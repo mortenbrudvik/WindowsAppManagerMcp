@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using WindowsAppManagerMcp.Infrastructure;
 using WindowsAppManagerMcp.Models;
 using WindowsAppManagerMcp.Native;
 using WindowsAppManagerMcp.Services.Interfaces;
@@ -445,7 +446,8 @@ public sealed class PopupService : IPopupService
                 ErrorCode: UIElementErrorCode.TargetDeniedByPolicy);
         }
 
-        var title = EmptyToNull(_windows.GetWindowText(window));
+        // The titles are returned cut (roadmap M3.F14): an application chooses them
+        var title = AppText.Cut(EmptyToNull(_windows.GetWindowText(window)));
         var foregroundNow = IsInForeground(window);
 
         // A popup is never named: one of the agent's host or of an app the user denies is neither listed nor read (as a
@@ -458,7 +460,7 @@ public sealed class PopupService : IPopupService
             Ref: null,
             Handle: (long)p.Handle,
             Kind: p.Kind,
-            Title: p.Title,
+            Title: AppText.Cut(p.Title),
             ClassName: p.ClassName,
             ProcessId: p.ProcessId,
             ProcessName: ProcessName((uint)p.ProcessId, names),

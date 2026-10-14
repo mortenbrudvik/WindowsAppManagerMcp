@@ -1,3 +1,4 @@
+using WindowsAppManagerMcp.Infrastructure;
 using WindowsAppManagerMcp.Models;
 using WindowsAppManagerMcp.Native;
 using WindowsAppManagerMcp.Services.Interfaces;
@@ -56,7 +57,7 @@ public sealed class AppWindowProbe : IAppWindowProbe
 
             var window = new OpenedWindow(
                 handle,
-                Safe(() => _windows.GetWindowText(handle)) ?? string.Empty,
+                AppText.Cut(Safe(() => _windows.GetWindowText(handle)) ?? string.Empty),
                 className,
                 processId,
                 Safe(() => _windows.GetProcessName((uint)processId)));

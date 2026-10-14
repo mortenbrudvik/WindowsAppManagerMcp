@@ -184,7 +184,7 @@ public class DialogServiceTests
 
         var content = (await CreateSut().ReadAsync(Dialog, TimeSpan.FromSeconds(1))).Content!;
 
-        content.Buttons.Single().Name.Should().HaveLength(DialogService.MaxButtonNameLength);
+        content.Buttons.Single().Name.Should().HaveLength(DialogService.MaxButtonNameLength).And.EndWith("…", "a cut is marked (roadmap M3.F14)");
     }
 
     [Fact]
@@ -196,7 +196,7 @@ public class DialogServiceTests
         var content = (await CreateSut().ReadAsync(Dialog, TimeSpan.FromSeconds(1))).Content!;
         var refused = await RespondAsync("retry");
 
-        content.Buttons.Single().AutomationId.Should().HaveLength(DialogService.MaxButtonNameLength);
+        content.Buttons.Single().AutomationId.Should().HaveLength(DialogService.MaxButtonNameLength).And.EndWith("…");
         refused.ErrorCode.Should().Be(nameof(UIElementErrorCode.ElementNotFound));
         refused.Error!.Length.Should().BeLessThan(1000);
     }
@@ -387,7 +387,7 @@ public class DialogServiceTests
 
         var result = await RespondAsync("yes");
 
-        result.NextDialog!.Title.Should().HaveLength(DialogService.MaxTitleLength);
+        result.NextDialog!.Title.Should().HaveLength(DialogService.MaxTitleLength).And.EndWith("…");
     }
 
     [Fact]

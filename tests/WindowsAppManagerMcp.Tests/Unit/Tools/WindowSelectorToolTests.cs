@@ -70,6 +70,20 @@ public class WindowSelectorToolTests
     }
 
     [Fact]
+    public async Task ACandidatesLongTitle_IsCut()
+    {
+        // roadmap M3.F14: the selector compared the whole title; the candidate returns it cut
+        var title = "Inbox - " + new string('a', 5000);
+        _windows.Setup(w => w.ResolveWindow(ChromeSelector)).Returns(WindowResolution.Failed("AmbiguousWindow",
+            "2 windows match processName 'chrome'.", [ChromeWindows[0] with { Title = title }, ChromeWindows[1]]));
+
+        var act = () => CreateWindowTools().MoveWindow(10, 20, window: ChromeSelector);
+
+        var error = (await act.Should().ThrowAsync<ToolErrorException>()).Which;
+        error.Candidates!.Select(c => c.Title).Should().Equal(title[..(AppText.MaxLength - 1)] + "…", "Docs - Google Chrome");
+    }
+
+    [Fact]
     public async Task MoveWindow_WithHandleAndWindow_OrWithNeither_IsInvalidArguments()
     {
         var both = () => CreateWindowTools().MoveWindow(10, 20, handle: Notepad, window: NotepadSelector);

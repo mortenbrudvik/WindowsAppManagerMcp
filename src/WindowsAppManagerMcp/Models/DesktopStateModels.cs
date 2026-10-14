@@ -96,10 +96,13 @@ public sealed record DesktopStateRequest(
 }
 
 /// <summary>A window as get_desktop_state names it: the window in front.</summary>
+/// <param name="Title">Its title, cut to <see cref="AppText.MaxLength"/> characters (roadmap M3.F14), as every
+/// title of the observation is.</param>
 /// <param name="IsAgentHost">True for the agent's own terminal, editor or chat window (or a window it owns); left out otherwise.</param>
 public sealed record DesktopWindow(long Handle, string Title, string ProcessName, int ProcessId, bool? IsAgentHost = null);
 
 /// <summary>One row of get_desktop_state's window list: a user-facing window, front first.</summary>
+/// <param name="Title">Its title, cut as <see cref="DesktopWindow.Title"/> is.</param>
 /// <param name="Process">The process name (for a UWP app, the app's own process).</param>
 /// <param name="State">normal, minimized or maximized.</param>
 /// <param name="Monitor">The index of the monitor the window is on (most of it), as get_monitors numbers them.</param>
@@ -108,6 +111,7 @@ public sealed record DesktopWindowRow(long Handle, string Title, string Process,
 
 /// <summary>The element that has keyboard focus, as get_desktop_state reports it (its value is never returned here).</summary>
 /// <param name="Ref">The element's ref, for element_action and the other element tools; null when it has no runtime id.</param>
+/// <param name="AutomationId">Cut to <see cref="AppText.MaxLength"/> characters (roadmap M3.F14).</param>
 /// <param name="WindowHandle">The top-level window it is in.</param>
 /// <param name="IsPassword">True for a password field; left out otherwise.</param>
 public sealed record DesktopFocus(

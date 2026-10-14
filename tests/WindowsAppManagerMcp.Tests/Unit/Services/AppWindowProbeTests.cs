@@ -61,6 +61,21 @@ public class AppWindowProbeTests
     }
 
     [Fact]
+    public void OpenedSince_CutsALongTitle()
+    {
+        // roadmap M3.F14: element_action's openedPopup returns the title the application chose
+        var sut = new AppWindowProbe(_windows.Object);
+        var before = sut.Snapshot([App]);
+        _desktop.Add((0x30, App, true));
+        _windows.Setup(w => w.GetWindowText(0x30)).Returns("Confirm " + new string('c', 5000));
+
+        var opened = sut.OpenedSince(before);
+
+        opened.All.Single().Title.Should().HaveLength(WindowsAppManagerMcp.Infrastructure.AppText.MaxLength).And.StartWith("Confirm cc")
+            .And.EndWith("…");
+    }
+
+    [Fact]
     public void OpenedSince_LeavesOutTooltips_AndPutsADialogFirst_EvenBelowATopmostWindow()
     {
         // Arrange - the action opens a dialog; a tooltip, and a hover card with no title bar, show above it

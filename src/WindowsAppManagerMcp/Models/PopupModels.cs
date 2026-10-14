@@ -129,6 +129,8 @@ public sealed record PopupList(IReadOnlyList<PopupWindow> Popups, bool Truncated
 /// <summary>An open popup of the target app, as get_active_popups returns it (roadmap M3.5).</summary>
 /// <param name="Ref">The ref of the popup window's own element, for find_ui_elements withinRef and the element tools; null
 /// when UI Automation could not read the popup (it did not respond, or closed meanwhile).</param>
+/// <param name="Title">Its window text, cut to <see cref="Infrastructure.AppText.MaxLength"/> characters (roadmap M3.F14);
+/// null when it has none.</param>
 /// <param name="ControlType">The UI Automation control type of the popup window's element (Menu, List, Window, Pane...),
 /// when it was read.</param>
 /// <param name="OwnerHandle">The window that owns it, when one does.</param>
@@ -149,6 +151,7 @@ public sealed record ActivePopup(
 /// <summary>Result of get_active_popups (roadmap M3.5).</summary>
 /// <param name="WindowHandle">The app window whose popups were listed: the window given, or the window in front (the window
 /// that owns it, when the window in front is a dialog).</param>
+/// <param name="WindowTitle">Its title, cut as <see cref="ActivePopup.Title"/> is.</param>
 /// <param name="IsForeground">True when that window, a window it owns or another window of its process is in the
 /// foreground (the default scope of find_ui_elements then searches its popups).</param>
 /// <param name="Popups">The open popups, front first (z-order).</param>

@@ -1,5 +1,6 @@
 namespace WindowsAppManagerMcp.Tests.Unit.Tools;
 
+using WindowsAppManagerMcp.Infrastructure;
 using WindowsAppManagerMcp.Tools;
 
 /// <summary>
@@ -309,6 +310,66 @@ public class WindowFinderToolsTests
 
         // Assert
         result[0].State.Should().Be(expectedString);
+    }
+
+    #endregion
+
+    #region Bounded titles (roadmap M3.F14)
+
+    private static readonly string LongTitle = "Inbox - " + new string('a', 5000);
+
+    private static string CutTitle => LongTitle[..(AppText.MaxLength - 1)] + "…";
+
+    [Fact]
+    public void FindWindows_CutsALongTitle_WithAnEllipsis()
+    {
+        _mockWindowService.Setup(w => w.FindWindows(It.IsAny<WindowQuery>()))
+            .Returns([TestDataFactory.CreateWindowInfo(title: LongTitle), TestDataFactory.CreateWindowInfo(title: "Untitled - Notepad")]);
+
+        var result = CreateSut().FindWindows(titleContains: "Inbox");
+
+        result.Select(w => w.Title).Should().Equal(CutTitle, "Untitled - Notepad");
+    }
+
+    [Fact]
+    public void GetAllWindows_AndGetForegroundWindow_CutALongTitle()
+    {
+        var window = TestDataFactory.CreateWindowInfo(title: LongTitle);
+        _mockWindowService.Setup(w => w.GetAllWindows(It.IsAny<bool>())).Returns([window]);
+        _mockWindowService.Setup(w => w.GetForegroundWindow()).Returns(window);
+
+        CreateSut().GetAllWindows().Single().Title.Should().Be(CutTitle);
+        CreateSut().GetForegroundWindow().Title.Should().Be(CutTitle);
+    }
+
+    [Theory]
+    [InlineData(WindowDetail.Compact)]
+    [InlineData(WindowDetail.Standard)]
+    [InlineData(WindowDetail.Full)]
+    public void GetWindowInfo_CutsALongTitle_AtEveryDetail(WindowDetail detail)
+    {
+        var window = TestDataFactory.CreateWindowInfo(title: LongTitle);
+        _mockWindowService.Setup(w => w.IsValidWindow(window.Handle)).Returns(true);
+        _mockWindowService.Setup(w => w.GetWindowInfo(window.Handle)).Returns(window);
+        _mockWindowService.Setup(w => w.GetWindowDetails(window.Handle))
+            .Returns(new WindowDetails(window, false, 3, false, true, true, 96));
+
+        var result = CreateSut().GetWindowInfo(handle: window.Handle, detail: detail);
+
+        result.Title.Should().Be(CutTitle);
+    }
+
+    [Fact]
+    public void GetOwnedWindows_CutsALongTitle()
+    {
+        var owner = TestDataFactory.CreateWindowInfo(handleValue: 0x100);
+        var dialog = TestDataFactory.CreateWindowInfo(handleValue: 0x200, title: LongTitle);
+        _mockWindowService.Setup(w => w.IsValidWindow(owner.Handle)).Returns(true);
+        _mockWindowService.Setup(w => w.GetOwnedWindows(owner.Handle, false)).Returns([new OwnedWindowInfo(dialog, true, true)]);
+
+        var result = CreateSut().GetOwnedWindows(handle: owner.Handle);
+
+        result.Windows!.Single().Title.Should().Be(CutTitle);
     }
 
     #endregion

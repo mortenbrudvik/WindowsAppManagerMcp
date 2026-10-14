@@ -24,10 +24,10 @@ public sealed class DialogService : IDialogService
     /// <summary>The most text kept in all.</summary>
     public const int MaxTotalText = 2000;
 
-    /// <summary>The longest title kept.</summary>
-    public const int MaxTitleLength = 200;
+    /// <summary>The longest title kept: the server's cap on a window title (roadmap M3.F14).</summary>
+    public const int MaxTitleLength = AppText.MaxLength;
 
-    /// <summary>The longest button name kept (in the result and in messages).</summary>
+    /// <summary>The longest button name kept (in the result and in messages); a cut one ends in an ellipsis, as a title does.</summary>
     public const int MaxButtonNameLength = 100;
 
     /// <summary>
@@ -128,7 +128,7 @@ public sealed class DialogService : IDialogService
 
         var title = _windows.GetWindowText(current);
         return DialogLocation.Failed(nameof(UIElementErrorCode.DialogNotFound),
-            $"Window {(long)current}{(string.IsNullOrEmpty(title) ? string.Empty : $" ('{Cut(title, MaxTitleLength)}')")} is no " +
+            $"Window {(long)current}{TitleOf(title)} is no " +
             $"dialog box and has no open dialog{(window == nint.Zero ? " (it is the window in front)" : string.Empty)}. A dialog is " +
             "a #32770 dialog box or a captioned window owned by another; any other window without an owner is no dialog. " +
             "Nothing was done. Wait for the dialog (wait_for_window), list the app's popups with get_active_popups, or press a " +
@@ -157,7 +157,7 @@ public sealed class DialogService : IDialogService
     }
 
     /// <summary>" ('title')" for a message, cut; empty for no title.</summary>
-    private static string TitleOf(string? title) => string.IsNullOrEmpty(title) ? string.Empty : $" ('{Cut(title, MaxTitleLength)}')";
+    private static string TitleOf(string? title) => string.IsNullOrEmpty(title) ? string.Empty : $" ('{AppText.Cut(title, MaxTitleLength)}')";
 
     /// <summary>A dialog box (#32770), or an owned window with a title bar that is no tool window (a WPF or WinForms dialog).</summary>
     private bool IsDialog(nint window)
@@ -194,15 +194,15 @@ public sealed class DialogService : IDialogService
         // A web page's HTML id is an AutomationId too (an Electron dialog): it is cut as a name is
         var buttonList = dialogButtons.Take(MaxButtons).Select(e => new DialogButton(
             e.Ref,
-            EmptyToNull(Cut(e.Name ?? string.Empty, MaxButtonNameLength)),
-            EmptyToNull(Cut(e.AutomationId ?? string.Empty, MaxButtonNameLength)),
+            EmptyToNull(AppText.Cut(e.Name ?? string.Empty, MaxButtonNameLength)),
+            EmptyToNull(AppText.Cut(e.AutomationId ?? string.Empty, MaxButtonNameLength)),
             DialogButtons.StandardOf(e.AutomationId),
             e.IsEnabled)).ToList();
         var (text, textCut) = Text(texts.Success ? texts.Elements ?? [] : [], buttonList);
         var title = EmptyToNull(_windows.GetWindowText(dialog));
         var content = new DialogContent(
             (long)dialog,
-            title == null ? null : Cut(title, MaxTitleLength),
+            title == null ? null : AppText.Cut(title, MaxTitleLength),
             EmptyToNull(_windows.GetClassName(dialog)),
             text,
             buttonList,
@@ -301,7 +301,7 @@ public sealed class DialogService : IDialogService
             // Read and pressed in one call, the dialog in front may be one that came up after the agent looked (a prompt of
             // another application): only cancel, which answers nothing, may go to it unread
             return Fail(ToolErrorReporting.InvalidArgumentsErrorCode,
-                $"button '{Cut(unnamed.Trim(), 100)}' needs the dialog named by handle or window ({{\"foreground\": true}} alone " +
+                $"button '{AppText.Cut(unnamed.Trim(), 100)}' needs the dialog named by handle or window ({{\"foreground\": true}} alone " +
                 "names none): the dialog in front now may not be the one you read. Read the dialog first (respond_to_dialog " +
                 "without button, or get_active_popups), then answer it by its dialogHandle as handle. Only cancel may be pressed " +
                 "in the dialog in front without naming it. Nothing was read or pressed.");
@@ -350,7 +350,7 @@ public sealed class DialogService : IDialogService
             return With(new DialogResponseResult(true, (long)dialog, Warnings: warnings.Count == 0 ? null : warnings), content, stopwatch);
         }
 
-        var shown = Cut(buttonAsked.Trim(), 100);
+        var shown = AppText.Cut(buttonAsked.Trim(), 100);
         var match = DialogButtons.Match(content.Buttons, buttonAsked);
         if (match.Buttons.Count == 0)
         {
@@ -401,7 +401,7 @@ public sealed class DialogService : IDialogService
         }
 
         bool closed;
-        var next = pressed.OpenedPopup is { } opened ? opened with { Title = Cut(opened.Title, MaxTitleLength) } : null;
+        var next = pressed.OpenedPopup is { } opened ? opened with { Title = AppText.Cut(opened.Title, MaxTitleLength) } : null;
         if (pressed.Status == ElementActionStatus.InvokedPendingModal)
         {
             // The press waits for the dialog it opened: the first dialog stays until that one is answered
@@ -468,7 +468,7 @@ public sealed class DialogService : IDialogService
         var popup = _popups.GetPopups(dialog).FirstOrDefault(p => !before.Contains(p.Handle) && p.Kind != PopupKind.Tooltip);
         return popup == null
             ? null
-            : new OpenedWindow((long)popup.Handle, Cut(popup.Title ?? string.Empty, MaxTitleLength), popup.ClassName, popup.ProcessId,
+            : new OpenedWindow((long)popup.Handle, AppText.Cut(popup.Title ?? string.Empty, MaxTitleLength), popup.ClassName, popup.ProcessId,
                 _windows.GetProcessName((uint)popup.ProcessId));
     }
 
@@ -499,6 +499,4 @@ public sealed class DialogService : IDialogService
                 $"{(b.IsEnabled ? string.Empty : " [disabled]")}"));
 
     private static string? EmptyToNull(string? value) => string.IsNullOrEmpty(value) ? null : value;
-
-    private static string Cut(string text, int length) => text.Length <= length ? text : text[..length];
 }

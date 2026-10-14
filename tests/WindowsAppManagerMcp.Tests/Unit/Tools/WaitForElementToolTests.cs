@@ -227,4 +227,18 @@ public class WaitForElementToolTests
 
         _request!.Criteria!.Scope.Should().Be(ElementSearchScope.Window);
     }
+
+    [Fact]
+    public async Task TheElement_HasALongAutomationIdCut_InTheResult()
+    {
+        // roadmap M3.F14: the application chooses it; the wait compared the whole one
+        var id = "row-" + new string('7', 5000);
+        _wait.Setup(w => w.WaitAsync(It.IsAny<ElementWaitRequest>(), It.IsAny<IProgress<OperationProgress>?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new WaitForElementResult(true, true, false, 120, 2, WindowHandle: 0x1A0B2C,
+                Element: new FoundElement("w1e1", "Row", "ListItem", id, null, null, null, true, false, [])));
+
+        var result = await CreateSut().WaitForElement(window: Notepad, automationId: id);
+
+        result.Element!.AutomationId.Should().Be(id[..(AppText.MaxLength - 1)] + "…");
+    }
 }

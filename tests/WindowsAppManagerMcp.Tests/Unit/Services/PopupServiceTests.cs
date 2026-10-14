@@ -490,6 +490,22 @@ public class PopupServiceTests
     }
 
     [Fact]
+    public async Task GetActivePopups_CutsALongTitle_OfTheWindowAndOfItsPopups()
+    {
+        // roadmap M3.F14: the application chooses the titles, so it could put any amount of text in front of the agent
+        var title = "Editor - " + new string('e', 5000);
+        var main = AddMain(title);
+        var dialog = AddPopup("Save As " + new string('s', 5000), "#32770", style: WsCaption, owner: main);
+
+        var result = await CreateSut().GetActivePopupsAsync(main, TimeSpan.FromSeconds(5), CancellationToken.None);
+
+        result.WindowTitle.Should().Be(title[..(WindowsAppManagerMcp.Infrastructure.AppText.MaxLength - 1)] + "…");
+        var popup = result.Popups!.Should().ContainSingle().Subject;
+        popup.Handle.Should().Be((long)dialog);
+        popup.Title.Should().HaveLength(WindowsAppManagerMcp.Infrastructure.AppText.MaxLength).And.StartWith("Save As ss").And.EndWith("…");
+    }
+
+    [Fact]
     public async Task GetActivePopups_WithoutAWindow_ListsThePopupsOfTheAppThatOwnsTheWindowInFront()
     {
         // Arrange - the dialog is in front: the app is its owner

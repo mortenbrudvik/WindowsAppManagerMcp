@@ -1,4 +1,5 @@
 using System.Text.Json.Serialization;
+using WindowsAppManagerMcp.Infrastructure;
 
 namespace WindowsAppManagerMcp.Models;
 
@@ -171,7 +172,10 @@ public sealed record WindowResolution
 /// </summary>
 public sealed record WindowCandidateDto(long Handle, string Title, string ProcessName, int ProcessId, string ClassName, bool? IsAgentHost = null)
 {
-    /// <summary>The candidate for a window that was read.</summary>
+    /// <summary>
+    /// The candidate for a window that was read, its title cut to <see cref="AppText.MaxLength"/> characters (roadmap M3.F14).
+    /// </summary>
     public static WindowCandidateDto From(WindowInfo window) =>
-        new(window.Handle.ToInt64(), window.Title, window.ProcessName, window.ProcessId, window.ClassName, window.IsAgentHost ? true : null);
+        new(window.Handle.ToInt64(), AppText.Cut(window.Title), window.ProcessName, window.ProcessId, window.ClassName,
+            window.IsAgentHost ? true : null);
 }

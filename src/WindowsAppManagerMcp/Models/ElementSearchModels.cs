@@ -1,4 +1,5 @@
 using System.Text.Json.Serialization;
+using WindowsAppManagerMcp.Infrastructure;
 using WindowsAppManagerMcp.Services.Interfaces;
 
 namespace WindowsAppManagerMcp.Models;
@@ -75,6 +76,8 @@ public record ScreenPoint(int X, int Y);
 /// detail standard or full, and are left out when they do not apply.
 /// </summary>
 /// <param name="Ref">The element's ref, for later calls; null when the element has no runtime id. Serialized first.</param>
+/// <param name="AutomationId">Cut to <see cref="AppText.MaxLength"/> characters by the tools that return it
+/// (<see cref="Bounded"/>, roadmap M3.F14); whole where a service reads it.</param>
 /// <param name="ClickPoint">Where a click hits the element: UI Automation's clickable point, or else the centre of its
 /// bounds. Null when it is offscreen or has no bounds.</param>
 /// <param name="Patterns">The control patterns it supports, action patterns first (Invoke, Toggle, Value, SelectionItem,
@@ -125,10 +128,19 @@ public record FoundElement(
     string? LocalizedControlType = null,
     long? WindowHandle = null,
     bool? Virtualized = null
-);
+)
+{
+    /// <summary>
+    /// The element as the tools return it: its AutomationId cut to <see cref="AppText.MaxLength"/> characters (roadmap
+    /// M3.F14). The search compared the whole one.
+    /// </summary>
+    public FoundElement Bounded() => this with { AutomationId = AppText.Cut(AutomationId) };
+}
 
 /// <summary>Result of find_ui_elements (roadmap M3.4).</summary>
 /// <param name="WindowHandle">The window searched (the window of withinRef when only that was given).</param>
+/// <param name="WindowTitle">Its title, cut to <see cref="AppText.MaxLength"/> characters by find_ui_elements
+/// (<see cref="Bounded"/>, roadmap M3.F14).</param>
 /// <param name="WithinRef">The ref whose element's descendants were searched, or null for the whole window: the ref asked
 /// for, or the ref the element has now when it was found again with a ref of its own (the asked-for one was dropped).</param>
 /// <param name="MatchCount">How many elements matched in the part of the window that was searched: all of it unless
@@ -171,7 +183,16 @@ public record FindElementsResult(
     VirtualizedSearchInfo? Virtualized = null,
     bool? RefMoved = null,
     string? Warning = null
-);
+)
+{
+    /// <summary>
+    /// The result as find_ui_elements returns it: the window title and each element's AutomationId cut to
+    /// <see cref="AppText.MaxLength"/> characters (roadmap M3.F14). The search compared the whole values, and the services
+    /// that search for themselves (respond_to_dialog, menu_path, element_action) read them whole.
+    /// </summary>
+    public FindElementsResult Bounded() =>
+        this with { WindowTitle = AppText.Cut(WindowTitle), Elements = Elements?.Select(e => e.Bounded()).ToList() };
+}
 
 /// <summary>
 /// What find_ui_elements' searchVirtualized searched (roadmap M3.10): the lists of the window (or of withinRef's element),

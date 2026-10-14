@@ -187,7 +187,7 @@ public partial class WindowFinderTools
         var owned = _windowService.GetOwnedWindows(owner, includeHidden);
         return new OwnedWindowsResult(true, handle.Value, owned.Any(o => o.IsBlocking), owned.Select(o => new OwnedWindowDto(
             Handle: o.Window.Handle.ToInt64(),
-            Title: o.Window.Title,
+            Title: AppText.Cut(o.Window.Title),
             ClassName: o.Window.ClassName,
             ProcessName: o.Window.ProcessName,
             ProcessId: o.Window.ProcessId,
@@ -199,10 +199,13 @@ public partial class WindowFinderTools
             IsBlocking: o.IsBlocking ? true : null)).ToList());
     }
 
-    /// <summary>A window as the tools return it (the launch tools return the window they found this way too).</summary>
+    /// <summary>
+    /// A window as the tools return it (the launch tools return the window they found this way too), its title cut to
+    /// <see cref="AppText.MaxLength"/> characters (roadmap M3.F14).
+    /// </summary>
     internal static WindowInfoDto ToDto(WindowInfo info) => new(
         Handle: info.Handle.ToInt64(),
-        Title: info.Title,
+        Title: AppText.Cut(info.Title),
         ProcessName: info.ProcessName,
         ProcessId: info.ProcessId,
         Bounds: new BoundsDto(info.Bounds.X, info.Bounds.Y, info.Bounds.Width, info.Bounds.Height),
@@ -225,7 +228,8 @@ public partial class WindowFinderTools
 /// the agent's own host window (its terminal, editor or chat app, or a window it owns) and omitted
 /// for every other window. Bounds is the window rect (GetWindowRect, with the invisible resize borders of about 7 px left,
 /// right and bottom); VisibleBounds is the visible frame, the rect set_window_bounds, move_window and the geometry
-/// results use (omitted when DWM cannot report it).
+/// results use (omitted when DWM cannot report it). Title is cut to <see cref="AppText.MaxLength"/> characters, the
+/// ellipsis of a cut one included (roadmap M3.F14); the filters compare the whole title.
 /// </summary>
 public record WindowInfoDto(
     long Handle,
@@ -278,7 +282,7 @@ public sealed record WindowDetailsResult(
     string? ErrorCode = null)
 {
     internal static WindowDetailsResult Compact(WindowInfo info) => new(
-        true, info.Handle.ToInt64(), info.Title, info.ProcessName, info.ProcessId, info.State.ToString().ToLowerInvariant());
+        true, info.Handle.ToInt64(), AppText.Cut(info.Title), info.ProcessName, info.ProcessId, info.State.ToString().ToLowerInvariant());
 
     internal static WindowDetailsResult Standard(WindowInfo info)
     {

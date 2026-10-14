@@ -244,9 +244,9 @@ public sealed class DesktopStateService : IDesktopStateService
         var state = new DesktopState(
             Success: true,
             WindowHandle: handle,
-            WindowTitle: target.Title,
-            Foreground: foreground is null ? null : new DesktopWindow(foreground.Handle, foreground.Title, foreground.ProcessName,
-                foreground.ProcessId, foreground.IsAgentHost ? true : null),
+            WindowTitle: AppText.Cut(target.Title),
+            Foreground: foreground is null ? null : new DesktopWindow(foreground.Handle, AppText.Cut(foreground.Title),
+                foreground.ProcessName, foreground.ProcessId, foreground.IsAgentHost ? true : null),
             Focus: focus,
             Cursor: cursor,
             Input: input,
@@ -516,8 +516,8 @@ public sealed class DesktopStateService : IDesktopStateService
         }
 
         // The value is left out: get_focused_element reads it when it is needed (never for a password field)
-        return new DesktopFocus(element.Ref, element.ControlType, element.Name, NullIfEmpty(element.AutomationId), element.Bounds,
-            focused.WindowHandle, focused.ProcessName, element.IsPassword ? true : null);
+        return new DesktopFocus(element.Ref, element.ControlType, element.Name, AppText.Cut(NullIfEmpty(element.AutomationId)),
+            element.Bounds, focused.WindowHandle, focused.ProcessName, element.IsPassword ? true : null);
     }
 
     /// <summary>
@@ -569,7 +569,7 @@ public sealed class DesktopStateService : IDesktopStateService
     }
 
     private static DesktopWindowRow Row(WindowInfo window) => new(
-        window.Handle, window.Title, window.ProcessName, window.State.ToString().ToLowerInvariant(), window.MonitorIndex,
+        window.Handle, AppText.Cut(window.Title), window.ProcessName, window.State.ToString().ToLowerInvariant(), window.MonitorIndex,
         window.IsAgentHost ? true : null);
 
     /// <summary>
