@@ -1459,9 +1459,17 @@
             "default": false
           },
           "maxScrolls": {
-            "description": "realize with element criteria only: when the item is found neither in the tree nor through its list's ItemContainer pattern (a web or custom list), scroll the window's one visible list (List, Tree, DataGrid or Table) a page at a time, at most this many pages (down to its end, then back up), searching it after each page, and realize the item once exactly one matches (two: AmbiguousElement). Every page is an element_action scroll with every check; the list stays where the item was found (or where the search ended). Default: 0 (no scrolling); max 100. timeoutMs bounds the whole search (each step gets what is left, at least a second): raise it for long lists.",
+            "description": "realize with element criteria only: when the item is found neither in the tree nor through its list's ItemContainer pattern (a web or custom list), scroll the window's one visible list (List, Tree, DataGrid or Table; of several, the one that scrolls itself; or listRef) a page at a time, at most this many pages (down to its end, then back up), searching it after each page, and realize the item once exactly one matches (two: AmbiguousElement). Every page is an element_action scroll with every check; the list stays where the item was found (or where the search ended). Default: 0 (no scrolling); max 100. timeoutMs bounds the whole search (each step gets what is left, at least a second): raise it for long lists.",
             "type": "integer",
             "default": 0
+          },
+          "listRef": {
+            "description": "realize with maxScrolls: the list to scroll when the window has several that scroll (a ref from find_ui_elements' virtualized.containers).",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
           },
           "timeoutMs": {
             "description": "How long the action may block, for example on a dialog it opened, and the bound of each read, in milliseconds (default: 5000, min: 1000, max: 30000). realize with maxScrolls: the whole search.",
