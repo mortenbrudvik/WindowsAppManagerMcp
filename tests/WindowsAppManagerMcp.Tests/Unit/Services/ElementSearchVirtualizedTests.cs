@@ -35,10 +35,10 @@ public class ElementSearchVirtualizedTests
     private Task<FindElementsResult> Find(
         string? name = null, string? automationId = null, string[]? controlTypes = null, bool searchVirtualized = true,
         int maxResults = 20, string? withinRef = null, ElementDetail detail = ElementDetail.Minimal,
-        ElementNameMatch nameMatch = ElementNameMatch.Exact, TimeSpan? timeout = null) =>
+        ElementNameMatch nameMatch = ElementNameMatch.Exact, TimeSpan? timeout = null, string? className = null) =>
         new ElementSearchService(_tree, _worker, _registry, _windows.Object).FindAsync(
-            new ElementQuery(Handle, withinRef, name, nameMatch, automationId, controlTypes, MaxResults: maxResults, Detail: detail,
-                Timeout: timeout ?? TimeSpan.FromSeconds(5)) { SearchVirtualized = searchVirtualized });
+            new ElementQuery(Handle, withinRef, name, nameMatch, automationId, controlTypes, className, MaxResults: maxResults,
+                Detail: detail, Timeout: timeout ?? TimeSpan.FromSeconds(5)) { SearchVirtualized = searchVirtualized });
 
     [Fact]
     public async Task WithoutSearchVirtualized_AnItemTheListHasNotRealized_IsNotFound_AndTheListIsNotAsked()
@@ -266,6 +266,45 @@ public class ElementSearchVirtualizedTests
         var result = await Find(automationId: "row-6000", controlTypes: ["ListItem"]);
 
         result.Elements.Should().ContainSingle().Which.Name.Should().Be("Item 06000");
+    }
+
+    [Fact]
+    public async Task AnExplorerPlaceholder_OfControlTypeCustom_IsFoundByTheControlTypeOfTheRealizedItems()
+    {
+        // Arrange - File Explorer (roadmap M3.F37): an item it has not realized is a Custom placeholder, its realized ones
+        // ListItems, so controlType ListItem, the natural filter for a list item, used to drop it
+        _list.WithExplorerPlaceholders();
+
+        // Act
+        var result = await Find(name: "Item 05000", controlTypes: ["ListItem"]);
+
+        // Assert - kept, reported as virtualized with the control type it has, and the note says why
+        result.Success.Should().BeTrue(result.Error);
+        result.Truncated.Should().BeFalse("{0}", result.Virtualized?.Note);
+        var item = result.Elements.Should().ContainSingle().Subject;
+        (item.Name, item.ControlType, item.Virtualized).Should().Be(("Item 05000", "Custom", true));
+        result.Virtualized!.Note.Should().Contain("Custom").And.Contain("controlType");
+    }
+
+    [Fact]
+    public async Task AnExplorerPlaceholder_IsStillHeldToTheCriteriaTheListDidNotCompare()
+    {
+        // Arrange
+        _list.WithExplorerPlaceholders();
+
+        // Act - the list compares the name; the class is tested on the placeholder as on any item
+        var result = await Find(name: "Item 05000", controlTypes: ["ListItem"], className: "UIItem");
+
+        // Assert
+        result.MatchCount.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task APlaceholderThatSaysItsControlType_IsStillHeldToControlType()
+    {
+        // WPF's placeholder says it is a ListItem, so a Button filter drops it as before
+        (await Find(name: "Item 05000", controlTypes: ["Button"])).MatchCount.Should().Be(0);
+        (await Find(name: "Item 05000", controlTypes: ["ListItem"])).MatchCount.Should().Be(1);
     }
 
     [Fact]

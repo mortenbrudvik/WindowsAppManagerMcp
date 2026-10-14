@@ -1,12 +1,14 @@
 using System.Globalization;
 using WindowsAppManagerMcp.Models;
+using WindowsAppManagerMcp.Native;
 using WindowsAppManagerMcp.Services.Interfaces;
 
 namespace WindowsAppManagerMcp.Services;
 
 // searchVirtualized (roadmap M3.10): the items of the window's lists that are not realized yet, found through the lists'
 // ItemContainer pattern. Only reads: realizing an item and scrolling it into view are element_action realize's, behind its
-// guards (the input gate, pause, target policy, host guard) and audited.
+// guards (the input gate, pause, target policy, host guard) and audited. A placeholder that does not say what it is (Custom
+// or unknown) is matched on the property the list compared and the other criteria, not on controlType (roadmap M3.F37).
 public sealed partial class ElementSearchService
 {
     /// <summary>The most lists searchVirtualized searches through their ItemContainer pattern in one call.</summary>
@@ -105,6 +107,12 @@ public sealed partial class ElementSearchService
             : (UiaProperty.Name, criteria.Name!);
         var (condition, filter) = (criteria with { VisibleOnly = false }).Compile(controlTypesOnServer: true);
         var evaluate = UiaConditionEvaluator.CanEvaluate(condition);
+
+        // A placeholder that does not say what it is (Explorer's are Custom, its realized items ListItems) is not held to
+        // controlType, which only the realized item can answer; the other criteria still apply (roadmap M3.F37)
+        var (untypedCondition, untypedFilter) = (criteria with { VisibleOnly = false, ControlTypes = null }).Compile(controlTypesOnServer: true);
+        var evaluateUntyped = UiaConditionEvaluator.CanEvaluate(untypedCondition);
+        var untypedKept = 0;
         var known = total.Matches.Select(m => m.Element.RuntimeId).OfType<IReadOnlyList<int>>().ToList();
         var items = new List<UiaElement>();
         var more = false;
@@ -219,7 +227,11 @@ public sealed partial class ElementSearchService
                             continue;
                         }
 
-                        if ((evaluate && !UiaConditionEvaluator.Matches(condition, element)) || (filter != null && !filter(element)))
+                        var untyped = criteria.ControlTypes is { Count: > 0 } && IsUntypedPlaceholder(element);
+                        if (untyped
+                                ? (evaluateUntyped && !UiaConditionEvaluator.Matches(untypedCondition, element)) ||
+                                  (untypedFilter != null && !untypedFilter(element))
+                                : (evaluate && !UiaConditionEvaluator.Matches(condition, element)) || (filter != null && !filter(element)))
                         {
                             continue;
                         }
@@ -241,6 +253,10 @@ public sealed partial class ElementSearchService
                         }
 
                         items.Add(element);
+                        if (untyped && !criteria.ControlTypes!.Contains(element.Properties.ControlType, StringComparer.OrdinalIgnoreCase))
+                        {
+                            untypedKept++;
+                        }
                     }
 
                     if (more || stop == ElementSearchTruncation.Timeout)
@@ -272,8 +288,24 @@ public sealed partial class ElementSearchService
             Stopped(ElementSearchTruncation.Timeout, TimedOutNote);
         }
 
+        if (untypedKept > 0)
+        {
+            notes.Add($"{untypedKept} item{(untypedKept == 1 ? " is a placeholder" : "s are placeholders")} the list has not " +
+                      "realized that do not say what they are (control type Custom or unknown), so controlType was not tested on " +
+                      "them: they are returned with the control type they have now. element_action realize makes the item real.");
+        }
+
         return new VirtualizedLookup(items, more, containers, notes.Count == 0 ? null : string.Join(" ", notes), stop);
     }
+
+    /// <summary>
+    /// An item a list returned for one it has not realized that does not say what it is (roadmap M3.F37): a placeholder (read
+    /// property by property, or without a runtime id) whose control type is Custom or unknown. File Explorer's Items View
+    /// returns such a Custom element, without a runtime id, for an item it has not realized, and a ListItem once it has.
+    /// </summary>
+    private static bool IsUntypedPlaceholder(UiaElement element) =>
+        (element.Virtualized || element.RuntimeId is not { Count: > 0 }) &&
+        element.Properties.ControlType is "Custom" or UiaControlTypes.Unknown;
 
     /// <summary>
     /// <paramref name="value"/> in the cases a list's text is usually in, other than its own: all lower case, all upper case,
