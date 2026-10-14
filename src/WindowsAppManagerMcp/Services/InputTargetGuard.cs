@@ -597,10 +597,11 @@ public sealed class InputTargetGuard : IInputTargetGuard
         }
 
         // Policy: set by the user in the server's environment. A window whose process cannot be named cannot be checked, so it
-        // is refused while the policy denies anything, as the UI Automation reads refuse it
+        // is refused while the policy denies anything, as the UI Automation reads refuse it. A security prompt that a shared
+        // process shows is refused by its structure (roadmap M3.F5)
         var verdict = window.Info is { } info
             ? _policy.EvaluateFailClosed(info)
-            : _policy.EvaluateFailClosed([window.Summary.ProcessName]);
+            : _policy.EvaluateFailClosed(hWnd, [window.Summary.ProcessName]);
         if (!verdict.Allowed)
         {
             return InputGuardResult.Refuse(InputErrorCode.TargetDeniedByPolicy,
