@@ -40,7 +40,7 @@ public class NativeInputWrapper : INativeInputWrapper
     private static INPUT ToNativeInput(InputEvent inputEvent) => inputEvent.Kind switch
     {
         InputEventKind.Mouse => INPUT.MouseInput(inputEvent.Dx, inputEvent.Dy, inputEvent.Flags, inputEvent.MouseData),
-        InputEventKind.VirtualKey => INPUT.KeyboardInput(inputEvent.Code, inputEvent.Flags),
+        InputEventKind.VirtualKey => INPUT.KeyboardInput(inputEvent.Code, inputEvent.Flags, inputEvent.Scan),
         InputEventKind.Unicode => INPUT.UnicodeInput((char)inputEvent.Code, inputEvent.Flags),
         _ => throw new ArgumentOutOfRangeException(nameof(inputEvent), inputEvent.Kind, "Unknown input event kind")
     };

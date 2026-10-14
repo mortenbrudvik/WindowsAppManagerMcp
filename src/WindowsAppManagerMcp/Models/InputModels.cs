@@ -199,6 +199,12 @@ public record SendKeysResult(
     InputErrorCode ErrorCode = InputErrorCode.None
 )
 {
+    /// <summary>
+    /// How many keys were sent completely, counting each top-level key, chord or group, and each repetition of {KEY n}
+    /// (roadmap M4.1): all of them on success, how far it got when it stopped part way. Null when nothing was checked.
+    /// </summary>
+    public int? KeysSent { get; init; }
+
     /// <inheritdoc cref="TypeTextResult.ReceivingWindow"/>
     public WindowSummary? ReceivingWindow { get; init; }
 
@@ -273,6 +279,16 @@ public readonly record struct InputEvent(InputEventKind Kind, ushort Code, uint 
         Native.NativeEnums.MOUSEEVENTF_MOVE | Native.NativeEnums.MOUSEEVENTF_VIRTUALDESK | Native.NativeEnums.MOUSEEVENTF_ABSOLUTE;
 
     public static InputEvent Key(ushort virtualKey, uint flags) => new(InputEventKind.VirtualKey, virtualKey, flags);
+
+    /// <summary>A virtual key with its scan code (KEYBDINPUT.wScan), which applications read from the key message (roadmap M4.1).</summary>
+    public static InputEvent Key(ushort virtualKey, uint flags, ushort scan) =>
+        new InputEvent(InputEventKind.VirtualKey, virtualKey, flags) { Scan = scan };
+
+    /// <summary>
+    /// VirtualKey events: the key's scan code for KEYBDINPUT.wScan, without the 0xE0 prefix (the event's
+    /// KEYEVENTF_EXTENDEDKEY flag carries that); 0 when unknown. Otherwise 0.
+    /// </summary>
+    public ushort Scan { get; init; }
 
     public static InputEvent Unicode(char character, uint flags) => new(InputEventKind.Unicode, character, flags);
 }

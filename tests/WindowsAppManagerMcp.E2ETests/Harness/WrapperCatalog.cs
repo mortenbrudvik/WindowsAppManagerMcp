@@ -201,6 +201,15 @@ public static class WrapperCatalog
                 [nameof(INativeSystemInfoWrapper.GetSessionId)] = WrapperMember.Read,
                 [nameof(INativeSystemInfoWrapper.GetMouseWheelRouting)] = WrapperMember.Read
             },
+            // The keyboard layout send_keys maps characters with (roadmap M4.1): ToUnicodeEx is called so that it changes no
+            // keyboard state
+            [typeof(INativeKeyboardLayoutWrapper)] = new Dictionary<string, WrapperMember>
+            {
+                [nameof(INativeKeyboardLayoutWrapper.GetKeyboardLayout)] = WrapperMember.Read,
+                [nameof(INativeKeyboardLayoutWrapper.VkKeyScan)] = WrapperMember.Read,
+                [nameof(INativeKeyboardLayoutWrapper.ScanCode)] = WrapperMember.Read,
+                [nameof(INativeKeyboardLayoutWrapper.KeyText)] = WrapperMember.Read
+            },
             [typeof(INativeVirtualDesktopWrapper)] = new Dictionary<string, WrapperMember>
             {
                 // IsWindowOnCurrentVirtualDesktop and GetWindowDesktopId; the wrapper cannot move a window to a desktop

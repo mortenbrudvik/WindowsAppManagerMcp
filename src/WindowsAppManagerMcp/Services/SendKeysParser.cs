@@ -32,102 +32,19 @@ public readonly record struct KeyChord(KeyModifiers Modifiers, InputEventKind Ki
 }
 
 /// <summary>
-/// Parses send_keys' SendKeys-style syntax into input events: <c>^</c> Ctrl, <c>%</c> Alt and <c>+</c>
-/// Shift apply to the next key; <c>{NAME}</c> is a special key; any other character is a key.
+/// send_keys' key grammar without a keyboard layout (see <see cref="KeySpecParser"/>), and the chords a batch of input
+/// events presses, which the input guard, the pause hotkey and the clipboard checks read.
 /// </summary>
 public static class SendKeysParser
 {
     /// <summary>
-    /// The events for <paramref name="keys"/>: modifiers down, the key down and up, modifiers up.
-    /// <paramref name="windowsModifier"/> also reads <c>#</c> as the Windows-key modifier; send_keys does
-    /// not (there <c>#</c> is the character), only the destructive-chord settings do.
+    /// The events for <paramref name="keys"/> on the <see cref="KeyboardLayout.Invariant"/> layout: letters and digits by
+    /// their keys (Shift for capitals), every other character as Unicode, no scan codes. For the settings and checks that
+    /// read chords, where no window's layout applies; send_keys itself maps with the target's layout.
     /// </summary>
-    /// <exception cref="KeySyntaxException">A brace is not closed (InvalidKeySpecification).</exception>
+    /// <exception cref="KeySyntaxException">The string breaks the grammar (InvalidKeySpecification).</exception>
     /// <exception cref="ArgumentException">A key name is unknown (UnknownKey).</exception>
-    public static List<InputEvent> Parse(string keys, bool windowsModifier = false)
-    {
-        ArgumentNullException.ThrowIfNull(keys);
-
-        var inputs = new List<InputEvent>();
-        var modifiers = new List<ushort>();
-        var i = 0;
-
-        while (i < keys.Length)
-        {
-            var c = keys[i];
-
-            // Handle modifier prefixes
-            if (c == '^' || c == '%' || c == '+' || (windowsModifier && c == '#'))
-            {
-                var modifierVk = c switch
-                {
-                    '^' => NativeEnums.VK_CONTROL,
-                    '%' => NativeEnums.VK_MENU,
-                    '+' => NativeEnums.VK_SHIFT,
-                    '#' => NativeEnums.VK_LWIN,
-                    _ => (ushort)0
-                };
-
-                if (modifierVk != 0 && !modifiers.Contains(modifierVk))
-                {
-                    modifiers.Add(modifierVk);
-                    var flags = IsExtendedKey(modifierVk) ? NativeEnums.KEYEVENTF_EXTENDEDKEY : NativeEnums.KEYEVENTF_KEYDOWN;
-                    inputs.Add(InputEvent.Key(modifierVk, flags));
-                }
-                i++;
-                continue;
-            }
-
-            // Handle special keys in braces
-            if (c == '{')
-            {
-                var endBrace = keys.IndexOf('}', i + 1);
-                if (endBrace == -1)
-                {
-                    throw new KeySyntaxException($"Unclosed brace at position {i}");
-                }
-
-                var keyName = keys.Substring(i + 1, endBrace - i - 1).ToUpperInvariant();
-                var vk = GetVirtualKeyCode(keyName);
-                var flags = IsExtendedKey(vk) ? NativeEnums.KEYEVENTF_EXTENDEDKEY : NativeEnums.KEYEVENTF_KEYDOWN;
-
-                inputs.Add(InputEvent.Key(vk, flags));
-                inputs.Add(InputEvent.Key(vk, flags | NativeEnums.KEYEVENTF_KEYUP));
-
-                // Release modifiers after the key
-                ReleaseModifiers(inputs, modifiers);
-                modifiers.Clear();
-
-                i = endBrace + 1;
-                continue;
-            }
-
-            // Handle regular characters
-            var charVk = GetVirtualKeyForChar(c);
-            if (charVk != 0)
-            {
-                inputs.Add(InputEvent.Key(charVk, NativeEnums.KEYEVENTF_KEYDOWN));
-                inputs.Add(InputEvent.Key(charVk, NativeEnums.KEYEVENTF_KEYUP));
-            }
-            else
-            {
-                // Send as Unicode
-                inputs.Add(InputEvent.Unicode(c, NativeEnums.KEYEVENTF_KEYDOWN));
-                inputs.Add(InputEvent.Unicode(c, NativeEnums.KEYEVENTF_KEYUP));
-            }
-
-            // Release modifiers after the key
-            ReleaseModifiers(inputs, modifiers);
-            modifiers.Clear();
-
-            i++;
-        }
-
-        // Release any remaining modifiers
-        ReleaseModifiers(inputs, modifiers);
-
-        return inputs;
-    }
+    public static List<InputEvent> Parse(string keys) => KeySpecParser.Parse(keys, KeyboardLayout.Invariant).Events.ToList();
 
     /// <summary>
     /// Every key press in <paramref name="events"/> with the modifiers held down at that moment. Presses of
@@ -230,7 +147,25 @@ public static class SendKeysParser
         _ => GetVirtualKeyForChar(c)
     };
 
-    private static KeyModifiers ModifierOf(ushort virtualKey) => virtualKey switch
+    /// <summary>
+    /// <paramref name="chord"/> written in send_keys syntax, for messages: <c>#r</c>, <c>^+{F5}</c>, <c>%{VK 0xE8}</c> for a
+    /// key without a name.
+    /// </summary>
+    public static string Spec(KeyChord chord)
+    {
+        var modifiers = ((chord.Modifiers & KeyModifiers.Control) != 0 ? "^" : string.Empty) +
+                        ((chord.Modifiers & KeyModifiers.Alt) != 0 ? "%" : string.Empty) +
+                        ((chord.Modifiers & KeyModifiers.Shift) != 0 ? "+" : string.Empty) +
+                        ((chord.Modifiers & KeyModifiers.Windows) != 0 ? "#" : string.Empty);
+        var code = chord.Code;
+        var key = chord.Kind == InputEventKind.Unicode ? ((char)code).ToString()
+            : code is >= 'A' and <= 'Z' or >= '0' and <= '9' ? char.ToLowerInvariant((char)code).ToString()
+            : $"{{{KeyTable.NameOf(code) ?? KeyNames.Of(code)}}}";
+        return modifiers + key;
+    }
+
+    /// <summary>The modifier <paramref name="virtualKey"/> is, generic or left/right; None for any other key.</summary>
+    public static KeyModifiers ModifierOf(ushort virtualKey) => virtualKey switch
     {
         NativeEnums.VK_CONTROL or NativeEnums.VK_LCONTROL or NativeEnums.VK_RCONTROL => KeyModifiers.Control,
         NativeEnums.VK_MENU or NativeEnums.VK_LMENU or NativeEnums.VK_RMENU => KeyModifiers.Alt,
@@ -238,77 +173,6 @@ public static class SendKeysParser
         NativeEnums.VK_LWIN or NativeEnums.VK_RWIN => KeyModifiers.Windows,
         _ => KeyModifiers.None
     };
-
-    private static void ReleaseModifiers(List<InputEvent> inputs, List<ushort> modifiers)
-    {
-        // Release in reverse order
-        for (var i = modifiers.Count - 1; i >= 0; i--)
-        {
-            var flags = IsExtendedKey(modifiers[i]) ? NativeEnums.KEYEVENTF_EXTENDEDKEY : NativeEnums.KEYEVENTF_KEYDOWN;
-            inputs.Add(InputEvent.Key(modifiers[i], flags | NativeEnums.KEYEVENTF_KEYUP));
-        }
-    }
-
-    private static ushort GetVirtualKeyCode(string keyName)
-    {
-        return keyName switch
-        {
-            "ENTER" or "RETURN" => NativeEnums.VK_RETURN,
-            "TAB" => NativeEnums.VK_TAB,
-            "ESC" or "ESCAPE" => NativeEnums.VK_ESCAPE,
-            "BACKSPACE" or "BS" or "BKSP" => NativeEnums.VK_BACK,
-            "DELETE" or "DEL" => NativeEnums.VK_DELETE,
-            "INSERT" or "INS" => NativeEnums.VK_INSERT,
-            "UP" => NativeEnums.VK_UP,
-            "DOWN" => NativeEnums.VK_DOWN,
-            "LEFT" => NativeEnums.VK_LEFT,
-            "RIGHT" => NativeEnums.VK_RIGHT,
-            "HOME" => NativeEnums.VK_HOME,
-            "END" => NativeEnums.VK_END,
-            "PGUP" or "PAGEUP" => NativeEnums.VK_PRIOR,
-            "PGDN" or "PAGEDOWN" => NativeEnums.VK_NEXT,
-            "SPACE" => NativeEnums.VK_SPACE,
-            "F1" => NativeEnums.VK_F1,
-            "F2" => NativeEnums.VK_F2,
-            "F3" => NativeEnums.VK_F3,
-            "F4" => NativeEnums.VK_F4,
-            "F5" => NativeEnums.VK_F5,
-            "F6" => NativeEnums.VK_F6,
-            "F7" => NativeEnums.VK_F7,
-            "F8" => NativeEnums.VK_F8,
-            "F9" => NativeEnums.VK_F9,
-            "F10" => NativeEnums.VK_F10,
-            "F11" => NativeEnums.VK_F11,
-            "F12" => NativeEnums.VK_F12,
-            "CAPSLOCK" or "CAPS" => NativeEnums.VK_CAPITAL,
-            "NUMLOCK" => NativeEnums.VK_NUMLOCK,
-            "SCROLLLOCK" or "SCROLL" => NativeEnums.VK_SCROLL,
-            "PRTSC" or "PRINTSCREEN" => NativeEnums.VK_SNAPSHOT,
-            "PAUSE" or "BREAK" => NativeEnums.VK_PAUSE,
-            "WIN" or "LWIN" => NativeEnums.VK_LWIN,
-            "RWIN" => NativeEnums.VK_RWIN,
-            "APPS" or "CONTEXTMENU" => NativeEnums.VK_APPS,
-            "CTRL" or "CONTROL" => NativeEnums.VK_CONTROL,
-            "ALT" or "MENU" => NativeEnums.VK_MENU,
-            "SHIFT" => NativeEnums.VK_SHIFT,
-            _ => throw new ArgumentException($"Unknown key: {keyName}")
-        };
-    }
-
-    private static bool IsExtendedKey(ushort vk)
-    {
-        // Extended keys include arrow keys, Insert, Delete, Home, End, Page Up, Page Down,
-        // Num Lock, Print Screen, and the right-hand Alt and Ctrl keys
-        return vk == NativeEnums.VK_UP || vk == NativeEnums.VK_DOWN ||
-               vk == NativeEnums.VK_LEFT || vk == NativeEnums.VK_RIGHT ||
-               vk == NativeEnums.VK_INSERT || vk == NativeEnums.VK_DELETE ||
-               vk == NativeEnums.VK_HOME || vk == NativeEnums.VK_END ||
-               vk == NativeEnums.VK_PRIOR || vk == NativeEnums.VK_NEXT ||
-               vk == NativeEnums.VK_NUMLOCK || vk == NativeEnums.VK_SNAPSHOT ||
-               vk == NativeEnums.VK_RCONTROL || vk == NativeEnums.VK_RMENU ||
-               vk == NativeEnums.VK_LWIN || vk == NativeEnums.VK_RWIN ||
-               vk == NativeEnums.VK_APPS;
-    }
 
     private static ushort GetVirtualKeyForChar(char c)
     {
@@ -332,7 +196,7 @@ public static class SendKeysParser
 }
 
 /// <summary>
-/// The keys string is not valid SendKeys syntax, such as a brace that is not closed: a mistake the agent fixes in
+/// The keys string breaks send_keys' grammar, such as a brace that is not closed: a mistake the agent fixes in
 /// the string, reported as InvalidKeySpecification, unlike an unknown key name (UnknownKey).
 /// </summary>
 public sealed class KeySyntaxException(string message) : ArgumentException(message);

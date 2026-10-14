@@ -306,7 +306,7 @@ public class InputSimulationServiceScrollTests
         var clipboard = new FakeClipboardWrapper();
         var origin = NewOrigin(clipboard);
 
-        var result = await CreateSut(origin).SendKeysAsync("^c", InputTarget.Window(0x200), false, default);
+        var result = await CreateSut(origin).SendKeysAsync("^c", InputTarget.Window(0x200), false, 0, default);
 
         result.Success.Should().BeTrue(result.Error);
         origin.IsCopyPending(clipboard.Sequence).Should().BeTrue("the app has not copied yet");
@@ -320,7 +320,7 @@ public class InputSimulationServiceScrollTests
         var clipboard = new FakeClipboardWrapper();
         var origin = NewOrigin(clipboard);
 
-        (await CreateSut(origin).SendKeysAsync("^c", InputTarget.Window(0x200), false, default)).Success.Should().BeTrue();
+        (await CreateSut(origin).SendKeysAsync("^c", InputTarget.Window(0x200), false, 0, default)).Success.Should().BeTrue();
         clipboard.AppCopies(Terminal.ProcessId, "what the user copied in the terminal");
 
         origin.Classify(clipboard.Sequence).Should().Be(ClipboardOriginKind.NotFromAgent);
@@ -347,8 +347,8 @@ public class InputSimulationServiceScrollTests
         var origin = NewOrigin(clipboard);
         var sut = CreateSut(origin);
 
-        (await sut.TypeTextAsync("^c", 0, InputTarget.Window(0x200), false, default)).Success.Should().BeTrue();
-        (await sut.SendKeysAsync("^v", InputTarget.Window(0x200), false, default)).Success.Should().BeTrue();
+        (await sut.TypeTextAsync("^c", 0, InputTarget.Window(0x200), false, null, default)).Success.Should().BeTrue();
+        (await sut.SendKeysAsync("^v", InputTarget.Window(0x200), false, 0, default)).Success.Should().BeTrue();
         sut.Scroll(500, 300, 1, 0, InputTarget.None, false, default).Success.Should().BeTrue();
         sut.RightClick(500, 300, InputTarget.None, false, default).Success.Should().BeTrue();
         clipboard.AppCopies(Notepad.ProcessId, "copied by the app on its own");
@@ -363,7 +363,7 @@ public class InputSimulationServiceScrollTests
         var origin = NewOrigin(clipboard);
         _input.Insert = (_, _) => 0;
 
-        var result = await CreateSut(origin).SendKeysAsync("^c", InputTarget.Window(0x200), false, default);
+        var result = await CreateSut(origin).SendKeysAsync("^c", InputTarget.Window(0x200), false, 0, default);
 
         result.ErrorCode.Should().Be(InputErrorCode.SendInputFailed);
         clipboard.AppCopies(Notepad.ProcessId, "copied by the app on its own");

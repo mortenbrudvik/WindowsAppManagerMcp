@@ -1,0 +1,140 @@
+namespace WindowsAppManagerMcp.E2ETests.Scenarios;
+
+/// <summary>
+/// The keyboard engine against the fixture (roadmap M4.1): send_keys types every character with the key of the keyboard
+/// layout of the fixture's thread, with Shift or AltGr and the key's scan code, and type_text presses Enter for a line
+/// break only when asked. The full (input) tier: input goes only to the fixture (see <see cref="FixtureOnlyCallPolicy"/>),
+/// and each test types nothing unless the fixture's text box has keyboard focus. The tests pass on any keyboard layout
+/// and with Caps Lock on or off: each expects the text the keys stand for, whatever keys type it.
+/// </summary>
+public class FixtureKeyboardTests
+{
+    private static readonly TimeSpan SettleTimeout = TimeSpan.FromSeconds(3);
+
+    private readonly ITestOutputHelper _output;
+
+    public FixtureKeyboardTests(ITestOutputHelper output)
+    {
+        _output = output;
+    }
+
+    [DesktopFact]
+    public async Task SendKeys_TypesCapitalsAndPunctuation_AsWritten()
+    {
+        // Before M4.1 capitals came out small and punctuation went as Unicode characters
+        using var e2e = StartOnTheEditBox(out var main);
+
+        await SendAndExpect(e2e, main, ["Hello, World! a-b/c;d'e[f]g=h_i?j\"k<l>m"], "Hello, World! a-b/c;d'e[f]g=h_i?j\"k<l>m");
+    }
+
+    [DesktopFact]
+    public async Task SendKeys_TypesAltGrCharacters_AndTheEscapedCharacters()
+    {
+        // On a Norwegian or German layout @ { } \ $ € | need AltGr; ~ and ^ are dead keys there and go as Unicode
+        using var e2e = StartOnTheEditBox(out var main);
+
+        await SendAndExpect(e2e, main, ["@{{}{}}\\$€|{~}{^}{+}{%}{#}{(}{)}"], "@{}\\$€|~^+%#()");
+    }
+
+    [DesktopFact]
+    public async Task SendKeys_RepeatsMoveTheCaret_AndAHeldShiftSelects()
+    {
+        using var e2e = StartOnTheEditBox(out var main);
+
+        await SendAndExpect(e2e, main, ["abcdef{LEFT 5}X"], "aXbcdef");
+        await SendAndExpect(e2e, main, ["{HOME}{SHIFT down}{RIGHT 2}{SHIFT up}Z"], "Zbcdef");
+    }
+
+    [DesktopFact]
+    public async Task SendKeys_ACtrlChord_AndPacedKeys_Arrive()
+    {
+        // Ctrl+A selects the old text, and the paced keys replace it one by one
+        using var e2e = StartOnTheEditBox(out var main);
+
+        await SendAndExpect(e2e, main, ["old", "^a"], "old");
+        await SendAndExpect(e2e, main, ["new"], "new", delayMs: 40);
+    }
+
+    [DesktopFact]
+    public async Task TypeText_WithControlCharsKeys_PressesEnter_InAMultiLineTextBox()
+    {
+        // Arrange - the document window's text box accepts Enter
+        using var e2e = E2ESession.Start(DesktopTier.Input, _output, new FixtureLaunchOptions { OpenDocument = true });
+        var document = e2e.Fixture.WaitForEvent(FixtureContract.Events.DocumentOpened).GetHandle("hwnd");
+        var processId = e2e.Fixture.ProcessId;
+        var toDocument = e2e.Server.Foreground.EnsureForeground(document);
+        toDocument.IsForeground.Should().BeTrue(toDocument.Error);
+        Wait.Until(() => UiaReads.FocusedAutomationId(processId) == FixtureContract.Ids.DocumentTextBox, SettleTimeout).Should().BeTrue(
+            "keyboard focus should be on the document's text box, but it is on '" + UiaReads.FocusedAutomationId(processId) + "'. Nothing was typed");
+        var before = UiaReads.ReadValue(document, FixtureContract.Ids.DocumentTextBox);
+
+        // Act - to the end of the text, then a line break as Enter
+        var end = await e2e.Server.Input.SendKeysAsync("^{END}", InputTarget.Window(document), releaseHeldModifiers: false, 0, CancellationToken.None);
+        var typed = await e2e.Server.Input.TypeTextAsync("\nline two", 0, InputTarget.Window(document), releaseHeldModifiers: false,
+            TextControlChars.Keys, CancellationToken.None);
+        _output.WriteLine($"send_keys: {end.ErrorCode} {end.Error}; type_text: {typed.ErrorCode} {typed.Error}");
+
+        // Assert
+        end.Success.Should().BeTrue(end.Error);
+        typed.Success.Should().BeTrue(typed.Error);
+        typed.CharactersTyped.Should().Be(9);
+        var expected = before + "\r\nline two";
+        e2e.Fixture.WaitForEvent(
+            FixtureContract.Events.TextChanged,
+            e => e.GetString("id") == FixtureContract.Ids.DocumentTextBox && e.GetString("text") == expected);
+        UiaReads.ReadValue(document, FixtureContract.Ids.DocumentTextBox).Should().Be(expected);
+    }
+
+    [DesktopFact]
+    public async Task TypeText_WithALineBreak_AndNoControlChars_TypesNothing()
+    {
+        using var e2e = StartOnTheEditBox(out var main);
+
+        var typed = await e2e.Server.Input.TypeTextAsync("a\nb", 0, InputTarget.Window(main), releaseHeldModifiers: false, null, CancellationToken.None);
+
+        typed.ErrorCode.Should().Be(InputErrorCode.InvalidArguments, typed.Error);
+        UiaReads.ReadValue(main, FixtureContract.Ids.EditBox).Should().BeEmpty();
+    }
+
+    /// <summary>
+    /// Sends each of <paramref name="calls"/> with send_keys to the fixture's main window, then checks that its edit box
+    /// holds <paramref name="expected"/>, as the fixture recorded it and as UI Automation reads it.
+    /// </summary>
+    private async Task SendAndExpect(E2ESession e2e, nint main, string[] calls, string expected, int delayMs = 0)
+    {
+        foreach (var keys in calls)
+        {
+            var sent = await e2e.Server.Input.SendKeysAsync(keys, InputTarget.Window(main), releaseHeldModifiers: false, delayMs,
+                CancellationToken.None);
+            _output.WriteLine($"send_keys {keys}: {sent.ErrorCode} {sent.Error}; keysSent {sent.KeysSent}");
+            sent.Success.Should().BeTrue(sent.Error);
+        }
+
+        e2e.Fixture.WaitForEvent(
+            FixtureContract.Events.TextChanged,
+            e => e.GetString("id") == FixtureContract.Ids.EditBox && e.GetString("text") == expected);
+        UiaReads.ReadValue(main, FixtureContract.Ids.EditBox).Should().Be(expected);
+    }
+
+    /// <summary>Starts the fixture and brings it to the front with the caret in its (empty) edit box.</summary>
+    private E2ESession StartOnTheEditBox(out nint main)
+    {
+        var e2e = E2ESession.Start(DesktopTier.Input, _output);
+        try
+        {
+            main = e2e.Fixture.MainWindowHandle;
+            var focus = e2e.Server.Foreground.EnsureForeground(main);
+            focus.IsForeground.Should().BeTrue(focus.Error);
+            var processId = e2e.Fixture.ProcessId;
+            Wait.Until(() => UiaReads.FocusedAutomationId(processId) == FixtureContract.Ids.EditBox, SettleTimeout).Should().BeTrue(
+                "keyboard focus should be on the fixture's edit box, but it is on '" + UiaReads.FocusedAutomationId(processId) +
+                "'. Nothing was typed");
+            return e2e;
+        }
+        catch
+        {
+            e2e.Dispose();
+            throw;
+        }
+    }
+}

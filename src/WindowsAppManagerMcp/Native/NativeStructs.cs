@@ -167,7 +167,7 @@ internal struct INPUT
         };
     }
 
-    public static INPUT KeyboardInput(ushort vk, uint flags)
+    public static INPUT KeyboardInput(ushort vk, uint flags, ushort scan = 0)
     {
         return new INPUT
         {
@@ -175,7 +175,7 @@ internal struct INPUT
             ki = new KEYBDINPUT
             {
                 wVk = vk,
-                wScan = 0,
+                wScan = scan,
                 dwFlags = flags,
                 time = 0,
                 dwExtraInfo = nint.Zero

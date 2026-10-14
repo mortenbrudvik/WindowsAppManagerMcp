@@ -42,6 +42,8 @@ public static class ServiceRegistration
         // Services
         services.AddSingleton<INativeWindowWrapper, NativeWindowWrapper>();
         services.AddSingleton<INativeInputWrapper, NativeInputWrapper>();
+        // The keyboard layout send_keys maps characters with (roadmap M4.1)
+        services.AddSingleton<INativeKeyboardLayoutWrapper, NativeKeyboardLayoutWrapper>();
         services.AddSingleton<IUIAutomationWrapper, UIAutomationWrapper>();
         services.AddSingleton<ICdpService, CdpService>();
         services.AddSingleton<IMonitorService, MonitorService>();

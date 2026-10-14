@@ -491,7 +491,7 @@ public class WindowSelectorToolTests
         // Arrange - {"foreground": true} names no window: the guard must see no windowHandle, and so refuse Alt+F4
         // (DestructiveChordNeedsTarget) as it does without one
         var input = new Mock<IInputSimulationService>();
-        input.Setup(i => i.SendKeysAsync(It.IsAny<string>(), It.IsAny<InputTarget>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+        input.Setup(i => i.SendKeysAsync(It.IsAny<string>(), It.IsAny<InputTarget>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new SendKeysResult(false, "%{F4}", Error: "refused", ErrorCode: InputErrorCode.DestructiveChordNeedsTarget));
         var tools = new InputSimulationTools(input.Object, _windows.Object);
 
@@ -499,7 +499,7 @@ public class WindowSelectorToolTests
         await tools.SendKeys("%{F4}", window: new WindowSelector { Foreground = true });
 
         // Assert
-        input.Verify(i => i.SendKeysAsync("%{F4}", new InputTarget(null, false), false, It.IsAny<CancellationToken>()), Times.Once);
+        input.Verify(i => i.SendKeysAsync("%{F4}", new InputTarget(null, false), false, It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Once);
         _windows.Verify(w => w.ResolveWindow(It.IsAny<WindowSelector>()), Times.Never);
     }
 
@@ -507,14 +507,14 @@ public class WindowSelectorToolTests
     public async Task TypeText_WithABareForegroundSelectorAndAllowHostTarget_GivesAllowHostTargetNoWindow_SoItHasNoEffect()
     {
         var input = new Mock<IInputSimulationService>();
-        input.Setup(i => i.TypeTextAsync(It.IsAny<string>(), It.IsAny<int>(), It.IsAny<InputTarget>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+        input.Setup(i => i.TypeTextAsync(It.IsAny<string>(), It.IsAny<int>(), It.IsAny<InputTarget>(), It.IsAny<bool>(), It.IsAny<TextControlChars?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new TypeTextResult(true, "hello", 5));
         var tools = new InputSimulationTools(input.Object, _windows.Object);
 
         await tools.TypeText("hello", window: new WindowSelector { Foreground = true }, allowHostTarget: true);
 
         // InputTarget.HasWindow is false: the host guard ignores allowHostTarget without a window named by handle
-        input.Verify(i => i.TypeTextAsync("hello", It.IsAny<int>(), new InputTarget(null, true), false, It.IsAny<CancellationToken>()), Times.Once);
+        input.Verify(i => i.TypeTextAsync("hello", It.IsAny<int>(), new InputTarget(null, true), false, It.IsAny<TextControlChars?>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Theory]

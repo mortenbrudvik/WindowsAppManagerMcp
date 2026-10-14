@@ -287,7 +287,7 @@ public class InputSimulationServiceGuardTests
             .Returns(Refused(InputErrorCode.TargetLostFocus, Notepad));
 
         // Act
-        var result = await CreateSut().TypeTextAsync("echo pwned\r");
+        var result = await CreateSut().TypeTextAsync("echo pwned\r", controlChars: TextControlChars.Keys);
 
         // Assert
         result.ErrorCode.Should().Be(InputErrorCode.TargetLostFocus);

@@ -66,16 +66,16 @@ public class InputSimulationToolsTests
         mock.Setup(s => s.GetCursorPosition())
             .Returns((500, 500));
 
-        mock.Setup(s => s.TypeTextAsync(It.IsAny<string>(), It.IsAny<int>(), It.IsAny<InputTarget>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((string text, int delay, InputTarget _, bool _, CancellationToken _) => new TypeTextResult(
+        mock.Setup(s => s.TypeTextAsync(It.IsAny<string>(), It.IsAny<int>(), It.IsAny<InputTarget>(), It.IsAny<bool>(), It.IsAny<TextControlChars?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string text, int delay, InputTarget _, bool _, TextControlChars? _, CancellationToken _) => new TypeTextResult(
                 Success: success,
                 Text: text,
                 CharactersTyped: text?.Length ?? 0,
                 Error: error,
                 ErrorCode: errorCode));
 
-        mock.Setup(s => s.SendKeysAsync(It.IsAny<string>(), It.IsAny<InputTarget>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((string keys, InputTarget _, bool _, CancellationToken _) => new SendKeysResult(
+        mock.Setup(s => s.SendKeysAsync(It.IsAny<string>(), It.IsAny<InputTarget>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string keys, InputTarget _, bool _, int _, CancellationToken _) => new SendKeysResult(
                 Success: success,
                 Keys: keys,
                 Error: error,
@@ -406,7 +406,7 @@ public class InputSimulationToolsTests
         await sut.TypeText("Hello World");
 
         // Assert
-        _mockInputService.Verify(s => s.TypeTextAsync("Hello World", 0, InputTarget.None, false, It.IsAny<CancellationToken>()), Times.Once);
+        _mockInputService.Verify(s => s.TypeTextAsync("Hello World", 0, InputTarget.None, false, It.IsAny<TextControlChars?>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -419,7 +419,7 @@ public class InputSimulationToolsTests
         await sut.TypeText("Hello", delayMs: 50);
 
         // Assert
-        _mockInputService.Verify(s => s.TypeTextAsync("Hello", 50, InputTarget.None, false, It.IsAny<CancellationToken>()), Times.Once);
+        _mockInputService.Verify(s => s.TypeTextAsync("Hello", 50, InputTarget.None, false, It.IsAny<TextControlChars?>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -432,7 +432,7 @@ public class InputSimulationToolsTests
         await sut.TypeText("Hello", delayMs: -10);
 
         // Assert
-        _mockInputService.Verify(s => s.TypeTextAsync("Hello", 0, InputTarget.None, false, It.IsAny<CancellationToken>()), Times.Once);
+        _mockInputService.Verify(s => s.TypeTextAsync("Hello", 0, InputTarget.None, false, It.IsAny<TextControlChars?>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -445,7 +445,7 @@ public class InputSimulationToolsTests
         await sut.TypeText("Hello", delayMs: 500);
 
         // Assert
-        _mockInputService.Verify(s => s.TypeTextAsync("Hello", 100, InputTarget.None, false, It.IsAny<CancellationToken>()), Times.Once);
+        _mockInputService.Verify(s => s.TypeTextAsync("Hello", 100, InputTarget.None, false, It.IsAny<TextControlChars?>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -453,7 +453,7 @@ public class InputSimulationToolsTests
     {
         // Arrange
         var expectedResult = new TypeTextResult(true, "Hello", 5);
-        _mockInputService.Setup(s => s.TypeTextAsync("Hello", 0, InputTarget.None, false, It.IsAny<CancellationToken>())).ReturnsAsync(expectedResult);
+        _mockInputService.Setup(s => s.TypeTextAsync("Hello", 0, InputTarget.None, false, It.IsAny<TextControlChars?>(), It.IsAny<CancellationToken>())).ReturnsAsync(expectedResult);
         var sut = CreateSut();
 
         // Act
@@ -473,7 +473,7 @@ public class InputSimulationToolsTests
             CharactersTyped: 0,
             Error: "Text cannot be empty",
             ErrorCode: InputErrorCode.EmptyText);
-        _mockInputService.Setup(s => s.TypeTextAsync("", 0, InputTarget.None, false, It.IsAny<CancellationToken>())).ReturnsAsync(errorResult);
+        _mockInputService.Setup(s => s.TypeTextAsync("", 0, InputTarget.None, false, It.IsAny<TextControlChars?>(), It.IsAny<CancellationToken>())).ReturnsAsync(errorResult);
         var sut = CreateSut();
 
         // Act
@@ -498,7 +498,35 @@ public class InputSimulationToolsTests
         await sut.SendKeys("{ENTER}");
 
         // Assert
-        _mockInputService.Verify(s => s.SendKeysAsync("{ENTER}", InputTarget.None, false, It.IsAny<CancellationToken>()), Times.Once);
+        _mockInputService.Verify(s => s.SendKeysAsync("{ENTER}", InputTarget.None, false, It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Theory]
+    [InlineData(0, 0)]
+    [InlineData(40, 40)]
+    [InlineData(-5, 0)]
+    [InlineData(60_000, InputSimulationService.MaxSendKeysDelayMs)]
+    public async Task SendKeys_PassesDelayMs_ClampedToTheMaximum(int delayMs, int expected)
+    {
+        // Act
+        await CreateSut().SendKeys("{DOWN 3}", delayMs: delayMs);
+
+        // Assert (roadmap M4.1)
+        _mockInputService.Verify(s => s.SendKeysAsync("{DOWN 3}", InputTarget.None, false, expected, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData(TextControlChars.Unicode)]
+    [InlineData(TextControlChars.Keys)]
+    [InlineData(TextControlChars.ShiftEnter)]
+    public async Task TypeText_PassesControlChars_AsGiven(TextControlChars? controlChars)
+    {
+        // Act
+        await CreateSut().TypeText("a\nb", controlChars: controlChars);
+
+        // Assert (roadmap M4.1): the service refuses a line break without it
+        _mockInputService.Verify(s => s.TypeTextAsync("a\nb", 0, InputTarget.None, false, controlChars, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -511,7 +539,7 @@ public class InputSimulationToolsTests
         await sut.SendKeys("^c");
 
         // Assert
-        _mockInputService.Verify(s => s.SendKeysAsync("^c", InputTarget.None, false, It.IsAny<CancellationToken>()), Times.Once);
+        _mockInputService.Verify(s => s.SendKeysAsync("^c", InputTarget.None, false, It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -519,7 +547,7 @@ public class InputSimulationToolsTests
     {
         // Arrange
         var expectedResult = new SendKeysResult(true, "{ENTER}");
-        _mockInputService.Setup(s => s.SendKeysAsync("{ENTER}", InputTarget.None, false, It.IsAny<CancellationToken>())).ReturnsAsync(expectedResult);
+        _mockInputService.Setup(s => s.SendKeysAsync("{ENTER}", InputTarget.None, false, It.IsAny<int>(), It.IsAny<CancellationToken>())).ReturnsAsync(expectedResult);
         var sut = CreateSut();
 
         // Act
@@ -538,7 +566,7 @@ public class InputSimulationToolsTests
             Keys: "{UNKNOWNKEY}",
             Error: "Unknown key: UNKNOWNKEY",
             ErrorCode: InputErrorCode.UnknownKey);
-        _mockInputService.Setup(s => s.SendKeysAsync("{UNKNOWNKEY}", InputTarget.None, false, It.IsAny<CancellationToken>())).ReturnsAsync(errorResult);
+        _mockInputService.Setup(s => s.SendKeysAsync("{UNKNOWNKEY}", InputTarget.None, false, It.IsAny<int>(), It.IsAny<CancellationToken>())).ReturnsAsync(errorResult);
         var sut = CreateSut();
 
         // Act
@@ -564,7 +592,7 @@ public class InputSimulationToolsTests
         await sut.SendKeys(keys);
 
         // Assert
-        _mockInputService.Verify(s => s.SendKeysAsync(keys, InputTarget.None, false, It.IsAny<CancellationToken>()), Times.Once);
+        _mockInputService.Verify(s => s.SendKeysAsync(keys, InputTarget.None, false, It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     #endregion
@@ -603,8 +631,8 @@ public class InputSimulationToolsTests
         await sut.SendKeys("{ENTER}", releaseHeldModifiers: true, cancellationToken: request.Token);
 
         // Assert
-        _mockInputService.Verify(s => s.TypeTextAsync("x", 0, InputTarget.None, true, request.Token), Times.Once);
-        _mockInputService.Verify(s => s.SendKeysAsync("{ENTER}", InputTarget.None, true, request.Token), Times.Once);
+        _mockInputService.Verify(s => s.TypeTextAsync("x", 0, InputTarget.None, true, null, request.Token), Times.Once);
+        _mockInputService.Verify(s => s.SendKeysAsync("{ENTER}", InputTarget.None, true, 0, request.Token), Times.Once);
     }
 
     #endregion

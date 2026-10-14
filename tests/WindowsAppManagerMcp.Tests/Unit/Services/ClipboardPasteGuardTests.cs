@@ -304,7 +304,7 @@ public class ClipboardPasteGuardTests
         // History holds the user's earlier copies, whatever is on the clipboard now
         var outcome = _clipboard.WriteText("Meeting notes");
         _origin.ServerWrote(outcome.SequenceNumber, "Meeting notes");
-        var winV = SendKeysParser.Parse("#v", windowsModifier: true);
+        var winV = SendKeysParser.Parse("#v");
 
         Guard().Check(winV, Editor).Should().Contain("clipboard history");
         Guard(allowUserClipboard: true).Check(winV, Editor).Should().BeNull();

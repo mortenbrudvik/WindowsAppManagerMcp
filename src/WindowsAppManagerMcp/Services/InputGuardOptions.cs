@@ -25,8 +25,8 @@ public sealed record InputGuardOptions(
     /// <summary>
     /// Environment variable with the destructive chords, separated by spaces (commas and semicolons are
     /// keys). It replaces the default list; the entry "default" puts the default list back in, and "none"
-    /// alone turns the rule off. <c>#</c> is the Windows-key modifier here. An entry that is not one chord
-    /// is ignored and logged, and the default list then stays in force as well.
+    /// alone turns the rule off. Entries are in send_keys syntax (<c>#</c> is the Windows key). An entry that is
+    /// not one chord is ignored and logged, and the default list then stays in force as well.
     /// </summary>
     public const string DestructiveChordsVariable = "WAM_DESTRUCTIVE_CHORDS";
 
@@ -35,8 +35,8 @@ public sealed record InputGuardOptions(
 
     /// <summary>
     /// Alt+F4 (close the window), Ctrl+W (close the tab or window), Ctrl+Q (quit), Ctrl+F4 (close the
-    /// document or tab), Ctrl+Shift+Esc (Task Manager) and Win+L (lock the session). send_keys has no
-    /// Windows-key modifier today, so Win+L is listed for when it has one.
+    /// document or tab), Ctrl+Shift+Esc (Task Manager) and Win+L (lock the session; Windows ignores it when injected,
+    /// so it stays listed in case it does not).
     /// </summary>
     public static IReadOnlyList<string> DefaultDestructiveChords { get; } = ["%{F4}", "^w", "^q", "^{F4}", "^+{ESC}", "#l"];
 
@@ -108,7 +108,8 @@ public sealed record InputGuardOptions(
 
     /// <summary>
     /// The first chord in <paramref name="events"/> (parsed send_keys input) that moves the keyboard to
-    /// another window (<see cref="FocusChangingChords"/>) or closes the window (a destructive chord) and is
+    /// another window (<see cref="FocusChangingChords"/>, or any chord with the Windows key, which opens a part of
+    /// Windows such as Run, Search or the clipboard history) or closes the window (a destructive chord) and is
     /// followed by more key presses, as its spec; null when there is none. Only the last key of a call may be
     /// such a chord.
     /// </summary>
@@ -127,6 +128,11 @@ public sealed record InputGuardOptions(
             if (DestructiveChords.FirstOrDefault(d => d.Chord.IsPartOf(pressed[i])) is { } destructive)
             {
                 return destructive.Spec;
+            }
+
+            if ((pressed[i].Modifiers & KeyModifiers.Windows) != 0)
+            {
+                return SendKeysParser.Spec(pressed[i]);
             }
         }
 
@@ -152,17 +158,35 @@ public sealed record InputGuardOptions(
         return new InputGuardOptions(chords, invalid, source);
     }
 
-    /// <summary>The chord <paramref name="spec"/> stands for, or null when it is not exactly one key press.</summary>
+    /// <summary>
+    /// The chord <paramref name="spec"/> stands for, or null when it is not exactly one key press. No window's layout applies
+    /// here, so a character is read as the invariant layout reads it; send_keys sends punctuation as the key of the target's
+    /// layout, so + , - and . are read as the keys every layout has for them (VK_OEM_PLUS, VK_OEM_COMMA, VK_OEM_MINUS,
+    /// VK_OEM_PERIOD). Other punctuation is matched only where send_keys sends it as Unicode; name its key instead
+    /// (<c>^{OEM_2}</c>).
+    /// </summary>
     private static KeyChord? TryParseChord(string spec)
     {
         try
         {
-            var chords = SendKeysParser.Chords(SendKeysParser.Parse(spec, windowsModifier: true));
-            return chords.Count == 1 ? chords[0] : null;
+            var chords = SendKeysParser.Chords(SendKeysParser.Parse(spec));
+            return chords.Count != 1 ? null
+                : chords[0] is { Kind: Models.InputEventKind.Unicode } chord && PunctuationKey((char)chord.Code) is var key && key != 0
+                    ? new KeyChord(chord.Modifiers, Models.InputEventKind.VirtualKey, key)
+                    : chords[0];
         }
         catch (ArgumentException)
         {
             return null;
         }
     }
+
+    private static ushort PunctuationKey(char c) => c switch
+    {
+        '+' => 0xBB,
+        ',' => 0xBC,
+        '-' => 0xBD,
+        '.' => 0xBE,
+        _ => 0
+    };
 }

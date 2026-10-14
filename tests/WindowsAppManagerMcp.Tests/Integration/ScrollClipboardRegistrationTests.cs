@@ -34,6 +34,16 @@ public sealed class ScrollClipboardRegistrationTests : IDisposable
     }
 
     [Fact]
+    public void TheInputService_GetsTheKeyboardLayoutQueries()
+    {
+        // Without them send_keys would map every character with the invariant layout (roadmap M4.1)
+        var input = _provider.GetRequiredService<IInputSimulationService>();
+
+        Field(input, "_keyboardLayout").Should().BeSameAs(_provider.GetRequiredService<INativeKeyboardLayoutWrapper>())
+            .And.BeOfType<NativeKeyboardLayoutWrapper>();
+    }
+
+    [Fact]
     public void TheInputService_GetsThePasteGuard_AndTheOriginReadsWindows()
     {
         // Without them the agent could paste the user's clipboard, or a copy the user makes in another window of the

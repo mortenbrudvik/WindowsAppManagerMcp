@@ -411,13 +411,13 @@ public sealed class ContractServices : IDisposable
             {
                 ReceivingWindow = receiving, ForegroundAfter = receiving, ActualX = x, ActualY = y
             });
-        Input.Setup(i => i.TypeTextAsync(It.IsAny<string>(), It.IsAny<int>(), It.IsAny<InputTarget>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((string text, int _, InputTarget _, bool _, CancellationToken _) => new TypeTextResult(true, text, text.Length)
+        Input.Setup(i => i.TypeTextAsync(It.IsAny<string>(), It.IsAny<int>(), It.IsAny<InputTarget>(), It.IsAny<bool>(), It.IsAny<TextControlChars?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string text, int _, InputTarget _, bool _, TextControlChars? _, CancellationToken _) => new TypeTextResult(true, text, text.Length)
             {
                 ReceivingWindow = receiving, ForegroundAfter = receiving
             });
-        Input.Setup(i => i.SendKeysAsync(It.IsAny<string>(), It.IsAny<InputTarget>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((string keys, InputTarget _, bool _, CancellationToken _) => new SendKeysResult(true, keys)
+        Input.Setup(i => i.SendKeysAsync(It.IsAny<string>(), It.IsAny<InputTarget>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string keys, InputTarget _, bool _, int _, CancellationToken _) => new SendKeysResult(true, keys)
             {
                 ReceivingWindow = receiving, ForegroundAfter = receiving
             });
@@ -583,10 +583,10 @@ public sealed class ContractServices : IDisposable
             .Returns((int x, int y, int _, InputTarget _, bool _, CancellationToken _) => new ClickResult(false, x, y, "double", host, InputErrorCode.TargetIsAgentHost));
         Input.Setup(i => i.MoveMouse(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<InputTarget>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .Returns((int x, int y, InputTarget _, bool _, CancellationToken _) => new MouseMoveResult(false, x, y, host, InputErrorCode.TargetIsAgentHost));
-        Input.Setup(i => i.TypeTextAsync(It.IsAny<string>(), It.IsAny<int>(), It.IsAny<InputTarget>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((string text, int _, InputTarget _, bool _, CancellationToken _) => new TypeTextResult(false, text, 0, host, InputErrorCode.TargetIsAgentHost));
-        Input.Setup(i => i.SendKeysAsync(It.IsAny<string>(), It.IsAny<InputTarget>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((string keys, InputTarget _, bool _, CancellationToken _) => new SendKeysResult(false, keys, host, InputErrorCode.TargetIsAgentHost));
+        Input.Setup(i => i.TypeTextAsync(It.IsAny<string>(), It.IsAny<int>(), It.IsAny<InputTarget>(), It.IsAny<bool>(), It.IsAny<TextControlChars?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string text, int _, InputTarget _, bool _, TextControlChars? _, CancellationToken _) => new TypeTextResult(false, text, 0, host, InputErrorCode.TargetIsAgentHost));
+        Input.Setup(i => i.SendKeysAsync(It.IsAny<string>(), It.IsAny<InputTarget>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string keys, InputTarget _, bool _, int _, CancellationToken _) => new SendKeysResult(false, keys, host, InputErrorCode.TargetIsAgentHost));
         Input.Setup(i => i.Scroll(It.IsAny<int?>(), It.IsAny<int?>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<InputTarget>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .Returns((int? x, int? y, int deltaY, int deltaX, InputTarget _, bool _, CancellationToken _) =>
                 new ScrollResult(false, x ?? 0, y ?? 0, deltaY, deltaX, host, InputErrorCode.TargetIsAgentHost));

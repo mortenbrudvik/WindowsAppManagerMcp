@@ -74,9 +74,10 @@ public sealed class InputTargetGuard : IInputTargetGuard
         {
             return InputGuardResult.Refuse(InputErrorCode.KeysAfterFocusChange,
                 $"The keys go on after {focusChord}, which hands the keyboard to another window: it switches or closes the " +
-                "window, or opens the Start menu or the window menu. The keys after it would reach a window the guard never " +
-                $"checked, such as the agent's own terminal. Nothing was sent. Make {focusChord} the last key of one send_keys " +
-                "call, then send the rest in a new call (with windowHandle), which is checked again.",
+                "window, or opens the Start menu, the window menu or another part of Windows. The keys after it would reach a " +
+                $"window the guard never checked, such as the agent's own terminal. Nothing was sent. Make {focusChord} the last " +
+                "key of one send_keys call, then send the rest in a new call (with windowHandle), which is checked again." +
+                (focusChord.Contains('#') ? " # is the Windows key in send_keys: write the character # as {#}." : string.Empty),
                 target, DescribeForeground());
         }
 

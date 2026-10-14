@@ -625,7 +625,7 @@ public sealed partial class ElementActionService : IElementActionService
             });
 
         var first = await _input.SendKeysAsync(request.Action == ElementActionKind.AppendText ? "^{END}" : "^a", target,
-            releaseHeldModifiers: false, cancellationToken).ConfigureAwait(false);
+            releaseHeldModifiers: false, delayMs: 0, cancellationToken).ConfigureAwait(false);
         if (!first.Success)
         {
             return Failed(first.ErrorCode, first.ReceivingWindow,
@@ -636,7 +636,7 @@ public sealed partial class ElementActionService : IElementActionService
         if (text.Length == 0)
         {
             // set_value "": the selected text is deleted
-            var deleted = await _input.SendKeysAsync("{DELETE}", target, releaseHeldModifiers: false, cancellationToken).ConfigureAwait(false);
+            var deleted = await _input.SendKeysAsync("{DELETE}", target, releaseHeldModifiers: false, delayMs: 0, cancellationToken).ConfigureAwait(false);
             return deleted.Success
                 ? new InputStep(null, deleted.ReceivingWindow ?? receiving)
                 : Failed(deleted.ErrorCode, deleted.ReceivingWindow, InputError(deleted.ErrorCode, deleted.Error, "Delete was not sent."),
@@ -645,14 +645,14 @@ public sealed partial class ElementActionService : IElementActionService
 
         if (request.Mode == ElementValueMode.Paste)
         {
-            var pasted = await _input.SendKeysAsync("^v", target, releaseHeldModifiers: false, cancellationToken).ConfigureAwait(false);
+            var pasted = await _input.SendKeysAsync("^v", target, releaseHeldModifiers: false, delayMs: 0, cancellationToken).ConfigureAwait(false);
             return pasted.Success
                 ? new InputStep(null, pasted.ReceivingWindow ?? receiving)
                 : Failed(pasted.ErrorCode, pasted.ReceivingWindow, InputError(pasted.ErrorCode, pasted.Error, "The paste was not sent."),
                     $"Only {selectKey} was sent; nothing was pasted.");
         }
 
-        var typed = await _input.TypeTextAsync(text, 0, target, releaseHeldModifiers: false, cancellationToken).ConfigureAwait(false);
+        var typed = await _input.TypeTextAsync(text, 0, target, releaseHeldModifiers: false, TextControlChars.Unicode, cancellationToken).ConfigureAwait(false);
         return typed.Success
             ? new InputStep(null, typed.ReceivingWindow ?? receiving)
             : Failed(typed.ErrorCode, typed.ReceivingWindow,
