@@ -51,7 +51,8 @@ public class ElementSearchScopeTests
     private void SetPopups(bool truncated, params PopupWindow[] popups) =>
         _popups.Setup(p => p.GetPopupList(Main)).Returns(new PopupList(popups, truncated));
 
-    private ElementSearchService CreateSut() => new(_tree, _worker, _registry, _windows.Object, popups: _popups.Object);
+    private ElementSearchService CreateSut(IUiaWorker? worker = null) =>
+        new(_tree, worker ?? _worker, _registry, _windows.Object, popups: _popups.Object);
 
     private Task<FindElementsResult> Find(
         string? name = null, string[]? controlTypes = null, ElementSearchScope? scope = null, int maxResults = 20,
@@ -363,7 +364,6 @@ public class ElementSearchScopeTests
         result.WindowsExcluded.Should().Be(2);
         result.Elements!.Select(e => e.WindowHandle).Should().Equal((long)Dialog, (long)Main);
         _registry.Lookup(result.Elements![1].Ref!).WindowHandle.Should().Be(Main);
-        _worker.LastTargetProcessId.Should().Be(0);
     }
 
     [Fact]
@@ -432,6 +432,238 @@ public class ElementSearchScopeTests
         resolved.Success.Should().BeTrue(resolved.Error);
         resolved.Element!.Via.Should().Be(ElementResolutionPath.Selector);
         resolved.Element.WindowHandle.Should().Be(Main);
+    }
+
+    #endregion
+
+    #region Reads per window (roadmap M3.F13)
+
+    private static ElementQuery Query(string name, ElementSearchScope scope, nint? handle = null) =>
+        new(handle ?? Main, Name: name, Detail: ElementDetail.Standard, Timeout: TimeSpan.FromSeconds(5), Scope: scope);
+
+    [Fact]
+    public async Task Find_WithPopups_ReadsEachWindowAgainstItsOwnApplication()
+    {
+        // Arrange - the context menu belongs to another process (a WebView2 child process, a shell extension's host)
+        _windows.Setup(w => w.GetWindowThreadProcessId(Menu)).Returns(400u);
+        var worker = new PerTargetWorker(_tree);
+
+        // Act
+        var result = await CreateSut(worker).FindAsync(Query("Rename", ElementSearchScope.WindowAndPopups));
+
+        // Assert - the menu's search, the proof that its item is alone and the item's details were read in reads counted
+        // against the menu's own process, the window's in reads counted against the window's
+        result.Success.Should().BeTrue(result.Error);
+        result.Elements!.Should().ContainSingle().Which.WindowHandle.Should().Be((long)Menu);
+        worker.CallsIn(400).Should().Contain(c => c.Contains("Context")).And.Contain("Clickable:Rename")
+            .And.NotContain(c => c.Contains("Editor") || c.Contains("Save As"));
+        worker.CallsIn(300).Should().Contain(c => c.Contains("Editor"))
+            .And.NotContain(c => c.Contains("Context") || c.Contains("Rename"));
+    }
+
+    [Fact]
+    public async Task Find_WithScopeDesktop_ReadsEachWindowAgainstItsOwnApplication()
+    {
+        // Arrange - no window named: the dialog of one app and the editor of another
+        _windows.Setup(w => w.GetWindowThreadProcessId(Dialog)).Returns(500u);
+        _popups.Setup(p => p.GetDesktopWindows(nint.Zero, PopupService.DesktopWindowLimit))
+            .Returns(new DesktopWindowSet([Dialog, Main], Excluded: 0, OverLimit: 0));
+        var worker = new PerTargetWorker(_tree);
+
+        // Act
+        var result = await CreateSut(worker).FindAsync(Query("Save", ElementSearchScope.Desktop, handle: nint.Zero));
+
+        // Assert - the desktop's list is read first, counted against no application; then each window against its own
+        result.Elements!.Select(e => e.WindowHandle).Should().Equal((long)Dialog, (long)Main);
+        worker.Targets[0].Should().Be(0);
+        worker.CallsIn(0).Should().BeEmpty("no window's tree is read before the windows are known");
+        worker.CallsIn(500).Should().Contain(c => c.Contains("Save As")).And.NotContain(c => c.Contains("Editor"));
+        worker.CallsIn(300).Should().Contain(c => c.Contains("Editor")).And.NotContain(c => c.Contains("Save As"));
+    }
+
+    [Fact]
+    public async Task Find_WithPopups_SkipsAPopupWhoseApplicationHasTooManyStuckReads_AndSearchesTheRest()
+    {
+        // Arrange - earlier reads of the menu's process are still stuck
+        _windows.Setup(w => w.GetWindowThreadProcessId(Menu)).Returns(400u);
+        var worker = new PerTargetWorker(_tree) { Refused = { 400 } };
+
+        // Act
+        var result = await CreateSut(worker).FindAsync(Query("Delete", ElementSearchScope.WindowAndPopups));
+
+        // Assert - the menu is skipped as a popup that does not respond is; the window's button is still found
+        result.Success.Should().BeTrue(result.Error);
+        result.Elements!.Should().ContainSingle().Which.WindowHandle.Should().BeNull();
+        result.MatchCount.Should().Be(1);
+        result.Truncated.Should().BeTrue();
+        result.TruncationReason.Should().Be(ElementSearchTruncation.PartsSkipped);
+        result.WindowsSearched.Should().Be(2);
+        worker.CallsIn(400).Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task Find_WithPopups_WhenThePopupsApplicationRefusesAfterItsSearch_DescribesItsMatchFromWhatTheSearchRead()
+    {
+        // Arrange - the menu's search is read; by the time its match is described, another call's read of the menu's
+        // process is stuck
+        _windows.Setup(w => w.GetWindowThreadProcessId(Menu)).Returns(400u);
+        var worker = new PerTargetWorker(_tree) { RefusedAfter = { [400] = 1 } };
+
+        // Act
+        var result = await CreateSut(worker).FindAsync(Query("Rename", ElementSearchScope.WindowAndPopups));
+
+        // Assert - returned with its ref and the centre of its bounds, nothing more read of it
+        result.Success.Should().BeTrue(result.Error);
+        var rename = result.Elements!.Should().ContainSingle().Subject;
+        rename.WindowHandle.Should().Be((long)Menu);
+        rename.Ref.Should().NotBeNull();
+        rename.ClickPoint.Should().Be(new ScreenPoint(50, 15));
+        _tree.Reads.Should().NotContain(r => r.EndsWith(":Rename", StringComparison.Ordinal) &&
+                                             (r.StartsWith("Clickable", StringComparison.Ordinal) ||
+                                              r.StartsWith("Identity", StringComparison.Ordinal)));
+    }
+
+    [Fact]
+    public async Task Find_WithPopups_WhenTheNamedWindowsApplicationHasTooManyStuckReads_FailsAtOnce()
+    {
+        // Arrange
+        var worker = new PerTargetWorker(_tree) { Refused = { 300 } };
+
+        // Act
+        var result = await CreateSut(worker).FindAsync(Query("Delete", ElementSearchScope.WindowAndPopups));
+
+        // Assert - as before: nothing of it or its popups is read
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(UIElementErrorCode.OperationTimedOut);
+        result.Error.Should().Contain("process 300");
+        worker.Targets.Should().BeEmpty();
+        _popups.Verify(p => p.GetPopupList(It.IsAny<nint>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task Find_WithPopups_WhenTheNamedWindowsApplicationRefusesItsSearch_FailsAsAtTheStart()
+    {
+        // Arrange - the popups belong to other processes; the window's application is refused after the search's start
+        _windows.Setup(w => w.GetWindowThreadProcessId(Menu)).Returns(400u);
+        _windows.Setup(w => w.GetWindowThreadProcessId(Dialog)).Returns(500u);
+        var worker = new PerTargetWorker(_tree) { RefusedAfter = { [300] = 1 } };
+
+        // Act
+        var result = await CreateSut(worker).FindAsync(Query("Delete", ElementSearchScope.WindowAndPopups));
+
+        // Assert - the window named is never skipped
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(UIElementErrorCode.OperationTimedOut);
+        worker.Targets.Should().Equal(300, 400, 500);
+    }
+
+    [Fact]
+    public async Task Find_WithPopups_WhenTheListsLookupIsRefused_ReturnsTheTreesMatches_WithANote()
+    {
+        // Arrange - the window's application is refused after its own search, before searchVirtualized asks its lists
+        _windows.Setup(w => w.GetWindowThreadProcessId(Menu)).Returns(400u);
+        _windows.Setup(w => w.GetWindowThreadProcessId(Dialog)).Returns(500u);
+        var worker = new PerTargetWorker(_tree) { RefusedAfter = { [300] = 2 } };
+
+        // Act
+        var result = await CreateSut(worker).FindAsync(
+            Query("Delete", ElementSearchScope.WindowAndPopups) with { SearchVirtualized = true });
+
+        // Assert - the lookup did not run, and the result says that not everything was searched
+        result.Success.Should().BeTrue(result.Error);
+        result.Elements!.Select(e => e.WindowHandle).Should().Equal((long)Menu, null);
+        result.Elements!.Should().OnlyContain(e => e.Ref != null);
+        result.Truncated.Should().BeTrue();
+        result.TruncationReason.Should().Be(ElementSearchTruncation.PartsSkipped);
+        result.Virtualized!.Note.Should().Contain("process 300");
+    }
+
+    [Fact]
+    public async Task Find_APopupStuckInItsProvider_CountsAgainstThePopupsApplication_SoTheWindowIsStillSearched()
+    {
+        // Arrange - the menu belongs to another process, whose provider does not return from its search (one call, past
+        // the deadline and the grace after it); the worker refuses an application after one stuck read
+        _windows.Setup(w => w.GetWindowThreadProcessId(Menu)).Returns(400u);
+        _tree.WithWindow(Menu, new FakeUiaNode("Menu", "Context").With(Enumerable.Range(0, 60)
+            .Select(i => new FakeUiaNode("MenuItem", i == 7 ? "Delete" : $"Item {i}")).ToArray()));
+        using var release = new ManualResetEventSlim();
+        _tree.OnFindAll = (node, _) =>
+        {
+            if (node.Name == "Context")
+            {
+                release.Wait(TimeSpan.FromSeconds(30));
+            }
+        };
+        var worker = new UiaWorker(maxStuckCallsPerTarget: 1, maxStuckCalls: 16);
+        var query = new ElementQuery(Main, Name: "Delete", Timeout: TimeSpan.FromMilliseconds(300),
+            Scope: ElementSearchScope.WindowAndPopups);
+
+        try
+        {
+            // Act - the first search is stuck in the menu; the second comes while that read is still stuck
+            var stuck = await CreateSut(worker).FindAsync(query);
+            var next = await CreateSut(worker).FindAsync(query with { Timeout = TimeSpan.FromSeconds(5) });
+
+            // Assert - the stuck read counts against the menu's application, not the window's: the window is still searched
+            stuck.ErrorCode.Should().Be(UIElementErrorCode.OperationTimedOut);
+            worker.StuckCallsFor(400).Should().Be(1);
+            worker.StuckCallsFor(300).Should().Be(0);
+            next.Success.Should().BeTrue(next.Error);
+            next.Elements!.Should().ContainSingle().Which.WindowHandle.Should().BeNull();
+            next.TruncationReason.Should().Be(ElementSearchTruncation.PartsSkipped);
+        }
+        finally
+        {
+            release.Set();
+        }
+    }
+
+    /// <summary>
+    /// Runs each read on the calling thread, as <see cref="InlineUiaWorker"/> does, and records which application it was
+    /// counted against with the tree calls made during it. Refuses the reads of the processes in <see cref="Refused"/>, and
+    /// those of a process in <see cref="RefusedAfter"/> once it had that many, as <see cref="UiaWorker"/> refuses an
+    /// application with too many stuck reads.
+    /// </summary>
+    private sealed class PerTargetWorker(FakeUiaTree tree) : IUiaWorker
+    {
+        private readonly List<(int Target, List<string> Calls)> _reads = [];
+
+        public HashSet<int> Refused { get; } = [];
+
+        public Dictionary<int, int> RefusedAfter { get; } = [];
+
+        /// <summary>The application each read that ran was counted against, in order.</summary>
+        public IReadOnlyList<int> Targets => _reads.Select(r => r.Target).ToList();
+
+        /// <summary>The tree calls made in the reads counted against <paramref name="target"/>.</summary>
+        public IReadOnlyList<string> CallsIn(int target) => _reads.Where(r => r.Target == target).SelectMany(r => r.Calls).ToList();
+
+        public Task<T> RunAsync<T>(int targetProcessId, Func<CancellationToken, T> read, CancellationToken cancellationToken, TimeSpan grace)
+        {
+            if (Refused.Contains(targetProcessId) ||
+                (RefusedAfter.TryGetValue(targetProcessId, out var allowed) && _reads.Count(r => r.Target == targetProcessId) >= allowed))
+            {
+                return Task.FromException<T>(new UiaReadRefusedException(
+                    $"UI Automation is not responding for the application (process {targetProcessId})."));
+            }
+
+            var before = Calls();
+            try
+            {
+                return Task.FromResult(read(cancellationToken));
+            }
+            catch (Exception ex)
+            {
+                return Task.FromException<T>(ex);
+            }
+            finally
+            {
+                var after = Calls();
+                _reads.Add((targetProcessId, after.Zip(before, (a, b) => a.Skip(b.Count)).SelectMany(c => c).ToList()));
+            }
+        }
+
+        private IReadOnlyList<string>[] Calls() => [tree.Reads, tree.Finds, tree.CachedFetches, tree.ChildListings, tree.ChildProbes];
     }
 
     #endregion
