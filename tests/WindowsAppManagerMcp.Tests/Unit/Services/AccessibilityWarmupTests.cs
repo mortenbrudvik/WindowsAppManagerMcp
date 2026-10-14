@@ -224,6 +224,69 @@ public class AccessibilityWarmupTests
         _tree.CachedFetches.Should().NotContain("Not a container", "only panes and groups are searched");
     }
 
+    [Fact]
+    public void WarmUp_OfARenderWidgetWhoseElementHoldsThePageItself_TakesItAsThePage()
+    {
+        // Arrange - WebView2 runtime 155 on a real desktop (roadmap M3.F33): the render widget's element is the Win32 pane
+        // "Chrome Legacy Window", and its children are the page's own elements, with no Document element between them
+        _desktop[Browser] = new FakeWindow("Chrome_WidgetWin_1", BrowserProcess, 0);
+        _desktop[RenderWidget] = new FakeWindow(AccessibilityWarmup.RenderWidgetHostClass, BrowserProcess, Browser);
+        _tree.WithWindow(RenderWidget, new FakeUiaNode("Pane", "Chrome Legacy Window") { FrameworkId = "Win32" }.With(
+            new FakeUiaNode("Text", "WAM fixture web content") { FrameworkId = "Chrome" },
+            new FakeUiaNode("Text", "Local HTML") { FrameworkId = "Chrome" },
+            new FakeUiaNode("Button", "Web button") { FrameworkId = "Chrome" }));
+
+        // Act
+        var info = CreateSut().WarmUp(Browser, Budget, CancellationToken.None);
+
+        // Assert
+        info!.Status.Should().Be(AccessibilityWarmupStatus.Ready);
+        info.DocumentChildCount.Should().Be(3);
+    }
+
+    [Fact]
+    public void WarmUp_OfARenderWidgetElementThatFillsWithThePageAfterTheFirstQuery_WaitsForIt()
+    {
+        // Arrange - the first query turns Chromium's accessibility on; the page's elements arrive under the pane a moment later
+        _desktop[Browser] = new FakeWindow("Chrome_WidgetWin_1", BrowserProcess, 0);
+        _desktop[RenderWidget] = new FakeWindow(AccessibilityWarmup.RenderWidgetHostClass, BrowserProcess, Browser);
+        var pane = new FakeUiaNode("Pane", "Chrome Legacy Window") { FrameworkId = "Win32" };
+        _tree.WithWindow(RenderWidget, pane);
+        var waits = 0;
+        _afterWait = () =>
+        {
+            if (++waits == 1)
+            {
+                pane.With(new FakeUiaNode("Text", "Heading") { FrameworkId = "Chrome" }, new FakeUiaNode("Button", "Go") { FrameworkId = "Chrome" });
+            }
+        };
+
+        // Act
+        var info = CreateSut().WarmUp(Browser, Budget, CancellationToken.None);
+
+        // Assert
+        info!.Status.Should().Be(AccessibilityWarmupStatus.Ready);
+        info.DocumentChildCount.Should().Be(2);
+        info.Warning.Should().BeNull();
+    }
+
+    [Fact]
+    public void WarmUp_OfARenderWidgetElementWhoseChildrenAreNotChromiumContent_DoesNotTakeItAsThePage()
+    {
+        // Arrange - a pane below the widget that holds only native controls is not a page
+        _desktop[Browser] = new FakeWindow("Chrome_WidgetWin_1", BrowserProcess, 0);
+        _desktop[RenderWidget] = new FakeWindow(AccessibilityWarmup.RenderWidgetHostClass, BrowserProcess, Browser);
+        _tree.WithWindow(RenderWidget, new FakeUiaNode("Pane", "Chrome Legacy Window") { FrameworkId = "Win32" }.With(
+            new FakeUiaNode("Button", "Native") { FrameworkId = "Win32" }));
+
+        // Act
+        var info = CreateSut().WarmUp(Browser, TimeSpan.FromMilliseconds(400), CancellationToken.None);
+
+        // Assert
+        info!.Status.Should().Be(AccessibilityWarmupStatus.NotReady);
+        info.Warning.Should().Contain("no web document was found");
+    }
+
     #endregion
 
     #region Waiting for the page
