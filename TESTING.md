@@ -2194,10 +2194,13 @@ to do with the server's code, from run to run: in the second run of the first 1.
 Minimize button with automation id `Minimize-Restore` and no framework, where uia3 read `Minimize` and `Win32`, while
 the first run's uia2 agreed, and in both runs of the gate that passed (on 293cacd) both engines read `Minimize` and
 `Win32`. So the `BothEngines_*` facts compare those elements (the TitleBar, MenuBar, MenuItem and Button elements that
-lie wholly outside the client area the fixture reports) by control type and name only, and every other element in full.
-On a Windows display language other than English a name or a localized type of the title bar can still differ: when the
-first difference is one of those elements, record it, and compare the fixture's own controls in the output of the
-find_ui_elements theory, which writes every element it finds with each engine, before you change the default.
+lie wholly outside the client area the fixture reports) by control type and place in the tree first, with every other
+element in full, and then by name. Their names are the proxies' own: on a Windows display language other than English,
+Windows' native proxy names them in that language, and .NET's managed proxy can name them from resources in another
+(roadmap M3.F29). A name that differs there fails on its own, after the rest has passed, with a message that names the
+element, both names and the display language, and says that the difference may be the proxies' localization rather than
+the server's engine code. Record it, and compare the fixture's own controls in the output of the find_ui_elements
+theory, which writes every element it finds with each engine, before you change the default.
 
 ### Tool surface snapshot
 
