@@ -254,7 +254,8 @@ public sealed record CaptureOptions
 
 /// <summary>
 /// The warnings a successful capture can carry (roadmap M2.9). Each one starts with a stable code and a colon,
-/// so an agent can match on the code; the rest of the sentence says what it means and what to do.
+/// so an agent can match on the code; the rest of the sentence says what it means and what to do. capture_with_elements
+/// also carries its walk's warnings (<see cref="UIElementWarnings"/>, roadmap M3.F16), in the same form.
 /// </summary>
 public static class CaptureWarnings
 {

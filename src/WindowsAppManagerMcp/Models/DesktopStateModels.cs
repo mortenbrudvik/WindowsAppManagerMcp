@@ -141,13 +141,16 @@ public sealed record DesktopInputState(bool Paused, string? PausedBy = null, IRe
 /// deadline stopped the popups.</param>
 /// <param name="Scope">window, or windowAndPopups when the target's open popups were walked too (front first).</param>
 /// <param name="AccessibilityWarmup">Set when the window shows web content and the walk waited for it first (roadmap M3.3).</param>
+/// <param name="Warnings">The window walk's warnings, as get_ui_elements gives them (roadmap M3.F16): why its lines may not
+/// show what the window holds (WindowMinimized, TargetElevated). Null when there is nothing to say.</param>
 public sealed record DesktopElements(
     string? Text,
     int Count,
     bool Truncated,
     UIElementTruncationReason? TruncationReason,
     ElementSearchScope Scope,
-    AccessibilityWarmupInfo? AccessibilityWarmup = null);
+    AccessibilityWarmupInfo? AccessibilityWarmup = null,
+    IReadOnlyList<string>? Warnings = null);
 
 /// <summary>A part of get_desktop_state's observation that was not read, and why; the rest of the observation is still returned.</summary>
 /// <param name="Section">windows, focus, elements, popups, screenshot, or target (the window the call reads: its elements,

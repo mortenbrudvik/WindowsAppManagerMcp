@@ -50,6 +50,10 @@ namespace WindowsAppManagerMcp.Services;
 /// (<see cref="UIElementResult.OwnedWindows"/>). A level fetched with its properties is tested on them; of a level read one
 /// element at a time, the first children are read one at a time while they are owned windows (the HWND proxy lists them
 /// first, at most <see cref="ElementSearch.MaxOwnedWindows"/>). Without the Win32 reads nothing is left out.</item>
+/// <item>The result says why a tree may not show what the window holds (<see cref="UIElementResult.Warnings"/>, roadmap
+/// M3.F16): a window whose process runs at a higher integrity level than the server, which UI Automation cannot read
+/// (TargetElevated), and a minimized window, whose elements are all offscreen (WindowMinimized). Both are read after the
+/// walk, with Win32 and token reads that no window's thread answers; neither stops the walk.</item>
 /// </list>
 /// </remarks>
 public class UIElementService : IUIElementService
@@ -89,6 +93,7 @@ public class UIElementService : IUIElementService
     private readonly IAccessibilityWarmup? _warmup;
     private readonly IElementRegistry? _registry;
     private readonly ITargetPolicy? _policy;
+    private readonly IProcessSecurityProbe? _security;
 
     /// <param name="tree">The UI Automation tree.</param>
     /// <param name="worker">Runs the walk under a deadline.</param>
@@ -101,13 +106,17 @@ public class UIElementService : IUIElementService
     /// <param name="registry">Gives every returned element its ref (roadmap M3.4). Without it the elements have none.</param>
     /// <param name="policy">The user's target policy, which refuses reads of a window of an app it denies. The server always
     /// passes it; without it (or without <paramref name="windows"/>) no window is refused.</param>
+    /// <param name="security">Tells a window whose process runs at a higher integrity level than the server, whose tree UI
+    /// Automation cannot read (roadmap M3.F16). The server always passes it; without it (or without
+    /// <paramref name="windows"/>) no such warning is given.</param>
     public UIElementService(
         IUiaTree tree,
         IUiaWorker worker,
         INativeWindowWrapper? windows = null,
         IAccessibilityWarmup? warmup = null,
         IElementRegistry? registry = null,
-        ITargetPolicy? policy = null)
+        ITargetPolicy? policy = null,
+        IProcessSecurityProbe? security = null)
     {
         _tree = tree;
         _worker = worker;
@@ -115,6 +124,7 @@ public class UIElementService : IUIElementService
         _warmup = warmup;
         _registry = registry;
         _policy = policy;
+        _security = security;
     }
 
     /// <inheritdoc />
@@ -170,16 +180,24 @@ public class UIElementService : IUIElementService
                      CreateErrorResult(windowHandle, stopwatch, ex.Message, UIElementErrorCode.OperationTimedOut);
         }
 
-        return result with { WindowState = ReadWindowState(windowHandle), AccessibilityWarmup = started.Warmup };
+        var windowState = ReadWindowState(windowHandle, out var root);
+        return result with
+        {
+            WindowState = windowState,
+            AccessibilityWarmup = started.Warmup,
+            Warnings = Warnings(windowHandle, result, windowState, root, filter)
+        };
     }
 
     /// <summary>
-    /// The state of the window's top-level window: Minimized when it, or the window itself, is minimized (its elements
-    /// are offscreen), Maximized or Normal otherwise. Null without a window wrapper, or when the handle is no window.
-    /// These are reads Windows answers without the window's thread, so a hung application does not block them.
+    /// The state of the window's top-level window (<paramref name="root"/>, the window itself when it has none above it):
+    /// Minimized when it, or the window itself, is minimized (its elements are offscreen), Maximized or Normal otherwise.
+    /// Null without a window wrapper, or when the handle is no window. These are reads Windows answers without the window's
+    /// thread, so a hung application does not block them.
     /// </summary>
-    private WindowState? ReadWindowState(nint windowHandle)
+    private WindowState? ReadWindowState(nint windowHandle, out nint root)
     {
+        root = windowHandle;
         if (_windows == null)
         {
             return null;
@@ -192,10 +210,10 @@ public class UIElementService : IUIElementService
                 return null;
             }
 
-            var root = _windows.GetAncestor(windowHandle, WindowAncestor.Root);
-            if (root == nint.Zero)
+            var ancestor = _windows.GetAncestor(windowHandle, WindowAncestor.Root);
+            if (ancestor != nint.Zero)
             {
-                root = windowHandle;
+                root = ancestor;
             }
 
             if (_windows.IsIconic(root) || _windows.IsIconic(windowHandle))
@@ -211,6 +229,87 @@ public class UIElementService : IUIElementService
             return null;
         }
     }
+
+    /// <summary>
+    /// Why the tree may not show what the window holds (roadmap M3.F16, D-UIA-07), or null when nothing says so.
+    /// TargetElevated first, whatever the walk returned or why it failed: restoring the window does not make its tree
+    /// readable, and no number of elements tells a thin tree from a small window (what Windows itself reports about the
+    /// window's child windows can still be read). Then WindowMinimized, for a walk that succeeded. Nothing for a window
+    /// that was not found or not read.
+    /// </summary>
+    private IReadOnlyList<string>? Warnings(
+        nint windowHandle, UIElementResult result, WindowState? windowState, nint root, UIElementFilter? filter)
+    {
+        if (result.ErrorCode is UIElementErrorCode.WindowNotFound or UIElementErrorCode.AutomationUnavailable
+            or UIElementErrorCode.NotResponding)
+        {
+            return null;
+        }
+
+        var warnings = new List<string>();
+        if (ElevationWarning(windowHandle) is { } elevated)
+        {
+            warnings.Add(elevated);
+        }
+
+        if (result.Success && windowState == WindowState.Minimized)
+        {
+            warnings.Add(MinimizedWarning(root, filter?.VisibleOnly == true));
+        }
+
+        return warnings.Count > 0 ? warnings : null;
+    }
+
+    /// <summary>
+    /// The TargetElevated warning when the window's process, or for a UWP frame the app it shows (see
+    /// <see cref="UiaTargets.TargetProcessId"/>), is known or likely to run at a higher integrity level than the server, as
+    /// the input guard tells it (<see cref="ProcessIntegrity.IsMorePrivilegedThan"/>); null otherwise, and when it cannot be
+    /// read. Token reads, cached per process, which no window's thread answers.
+    /// </summary>
+    private string? ElevationWarning(nint windowHandle)
+    {
+        if (_security == null || _windows == null)
+        {
+            return null;
+        }
+
+        try
+        {
+            var server = _security.ServerIntegrity;
+            foreach (var processId in new[] { (int)_windows.GetWindowThreadProcessId(windowHandle), TargetProcessId(windowHandle) }
+                         .Where(id => id > 0).Distinct())
+            {
+                var integrity = _security.GetIntegrity(processId);
+                if (integrity.IsMorePrivilegedThan(server))
+                {
+                    return CaptureWarnings.Format(UIElementWarnings.TargetElevated,
+                        $"Window {(long)windowHandle} belongs to a process that runs at a higher integrity level ({integrity.Level}) than " +
+                        $"this server ({server.Level}), for example as administrator. Windows keeps this server's UI Automation out " +
+                        "of it, so its tree comes back empty or with only what Windows itself reports about its windows: that does " +
+                        "not mean it has no controls. Input to it is refused too (TargetElevated). Ask the user to do this step, " +
+                        "or to run the server elevated.");
+                }
+            }
+        }
+        catch (Exception)
+        {
+            // Only the warning depends on it
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// The WindowMinimized warning for a window whose top-level window <paramref name="root"/> is minimized: with
+    /// <paramref name="visibleOnly"/>, its elements were left out; without, they are returned offscreen.
+    /// </summary>
+    private static string MinimizedWarning(nint root, bool visibleOnly) => CaptureWarnings.Format(UIElementWarnings.WindowMinimized,
+        $"The window is minimized (its top-level window, handle {(long)root}), so UI Automation reports all its elements " +
+        (visibleOnly
+            ? "offscreen and visibleOnly left them out: the tree does not show what the window holds. "
+            : "offscreen: their bounds are not where they will be once it is restored, and element_action refuses them " +
+              "(ElementOffscreen). ") +
+        $"Restore it (set_window_state with handle {(long)root} and state normal, or focus_window) and read it again.");
 
     /// <summary>Why the window must not be read, or null when it responds (see <see cref="UiaTargets.NotRespondingReason"/>).</summary>
     private string? NotRespondingReason(nint windowHandle) => UiaTargets.NotRespondingReason(_windows, windowHandle);

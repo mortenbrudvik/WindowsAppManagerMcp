@@ -1947,4 +1947,236 @@ public class UIElementServiceTests
     }
 
     #endregion
+
+    #region Minimized and elevated targets (roadmap M3.F16)
+
+    private static readonly ProcessIntegrity MediumServer = new(1, IntegrityLevel.Medium, ProcessIntegrity.MediumRid, false, null);
+
+    /// <summary>A window wrapper for a window that responds, of process <paramref name="processId"/>.</summary>
+    private static Mock<INativeWindowWrapper> WindowOfProcess(uint processId = 4242)
+    {
+        var windows = new Mock<INativeWindowWrapper>();
+        windows.Setup(w => w.IsWindow(It.IsAny<nint>())).Returns(true);
+        windows.Setup(w => w.RespondsWithin(It.IsAny<nint>(), It.IsAny<uint>())).Returns(true);
+        windows.Setup(w => w.GetWindowThreadProcessId(Handle)).Returns(processId);
+        return windows;
+    }
+
+    /// <summary>A security probe for a medium-integrity server, which reads <paramref name="processId"/> at <paramref name="level"/>.</summary>
+    private static Mock<IProcessSecurityProbe> Security(int processId, IntegrityLevel level, int? rid)
+    {
+        var security = new Mock<IProcessSecurityProbe>();
+        security.SetupGet(s => s.ServerIntegrity).Returns(MediumServer);
+        security.Setup(s => s.GetIntegrity(It.IsAny<int>()))
+            .Returns<int>(id => new ProcessIntegrity(id, IntegrityLevel.Medium, ProcessIntegrity.MediumRid, false, null));
+        security.Setup(s => s.GetIntegrity(processId)).Returns(new ProcessIntegrity(processId, level, rid, null, null));
+        return security;
+    }
+
+    private static string Json(UIElementResult result) =>
+        System.Text.Json.JsonSerializer.Serialize(result, ModelContextProtocol.McpJsonUtilities.DefaultOptions);
+
+    [Fact]
+    public async Task GetUIElements_OfAMinimizedWindow_WarnsThatVisibleOnlyLeftItsElementsOut()
+    {
+        // Arrange - a minimized window's elements are offscreen, so visibleOnly leaves them all out (D-UIA-07)
+        Window(new FakeUiaNode("Button", "Save") { IsOffscreen = true });
+        var windows = WindowOfProcess();
+        windows.Setup(w => w.IsIconic(Handle)).Returns(true);
+
+        // Act
+        var result = await new UIElementService(_tree, _worker, windows.Object)
+            .GetUIElementsAsync(Handle, filter: new UIElementFilter(VisibleOnly: true));
+
+        // Assert - one warning with a stable code, naming the window to restore and how
+        result.Success.Should().BeTrue();
+        result.Elements.Should().BeEmpty();
+        result.Warnings.Should().ContainSingle().Which.Should()
+            .StartWith("WindowMinimized: ").And.Contain("visibleOnly").And.Contain("set_window_state")
+            .And.Contain($"handle {(long)Handle}").And.Contain("focus_window");
+        Json(result).Should().Contain("\"warnings\":[\"WindowMinimized: ");
+    }
+
+    [Fact]
+    public async Task GetUIElements_OfAMinimizedWindowWithVisibleOnlyOff_WarnsThatItsElementsAreOffscreen()
+    {
+        // Arrange
+        Window(new FakeUiaNode("Button", "Save") { IsOffscreen = true });
+        var windows = WindowOfProcess();
+        windows.Setup(w => w.IsIconic(Handle)).Returns(true);
+
+        // Act
+        var result = await new UIElementService(_tree, _worker, windows.Object)
+            .GetUIElementsAsync(Handle, filter: new UIElementFilter(VisibleOnly: false));
+
+        // Assert - the elements are returned, but their bounds are not where they will be once the window is restored
+        Shape(result.Elements).Should().Be("Save");
+        result.Warnings.Should().ContainSingle().Which.Should()
+            .StartWith("WindowMinimized: ").And.Contain("offscreen").And.Contain("ElementOffscreen").And.NotContain("visibleOnly");
+    }
+
+    [Fact]
+    public async Task GetUIElements_OfAControlInAMinimizedWindow_NamesTheTopLevelWindowToRestore()
+    {
+        // Arrange
+        BuildToolbarWindow();
+        var root = new nint(0x7000);
+        var windows = WindowOfProcess();
+        windows.Setup(w => w.GetAncestor(Handle, WindowAncestor.Root)).Returns(root);
+        windows.Setup(w => w.IsIconic(root)).Returns(true);
+
+        // Act
+        var result = await new UIElementService(_tree, _worker, windows.Object).GetUIElementsAsync(Handle);
+
+        // Assert - set_window_state restores a top-level window
+        result.WindowState.Should().Be(WindowState.Minimized);
+        result.Warnings.Should().ContainSingle().Which.Should().Contain($"handle {(long)root}");
+    }
+
+    [Fact]
+    public async Task GetUIElements_OfANormalWindowAtTheServersLevel_HasNoWarnings()
+    {
+        // Arrange
+        BuildToolbarWindow();
+        var security = Security(4242, IntegrityLevel.Medium, ProcessIntegrity.MediumRid);
+
+        // Act
+        var result = await new UIElementService(_tree, _worker, WindowOfProcess().Object, security: security.Object)
+            .GetUIElementsAsync(Handle);
+
+        // Assert - left out of the result, so an ordinary walk costs no tokens for it
+        result.Warnings.Should().BeNull();
+        Json(result).Should().NotContain("warnings");
+    }
+
+    [Theory]
+    [InlineData(IntegrityLevel.High, ProcessIntegrity.HighRid)]
+    [InlineData(IntegrityLevel.System, ProcessIntegrity.SystemRid)]
+    [InlineData(IntegrityLevel.LikelyElevated, null)]
+    public async Task GetUIElements_OfAnElevatedWindow_WarnsTargetElevated(IntegrityLevel level, int? rid)
+    {
+        // Arrange - UIPI keeps a client below the window's integrity level out of its provider: the tree comes back empty
+        Window();
+        var security = Security(4242, level, rid);
+
+        // Act
+        var result = await new UIElementService(_tree, _worker, WindowOfProcess().Object, security: security.Object)
+            .GetUIElementsAsync(Handle);
+
+        // Assert - still a success, with the cause and what to do
+        result.Success.Should().BeTrue();
+        result.Warnings.Should().ContainSingle().Which.Should()
+            .StartWith("TargetElevated: ").And.Contain(level.ToString()).And.Contain("Medium").And.Contain("administrator");
+    }
+
+    [Theory]
+    [InlineData(IntegrityLevel.Restricted)]
+    [InlineData(IntegrityLevel.Unknown)]
+    [InlineData(IntegrityLevel.Low)]
+    public async Task GetUIElements_OfAWindowNotKnownToBeMorePrivileged_HasNoElevationWarning(IntegrityLevel level)
+    {
+        // Arrange - Restricted may be another user's ordinary process, so it is not called elevated (as the input guard)
+        Window();
+        var security = Security(4242, level, level == IntegrityLevel.Low ? ProcessIntegrity.LowRid : null);
+
+        // Act
+        var result = await new UIElementService(_tree, _worker, WindowOfProcess().Object, security: security.Object)
+            .GetUIElementsAsync(Handle);
+
+        // Assert
+        result.Warnings.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task GetUIElements_OfAnElevatedWindowWhoseChildrenCannotBeRead_StillWarnsTargetElevated()
+    {
+        // Arrange - the failure is what UIPI does, so the warning says why
+        Window().ChildrenException = new System.Runtime.InteropServices.COMException("access denied");
+        var security = Security(4242, IntegrityLevel.High, ProcessIntegrity.HighRid);
+
+        // Act
+        var result = await new UIElementService(_tree, _worker, WindowOfProcess().Object, security: security.Object)
+            .GetUIElementsAsync(Handle);
+
+        // Assert
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(UIElementErrorCode.OperationException);
+        result.Warnings.Should().ContainSingle().Which.Should().StartWith("TargetElevated: ");
+    }
+
+    [Fact]
+    public async Task GetUIElements_OfAMinimizedElevatedWindow_GivesBothWarnings()
+    {
+        // Arrange
+        Window();
+        var windows = WindowOfProcess();
+        windows.Setup(w => w.IsIconic(Handle)).Returns(true);
+        var security = Security(4242, IntegrityLevel.High, ProcessIntegrity.HighRid);
+
+        // Act
+        var result = await new UIElementService(_tree, _worker, windows.Object, security: security.Object).GetUIElementsAsync(Handle);
+
+        // Assert - the elevation first: restoring the window does not make its tree readable
+        result.Warnings.Should().HaveCount(2);
+        result.Warnings![0].Should().StartWith("TargetElevated: ");
+        result.Warnings[1].Should().StartWith("WindowMinimized: ");
+    }
+
+    [Fact]
+    public async Task GetUIElements_OfAUwpFrame_ChecksTheElevationOfTheAppItShows()
+    {
+        // Arrange - the frame belongs to ApplicationFrameHost; the app runs in its CoreWindow's process
+        Window();
+        var coreWindow = new nint(0x6001);
+        var windows = WindowOfProcess(processId: 6000);
+        windows.Setup(w => w.GetClassName(Handle)).Returns("ApplicationFrameWindow");
+        windows.Setup(w => w.GetClassName(coreWindow)).Returns("Windows.UI.Core.CoreWindow");
+        windows.Setup(w => w.GetWindowThreadProcessId(coreWindow)).Returns(7000u);
+        windows.Setup(w => w.EnumChildWindows(Handle, It.IsAny<Func<nint, bool>>()))
+            .Callback<nint, Func<nint, bool>>((_, callback) => callback(coreWindow));
+        var security = Security(7000, IntegrityLevel.High, ProcessIntegrity.HighRid);
+
+        // Act
+        var result = await new UIElementService(_tree, _worker, windows.Object, security: security.Object).GetUIElementsAsync(Handle);
+
+        // Assert
+        result.Warnings.Should().ContainSingle().Which.Should().StartWith("TargetElevated: ");
+    }
+
+    [Fact]
+    public async Task GetUIElements_OfAnUnknownWindow_HasNoWarnings()
+    {
+        // Arrange - nothing was read, so there is nothing to explain
+        var windows = WindowOfProcess();
+        windows.Setup(w => w.IsIconic(It.IsAny<nint>())).Returns(true);
+        var security = Security(4242, IntegrityLevel.High, ProcessIntegrity.HighRid);
+
+        // Act
+        var result = await new UIElementService(_tree, _worker, windows.Object, security: security.Object)
+            .GetUIElementsAsync(new nint(999));
+
+        // Assert
+        result.ErrorCode.Should().Be(UIElementErrorCode.WindowNotFound);
+        result.Warnings.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task GetUIElements_WhenTheWindowsProcessCannotBeRead_ReturnsTheTreeWithoutAnElevationWarning()
+    {
+        // Arrange
+        BuildToolbarWindow();
+        var windows = WindowOfProcess();
+        windows.Setup(w => w.GetWindowThreadProcessId(Handle)).Throws(new InvalidOperationException("gone"));
+        var security = Security(4242, IntegrityLevel.High, ProcessIntegrity.HighRid);
+
+        // Act
+        var result = await new UIElementService(_tree, _worker, windows.Object, security: security.Object).GetUIElementsAsync(Handle);
+
+        // Assert
+        result.Success.Should().BeTrue();
+        result.Warnings.Should().BeNull();
+        security.Verify(s => s.GetIntegrity(It.IsAny<int>()), Times.Never);
+    }
+
+    #endregion
 }

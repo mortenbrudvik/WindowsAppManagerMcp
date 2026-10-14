@@ -643,6 +643,35 @@ public class ScreenshotToolsTests
         json.GetProperty("elementCount").GetInt32().Should().Be(3);
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task CaptureWithElements_CarriesTheWalksWarnings_AndOnlyWhenThereAreAny(bool walkSucceeds)
+    {
+        // Arrange - an elevated window's tree comes back empty, or its walk fails (roadmap M3.F16)
+        const string elevated = "TargetElevated: Window 12345 belongs to a process that runs at a higher integrity level.";
+        var walk = walkSucceeds
+            ? TestDataFactory.CreateUIElementResult() with { Warnings = [elevated] }
+            : TestDataFactory.CreateUIElementResult() with
+            {
+                Success = false, Elements = null, Error = "access denied", ErrorCode = UIElementErrorCode.OperationException,
+                Warnings = [elevated]
+            };
+        var sut = CreateSut();
+        var plain = Metadata(await sut.CaptureWithElements(handle: 12345));
+        _mockUIElementService.Setup(u => u.GetUIElementsAsync(
+                It.IsAny<nint>(), It.IsAny<int>(), It.IsAny<UIElementFilter?>(), It.IsAny<IProgress<OperationProgress>?>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(walk);
+
+        // Act
+        var json = Metadata(await sut.CaptureWithElements(handle: 12345));
+
+        // Assert - with the captures' own warnings, in the same "Code: text" form
+        plain.TryGetProperty("warnings", out _).Should().BeFalse();
+        json.GetProperty("warnings").EnumerateArray().Select(w => w.GetString()).Should().Equal(elevated);
+    }
+
     #endregion
 
     private void VerifyNoWalk()

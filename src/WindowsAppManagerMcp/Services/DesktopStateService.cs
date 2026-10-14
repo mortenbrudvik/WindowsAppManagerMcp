@@ -477,7 +477,10 @@ public sealed class DesktopStateService : IDesktopStateService
             reason = result.TruncationReason ?? reason;
         }
 
-        return new ElementsWalk(Elements(text, count, truncated, truncated ? reason : null, scope, result.AccessibilityWarmup), null, excluded);
+        // The window's warnings explain a thin or empty walk (roadmap M3.F16): a minimized or an elevated window
+        return new ElementsWalk(
+            Elements(text, count, truncated, truncated ? reason : null, scope, result.AccessibilityWarmup) with { Warnings = result.Warnings },
+            null, excluded);
     }
 
     private static UIElementFilter Filter(DesktopStateRequest request, int maxElements, TimeSpan warmupBudget, TimeSpan stopGrace) => new(
