@@ -59,7 +59,8 @@ public class ElementWaitServiceTests
         int timeoutMs = 5000,
         string? elementRef = null,
         IProgress<OperationProgress>? progress = null,
-        CancellationToken cancellationToken = default) =>
+        CancellationToken cancellationToken = default,
+        int stableMs = 0) =>
         CreateSut().WaitAsync(new ElementWaitRequest
         {
             Window = elementRef == null && criteria?.WithinRef == null ? Editor : null,
@@ -67,7 +68,8 @@ public class ElementWaitServiceTests
             Criteria = elementRef == null ? criteria ?? Criteria(name: "OK") : null,
             Condition = condition,
             Expected = expected,
-            TimeoutMs = timeoutMs
+            TimeoutMs = timeoutMs,
+            StableMs = stableMs
         }, progress, cancellationToken);
 
     private static ElementQuery Criteria(string? name = null, string? automationId = null, string[]? controlTypes = null, string? withinRef = null) =>
@@ -1032,6 +1034,195 @@ public class ElementWaitServiceTests
         never.LastObservedState.Should().Contain("not realized");
         result.Satisfied.Should().BeTrue(result.Error);
         result.Element!.Virtualized.Should().BeNull("it is real now");
+    }
+
+    #endregion
+
+    #region stableMs
+
+    /// <summary>A spinner that goes at 200 ms, a re-created one that is there from 300 ms (the check at 250 ms falls in the gap), and that one going for good at 1000 ms.</summary>
+    private void ASpinnerThatIsReCreated()
+    {
+        var body = BuildWindow();
+        var first = new FakeUiaNode("ProgressBar", "Loading");
+        var second = new FakeUiaNode("ProgressBar", "Loading");
+        body.With(first);
+        At(200, first.Vanish);
+        At(300, () => body.With(second));
+        At(1000, second.Vanish);
+    }
+
+    [Fact]
+    public async Task Gone_WithoutStableMs_IsSatisfiedInTheGapWhileAListIsReCreated()
+    {
+        ASpinnerThatIsReCreated();
+
+        var result = await WaitAsync(Criteria(name: "Loading"), ElementWaitCondition.Gone);
+
+        result.Satisfied.Should().BeTrue();
+        result.ElapsedMs.Should().BeLessThan(300, "one check that finds nothing satisfies gone, as before stableMs");
+    }
+
+    [Fact]
+    public async Task Gone_WithStableMs_IsNotSatisfiedByTheGapWhileAListIsReCreated()
+    {
+        ASpinnerThatIsReCreated();
+
+        var result = await WaitAsync(Criteria(name: "Loading"), ElementWaitCondition.Gone, stableMs: 300);
+
+        result.Satisfied.Should().BeTrue();
+        result.ElapsedMs.Should().BeGreaterThanOrEqualTo(1300, "gone must hold for 300 ms after the re-created spinner went");
+        result.Element.Should().BeNull();
+        result.LastObservedState.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task Enabled_WithStableMs_MustHoldAtEveryCheckForThatLong()
+    {
+        // Arrange - OK is enabled at 200 ms (the check at 250 ms sees it), disabled again at 300 ms, and enabled for good at 1000 ms
+        var ok = Button("OK", enabled: false);
+        BuildWindow(ok);
+        At(200, () => ok.IsEnabled = true);
+        At(300, () => ok.IsEnabled = false);
+        At(1000, () => ok.IsEnabled = true);
+
+        // Act
+        var result = await WaitAsync(condition: ElementWaitCondition.Enabled, stableMs: 400);
+
+        // Assert
+        result.Satisfied.Should().BeTrue();
+        result.ElapsedMs.Should().BeGreaterThanOrEqualTo(1400);
+        result.Element!.IsEnabled.Should().BeTrue();
+        result.LastObservedState.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task Exists_WithStableMs_IsCheckedAgainWhenTheTimeIsUp_NotABackOffIntervalLater()
+    {
+        BuildWindow(Button("OK"));
+
+        var result = await WaitAsync(stableMs: 200);
+
+        result.Satisfied.Should().BeTrue();
+        result.ElapsedMs.Should().Be(200);
+        Delays.Select(d => (int)d.TotalMilliseconds).Should().Equal(100, 100);
+        result.Polls.Should().Be(3);
+    }
+
+    [Fact]
+    public async Task StableMs_LongerThanTheTimeout_IsCutToIt()
+    {
+        BuildWindow(Button("OK"));
+
+        var result = await WaitAsync(timeoutMs: 1000, stableMs: 5000);
+
+        result.Satisfied.Should().BeTrue();
+        result.ElapsedMs.Should().Be(1000);
+    }
+
+    [Fact]
+    public async Task StableMs_WithTimeoutZero_ChecksOnce()
+    {
+        BuildWindow(Button("OK"));
+
+        var result = await WaitAsync(timeoutMs: 0, stableMs: 300);
+
+        result.Satisfied.Should().BeTrue();
+        result.Polls.Should().Be(1);
+        Delays.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task StableMs_AConditionThatDoesNotHoldLongEnough_TimesOut_SayingHowLongItHeld()
+    {
+        // Arrange - OK is enabled from 700 ms on, so it has held for less than 500 ms when the wait ends at 1000 ms
+        var ok = Button("OK", enabled: false);
+        BuildWindow(ok);
+        At(700, () => ok.IsEnabled = true);
+
+        // Act
+        var result = await WaitAsync(condition: ElementWaitCondition.Enabled, timeoutMs: 1000, stableMs: 500);
+
+        // Assert
+        result.Success.Should().BeFalse();
+        result.TimedOut.Should().BeTrue();
+        result.ErrorCode.Should().Be("WaitTimedOut");
+        result.Element!.IsEnabled.Should().BeTrue("the element as last seen");
+        result.LastObservedState.Should().MatchRegex(@"^Button 'OK' \(w1e[0-9]+\) is enabled \(for [0-9]+ of 500 ms\)$");
+        result.Error.Should().StartWith("No element matching name 'OK' stayed enabled for 500 ms within 1000 ms");
+    }
+
+    [Fact]
+    public async Task StableMs_GoneThatDoesNotHoldLongEnough_TimesOut_SayingSo()
+    {
+        var spinner = new FakeUiaNode("ProgressBar", "Loading");
+        BuildWindow(spinner);
+        At(700, spinner.Vanish);
+
+        var result = await WaitAsync(Criteria(name: "Loading"), ElementWaitCondition.Gone, timeoutMs: 1000, stableMs: 500);
+
+        result.TimedOut.Should().BeTrue();
+        result.LastObservedState.Should().MatchRegex(@"^no element matches name 'Loading' \(for [0-9]+ of 500 ms\)$");
+        result.Error.Should().StartWith("Elements matching name 'Loading' did not stay gone for 500 ms within 1000 ms");
+    }
+
+    [Fact]
+    public async Task StableMs_ARefThatDoesNotStayEnabled_TimesOut_SayingSo()
+    {
+        var ok = Button("OK", enabled: false);
+        BuildWindow(ok);
+        var okRef = await RefOf("OKBtn");
+        At(300, () => ok.IsEnabled = true);
+        At(500, () => ok.IsEnabled = false);
+
+        var result = await WaitAsync(condition: ElementWaitCondition.Enabled, elementRef: okRef, timeoutMs: 1000, stableMs: 400);
+
+        result.TimedOut.Should().BeTrue();
+        result.LastObservedState.Should().EndWith("is disabled");
+        result.Error.Should().StartWith($"Element {okRef} did not stay enabled for 400 ms within 1000 ms");
+    }
+
+    [Fact]
+    public async Task StableMs_ARefWhoseElementIsGone_SatisfiesGoneAtOnce_SinceItNeverComesBack()
+    {
+        var busy = Button("Busy");
+        BuildWindow(busy);
+        var busyRef = await RefOf("BusyBtn");
+        At(300, busy.Vanish);
+
+        var result = await WaitAsync(condition: ElementWaitCondition.Gone, elementRef: busyRef, stableMs: 2000);
+
+        result.Satisfied.Should().BeTrue();
+        result.ElapsedMs.Should().BeLessThan(1000);
+    }
+
+    [Fact]
+    public async Task StableMs_AWindowThatCloses_SatisfiesGoneAtOnce()
+    {
+        BuildWindow(new FakeUiaNode("ProgressBar", "Loading"));
+        At(300, CloseWindow);
+
+        var result = await WaitAsync(Criteria(name: "Loading"), ElementWaitCondition.Gone, stableMs: 2000);
+
+        result.Satisfied.Should().BeTrue();
+        result.ElapsedMs.Should().BeLessThan(1000);
+        result.Warning.Should().Contain("closed");
+    }
+
+    [Fact]
+    public async Task StableMs_ACheckThatCannotTell_StartsTheTimeAgain()
+    {
+        // Arrange - OK is there throughout, but the window does not respond from 200 to 400 ms
+        BuildWindow(Button("OK"));
+        At(200, () => _windows.Setup(w => w.IsHungAppWindow(Handle)).Returns(true));
+        At(400, () => _windows.Setup(w => w.IsHungAppWindow(Handle)).Returns(false));
+
+        // Act
+        var result = await WaitAsync(stableMs: 300);
+
+        // Assert - the condition was seen to hold at every check of the last 300 ms
+        result.Satisfied.Should().BeTrue();
+        result.ElapsedMs.Should().BeGreaterThanOrEqualTo(700);
     }
 
     #endregion

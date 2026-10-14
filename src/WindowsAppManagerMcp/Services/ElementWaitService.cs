@@ -28,6 +28,13 @@ namespace WindowsAppManagerMcp.Services;
 /// the full reads of long values (value_equals) share with the search. The search may take up to 2 s more to stop and hand
 /// back what it found when a provider does not return from one call (ElementSearchService's grace, which find_ui_elements
 /// shares: a provider call cannot be interrupted), so a wait can end up to about 3 s after its timeout.</para>
+/// <para><b>stableMs.</b> With stableMs (roadmap M3.F20, as wait_for_window's, cut to the timeout) the condition must hold
+/// at every check for that long, timed from the first check of the run that saw it: a check that does not see it, or cannot
+/// tell, starts the time again, so a list that is re-created does not satisfy gone in the gap. While it holds, the next check
+/// comes when the time is up rather than a back-off interval later. Any match may satisfy it at each check, and the element
+/// returned is the last check's. A gone that cannot be undone (the window closed, the ref's or withinRef's element is gone)
+/// counts at once, and so does a gone wait that finds no window when it starts (with its warning). stableMs 0 is one check
+/// that sees the condition, as before.</para>
 /// <para><b>Ends.</b> A check that cannot tell (the window does not respond, UI Automation does not answer in time or cannot
 /// open a window Win32 still knows, the search did not cover the whole window, a provider error) is remembered as the last
 /// observed state and the wait goes on. A window that closes (IsWindow is false, or its handle now names a window of another
@@ -172,11 +179,17 @@ public sealed class ElementWaitService : IElementWaitService
         _ => Needs.None
     };
 
-    /// <summary>What one check saw: satisfied (with the element), not yet (with what was seen), or the end of the wait.</summary>
+    /// <summary>
+    /// What one check saw: satisfied (with the element), not yet (with what was seen), or the end of the wait. Final is a
+    /// gone that cannot be undone, which needs no stableMs.
+    /// </summary>
     private sealed record Check(bool Satisfied, string State, FoundElement? Element = null, WaitForElementResult? Ended = null,
-        string? Warning = null)
+        string? Warning = null, bool Final = false)
     {
         public static Check Met(FoundElement? element, string state, string? warning = null) => new(true, state, element, Warning: warning);
+
+        /// <summary>gone for good: the window closed, or the ref's or withinRef's element is gone (refs never come back).</summary>
+        public static Check GoneForGood(string state, string? warning = null) => new(true, state, Warning: warning, Final: true);
 
         public static Check NotYet(string state, FoundElement? element = null) => new(false, state, element);
 
@@ -191,6 +204,10 @@ public sealed class ElementWaitService : IElementWaitService
     {
         private readonly ElementWaitCondition _condition = request.Condition;
         private readonly UiaToggleState? _toggle = ParseToggleState(request.Expected);
+
+        // A condition cannot hold longer than the wait: timeoutMs 0 is one check
+        private readonly int _stableMs = Math.Clamp(request.StableMs, 0, timeoutMs);
+
         private nint _window;
         private (uint ProcessId, string? ClassName)? _identity;
         private string? _ref = request.Ref;
@@ -200,6 +217,10 @@ public sealed class ElementWaitService : IElementWaitService
         private bool _warmedUp;
         private FoundElement? _lastElement;
         private string _lastState = "nothing was checked yet";
+
+        // stableMs: since when the condition has held at every check (null while it does not), and whether it ever did
+        private long? _heldSince;
+        private bool _held;
 
         // Set once the ref (or withinRef) was moved to a re-created element: the result says so
         private string? _movedWarning;
@@ -223,6 +244,7 @@ public sealed class ElementWaitService : IElementWaitService
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 _polls++;
+                var checkedAt = elapsed();
                 var check = _ref != null && request.Criteria == null
                     ? await CheckRefAsync(cancellationToken).ConfigureAwait(false)
                     : await CheckCriteriaAsync(cancellationToken).ConfigureAwait(false);
@@ -236,7 +258,19 @@ public sealed class ElementWaitService : IElementWaitService
                 _lastElement = check.Element;
                 if (check.Satisfied)
                 {
-                    return Result(true) with { Element = check.Element, Warning = check.Warning ?? _movedWarning };
+                    _heldSince ??= checkedAt;
+                    var held = checkedAt - _heldSince.Value;
+                    if (check.Final || held >= _stableMs)
+                    {
+                        return Result(true) with { Element = check.Element, Warning = check.Warning ?? _movedWarning };
+                    }
+
+                    _held = true;
+                    _lastState = $"{check.State} (for {held} of {_stableMs} ms)";
+                }
+                else
+                {
+                    _heldSince = null;
                 }
 
                 var now = elapsed();
@@ -254,7 +288,14 @@ public sealed class ElementWaitService : IElementWaitService
                 }
 
                 var interval = (int)Math.Min(MaxPollIntervalMs, MinPollIntervalMs * Math.Pow(1.5, _polls - 1));
-                await service._delay(TimeSpan.FromMilliseconds(Math.Min(interval, remaining)), cancellationToken).ConfigureAwait(false);
+                var delay = Math.Min(interval, remaining);
+                if (_heldSince is { } since)
+                {
+                    // A condition that holds is checked again when stableMs is up, not a back-off interval later
+                    delay = Math.Min(delay, Math.Max(since + _stableMs - now, 0));
+                }
+
+                await service._delay(TimeSpan.FromMilliseconds(delay), cancellationToken).ConfigureAwait(false);
             }
         }
 
@@ -494,7 +535,7 @@ public sealed class ElementWaitService : IElementWaitService
 
                     if (_condition == ElementWaitCondition.Gone)
                     {
-                        return Check.Met(null, "the window closed",
+                        return Check.GoneForGood("the window closed",
                             $"Window {(long)_window} closed, taking its elements with it. If only the element was meant to go, " +
                             "check that the application is still running.");
                     }
@@ -508,7 +549,7 @@ public sealed class ElementWaitService : IElementWaitService
                     // withinRef's element is gone, and the elements below it with it
                     const string prefix = "withinRef: ";
                     var why = found.Error is { } error && error.StartsWith(prefix, StringComparison.Ordinal) ? error[prefix.Length..] : found.Error;
-                    return Check.Met(null, "withinRef's element is gone",
+                    return Check.GoneForGood("withinRef's element is gone",
                         $"withinRef's element is gone, and the elements below it with it: {why}");
 
                 case UIElementErrorCode.InvalidControlType or UIElementErrorCode.AutomationUnavailable or
@@ -581,7 +622,7 @@ public sealed class ElementWaitService : IElementWaitService
                 {
                     if (_condition == ElementWaitCondition.Gone)
                     {
-                        return Check.Met(null, "the element is gone", code == UIElementErrorCode.AmbiguousElement
+                        return Check.GoneForGood("the element is gone", code == UIElementErrorCode.AmbiguousElement
                             ? $"The element is gone; {resolution.CandidateCount} elements that look like it are there, and the ref " +
                               "follows none of them."
                             : null);
@@ -602,7 +643,7 @@ public sealed class ElementWaitService : IElementWaitService
                 _movedWarning ??= ElementRefs.MovedWarning(resolved.Ref);
                 if (_condition == ElementWaitCondition.Gone)
                 {
-                    return Check.Met(null, "the element is gone",
+                    return Check.GoneForGood("the element is gone",
                         $"The element is gone; {Name(element)} took its place and fits its description. {_movedWarning}");
                 }
             }
@@ -806,10 +847,27 @@ public sealed class ElementWaitService : IElementWaitService
             var condition = ConditionName(_condition);
             if (request.Criteria is not { } criteria)
             {
-                return _condition == ElementWaitCondition.Gone ? $"Element {_ref} was still there" : $"Element {_ref} did not become {condition}";
+                return (_condition, _held) switch
+                {
+                    (ElementWaitCondition.Exists, true) => $"Element {_ref} did not stay for {_stableMs} ms",
+                    (_, true) => $"Element {_ref} did not stay {condition} for {_stableMs} ms",
+                    (ElementWaitCondition.Gone, _) => $"Element {_ref} was still there",
+                    _ => $"Element {_ref} did not become {condition}"
+                };
             }
 
             var what = Describe(criteria);
+            if (_held)
+            {
+                // The condition held at some checks, but never for stableMs
+                return _condition switch
+                {
+                    ElementWaitCondition.Exists => $"No element matching {what} stayed for {_stableMs} ms",
+                    ElementWaitCondition.Gone => $"Elements matching {what} did not stay gone for {_stableMs} ms",
+                    _ => $"No element matching {what} stayed {condition} for {_stableMs} ms"
+                };
+            }
+
             return _condition switch
             {
                 ElementWaitCondition.Exists => $"No element matching {what} appeared",

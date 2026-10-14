@@ -13,7 +13,8 @@ public interface IElementWaitService
     /// With criteria the window is waited for first (<see cref="IWindowWaitService.WaitForConditionAsync"/>, condition
     /// exists), then each check runs find_ui_elements' search (<see cref="IElementSearchService"/>) and tests its matches; a
     /// ref is resolved through the element registry (<see cref="IElementRegistry"/>) on each check. Checks back off from
-    /// 100 to 500 ms. Only reads.
+    /// 100 to 500 ms. With <see cref="ElementWaitRequest.StableMs"/> the condition must hold at every check for that long
+    /// (roadmap M3.F20). Only reads.
     /// </summary>
     /// <remarks>
     /// The wait ends early, unsatisfied, when the condition can no longer be met: the window closed (as Win32 tells), a ref

@@ -57,7 +57,30 @@ public class WaitForElementToolTests
 
         _request!.Condition.Should().Be(ElementWaitCondition.Exists);
         _request.TimeoutMs.Should().Be(10_000);
+        _request.StableMs.Should().Be(0, "without stableMs one check that sees the condition satisfies it (roadmap M3.F20)");
         _request.Expected.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task StableMs_ReachesTheService_ForCriteriaAndARef()
+    {
+        await CreateSut().WaitForElement(window: Notepad, name: "Loading", condition: ElementWaitCondition.Gone, stableMs: 500);
+        var criteria = _request!;
+        await CreateSut().WaitForElement(@ref: "w1e2", condition: ElementWaitCondition.Enabled, timeoutMs: 1000, stableMs: 10_000);
+
+        criteria.StableMs.Should().Be(500);
+        _request!.StableMs.Should().Be(10_000, "a stableMs longer than timeoutMs is cut to it by the wait, as wait_for_window's");
+    }
+
+    [Theory]
+    [InlineData(-1)]
+    [InlineData(10_001)]
+    public async Task AStableMsOutOfRange_IsRefused(int stableMs)
+    {
+        var error = await RefusedAsync(() => CreateSut().WaitForElement(window: Notepad, name: "Save", stableMs: stableMs));
+
+        error.ErrorCode.Should().Be(ToolErrorReporting.InvalidArgumentsErrorCode);
+        error.Message.Should().Contain($"stableMs must be 0-10000, but it is {stableMs}.");
     }
 
     [Fact]
@@ -67,7 +90,7 @@ public class WaitForElementToolTests
 
         _request.Should().BeEquivalentTo(new ElementWaitRequest
         {
-            Ref = "w4120035e17", Condition = ElementWaitCondition.ValueEquals, Expected = "report.txt", TimeoutMs = 10_000
+            Ref = "w4120035e17", Condition = ElementWaitCondition.ValueEquals, Expected = "report.txt", TimeoutMs = 10_000, StableMs = 0
         });
     }
 
