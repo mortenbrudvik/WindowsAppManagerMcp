@@ -491,7 +491,7 @@ public sealed class FixtureOnlyCallPolicy : IWrapperCallPolicy
         int processId;
         try
         {
-            processId = tree.ReadIdentity(node).ProcessId;
+            processId = ReadProcessId(tree, node);
         }
         catch (Exception ex)
         {
@@ -501,6 +501,22 @@ public sealed class FixtureOnlyCallPolicy : IWrapperCallPolicy
         return processId == _fixtureProcessId
             ? null
             : $"{call.Name} on an element of process {processId} is not the fixture (process {_fixtureProcessId}).";
+    }
+
+    /// <summary>
+    /// The element's process. An item its list has not realized (WPF's placeholder) fails the identity read as a whole, so
+    /// it is read property by property, as ElementActionService does; an element that is gone fails both reads.
+    /// </summary>
+    private static int ReadProcessId(IUiaTree tree, IUiaNode node)
+    {
+        try
+        {
+            return tree.ReadIdentity(node).ProcessId;
+        }
+        catch (UiaElementUnavailableException)
+        {
+            return tree.ReadVirtualizedItem(node).ProcessId;
+        }
     }
 
     private static bool IsZeroDistanceMove(InputEvent e) =>
