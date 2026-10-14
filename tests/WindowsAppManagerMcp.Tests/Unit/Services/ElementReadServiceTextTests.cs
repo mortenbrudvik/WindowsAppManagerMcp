@@ -337,6 +337,8 @@ public class ElementReadServiceTextTests
         result.Text.Should().BeNull();
         result.TotalLength.Should().BeNull();
         text.Calls.Should().Be(0);
+        text.SelectionReads.Should().Be(0);
+        result.SelectedText.Should().BeNull();
         _tree.Reads.Should().NotContain(r => r.StartsWith("Value:"));
     }
 
@@ -402,6 +404,98 @@ public class ElementReadServiceTextTests
         result.ErrorCode.Should().Be(UIElementErrorCode.ElementAccessFailed);
         result.Error.Should().Contain("realize");
         _tree.Reads.Should().NotContain(r => r.StartsWith("Value:") || r.StartsWith("Pattern:IUiaValuePattern"));
+    }
+
+    #endregion
+
+    #region Selection
+
+    [Fact]
+    public async Task ReadText_OfADocumentWithASelection_ReturnsTheSelectedText()
+    {
+        // Arrange (roadmap M3.F15)
+        var pattern = new FakeTextPattern("Dear team, the release is on Monday.") { Selection = "on Monday" };
+        var elementRef = Add(new FakeUiaNode("Document", "Body") { OtherPatterns = UiaPatterns.Text }.WithPattern<IUiaTextPattern>(pattern));
+
+        // Act
+        var result = await Read(elementRef);
+
+        // Assert
+        result.Text.Should().Be("Dear team, the release is on Monday.");
+        result.SelectedText.Should().Be("on Monday");
+        result.SelectionTruncated.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task ReadText_OfAnEditWithTextAndValue_ReturnsItsSelection()
+    {
+        // Arrange - a Win32 edit under UIA3 has both patterns, holding the same text
+        var pattern = new FakeTextPattern("Quarterly report") { Selection = "report" };
+        var elementRef = Add(new FakeUiaNode("Edit", "Title")
+        {
+            ActionPatterns = ["Value"], OtherPatterns = UiaPatterns.Text, Value = "Quarterly report"
+        }.WithPattern<IUiaTextPattern>(pattern));
+
+        // Act
+        var result = await Read(elementRef);
+
+        // Assert
+        result.Source.Should().Be(ElementTextSource.Text);
+        result.SelectedText.Should().Be("report");
+    }
+
+    [Fact]
+    public async Task ReadText_WithOnlyACaret_LeavesTheSelectionOut()
+    {
+        var pattern = new FakeTextPattern("Hello");
+        var elementRef = Add(new FakeUiaNode("Document", "Body") { OtherPatterns = UiaPatterns.Text }.WithPattern<IUiaTextPattern>(pattern));
+
+        var result = await Read(elementRef);
+
+        result.SelectedText.Should().BeNull();
+        result.SelectionTruncated.Should().BeNull();
+        pattern.SelectionReads.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task ReadText_OfALongSelection_CutsIt_AndSaysSo()
+    {
+        // Arrange - the whole of a long document is selected
+        var document = new string('s', 10_000);
+        var pattern = new FakeTextPattern(document) { Selection = document };
+        var elementRef = Add(new FakeUiaNode("Document", "Body") { OtherPatterns = UiaPatterns.Text }.WithPattern<IUiaTextPattern>(pattern));
+
+        // Act
+        var result = await Read(elementRef, maxLength: 100);
+
+        // Assert
+        result.Text.Should().HaveLength(100);
+        result.SelectedText.Should().HaveLength(ElementReadService.MaxSelectedTextLength);
+        result.SelectionTruncated.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task ReadText_WhenTheSelectionCannotBeRead_StillReturnsThePage()
+    {
+        var pattern = new FakeTextPattern("Hello") { SelectionFailure = new InvalidOperationException("no selection support") };
+        var elementRef = Add(new FakeUiaNode("Document", "Body") { OtherPatterns = UiaPatterns.Text }.WithPattern<IUiaTextPattern>(pattern));
+
+        var result = await Read(elementRef);
+
+        result.Success.Should().BeTrue();
+        result.Text.Should().Be("Hello");
+        result.SelectedText.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task ReadText_OfAnElementWithoutATextPattern_ReadsNoSelection()
+    {
+        var elementRef = Add(new FakeUiaNode("Edit", "Name") { ActionPatterns = ["Value"], Value = "Ann" });
+
+        var result = await Read(elementRef);
+
+        result.Source.Should().Be(ElementTextSource.Value);
+        result.SelectedText.Should().BeNull();
     }
 
     #endregion

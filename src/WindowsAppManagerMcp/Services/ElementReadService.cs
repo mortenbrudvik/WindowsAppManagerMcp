@@ -21,7 +21,11 @@ namespace WindowsAppManagerMcp.Services;
 /// pattern to the next source, but an element with either pattern is never read by its name: an empty edit box is empty, not
 /// its label. The Text pattern comes before the Value pattern (the
 /// design had them the other way round) because a browser document's value is its URL, and because only the Text pattern
-/// can page a long document without reading all of it for every page; where an edit has both, they hold the same text.</para>
+/// can page a long document without reading all of it for every page; where an edit has both, they hold the same text.
+/// An element with the Text pattern also gives its selection with every page (roadmap M3.F15), cut to
+/// <see cref="MaxSelectedTextLength"/> characters. Its text attributes (font, weight, color, ...) are not read: they vary along
+/// a page (a range's attribute is "mixed" as soon as two runs differ), so reporting them would take a walk of the page's
+/// format runs and a list as long as the text.</para>
 /// <para><b>Tables.</b> Only reads: never scrolls, realizes or acts. Through the Grid pattern when the element has it: its row
 /// and column counts, the headers from the Table pattern's column headers (paired with their columns by where they sit when
 /// they are grid items, and their rows then left out of the data rows), else from a Header among the grid's first children.
@@ -30,11 +34,14 @@ namespace WindowsAppManagerMcp.Services;
 /// not realized ends the page (NotRealized). Otherwise a walk of the element's children: DataItem, ListItem and TreeItem
 /// children are the rows (read in one cached call when there are at most <see cref="CachedRowsLimit"/> children), a Header
 /// child or a first row of HeaderItems gives the headers, and a row's children but nested tree items are its cells (a row
-/// without cells is one cell, its own text). A cell's text is its value when it has the
+/// without cells is one cell, its own text). Both walks take the rows inside Group children as rows in their place, numbered
+/// across the groups (roadmap M3.F15). A grid's row headers come with its rows: through the Table pattern for a grid read
+/// through GetItem, unless they are cells of the grid already, and from a HeaderItem in the row for one read through its
+/// rows. A cell's text is its value when it has the
 /// Value pattern (never a password field's: null), else its name, else the names of its children; a cell that disappears is
 /// null. The read stops at the timeout (whole rows only), at <see cref="MaxTableTextBytes"/> bytes of JSON, and between
 /// cells when the token is cancelled; the rows read until the worker abandons a stuck call, or until the table itself
-/// disappears, are still returned.</para>
+/// disappears, are still returned. A page that timed out before its first row has no nextStartRow (roadmap M3.F15).</para>
 /// </remarks>
 public sealed partial class ElementReadService : IElementReadService
 {
@@ -47,6 +54,12 @@ public sealed partial class ElementReadService : IElementReadService
     /// 20,000 CJK, 5,000 emoji. <see cref="MaxTextLength"/> still bounds the characters.
     /// </summary>
     public const int MaxTextBytes = 60_000;
+
+    /// <summary>
+    /// The most characters of the selection read_element_text returns beside its page (roadmap M3.F15): enough for a word, a
+    /// sentence or a paragraph the user picked out; a longer one is cut (selectionTruncated), and its text is in the pages.
+    /// </summary>
+    public const int MaxSelectedTextLength = 1_000;
 
     /// <summary>The most rows one read_table call returns.</summary>
     public const int MaxRowsLimit = 200;
@@ -84,6 +97,9 @@ public sealed partial class ElementReadService : IElementReadService
 
     /// <summary>How many of a realized row's first cells are asked for their GridItem row before the row is placed by its position.</summary>
     private const int RowIndexCells = 3;
+
+    /// <summary>How many levels of Group children a table's rows are looked for in (a grouping by two keys nests two).</summary>
+    private const int MaxGroupDepth = 3;
 
     /// <summary>
     /// The UI frameworks (FrameworkId) whose GridPattern.GetItem only looks the cell up, checked against their sources: the
@@ -284,8 +300,8 @@ public sealed partial class ElementReadService : IElementReadService
             ElementTextResult Read(ElementTextResult result) =>
                 resolved.Moved ? result with { RefMoved = true, Warning = ElementRefs.MovedWarning(resolved.Ref) } : result;
             ElementTextResult Page(string text, ElementTextSource source, int start, int? total, int? next) =>
-                Read(new(true, resolved.Ref, (long)handle, controlType, text, source, start, total, next != null, next,
-                    Elapsed(stopwatch), AccessibilityWarmup: warmup.Value));
+                WithSelection(node, resolved.Element.Patterns, Read(new(true, resolved.Ref, (long)handle, controlType, text, source,
+                    start, total, next != null, next, Elapsed(stopwatch), AccessibilityWarmup: warmup.Value)));
 
             bool isPassword;
             try
@@ -371,6 +387,37 @@ public sealed partial class ElementReadService : IElementReadService
         {
             return Failure($"Error reading the element's text: {ex.Message}", UIElementErrorCode.OperationException);
         }
+    }
+
+    /// <summary>
+    /// The result with the element's selection (roadmap M3.F15) when it has the Text pattern and something is selected: at
+    /// most <see cref="MaxSelectedTextLength"/> characters, never ending inside a surrogate pair. Only for a page read: a
+    /// password field never gets here. The page was read, so a selection that cannot be read is left out, whatever failed.
+    /// </summary>
+    private ElementTextResult WithSelection(IUiaNode node, UiaPatterns patterns, ElementTextResult result)
+    {
+        if ((patterns & UiaPatterns.Text) == 0)
+        {
+            return result;
+        }
+
+        string selected;
+        try
+        {
+            selected = _tree.GetPattern<IUiaTextPattern>(node)?.GetSelectedText(MaxSelectedTextLength + 1) ?? string.Empty;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return result;
+        }
+
+        if (selected.Length == 0)
+        {
+            return result;
+        }
+
+        var end = FittingLength(selected, MaxSelectedTextLength, MaxTextBytes);
+        return result with { SelectedText = selected[..end], SelectionTruncated = end < selected.Length ? true : null };
     }
 
     /// <summary>A page of the Text pattern's document; null when the element has no such pattern or it fails.</summary>

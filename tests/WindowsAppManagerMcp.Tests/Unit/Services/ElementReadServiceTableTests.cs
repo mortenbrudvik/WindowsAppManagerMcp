@@ -416,6 +416,26 @@ public class ElementReadServiceTableTests
         result.NextStartRow.Should().Be(result.Rows.Count);
     }
 
+    [Fact]
+    public async Task ReadTable_WhenTheTimeoutPassesBeforeTheFirstRow_GivesNoNextStartRow_AndSaysToReadThePageAgain()
+    {
+        // Arrange - the page's first cell takes longer than the whole timeout (roadmap M3.F15)
+        var cells = Cells(5, 2);
+        ((FakeUiaNode)cells[3][0]!).OnRead = () => Thread.Sleep(400);
+        var elementRef = Add(Grid(cells, "A", "B"));
+
+        // Act
+        var result = await Read(elementRef, startRow: 3, timeout: TimeSpan.FromMilliseconds(200));
+
+        // Assert - a nextStartRow equal to startRow would send a paging agent round the same page for ever
+        result.Success.Should().BeTrue();
+        result.Rows.Should().BeEmpty();
+        result.Truncated.Should().BeTrue();
+        result.TruncationReason.Should().Be(ElementTableTruncation.Timeout);
+        result.NextStartRow.Should().BeNull();
+        result.Warning.Should().Contain("startRow 3").And.Contain("timeoutMs");
+    }
+
     #endregion
 
     #region Grids whose GetItem scrolls: read through the tree
@@ -424,9 +444,11 @@ public class ElementReadServiceTableTests
     /// A virtualized grid of <paramref name="rowCount"/> rows of <paramref name="columns"/> columns, as WPF's DataGrid exposes it:
     /// the Grid and Table patterns, a Header child, and a DataItem child only for each realized row, whose cells
     /// ("r{row}c{column}") carry their GridItem row and column. GetItem would scroll it, so the test checks it is never called.
+    /// With <paramref name="rowHeaders"/>, each row starts with a HeaderItem, named "#{row}" with
+    /// <paramref name="namedRowHeaders"/> and unnamed (as WPF's blank row headers) without.
     /// </summary>
     private static (FakeUiaNode Grid, FakeGridPattern Pattern) VirtualizedGrid(
-        string? framework, int rowCount, int columns, IEnumerable<int> realized, bool rowHeaders = false)
+        string? framework, int rowCount, int columns, IEnumerable<int> realized, bool rowHeaders = false, bool namedRowHeaders = false)
     {
         var pattern = new FakeGridPattern(Enumerable.Repeat<IReadOnlyList<FakeUiaNode?>>([], rowCount).ToList(), columns);
         var headers = Enumerable.Range(0, columns).Select(c => new FakeUiaNode("HeaderItem", $"Column {c}")).ToArray();
@@ -439,7 +461,7 @@ public class ElementReadServiceTableTests
             var item = new FakeUiaNode("DataItem", "Contoso.Person");
             if (rowHeaders)
             {
-                item.With(new FakeUiaNode("HeaderItem"));
+                item.With(new FakeUiaNode("HeaderItem", namedRowHeaders ? $"#{row}" : null));
             }
 
             item.With(Enumerable.Range(0, columns)
@@ -511,6 +533,7 @@ public class ElementReadServiceTableTests
         result.Rows.Should().HaveCount(10);
         result.Rows![0].Should().Equal("r500c0", "r500c1", "r500c2");
         result.Rows[9][0].Should().Be("r509c0");
+        result.RowHeaders.Should().BeNull("blank row headers say nothing");
         result.TruncationReason.Should().Be(ElementTableTruncation.MaxRows);
         result.NextStartRow.Should().Be(510);
     }
@@ -651,6 +674,143 @@ public class ElementReadServiceTableTests
 
     #endregion
 
+    #region Row headers
+
+    /// <summary>A WinForms grid as <see cref="Grid"/> makes it, whose Table pattern also gives a row header per row.</summary>
+    private static FakeUiaNode GridWithRowHeaders(IReadOnlyList<IReadOnlyList<FakeUiaNode?>> cells, IEnumerable<FakeUiaNode> rowHeaders) =>
+        new FakeUiaNode("DataGrid", "Week") { OtherPatterns = UiaPatterns.Grid | UiaPatterns.Table, FrameworkId = "WinForm" }
+            .WithPattern<IUiaGridPattern>(new FakeGridPattern(cells))
+            .WithPattern<IUiaTablePattern>(new FakeTablePattern(new FakeUiaNode("HeaderItem", "Hours"), new FakeUiaNode("HeaderItem", "Notes"))
+            {
+                RowHeaders = rowHeaders.ToList()
+            });
+
+    [Fact]
+    public async Task ReadTable_OfAGridWithRowHeaders_ReturnsTheRowHeaderOfEachRowOfThePage()
+    {
+        // Arrange - a timesheet whose rows are headed by their day (roadmap M3.F15)
+        var days = new[] { "Mon", "Tue", "Wed", "Thu", "Fri" }.Select(day => new FakeUiaNode("HeaderItem", day));
+        var elementRef = Add(GridWithRowHeaders(Cells(5, 2), days));
+
+        // Act
+        var result = await Read(elementRef, startRow: 1, maxRows: 2);
+
+        // Assert - one per row returned, in the same order; a row header is no column
+        result.Headers.Should().Equal("Hours", "Notes");
+        result.Rows!.Select(r => r[0]).Should().Equal("r1c0", "r2c0");
+        result.RowHeaders.Should().Equal("Tue", "Wed");
+        result.TotalColumns.Should().Be(2);
+    }
+
+    [Fact]
+    public async Task ReadTable_ARowHeaderWithAValue_GivesTheValue_AndARowWithoutOne_Null()
+    {
+        // Arrange - three rows, two row headers: the first holds its text as its value, as a WinForms cell does
+        var headers = new[]
+        {
+            new FakeUiaNode("HeaderItem", "Row 0") { ActionPatterns = ["Value"], Value = "Total" },
+            new FakeUiaNode("HeaderItem", "Average")
+        };
+        var elementRef = Add(GridWithRowHeaders(Cells(3, 2), headers));
+
+        // Act
+        var result = await Read(elementRef);
+
+        // Assert
+        result.Rows.Should().HaveCount(3);
+        result.RowHeaders.Should().Equal("Total", "Average", null);
+    }
+
+    [Fact]
+    public async Task ReadTable_OfAGridWithoutRowHeaders_LeavesThemOut()
+    {
+        // Arrange
+        var table = new FakeTablePattern(new FakeUiaNode("HeaderItem", "A"), new FakeUiaNode("HeaderItem", "B"));
+        var elementRef = Add(new FakeUiaNode("DataGrid", "Rows") { OtherPatterns = UiaPatterns.Grid | UiaPatterns.Table, FrameworkId = "WinForm" }
+            .WithPattern<IUiaGridPattern>(new FakeGridPattern(Cells(2, 2)))
+            .WithPattern<IUiaTablePattern>(table));
+
+        // Act
+        var result = await Read(elementRef);
+
+        // Assert
+        result.Rows.Should().HaveCount(2);
+        result.RowHeaders.Should().BeNull();
+        table.RowHeaderCalls.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task ReadTable_OfAGridWhoseRowHeadersAreBlank_LeavesThemOut()
+    {
+        var blank = Enumerable.Range(0, 3).Select(_ => new FakeUiaNode("HeaderItem", ""));
+        var elementRef = Add(GridWithRowHeaders(Cells(3, 2), blank));
+
+        var result = await Read(elementRef);
+
+        result.Rows.Should().HaveCount(3);
+        result.RowHeaders.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task ReadTable_RowHeadersThatAreCellsOfTheGrid_AreReadOnceInTheirRow_NotAgainAsRowHeaders()
+    {
+        // Arrange - an HTML table with a th scope=row in each row: Chromium gives it as a cell (column 0) and a row header
+        var cells = Enumerable.Range(0, 3)
+            .Select(r => (IReadOnlyList<FakeUiaNode?>)new List<FakeUiaNode?>
+            {
+                new FakeUiaNode("HeaderItem", $"Item {r}").WithPattern<IUiaGridItemPattern>(new FakeGridItemPattern(r, 0)),
+                Cell($"r{r}c1")
+            })
+            .ToList();
+        var grid = new FakeUiaNode("Table", "Prices") { OtherPatterns = UiaPatterns.Grid | UiaPatterns.Table, FrameworkId = "Chrome" }
+            .WithPattern<IUiaGridPattern>(new FakeGridPattern(cells))
+            .WithPattern<IUiaTablePattern>(new FakeTablePattern { RowHeaders = cells.Select(row => row[0]!).ToList() });
+        var elementRef = Add(grid);
+
+        // Act
+        var result = await Read(elementRef);
+
+        // Assert
+        result.Rows![0].Should().Equal("Item 0", "r0c1");
+        result.RowHeaders.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task ReadTable_OfAGridReadThroughTheTree_TakesEachRowsHeaderItemAsItsRowHeader()
+    {
+        // Arrange - a WPF DataGrid with row headers: each realized row starts with its DataGridRowHeader, a HeaderItem
+        var (grid, _) = VirtualizedGrid("WPF", 10, 2, Enumerable.Range(0, 10), rowHeaders: true, namedRowHeaders: true);
+        var elementRef = Add(grid);
+
+        // Act
+        var result = await Read(elementRef, startRow: 4, maxRows: 3);
+
+        // Assert
+        result.Rows!.Select(r => r[0]).Should().Equal("r4c0", "r5c0", "r6c0");
+        result.Rows.Should().OnlyContain(row => row.Count == 2);
+        result.RowHeaders.Should().Equal("#4", "#5", "#6");
+    }
+
+    [Fact]
+    public async Task ReadTable_CountsRowHeadersInTheSizeLimit()
+    {
+        // Arrange - 100 rows of one short cell, each headed by a 400-character row header: 40,000 characters of headers alone
+        var headers = Enumerable.Range(0, 100).Select(_ => new FakeUiaNode("HeaderItem", new string('h', 400)));
+        var cells = Enumerable.Range(0, 100).Select(_ => (IReadOnlyList<FakeUiaNode?>)new List<FakeUiaNode?> { Cell("x") }).ToList();
+        var elementRef = Add(GridWithRowHeaders(cells, headers));
+
+        // Act
+        var result = await Read(elementRef, maxRows: 200);
+
+        // Assert
+        result.TruncationReason.Should().Be(ElementTableTruncation.Size);
+        result.RowHeaders.Should().HaveCount(result.Rows!.Count);
+        result.RowHeaders!.Sum(h => h!.Length + 3).Should().BeLessThanOrEqualTo(ElementReadService.MaxTableTextBytes);
+        result.NextStartRow.Should().Be(result.Rows.Count);
+    }
+
+    #endregion
+
     #region Rows walk
 
     [Fact]
@@ -745,6 +905,95 @@ public class ElementReadServiceTableTests
         // Assert
         result.Rows.Should().ContainSingle().Which.Should().Equal("a", "b");
         result.TotalColumns.Should().Be(2);
+    }
+
+    [Fact]
+    public async Task ReadTable_OfAGroupedList_ReadsTheRowsInsideItsGroups_InOrder()
+    {
+        // Arrange - Explorer's details view grouped by date: no Grid pattern, the column headers, then a Group per group
+        var list = new FakeUiaNode("List", "Items View").With(
+            new FakeUiaNode("Header").With(new FakeUiaNode("HeaderItem", "Name"), new FakeUiaNode("HeaderItem", "Size")),
+            new FakeUiaNode("Group", "Today").With(
+                new FakeUiaNode("ListItem", "a.txt").With(new FakeUiaNode("Text", "a.txt"), new FakeUiaNode("Text", "1 KB")),
+                new FakeUiaNode("ListItem", "b.txt").With(new FakeUiaNode("Text", "b.txt"), new FakeUiaNode("Text", "2 KB"))),
+            new FakeUiaNode("Group", "Last week").With(
+                new FakeUiaNode("ListItem", "c.txt").With(new FakeUiaNode("Text", "c.txt"), new FakeUiaNode("Text", "3 KB"))));
+        var elementRef = Add(list);
+
+        // Act
+        var result = await Read(elementRef);
+
+        // Assert (roadmap M3.F15)
+        result.Success.Should().BeTrue(result.Error);
+        result.Source.Should().Be(ElementTableSource.Rows);
+        result.Headers.Should().Equal("Name", "Size");
+        result.Rows!.Select(r => r[0]).Should().Equal("a.txt", "b.txt", "c.txt");
+        result.Rows![2].Should().Equal("c.txt", "3 KB");
+        result.TotalRows.Should().Be(3);
+        result.Truncated.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task ReadTable_OfAGroupedList_NumbersItsRowsAcrossTheGroups_SoThatPagesFollowOn()
+    {
+        // Arrange - a group of three, and a group holding a group of two and a row
+        var list = new FakeUiaNode("List", "Items View").With(
+            new FakeUiaNode("Group", "Today").With(new FakeUiaNode("ListItem", "0"), new FakeUiaNode("ListItem", "1"), new FakeUiaNode("ListItem", "2")),
+            new FakeUiaNode("Group", "Earlier").With(
+                new FakeUiaNode("Group", "Last week").With(new FakeUiaNode("ListItem", "3"), new FakeUiaNode("ListItem", "4")),
+                new FakeUiaNode("ListItem", "5")));
+        var elementRef = Add(list);
+
+        // Act
+        var first = await Read(elementRef, maxRows: 2);
+        var second = await Read(elementRef, startRow: first.NextStartRow!.Value, maxRows: 2);
+        var third = await Read(elementRef, startRow: second.NextStartRow!.Value, maxRows: 2);
+
+        // Assert
+        first.Rows!.Select(r => r[0]).Should().Equal("0", "1");
+        first.NextStartRow.Should().Be(2);
+        second.Rows!.Select(r => r[0]).Should().Equal("2", "3");
+        second.NextStartRow.Should().Be(4);
+        third.Rows!.Select(r => r[0]).Should().Equal("4", "5");
+        third.NextStartRow.Should().BeNull();
+        third.TotalRows.Should().Be(6);
+    }
+
+    [Fact]
+    public async Task ReadTable_OfAGroupedGridReadThroughTheTree_ReadsTheRealizedRowsInsideItsGroups()
+    {
+        // Arrange - a grouped WPF DataGrid: its rows sit in a GroupItem (Group) per group, placed by their cells' GridItem row
+        var (grid, pattern) = VirtualizedGrid("WPF", 4, 2, []);
+        foreach (var (name, rows) in new[] { ("Open", new[] { 0, 1 }), ("Closed", new[] { 2, 3 }) })
+        {
+            grid.With(new FakeUiaNode("Group", name).With(rows
+                .Select(row => new FakeUiaNode("DataItem", "Contoso.Ticket").With(Enumerable.Range(0, 2)
+                    .Select(c => new FakeUiaNode("Custom", $"r{row}c{c}").WithPattern<IUiaGridItemPattern>(new FakeGridItemPattern(row, c)))
+                    .ToArray()))
+                .ToArray()));
+        }
+
+        var elementRef = Add(grid);
+
+        // Act
+        var result = await Read(elementRef, startRow: 1);
+
+        // Assert
+        pattern.Items.Should().BeEmpty();
+        result.Rows!.Select(r => r[0]).Should().Equal("r1c0", "r2c0", "r3c0");
+        result.TotalRows.Should().Be(4);
+        result.Truncated.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task ReadTable_OfAnElementWhoseGroupsHoldNoRows_FailsWithPatternNotSupported()
+    {
+        var pane = new FakeUiaNode("Pane", "Settings").With(new FakeUiaNode("Group", "Display").With(new FakeUiaNode("Button", "Apply")));
+        var elementRef = Add(pane);
+
+        var result = await Read(elementRef);
+
+        result.ErrorCode.Should().Be(UIElementErrorCode.PatternNotSupported);
     }
 
     [Fact]
