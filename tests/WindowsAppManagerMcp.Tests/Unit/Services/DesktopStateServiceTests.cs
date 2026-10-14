@@ -151,6 +151,31 @@ public class DesktopStateServiceTests
     }
 
     [Fact]
+    public async Task ALongTitleOrAutomationId_IsCut_WhereverTheObservationReturnsIt()
+    {
+        // roadmap M3.F14: the application chooses them; the window in front, its row and the focused element's id are cut
+        var title = "notes.txt " + new string('n', 5000) + " - Notepad";
+        var notepad = Window(Notepad, title, "notepad");
+        _windows.Setup(w => w.GetForegroundWindow()).Returns(notepad);
+        _windows.Setup(w => w.GetAllWindows(It.IsAny<bool>())).Returns([notepad]);
+        _windows.Setup(w => w.GetWindowInfo(Notepad)).Returns(notepad);
+        var id = "editor-" + new string('i', 5000);
+        _inspection.Setup(i => i.GetFocusedElementAsync(It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new FocusedElementResult(true,
+                new UIElementDetails("Text editor", "Document", id, "RichEditD2DPT", "Win32", new BoundsDto(8, 80, 1200, 700),
+                    true, false, true, true, false, ["Value"], Ref: "w4120035e3"),
+                Notepad, title, 4242, "notepad", 3));
+
+        var (state, _) = await CreateSut().GetStateAsync(Request(), CancellationToken.None);
+
+        var cut = title[..(AppText.MaxLength - 1)] + "…";
+        state.WindowTitle.Should().Be(cut);
+        state.Foreground!.Title.Should().Be(cut);
+        state.Windows!.Single().Title.Should().Be(cut);
+        state.Focus!.AutomationId.Should().Be(id[..(AppText.MaxLength - 1)] + "…");
+    }
+
+    [Fact]
     public async Task OnlyTheSectionsAskedFor_AreRead()
     {
         var (state, _) = await CreateSut().GetStateAsync(Request(include: new HashSet<DesktopStateSection> { DesktopStateSection.Focus }),

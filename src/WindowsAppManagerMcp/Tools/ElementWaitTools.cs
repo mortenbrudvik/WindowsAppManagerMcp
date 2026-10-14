@@ -68,7 +68,10 @@ public class ElementWaitTools
     {
         var request = CheckArguments(window, @ref, name, nameMatch, automationId, controlType, className, withinRef, scope, condition, expected,
             timeoutMs);
-        return await _wait.WaitAsync(request, ToolProgress.ForServices(progress), cancellationToken).ConfigureAwait(false);
+        var result = await _wait.WaitAsync(request, ToolProgress.ForServices(progress), cancellationToken).ConfigureAwait(false);
+
+        // The wait compared the whole AutomationId; the element is returned as find_ui_elements returns it (roadmap M3.F14)
+        return result.Element is { } element ? result with { Element = element.Bounded() } : result;
     }
 
     /// <summary>The request, or InvalidArguments (InvalidControlType for an unknown control type) before anything waits.</summary>

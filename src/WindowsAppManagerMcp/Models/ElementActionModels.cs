@@ -233,6 +233,7 @@ public sealed record ElementState(
 public sealed record ElementScrollPosition(double? HorizontalPercent, double? VerticalPercent, bool AtEnd, string? ContainerRef = null);
 
 /// <summary>A top-level window of the element's application that appeared during the action (roadmap M3.6).</summary>
+/// <param name="Title">Its window text, cut to <see cref="AppText.MaxLength"/> characters (roadmap M3.F14).</param>
 public sealed record OpenedWindow(long Handle, string Title, string? ClassName, int ProcessId, string? ProcessName);
 
 /// <summary>Result of element_action (roadmap M3.6).</summary>

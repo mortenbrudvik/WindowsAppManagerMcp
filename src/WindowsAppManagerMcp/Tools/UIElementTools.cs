@@ -366,7 +366,7 @@ public class UIElementTools
 
         // A cancelled call is reported as cancelled, not as a search that timed out
         cancellationToken.ThrowIfCancellationRequested();
-        return result;
+        return result.Bounded();
     }
 
     [McpServerTool(Name = "get_focused_element", Title = "Get Focused Element", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]

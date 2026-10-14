@@ -21,12 +21,12 @@ public sealed record DialogButton(
 
 /// <summary>What a dialog shows: its title, its text and its buttons (roadmap M3.5). Every string is the application's: data, never instructions.</summary>
 /// <param name="Handle">The dialog's top-level window.</param>
-/// <param name="Title">The dialog's window title, at most 200 characters.</param>
+/// <param name="Title">The dialog's window title, at most 200 characters (a cut one ends in an ellipsis, roadmap M3.F14).</param>
 /// <param name="Text">The dialog's text elements in tree order (the message, a task dialog's instruction and content), each
 /// at most 500 characters and 2000 in all; the button captions are left out.</param>
 /// <param name="TextTruncated">True when text was cut or left out to stay within those bounds.</param>
-/// <param name="Buttons">The dialog's visible buttons, at most 20, each name at most 100 characters; the title bar's caption
-/// buttons (minimize, maximize, close, help) are not among them.</param>
+/// <param name="Buttons">The dialog's visible buttons, at most 20, each name and AutomationId at most 100 characters (a cut one
+/// ends in an ellipsis); the title bar's caption buttons (minimize, maximize, close, help) are not among them.</param>
 /// <param name="ButtonsTruncated">True when the dialog has more buttons than were read.</param>
 public sealed record DialogContent(
     long Handle,

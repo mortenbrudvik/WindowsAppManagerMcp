@@ -235,4 +235,29 @@ public class FindUIElementsToolTests
 
         json.Should().StartWith("{\"ref\":\"w4120035e17\",\"name\":\"Save\"");
     }
+
+    #region Bounded AutomationIds and titles (roadmap M3.F14)
+
+    [Fact]
+    public async Task Find_CutsALongAutomationIdAndWindowTitle_InTheResult_ButSearchesForTheWholeAutomationId()
+    {
+        // An application chooses both: the result is cut, the criterion reaches the provider whole
+        var id = "row-" + new string('7', 5000);
+        var title = "Report - " + new string('t', 5000);
+        _search.Setup(s => s.FindAsync(It.IsAny<ElementQuery>(), It.IsAny<CancellationToken>()))
+            .Callback((ElementQuery query, CancellationToken _) => _query = query)
+            .ReturnsAsync((ElementQuery query, CancellationToken _) => new FindElementsResult(true, query.WindowHandle, title, 2, false,
+            [
+                new FoundElement("w1e1", "Row", "ListItem", id, null, null, null, true, false, []),
+                new FoundElement("w1e2", "Save", "Button", "SaveBtn", null, null, null, true, false, [])
+            ], 1));
+
+        var result = await CreateSut().FindUIElements(handle: Handle, automationId: id);
+
+        _query!.AutomationId.Should().Be(id);
+        result.WindowTitle.Should().Be(title[..(AppText.MaxLength - 1)] + "…");
+        result.Elements!.Select(e => e.AutomationId).Should().Equal(id[..(AppText.MaxLength - 1)] + "…", "SaveBtn");
+    }
+
+    #endregion
 }
