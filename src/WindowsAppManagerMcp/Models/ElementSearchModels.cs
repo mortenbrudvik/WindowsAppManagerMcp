@@ -253,7 +253,8 @@ public record ElementQuery(
     /// Also search the items of the window's lists that are not realized yet (roadmap M3.10; default false): after the tree
     /// search, the List, Tree, DataGrid and Table elements of the named window (or withinRef's element) that support the
     /// ItemContainer pattern are asked for items whose automation id (else whole name) equals the criterion
-    /// (FindItemByProperty, compared by the provider, usually case-sensitively). Only reads: nothing is realized or scrolled.
+    /// (FindItemByProperty, compared by the provider, usually case-sensitively; when no item has the text exactly, it is asked
+    /// for again in the usual other cases: roadmap M3.F19). Only reads: nothing is realized or scrolled.
     /// Needs automationId, or name with nameMatch exact (<see cref="Services.ElementSearchService.VirtualizedArgumentError"/>).
     /// </summary>
     public bool SearchVirtualized { get; init; }
