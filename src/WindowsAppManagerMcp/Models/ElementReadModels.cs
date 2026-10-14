@@ -107,6 +107,12 @@ public sealed record ElementTableRequest(
 /// <param name="RefMoved">True when the ref read was moved to a re-created element that alone fits its description (the
 /// element it was given for is gone), with <paramref name="Warning"/>; left out otherwise.</param>
 /// <param name="Warning">Why the text needs a check although it was read: the ref moved.</param>
+/// <param name="SelectedText">The text selected in the element (roadmap M3.F15), through its Text pattern: several selected
+/// ranges joined by newlines, at most <see cref="Services.ElementReadService.MaxSelectedTextLength"/> characters, whatever page
+/// was read. Left out when nothing is selected (a caret alone), when the element has no Text pattern or its selection cannot be
+/// read, and for a password field.</param>
+/// <param name="SelectionTruncated">True when <paramref name="SelectedText"/> is only the start of the selection; left out
+/// otherwise.</param>
 public sealed record ElementTextResult(
     bool Success,
     string? Ref,
@@ -126,7 +132,9 @@ public sealed record ElementTextResult(
     AccessibilityWarmupInfo? AccessibilityWarmup = null,
     bool? TextSkipped = null,
     bool? RefMoved = null,
-    string? Warning = null
+    string? Warning = null,
+    string? SelectedText = null,
+    bool? SelectionTruncated = null
 );
 
 /// <summary>Result of read_table (roadmap M3.9).</summary>
@@ -140,13 +148,19 @@ public sealed record ElementTextResult(
 /// every row child read).</param>
 /// <param name="TotalColumns">How many columns the table has: the Grid pattern's column count, or the most cells or headers seen.</param>
 /// <param name="Truncated">True when the result does not hold every row from <paramref name="StartRow"/> on, or every column.</param>
-/// <param name="NextStartRow">The startRow of the next page, when rows were left out.</param>
+/// <param name="NextStartRow">The startRow of the next page, when rows were left out; left out too when the timeout passed
+/// before the page's first row was read (roadmap M3.F15), since the next page is this one: <paramref name="Warning"/> says to
+/// read it again with more time.</param>
 /// <param name="CellsTruncated">True when a header or cell was cut to the cell length limit; left out otherwise.</param>
 /// <param name="RefMoved">True when the ref was moved to a re-created element that alone fits its description (the element
 /// it was given for is gone), with <paramref name="Warning"/>; left out otherwise.</param>
 /// <param name="Warning">Why the table needs a check although it was read (the ref moved), and why the page ended early and
-/// what to do (NotRealized: scroll the grid with element_action and read on; Disappeared: find the table again); left out
-/// otherwise.</param>
+/// what to do (NotRealized: scroll the grid with element_action and read on; Disappeared: find the table again; Timeout before
+/// the first row: read the page again with a larger timeout); left out otherwise.</param>
+/// <param name="RowHeaders">The row header of each row returned, in the order of <paramref name="Rows"/> (roadmap M3.F15):
+/// null for a row without one. Only for a grid: its Table pattern's row headers, or the HeaderItem that starts a row read
+/// through the tree. Left out when no row of the page has a row header with text, and for row headers that are cells of the
+/// grid (an HTML table's th in a row), which are in their row already.</param>
 public sealed record ElementTableResult(
     bool Success,
     string? Ref,
@@ -166,5 +180,6 @@ public sealed record ElementTableResult(
     UIElementErrorCode ErrorCode = UIElementErrorCode.None,
     AccessibilityWarmupInfo? AccessibilityWarmup = null,
     bool? RefMoved = null,
-    string? Warning = null
+    string? Warning = null,
+    IReadOnlyList<string?>? RowHeaders = null
 );

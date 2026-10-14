@@ -39,8 +39,8 @@ public sealed class FakeSelectionItemPattern(bool isSelected) : IUiaSelectionIte
 /// A Text pattern over a document string (roadmap M3.9). A page is cut from the document by character, as a provider whose
 /// character unit is one UTF-16 code unit does; <see cref="LineBreakIsOneCharacter"/> makes "\r\n" one character, as some
 /// providers count it, and <see cref="CharacterLength"/> makes every character longer. Like a provider's range, and unlike
-/// the engines' adapters, a page holds the whole text of the characters it spans, however long. Every call is counted;
-/// <see cref="Failure"/> makes every call throw.
+/// the engines' adapters, a page holds the whole text of the characters it spans, however long. <see cref="Selection"/> is the
+/// selected text (roadmap M3.F15). Every call is counted; <see cref="Failure"/> makes every call throw.
 /// </summary>
 public sealed class FakeTextPattern(string document) : IUiaTextPattern
 {
@@ -61,6 +61,15 @@ public sealed class FakeTextPattern(string document) : IUiaTextPattern
     /// <summary>Runs before every page is returned.</summary>
     public Action? OnGetTextPage { get; set; }
 
+    /// <summary>The selected text, ranges joined by newlines as the engines join them (empty: nothing selected).</summary>
+    public string Selection { get; set; } = string.Empty;
+
+    /// <summary>Thrown by <see cref="GetSelectedText"/> when set.</summary>
+    public Exception? SelectionFailure { get; set; }
+
+    /// <summary>How many times the selection was read.</summary>
+    public int SelectionReads { get; private set; }
+
     /// <summary>How many times any method was called.</summary>
     public int Calls { get; private set; }
 
@@ -74,8 +83,14 @@ public sealed class FakeTextPattern(string document) : IUiaTextPattern
     public string GetSelectedText(int maxLength)
     {
         Calls++;
+        SelectionReads++;
         ThrowIfFailing();
-        return string.Empty;
+        if (SelectionFailure != null)
+        {
+            throw SelectionFailure;
+        }
+
+        return maxLength >= 0 && Selection.Length > maxLength ? Selection[..maxLength] : Selection;
     }
 
     public UiaTextPage GetTextPage(int offset, int maxLength)
@@ -177,7 +192,7 @@ public sealed class FakeGridItemPattern(int row, int column, int rowSpan = 1, in
     }
 }
 
-/// <summary>A Table pattern with column headers (roadmap M3.9).</summary>
+/// <summary>A Table pattern with column headers (roadmap M3.9), and row headers when the test sets them (roadmap M3.F15).</summary>
 public sealed class FakeTablePattern(params FakeUiaNode[] columnHeaders) : IUiaTablePattern
 {
     public UiaRowOrColumnMajor RowOrColumnMajor => UiaRowOrColumnMajor.RowMajor;
@@ -185,8 +200,18 @@ public sealed class FakeTablePattern(params FakeUiaNode[] columnHeaders) : IUiaT
     /// <summary>Thrown by <see cref="GetColumnHeaders"/> when set.</summary>
     public Exception? HeadersException { get; set; }
 
+    /// <summary>What <see cref="GetRowHeaders"/> returns: none unless the test sets them.</summary>
+    public IReadOnlyList<FakeUiaNode> RowHeaders { get; init; } = [];
+
+    /// <summary>How many times the row headers were asked for.</summary>
+    public int RowHeaderCalls { get; private set; }
+
     public IReadOnlyList<IUiaNode> GetColumnHeaders() =>
         HeadersException != null ? throw HeadersException : columnHeaders;
 
-    public IReadOnlyList<IUiaNode> GetRowHeaders() => [];
+    public IReadOnlyList<IUiaNode> GetRowHeaders()
+    {
+        RowHeaderCalls++;
+        return RowHeaders;
+    }
 }
