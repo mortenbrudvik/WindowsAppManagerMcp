@@ -3265,7 +3265,7 @@
             "default": null
           },
           "placement": {
-            "description": "Where to put the window once it is found (implies waiting for it): snap (a snap_window position) or bounds (the visible frame, as set_window_bounds), monitorIndex, state (normal, maximized or minimized) and focus (as focus_window). Checked before anything is launched: unknown values fail with InvalidSnapPosition or InvalidState, contradictions (snap with bounds, bounds with monitorIndex, maximized with snap or bounds, focus with minimized, or nothing asked) with InvalidArguments, a monitor that does not exist with InvalidMonitorIndex. The window is checked again about 500 ms after it is placed and placed once more if the app moved it back (reapplied: true)",
+            "description": "Where to put the window once it is found (implies waiting for it): snap (a snap_window position) or bounds (the visible frame, as set_window_bounds), monitorIndex, state (normal, maximized or minimized) and focus (as focus_window). Checked before anything is launched: unknown values fail with InvalidSnapPosition or InvalidState, contradictions (snap with bounds, bounds with monitorIndex, maximized with snap or bounds, focus with minimized, or nothing asked) with InvalidArguments, a monitor that does not exist with InvalidMonitorIndex. The window is then watched for up to 3 s and placed again each time the app moves it back, up to 3 times (reapplied: true)",
             "type": [
               "object",
               "null"
@@ -3383,7 +3383,7 @@
     {
       "name": "launch_applications_batch",
       "title": "Launch Applications (Batch)",
-      "description": "Launch multiple applications in a single batch operation. Each item is launched as by launch_application, in order; with waitForWindows the windows are then waited for together, and each result has its own launchStatus, window and errorCode. An item that is null fails alone with InvalidArguments; the others are still launched. Each item can have a placement, reuseExisting and forceAccessibility, as launch_application takes them: an item whose placement is invalid fails alone and is not launched, and at most one item may ask for focus (InvalidArguments, nothing launched). With a placement on any item every window is waited for; the windows are placed after all of them were found, in order, and checked again together once.",
+      "description": "Launch multiple applications in a single batch operation. Each item is launched as by launch_application, in order; with waitForWindows the windows are then waited for together, and each result has its own launchStatus, window and errorCode. An item that is null fails alone with InvalidArguments; the others are still launched. Each item can have a placement, reuseExisting and forceAccessibility, as launch_application takes them: an item whose placement is invalid fails alone and is not launched, and at most one item may ask for focus (InvalidArguments, nothing launched). With a placement on any item every window is waited for; the windows are placed after all of them were found, in order, and watched together until they stay put.",
       "inputSchema": {
         "type": "object",
         "properties": {

@@ -1,10 +1,10 @@
 namespace WindowsAppManagerMcp.Tests.Unit.Services;
 
 /// <summary>
-/// Unit tests for <see cref="LaunchPlacementService"/> (roadmap M3.13): a launch's window is placed through the window
-/// service, checked again once after the recheck delay and placed a second time when the app moved it back, then
-/// focused through the foreground service. Every window here lives in a dictionary behind mocks; nothing reaches the
-/// desktop.
+/// Unit tests for <see cref="LaunchPlacementService"/> (roadmap M3.13, M3.F27): a launch's window is placed through the
+/// window service, watched until it stays where it was put (placed again each time the app moves it back, a bounded
+/// number of times, within the settle time), then focused through the foreground service. Every window here lives in a
+/// dictionary behind mocks, and the waits move a manual clock; nothing reaches the desktop and nothing waits.
 /// </summary>
 public class LaunchPlacementServiceTests
 {
@@ -19,13 +19,19 @@ public class LaunchPlacementServiceTests
     private readonly Dictionary<nint, WindowInfo> _desktop = [];
     private readonly List<string> _calls = [];
     private readonly List<TimeSpan> _delays = [];
+    private readonly ManualClock _clock = new();
+    private readonly DateTimeOffset _start;
     private nint _inFront;
 
-    /// <summary>What the app does while the service waits before its recheck (an app that restores its saved bounds).</summary>
-    private Action? _duringDelay;
+    /// <summary>What the app does on its own, and when (time since the placement): each runs once, during the wait that reaches it.</summary>
+    private readonly List<(TimeSpan At, Action Act)> _app = [];
+
+    /// <summary>What the app does during every wait (an app that fights the placement).</summary>
+    private Action? _duringEveryDelay;
 
     public LaunchPlacementServiceTests()
     {
+        _start = _clock.Now;
         Add(Code, "Code", SavedBounds);
         Add(Terminal, "WindowsTerminal", new WindowRect(50, 50, 700, 500));
 
@@ -91,13 +97,33 @@ public class LaunchPlacementServiceTests
         return WindowChangeResult.Done(handle);
     }
 
-    private LaunchPlacementService CreateSut() => new(_windows.Object, _foreground.Object, _session.Object, delay: (delay, _) =>
+    private LaunchPlacementService CreateSut() => new(_windows.Object, _foreground.Object, _session.Object, _clock, (delay, token) =>
     {
+        token.ThrowIfCancellationRequested();
         _delays.Add(delay);
         _calls.Add("delay");
-        _duringDelay?.Invoke();
+        _clock.Advance(delay);
+        foreach (var move in _app.Where(m => m.At <= Elapsed).ToList())
+        {
+            _app.Remove(move);
+            move.Act();
+        }
+
+        _duringEveryDelay?.Invoke();
+        token.ThrowIfCancellationRequested();
         return Task.CompletedTask;
     });
+
+    /// <summary>The time the service has waited since the test began.</summary>
+    private TimeSpan Elapsed => _clock.Now - _start;
+
+    /// <summary>The app does <paramref name="act"/> on its own <paramref name="ms"/> milliseconds after the placement.</summary>
+    private void At(int ms, Action act) => _app.Add((TimeSpan.FromMilliseconds(ms), act));
+
+    private static TimeSpan Ms(int ms) => TimeSpan.FromMilliseconds(ms);
+
+    /// <summary>The calls other than the waits.</summary>
+    private IEnumerable<string> Actions => _calls.Where(c => c != "delay");
 
     private static LaunchPlacementPlan Plan(LaunchPlacement placement)
     {
@@ -109,53 +135,164 @@ public class LaunchPlacementServiceTests
         (await CreateSut().PlaceAsync([(handle, Plan(placement))])).Single();
 
     [Fact]
-    public async Task Snap_PlacesTheWindow_WaitsOnce_AndReportsWhereItIs()
+    public void TheTimes_AreWhatTheDocumentationSays()
+    {
+        LaunchPlacementService.FirstCheckDelay.Should().Be(Ms(250));
+        LaunchPlacementService.MaxCheckInterval.Should().Be(TimeSpan.FromSeconds(1));
+        LaunchPlacementService.StableTime.Should().Be(TimeSpan.FromSeconds(1));
+        LaunchPlacementService.SettleTime.Should().Be(TimeSpan.FromSeconds(3));
+        LaunchPlacementService.MaxReapplies.Should().Be(3);
+    }
+
+    [Fact]
+    public async Task Snap_PlacesTheWindow_WatchesItUntilItStaysPut_AndReportsWhereItIs()
     {
         var outcome = await PlaceOneAsync(Code, new LaunchPlacement(Snap: "left_half", MonitorIndex: 1));
 
         outcome.Success.Should().BeTrue();
         outcome.Reapplied.Should().BeFalse("the app left the window where it was put");
+        outcome.Warning.Should().BeNull();
         outcome.Window!.VisibleBounds.Should().Be(LeftHalf);
         outcome.Focused.Should().BeFalse();
-        _calls.Should().Equal("snap LeftHalf 1", "delay");
-        _delays.Should().Equal(LaunchPlacementService.DefaultRecheckDelay);
-        LaunchPlacementService.DefaultRecheckDelay.Should().Be(TimeSpan.FromMilliseconds(500));
+        _calls.Should().Equal("snap LeftHalf 1", "delay", "delay", "delay");
+
+        // Checks at increasing intervals, and the last one when the window has stayed put for the stable time
+        _delays.Should().Equal(Ms(250), Ms(500), Ms(250));
+        Elapsed.Should().Be(LaunchPlacementService.StableTime);
     }
 
     [Fact]
-    public async Task AnAppThatRestoresItsSavedBounds_IsPlacedOnceMore_AndOnlyOnce()
+    public async Task AnAppThatRestoresItsSavedBounds_IsPlacedOnceMore_AndWatchedUntilItStaysPut()
     {
-        // The app puts its window back where it saved it, each time it is moved (VS Code, Chrome)
-        _duringDelay = () => Place(Code, SavedBounds);
+        // The app puts its window back where it saved it shortly after it shows it (VS Code, Chrome)
+        At(100, () => Place(Code, SavedBounds));
+
+        var outcome = await PlaceOneAsync(Code, new LaunchPlacement(Snap: "left_half"));
+
+        outcome.Success.Should().BeTrue();
+        outcome.Reapplied.Should().BeTrue();
+        outcome.Warning.Should().BeNull();
+        outcome.Window!.VisibleBounds.Should().Be(LeftHalf);
+        _calls.Should().Equal("snap LeftHalf ", "delay", "snap LeftHalf ", "delay", "delay", "delay");
+
+        // Placed again at 250 ms; the checks start over from the first interval and end once it stayed put for a second
+        _delays.Should().Equal(Ms(250), Ms(250), Ms(500), Ms(250));
+        Elapsed.Should().Be(Ms(1250));
+    }
+
+    [Fact]
+    public async Task AnAppThatMovesItsWindowLater_ThanTheFirstChecks_IsFollowed()
+    {
+        // Before, the one check after 500 ms missed a window the app moved after it
+        At(900, () => Place(Code, SavedBounds));
 
         var outcome = await PlaceOneAsync(Code, new LaunchPlacement(Snap: "left_half"));
 
         outcome.Success.Should().BeTrue();
         outcome.Reapplied.Should().BeTrue();
         outcome.Window!.VisibleBounds.Should().Be(LeftHalf);
-        _calls.Should().Equal("snap LeftHalf ", "delay", "snap LeftHalf ");
+        Actions.Should().Equal("snap LeftHalf ", "snap LeftHalf ");
+        Elapsed.Should().Be(Ms(2000), "placed again at 1 s, the window then stayed put for a second");
+    }
+
+    [Fact]
+    public async Task AnAppThatMovesItsWindowTwice_IsFollowedBothTimes()
+    {
+        At(100, () => Place(Code, SavedBounds));
+        At(600, () => _desktop[Code] = _desktop[Code] with { State = WindowState.Maximized });
+
+        var outcome = await PlaceOneAsync(Code, new LaunchPlacement(Snap: "left_half"));
+
+        outcome.Success.Should().BeTrue();
+        outcome.Reapplied.Should().BeTrue();
+        outcome.Warning.Should().BeNull();
+        outcome.Window!.VisibleBounds.Should().Be(LeftHalf);
+        outcome.Window.State.Should().Be(WindowState.Normal);
+        Actions.Should().Equal("snap LeftHalf ", "snap LeftHalf ", "snap LeftHalf ");
+    }
+
+    [Fact]
+    public async Task AnAppThatFightsThePlacement_IsPlacedAgainAtMostMaxReappliesTimes_AndReportedWithAWarning()
+    {
+        // The app puts its window back each time it is placed
+        _duringEveryDelay = () => Place(Code, SavedBounds);
+
+        var outcome = await PlaceOneAsync(Code, new LaunchPlacement(Snap: "left_half", Focus: true));
+
+        outcome.Success.Should().BeTrue("the window was placed each time; the app moved it");
+        outcome.Reapplied.Should().BeTrue();
+        outcome.Window!.VisibleBounds.Should().Be(SavedBounds, "it is left where the app put it");
+        outcome.Warning.Should().Contain("moved its window again").And.Contain("4 times").And.Contain("do not launch it again");
+        outcome.Focused.Should().BeTrue("focus still comes last");
+        _calls.Should().Equal(
+            "snap LeftHalf ", "delay", "snap LeftHalf ", "delay", "snap LeftHalf ", "delay", "snap LeftHalf ", "delay", $"focus {Code}");
+    }
+
+    [Fact]
+    public async Task TheWatch_EndsAtTheSettleTime_EvenWhenTheWindowHasNotStayedPutForLongEnough()
+    {
+        // Moved back three times, each about a second after the last placement; the third one is placed again at 2.25 s
+        At(100, () => Place(Code, SavedBounds));
+        At(1100, () => Place(Code, SavedBounds));
+        At(2100, () => Place(Code, SavedBounds));
+
+        var outcome = await PlaceOneAsync(Code, new LaunchPlacement(Snap: "left_half"));
+
+        outcome.Success.Should().BeTrue();
+        outcome.Reapplied.Should().BeTrue();
+        outcome.Warning.Should().BeNull("the app did not move it more often than it is placed again");
+        Actions.Should().HaveCount(4);
+        Elapsed.Should().Be(LaunchPlacementService.SettleTime, "the last wait is cut to the settle time");
+        _delays.Last().Should().Be(Ms(500));
     }
 
     [Fact]
     public async Task AnAppThatMaximizesItself_AfterThePlacement_IsPlacedOnceMore()
     {
-        _duringDelay = () => _desktop[Code] = _desktop[Code] with { State = WindowState.Maximized };
+        At(100, () => _desktop[Code] = _desktop[Code] with { State = WindowState.Maximized });
 
         var outcome = await PlaceOneAsync(Code, new LaunchPlacement(Bounds: new BoundsDto(10, 20, 800, 600)));
 
         outcome.Reapplied.Should().BeTrue();
         outcome.Window!.State.Should().Be(WindowState.Normal);
-        _calls.Should().Equal("frame 10,20,800,600", "delay", "frame 10,20,800,600");
+        Actions.Should().Equal("frame 10,20,800,600", "frame 10,20,800,600");
     }
 
     [Fact]
-    public async Task Focus_ComesAfterThePlacementAndTheRecheck_AndIsReported()
+    public async Task AWindowThatClosesWhileItIsWatched_IsInvalidHandle()
+    {
+        At(600, () => _desktop.Remove(Code));
+
+        var outcome = await PlaceOneAsync(Code, new LaunchPlacement(Snap: "left_half", Focus: true));
+
+        outcome.ErrorCode.Should().Be(WindowErrorCode.InvalidHandle);
+        outcome.Error.Should().Contain("closed");
+        outcome.Window.Should().BeNull();
+        Actions.Should().Equal("snap LeftHalf ");
+        Elapsed.Should().Be(Ms(750), "nothing is left to watch");
+    }
+
+    [Fact]
+    public async Task Cancelled_WhileTheWindowIsWatched_Throws_AndLeavesItPlaced()
+    {
+        using var cancel = new CancellationTokenSource();
+        At(600, cancel.Cancel);
+
+        var call = async () => await CreateSut().PlaceAsync([(Code, Plan(new LaunchPlacement(Snap: "left_half", Focus: true)))], cancel.Token);
+
+        await call.Should().ThrowAsync<OperationCanceledException>();
+        Actions.Should().Equal("snap LeftHalf ");
+        _desktop[Code].VisibleBounds.Should().Be(LeftHalf);
+    }
+
+    [Fact]
+    public async Task Focus_ComesAfterThePlacementAndTheWatch_AndIsReported()
     {
         var outcome = await PlaceOneAsync(Code, new LaunchPlacement(Snap: "left_half", Focus: true));
 
         outcome.Success.Should().BeTrue();
         outcome.Focused.Should().BeTrue();
-        _calls.Should().Equal("snap LeftHalf ", "delay", $"focus {Code}");
+        _calls.Should().Equal("snap LeftHalf ", "delay", "delay", "delay", $"focus {Code}");
     }
 
     [Fact]
@@ -273,13 +410,13 @@ public class LaunchPlacementServiceTests
     }
 
     [Fact]
-    public async Task APauseDuringTheRecheck_StopsTheSecondPlacement()
+    public async Task APauseDuringTheWatch_StopsTheSecondPlacement()
     {
-        _duringDelay = () =>
+        At(100, () =>
         {
             Place(Code, SavedBounds);
             _session.SetupGet(s => s.IsPaused).Returns(true);
-        };
+        });
 
         var outcome = await PlaceOneAsync(Code, new LaunchPlacement(Snap: "left_half"));
 
@@ -314,7 +451,7 @@ public class LaunchPlacementServiceTests
         var outcome = await PlaceOneAsync(Code, new LaunchPlacement(State: "maximized"));
 
         outcome.Window!.State.Should().Be(WindowState.Maximized);
-        _calls.Should().Equal("state Maximize", "delay");
+        Actions.Should().Equal("state Maximize");
     }
 
     [Fact]
@@ -323,7 +460,7 @@ public class LaunchPlacementServiceTests
         var outcome = await PlaceOneAsync(Code, new LaunchPlacement(Snap: "left_half", State: "minimized"));
 
         outcome.Window!.State.Should().Be(WindowState.Minimized);
-        _calls.Should().Equal("snap LeftHalf ", "state Minimize", "delay");
+        Actions.Should().Equal("snap LeftHalf ", "state Minimize");
     }
 
     [Fact]
@@ -343,7 +480,7 @@ public class LaunchPlacementServiceTests
 
         outcome.Success.Should().BeTrue();
         outcome.Window!.State.Should().Be(WindowState.Normal);
-        _calls.Should().Equal("state Restore", "state Restore", "delay");
+        Actions.Should().Equal("state Restore", "state Restore");
     }
 
     [Fact]
@@ -352,11 +489,11 @@ public class LaunchPlacementServiceTests
         var outcome = await PlaceOneAsync(Code, new LaunchPlacement(State: "normal"));
 
         outcome.Success.Should().BeTrue();
-        _calls.Should().Equal("delay");
+        Actions.Should().BeEmpty();
     }
 
     [Fact]
-    public async Task SeveralWindows_ArePlacedInOrder_CheckedTogetherOnce_AndTheLastFocusEndsInFront()
+    public async Task SeveralWindows_ArePlacedInOrder_WatchedTogether_AndTheLastFocusEndsInFront()
     {
         var plans = new List<(nint, LaunchPlacementPlan)>
         {
@@ -370,7 +507,28 @@ public class LaunchPlacementServiceTests
         outcomes.Should().OnlyContain(o => o.Success);
         outcomes[1].Focused.Should().BeTrue();
         outcomes[0].Focused.Should().BeFalse();
-        _calls.Should().Equal("snap LeftHalf ", "frame 960,0,960,1040", "delay", $"focus {Terminal}");
+        _calls.Should().Equal("snap LeftHalf ", "frame 960,0,960,1040", "delay", "delay", "delay", $"focus {Terminal}");
+    }
+
+    [Fact]
+    public async Task SeveralWindows_EachIsWatchedUntilItStaysPut_OnItsOwnClock()
+    {
+        At(100, () => Place(Code, SavedBounds));
+        var plans = new List<(nint, LaunchPlacementPlan)>
+        {
+            (Code, Plan(new LaunchPlacement(Snap: "left_half"))),
+            (Terminal, Plan(new LaunchPlacement(Bounds: new BoundsDto(960, 0, 960, 1040))))
+        };
+
+        var outcomes = await CreateSut().PlaceAsync(plans);
+
+        outcomes[0].Reapplied.Should().BeTrue();
+        outcomes[1].Reapplied.Should().BeFalse();
+        outcomes.Should().OnlyContain(o => o.Success && o.Warning == null);
+        Actions.Should().Equal("snap LeftHalf ", "frame 960,0,960,1040", "snap LeftHalf ");
+
+        // The terminal stayed put from the start (1 s); the editor from its second placement at 250 ms (1.25 s)
+        _delays.Should().Equal(Ms(250), Ms(250), Ms(500), Ms(250));
     }
 
     [Fact]
@@ -386,7 +544,7 @@ public class LaunchPlacementServiceTests
 
         outcomes.Should().OnlyContain(o => o.Success && !o.Reapplied);
         outcomes.Should().OnlyContain(o => o.Window!.VisibleBounds == new WindowRect(10, 20, 800, 600));
-        _calls.Should().Equal("snap LeftHalf ", "frame 10,20,800,600", "delay");
+        Actions.Should().Equal("snap LeftHalf ", "frame 10,20,800,600");
     }
 
     [Fact]
