@@ -196,7 +196,8 @@ public enum UIElementErrorCode
 
     /// <summary>
     /// element_action's keyboard path (set_value mode type or paste): after focusing the element, keyboard focus was not on
-    /// it, so no key was sent (select-all would have reached another control).
+    /// it, so no key was sent (select-all would have reached another control); or focus moved off it to another control
+    /// later, which the input guard's recheck before every batch of keys caught (roadmap M3.F17), so no more keys were sent.
     /// </summary>
     FocusNotOnElement = 17,
 

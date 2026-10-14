@@ -32,6 +32,12 @@ public sealed partial class ElementActionService : IElementActionService
     /// <summary>How many times the state is read after the action while it does not show the action's effect yet.</summary>
     public const int VerifyAttempts = 3;
 
+    /// <summary>
+    /// How long the keyboard path's focus recheck waits for UI Automation (roadmap M3.F17). It runs inside the input gate
+    /// before every batch of keys, so an application that stops answering holds the gate at most this long.
+    /// </summary>
+    public static readonly TimeSpan FocusRecheckTimeout = TimeSpan.FromSeconds(1);
+
     private readonly IUiaTree _tree;
     private readonly IUiaWorker _worker;
     private readonly IElementRegistry _registry;
@@ -543,24 +549,31 @@ public sealed partial class ElementActionService : IElementActionService
         }
 
         gate.Dispose();
-        var target = InputTarget.Window(call.Window, request.AllowHostTarget);
+
+        // Each call below takes the input gate again, so focus could move between them: the guard runs this recheck inside
+        // the gate before every batch, and keys never reach another control the focus moved to (roadmap M3.F17)
+        var focus = new FocusWatch();
+        var target = InputTarget.Window(call.Window, request.AllowHostTarget) with
+        {
+            FocusRecheck = () => RecheckFocus(element, targetProcess, focus, cancellationToken)
+        };
+        var selectKey = request.Action == ElementActionKind.AppendText ? "Ctrl+End" : "Ctrl+A";
+
+        InputStep Failed(InputErrorCode code, WindowSummary? receivingWindow, string message, string ifFocusMoved) =>
+            InputStep.Failed(call.Fail(focus.ErrorCode ?? code.ToString(), focus.Message is { } why
+                ? $"{why} {ifFocusMoved} Read the element again before you retry, or use mode value."
+                : message) with
+            {
+                Method = ElementActionMethod.Keyboard,
+                ReceivingWindow = receivingWindow
+            });
+
         var first = await _input.SendKeysAsync(request.Action == ElementActionKind.AppendText ? "^{END}" : "^a", target,
             releaseHeldModifiers: false, cancellationToken).ConfigureAwait(false);
         if (!first.Success)
         {
-            return InputStep.Failed(call.Fail(first.ErrorCode.ToString(),
-                InputError(first.ErrorCode, first.Error, "The keys were not sent.") + " Nothing was typed.") with
-            {
-                Method = ElementActionMethod.Keyboard,
-                ReceivingWindow = first.ReceivingWindow
-            });
-        }
-
-        if (await FocusRefusalAsync(call, element, targetProcess,
-                $"Only {(request.Action == ElementActionKind.AppendText ? "Ctrl+End" : "Ctrl+A")} was sent; nothing was typed.",
-                cancellationToken).ConfigureAwait(false) is { } moved)
-        {
-            return InputStep.Failed(moved);
+            return Failed(first.ErrorCode, first.ReceivingWindow,
+                InputError(first.ErrorCode, first.Error, "The keys were not sent.") + " Nothing was typed.", "Nothing was typed.");
         }
 
         var receiving = first.ReceivingWindow;
@@ -570,11 +583,8 @@ public sealed partial class ElementActionService : IElementActionService
             var deleted = await _input.SendKeysAsync("{DELETE}", target, releaseHeldModifiers: false, cancellationToken).ConfigureAwait(false);
             return deleted.Success
                 ? new InputStep(null, deleted.ReceivingWindow ?? receiving)
-                : InputStep.Failed(call.Fail(deleted.ErrorCode.ToString(), InputError(deleted.ErrorCode, deleted.Error, "Delete was not sent.")) with
-                {
-                    Method = ElementActionMethod.Keyboard,
-                    ReceivingWindow = deleted.ReceivingWindow
-                });
+                : Failed(deleted.ErrorCode, deleted.ReceivingWindow, InputError(deleted.ErrorCode, deleted.Error, "Delete was not sent."),
+                    $"Only {selectKey} was sent; the text was not deleted.");
         }
 
         if (request.Mode == ElementValueMode.Paste)
@@ -582,23 +592,62 @@ public sealed partial class ElementActionService : IElementActionService
             var pasted = await _input.SendKeysAsync("^v", target, releaseHeldModifiers: false, cancellationToken).ConfigureAwait(false);
             return pasted.Success
                 ? new InputStep(null, pasted.ReceivingWindow ?? receiving)
-                : InputStep.Failed(call.Fail(pasted.ErrorCode.ToString(), InputError(pasted.ErrorCode, pasted.Error, "The paste was not sent.")) with
-                {
-                    Method = ElementActionMethod.Keyboard,
-                    ReceivingWindow = pasted.ReceivingWindow
-                });
+                : Failed(pasted.ErrorCode, pasted.ReceivingWindow, InputError(pasted.ErrorCode, pasted.Error, "The paste was not sent."),
+                    $"Only {selectKey} was sent; nothing was pasted.");
         }
 
         var typed = await _input.TypeTextAsync(text, 0, target, releaseHeldModifiers: false, cancellationToken).ConfigureAwait(false);
         return typed.Success
             ? new InputStep(null, typed.ReceivingWindow ?? receiving)
-            : InputStep.Failed(call.Fail(typed.ErrorCode.ToString(),
+            : Failed(typed.ErrorCode, typed.ReceivingWindow,
                 $"{InputError(typed.ErrorCode, typed.Error, "The text was not typed.")} " +
-                $"({typed.CharactersTyped} of {text.Length} characters were typed.)") with
-            {
-                Method = ElementActionMethod.Keyboard,
-                ReceivingWindow = typed.ReceivingWindow
-            });
+                $"({typed.CharactersTyped} of {text.Length} characters were typed.)",
+                typed.CharactersTyped == 0
+                    ? $"Only {selectKey} was sent; nothing was typed."
+                    : $"{typed.CharactersTyped} of {text.Length} characters were typed before it moved.");
+    }
+
+    /// <summary>Why the keyboard path's focus recheck refused keys (roadmap M3.F17); both null while it allowed them.</summary>
+    private sealed class FocusWatch
+    {
+        /// <summary>element_action's errorCode for it: FocusNotOnElement, or OperationTimedOut when focus could not be read.</summary>
+        public string? ErrorCode { get; set; }
+
+        public string? Message { get; set; }
+    }
+
+    /// <summary>
+    /// <see cref="InputTarget.FocusRecheck"/> for the keyboard path, run by the input guard inside the gate: keyboard focus must
+    /// still be on the element. The read runs on the worker for at most <see cref="FocusRecheckTimeout"/>, since the gate is held
+    /// meanwhile; when it fails or times out the keys are refused, because they could reach any control of the window.
+    /// </summary>
+    private SelectorRefusal? RecheckFocus(PreparedElement element, int targetProcess, FocusWatch watch, CancellationToken cancellationToken)
+    {
+        bool onElement;
+        try
+        {
+            using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            deadline.CancelAfter(FocusRecheckTimeout);
+            onElement = _worker.RunAsync(targetProcess, _ => HasFocus(element), deadline.Token, TimeSpan.Zero)
+                .GetAwaiter().GetResult().Element == true;
+        }
+        catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
+        {
+            watch.ErrorCode = nameof(UIElementErrorCode.OperationTimedOut);
+            watch.Message = $"UI Automation did not say in time where keyboard focus is ({ex.Message}), so the keys could reach " +
+                            "another control of the window.";
+            return new SelectorRefusal(nameof(InputErrorCode.TargetLostFocus), watch.Message);
+        }
+
+        if (onElement)
+        {
+            return null;
+        }
+
+        watch.ErrorCode = nameof(UIElementErrorCode.FocusNotOnElement);
+        watch.Message = "Keyboard focus moved off the element to another control after the element was focused, so the keys " +
+                        "would have reached that control.";
+        return new SelectorRefusal(nameof(InputErrorCode.TargetLostFocus), watch.Message);
     }
 
     /// <summary>
