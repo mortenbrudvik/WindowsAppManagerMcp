@@ -35,8 +35,10 @@ public class LayoutToolErrorContractTests
         payload.GetProperty("error").GetString().Should().Be(
             "Layout preset 'typo' was not found. Call list_layouts to see the available presets.");
         payload.GetProperty("tool").GetString().Should().Be("get_layout");
-        server.Logs.Entries.Should().NotContain(e => e.Level >= Microsoft.Extensions.Logging.LogLevel.Warning,
-            "an ordinary not-found must not be logged as a server error");
+        // A busy machine can make the call slow, and the slow-call Warning says nothing of how the error was logged (roadmap M3.F29)
+        server.Logs.Entries.Where(e => !e.Message.Contains("Slow call", StringComparison.Ordinal))
+            .Should().NotContain(e => e.Level >= Microsoft.Extensions.Logging.LogLevel.Warning,
+                "an ordinary not-found must not be logged as a server error");
     }
 
     [Fact]

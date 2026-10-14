@@ -1,3 +1,5 @@
+using System.Globalization;
+
 namespace WindowsAppManagerMcp.E2ETests.Scenarios;
 
 /// <summary>
@@ -21,7 +23,9 @@ namespace WindowsAppManagerMcp.E2ETests.Scenarios;
 /// and close buttons) is not the server's or the fixture's: Windows serves it through its own proxies, natively to UIA3 and
 /// through .NET's client-side proxy to UIA2, and those differ in automation ids and framework from run to run (the first 1.15.0
 /// gate's second run read 'Minimize-Restore' and no framework where UIA3 read 'Minimize' and Win32). The BothEngines_* facts
-/// compare those elements by control type and name only (<see cref="IsNonClient"/>), and everything else in full.</para>
+/// compare those elements by control type and place in the tree (<see cref="IsNonClient"/>), then by name, and everything
+/// else in full. Their names are the proxies' own, so on a display language other than English they can be localized
+/// differently: a name that differs there fails on its own, with a message that says so (roadmap M3.F29).</para>
 /// </remarks>
 public class FixtureUiaEngineTests
 {
@@ -95,8 +99,8 @@ public class FixtureUiaEngineTests
         var fromUia2 = await uia2.UiElements.GetUIElementsAsync(window);
 
         // Assert - the same elements in the same order, with the same names, types, ids, frameworks and states, and a ref
-        // for each (the UIA3 engine reads the runtime id a ref needs from its walk's cache request); the title bar's by type
-        // and name only
+        // for each (the UIA3 engine reads the runtime id a ref needs from its walk's cache request); the title bar's by type,
+        // then by name
         fromUia3.Success.Should().BeTrue(fromUia3.Error);
         fromUia2.Success.Should().BeTrue(fromUia2.Error);
         var uia3Elements = UiaReads.Flatten(fromUia3.Elements).ToList();
@@ -122,8 +126,14 @@ public class FixtureUiaEngineTests
             }
         }
 
+        // ... and last, the title bar's names, which the proxies can localize differently (roadmap M3.F29)
+        FirstNonClientNameDifference(
+                uia3Elements.Select(e => (e.ControlType, e.Name, e.Bounds)).ToList(),
+                uia2Elements.Select(e => (e.ControlType, e.Name, e.Bounds)).ToList(), client)
+            .Should().BeNull(NonClientNameReason());
+
         string Describe(UIElementInfo e) => IsNonClient(e.ControlType, e.Bounds, client)
-            ? $"{e.ControlType} '{e.Name}' (non-client: type and name only)"
+            ? $"{e.ControlType} (non-client: type, then name)"
             : $"{e.ControlType} '{e.Name}' aid={e.AutomationId} enabled={e.IsEnabled} offscreen={e.IsOffscreen} " +
               $"children={e.Children?.Count ?? 0} fw={e.FrameworkId} ref={e.Ref != null}";
     }
@@ -200,7 +210,7 @@ public class FixtureUiaEngineTests
         var fromUia2 = await FindAsync(uia2, queries);
 
         // Assert - the same elements in the same order, with the same identity, patterns, state, description and bounds; the
-        // title bar's buttons by type and name only
+        // title bar's buttons by type, then by name
         for (var query = 0; query < queries.Count; query++)
         {
             fromUia3[query].Success.Should().BeTrue("UIA3, query {0}: {1}", query, fromUia3[query].Error);
@@ -228,8 +238,17 @@ public class FixtureUiaEngineTests
             }
         }
 
+        // ... and last, the title bar's buttons' names, which the proxies can localize differently (roadmap M3.F29)
+        for (var query = 0; query < queries.Count; query++)
+        {
+            FirstNonClientNameDifference(
+                    fromUia3[query].Elements!.Select(e => (e.ControlType, e.Name, e.Bounds)).ToList(),
+                    fromUia2[query].Elements!.Select(e => (e.ControlType, e.Name, e.Bounds)).ToList(), client)
+                .Should().BeNull("in query {0}, {1}", query, NonClientNameReason());
+        }
+
         string Compared(FoundElement e) => IsNonClient(e.ControlType, e.Bounds, client)
-            ? $"{e.ControlType} '{e.Name}' (non-client: type and name only)"
+            ? $"{e.ControlType} (non-client: type, then name)"
             : Snapshot(e);
     }
 
@@ -322,6 +341,31 @@ public class FixtureUiaEngineTests
         bounds is { } b && NonClientControlTypes.Contains(controlType) &&
         (b.Y + b.Height <= client.Y + BoundsTolerance || b.Y >= client.Y + client.Height - BoundsTolerance ||
          b.X + b.Width <= client.X + BoundsTolerance || b.X >= client.X + client.Width - BoundsTolerance);
+
+    /// <summary>
+    /// The first element of the window's non-client area (<see cref="IsNonClient"/>, by the UIA3 read's bounds) whose name
+    /// the two engines read differently, as its control type and both names; null when they read the same names. The two
+    /// lists hold the same elements in the same order, which the caller compared first by control type.
+    /// </summary>
+    internal static string? FirstNonClientNameDifference(
+        IReadOnlyList<(string ControlType, string? Name, BoundsDto? Bounds)> uia3,
+        IReadOnlyList<(string ControlType, string? Name, BoundsDto? Bounds)> uia2,
+        ScreenRect client) =>
+        uia3.Zip(uia2)
+            .Where(p => IsNonClient(p.First.ControlType, p.First.Bounds, client) && p.First.Name != p.Second.Name)
+            .Select(p => $"{p.First.ControlType}: UIA3 '{p.First.Name}', UIA2 '{p.Second.Name}'")
+            .FirstOrDefault();
+
+    /// <summary>
+    /// Why a name of the non-client area can differ between the engines without the server's engine code being at fault:
+    /// Windows' native proxy names those elements for UIA3 in the display language, and .NET's managed proxy names them for
+    /// UIA2 from resources of its own, which can be in another language (roadmap M3.F29).
+    /// </summary>
+    internal static string NonClientNameReason() =>
+        "the window's title bar, system menu bar and caption buttons are named by Windows' own proxies, not by the server or " +
+        "the fixture, so with a display language other than English (this run's: " +
+        $"'{CultureInfo.CurrentUICulture.Name}') a difference there may be the proxies' localization rather than the " +
+        "server's engine code; compare the fixture's own controls before you change the default engine";
 
     /// <summary>
     /// What find_ui_elements reports about an element at detail full, but its ref (each server numbers its own) and its

@@ -65,7 +65,7 @@ public class UiaEngineScenarioTests
     [InlineData("Button", 1248, 174, 60, 37)]
     [InlineData("Button", 1308, 174, 59, 37)]
     [InlineData("Button", 1367, 174, 60, 37)]
-    public void TheBothEnginesFacts_CompareTheTitleBarAndItsButtons_ByTypeAndNameOnly(string controlType, int x, int y, int width, int height)
+    public void TheBothEnginesFacts_CompareTheTitleBarAndItsButtons_ByTypeThenByName(string controlType, int x, int y, int width, int height)
     {
         // The elements the first 1.15.0 gate's second run read with other automation ids under UIA2, where Windows serves them itself
         FixtureUiaEngineTests.IsNonClient(controlType, new BoundsDto(x, y, width, height), GateClientArea).Should().BeTrue();
@@ -88,6 +88,44 @@ public class UiaEngineScenarioTests
     public void TheBothEnginesFacts_CompareAButtonWithoutBounds_InFull()
     {
         FixtureUiaEngineTests.IsNonClient("Button", bounds: null, GateClientArea).Should().BeFalse();
+    }
+
+    /// <summary>The title bar, the system menu item and a caption button as the 1.15.0 gate read them, and a fixture control.</summary>
+    private static readonly (string ControlType, string? Name, BoundsDto? Bounds)[] GateElements =
+    [
+        ("TitleBar", "WAM Fixture", new BoundsDto(493, 174, 934, 37)),
+        ("MenuItem", "System", new BoundsDto(494, 182, 28, 28)),
+        ("Button", "Minimize", new BoundsDto(1248, 174, 60, 37)),
+        ("Button", "Save", new BoundsDto(509, 427, 170, 32))
+    ];
+
+    [Fact]
+    public void TheBothEnginesFacts_FindNoNameDifference_WhenTheNonClientNamesAgree()
+    {
+        FixtureUiaEngineTests.FirstNonClientNameDifference(GateElements, GateElements.ToList(), GateClientArea).Should().BeNull();
+    }
+
+    [Fact]
+    public void TheBothEnginesFacts_ReportTheFirstNonClientNameThatDiffers_ByTypeAndBothNames()
+    {
+        // Arrange - a managed proxy whose resources are English on a Windows that names its caption buttons in Norwegian
+        var uia3 = GateElements.Select(e => e.Name == "Minimize" ? e with { Name = "Minimer" } : e).ToList();
+
+        // Act
+        var difference = FixtureUiaEngineTests.FirstNonClientNameDifference(uia3, GateElements, GateClientArea);
+
+        // Assert - the name is still compared, and the failure says that localization may be the cause (roadmap M3.F29)
+        difference.Should().Be("Button: UIA3 'Minimer', UIA2 'Minimize'");
+        FixtureUiaEngineTests.NonClientNameReason().Should().Contain("display language").And.Contain("localization");
+    }
+
+    [Fact]
+    public void TheBothEnginesFacts_LeaveTheNamesOfTheFixturesOwnControls_ToTheFullComparison()
+    {
+        // The fixture's controls are compared in full, names among the rest, before the non-client names
+        var uia2 = GateElements.Select(e => e.Name == "Save" ? e with { Name = "Lagre" } : e).ToList();
+
+        FixtureUiaEngineTests.FirstNonClientNameDifference(GateElements, uia2, GateClientArea).Should().BeNull();
     }
 
     /// <summary>The engine argument of each InlineData of a theory whose first parameter is the engine.</summary>

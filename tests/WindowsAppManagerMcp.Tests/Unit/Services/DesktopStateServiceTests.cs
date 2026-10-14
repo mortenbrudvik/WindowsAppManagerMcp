@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using WindowsAppManagerMcp.Infrastructure;
 
 namespace WindowsAppManagerMcp.Tests.Unit.Services;
@@ -12,6 +11,12 @@ public class DesktopStateServiceTests
 {
     private const ushort VkCapital = 0x14;
     private const ushort VkLControl = 0xA2;
+
+    /// <summary>
+    /// How long a test waits in real time for a call to return once its clock (<see cref="ManualTimerClock"/>) has passed
+    /// what the call waits for: only a guard against a call that never returns, far above what a busy machine adds.
+    /// </summary>
+    private static readonly TimeSpan HangGuard = TimeSpan.FromSeconds(30);
     private static readonly nint Notepad = 0x1A0B2C;
     private static readonly nint Terminal = 0x2C0D4E;
     private static readonly nint Menu = 0x260A38;
@@ -68,8 +73,10 @@ public class DesktopStateServiceTests
         _popups.Setup(p => p.GetPopupList(It.IsAny<nint>())).Returns(new PopupList([], false));
     }
 
-    private DesktopStateService CreateSut() => new(
-        _windows.Object, _session, _input, _inspection.Object, _elements.Object, _popups.Object, _screenshots.Object, _policy, _toolsets);
+    /// <param name="clock">The clock of the deadline: a test that moves it decides when the deadline passes. Default the system clock.</param>
+    private DesktopStateService CreateSut(TimeProvider? clock = null) => new(
+        _windows.Object, _session, _input, _inspection.Object, _elements.Object, _popups.Object, _screenshots.Object, _policy, _toolsets,
+        clock);
 
     private static WindowInfo Window(nint handle, string title, string process) =>
         new(handle, title, process, 4000 + (int)(handle % 1000), new WindowRect(0, 0, 1280, 720), WindowState.Normal, true, 0);
@@ -557,18 +564,23 @@ public class DesktopStateServiceTests
     [Fact]
     public async Task APartThatDoesNotAnswer_IsReportedAtTheDeadline_AndTheRestIsReturned()
     {
-        // Arrange - the walk never returns, not even when it is asked to stop
+        // Arrange - the walk never returns, not even when it is asked to stop; the test's clock decides when the deadline passes
         var never = new TaskCompletionSource<UIElementResult>();
         _elements.Setup(e => e.GetUIElementsAsync(It.IsAny<nint>(), It.IsAny<int>(), It.IsAny<UIElementFilter?>(),
                 It.IsAny<IProgress<OperationProgress>?>(), It.IsAny<CancellationToken>()))
             .Returns(never.Task);
-        var stopwatch = Stopwatch.StartNew();
+        var clock = new ManualTimerClock();
+        var timeout = TimeSpan.FromSeconds(1);
 
-        // Act
-        var (state, _) = await CreateSut().GetStateAsync(Request(timeout: TimeSpan.FromSeconds(1)), CancellationToken.None);
+        // Act - up to a tick before the deadline, then to it
+        var call = CreateSut(clock).GetStateAsync(Request(timeout: timeout), CancellationToken.None);
+        clock.Advance(timeout - TimeSpan.FromTicks(1));
+        var returnedBeforeTheDeadline = call.IsCompleted;
+        clock.Advance(TimeSpan.FromTicks(1));
+        var (state, _) = await call.WaitAsync(HangGuard);
 
-        // Assert
-        stopwatch.Elapsed.Should().BeLessThan(TimeSpan.FromSeconds(3), "one deadline covers the whole call");
+        // Assert - one deadline covers the whole call: it returns when the deadline passes, and not before
+        returnedBeforeTheDeadline.Should().BeFalse("the call waits for its parts until the deadline");
         state.Success.Should().BeTrue();
         state.Elements.Should().BeNull();
         var error = state.Errors.Should().ContainSingle().Subject;
@@ -613,8 +625,15 @@ public class DesktopStateServiceTests
                 };
             });
 
-        var (state, _) = await CreateSut().GetStateAsync(Request(timeout: TimeSpan.FromSeconds(1)), CancellationToken.None);
+        var clock = new ManualTimerClock();
+        var timeout = TimeSpan.FromSeconds(1);
 
+        // The walk is asked to stop when its part of the deadline is used up; the deadline itself never passes
+        var call = CreateSut(clock).GetStateAsync(Request(timeout: timeout), CancellationToken.None);
+        clock.Advance(DesktopStateService.PartBudget(timeout));
+        var (state, _) = await call.WaitAsync(HangGuard);
+
+        state.Errors.Should().BeNull();
         state.Elements!.Count.Should().Be(1);
         state.Elements.Truncated.Should().BeTrue();
         state.Elements.TruncationReason.Should().Be(UIElementTruncationReason.Timeout);
@@ -623,18 +642,33 @@ public class DesktopStateServiceTests
     [Fact]
     public async Task TheElementsWalk_StuckInACallWhenItIsAskedToStop_StillHandsBackWhatItRead_BeforeTheDeadline()
     {
-        // Arrange - the real walk over a fake tree: the second level's listing blocks past the deadline and ignores the stop
+        // Arrange - the real walk over a fake tree: the second level's listing blocks past the deadline and ignores the stop. The
+        // test's clock asks the walk to stop once it is stuck there, and never reaches the deadline: the walk's stop grace runs
+        // on the worker's clock, and ends before the deadline (TheUiAutomationParts_GetAStopGraceThatEndsBeforeTheDeadline)
+        using var stuck = new ManualResetEventSlim();
         using var release = new ManualResetEventSlim();
-        var panel = new FakeUiaNode("Pane", "Panel") { OnGetChildren = () => release.Wait(TimeSpan.FromSeconds(5)) };
+        var panel = new FakeUiaNode("Pane", "Panel")
+        {
+            OnGetChildren = () =>
+            {
+                stuck.Set();
+                release.Wait(TimeSpan.FromSeconds(5));
+            }
+        };
         var tree = new FakeUiaTree().WithWindow(Notepad,
             new FakeUiaNode("Window", "notes.txt - Notepad").With(new FakeUiaNode("Button", "Save") { ActionPatterns = ["Invoke"] }, panel));
+        var clock = new ManualTimerClock();
+        var timeout = TimeSpan.FromSeconds(2);
         var sut = new DesktopStateService(_windows.Object, _session, _input, _inspection.Object, new UIElementService(tree, new UiaWorker()),
-            _popups.Object, _screenshots.Object, _policy);
+            _popups.Object, _screenshots.Object, _policy, time: clock);
 
         try
         {
             // Act
-            var (state, _) = await sut.GetStateAsync(Request(window: Notepad, timeout: TimeSpan.FromSeconds(2)), CancellationToken.None);
+            var call = sut.GetStateAsync(Request(window: Notepad, timeout: timeout), CancellationToken.None);
+            stuck.Wait(HangGuard).Should().BeTrue("the walk reaches the second level");
+            clock.Advance(DesktopStateService.PartBudget(timeout));
+            var (state, _) = await call.WaitAsync(HangGuard);
 
             // Assert - the first level, cut short by the timeout; not an elements error with nothing
             state.Errors.Should().BeNull();
@@ -698,8 +732,8 @@ public class DesktopStateServiceTests
         var timeout = TimeSpan.FromSeconds(1);
         var slack = timeout - DesktopStateService.PartBudget(timeout);
 
-        // Act
-        await CreateSut().GetStateAsync(Request(timeout: timeout), CancellationToken.None);
+        // Act - on a clock that does not move, so every part is asked, however slowly a busy machine starts them
+        await CreateSut(new ManualTimerClock()).GetStateAsync(Request(timeout: timeout), CancellationToken.None).WaitAsync(HangGuard);
 
         // Assert
         popupsGrace.Should().NotBeNull().And.BeGreaterThan(TimeSpan.Zero).And.BeLessThan(slack);
@@ -729,8 +763,13 @@ public class DesktopStateServiceTests
                 };
             });
 
-        // Act
-        var (state, _) = await CreateSut().GetStateAsync(Request(timeout: TimeSpan.FromSeconds(2)), CancellationToken.None);
+        var clock = new ManualTimerClock();
+        var timeout = TimeSpan.FromSeconds(2);
+
+        // Act - the walks are asked to stop when their part of the deadline is used up
+        var call = CreateSut(clock).GetStateAsync(Request(timeout: timeout), CancellationToken.None);
+        clock.Advance(DesktopStateService.PartBudget(timeout));
+        var (state, _) = await call.WaitAsync(HangGuard);
 
         // Assert - a window walk started with a stopped token would only cost time the deadline does not have
         _walks.Select(w => w.Handle).Should().Equal(Menu);

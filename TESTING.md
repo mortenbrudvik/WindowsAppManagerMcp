@@ -1957,14 +1957,20 @@ Rules for new tests:
   start-up (seconds, not 100 ms). Prefer a fake clock (`ManualClock`) or an explicit signal from the code
   under test over sleeping.
 
-**Timing-sensitive tests under heavy load.** A few tests still fail now and then when the machine is very busy (a
-build, another test run, a virus scan), and pass on a rerun: the deadline tests of `DesktopStateServiceTests`
-(`APartThatDoesNotAnswer_IsReportedAtTheDeadline_AndTheRestIsReturned` and the `TheElementsWalk_*` and
-`TheUiAutomationParts_*` tests, which bound a call's wall time), and contract tests that time out after about 11 to 14
-seconds in an in-process server (close_windows_batch in `UserConfirmationContractTests`, the click case of
-`ToolPayloadBudgetTests` and `EveryToolContractTests`, `CaptureCoordinateContractTests`, `LayoutToolErrorContractTests`).
-When one of these fails alone in a full run, run it again on its own (`--filter "FullyQualifiedName~<class>"`) before
-you look for a regression; a failure that repeats on an idle machine is a real one.
+**Timing-sensitive tests under heavy load.** A test that waits for a deadline should not let a busy machine (a build,
+another test run, a virus scan) decide when the deadline passes (roadmap M3.F29). The deadline tests of
+`DesktopStateServiceTests` run get_desktop_state's deadline on a `ManualTimerClock` (`Fixtures/`), whose timers fire only
+when the test moves it: the test moves it to the parts' budget or to the deadline once the parts are where it expects
+them, and checks that the call returns then and not before, instead of bounding the call's wall time. The real time a
+test then waits for the call (`HangGuard`, 30 s) only guards against a call that never returns. Each step of the
+in-process MCP server (`InProcessMcpServer`, `RawMcpConnection`: starting the host, connecting, stopping) may take 30 s,
+as long as a call: at 10 s, contract tests failed now and then after 11 to 14 seconds on a busy machine
+(close_windows_batch in `UserConfirmationContractTests`, the click case of `ToolPayloadBudgetTests` and
+`EveryToolContractTests`, `CaptureCoordinateContractTests`, `LayoutToolErrorContractTests`), where a full run under load
+takes some contract tests up to 10 s. `LayoutToolErrorContractTests` also ignores the slow-call Warning when it checks
+that a not-found is not logged as a server error. When a test still fails alone in a full run, run it again on its own
+(`--filter "FullyQualifiedName~<class>"`) before you look for a regression; a failure that repeats on an idle machine is
+a real one.
 
 ### End-to-end tests against the fixture app
 
@@ -2103,7 +2109,8 @@ process, shown without activation and destroyed in `Dispose`. `E2ETestGateTests`
 | `FixturePlacementTests` | Input | The launch tools' placement of a window (M3.13) |
 
 **Running them.** Locally only with an opt-in, as above. On GitHub, `.github/workflows/e2e.yml`
-runs them on demand (Actions, "E2E", "Run workflow"), with a choice of tier and runner. It first
+runs them on demand (Actions, "E2E", "Run workflow"), with a choice of tier, UI Automation engine (`engine`: uia3,
+the default, or uia2, which the test step sets as `WAM_UIA_ENGINE`) and runner. It first
 checks that the runner has an interactive desktop and otherwise ends with a notice instead of
 running anything; use a self-hosted runner in a logged-on desktop session then (runner version 2.327.1 or later,
 which the workflows' Node.js 24 actions need). It fails when no
@@ -2120,8 +2127,12 @@ agent. The tier only starts the fixture and reads it, but the fixture's windows 
 leave the desktop alone during the runs, because a window opened over the fixture can fail a capture
 scenario.
 
-Run both from the repository root, on a real desktop: `.github/workflows/e2e.yml` has no engine choice. The trx
-logger keeps every test's output, so the two runs can be compared afterwards (`TestResults/` is gitignored):
+`.github/workflows/e2e.yml` can run either engine: start it twice on a self-hosted runner in a logged-on desktop
+session, with tier `no-input` and engine `uia3`, then engine `uia2`. Each run uploads its trx files as
+`e2e-results-no-input-<engine>`, and its summary names the tier and the engine. The workflow sets `WAM_UIA_ENGINE` in
+both runs, so the first run's output reads `UI Automation engine: Uia3 (WAM_UIA_ENGINE)` instead of `(default)`: the
+same engine, chosen by name. Or run both from the repository root, on a real desktop. The trx logger keeps every test's
+output, so the two runs can be compared afterwards (`TestResults/` is gitignored):
 
 ```bash
 # Git Bash
@@ -2154,8 +2165,8 @@ What the runs cover:
   `FixtureDesktopStateTests` (get_desktop_state) and `FixtureVirtualizedListTests` (the virtualized list search).
   The rest of the tier (see [the scenarios](#end-to-end-tests-against-the-fixture-app)) runs too. Each test's output
   names the engine and where it came from:
-  `UI Automation engine: Uia3 (default)` in the first run, `UI Automation engine: Uia2 (WAM_UIA_ENGINE)`
-  in the second. A value of `WAM_UIA_ENGINE` other than `uia3` or `uia2` fails these tests instead of
+  `UI Automation engine: Uia3 (default)` in the first run (`Uia3 (WAM_UIA_ENGINE)` from the workflow),
+  `UI Automation engine: Uia2 (WAM_UIA_ENGINE)` in the second. A value of `WAM_UIA_ENGINE` other than `uia3` or `uia2` fails these tests instead of
   falling back to uia3, so a mistyped second run cannot pass as a uia2 run.
 - `FixtureUiaEngineTests` and `FixtureUiElementsTests` choose the engine themselves, so they give the
   same results in both runs (`UiaEngineScenarioTests` keeps it so). Each of their theories runs once
@@ -2189,10 +2200,13 @@ to do with the server's code, from run to run: in the second run of the first 1.
 Minimize button with automation id `Minimize-Restore` and no framework, where uia3 read `Minimize` and `Win32`, while
 the first run's uia2 agreed, and in both runs of the gate that passed (on 293cacd) both engines read `Minimize` and
 `Win32`. So the `BothEngines_*` facts compare those elements (the TitleBar, MenuBar, MenuItem and Button elements that
-lie wholly outside the client area the fixture reports) by control type and name only, and every other element in full.
-On a Windows display language other than English a name or a localized type of the title bar can still differ: when the
-first difference is one of those elements, record it, and compare the fixture's own controls in the output of the
-find_ui_elements theory, which writes every element it finds with each engine, before you change the default.
+lie wholly outside the client area the fixture reports) by control type and place in the tree first, with every other
+element in full, and then by name. Their names are the proxies' own: on a Windows display language other than English,
+Windows' native proxy names them in that language, and .NET's managed proxy can name them from resources in another
+(roadmap M3.F29). A name that differs there fails on its own, after the rest has passed, with a message that names the
+element, both names and the display language, and says that the difference may be the proxies' localization rather than
+the server's engine code. Record it, and compare the fixture's own controls in the output of the find_ui_elements
+theory, which writes every element it finds with each engine, before you change the default.
 
 ### Tool surface snapshot
 
