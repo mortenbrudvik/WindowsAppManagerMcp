@@ -27,6 +27,7 @@ public enum FixtureDpiAwareness
 /// <param name="OpenDocument">Open the document window (with unsaved changes) right after the main window is ready.</param>
 /// <param name="DpiAwareness">The process DPI awareness.</param>
 /// <param name="OpenTable">Open the table window (a WPF DataGrid) right after the main window is ready.</param>
+/// <param name="OpenMenuWindow">Open the menu window (a Win32 menu bar) right after the main window is ready.</param>
 public sealed record FixtureOptions(
     string Instance,
     string? EventLogPath = null,
@@ -36,7 +37,8 @@ public sealed record FixtureOptions(
     bool OpenModal = false,
     bool OpenDocument = false,
     FixtureDpiAwareness DpiAwareness = FixtureDpiAwareness.PerMonitorV2,
-    bool OpenTable = false)
+    bool OpenTable = false,
+    bool OpenMenuWindow = false)
 {
     public const string InstanceOption = "--instance";
     public const string EventLogOption = "--event-log";
@@ -47,6 +49,7 @@ public sealed record FixtureOptions(
     public const string OpenDocumentOption = "--open-document";
     public const string DpiAwarenessOption = "--dpi-awareness";
     public const string OpenTableOption = "--open-table";
+    public const string OpenMenuWindowOption = "--open-menu-window";
 
     /// <summary>The instance token when none is given, for starting the fixture by hand.</summary>
     public const string DefaultInstance = "manual";
@@ -115,6 +118,9 @@ public sealed record FixtureOptions(
                 case OpenTableOption:
                     options = options with { OpenTable = true };
                     break;
+                case OpenMenuWindowOption:
+                    options = options with { OpenMenuWindow = true };
+                    break;
                 default:
                     throw new ArgumentException($"Unknown option '{name}'.");
             }
@@ -158,6 +164,10 @@ public sealed record FixtureOptions(
         if (OpenTable)
         {
             args.Add(OpenTableOption);
+        }
+        if (OpenMenuWindow)
+        {
+            args.Add(OpenMenuWindowOption);
         }
         return args;
     }

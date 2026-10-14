@@ -21,6 +21,9 @@ public sealed record FixtureLaunchOptions
     /// <summary>Open the table window (a WPF DataGrid, roadmap M3.F4) right after the main window is ready.</summary>
     public bool OpenTable { get; init; }
 
+    /// <summary>Open the menu window (a Win32 menu bar, roadmap M3.F4) right after the main window is ready.</summary>
+    public bool OpenMenuWindow { get; init; }
+
     /// <summary>The fixture's process DPI awareness.</summary>
     public FixtureDpiAwareness DpiAwareness { get; init; } = FixtureDpiAwareness.PerMonitorV2;
 
@@ -166,7 +169,8 @@ public sealed class FixtureAppSession : IDisposable
             OpenModal: launch.OpenModal,
             OpenDocument: launch.OpenDocument,
             DpiAwareness: launch.DpiAwareness,
-            OpenTable: launch.OpenTable);
+            OpenTable: launch.OpenTable,
+            OpenMenuWindow: launch.OpenMenuWindow);
     }
 
     /// <summary>

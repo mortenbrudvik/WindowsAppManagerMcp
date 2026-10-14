@@ -6,14 +6,10 @@ namespace WindowsAppManagerMcp.E2ETests.Scenarios;
 /// <summary>
 /// respond_to_dialog and element_action's menu_path (roadmap M3.5) against the fixture, input tier: the document's save
 /// prompt is a Win32 message box (#32770, WPF's MessageBox), answered by its standard id; the WPF modal dialog is answered
-/// by its button's text; the context menu's Delete is invoked by a one-item menu path. Every press goes through
+/// by its button's text; the context menu's Delete is invoked by a one-item menu path; a three-item menu path opens the
+/// menu window's Win32 menu bar and its submenu, each a #32768 popup window (roadmap M3.F4). Every press goes through
 /// element_action's service, which the harness lets act only on the fixture's elements.
 /// </summary>
-/// <remarks>
-/// Not covered, for want of a fixture surface: file_dialog (the fixture opens no Open or Save As dialog; its file name box
-/// and button ids are covered by FileDialogServiceTests with fakes), a task dialog's CommandButton ids, and a Win32 menu
-/// bar (#32768 submenus).
-/// </remarks>
 public class FixtureDialogTests
 {
     private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(10);
@@ -77,6 +73,40 @@ public class FixtureDialogTests
         result.Success.Should().BeTrue(result.Error);
         result.Invoked!.AutomationId.Should().Be(FixtureContract.Ids.ModalCancelButton);
         e2e.Fixture.WaitForEvent(FixtureContract.Events.ModalClosed, e => e.GetString("result") == "cancel");
+    }
+
+    [DesktopFact]
+    public async Task AMenuPath_OpensTheWin32MenuBarsMenuAndSubmenu_EachA32768Popup_AndRunsTheCommand()
+    {
+        // Arrange - the menu window's bar is a real HMENU; a Win32 menu opens from the window in front
+        using var e2e = E2ESession.Start(DesktopTier.Input, _output, new FixtureLaunchOptions { OpenMenuWindow = true });
+        var window = e2e.Fixture.WaitForEvent(FixtureContract.Events.MenuWindowOpened).GetHandle("hwnd");
+        e2e.Server.Foreground.EnsureForeground(window).IsForeground.Should().BeTrue();
+        var path = FixtureContract.Win32Menu.CommandPaths[FixtureContract.Win32Menu.ExportAsTextCommand];
+
+        // Act
+        var result = await e2e.Server.Get<IMenuPathService>().RunAsync(new MenuPathRequest(window, null, MenuPaths.Parse(path, out _)!, Timeout: Timeout));
+        _output.WriteLine($"menu_path {path}: success={result.Success} ref={result.Ref} method={result.Method} error={result.ErrorCode}: {result.Error}");
+        foreach (var step in result.Steps ?? [])
+        {
+            _output.WriteLine($"  {step.Item}: ref={step.Ref} method={step.Method} popup={step.OpenedPopup} " +
+                              $"class now={(step.OpenedPopup is { } popup ? E2ENative.GetClassName((nint)popup) : null)}");
+        }
+
+        // Assert - File and Export each opened a menu window of their own, and the fixture ran the command
+        result.Success.Should().BeTrue(result.Error);
+        result.Steps!.Select(s => s.Item).Should().Equal(
+            FixtureContract.Win32Menu.File, FixtureContract.Win32Menu.Export, FixtureContract.Win32Menu.ExportAsText);
+        foreach (var step in result.Steps!.Take(2))
+        {
+            step.OpenedPopup.Should().NotBeNull("'{0}' opens a Win32 submenu, a popup window of its own", step.Item);
+        }
+
+        var command = e2e.Fixture.WaitForEvent(FixtureContract.Events.MenuCommand);
+        command.GetInt64("command").Should().Be(FixtureContract.Win32Menu.ExportAsTextCommand);
+        command.GetString("path").Should().Be(path);
+        e2e.Fixture.Events.ReadAll().Count(e => e.Name == FixtureContract.Events.MenuCommand)
+            .Should().Be(1, "only the last item of a path is invoked");
     }
 
     [DesktopFact]

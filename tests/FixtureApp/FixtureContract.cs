@@ -31,6 +31,9 @@ public static class FixtureContract
     /// <summary>Start of the table window's title.</summary>
     public const string TableTitlePrefix = "WAM Fixture Table";
 
+    /// <summary>Start of the menu window's title.</summary>
+    public const string MenuTitlePrefix = "WAM Fixture Menu";
+
     /// <summary>Number of items in the virtualized list.</summary>
     public const int VirtualListItemCount = 10_000;
 
@@ -52,6 +55,9 @@ public static class FixtureContract
 
     /// <summary>Title of the table window of fixture instance <paramref name="instance"/>.</summary>
     public static string TableTitle(string instance) => $"{TableTitlePrefix} {instance}";
+
+    /// <summary>Title of the menu window of fixture instance <paramref name="instance"/>.</summary>
+    public static string MenuTitle(string instance) => $"{MenuTitlePrefix} {instance}";
 
     /// <summary>Text of item <paramref name="index"/> of the virtualized list.</summary>
     public static string VirtualListItem(int index) => $"Item {index:D5}";
@@ -83,6 +89,35 @@ public static class FixtureContract
 
     /// <summary>A solid color swatch: its AutomationId and color.</summary>
     public sealed record Swatch(string Id, byte R, byte G, byte B);
+
+    /// <summary>
+    /// The menu window's Win32 menu bar (a real HMENU, roadmap M3.F4): File (New, Export with As Text and As CSV) and Edit
+    /// (Select All). Each menu that opens is a #32768 popup window of its own, unlike a WPF menu.
+    /// </summary>
+    public static class Win32Menu
+    {
+        public const string File = "File";
+        public const string New = "New";
+        public const string Export = "Export";
+        public const string ExportAsText = "As Text";
+        public const string ExportAsCsv = "As CSV";
+        public const string Edit = "Edit";
+        public const string SelectAll = "Select All";
+
+        public const int NewCommand = 101;
+        public const int ExportAsTextCommand = 111;
+        public const int ExportAsCsvCommand = 112;
+        public const int SelectAllCommand = 201;
+
+        /// <summary>The menu path of each command id, as element_action's menu_path takes it.</summary>
+        public static readonly IReadOnlyDictionary<int, string> CommandPaths = new Dictionary<int, string>
+        {
+            [NewCommand] = $"{File}>{New}",
+            [ExportAsTextCommand] = $"{File}>{Export}>{ExportAsText}",
+            [ExportAsCsvCommand] = $"{File}>{Export}>{ExportAsCsv}",
+            [SelectAllCommand] = $"{Edit}>{SelectAll}"
+        };
+    }
 
     /// <summary>UI Automation AutomationIds of the fixture's elements.</summary>
     public static class Ids
@@ -169,6 +204,15 @@ public static class FixtureContract
 
         /// <summary>The table window is shown. Fields: <c>hwnd</c>.</summary>
         public const string TableOpened = "tableOpened";
+
+        /// <summary>The menu window is shown, with its Win32 menu bar. Fields: <c>hwnd</c>.</summary>
+        public const string MenuWindowOpened = "menuWindowOpened";
+
+        /// <summary>
+        /// A command of the menu window's Win32 menu bar ran (WM_COMMAND). Fields: <c>command</c> (its id, see
+        /// <see cref="Win32Menu"/>) and <c>path</c> (its menu path, such as File&gt;Export&gt;As Text).
+        /// </summary>
+        public const string MenuCommand = "menuCommand";
 
         /// <summary>The context menu opened.</summary>
         public const string ContextMenuOpened = "contextMenuOpened";

@@ -1984,10 +1984,12 @@ combo box, a button that opens a modal dialog (the main window is disabled while
 button that opens a document window that shows a Yes/No/Cancel save prompt when it is closed with
 unsaved changes, a context menu, three solid color swatches and a virtualized list of 10,000
 items. A table window holds a WPF DataGrid of 1,000 rows with column and row headers, of which it
-realizes only the rows around what it shows (roadmap M3.F4). It has no WebView2 pane yet: that would
-add a package and a runtime dependency to every build. Its command line (`FixtureOptions`) sets an
-instance token that appears in every window title, shows the windows without activating them, opens
-the modal, the document or the table window at start, and sets the process DPI awareness. A watchdog thread ends the fixture when the test host exits or
+realizes only the rows around what it shows, and a menu window has a Win32 menu bar (a real HMENU,
+whose menus open as #32768 popup windows) with a submenu (roadmap M3.F4). It has no WebView2 pane
+yet: that would add a package and a runtime dependency to every build. Its command line
+(`FixtureOptions`) sets an instance token that appears in every window title, shows the windows
+without activating them, opens the modal, the document, the table window or the menu window at
+start, and sets the process DPI awareness. A watchdog thread ends the fixture when the test host exits or
 after its maximum lifetime (5 minutes by default), so a crashed run cannot leave it behind.
 
 **The event log.** The fixture writes one JSON object per line to the file given with
@@ -2099,7 +2101,7 @@ process, shown without activation and destroyed in `Dispose`. `E2ETestGateTests`
 | `FixtureUiaEngineTests` | No input | The two UI Automation engines read the same tree and find the same elements (roadmap M3.1, M3.2) |
 | `FixtureElementRefsTests` | No input | find_ui_elements and element refs (M3.4) |
 | `FixturePopupTests` | Input | The open context menu found by the default scope and listed by get_active_popups, and the combo box list found by scope windowAndPopups (M3.5) |
-| `FixtureDialogTests` | Input | respond_to_dialog on the save prompt and the WPF modal, a one-item menu_path (M3.5) |
+| `FixtureDialogTests` | Input | respond_to_dialog on the save prompt and the WPF modal, a one-item menu_path (M3.5); a menu_path through the menu window's Win32 menu bar and its #32768 submenus (M3.F4) |
 | `FixtureElementActionTests` | Input | element_action's pattern actions, checked against the fixture's event log (M3.6) |
 | `FixtureWindowWaitTests` | No input | wait_for_window (M3.7) |
 | `FixtureElementWaitTests` | No input | wait_for_element (M3.8) |

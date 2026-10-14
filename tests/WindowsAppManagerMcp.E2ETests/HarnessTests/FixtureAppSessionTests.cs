@@ -95,13 +95,14 @@ public class FixtureAppSessionTests
     public void BuildOptions_PassesTheSurfacesToOpenAtStart()
     {
         // Arrange - the M3.F4 surfaces a no-input test cannot open with a click
-        var launch = new FixtureLaunchOptions { OpenTable = true };
+        var launch = new FixtureLaunchOptions { OpenTable = true, OpenMenuWindow = true };
 
         // Act
         var options = FixtureAppSession.BuildOptions(DesktopTier.NoInput, launch, "abc", "events.jsonl", 1);
 
         // Assert
         options.OpenTable.Should().BeTrue();
+        options.OpenMenuWindow.Should().BeTrue();
     }
 
     [Fact]
@@ -110,6 +111,7 @@ public class FixtureAppSessionTests
         var options = FixtureAppSession.BuildOptions(DesktopTier.Input, new FixtureLaunchOptions(), "abc", "events.jsonl", 1);
 
         options.OpenTable.Should().BeFalse();
+        options.OpenMenuWindow.Should().BeFalse();
     }
 
     [Theory]

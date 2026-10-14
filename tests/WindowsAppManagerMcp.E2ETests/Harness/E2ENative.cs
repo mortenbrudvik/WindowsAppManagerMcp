@@ -61,6 +61,9 @@ internal static class E2ENative
     [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern int GetWindowTextW(nint hwnd, StringBuilder text, int maxCount);
 
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern int GetClassNameW(nint hwnd, StringBuilder className, int maxCount);
+
     [DllImport("shcore.dll")]
     public static extern int SetProcessDpiAwareness(int value);
 
@@ -83,6 +86,13 @@ internal static class E2ENative
         var text = new StringBuilder(512);
         GetWindowTextW(hwnd, text, text.Capacity);
         return text.ToString();
+    }
+
+    public static string GetClassName(nint hwnd)
+    {
+        var name = new StringBuilder(256);
+        GetClassNameW(hwnd, name, name.Capacity);
+        return name.ToString();
     }
 
     [DllImport("user32.dll")]

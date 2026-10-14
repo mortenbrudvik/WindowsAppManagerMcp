@@ -19,7 +19,8 @@ public class FixtureOptionsTests
             OpenModal: true,
             OpenDocument: true,
             DpiAwareness: FixtureDpiAwareness.Unaware,
-            OpenTable: true);
+            OpenTable: true,
+            OpenMenuWindow: true);
 
         // Act
         var parsed = FixtureOptions.Parse(options.ToArguments());
@@ -62,10 +63,12 @@ public class FixtureOptionsTests
         options.NoActivate.Should().BeFalse();
         options.DpiAwareness.Should().Be(FixtureDpiAwareness.PerMonitorV2);
         options.OpenTable.Should().BeFalse("an ordinary start opens no extra window");
+        options.OpenMenuWindow.Should().BeFalse();
     }
 
     [Theory]
     [InlineData("--open-table")]
+    [InlineData("--open-menu-window")]
     public void Parse_ReadsAnOpenOption_AsAFlag_ThatWritesBackAlone(string option)
     {
         // Act
@@ -90,6 +93,7 @@ public class FixtureOptionsTests
     [InlineData("--no-activate", "--no-activate")]
     [InlineData("--open-table", "--open-table")]
     [InlineData("--open-table", "yes")]
+    [InlineData("--open-menu-window", "--open-menu-window")]
     public void Parse_RejectsInvalidCommandLines(params string[] args)
     {
         var act = () => FixtureOptions.Parse(args);
@@ -115,7 +119,8 @@ public class FixtureOptionsTests
             FixtureContract.ModalTitle("abc"),
             FixtureContract.DocumentTitle("abc", dirty: true),
             FixtureContract.SavePromptTitle("abc"),
-            FixtureContract.TableTitle("abc")
+            FixtureContract.TableTitle("abc"),
+            FixtureContract.MenuTitle("abc")
         };
 
         // Assert
