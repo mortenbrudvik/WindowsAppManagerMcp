@@ -59,6 +59,10 @@ public static class ServiceRegistration
         services.AddSingleton<IProcessService, ProcessService>();
         // Finds the window a launch opens, whichever process owns it (launch tools and apply_layout's launchMissing)
         services.AddSingleton<IWindowWaitService, WindowWaitService>();
+        // Window events that wake wait_for_window's sleeps between polls (roadmap M3.F22): out-of-context WinEvent hooks on
+        // a thread of their own, which the first wait that sleeps starts and the container stops with the server
+        services.AddSingleton<INativeWinEventWrapper, NativeWinEventWrapper>();
+        services.AddSingleton<IWindowEventSource, WindowEventSource>();
         // Places the launch tools' windows (placement, roadmap M3.13) and apply_layout's launched ones (roadmap M3.F27)
         // through the window and foreground services
         services.AddSingleton<ILaunchPlacementService>(sp => new LaunchPlacementService(

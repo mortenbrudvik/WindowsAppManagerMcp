@@ -798,7 +798,7 @@ A timeout (`isError: true`):
 }
 ```
 
-It polls for now; it will wake on window events once roadmap M7.2 records them.
+**Window events.** Between two reads the server also listens for window events (roadmap M3.F22): a window created, destroyed, shown, hidden, renamed, minimized or restored, cloaked or uncloaked, or brought to the front. Such an event ends the pause early, so the next read comes sooner, but never sooner than 25 ms after the pause began. The events only bring the next read forward: the reads alone decide, `stableMs` is still measured by them, and when the server cannot listen (its hooks could not be installed) it reads on the schedule above. They change how soon a wait ends, not what it waits for.
 
 ---
 

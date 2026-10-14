@@ -166,6 +166,19 @@ public static class WrapperCatalog
                 [nameof(IDesktopPauseFlag.Set)] = WrapperMember.GlobalHotkey,
                 [nameof(IDesktopPauseFlag.Reset)] = WrapperMember.GlobalHotkey
             },
+            [typeof(INativeWinEventWrapper)] = new Dictionary<string, WrapperMember>
+            {
+                // wait_for_window's wake-ups (roadmap M3.F22): out-of-context WinEvent hooks, which load nothing into another
+                // process and change no window, only queue window events to the server's own event thread; that thread's
+                // queue, message loop and its own update and stop messages change nothing outside the server either
+                [nameof(INativeWinEventWrapper.GetCurrentThreadId)] = WrapperMember.Read,
+                [nameof(INativeWinEventWrapper.CreateMessageQueue)] = WrapperMember.Read,
+                [nameof(INativeWinEventWrapper.SetWinEventHook)] = WrapperMember.Read,
+                [nameof(INativeWinEventWrapper.UnhookWinEvent)] = WrapperMember.Read,
+                [nameof(INativeWinEventWrapper.WaitForMessage)] = WrapperMember.Read,
+                [nameof(INativeWinEventWrapper.PostUpdateMessage)] = WrapperMember.Read,
+                [nameof(INativeWinEventWrapper.PostStopMessage)] = WrapperMember.Read
+            },
             [typeof(IUIAutomationWrapper)] = new Dictionary<string, WrapperMember>
             {
                 // The browser reads moved onto IUiaTree (roadmap M3.F24), whose members are classified below.

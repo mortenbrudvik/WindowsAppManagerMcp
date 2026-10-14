@@ -11,8 +11,10 @@ namespace WindowsAppManagerMcp.Services;
 /// Each poll resolves the selector the way IWindowService.ResolveWindow does (a handle or foreground through it, filters
 /// through FindWindows, so the listing's rules and includeUntitled, includeCloaked and className apply), which only reads
 /// windows and never sends one a message. The only wait on an application is input_idle's WaitForInputIdle, bounded to
-/// <see cref="MaxInputIdleWaitMs"/> per poll and skipped while Windows reports the window hung. It polls for now; event
-/// wake-ups (SetWinEventHook) come with roadmap M7.2.
+/// <see cref="MaxInputIdleWaitMs"/> per poll and skipped while Windows reports the window hung. Window events
+/// (<see cref="IWindowEventSource"/>, roadmap M3.F22) end the sleep between two polls early, so the next poll comes sooner,
+/// but no sooner than <see cref="WaitWakeUp.MinSleepMs"/>: the polls alone decide, stableMs is measured by them, and a wait
+/// without events (no event source, or one that cannot subscribe) polls exactly as before.
 /// </remarks>
 public sealed partial class WindowWaitService
 {
@@ -73,27 +75,67 @@ public sealed partial class WindowWaitService
         var watch = new ConditionWatch(this, request, timeoutMs, initial,
             request.NewOnly ? ShownWindows(request.Window.IncludeCloaked) : null);
         long lastProgress = 0;
+        WindowEvents? events = null;
 
-        while (true)
+        try
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            var now = Elapsed();
-            if (watch.Poll(now, Elapsed) is { } done)
-                return done with { ElapsedMs = Elapsed() };
-
-            if (progress != null && now - lastProgress >= ProgressIntervalMs)
+            while (true)
             {
-                lastProgress = now;
-                progress.Report(new OperationProgress((int)now, timeoutMs,
-                    $"waiting for {ConditionName(request.Condition)}: {now} of {timeoutMs} ms, {watch.Status}"));
+                cancellationToken.ThrowIfCancellationRequested();
+
+                // An event from here on may come after the poll read: it wakes the sleep after it
+                events?.WakeUp?.Reset();
+                var now = Elapsed();
+                if (watch.Poll(now, Elapsed) is { } done)
+                    return done with { ElapsedMs = Elapsed() };
+
+                if (progress != null && now - lastProgress >= ProgressIntervalMs)
+                {
+                    lastProgress = now;
+                    progress.Report(new OperationProgress((int)now, timeoutMs,
+                        $"waiting for {ConditionName(request.Condition)}: {now} of {timeoutMs} ms, {watch.Status}"));
+                }
+
+                var remaining = timeoutMs - Elapsed();
+                if (remaining <= 0)
+                    return watch.TimedOut() with { ElapsedMs = Elapsed() };
+
+                var interval = TimeSpan.FromMilliseconds(Math.Min(now < FastPollPeriodMs ? PollIntervalMs : SlowPollIntervalMs, remaining));
+
+                // Subscribed before the first sleep, so a wait its first poll answers installs nothing
+                events ??= SubscribeToWindowEvents();
+                if (events?.WakeUp is { } wakeUp)
+                    await wakeUp.SleepAsync(interval, _delay, cancellationToken).ConfigureAwait(false);
+                else
+                    await _delay(interval, cancellationToken).ConfigureAwait(false);
             }
+        }
+        finally
+        {
+            events?.Subscription?.Dispose();
+        }
+    }
 
-            var remaining = timeoutMs - Elapsed();
-            if (remaining <= 0)
-                return watch.TimedOut() with { ElapsedMs = Elapsed() };
+    /// <summary>
+    /// A condition wait's window events (roadmap M3.F22): the wake-up they signal, and the subscription to end. Both are
+    /// null when there is no event source or it could not subscribe: the wait then polls as it did without events.
+    /// </summary>
+    private sealed record WindowEvents(WaitWakeUp? WakeUp, IDisposable? Subscription);
 
-            var interval = now < FastPollPeriodMs ? PollIntervalMs : SlowPollIntervalMs;
-            await _delay(TimeSpan.FromMilliseconds(Math.Min(interval, remaining)), cancellationToken).ConfigureAwait(false);
+    private WindowEvents SubscribeToWindowEvents()
+    {
+        if (_events == null)
+            return new WindowEvents(null, null);
+
+        var wakeUp = new WaitWakeUp();
+        try
+        {
+            return new WindowEvents(wakeUp, _events.Subscribe(wakeUp.Signal));
+        }
+        catch (Exception)
+        {
+            // The events only make the wait quicker; it polls without them
+            return new WindowEvents(null, null);
         }
     }
 
