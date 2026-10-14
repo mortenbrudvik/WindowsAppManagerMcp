@@ -877,6 +877,257 @@ public class AccessibilityWarmupTests
 
     #endregion
 
+    #region A WebView2 hosted as a visual, below Chromium's views (roadmap M3.F43)
+
+    /// <summary>
+    /// A WinUI 3 window with a WebView2 as runtime 155 shows it (<see cref="FakeWinUi3WebView2"/>): no render widget, an
+    /// msedgewebview2.exe child of the app's process, and the page's Document about 8 levels below the root of Chromium's views.
+    /// </summary>
+    private FakeWinUi3WebView2 WinUi3WithWebView2(bool withDocument = true)
+    {
+        _desktop[App] = new FakeWindow("WinUIDesktopWin32WindowClass", AppProcess, 0);
+        _desktop[0x301] = new FakeWindow("Microsoft.UI.Content.DesktopChildSiteBridge", AppProcess, App);
+        _desktop[0x302] = new FakeWindow("Chrome_WidgetWin_0", AppProcess, 0x301);
+        _desktop[0x303] = new FakeWindow("InputSiteWindowClass", AppProcess, 0x301, visible: false);
+        HostsWebView2(AppProcess);
+        var app = new FakeWinUi3WebView2(withDocument);
+        _tree.WithWindow(App, app.Window);
+        return app;
+    }
+
+    [Fact]
+    public void WarmUp_OfAWinUi3WebView2_FindsTheDocumentBelowChromiumsViews_AndReportsWebView2()
+    {
+        // Arrange
+        WinUi3WithWebView2();
+
+        // Act
+        var info = CreateSut().WarmUp(App, Budget, CancellationToken.None);
+
+        // Assert - the window's own containers are searched only down to the root of Chromium's views
+        info.Should().Be(new AccessibilityWarmupInfo(AccessibilityWarmupStatus.Ready, WebContentHost.WebView2, 0, 1, 3));
+        _tree.CachedFetches.Should().StartWith(["WAM WinUI3 WebView2 check", "Bridge", "WAM page", "WAM page - Web content"])
+            .And.NotContain("XAML");
+        _tree.CachedFetches.Count.Should().BeLessThanOrEqualTo(3 + AccessibilityWarmup.ChromeViewsSearchListings);
+        _waits.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void WarmUp_OfAWinUi3WebView2WhosePageIsNotBuiltYet_WaitsForItsDocument()
+    {
+        // Arrange - Chromium builds the page's tree once asked: its Document appears after the first wait
+        var app = WinUi3WithWebView2(withDocument: false);
+        _afterWait = () =>
+        {
+            if (app.Document == null)
+            {
+                app.AddDocument();
+            }
+        };
+
+        // Act
+        var info = CreateSut().WarmUp(App, Budget, CancellationToken.None);
+
+        // Assert - 3 elements at the second check, still 3 at the third
+        info!.Status.Should().Be(AccessibilityWarmupStatus.Ready);
+        info.Host.Should().Be(WebContentHost.WebView2);
+        info.DocumentChildCount.Should().Be(3);
+        info.Polls.Should().Be(3);
+    }
+
+    [Fact]
+    public void WarmUp_OfAWinUi3WebView2WhosePageNeverComes_IsNotReady()
+    {
+        // Arrange
+        WinUi3WithWebView2(withDocument: false);
+
+        // Act
+        var info = CreateSut().WarmUp(App, Budget, CancellationToken.None);
+
+        // Assert
+        info!.Status.Should().Be(AccessibilityWarmupStatus.NotReady);
+        info.Host.Should().Be(WebContentHost.WebView2);
+        info.WaitedMs.Should().Be(1500);
+        info.Warning.Should().Contain("no web document was found");
+    }
+
+    [Fact]
+    public void WarmUp_OfAWinUi3WebView2WarmedUpBefore_DoesNotReadAgain()
+    {
+        // Arrange
+        WinUi3WithWebView2();
+        var sut = CreateSut();
+        sut.WarmUp(App, Budget, CancellationToken.None)!.Status.Should().Be(AccessibilityWarmupStatus.Ready);
+        var fetchesBefore = _tree.CachedFetches.Count;
+
+        // Act
+        var info = sut.WarmUp(App, Budget, CancellationToken.None);
+
+        // Assert
+        info.Should().BeNull();
+        _tree.CachedFetches.Count.Should().Be(fetchesBefore);
+    }
+
+    [Fact]
+    public void WarmUp_LooksThroughChromiumsViewsOnlyAFewLevelsDeep()
+    {
+        // Arrange - the Document lies one level below the deepest of Chromium's views searched
+        _desktop[App] = new FakeWindow("WinUIDesktopWin32WindowClass", AppProcess, 0);
+        HostsWebView2(AppProcess);
+        var viewsRoot = new FakeUiaNode("Pane", "Views") { FrameworkId = "Chrome" };
+        var level = viewsRoot;
+        for (var depth = 1; depth < AccessibilityWarmup.ChromeViewsSearchDepth; depth++)
+        {
+            var view = new FakeUiaNode("Pane", $"View {depth}") { FrameworkId = "Chrome" };
+            level.With(view);
+            level = view;
+        }
+
+        var document = new FakeUiaNode("Document", "Page") { FrameworkId = "Chrome" };
+        AddChildren(document, 2);
+        level.With(new FakeUiaNode("Pane", "Too deep") { FrameworkId = "Chrome" }.With(document));
+        _tree.WithWindow(App, new FakeUiaNode("Window", "App").With(viewsRoot));
+
+        // Act - checked once, without a wait
+        var info = CreateSut().WarmUp(App, TimeSpan.Zero, CancellationToken.None);
+
+        // Assert - the root of Chromium's views is web content, but no Document was found below it
+        info!.Status.Should().Be(AccessibilityWarmupStatus.NotReady);
+        info.DocumentChildCount.Should().BeNull();
+        _tree.CachedFetches.Should().NotContain("Too deep");
+    }
+
+    [Fact]
+    public void WarmUp_ListsAtMostTheBoundOfChromiumsViews_WhenLookingForTheDocument()
+    {
+        // Arrange - a wide root of Chromium's views, without a Document
+        _desktop[App] = new FakeWindow("WinUIDesktopWin32WindowClass", AppProcess, 0);
+        HostsWebView2(AppProcess);
+        var viewsRoot = new FakeUiaNode("Pane", "Views") { FrameworkId = "Chrome" };
+        for (var i = 0; i < 40; i++)
+        {
+            viewsRoot.With(new FakeUiaNode("Pane", $"View {i}") { FrameworkId = "Chrome" }.With(
+                new FakeUiaNode("Group", $"Group {i}") { FrameworkId = "Chrome" }));
+        }
+
+        _tree.WithWindow(App, new FakeUiaNode("Window", "App").With(viewsRoot));
+
+        // Act - checked once, without a wait
+        CreateSut().WarmUp(App, TimeSpan.Zero, CancellationToken.None);
+
+        // Assert - the window's level, then the views twice (the first search and the one check), each within the bound
+        _tree.CachedFetches.Should().HaveCount(1 + 2 * AccessibilityWarmup.ChromeViewsSearchListings);
+    }
+
+    [Fact]
+    public void WarmUp_DoesNotLookThroughPanesOfAnotherFramework_BelowTheRootOfChromiumsViews()
+    {
+        // Arrange - a Document of Chromium below a native pane inside Chromium's views is not this page's
+        _desktop[App] = new FakeWindow("WinUIDesktopWin32WindowClass", AppProcess, 0);
+        HostsWebView2(AppProcess);
+        var document = new FakeUiaNode("Document", "Elsewhere") { FrameworkId = "Chrome" };
+        AddChildren(document, 2);
+        _tree.WithWindow(App, new FakeUiaNode("Window", "App").With(
+            new FakeUiaNode("Pane", "Views") { FrameworkId = "Chrome" }.With(
+                new FakeUiaNode("Pane", "Native") { FrameworkId = "Win32" }.With(document))));
+
+        // Act
+        var info = CreateSut().WarmUp(App, TimeSpan.Zero, CancellationToken.None);
+
+        // Assert
+        info!.DocumentChildCount.Should().BeNull();
+        _tree.CachedFetches.Should().NotContain("Native");
+    }
+
+    [Fact]
+    public void FindPages_AfterTheWarmUpOfAWinUi3WebView2_GivesThePage_ToListInPlaceOfChromiumsViews()
+    {
+        // Arrange
+        var app = WinUi3WithWebView2();
+        var sut = CreateSut();
+        sut.WarmUp(App, Budget, CancellationToken.None).Should().NotBeNull();
+        var fetchesBefore = _tree.CachedFetches.Count;
+
+        // Act
+        var pages = sut.FindPages(App, CancellationToken.None);
+
+        // Assert - the page the warm-up found, with no further search
+        var page = pages.Should().ContainSingle().Subject;
+        (page.RenderWidget, page.Host).Should().Be((App, nint.Zero));
+        page.Root.Should().BeSameAs(app.Document);
+        page.ViewsRoot.Should().Equal(app.ViewsRootId);
+        _tree.CachedFetches.Count.Should().Be(fetchesBefore);
+    }
+
+    [Fact]
+    public void FindPages_OfAWinUi3WebView2WarmedUpBefore_FindsThePageAgain()
+    {
+        // Arrange - a second read: the warm-up does nothing, and the walk still needs the page's current Document
+        var app = WinUi3WithWebView2();
+        var sut = CreateSut();
+        sut.WarmUp(App, Budget, CancellationToken.None);
+        sut.FindPages(App, CancellationToken.None);
+        sut.WarmUp(App, Budget, CancellationToken.None).Should().BeNull();
+
+        // Act
+        var pages = sut.FindPages(App, CancellationToken.None);
+
+        // Assert
+        var page = pages.Should().ContainSingle().Subject;
+        page.Root.Should().BeSameAs(app.Document);
+        page.ViewsRoot.Should().Equal(app.ViewsRootId);
+    }
+
+    [Fact]
+    public void FindPages_OfAWinUi3WebView2WhosePageIsNotThere_GivesNone()
+    {
+        // Arrange
+        WinUi3WithWebView2(withDocument: false);
+        var sut = CreateSut();
+        sut.WarmUp(App, TimeSpan.Zero, CancellationToken.None)!.Status.Should().Be(AccessibilityWarmupStatus.NotReady);
+
+        // Act
+        var pages = sut.FindPages(App, CancellationToken.None);
+
+        // Assert
+        pages.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void FindPages_OfAVisualWebView2WhoseDocumentIsAmongTheWindowsOwnPanes_GivesNone_TheWalkReachesIt()
+    {
+        // Arrange
+        AppWithVisualWebView(documentChildren: 2);
+        var sut = CreateSut();
+        sut.WarmUp(App, Budget, CancellationToken.None).Should().NotBeNull();
+
+        // Act
+        var pages = sut.FindPages(App, CancellationToken.None);
+
+        // Assert
+        pages.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void FindPages_OfAWindowWhoseProcessStartedNoWebView2_MakesNoUiAutomationCall()
+    {
+        // Arrange - the same window, but the msedgewebview2.exe processes belong to another app
+        WinUi3WithWebView2();
+        HostsWebView2(AppProcess + 1);
+        var sut = CreateSut();
+        sut.WarmUp(App, Budget, CancellationToken.None).Should().BeNull();
+
+        // Act
+        var pages = sut.FindPages(App, CancellationToken.None);
+
+        // Assert
+        pages.Should().BeEmpty();
+        _tree.Reads.Should().BeEmpty();
+        _tree.CachedFetches.Should().BeEmpty();
+    }
+
+    #endregion
+
     #region The pages a walk lists (roadmap M3.F35)
 
     private const nint WebViewHost = 0x200;

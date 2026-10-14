@@ -29,7 +29,10 @@ public interface IAccessibilityWarmup
     /// element of each render widget's parent window (roadmap M3.F35): Chromium's own views lie between that element and the
     /// page, deeper than a walk reaches. A render widget that is the window itself is left out, since the window's own tree
     /// is the page. Call it on the UI Automation worker thread, after <see cref="WarmUp"/> of the same window: it reuses the
-    /// render widgets the warm-up found, so a window without web content costs no further call.
+    /// render widgets the warm-up found, so a window without web content costs no further call. A window without render
+    /// widgets whose WebView2 page is hosted as a visual (roadmap M3.F43) gives that page, to be listed in place of the
+    /// children of the root of Chromium's views (<see cref="RenderWidgetPage.ViewsRoot"/>): the one its warm-up found, or,
+    /// for a window warmed up before, the one a bounded search finds again.
     /// </summary>
     /// <param name="window">The window about to be walked.</param>
     /// <param name="cancellationToken">The read's deadline: ends the search with the pages found so far.</param>
@@ -43,4 +46,8 @@ public interface IAccessibilityWarmup
 /// <param name="Host">The render widget's parent window, whose element the page is listed under.</param>
 /// <param name="Root">The page's element: its Document, or the render widget's own element when that holds the page's
 /// elements with no Document above them (WebView2 runtime 155's "Chrome Legacy Window" pane).</param>
-public sealed record RenderWidgetPage(nint RenderWidget, nint Host, IUiaNode Root);
+/// <param name="ViewsRoot">For a WebView2 page hosted as a visual (roadmap M3.F43), which has no render widget: the runtime id
+/// of the root of Chromium's views (the first element of the Chrome framework below the window's own elements), whose
+/// children the page replaces in the walk; <paramref name="RenderWidget"/> is then the window and <paramref name="Host"/>
+/// zero. Null for a render widget's page.</param>
+public sealed record RenderWidgetPage(nint RenderWidget, nint Host, IUiaNode Root, IReadOnlyList<int>? ViewsRoot = null);

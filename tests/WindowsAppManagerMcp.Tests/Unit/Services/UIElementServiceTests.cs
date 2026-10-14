@@ -2060,6 +2060,141 @@ public class UIElementServiceTests
 
     #endregion
 
+    #region A WebView2 hosted as a visual, and elements met again (roadmap M3.F43)
+
+    /// <summary>
+    /// The walk with the real warm-up and the element registry over a WinUI 3 window with a WebView2 hosted as a visual
+    /// (<see cref="FakeWinUi3WebView2"/>), whose process started an msedgewebview2.exe.
+    /// </summary>
+    private (UIElementService Sut, FakeWinUi3WebView2 App) WinUi3Sut(bool withDocument = true)
+    {
+        _win32[Handle] = new Win32Window("WinUIDesktopWin32WindowClass", 0, AppProcess);
+        _win32[0x2010] = new Win32Window("Microsoft.UI.Content.DesktopChildSiteBridge", Handle, AppProcess);
+        _win32[0x2011] = new Win32Window("Chrome_WidgetWin_0", 0x2010, AppProcess);
+        var app = new FakeWinUi3WebView2(withDocument);
+        _tree.WithWindow(Handle, app.Window);
+        var windows = Win32Windows();
+        var processes = new Mock<INativeProcessWrapper>();
+        processes.Setup(p => p.GetProcessList()).Returns(new Dictionary<int, (int ParentProcessId, string ImageName)>
+        {
+            [(int)AppProcess] = (1, "WamWebCheck.exe"),
+            [(int)WebViewProcess] = ((int)AppProcess, "msedgewebview2.exe")
+        });
+        var warmup = new AccessibilityWarmup(_tree, windows.Object, processes.Object, wait: (_, _) => { });
+        var registry = new ElementRegistry(_tree, _worker, windows.Object, ElementRegistry.DefaultCapacity, 1, TimeProvider.System);
+        return (new UIElementService(_tree, _worker, windows.Object, warmup, registry), app);
+    }
+
+    private const string WinUi3Shape =
+        "Bridge(WAM page(Intermediate D3D Window,WAM page - Web content(WAM page(WAM WinUI 3 page,Page button,Amounts)))," +
+        "XAML(Native button,WebView2))";
+
+    [Fact]
+    public async Task GetUIElements_OfAWinUi3WebView2_ListsThePageInPlaceOfChromiumsViews_WithinMaxDepth()
+    {
+        // Arrange - the page's Document is at level 11 of the window's tree
+        var (sut, _) = WinUi3Sut();
+
+        // Act
+        var result = await sut.GetUIElementsAsync(Handle, maxDepth: 10);
+
+        // Assert - the Document a level below the root of Chromium's views (level 4), its elements at level 5; the page and
+        // the XAML island the WebView2 pane lists again are left out
+        result.Success.Should().BeTrue(result.Error);
+        Shape(result.Elements).Should().Be(WinUi3Shape);
+        result.DepthReached.Should().Be(5);
+        result.Truncated.Should().BeFalse();
+        result.AccessibilityWarmup!.Status.Should().Be(AccessibilityWarmupStatus.Ready);
+        result.AccessibilityWarmup.Host.Should().Be(WebContentHost.WebView2);
+    }
+
+    [Fact]
+    public async Task GetUIElements_OfAWinUi3WebView2_GivesThePagesElementsRefsOfTheWindow_EachOnce()
+    {
+        // Arrange
+        var (sut, _) = WinUi3Sut();
+
+        // Act
+        var result = await sut.GetUIElementsAsync(Handle, maxDepth: 10);
+
+        // Assert
+        var refs = All(result.Elements).Select(e => e.Ref).ToList();
+        refs.Should().OnlyHaveUniqueItems().And.NotContainNulls();
+        var button = All(result.Elements).Single(e => e.Name == "Page button");
+        button.FrameworkId.Should().BeNull("the page's framework is named where it starts, at the root of Chromium's views");
+        button.Bounds.Should().Be(new BoundsDto(40, 120, 90, 24));
+    }
+
+    [Fact]
+    public async Task GetUIElements_OfAWinUi3WebView2ReadAgain_ListsThePageAgain_WithoutAWarmUp()
+    {
+        // Arrange
+        var (sut, _) = WinUi3Sut();
+        (await sut.GetUIElementsAsync(Handle, maxDepth: 10)).AccessibilityWarmup.Should().NotBeNull();
+
+        // Act
+        var result = await sut.GetUIElementsAsync(Handle, maxDepth: 10);
+
+        // Assert
+        Shape(result.Elements).Should().Be(WinUi3Shape);
+        result.AccessibilityWarmup.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task GetUIElements_OfAWinUi3WebView2WithoutItsPageYet_ListsChromiumsViews()
+    {
+        // Arrange - the page's tree is not built: nothing to put in place of Chromium's views
+        var (sut, _) = WinUi3Sut(withDocument: false);
+
+        // Act
+        var result = await sut.GetUIElementsAsync(Handle, maxDepth: 4);
+
+        // Assert
+        Shape(result.Elements).Should().Be(
+            "Bridge(WAM page(Intermediate D3D Window,WAM page - Web content(NonClientView,TopContainerOverlayView))," +
+            "XAML(Native button,WebView2))");
+        result.AccessibilityWarmup!.Status.Should().Be(AccessibilityWarmupStatus.NotReady);
+    }
+
+    [Fact]
+    public async Task GetUIElements_ListsAnElementMetAgainOnlyWhereItWasFirstMet()
+    {
+        // Arrange - a provider lists one element (the same runtime id) under two parents, and one of them below itself
+        var sharedId = FakeUiaNode.NewRuntimeId();
+        var loopId = FakeUiaNode.NewRuntimeId();
+        Window(
+            Node("Pane", "First").With(new FakeUiaNode("Button", "Shared") { RuntimeId = sharedId }),
+            new FakeUiaNode("Pane", "Loop") { RuntimeId = loopId }.With(
+                new FakeUiaNode("Button", "Shared") { RuntimeId = sharedId },
+                Node("Group", "Inside").With(
+                    new FakeUiaNode("Pane", "Loop") { RuntimeId = loopId }.With(Node("Button", "Again")))));
+
+        // Act
+        var result = await CreateSut().GetUIElementsAsync(Handle, maxDepth: 10);
+
+        // Assert
+        Shape(result.Elements).Should().Be("First(Shared),Loop(Inside)");
+        result.DepthReached.Should().Be(2);
+    }
+
+    [Fact]
+    public async Task GetUIElements_ListsElementsWithoutARuntimeIdEachTime()
+    {
+        // Arrange - they cannot be told apart
+        Window(new FakeUiaNode("Button", "Same") { RuntimeId = null }, new FakeUiaNode("Button", "Same") { RuntimeId = null });
+
+        // Act
+        var result = await CreateSut().GetUIElementsAsync(Handle);
+
+        // Assert
+        Shape(result.Elements).Should().Be("Same,Same");
+    }
+
+    private static IEnumerable<UIElementInfo> All(IReadOnlyList<UIElementInfo>? elements) =>
+        elements?.SelectMany(e => All(e.Children).Prepend(e)) ?? [];
+
+    #endregion
+
     #region Owned windows (roadmap M3.F9)
 
     private static readonly nint Dialog = 0x5678;

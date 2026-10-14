@@ -24,9 +24,13 @@ namespace WindowsAppManagerMcp.Services;
 /// part of that window's tree. Only when a window has no render widget and its process started an msedgewebview2.exe (one
 /// process list, Win32 only) is the window's UI Automation tree searched, within <see cref="VisualDocumentSearchDepth"/>
 /// levels of panes and groups and at most <see cref="VisualDocumentSearchListings"/> listings, for a Document whose
-/// framework is Chrome. When one is found it is checked like a render widget's Document and reported as WebView2; when
-/// none is, the window is read as before. So a window without web content costs one process list, and a window of an app
-/// that hosts WebView2 without a page in it (a dialog of that app) a bounded search.</item>
+/// framework is Chrome, or for the root of Chromium's views (the first element of the Chrome framework; roadmap M3.F43:
+/// the WinUI 3 WebView2 lists its page about 8 levels below it), below which the Document is then looked for within
+/// <see cref="ChromeViewsSearchDepth"/> levels of Chromium's panes and groups and at most
+/// <see cref="ChromeViewsSearchListings"/> listings. A Document found, or the root of Chromium's views (whose Document may
+/// not be there yet), is checked like a render widget's Document and reported as WebView2; when neither is found, the
+/// window is read as before. So a window without web content costs one process list, and a window of an app that hosts
+/// WebView2 without a page in it (a dialog of that app) a bounded search.</item>
 /// <item>Only the window being read is touched: nothing global is set, and no other application is asked anything.</item>
 /// <item>A window whose pages got web content is remembered with the render widgets it showed (at most
 /// <see cref="CacheCapacity"/> windows, a dead window or one whose handle now belongs to another process is forgotten), so
@@ -38,7 +42,10 @@ namespace WindowsAppManagerMcp.Services;
 /// <item>A walk of the window lists its render widgets' pages under their parent windows' elements (roadmap M3.F35:
 /// Chromium's own views lie between those elements and the page, deeper than the walk reaches). <see cref="FindPages"/>
 /// gives them each page's root, the element the warm-up checks: it reuses the render widgets the warm-up just found in the
-/// window, so a window without web content costs the walk no further call.</item>
+/// window, so a window without web content costs the walk no further call. A page hosted as a visual is given with the
+/// root of Chromium's views, whose children the walk replaces with it (roadmap M3.F43): the page the warm-up just found,
+/// or, for a window remembered with such a page, the one the bounded search finds again (the walk needs the page's current
+/// Document, which a navigation replaces).</item>
 /// </list>
 /// </remarks>
 public sealed class AccessibilityWarmup : IAccessibilityWarmup
@@ -70,6 +77,15 @@ public sealed class AccessibilityWarmup : IAccessibilityWarmup
     /// <summary>The most levels listed while looking for the Document of web content hosted as a visual (roadmap M3.F23).</summary>
     public const int VisualDocumentSearchListings = 16;
 
+    /// <summary>
+    /// How many levels of Chromium's views below their root the Document of web content hosted as a visual is looked for
+    /// (roadmap M3.F43: 8 in a WinUI 3 WebView2 of runtime 155).
+    /// </summary>
+    public const int ChromeViewsSearchDepth = 12;
+
+    /// <summary>The most of Chromium's views listed while looking for that Document (roadmap M3.F43: 10 in that WebView2).</summary>
+    public const int ChromeViewsSearchListings = 24;
+
     /// <summary>The framework of the UI Automation elements of a Chromium page.</summary>
     public const string ChromeFrameworkId = "Chrome";
 
@@ -99,8 +115,9 @@ public sealed class AccessibilityWarmup : IAccessibilityWarmup
     private readonly Dictionary<nint, Remembered> _remembered = [];
     private long _sequence;
 
-    // The render widgets the latest warm-up found, for the walk that follows it (FindPages, roadmap M3.F35)
-    private (nint Window, List<nint> Widgets)? _found;
+    // The render widgets the latest warm-up found, for the walk that follows it (FindPages, roadmap M3.F35), and its page
+    // hosted as a visual (roadmap M3.F43)
+    private Found? _found;
 
     /// <param name="tree">The UI Automation tree.</param>
     /// <param name="windows">Finds the render widgets and tells whether a remembered window is still alive.</param>
@@ -165,8 +182,10 @@ public sealed class AccessibilityWarmup : IAccessibilityWarmup
                 return [];
             }
 
+            var found = TakeFound(window);
+            var widgets = found?.Widgets ?? FindRenderWidgets(window);
             var pages = new List<RenderWidgetPage>();
-            foreach (var widget in TakeFound(window) ?? FindRenderWidgets(window))
+            foreach (var widget in widgets)
             {
                 if (cancellationToken.IsCancellationRequested)
                 {
@@ -204,6 +223,15 @@ public sealed class AccessibilityWarmup : IAccessibilityWarmup
                 }
             }
 
+            // A page hosted as a visual: the one the warm-up just found, or for a window remembered with one, found again
+            if (widgets.Count == 0 && !cancellationToken.IsCancellationRequested &&
+                (found is { VisualSearched: true }
+                    ? found.VisualPage
+                    : IsRememberedVisual(window) ? FindVisualPage(window, cancellationToken) : null) is { } visual)
+            {
+                pages.Add(visual);
+            }
+
             return pages;
         }
         catch (Exception)
@@ -213,11 +241,31 @@ public sealed class AccessibilityWarmup : IAccessibilityWarmup
         }
     }
 
+    /// <summary>Whether <paramref name="window"/> is remembered with web content hosted as a visual (roadmap M3.F23).</summary>
+    private bool IsRememberedVisual(nint window)
+    {
+        lock (_gate)
+        {
+            return _remembered.TryGetValue(window, out var known) && known.Warmed.Contains(window);
+        }
+    }
+
+    /// <summary>
+    /// The page hosted as a visual in <paramref name="window"/> as a walk lists it (roadmap M3.F43): its Document with the root
+    /// of Chromium's views it lies below, or null when there is no such root (a Document among the window's own containers is
+    /// within the walk's reach anyway), no Document yet, or the root has no runtime id.
+    /// </summary>
+    private RenderWidgetPage? FindVisualPage(nint window, CancellationToken cancellationToken) =>
+        FindVisualContent(window, cancellationToken) is { ViewsRoot.RuntimeId: { Count: > 0 } viewsRoot, Document: { } document }
+            ? new RenderWidgetPage(window, nint.Zero, document, viewsRoot)
+            : null;
+
     /// <summary>
     /// The render widgets the latest warm-up found in <paramref name="window"/>, once: the walk that follows a warm-up lists
-    /// their pages (roadmap M3.F35). Null when the latest warm-up was of another window, or its widgets were taken already.
+    /// their pages (roadmap M3.F35), or its page hosted as a visual (roadmap M3.F43). Null when the latest warm-up was of
+    /// another window, or its widgets were taken already.
     /// </summary>
-    private List<nint>? TakeFound(nint window)
+    private Found? TakeFound(nint window)
     {
         lock (_gate)
         {
@@ -227,7 +275,7 @@ public sealed class AccessibilityWarmup : IAccessibilityWarmup
             }
 
             _found = null;
-            return found.Widgets;
+            return found;
         }
     }
 
@@ -257,14 +305,15 @@ public sealed class AccessibilityWarmup : IAccessibilityWarmup
         }
 
         var widgets = FindRenderWidgets(window);
+        var found = new Found(window, widgets);
         lock (_gate)
         {
-            _found = (window, widgets);
+            _found = found;
         }
 
         if (widgets.Count == 0)
         {
-            return WarmUpVisual(window, processId, known, budget, cancellationToken);
+            return WarmUpVisual(window, processId, known, found, budget, cancellationToken);
         }
 
         // A page that was warmed up is remembered with its render widget. Chromium builds a hidden page's tree only once it
@@ -283,21 +332,42 @@ public sealed class AccessibilityWarmup : IAccessibilityWarmup
     /// <summary>
     /// The warm-up of a window without a render widget, whose web content may be hosted as a visual (roadmap M3.F23): its
     /// page has no window of its own, so it is remembered by the window. Null, with no UI Automation call, when the
-    /// window's process started no msedgewebview2.exe; null, after a bounded search, when no Document of Chromium is found
-    /// below the window.
+    /// window's process started no msedgewebview2.exe; null, after a bounded search, when neither a Document of Chromium nor
+    /// the root of Chromium's views is found below the window. Below such a root (roadmap M3.F43) the Document is looked for
+    /// at each check until it is there, and the page is noted in <paramref name="found"/> for the walk that follows.
     /// </summary>
     private AccessibilityWarmupInfo? WarmUpVisual(
-        nint window, uint processId, Remembered? known, TimeSpan budget, CancellationToken cancellationToken)
+        nint window, uint processId, Remembered? known, Found found, TimeSpan budget, CancellationToken cancellationToken)
     {
-        if (known?.Warmed.Contains(window) == true || !StartedWebView2(processId) ||
-            FindVisualDocument(window, cancellationToken) is not { } document)
+        if (known?.Warmed.Contains(window) == true || !StartedWebView2(processId))
         {
             return null;
         }
 
-        var pages = new Pages([window], [window], WebContentHost.WebView2, FindVisualDocument,
-            new Dictionary<nint, IUiaNode> { [window] = document });
-        return WarmUpPages(window, processId, known, pages, budget, cancellationToken);
+        var content = FindVisualContent(window, cancellationToken);
+        found.VisualSearched = true;
+        if (content == null)
+        {
+            return null;
+        }
+
+        var documents = new Dictionary<nint, IUiaNode>();
+        if (content.Document != null)
+        {
+            documents[window] = content.Document;
+        }
+
+        Func<nint, CancellationToken, IUiaNode?> findDocument = content.ViewsRoot is { } viewsRoot
+            ? (_, token) => FindDocumentInViews(viewsRoot.Node, token)
+            : FindVisualDocument;
+        var pages = new Pages([window], [window], WebContentHost.WebView2, findDocument, documents);
+        var info = WarmUpPages(window, processId, known, pages, budget, cancellationToken);
+        if (content.ViewsRoot?.RuntimeId is { Count: > 0 } viewsRootId && documents.TryGetValue(window, out var document))
+        {
+            found.VisualPage = new RenderWidgetPage(window, nint.Zero, document, viewsRootId);
+        }
+
+        return info;
     }
 
     /// <summary>
@@ -543,7 +613,7 @@ public sealed class AccessibilityWarmup : IAccessibilityWarmup
             return root;
         }
 
-        return FindDocumentBelow(root, DocumentSearchDepth, DocumentSearchListings, _ => true, cancellationToken) ??
+        return FindBelow(root, DocumentSearchDepth, DocumentSearchListings, IsDocument, IsContainer, cancellationToken)?.Node ??
                (_tree.GetChildElements(root, cancellationToken).Any(child =>
                    string.Equals(child.Properties.FrameworkId, ChromeFrameworkId, StringComparison.OrdinalIgnoreCase))
                    ? root
@@ -551,24 +621,50 @@ public sealed class AccessibilityWarmup : IAccessibilityWarmup
     }
 
     /// <summary>
-    /// The Document of web content hosted as a visual in <paramref name="window"/> (roadmap M3.F23): the first Document whose
-    /// framework is Chrome within <see cref="VisualDocumentSearchDepth"/> levels of panes and groups below the window's
-    /// element, listing at most <see cref="VisualDocumentSearchListings"/> levels. Null when there is none (yet).
+    /// The Document of web content hosted as a visual in <paramref name="window"/> (roadmap M3.F23, M3.F43), as
+    /// <see cref="FindVisualContent"/> finds it. Null when there is none (yet).
     /// </summary>
     private IUiaNode? FindVisualDocument(nint window, CancellationToken cancellationToken) =>
-        _tree.FromHandle(window) is { } root
-            ? FindDocumentBelow(root, VisualDocumentSearchDepth, VisualDocumentSearchListings,
-                properties => string.Equals(properties.FrameworkId, ChromeFrameworkId, StringComparison.OrdinalIgnoreCase),
-                cancellationToken)
-            : null;
+        FindVisualContent(window, cancellationToken)?.Document;
 
     /// <summary>
-    /// The first Document that <paramref name="accept"/> takes within <paramref name="maxDepth"/> levels of panes and groups
-    /// below <paramref name="root"/>, breadth first, listing at most <paramref name="maxListings"/> levels. Null when there is
-    /// none.
+    /// What is below <paramref name="window"/>'s element of web content hosted as a visual: the first element of the Chrome
+    /// framework within <see cref="VisualDocumentSearchDepth"/> levels of the window's own panes and groups, listing at
+    /// most <see cref="VisualDocumentSearchListings"/> levels (roadmap M3.F23). That is the page's Document, or the root of
+    /// Chromium's views (roadmap M3.F43), below which the Document is looked for (<see cref="FindDocumentInViews"/>). Null
+    /// when there is neither.
     /// </summary>
-    private IUiaNode? FindDocumentBelow(
-        IUiaNode root, int maxDepth, int maxListings, Func<UiaNodeProperties, bool> accept, CancellationToken cancellationToken)
+    private VisualContent? FindVisualContent(nint window, CancellationToken cancellationToken)
+    {
+        if (_tree.FromHandle(window) is not { } root ||
+            FindBelow(root, VisualDocumentSearchDepth, VisualDocumentSearchListings,
+                child => IsChrome(child) && (IsDocument(child) || IsContainer(child)), IsContainer, cancellationToken) is not { } found)
+        {
+            return null;
+        }
+
+        return IsDocument(found)
+            ? new VisualContent(found.Node, ViewsRoot: null)
+            : new VisualContent(FindDocumentInViews(found.Node, cancellationToken), found);
+    }
+
+    /// <summary>
+    /// The page's Document below the root of Chromium's views (roadmap M3.F43): the first Document of the Chrome framework
+    /// within <see cref="ChromeViewsSearchDepth"/> levels of Chromium's panes and groups, listing at most
+    /// <see cref="ChromeViewsSearchListings"/> of them. Null when there is none (yet).
+    /// </summary>
+    private IUiaNode? FindDocumentInViews(IUiaNode viewsRoot, CancellationToken cancellationToken) =>
+        FindBelow(viewsRoot, ChromeViewsSearchDepth, ChromeViewsSearchListings,
+            child => IsDocument(child) && IsChrome(child), child => IsContainer(child) && IsChrome(child), cancellationToken)?.Node;
+
+    /// <summary>
+    /// The first element below <paramref name="root"/> that <paramref name="accept"/> takes, breadth first, within
+    /// <paramref name="maxDepth"/> levels of the elements <paramref name="descend"/> takes, listing at most
+    /// <paramref name="maxListings"/> levels. Null when there is none.
+    /// </summary>
+    private UiaElement? FindBelow(
+        IUiaNode root, int maxDepth, int maxListings, Func<UiaElement, bool> accept, Func<UiaElement, bool> descend,
+        CancellationToken cancellationToken)
     {
         var pending = new Queue<(IUiaNode Node, int Depth)>();
         pending.Enqueue((root, 0));
@@ -579,12 +675,12 @@ public sealed class AccessibilityWarmup : IAccessibilityWarmup
             listings++;
             foreach (var child in _tree.GetChildElements(node, cancellationToken))
             {
-                if (IsDocument(child.Properties.ControlType) && accept(child.Properties))
+                if (accept(child))
                 {
-                    return child.Node;
+                    return child;
                 }
 
-                if (depth + 1 < maxDepth && Containers.Contains(child.Properties.ControlType))
+                if (depth + 1 < maxDepth && descend(child))
                 {
                     pending.Enqueue((child.Node, depth + 1));
                 }
@@ -593,6 +689,13 @@ public sealed class AccessibilityWarmup : IAccessibilityWarmup
 
         return null;
     }
+
+    private static bool IsDocument(UiaElement element) => IsDocument(element.Properties.ControlType);
+
+    private static bool IsContainer(UiaElement element) => Containers.Contains(element.Properties.ControlType);
+
+    private static bool IsChrome(UiaElement element) =>
+        string.Equals(element.Properties.FrameworkId, ChromeFrameworkId, StringComparison.OrdinalIgnoreCase);
 
     private static bool IsDocument(string controlType) => string.Equals(controlType, "Document", StringComparison.OrdinalIgnoreCase);
 
@@ -649,4 +752,27 @@ public sealed class AccessibilityWarmup : IAccessibilityWarmup
         WebContentHost Host,
         Func<nint, CancellationToken, IUiaNode?> FindDocument,
         Dictionary<nint, IUiaNode> Documents);
+
+    /// <summary>
+    /// What the latest warm-up found in a window, for the walk that follows it: its shown render widgets, and, for a window
+    /// without any, whether web content hosted as a visual was looked for and its page as the walk lists it (roadmap
+    /// M3.F43). Set before the walk takes it, on the same thread.
+    /// </summary>
+    private sealed class Found(nint window, List<nint> widgets)
+    {
+        public nint Window { get; } = window;
+
+        public List<nint> Widgets { get; } = widgets;
+
+        public bool VisualSearched { get; set; }
+
+        public RenderWidgetPage? VisualPage { get; set; }
+    }
+
+    /// <summary>
+    /// Web content hosted as a visual below a window (roadmap M3.F23, M3.F43): a Document of Chromium among the window's own
+    /// containers (with no <paramref name="ViewsRoot"/>), or the root of Chromium's views and the Document below it (null
+    /// when it is not there yet).
+    /// </summary>
+    private sealed record VisualContent(IUiaNode? Document, UiaElement? ViewsRoot);
 }

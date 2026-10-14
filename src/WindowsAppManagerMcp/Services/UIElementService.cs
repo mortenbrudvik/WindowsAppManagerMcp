@@ -50,6 +50,15 @@ namespace WindowsAppManagerMcp.Services;
 /// get refs of the window. Chromium's views are still walked after it; a page met again among them is not listed twice.
 /// Only shown render widgets are listed, at most <see cref="AccessibilityWarmup.MaxRenderWidgets"/>, and a window without
 /// one costs no further call.</item>
+/// <item>A WebView2 page hosted as a visual (roadmap M3.F43: the WinUI 3 WebView2 control, which has no render widget) lies
+/// about 8 levels below the root of Chromium's views (the first element of the Chrome framework), beyond maxDepth. Its
+/// Document is listed in place of that root's children, which are Chromium's own views and nothing of the page: the
+/// page's elements are then a level below the root. Searches still see Chromium's views.</item>
+/// <item>An element met again (the same runtime id: a provider that lists a subtree under two parents, or under one of its
+/// own descendants, as a WinUI 3 window lists its WebView2's page and XAML island; roadmap M3.F43) is listed only where the
+/// walk first met it, breadth first: it and the elements inside it are left out the second time, so they are not listed
+/// twice with the same refs and a loop ends. An element without a runtime id cannot be told from another, and is listed
+/// each time.</item>
 /// <item>Each element names its UI framework only where it changes from the returned element it is inside (or, at the top,
 /// from the window's), so a web page inside a native frame shows where it starts without repeating it on every element.</item>
 /// <item>A window the walked window owns (a dialog or popup, which the HWND proxy lists among the window's children with its
@@ -426,16 +435,20 @@ public class UIElementService : IUIElementService
                 windowHandle, filter?.AccessibilityWarmupBudget ?? AccessibilityWarmup.MaxWait, cancellationToken);
 
             // Its pages lie below Chromium's own views, deeper than the walk reaches: they are listed under the elements of
-            // their render widgets' parent windows (roadmap M3.F35)
-            var pages = _warmup?.FindPages(windowHandle, cancellationToken) is { Count: > 0 } found
-                ? found.GroupBy(page => page.Host).ToDictionary(hosted => hosted.Key, hosted => hosted.Select(page => page.Root).ToList())
+            // their render widgets' parent windows (roadmap M3.F35), or, hosted as a visual, in place of the children of the
+            // root of Chromium's views (roadmap M3.F43)
+            var found = _warmup?.FindPages(windowHandle, cancellationToken) ?? [];
+            var pages = found.Where(page => page.ViewsRoot == null).ToList() is { Count: > 0 } hostedByWindows
+                ? hostedByWindows.GroupBy(page => page.Host)
+                    .ToDictionary(hosted => hosted.Key, hosted => hosted.Select(page => page.Root).ToList())
                 : null;
+            var visualPages = found.Where(page => page.ViewsRoot != null).ToList() is { Count: > 0 } visual ? visual : null;
 
             var (windowTitle, windowFramework) = TryReadWindow(window);
             var refs = _registry == null ? null : new WalkRefs(_registry, windowHandle, _registry.NextGeneration());
             var walk = new Walk(
                 _tree, maxDepth, filter, controlTypes, windowTitle, windowFramework, refs, OwnedWindows.Below(_windows, windowHandle),
-                pages, progress, cancellationToken);
+                pages, visualPages, progress, cancellationToken);
             started.Walk = walk;
 
             // Errors reading the window's own children propagate: an empty tree would look like a
@@ -540,6 +553,7 @@ public class UIElementService : IUIElementService
         WalkRefs? refs,
         Func<UiaElement, bool>? leaveOut,
         Dictionary<nint, List<IUiaNode>>? pageHosts,
+        List<RenderWidgetPage>? visualPages,
         IProgress<OperationProgress>? progress,
         CancellationToken cancellationToken)
     {
@@ -550,18 +564,18 @@ public class UIElementService : IUIElementService
 
         /// <summary>
         /// The elements whose children are still to be read, in breadth-first order, with their level's number and the pages
-        /// listed first among those children (roadmap M3.F35).
+        /// listed first among those children (roadmap M3.F35), or in their place (roadmap M3.F43).
         /// </summary>
-        private readonly Queue<(WalkNode Parent, IUiaNode Node, int Level, List<IUiaNode>? Pages)> _pending = new();
+        private readonly Queue<(WalkNode Parent, IUiaNode Node, int Level, HostedPages? Pages)> _pending = new();
 
         /// <summary>The handles of the windows the window owns, left out of its children (<see cref="OwnedWindows"/>).</summary>
         private readonly List<long> _ownedWindows = [];
 
         /// <summary>
-        /// The runtime ids of the pages listed under their hosts, whose elements are not listed again where the walk meets them
-        /// among Chromium's views. Used on the walk's thread only.
+        /// The runtime ids of the elements met so far (roadmap M3.F43), so an element met again, such as a page listed under
+        /// its host and met again among Chromium's views, is not listed twice. Used on the walk's thread only.
         /// </summary>
-        private readonly List<IReadOnlyList<int>> _pageIds = [];
+        private readonly HashSet<string> _met = new(StringComparer.Ordinal);
 
         private int _elementCount;
         private int _skippedElementCount;
@@ -631,7 +645,7 @@ public class UIElementService : IUIElementService
             ReadChildren(_root, window, level: 1, isWindow: true, TakePages(windowHandle));
             while (true)
             {
-                (WalkNode Parent, IUiaNode Node, int Level, List<IUiaNode>? Pages) next;
+                (WalkNode Parent, IUiaNode Node, int Level, HostedPages? Pages) next;
                 lock (_gate)
                 {
                     if (!_pending.TryDequeue(out next))
@@ -658,8 +672,29 @@ public class UIElementService : IUIElementService
         }
 
         /// <summary>The pages listed under the element of the window <paramref name="host"/>, once, or null when there are none.</summary>
-        private List<IUiaNode>? TakePages(nint host) =>
-            host != nint.Zero && pageHosts != null && pageHosts.Remove(host, out var hosted) ? hosted : null;
+        private HostedPages? TakePages(nint host) =>
+            host != nint.Zero && pageHosts != null && pageHosts.Remove(host, out var hosted) ? new HostedPages(hosted, InPlace: false) : null;
+
+        /// <summary>
+        /// The pages hosted as a visual listed in place of the children of the root of Chromium's views whose runtime id is
+        /// <paramref name="runtimeId"/> (roadmap M3.F43), once, or null when there are none.
+        /// </summary>
+        private HostedPages? TakeVisualPages(IReadOnlyList<int> runtimeId)
+        {
+            if (visualPages is not { Count: > 0 })
+            {
+                return null;
+            }
+
+            var hosted = visualPages.Where(page => page.ViewsRoot!.SequenceEqual(runtimeId)).ToList();
+            if (hosted.Count == 0)
+            {
+                return null;
+            }
+
+            visualPages.RemoveAll(hosted.Contains);
+            return new HostedPages(hosted.Select(page => page.Root).ToList(), InPlace: true);
+        }
 
         /// <summary>
         /// Whether <paramref name="first"/> or an element still waiting has a child: the elements maxElements left unread.
@@ -746,9 +781,10 @@ public class UIElementService : IUIElementService
         /// <summary>
         /// Reads the children of <paramref name="node"/>, which are at <paramref name="level"/>, into
         /// <paramref name="parent"/>, and queues those whose own children are to be read. The pages of render widgets
-        /// hosted by the node's window (<paramref name="pages"/>, roadmap M3.F35) come first.
+        /// hosted by the node's window (<paramref name="pages"/>, roadmap M3.F35) come first; a page hosted as a visual takes
+        /// the place of the children (roadmap M3.F43), which are then not read.
         /// </summary>
-        private void ReadChildren(WalkNode parent, IUiaNode node, int level, bool isWindow = false, List<IUiaNode>? pages = null)
+        private void ReadChildren(WalkNode parent, IUiaNode node, int level, bool isWindow = false, HostedPages? pages = null)
         {
             if (StopRequested())
             {
@@ -758,7 +794,7 @@ public class UIElementService : IUIElementService
             IReadOnlyList<Candidate> children;
             try
             {
-                children = FetchChildren(node);
+                children = pages is { InPlace: true } ? [] : FetchChildren(node);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -785,7 +821,7 @@ public class UIElementService : IUIElementService
 
             if (pages != null)
             {
-                children = [.. pages.Select(PageCandidate), .. children];
+                children = [.. pages.Roots.Select(PageCandidate), .. children];
             }
 
             for (var index = 0; index < children.Count; index++)
@@ -848,7 +884,7 @@ public class UIElementService : IUIElementService
             {
                 if (!cancellationToken.IsCancellationRequested)
                 {
-                    return new Candidate(root, tree.ReadElement(root), Page: true);
+                    return new Candidate(root, tree.ReadElement(root));
                 }
             }
             catch (Exception)
@@ -856,17 +892,23 @@ public class UIElementService : IUIElementService
                 // Read again, on its own, when it is visited
             }
 
-            return new Candidate(root, null, Page: true);
+            return new Candidate(root, null);
         }
 
         /// <summary>
         /// The pages listed first among the children of the element <paramref name="candidate"/> (roadmap M3.F35): those of
         /// the render widgets whose parent window is the element's. Its window handle comes from its level's read; of an
         /// element read on its own, only a Pane's (the control type of a hosted window) is read, and only while pages are
-        /// still to be listed. Null when it hosts none.
+        /// still to be listed. Or the pages hosted as a visual listed in place of its children, when it is the root of
+        /// Chromium's views they lie below (<paramref name="runtimeId"/>, roadmap M3.F43). Null when it hosts none.
         /// </summary>
-        private List<IUiaNode>? PagesHostedBy(Candidate candidate, UiaNodeProperties properties)
+        private HostedPages? PagesHostedBy(Candidate candidate, UiaNodeProperties properties, IReadOnlyList<int>? runtimeId)
         {
+            if (runtimeId != null && TakeVisualPages(runtimeId) is { } visual)
+            {
+                return visual;
+            }
+
             if (pageHosts is not { Count: > 0 })
             {
                 return null;
@@ -894,15 +936,11 @@ public class UIElementService : IUIElementService
         }
 
         /// <summary>
-        /// Whether <paramref name="candidate"/> is a page already listed under its host, met again among Chromium's views:
-        /// a Document or Pane with a listed page's runtime id. Never true while no page was listed.
+        /// Notes the element's runtime id (roadmap M3.F43): false when the walk met it before, so it is not listed again. An
+        /// element without a runtime id is never taken for another.
         /// </summary>
-        private bool IsListedPage(Candidate candidate, UiaNodeProperties properties) =>
-            _pageIds.Count > 0 &&
-            (string.Equals(properties.ControlType, "Document", StringComparison.OrdinalIgnoreCase) ||
-             string.Equals(properties.ControlType, "Pane", StringComparison.OrdinalIgnoreCase)) &&
-            RuntimeIdOf(candidate) is { } runtimeId &&
-            _pageIds.Any(page => page.SequenceEqual(runtimeId));
+        private bool FirstMeeting(IReadOnlyList<int>? runtimeId) =>
+            runtimeId is not { Count: > 0 } || _met.Add(string.Join('.', runtimeId));
 
         /// <summary>
         /// The window's children without the windows it owns, whose handles are noted. A child fetched with its properties is
@@ -960,20 +998,16 @@ public class UIElementService : IUIElementService
         private void Visit(Candidate candidate, int level, WalkNode parent, int[] indexPath)
         {
             UiaNodeProperties properties;
+            IReadOnlyList<int>? runtimeId;
             bool included;
             try
             {
                 properties = candidate.Cached?.Properties ?? tree.Read(candidate.Node);
 
-                // A page listed under its host is not listed again where the walk meets it among Chromium's views
-                if (candidate.Page)
-                {
-                    if (RuntimeIdOf(candidate) is { } pageId)
-                    {
-                        _pageIds.Add(pageId);
-                    }
-                }
-                else if (IsListedPage(candidate, properties))
+                // An element met before (a page listed under its host and met again among Chromium's views, a subtree a
+                // provider lists twice) is listed only the first time
+                runtimeId = RuntimeIdOf(candidate);
+                if (!FirstMeeting(runtimeId))
                 {
                     return;
                 }
@@ -1007,13 +1041,13 @@ public class UIElementService : IUIElementService
             // The list row the element is in (the walk knows its ancestors), and the row of the elements below it
             var row = ElementRows.IsItem(properties.ControlType) ? null : ElementRows.Below(parent.Row);
             var rowBelow = ElementRows.IsItem(properties.ControlType)
-                ? ElementRows.OfItem(RuntimeIdOf(candidate), properties)
+                ? ElementRows.OfItem(runtimeId, properties)
                 : ElementRows.EndsTheSearch(properties.ControlType) ? null : row;
 
             // Registered outside the walk's lock: the registry has its own, and makes no UI Automation call
-            var elementRef = included ? refs?.Register(tree, candidate, properties, indexPath, row) : null;
+            var elementRef = included ? refs?.Register(candidate, properties, runtimeId, indexPath, row) : null;
             var node = new WalkNode(properties, included, elementRef, indexPath) { Row = rowBelow };
-            var hosted = level < maxDepth ? PagesHostedBy(candidate, properties) : null;
+            var hosted = level < maxDepth ? PagesHostedBy(candidate, properties, runtimeId) : null;
             lock (_gate)
             {
                 parent.Children.Add(node);
@@ -1034,8 +1068,9 @@ public class UIElementService : IUIElementService
         }
 
         /// <summary>
-        /// An item's runtime id, for the row of the elements below it: from its level's read, else as the engine knows it
-        /// (no further call for an element it found); null when it cannot be read.
+        /// An element's runtime id, to tell an element met again and for its ref and the row of the elements below it: from
+        /// its level's read, else as the engine knows it (no further call for an element it found); null when it cannot be
+        /// read.
         /// </summary>
         private IReadOnlyList<int>? RuntimeIdOf(Candidate candidate)
         {
@@ -1239,25 +1274,31 @@ public class UIElementService : IUIElementService
     }
 
     /// <summary>
-    /// A child to visit: its node, its properties when they came with it, and whether it is the page of a render widget
-    /// listed under its host (roadmap M3.F35).
+    /// A child to visit: its node, and its properties when they came with it.
     /// </summary>
-    private sealed record Candidate(IUiaNode Node, UiaElement? Cached, bool Page = false);
+    private sealed record Candidate(IUiaNode Node, UiaElement? Cached);
+
+    /// <summary>
+    /// The pages listed among an element's children: first among them (a render widget's, roadmap M3.F35), or in their
+    /// place (<paramref name="InPlace"/>: hosted as a visual, under the root of Chromium's views, roadmap M3.F43).
+    /// </summary>
+    private sealed record HostedPages(List<IUiaNode> Roots, bool InPlace);
 
     /// <summary>
     /// Gives the elements a walk returns their refs (roadmap M3.4). An element fetched with its level brings its runtime id
-    /// and class along; one read on its own gets its runtime id from <see cref="IUiaTree.GetRuntimeId"/> (which the
-    /// engines answer from what they read when they found it) and is registered without a class.
+    /// and class along; one read on its own comes with the runtime id the walk read (<see cref="IUiaTree.GetRuntimeId"/>,
+    /// which the engines answer from what they read when they found it) and is registered without a class.
     /// </summary>
     private sealed class WalkRefs(IElementRegistry registry, nint windowHandle, long generation)
     {
-        public string? Register(IUiaTree tree, Candidate candidate, UiaNodeProperties properties, int[] indexPath, ElementRow? row)
+        public string? Register(
+            Candidate candidate, UiaNodeProperties properties, IReadOnlyList<int>? runtimeId, int[] indexPath, ElementRow? row)
         {
             try
             {
                 var element = candidate.Cached ?? new UiaElement(
                     candidate.Node, properties, ClassName: null, IsKeyboardFocusable: false, UiaPatterns.None,
-                    tree.GetRuntimeId(candidate.Node), ControlTypeId: null);
+                    runtimeId, ControlTypeId: null);
                 return registry.Register(windowHandle, element, new ElementOrigin(generation, IndexPath: indexPath, Row: row));
             }
             catch (Exception)
