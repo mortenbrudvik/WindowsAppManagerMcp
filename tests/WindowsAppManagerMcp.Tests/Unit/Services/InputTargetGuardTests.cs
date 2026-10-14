@@ -748,6 +748,47 @@ public class InputTargetGuardTests
     }
 
     [Fact]
+    public void Keyboard_ForOneElement_WhoseFocusMovedToAnotherControl_IsRefused_AfterTheTargetIsInFront()
+    {
+        // Arrange - element_action's keys (roadmap M3.F17): the window is right, but focus left the element in it
+        var target = To(Notepad) with
+        {
+            FocusRecheck = () => new SelectorRefusal("TargetLostFocus", "Keyboard focus moved off the element to another control.")
+        };
+
+        // Act
+        var result = CreateSut().CheckKeyboard(target, KeyboardInputKind.Text, null);
+
+        // Assert - checked once the target is in front, where the focus inside it can be read
+        result.Allowed.Should().BeFalse();
+        result.ErrorCode.Should().Be(InputErrorCode.TargetLostFocus);
+        result.Error.Should().Contain("another control");
+        _foreground.Verify(f => f.EnsureForeground(Notepad, It.IsAny<int>()), Times.Once);
+    }
+
+    [Fact]
+    public void RecheckKeyboard_ForOneElement_RunsTheFocusRecheck_EvenWithTheSameWindowInFront()
+    {
+        // Arrange - focus moved to another control of the same window between two batches: the window check alone passes
+        var focusMoved = false;
+        var target = To(Notepad) with
+        {
+            FocusRecheck = () => focusMoved ? new SelectorRefusal("TargetLostFocus", "Keyboard focus moved off the element.") : null
+        };
+        var sut = CreateSut();
+        var approved = sut.CheckKeyboard(target, KeyboardInputKind.Text, null);
+        focusMoved = true;
+
+        // Act
+        var result = sut.RecheckKeyboard(approved);
+
+        // Assert
+        approved.Allowed.Should().BeTrue(approved.Error);
+        result.ErrorCode.Should().Be(InputErrorCode.TargetLostFocus);
+        result.ReceivingWindow!.Handle.Should().Be(Notepad);
+    }
+
+    [Fact]
     public void Keyboard_TargetDisabledByAModalDialog_IsBlockedByModal_WithTheDialog()
     {
         // Arrange - the dialog is GW_ENABLEDPOPUP of the target

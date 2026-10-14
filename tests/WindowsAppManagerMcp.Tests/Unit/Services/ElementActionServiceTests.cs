@@ -1591,6 +1591,83 @@ public sealed class ElementActionServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task SetValue_ModeType_WhenFocusMovesToAnotherControlBeforeSelectAll_SendsNoKey()
+    {
+        // Arrange - the user or a parallel call moves focus within the window after element_action checked it, before
+        // Ctrl+A: the input guard runs the target's focus recheck inside its gate before the keys (roadmap M3.F17)
+        var value = new FakeValuePattern("old");
+        var name = RefOf(Edit(value));
+        var search = new FakeUiaNode("Edit", "Search") { ProcessId = Pid, IsKeyboardFocusable = true };
+        _input.Setup(i => i.SendKeysAsync("^a", It.IsAny<InputTarget>(), false, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string k, InputTarget target, bool _, CancellationToken _) =>
+            {
+                _tree.Focused = search;
+                return SendKeysAsTheGuardWould(k, target);
+            });
+
+        // Act
+        var result = await ActAsync(name, ElementActionKind.SetValue, "Ada", ElementValueMode.Type);
+
+        // Assert
+        result.ErrorCode.Should().Be("FocusNotOnElement");
+        result.Error.Should().Contain("moved off the element").And.Contain("Nothing was typed");
+        value.Value.Should().Be("old");
+    }
+
+    [Fact]
+    public async Task SetValue_ModeType_WhenFocusMovesToAnotherControlAfterSelectAll_TypesNothing()
+    {
+        // Arrange - focus moves between Ctrl+A and the text, two calls of the input service
+        var value = new FakeValuePattern("old");
+        var name = RefOf(Edit(value));
+        var search = new FakeUiaNode("Edit", "Search") { ProcessId = Pid, IsKeyboardFocusable = true };
+        _input.Setup(i => i.SendKeysAsync("^a", It.IsAny<InputTarget>(), false, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string k, InputTarget target, bool _, CancellationToken _) => SendKeysAsTheGuardWould(k, target));
+        _input.Setup(i => i.TypeTextAsync("Ada", 0, It.IsAny<InputTarget>(), false, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string text, int _, InputTarget target, bool _, CancellationToken _) =>
+            {
+                _tree.Focused = search;
+                return target.FocusRecheck?.Invoke() is { } moved
+                    ? new TypeTextResult(false, text, 0, $"Nothing was typed. {moved.Error}", InputErrorCode.TargetLostFocus) { ReceivingWindow = Main }
+                    : new TypeTextResult(true, text, text.Length) { ReceivingWindow = Main };
+            });
+
+        // Act
+        var result = await ActAsync(name, ElementActionKind.SetValue, "Ada", ElementValueMode.Type);
+
+        // Assert
+        result.ErrorCode.Should().Be("FocusNotOnElement");
+        result.Error.Should().Contain("Only Ctrl+A was sent");
+        value.Value.Should().Be("old");
+    }
+
+    [Fact]
+    public async Task SetValue_ModeType_WhenFocusCannotBeReadInsideTheGate_SendsNoKey()
+    {
+        // Arrange - the application stops answering UI Automation after the first check: the recheck fails closed
+        var name = RefOf(Edit(new FakeValuePattern("old")));
+        _input.Setup(i => i.SendKeysAsync("^a", It.IsAny<InputTarget>(), false, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string k, InputTarget target, bool _, CancellationToken _) =>
+            {
+                _tree.FocusedException = new TimeoutException("The read did not finish in time.");
+                return SendKeysAsTheGuardWould(k, target);
+            });
+
+        // Act
+        var result = await ActAsync(name, ElementActionKind.SetValue, "Ada", ElementValueMode.Type);
+
+        // Assert
+        result.ErrorCode.Should().Be("OperationTimedOut");
+        result.Error.Should().Contain("keyboard focus").And.Contain("Nothing was typed");
+    }
+
+    /// <summary>The input service's answer to keys whose target's focus recheck, run by the guard inside the gate, refuses or not.</summary>
+    private static SendKeysResult SendKeysAsTheGuardWould(string keys, InputTarget target) =>
+        target.FocusRecheck?.Invoke() is { } moved
+            ? new SendKeysResult(false, keys, $"Nothing was sent. {moved.Error}", InputErrorCode.TargetLostFocus) { ReceivingWindow = Main }
+            : new SendKeysResult(true, keys) { ReceivingWindow = Main };
+
+    [Fact]
     public async Task SetValue_ModeType_OnAnEditableComboBox_TypesIntoItsEdit()
     {
         // Arrange - an editable combo box takes its text in the Edit that is its child

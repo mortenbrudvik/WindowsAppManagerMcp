@@ -55,6 +55,15 @@ public readonly record struct InputTarget(nint? WindowHandle, bool AllowHostTarg
     /// </summary>
     public Func<SelectorRefusal?>? PointRecheck { get; init; }
 
+    /// <summary>
+    /// For keys meant for one element of the window (element_action's keyboard path, roadmap M3.F17): checks that keyboard
+    /// focus is still on that element, and returns why not (errorCode TargetLostFocus), or null when it is. The input guard
+    /// runs this inside the gate for keyboard input, once the target is in front and before every batch (also while the same
+    /// window stays in front), so keys never reach another control of the window that focus moved to after the element was
+    /// focused. It reads the application's focus, so it must bound its own wait: the gate is held while it runs.
+    /// </summary>
+    public Func<SelectorRefusal?>? FocusRecheck { get; init; }
+
     /// <summary>Two targets are equal when they name the same window with the same host rule; the rechecks are not compared.</summary>
     public bool Equals(InputTarget other) => WindowHandle == other.WindowHandle && AllowHostTarget == other.AllowHostTarget;
 

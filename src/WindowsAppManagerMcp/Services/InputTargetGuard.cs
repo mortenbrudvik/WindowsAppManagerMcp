@@ -141,6 +141,12 @@ public sealed class InputTargetGuard : IInputTargetGuard
                 return MenuRefusal(target, receiving);
             }
 
+            // 6. Keys meant for one element: focus must still be on it, now that its window is in front
+            if (FocusRefusal(target, receiving.Summary) is { } focusMoved)
+            {
+                return focusMoved;
+            }
+
             return InputGuardResult.Allow(target, foreground, receiving.Summary, anchor: handle);
         }
 
@@ -171,6 +177,12 @@ public sealed class InputTargetGuard : IInputTargetGuard
     public InputGuardResult RecheckKeyboard(InputGuardResult approved)
     {
         ArgumentNullException.ThrowIfNull(approved);
+
+        // Before the same-window shortcut: focus can move to another control without another window coming to the front
+        if (FocusRefusal(approved.Target, approved.ReceivingWindow) is { } focusMoved)
+        {
+            return focusMoved;
+        }
 
         var foreground = _windows.GetForegroundWindow();
         if (foreground != nint.Zero && foreground == approved.Receiving)
@@ -242,6 +254,15 @@ public sealed class InputTargetGuard : IInputTargetGuard
     private static InputGuardResult? PointRefusal(InputTarget target) =>
         target.PointRecheck?.Invoke() is { } changed
             ? InputGuardResult.Refuse(RecheckErrorCode(changed.ErrorCode), changed.Error, target)
+            : null;
+
+    /// <summary>
+    /// The refusal of keys meant for one element whose keyboard focus moved off it (<see cref="InputTarget.FocusRecheck"/>,
+    /// roadmap M3.F17), or null; <paramref name="receiving"/> is the window the keys went to so far.
+    /// </summary>
+    private static InputGuardResult? FocusRefusal(InputTarget target, WindowSummary? receiving) =>
+        target.FocusRecheck?.Invoke() is { } moved
+            ? InputGuardResult.Refuse(RecheckErrorCode(moved.ErrorCode), moved.Error, target, receiving)
             : null;
 
     public InputGuardResult RecheckMouse(int x, int y, InputGuardResult approved)
