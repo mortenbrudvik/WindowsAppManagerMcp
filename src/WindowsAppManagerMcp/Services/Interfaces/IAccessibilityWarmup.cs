@@ -23,4 +23,24 @@ public interface IAccessibilityWarmup
     /// <remarks>Never throws for a provider's failure: the warm-up is a courtesy, and the read that follows reports its
     /// own errors.</remarks>
     AccessibilityWarmupInfo? WarmUp(nint window, TimeSpan budget, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// The pages of the visible render widgets inside <paramref name="window"/>, which a walk of the window lists under the
+    /// element of each render widget's parent window (roadmap M3.F35): Chromium's own views lie between that element and the
+    /// page, deeper than a walk reaches. A render widget that is the window itself is left out, since the window's own tree
+    /// is the page. Call it on the UI Automation worker thread, after <see cref="WarmUp"/> of the same window: it reuses the
+    /// render widgets the warm-up found, so a window without web content costs no further call.
+    /// </summary>
+    /// <param name="window">The window about to be walked.</param>
+    /// <param name="cancellationToken">The read's deadline: ends the search with the pages found so far.</param>
+    /// <returns>The pages, at most <see cref="Services.AccessibilityWarmup.MaxRenderWidgets"/>, or none.</returns>
+    /// <remarks>Never throws for a provider's failure: a page that cannot be read is left out.</remarks>
+    IReadOnlyList<RenderWidgetPage> FindPages(nint window, CancellationToken cancellationToken);
 }
+
+/// <summary>The page of a render widget, as a walk lists it (<see cref="IAccessibilityWarmup.FindPages"/>, roadmap M3.F35).</summary>
+/// <param name="RenderWidget">The Chrome_RenderWidgetHostHWND window Chromium renders the page into.</param>
+/// <param name="Host">The render widget's parent window, whose element the page is listed under.</param>
+/// <param name="Root">The page's element: its Document, or the render widget's own element when that holds the page's
+/// elements with no Document above them (WebView2 runtime 155's "Chrome Legacy Window" pane).</param>
+public sealed record RenderWidgetPage(nint RenderWidget, nint Host, IUiaNode Root);

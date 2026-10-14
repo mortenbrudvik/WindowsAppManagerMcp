@@ -35,6 +35,10 @@ namespace WindowsAppManagerMcp.Services;
 /// shown. A page hosted as a visual is remembered by its window, so a later read of that window makes no process list or
 /// search. A page that stayed empty is waited for again, at most <see cref="MaxWaitingAttempts"/> times; after that it is
 /// only checked, so a page that is really empty does not cost every read a wait.</item>
+/// <item>A walk of the window lists its render widgets' pages under their parent windows' elements (roadmap M3.F35:
+/// Chromium's own views lie between those elements and the page, deeper than the walk reaches). <see cref="FindPages"/>
+/// gives them each page's root, the element the warm-up checks: it reuses the render widgets the warm-up just found in the
+/// window, so a window without web content costs the walk no further call.</item>
 /// </list>
 /// </remarks>
 public sealed class AccessibilityWarmup : IAccessibilityWarmup
@@ -95,6 +99,9 @@ public sealed class AccessibilityWarmup : IAccessibilityWarmup
     private readonly Dictionary<nint, Remembered> _remembered = [];
     private long _sequence;
 
+    // The render widgets the latest warm-up found, for the walk that follows it (FindPages, roadmap M3.F35)
+    private (nint Window, List<nint> Widgets)? _found;
+
     /// <param name="tree">The UI Automation tree.</param>
     /// <param name="windows">Finds the render widgets and tells whether a remembered window is still alive.</param>
     /// <param name="processes">Lists the processes, to tell whether a window's process started a WebView2 (roadmap M3.F23).</param>
@@ -148,8 +155,89 @@ public sealed class AccessibilityWarmup : IAccessibilityWarmup
         }
     }
 
+    /// <inheritdoc />
+    public IReadOnlyList<RenderWidgetPage> FindPages(nint window, CancellationToken cancellationToken)
+    {
+        try
+        {
+            if (window == nint.Zero || ClassOf(window) == DesktopWindowClass)
+            {
+                return [];
+            }
+
+            var pages = new List<RenderWidgetPage>();
+            foreach (var widget in TakeFound(window) ?? FindRenderWidgets(window))
+            {
+                if (cancellationToken.IsCancellationRequested)
+                {
+                    break;
+                }
+
+                // A render widget read as the window is its own page
+                if (widget == window)
+                {
+                    continue;
+                }
+
+                // One whose parent is gone has nowhere to be listed
+                var host = _windows.GetAncestor(widget, WindowAncestor.Parent);
+                if (host == nint.Zero)
+                {
+                    continue;
+                }
+
+                try
+                {
+                    if (FindDocument(widget, cancellationToken) is { } root)
+                    {
+                        pages.Add(new RenderWidgetPage(widget, host, root));
+                    }
+                }
+                catch (TimeoutException)
+                {
+                    // Every further call to the provider would wait as long
+                    break;
+                }
+                catch (Exception)
+                {
+                    // This page is left out; the others are still listed
+                }
+            }
+
+            return pages;
+        }
+        catch (Exception)
+        {
+            // A courtesy: the walk lists the window's tree without its pages
+            return [];
+        }
+    }
+
+    /// <summary>
+    /// The render widgets the latest warm-up found in <paramref name="window"/>, once: the walk that follows a warm-up lists
+    /// their pages (roadmap M3.F35). Null when the latest warm-up was of another window, or its widgets were taken already.
+    /// </summary>
+    private List<nint>? TakeFound(nint window)
+    {
+        lock (_gate)
+        {
+            if (_found is not { } found || found.Window != window)
+            {
+                return null;
+            }
+
+            _found = null;
+            return found.Widgets;
+        }
+    }
+
     private AccessibilityWarmupInfo? WarmUpWindow(nint window, TimeSpan budget, CancellationToken cancellationToken)
     {
+        lock (_gate)
+        {
+            _found = null;
+        }
+
         // The desktop window's children are every application's windows: only one window's own pages are warmed up
         if (window == nint.Zero || !_windows.IsWindow(window) || ClassOf(window) == DesktopWindowClass)
         {
@@ -168,7 +256,13 @@ public sealed class AccessibilityWarmup : IAccessibilityWarmup
             }
         }
 
-        if (FindRenderWidgets(window) is not { Count: > 0 } widgets)
+        var widgets = FindRenderWidgets(window);
+        lock (_gate)
+        {
+            _found = (window, widgets);
+        }
+
+        if (widgets.Count == 0)
         {
             return WarmUpVisual(window, processId, known, budget, cancellationToken);
         }

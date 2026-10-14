@@ -1808,6 +1808,258 @@ public class UIElementServiceTests
 
     #endregion
 
+    #region The pages of render widgets (roadmap M3.F35)
+
+    private static readonly nint WebViewHost = 0x2002;
+    private static readonly nint RenderWidget = 0x2003;
+    private const uint AppProcess = 7000;
+    private const uint WebViewProcess = 7100;
+
+    /// <summary>A window as Win32 reads show it: its class, parent, process and visibility.</summary>
+    private sealed record Win32Window(string ClassName, nint Parent, uint ProcessId, bool Visible = true);
+
+    /// <summary>The Win32 windows of the tests: the walked window and the windows inside it.</summary>
+    private readonly Dictionary<nint, Win32Window> _win32 = new() { [Handle] = new("HwndWrapper[Fixture;;1]", 0, AppProcess) };
+
+    /// <summary>The window reads of the warm-up and the walk, over <see cref="_win32"/>.</summary>
+    private Mock<INativeWindowWrapper> Win32Windows()
+    {
+        var windows = new Mock<INativeWindowWrapper>();
+        windows.Setup(w => w.IsWindow(It.IsAny<nint>())).Returns((nint h) => _win32.ContainsKey(h));
+        windows.Setup(w => w.RespondsWithin(Handle, It.IsAny<uint>())).Returns(true);
+        windows.Setup(w => w.GetClassName(It.IsAny<nint>())).Returns((nint h) => _win32.TryGetValue(h, out var w) ? w.ClassName : string.Empty);
+        windows.Setup(w => w.IsWindowVisible(It.IsAny<nint>())).Returns((nint h) => _win32.TryGetValue(h, out var w) && w.Visible);
+        windows.Setup(w => w.GetWindowThreadProcessId(It.IsAny<nint>()))
+            .Returns((nint h) => _win32.TryGetValue(h, out var w) ? w.ProcessId : 0u);
+        windows.Setup(w => w.GetProcessName(WebViewProcess)).Returns("msedgewebview2");
+        windows.Setup(w => w.GetAncestor(It.IsAny<nint>(), WindowAncestor.Parent))
+            .Returns((nint h, WindowAncestor _) => _win32.TryGetValue(h, out var w) ? w.Parent : nint.Zero);
+        windows.Setup(w => w.EnumChildWindows(It.IsAny<nint>(), It.IsAny<Func<nint, bool>>()))
+            .Callback((nint parent, Func<nint, bool> callback) =>
+            {
+                foreach (var child in Win32Descendants(parent))
+                {
+                    if (!callback(child))
+                    {
+                        return;
+                    }
+                }
+            });
+        return windows;
+    }
+
+    private IEnumerable<nint> Win32Descendants(nint parent) =>
+        _win32.Where(w => w.Value.Parent == parent && w.Key != parent).ToList()
+            .SelectMany(w => Win32Descendants(w.Key).Prepend(w.Key));
+
+    /// <summary>The walk with the real warm-up and the element registry, over <see cref="_win32"/>.</summary>
+    private (UIElementService Sut, ElementRegistry Registry) WebSut()
+    {
+        var windows = Win32Windows();
+        var warmup = new AccessibilityWarmup(_tree, windows.Object, new Mock<INativeProcessWrapper>().Object, wait: (_, _) => { });
+        var registry = new ElementRegistry(_tree, _worker, windows.Object, ElementRegistry.DefaultCapacity, 1, TimeProvider.System);
+        return (new UIElementService(_tree, _worker, windows.Object, warmup, registry), registry);
+    }
+
+    /// <summary>
+    /// A WPF window hosting a WebView2 as runtime 155 shows it on a real desktop (roadmap M3.F33). Win32: the render widget of
+    /// msedgewebview2.exe in a Chrome_WidgetWin_1 window inside the WPF window. UI Automation, from the window:
+    ///   Pane "HwndHost" > Pane "WAM fixture web content" (the Chrome_WidgetWin_1 window) > Group "BrowserRootView" >
+    ///     Pane "NonClientView" > Pane "EmbeddedBrowserFrameView" > Pane "BrowserView" > ... (Chromium's views, the page far
+    ///     below)
+    ///   Button "Native"
+    /// and from the render widget: Pane "Chrome Legacy Window" > Text "Heading", Button "Web button".
+    /// </summary>
+    private (FakeUiaNode Host, FakeUiaNode Page) WpfWithWebView2(bool visible = true)
+    {
+        _win32[WebViewHost] = new Win32Window("Chrome_WidgetWin_1", Handle, WebViewProcess);
+        _win32[RenderWidget] = new Win32Window("Chrome_RenderWidgetHostHWND", WebViewHost, WebViewProcess, visible);
+        var host = new FakeUiaNode("Pane", "WAM fixture web content") { FrameworkId = "Win32", NativeWindowHandle = WebViewHost }.With(
+            new FakeUiaNode("Group", "BrowserRootView") { FrameworkId = "Chrome" }.With(
+                new FakeUiaNode("Pane", "NonClientView") { FrameworkId = "Chrome" }.With(
+                    new FakeUiaNode("Pane", "EmbeddedBrowserFrameView") { FrameworkId = "Chrome" }.With(
+                        new FakeUiaNode("Pane", "BrowserView") { FrameworkId = "Chrome" }.With(
+                            new FakeUiaNode("Pane", "MultiContentsView") { FrameworkId = "Chrome" })))));
+        Window(
+            new FakeUiaNode("Pane", "HwndHost") { FrameworkId = "WPF" }.With(host),
+            new FakeUiaNode("Button", "Native") { ActionPatterns = ["Invoke"] });
+        var page = new FakeUiaNode("Pane", "Chrome Legacy Window") { FrameworkId = "Win32", NativeWindowHandle = RenderWidget }.With(
+            new FakeUiaNode("Text", "Heading") { FrameworkId = "Chrome" },
+            new FakeUiaNode("Button", "Web button")
+            {
+                FrameworkId = "Chrome", ActionPatterns = ["Invoke"], Bounds = new UiaRect(400, 300, 120, 32)
+            });
+        _tree.WithWindow(RenderWidget, page);
+        return (host, page);
+    }
+
+    [Fact]
+    public async Task GetUIElements_OfAWindowHostingAWebView2_ListsThePageFirst_UnderTheRenderWidgetsParent()
+    {
+        // Arrange
+        WpfWithWebView2();
+        var (sut, _) = WebSut();
+
+        // Act
+        var result = await sut.GetUIElementsAsync(Handle, maxDepth: 5);
+
+        // Assert - the page at level 3, its elements at level 4; Chromium's own views after it, as far as maxDepth reaches
+        result.Success.Should().BeTrue(result.Error);
+        Shape(result.Elements).Should().Be(
+            "HwndHost(WAM fixture web content(Chrome Legacy Window(Heading,Web button)," +
+            "BrowserRootView(NonClientView(EmbeddedBrowserFrameView)))),Native");
+        result.DepthReached.Should().Be(5);
+        result.AccessibilityWarmup.Should().NotBeNull();
+        result.AccessibilityWarmup!.Host.Should().Be(WebContentHost.WebView2);
+    }
+
+    [Fact]
+    public async Task GetUIElements_GivesThePagesElementsRefsAndBounds_UnderTheWalkedWindow()
+    {
+        // Arrange
+        WpfWithWebView2();
+        var (sut, registry) = WebSut();
+
+        // Act
+        var result = await sut.GetUIElementsAsync(Handle, maxDepth: 4);
+
+        // Assert - numbered breadth first like any walked element, the page ahead of Chromium's views
+        var page = result.Elements![0].Children![0].Children![0];
+        page.Name.Should().Be("Chrome Legacy Window");
+        var button = page.Children![1];
+        button.Name.Should().Be("Web button");
+        button.FrameworkId.Should().Be("Chrome", "the page starts there");
+        button.Bounds.Should().Be(new BoundsDto(400, 300, 120, 32));
+        CountAll(result.Elements).Should().Be(8);
+        page.Ref.Should().Be("w1e4");
+        button.Ref.Should().Be("w1e7");
+        var lookup = registry.Lookup(button.Ref!);
+        lookup.WindowHandle.Should().Be(Handle, "the page's elements are the walked window's");
+        lookup.Fingerprint!.Name.Should().Be("Web button");
+    }
+
+    [Fact]
+    public async Task GetUIElements_WithActionableOnly_AsCaptureWithElementsMarksThem_ReturnsThePagesButton()
+    {
+        // Arrange
+        WpfWithWebView2();
+        var (sut, _) = WebSut();
+
+        // Act
+        var result = await sut.GetUIElementsAsync(Handle, maxDepth: 5, filter: new UIElementFilter(ActionableOnly: true));
+
+        // Assert
+        Shape(result.Elements).Should().Be("Web button,Native");
+        result.Elements![0].Bounds.Should().Be(new BoundsDto(400, 300, 120, 32));
+        result.Elements[0].Ref.Should().NotBeNull();
+    }
+
+    [Fact]
+    public async Task GetUIElements_OfAWindowWithoutWebContent_MakesTheSameCallsAsWithoutTheWarmUp()
+    {
+        // Arrange
+        BuildToolbarWindow();
+        var plain = await new UIElementService(_tree, _worker, Win32Windows().Object).GetUIElementsAsync(Handle);
+        var (reads, fetches, listings) = (_tree.Reads.Count, _tree.CachedFetches.Count, _tree.ChildListings.Count);
+        var (sut, _) = WebSut();
+
+        // Act
+        var result = await sut.GetUIElementsAsync(Handle);
+
+        // Assert
+        Shape(result.Elements).Should().Be(Shape(plain.Elements));
+        _tree.Reads.Skip(reads).Should().Equal(_tree.Reads.Take(reads));
+        _tree.CachedFetches.Skip(fetches).Should().Equal(_tree.CachedFetches.Take(fetches));
+        _tree.ChildListings.Skip(listings).Should().Equal(_tree.ChildListings.Take(listings));
+    }
+
+    [Fact]
+    public async Task GetUIElements_DoesNotListThePageOfAHiddenRenderWidget()
+    {
+        // Arrange - a background tab
+        WpfWithWebView2(visible: false);
+        var (sut, _) = WebSut();
+
+        // Act
+        var result = await sut.GetUIElementsAsync(Handle, maxDepth: 5);
+
+        // Assert
+        Shape(result.Elements).Should().Be(
+            "HwndHost(WAM fixture web content(BrowserRootView(NonClientView(EmbeddedBrowserFrameView)))),Native");
+    }
+
+    [Theory]
+    [InlineData(2, "HwndHost(WAM fixture web content),Native")]
+    [InlineData(3, "HwndHost(WAM fixture web content(Chrome Legacy Window,BrowserRootView)),Native")]
+    public async Task GetUIElements_CountsThePageTowardMaxDepth_AtTheLevelBelowItsHost(int maxDepth, string shape)
+    {
+        // Arrange
+        WpfWithWebView2();
+        var (sut, _) = WebSut();
+
+        // Act
+        var result = await sut.GetUIElementsAsync(Handle, maxDepth);
+
+        // Assert
+        Shape(result.Elements).Should().Be(shape);
+        result.DepthReached.Should().Be(maxDepth);
+    }
+
+    [Fact]
+    public async Task GetUIElements_CountsThePageTowardMaxElements()
+    {
+        // Arrange
+        WpfWithWebView2();
+        var (sut, _) = WebSut();
+
+        // Act
+        var result = await sut.GetUIElementsAsync(Handle, maxDepth: 5, filter: new UIElementFilter(MaxElements: 4));
+
+        // Assert - breadth first: the host's level, then the page ahead of Chromium's views
+        Shape(result.Elements).Should().Be("HwndHost(WAM fixture web content(Chrome Legacy Window)),Native");
+        result.TotalElementCount.Should().Be(4);
+        result.TruncationReason.Should().Be(UIElementTruncationReason.MaxElements);
+    }
+
+    [Fact]
+    public async Task GetUIElements_FindsTheHostInALevelReadOneElementAtATime()
+    {
+        // Arrange - the host's level cannot be read in one cached call, so its window handle is read on its own
+        var (host, _) = WpfWithWebView2();
+        host.Parent!.CachedChildrenException = new InvalidOperationException("one child failed the cached read");
+        var (sut, _) = WebSut();
+
+        // Act
+        var result = await sut.GetUIElementsAsync(Handle, maxDepth: 4);
+
+        // Assert
+        Shape(result.Elements).Should().Be(
+            "HwndHost(WAM fixture web content(Chrome Legacy Window(Heading,Web button),BrowserRootView(NonClientView))),Native");
+    }
+
+    [Fact]
+    public async Task GetUIElements_OfABrowserWindow_ListsThePageFirstAmongTheWindowsChildren_AndOnlyOnce()
+    {
+        // Arrange - Chrome's render widget is a child of its own window, and its Document is also among Chromium's views
+        _win32[Handle] = new Win32Window("Chrome_WidgetWin_1", 0, WebViewProcess);
+        _win32[RenderWidget] = new Win32Window("Chrome_RenderWidgetHostHWND", Handle, WebViewProcess);
+        var document = new FakeUiaNode("Document", "Page") { FrameworkId = "Chrome" }.With(
+            new FakeUiaNode("Hyperlink", "Home") { FrameworkId = "Chrome" });
+        Window(
+            new FakeUiaNode("Pane", "BrowserView") { FrameworkId = "Chrome" }.With(
+                new FakeUiaNode("Pane", "ContentsView") { FrameworkId = "Chrome" }.With(document)));
+        _tree.WithWindow(RenderWidget, document);
+        var (sut, _) = WebSut();
+
+        // Act
+        var result = await sut.GetUIElementsAsync(Handle, maxDepth: 5);
+
+        // Assert
+        Shape(result.Elements).Should().Be("Page(Home),BrowserView(ContentsView)");
+    }
+
+    #endregion
+
     #region Owned windows (roadmap M3.F9)
 
     private static readonly nint Dialog = 0x5678;
