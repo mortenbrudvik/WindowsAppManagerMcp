@@ -30,10 +30,11 @@ public class FixtureKeyboardTests
     [DesktopFact]
     public async Task SendKeys_TypesAltGrCharacters_AndTheEscapedCharacters()
     {
-        // On a Norwegian or German layout @ { } \ $ € | need AltGr; ~ and ^ are dead keys there and go as Unicode
+        // On a Norwegian layout @ { } [ ] $ € need AltGr; ~ ^ ` ´ ¨ are dead keys there and go as Unicode, so the 'a' after
+        // them stays an 'a'
         using var e2e = StartOnTheEditBox(out var main);
 
-        await SendAndExpect(e2e, main, ["@{{}{}}\\$€|{~}{^}{+}{%}{#}{(}{)}"], "@{}\\$€|~^+%#()");
+        await SendAndExpect(e2e, main, ["@{{}{}}[]\\$€|{~}{^}`´¨a{+}{%}{#}{(}{)}"], "@{}[]\\$€|~^`´¨a+%#()");
     }
 
     [DesktopFact]

@@ -103,8 +103,9 @@ public class KeySpecParserTests
     [Fact]
     public void ACharacterThatOnlyADeadKeyTypes_IsUnicode_SoItDoesNotWaitForTheNextKey()
     {
-        // Norwegian ~ and ^ are dead keys: sent as keys they would turn the next 'a' into ã or â
-        Norwegian("{~}{^}a").Should().Equal(Seq(Unicode('~'), Unicode('^'), Tap('A', 0x1E)));
+        // Norwegian ~ ^ ` ´ and ¨ are dead keys: sent as keys they would turn the next 'a' into ã, â, à, á or ä
+        Norwegian("{~}{^}`´¨a").Should().Equal(Seq(Unicode('~'), Unicode('^'), Unicode('`'), Unicode('´'), Unicode('¨'), Tap('A', 0x1E)));
+        Norwegian("^{^}").Should().Equal(Seq(One(CtrlDown), Unicode('^'), One(CtrlUp)));
     }
 
     [Fact]
