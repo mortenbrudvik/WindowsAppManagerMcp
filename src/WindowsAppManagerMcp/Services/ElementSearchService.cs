@@ -47,10 +47,11 @@ namespace WindowsAppManagerMcp.Services;
 /// children, and they are left out (<see cref="OwnedWindows"/>), in every scope, so an owned dialog is searched only as
 /// its own window (a popup of windowAndPopups); an element that still comes from two windows of the scope (an owner whose
 /// tree could not be split) is kept once, from the first.</para>
-/// <para>The whole search is one worker read, counted against the named window's application (or the unknown-target
-/// bucket for a desktop search that names no window): a provider stuck in another window of the scope, such as a WebView2
-/// child process or one of the desktop's windows, counts against that application's stuck reads too. Windows that do not
-/// respond are skipped before they are read, which keeps that rare.</para>
+/// <para>A search of the window scope is one worker read, counted against the window's application. A search of several
+/// windows reads each window on its own, counted against that window's application (roadmap M3.F13,
+/// ElementSearchService.Windows.cs), so a provider stuck in another window of the scope, such as a WebView2 child process or
+/// one of the desktop's windows, counts against its own application and not the named window's; a window whose
+/// application has too many stuck reads is skipped and counted, as one that does not respond is.</para>
 /// <para>A search the managed client cannot express (AppBar or SemanticZoom) runs again with the control types tested on
 /// the server. Reads of a match's details that fail leave those fields out; once the deadline has passed, or a provider did
 /// not answer in time, the remaining matches are described from what the search read (no further call). A read the worker
@@ -177,15 +178,17 @@ public sealed partial class ElementSearchService : IElementSearchService
             return Failure(denied, UIElementErrorCode.TargetDeniedByPolicy);
         }
 
+        var call = new SearchCall(query, scope, criteria, maxResults, started, stopwatch);
+        var warmupBudget = AccessibilityWarmup.BudgetFor(timeout);
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         deadline.CancelAfter(timeout);
         try
         {
-            return await _worker.RunAsync(
-                handle == nint.Zero ? 0 : UiaTargets.TargetProcessId(_windows, handle),
-                token => Find(query, scope, criteria, maxResults, AccessibilityWarmup.BudgetFor(timeout), started, stopwatch, token),
-                deadline.Token,
-                StopGrace).ConfigureAwait(false);
+            // A scope of several windows reads each one on its own, counted against its own application (roadmap M3.F13)
+            return scope == ElementSearchScope.Window
+                ? await _worker.RunAsync(TargetOf(handle), token => Find(call, warmupBudget, token), deadline.Token, StopGrace)
+                    .ConfigureAwait(false)
+                : await FindAcrossAsync(call, warmupBudget, deadline.Token).ConfigureAwait(false);
         }
         catch (RegexMatchTimeoutException)
         {
@@ -198,7 +201,7 @@ public sealed partial class ElementSearchService : IElementSearchService
         }
         catch (UiaReadRefusedException ex)
         {
-            // Earlier reads of the same application are still stuck; nothing was waited for
+            // Earlier reads of the named window's application are still stuck; nothing was waited for
             return Failure(ex.Message, UIElementErrorCode.OperationTimedOut);
         }
         catch (TimeoutException ex)
@@ -254,221 +257,297 @@ public sealed partial class ElementSearchService : IElementSearchService
         };
     }
 
-    /// <summary>The search, on the worker thread.</summary>
-    private FindElementsResult Find(
-        ElementQuery query, ElementSearchScope scope, ElementCriteria criteria, int maxResults, TimeSpan warmupBudget,
-        SearchStarted started, Stopwatch stopwatch, CancellationToken token)
-    {
-        var handle = query.WindowHandle;
-
-        FindElementsResult Failure(string error, UIElementErrorCode code, string? title = null) =>
-            new(false, (long)handle, title, 0, false, null, Elapsed(stopwatch), query.WithinRef, Error: error, ErrorCode: code,
-                AccessibilityWarmup: started.Warmup);
-
-        try
+    /// <summary>The search of the window scope, in one read on the worker thread.</summary>
+    private FindElementsResult Find(SearchCall call, TimeSpan warmupBudget, CancellationToken token) =>
+        Guarded(call, token, () =>
         {
-            if (handle != nint.Zero &&
-                UiaTargets.NotRespondingReason(_windows, handle, "its UI elements were not searched") is { } notResponding)
+            if (Open(call, warmupBudget, token) is { } failure)
             {
-                return Failure(notResponding, UIElementErrorCode.NotResponding);
+                return failure;
             }
 
-            if (!_tree.IsAvailable())
+            for (var index = 0; index < call.Windows.Count; index++)
             {
-                return Failure("UI Automation is not available on this system", UIElementErrorCode.AutomationUnavailable);
-            }
-
-            IUiaNode? window = null;
-            if (handle != nint.Zero)
-            {
-                try
+                if (CandidatesFor(call, index, token, out var end) is not { } candidatesLeft)
                 {
-                    window = _tree.FromHandle(handle);
-                }
-                catch (UiaElementUnavailableException)
-                {
-                    window = null;
-                }
-
-                if (window == null)
-                {
-                    return Failure("Window not found or handle is invalid", UIElementErrorCode.WindowNotFound);
-                }
-
-                // A window with web content builds its page's tree only once asked: ask, and wait for it a moment, so the
-                // search does not miss the page's elements
-                started.Warmup = query.WarmUp ? _warmup?.WarmUp(handle, warmupBudget, token) : null;
-                started.Title = TryReadName(window);
-            }
-
-            var title = started.Title;
-            var root = window;
-            var withinRef = query.WithinRef;
-            var withinMoved = false;
-            if (query.WithinRef != null)
-            {
-                var within = _registry.Resolve(query.WithinRef, token);
-                if (within.Element is not { } resolved)
-                {
-                    return Failure($"withinRef: {within.Error}", within.ErrorCode, title);
-                }
-
-                if (resolved.WindowHandle != handle)
-                {
-                    return Failure(
-                        $"withinRef '{resolved.Ref}' is an element of window {(long)resolved.WindowHandle}, not of the window searched " +
-                        $"({(long)handle}). Pass only withinRef, or the window it belongs to.",
-                        UIElementErrorCode.ElementStale, title);
-                }
-
-                root = resolved.Node;
-
-                // The ref the element has now: when it was found again and already had a ref of its own, the asked-for one
-                // was dropped
-                withinRef = resolved.Ref;
-
-                // Searched below the element the ref was moved to, and said so: the element the ref was given for is gone
-                withinMoved = resolved.Moved;
-            }
-
-            var generation = _registry.NextGeneration();
-            started.Generation = generation;
-            var (windows, excluded, overLimit) = WindowsOf(query, scope);
-            var compiled = criteria.Compile();
-            var controlTypesOnServer = false;
-            for (var index = 0; index < windows.Count; index++)
-            {
-                var target = windows[index];
-                if (token.IsCancellationRequested)
-                {
-                    started.Stop(ElementSearchStop.Timeout);
-                    break;
-                }
-
-                var candidatesLeft = ElementSearch.MaxCandidates - started.Candidates;
-                if (candidatesLeft <= 0)
-                {
-                    started.Stop(ElementSearchStop.CandidateLimit);
-                    break;
-                }
-
-                var isNamed = target == handle;
-
-                // The popups searched before the named window leave it a share of the candidate limit, so a large palette
-                // cannot keep the window the caller named from being searched
-                if (!isNamed && handle != nint.Zero && windows.Skip(index + 1).Contains(handle))
-                {
-                    candidatesLeft -= NamedWindowCandidateReserve;
-                    if (candidatesLeft <= 0)
+                    if (end)
                     {
-                        started.Stop(ElementSearchStop.CandidateLimit);
-                        continue;
-                    }
-                }
-
-                var node = isNamed ? root : OpenOther(target);
-                if (node == null)
-                {
-                    if (token.IsCancellationRequested)
-                    {
-                        started.Stop(ElementSearchStop.Timeout);
                         break;
                     }
 
-                    started.SkipWindow();
                     continue;
                 }
 
-                var keep = Math.Max(1, maxResults - started.Kept);
-
-                // A window's own tree: the windows it owns are searched as windows of their own (below withinRef there are none)
-                var leaveOut = isNamed && query.WithinRef != null ? null : OwnedWindows.Below(_windows, target);
-                ElementSearchOutcome outcome;
-                try
-                {
-                    try
-                    {
-                        outcome = Run(compiled, keep, candidatesLeft, target, node, leaveOut, started, token);
-                    }
-                    catch (UiaConditionNotSupportedException) when (criteria.ControlTypes is { Count: > 0 } && !controlTypesOnServer)
-                    {
-                        // The managed client cannot search for AppBar or SemanticZoom: test the control types here, in this
-                        // window and the next ones
-                        controlTypesOnServer = true;
-                        compiled = criteria.Compile(controlTypesOnServer: true);
-                        outcome = Run(compiled, keep, candidatesLeft, target, node, leaveOut, started, token);
-                    }
-                }
-                catch (Exception ex) when (!isNamed && !token.IsCancellationRequested &&
-                                           ex is not (OperationCanceledException or RegexMatchTimeoutException))
-                {
-                    // A popup that closed meanwhile, or whose provider failed or did not answer in time: the other windows
-                    // are still searched
-                    started.Abandon(target);
-                    started.SkipWindow();
-                    continue;
-                }
-
-                if (!isNamed && outcome.Stop == ElementSearchStop.Timeout && !token.IsCancellationRequested)
-                {
-                    // A popup whose provider did not answer in time, with time left: a part skipped, not the end of the search
-                    outcome = outcome with { Stop = ElementSearchStop.None, SkippedParts = outcome.SkippedParts + 1 };
-                }
-
-                started.Complete(target, node, outcome);
-                if (outcome.Stop != ElementSearchStop.None && (isNamed || token.IsCancellationRequested))
+                if (!SearchWindow(call, index, candidatesLeft, token))
                 {
                     break;
                 }
             }
 
-            var total = started.Snapshot();
-            if (total.MatchCount == 0 && total.Stop == ElementSearchStop.Timeout)
+            if (Gathered(call) is { } timedOut)
             {
-                return Failure(
-                    $"The timeout passed before any element matching {criteria.Describe()} was found ({total.Candidates} " +
-                    "candidates checked). Try again with a larger timeoutMs, or search a smaller part with withinRef.",
-                    UIElementErrorCode.OperationTimedOut, title);
+                return timedOut;
             }
 
             // searchVirtualized (roadmap M3.10): the named window's lists, asked for items they have not realized
-            var virtualized = query.SearchVirtualized && root != null
-                ? SearchVirtualized(criteria, handle, root, query.WithinRef != null, total, maxResults, token)
-                : null;
-
-            // Items found through a list can be look-alikes of a tree match, and a lookup that stopped early may have missed
-            // one: no match is proven unique then
-            var unique = query.WithinRef == null && virtualized is not ({ Items.Count: > 0 } or { Stop: not null })
-                ? Uniqueness(criteria, controlTypesOnServer, started.Searched, handle, token)
-                : _ => null;
-            var result = Result(query, withinRef, title, total,
-                Describe(query, criteria, total.Matches, generation, mayRead: true, unique, token), started.Warmup, stopwatch);
+            var virtualized = Virtualized(call, token);
+            var unique = MayProveUnique(call, virtualized) ? Uniqueness(call, token) : _ => null;
+            var result = Result(call, Describe(call.Query, call.Criteria, call.Total.Matches, call.Generation, mayRead: true, unique, token));
             if (virtualized != null)
             {
-                result = WithVirtualized(result, virtualized, query, criteria, generation, token);
+                result = WithVirtualized(result, virtualized, call.Query, call.Criteria, call.Generation, token);
             }
 
-            if (withinMoved)
+            return Finished(call, result);
+        })!;
+
+    /// <summary>
+    /// The start of the search, on the worker thread: the named window's hung check, node, warm-up and title, withinRef
+    /// resolved, and the scope's windows. A failure ends the call; null when the windows can be searched.
+    /// </summary>
+    private FindElementsResult? Open(SearchCall call, TimeSpan warmupBudget, CancellationToken token)
+    {
+        var query = call.Query;
+        var handle = query.WindowHandle;
+        var started = call.Started;
+        if (handle != nint.Zero &&
+            UiaTargets.NotRespondingReason(_windows, handle, "its UI elements were not searched") is { } notResponding)
+        {
+            return call.Failure(notResponding, UIElementErrorCode.NotResponding);
+        }
+
+        if (!_tree.IsAvailable())
+        {
+            return call.Failure("UI Automation is not available on this system", UIElementErrorCode.AutomationUnavailable);
+        }
+
+        IUiaNode? window = null;
+        if (handle != nint.Zero)
+        {
+            try
             {
-                result = result with { RefMoved = true, Warning = "withinRef: " + ElementRefs.MovedWarning(withinRef!) };
+                window = _tree.FromHandle(handle);
+            }
+            catch (UiaElementUnavailableException)
+            {
+                window = null;
             }
 
-            return scope == ElementSearchScope.Window
-                ? result with { Scope = scope }
-                : result with
-                {
-                    Scope = scope,
-                    WindowsSearched = started.Searched.Count,
-                    WindowsExcluded = excluded > 0 ? excluded : null,
-                    Truncated = result.Truncated || overLimit > 0,
-                    TruncationReason = result.TruncationReason is { } reason && reason != ElementSearchTruncation.MaxResults
-                        ? reason
-                        : overLimit > 0 ? ElementSearchTruncation.WindowLimit : result.TruncationReason
-                };
+            if (window == null)
+            {
+                return call.Failure("Window not found or handle is invalid", UIElementErrorCode.WindowNotFound);
+            }
+
+            // A window with web content builds its page's tree only once asked: ask, and wait for it a moment, so the
+            // search does not miss the page's elements
+            started.Warmup = query.WarmUp ? _warmup?.WarmUp(handle, warmupBudget, token) : null;
+            started.Title = TryReadName(window);
+        }
+
+        var title = started.Title;
+        call.Root = window;
+        call.WithinRef = query.WithinRef;
+        if (query.WithinRef != null)
+        {
+            var within = _registry.Resolve(query.WithinRef, token);
+            if (within.Element is not { } resolved)
+            {
+                return call.Failure($"withinRef: {within.Error}", within.ErrorCode, title);
+            }
+
+            if (resolved.WindowHandle != handle)
+            {
+                return call.Failure(
+                    $"withinRef '{resolved.Ref}' is an element of window {(long)resolved.WindowHandle}, not of the window searched " +
+                    $"({(long)handle}). Pass only withinRef, or the window it belongs to.",
+                    UIElementErrorCode.ElementStale, title);
+            }
+
+            call.Root = resolved.Node;
+
+            // The ref the element has now: when it was found again and already had a ref of its own, the asked-for one
+            // was dropped
+            call.WithinRef = resolved.Ref;
+
+            // Searched below the element the ref was moved to, and said so: the element the ref was given for is gone
+            call.WithinMoved = resolved.Moved;
+        }
+
+        started.Generation = _registry.NextGeneration();
+        (call.Windows, call.Excluded, call.OverLimit) = WindowsOf(query, call.Scope);
+        call.Compiled = call.Criteria.Compile();
+        return null;
+    }
+
+    /// <summary>
+    /// The candidates the search of the scope's window at <paramref name="index"/> may use, or null when it is not searched
+    /// and the search has stopped: then <paramref name="end"/> says whether the windows after it are not searched either (the
+    /// deadline, the candidate limit) or whether this window only had the named window's share left.
+    /// </summary>
+    private static int? CandidatesFor(SearchCall call, int index, CancellationToken token, out bool end)
+    {
+        end = true;
+        var started = call.Started;
+        if (token.IsCancellationRequested)
+        {
+            started.Stop(ElementSearchStop.Timeout);
+            return null;
+        }
+
+        var candidatesLeft = ElementSearch.MaxCandidates - started.Candidates;
+        if (candidatesLeft <= 0)
+        {
+            started.Stop(ElementSearchStop.CandidateLimit);
+            return null;
+        }
+
+        // The popups searched before the named window leave it a share of the candidate limit, so a large palette cannot
+        // keep the window the caller named from being searched
+        var handle = call.Query.WindowHandle;
+        if (call.Windows[index] != handle && handle != nint.Zero && call.Windows.Skip(index + 1).Contains(handle))
+        {
+            candidatesLeft -= NamedWindowCandidateReserve;
+            if (candidatesLeft <= 0)
+            {
+                started.Stop(ElementSearchStop.CandidateLimit);
+                end = false;
+                return null;
+            }
+        }
+
+        end = false;
+        return candidatesLeft;
+    }
+
+    /// <summary>
+    /// The search of the scope's window at <paramref name="index"/>, on the worker thread; false when the search ends with
+    /// it. Another window than the named one that cannot be opened or searched is skipped and counted (see the remarks).
+    /// </summary>
+    private bool SearchWindow(SearchCall call, int index, int candidatesLeft, CancellationToken token)
+    {
+        var started = call.Started;
+        var target = call.Windows[index];
+        var isNamed = target == call.Query.WindowHandle;
+        var node = isNamed ? call.Root : OpenOther(target);
+        if (node == null)
+        {
+            if (token.IsCancellationRequested)
+            {
+                started.Stop(ElementSearchStop.Timeout);
+                return false;
+            }
+
+            started.SkipWindow();
+            return true;
+        }
+
+        var keep = Math.Max(1, call.MaxResults - started.Kept);
+
+        // A window's own tree: the windows it owns are searched as windows of their own (below withinRef there are none)
+        var leaveOut = isNamed && call.Query.WithinRef != null ? null : OwnedWindows.Below(_windows, target);
+        ElementSearchOutcome outcome;
+        try
+        {
+            try
+            {
+                outcome = Run(call.Compiled, keep, candidatesLeft, target, node, leaveOut, started, token);
+            }
+            catch (UiaConditionNotSupportedException) when (call.Criteria.ControlTypes is { Count: > 0 } && !call.ControlTypesOnServer)
+            {
+                // The managed client cannot search for AppBar or SemanticZoom: test the control types here, in this window
+                // and the next ones
+                call.ControlTypesOnServer = true;
+                call.Compiled = call.Criteria.Compile(controlTypesOnServer: true);
+                outcome = Run(call.Compiled, keep, candidatesLeft, target, node, leaveOut, started, token);
+            }
+        }
+        catch (Exception ex) when (!isNamed && !token.IsCancellationRequested &&
+                                   ex is not (OperationCanceledException or RegexMatchTimeoutException))
+        {
+            // A popup that closed meanwhile, or whose provider failed or did not answer in time: the other windows are
+            // still searched
+            started.Abandon(target);
+            started.SkipWindow();
+            return true;
+        }
+
+        if (!isNamed && outcome.Stop == ElementSearchStop.Timeout && !token.IsCancellationRequested)
+        {
+            // A popup whose provider did not answer in time, with time left: a part skipped, not the end of the search
+            outcome = outcome with { Stop = ElementSearchStop.None, SkippedParts = outcome.SkippedParts + 1 };
+        }
+
+        started.Complete(target, node, outcome);
+        return outcome.Stop == ElementSearchStop.None || (!isNamed && !token.IsCancellationRequested);
+    }
+
+    /// <summary>
+    /// What the windows' searches found together, kept as <see cref="SearchCall.Total"/>; a failure when the deadline
+    /// passed before any match.
+    /// </summary>
+    private static FindElementsResult? Gathered(SearchCall call)
+    {
+        var total = call.Total = call.Started.Snapshot();
+        return total.MatchCount == 0 && total.Stop == ElementSearchStop.Timeout
+            ? call.Failure(
+                $"The timeout passed before any element matching {call.Criteria.Describe()} was found ({total.Candidates} " +
+                "candidates checked). Try again with a larger timeoutMs, or search a smaller part with withinRef.",
+                UIElementErrorCode.OperationTimedOut, call.Started.Title)
+            : null;
+    }
+
+    /// <summary>searchVirtualized's lookup in the named window's lists, on the worker thread; null when not asked.</summary>
+    private VirtualizedLookup? Virtualized(SearchCall call, CancellationToken token) =>
+        call.Query.SearchVirtualized && call.Root != null
+            ? SearchVirtualized(call.Criteria, call.Query.WindowHandle, call.Root, call.Query.WithinRef != null, call.Total,
+                call.MaxResults, token)
+            : null;
+
+    /// <summary>
+    /// Whether the matches may be proven unique: not below withinRef, and not when items found through a list (look-alikes
+    /// of a tree match), or a lookup that stopped early and may have missed one, came with them.
+    /// </summary>
+    private static bool MayProveUnique(SearchCall call, VirtualizedLookup? virtualized) =>
+        call.Query.WithinRef == null && virtualized is not ({ Items.Count: > 0 } or { Stop: not null });
+
+    private static FindElementsResult Result(SearchCall call, IReadOnlyList<FoundElement> elements) =>
+        Result(call.Query, call.WithinRef, call.Started.Title, call.Total, elements, call.Started.Warmup, call.Stopwatch);
+
+    /// <summary>The result with withinRef's move and the scope's fields.</summary>
+    private static FindElementsResult Finished(SearchCall call, FindElementsResult result)
+    {
+        if (call.WithinMoved)
+        {
+            result = result with { RefMoved = true, Warning = "withinRef: " + ElementRefs.MovedWarning(call.WithinRef!) };
+        }
+
+        return call.Scope == ElementSearchScope.Window
+            ? result with { Scope = call.Scope }
+            : result with
+            {
+                Scope = call.Scope,
+                WindowsSearched = call.Started.Searched.Count,
+                WindowsExcluded = call.Excluded > 0 ? call.Excluded : null,
+                Truncated = result.Truncated || call.OverLimit > 0,
+                TruncationReason = result.TruncationReason is { } reason && reason != ElementSearchTruncation.MaxResults
+                    ? reason
+                    : call.OverLimit > 0 ? ElementSearchTruncation.WindowLimit : result.TruncationReason
+            };
+    }
+
+    /// <summary>
+    /// A read of the search on the worker thread, with UI Automation's failures turned into the call's failure: what
+    /// <paramref name="read"/> returns (a failure, or null to go on).
+    /// </summary>
+    private static FindElementsResult? Guarded(SearchCall call, CancellationToken token, Func<FindElementsResult?> read)
+    {
+        try
+        {
+            return read();
         }
         catch (UiaElementUnavailableException ex)
         {
-            return Failure($"The element searched below is no longer available: {ex.Message}", UIElementErrorCode.ElementAccessFailed);
+            return call.Failure($"The element searched below is no longer available: {ex.Message}", UIElementErrorCode.ElementAccessFailed);
         }
         catch (RegexMatchTimeoutException)
         {
@@ -477,18 +556,21 @@ public sealed partial class ElementSearchService : IElementSearchService
         }
         catch (TimeoutException ex)
         {
-            return Failure($"UI Automation did not answer in time: {ex.Message}", UIElementErrorCode.OperationTimedOut);
+            return call.Failure($"UI Automation did not answer in time: {ex.Message}", UIElementErrorCode.OperationTimedOut);
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested)
         {
-            return Failure("The timeout passed before the search started. Try again with a larger timeoutMs.",
+            return call.Failure("The timeout passed before the search started. Try again with a larger timeoutMs.",
                 UIElementErrorCode.OperationTimedOut);
         }
         catch (Exception ex)
         {
-            return Failure($"Error searching UI elements: {ex.Message}", UIElementErrorCode.OperationException);
+            return call.Failure($"Error searching UI elements: {ex.Message}", UIElementErrorCode.OperationException);
         }
     }
+
+    /// <summary>The application a stuck read of <paramref name="window"/> is counted against (none for no window).</summary>
+    private int TargetOf(nint window) => window == nint.Zero ? 0 : UiaTargets.TargetProcessId(_windows, window);
 
     /// <summary>
     /// The node of a window of the scope other than the named one, or null when it must be skipped: it does not respond
@@ -526,16 +608,24 @@ public sealed partial class ElementSearchService : IElementSearchService
     /// not known. Each searched window's outcome is a search of that whole window (or of withinRef's element, for which the
     /// caller asks nothing).
     /// </summary>
-    private Func<UiaElement, bool?> Uniqueness(
-        ElementCriteria criteria, bool controlTypesOnServer, IReadOnlyList<SearchedWindow> searched, nint named,
-        CancellationToken token)
+    private Func<UiaElement, bool?> Uniqueness(SearchCall call, CancellationToken token)
     {
-        var verdicts = new Dictionary<UiaElement, bool?>(ReferenceEqualityComparer.Instance);
-
         // One budget for every window's proof, the named window's first
         using var budget = CancellationTokenSource.CreateLinkedTokenSource(token);
         budget.CancelAfter(UniquenessBudget);
-        foreach (var window in searched.OrderBy(w => w.Handle == named ? 0 : 1))
+        var verdicts = Verdicts(call, call.Started.Searched, budget.Token);
+        return m => verdicts.TryGetValue(m, out var verdict) ? verdict : null;
+    }
+
+    /// <summary>
+    /// The verdicts of <see cref="Uniqueness"/> for the matches kept from <paramref name="searched"/>, the named window's
+    /// first, within <paramref name="budget"/>; a match without one is not known.
+    /// </summary>
+    private Dictionary<UiaElement, bool?> Verdicts(SearchCall call, IReadOnlyList<SearchedWindow> searched, CancellationToken budget)
+    {
+        var criteria = call.Criteria;
+        var verdicts = new Dictionary<UiaElement, bool?>(ReferenceEqualityComparer.Instance);
+        foreach (var window in searched.OrderBy(w => w.Handle == call.Query.WindowHandle ? 0 : 1))
         {
             var outcome = window.Outcome;
             var matches = window.Kept;
@@ -588,7 +678,7 @@ public sealed partial class ElementSearchService : IElementSearchService
 
             // A single match in its window among the visible or enabled ones: an offscreen or disabled twin would not have
             // been found, so search the window for its identity alone
-            verdicts[matches[0]] = ProveAlone(criteria.Identity, controlTypesOnServer, matches[0], window, budget.Token);
+            verdicts[matches[0]] = ProveAlone(criteria.Identity, call.ControlTypesOnServer, matches[0], window, budget);
         }
 
         // A list item named by its text (no automation id): its look-alikes may be rows the list has not realized, which no
@@ -597,11 +687,11 @@ public sealed partial class ElementSearchService : IElementSearchService
         {
             if (ElementRegistry.NameIsIdentity(ElementRegistry.Fingerprint(match, null)))
             {
-                verdicts[match] = ProveAmongItems(match, budget.Token);
+                verdicts[match] = ProveAmongItems(match, budget);
             }
         }
 
-        return m => verdicts.TryGetValue(m, out var verdict) ? verdict : null;
+        return verdicts;
     }
 
     /// <summary>
@@ -915,6 +1005,56 @@ public sealed partial class ElementSearchService : IElementSearchService
     private static string? EmptyToNull(string? value) => string.IsNullOrEmpty(value) ? null : value;
 
     private static double Elapsed(Stopwatch stopwatch) => Math.Round(stopwatch.Elapsed.TotalMilliseconds, 2);
+
+    /// <summary>
+    /// One call's search: what it was asked, and what each step found for the steps after it (one read on the worker thread
+    /// for the window scope, a read per step and window for the others; one at a time).
+    /// </summary>
+    private sealed class SearchCall(
+        ElementQuery query, ElementSearchScope scope, ElementCriteria criteria, int maxResults, SearchStarted started, Stopwatch stopwatch)
+    {
+        public ElementQuery Query => query;
+
+        public ElementSearchScope Scope => scope;
+
+        public ElementCriteria Criteria => criteria;
+
+        public int MaxResults => maxResults;
+
+        public SearchStarted Started => started;
+
+        public Stopwatch Stopwatch => stopwatch;
+
+        public long Generation => started.Generation;
+
+        /// <summary>The named window's node, or withinRef's element; null for a desktop search that names no window.</summary>
+        public IUiaNode? Root { get; set; }
+
+        /// <summary>The ref searched below, as it is now (see <see cref="ResolvedElement.Moved"/>).</summary>
+        public string? WithinRef { get; set; }
+
+        public bool WithinMoved { get; set; }
+
+        /// <summary>The windows of the scope, in the order searched, and how many it left out (see <see cref="WindowsOf"/>).</summary>
+        public IReadOnlyList<nint> Windows { get; set; } = [];
+
+        public int Excluded { get; set; }
+
+        public int OverLimit { get; set; }
+
+        /// <summary>The criteria as the provider's condition and the server's filter.</summary>
+        public (UiaCondition Condition, Func<UiaElement, bool>? Filter) Compiled { get; set; }
+
+        /// <summary>The control types are tested on the server (the managed client cannot search for AppBar or SemanticZoom).</summary>
+        public bool ControlTypesOnServer { get; set; }
+
+        /// <summary>What every window's search found, once they are all done (see <see cref="Gathered"/>).</summary>
+        public SearchTotal Total { get; set; } = new([], 0, 0, ElementSearchStop.None, 0);
+
+        public FindElementsResult Failure(string error, UIElementErrorCode code, string? title = null) =>
+            new(false, (long)query.WindowHandle, title, 0, false, null, Elapsed(stopwatch), query.WithinRef, Error: error,
+                ErrorCode: code, AccessibilityWarmup: started.Warmup);
+    }
 
     /// <summary>A window of the scope, searched: its node, its search's outcome and the matches kept from it.</summary>
     /// <param name="Repeated">The outcome's kept matches that a window searched before had kept already (the same runtime
