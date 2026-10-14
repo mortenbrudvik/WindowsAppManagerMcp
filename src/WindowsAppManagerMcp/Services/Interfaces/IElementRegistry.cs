@@ -102,8 +102,8 @@ public interface IElementRegistry
 /// <param name="Unique">Whether the read proved that <paramref name="Selector"/> fits no other element of the window with
 /// this element's fingerprint: true (the selector is kept, and a resolution may move the ref to the element re-created),
 /// false (another element fits it: a kept selector is dropped) or null (not known: nothing changes).</param>
-/// <param name="Row">The list, tree or grid item the element is inside, when the read knows it (a tree walk, and
-/// find_ui_elements, which reads it: <see cref="Services.ElementRows"/>), or null.</param>
+/// <param name="Row">The list, tree or grid item the element is inside, when the read knows it (a tree walk; find_ui_elements,
+/// get_focused_element, get_element_at_point and get_active_popups read it: <see cref="Services.ElementRows"/>), or null.</param>
 public sealed record ElementOrigin(
     long Generation,
     Services.ElementCriteria? Selector = null,

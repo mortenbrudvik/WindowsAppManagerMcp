@@ -529,7 +529,11 @@ public sealed class PopupService : IPopupService
         return null;
     }
 
-    /// <summary>The popups' elements, read on the worker: each one's ref and control type written into <paramref name="listed"/>.</summary>
+    /// <summary>
+    /// The popups' elements, read on the worker: each one's ref and control type written into <paramref name="listed"/>. Each
+    /// ref records the list row its element is in (<see cref="ElementRows"/>, roadmap M3.F10), as find_ui_elements and the
+    /// walks record it: a row's flyout can sit below the row's item in the tree.
+    /// </summary>
     private void ReadPopups(IReadOnlyList<PopupWindow> popups, ActivePopup[] listed, CancellationToken token)
     {
         if (!_tree!.IsAvailable())
@@ -538,6 +542,7 @@ public sealed class PopupService : IPopupService
         }
 
         var generation = _registry?.NextGeneration() ?? 0;
+        var rows = ElementRows.For(_tree);
         for (var i = 0; i < popups.Count && !token.IsCancellationRequested; i++)
         {
             var popup = popups[i];
@@ -554,7 +559,8 @@ public sealed class PopupService : IPopupService
                 }
 
                 var element = _tree.ReadElement(node);
-                var elementRef = _registry?.Register(popup.Handle, element, new ElementOrigin(generation));
+                var elementRef = _registry?.Register(
+                    popup.Handle, element, new ElementOrigin(generation, Row: RowOf(rows, element, token)));
                 var controlType = element.Properties.ControlType;
                 Volatile.Write(ref listed[i], listed[i] with
                 {
@@ -572,6 +578,23 @@ public sealed class PopupService : IPopupService
             {
                 // It closed meanwhile, or its provider failed: listed without a ref
             }
+        }
+    }
+
+    /// <summary>
+    /// The list row of a popup's element, or null when it has none or it cannot be read (the popup is then registered without
+    /// it). A provider that does not answer is thrown, as for the element's own read.
+    /// </summary>
+    private static ElementRow? RowOf(ElementRows.Finder rows, UiaElement element, CancellationToken token)
+    {
+        try
+        {
+            return rows.Of(element, token);
+        }
+        catch (Exception ex) when (ex is not TimeoutException)
+        {
+            // An ancestor that is gone or failed, or the deadline: registered without its row
+            return null;
         }
     }
 

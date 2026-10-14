@@ -188,6 +188,92 @@ public class ElementRefReadTests
         (await _registry.ResolveAsync("w1e1", TimeSpan.FromSeconds(5), CancellationToken.None)).Element!.Node.Should().BeSameAs(email);
     }
 
+    /// <summary>
+    /// Window "Files" (hwnd Handle) > List "Items" > ListItem "report.docx" > CheckBox "Select": a recycling list's row,
+    /// whose check box keeps its runtime id when the row shows another file.
+    /// </summary>
+    private (FakeUiaNode Row, FakeUiaNode Pick) BuildRecyclingRow(nint pickWindow = 0)
+    {
+        var pick = new FakeUiaNode("CheckBox", "Select") { AutomationId = "Pick", IsKeyboardFocusable = true, NativeWindowHandle = pickWindow };
+        var row = new FakeUiaNode("ListItem", "report.docx");
+        _tree.WithWindow(Handle, new FakeUiaNode("Window", "Files") { NativeWindowHandle = Handle }.With(
+            new FakeUiaNode("List", "Items").With(row.With(pick))));
+        return (row, pick);
+    }
+
+    private static Mock<INativeHitTestWrapper> HitTestOf(nint window)
+    {
+        var hitTest = new Mock<INativeHitTestWrapper>();
+        hitTest.Setup(h => h.GetRootWindow(It.IsAny<nint>())).Returns(window);
+        hitTest.Setup(h => h.WindowFromPoint(It.IsAny<int>(), It.IsAny<int>())).Returns(window);
+        return hitTest;
+    }
+
+    [Fact]
+    public async Task FocusedElement_RecordsTheRowOfAControlInAListItem_SoItsRefIsStaleOnceTheRowShowsAnotherItem()
+    {
+        // Arrange (roadmap M3.F10)
+        var (row, pick) = BuildRecyclingRow();
+        _tree.Focused = pick;
+        var focused = await Inspection(HitTestOf(Handle)).GetFocusedElementAsync(TimeSpan.FromSeconds(5));
+
+        // Act
+        row.Name = "budget.xlsx";
+        var resolution = _registry.Resolve(focused.Element!.Ref!, CancellationToken.None);
+
+        // Assert
+        resolution.ErrorCode.Should().Be(UIElementErrorCode.ElementStale);
+        resolution.Error.Should().Contain("another item");
+    }
+
+    [Fact]
+    public async Task ElementAtPoint_RecordsTheRowOfAControlInAListItem_SoItsRefIsStaleOnceTheRowShowsAnotherItem()
+    {
+        // Arrange (roadmap M3.F10)
+        var (row, pick) = BuildRecyclingRow();
+        _tree.AtPoint = (_, _) => pick;
+        var atPoint = await Inspection(HitTestOf(Handle)).GetElementAtPointAsync(20, 20, 0, TimeSpan.FromSeconds(5));
+
+        // Act
+        row.Name = "budget.xlsx";
+        var resolution = _registry.Resolve(atPoint.Element!.Ref!, CancellationToken.None);
+
+        // Assert
+        resolution.ErrorCode.Should().Be(UIElementErrorCode.ElementStale);
+        resolution.Error.Should().Contain("another item");
+    }
+
+    [Fact]
+    public async Task FocusedElement_InTheSameRowStill_Resolves()
+    {
+        // Arrange
+        var (_, pick) = BuildRecyclingRow();
+        _tree.Focused = pick;
+        var focused = await Inspection(HitTestOf(Handle)).GetFocusedElementAsync(TimeSpan.FromSeconds(5));
+
+        // Act
+        var resolution = _registry.Resolve(focused.Element!.Ref!, CancellationToken.None);
+
+        // Assert
+        resolution.Element!.Node.Should().BeSameAs(pick);
+    }
+
+    [Fact]
+    public async Task FocusedElement_WhoseAncestorsCannotBeRead_StillHasARef_WithoutARow()
+    {
+        // Arrange - the element names its own window, so only the row read meets the failing parent
+        var (_, pick) = BuildRecyclingRow(pickWindow: Handle);
+        pick.ParentException = new UiaElementUnavailableException("gone");
+        _tree.Focused = pick;
+
+        // Act
+        var focused = await Inspection(HitTestOf(Handle)).GetFocusedElementAsync(TimeSpan.FromSeconds(5));
+
+        // Assert
+        focused.Success.Should().BeTrue(focused.Error);
+        focused.Element!.Ref.Should().Be("w1e1");
+    }
+
     [Fact]
     public async Task FocusedElement_WithoutAWindow_HasNoRef()
     {

@@ -8,7 +8,8 @@ namespace WindowsAppManagerMcp.Services;
 /// (<see cref="ElementRow"/>). A virtualizing list (WinUI, WPF with recycling, many web lists) reuses a row's elements for
 /// another item when it scrolls or its data changes, and a control inside the row (the row's Delete button) keeps its
 /// runtime id, type, automation id and class. So the element registry records the row when the element is read
-/// (<see cref="ElementOrigin.Row"/>: a tree walk knows it, find_ui_elements reads it with <see cref="Finder"/>), and reads it
+/// (<see cref="ElementOrigin.Row"/>: a tree walk knows it; find_ui_elements, the focused element, the element at a point
+/// and the popups' elements read it with <see cref="Finder"/>), and reads it
 /// again when it resolves the ref (<see cref="Changed"/>): a row that now shows another item makes the ref stale.
 /// </summary>
 /// <remarks>The row is looked for at most <see cref="MaxLevels"/> levels up, and not past a list, tree, grid, table or
