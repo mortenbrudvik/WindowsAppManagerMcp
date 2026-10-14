@@ -2246,9 +2246,10 @@ the first run's uia2 agreed, and in both runs of the gate that passed (on 293cac
 lie wholly outside the client area the fixture reports) by control type and place in the tree first, with every other
 element in full, and then by name. Their names are the proxies' own: on a Windows display language other than English,
 Windows' native proxy names them in that language, and .NET's managed proxy can name them from resources in another
-(roadmap M3.F29). A name that differs there fails on its own, after the rest has passed, with a message that names the
-element, both names and the display language, and says that the difference may be the proxies' localization rather than
-the server's engine code. Record it, and compare the fixture's own controls in the output of the find_ui_elements
+(roadmap M3.F29). A name that differs there does not fail the fact: the output reports it, with the element, both
+names and the display language. On 2026-10-14 the same commit passed and then, on the same en-GB desktop, read UIA3
+'Minimise' and UIA2 'Minimize' every time, so the proxies' names change between desktop sessions as well as languages,
+and a failure there said nothing about the server's engine code. Record such a difference, and compare the fixture's own controls in the output of the find_ui_elements
 theory, which writes every element it finds with each engine, before you change the default.
 
 ### Desktop check: provider-side contains (`WAM_UIA_PROVIDER_CONTAINS`)

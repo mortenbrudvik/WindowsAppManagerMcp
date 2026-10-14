@@ -126,11 +126,15 @@ public class FixtureUiaEngineTests
             }
         }
 
-        // ... and last, the title bar's names, which the proxies can localize differently (roadmap M3.F29)
-        FirstNonClientNameDifference(
+        // ... and last, the title bar's names, which Windows' proxies localize differently, and differently from one desktop
+        // session to the next (on 2026-10-14 the same commit passed, then read UIA3 'Minimise' and UIA2 'Minimize' on an
+        // en-GB Windows): reported, not failed, since neither the server nor the fixture names them (roadmap M3.F29)
+        if (FirstNonClientNameDifference(
                 uia3Elements.Select(e => (e.ControlType, e.Name, e.Bounds)).ToList(),
-                uia2Elements.Select(e => (e.ControlType, e.Name, e.Bounds)).ToList(), client)
-            .Should().BeNull(NonClientNameReason());
+                uia2Elements.Select(e => (e.ControlType, e.Name, e.Bounds)).ToList(), client) is { } nameDifference)
+        {
+            _output.WriteLine($"Non-client name difference, not a failure: {nameDifference}. {NonClientNameReason()}");
+        }
 
         string Describe(UIElementInfo e) => IsNonClient(e.ControlType, e.Bounds, client)
             ? $"{e.ControlType} (non-client: type, then name)"
@@ -238,13 +242,16 @@ public class FixtureUiaEngineTests
             }
         }
 
-        // ... and last, the title bar's buttons' names, which the proxies can localize differently (roadmap M3.F29)
+        // ... and last, the title bar's buttons' names, which Windows' proxies localize differently, and differently from one
+        // desktop session to the next: reported, not failed (roadmap M3.F29; see the facts above)
         for (var query = 0; query < queries.Count; query++)
         {
-            FirstNonClientNameDifference(
+            if (FirstNonClientNameDifference(
                     fromUia3[query].Elements!.Select(e => (e.ControlType, e.Name, e.Bounds)).ToList(),
-                    fromUia2[query].Elements!.Select(e => (e.ControlType, e.Name, e.Bounds)).ToList(), client)
-                .Should().BeNull("in query {0}, {1}", query, NonClientNameReason());
+                    fromUia2[query].Elements!.Select(e => (e.ControlType, e.Name, e.Bounds)).ToList(), client) is { } nameDifference)
+            {
+                _output.WriteLine($"Query {query}: non-client name difference, not a failure: {nameDifference}. {NonClientNameReason()}");
+            }
         }
 
         string Compared(FoundElement e) => IsNonClient(e.ControlType, e.Bounds, client)
