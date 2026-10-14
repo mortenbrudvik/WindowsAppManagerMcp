@@ -20,8 +20,8 @@ namespace WindowsAppManagerMcp.Tests.Unit.Architecture;
 /// ReadOnlyNativeWindowWrapper) may reach only the read-only APIs and the window reads of
 /// <see cref="WindowQueryNativeApis"/>, followed through their lambdas and helpers.</item>
 /// <item>Deny-lists that pin specific APIs to their wrapper: input, window changes, attaching thread
-/// input, registering hotkeys, the named events every server on the desktop shares (the pause and the
-/// chord marks), the clipboard, and starting or stopping processes.</item>
+/// input, registering hotkeys, installing WinEvent hooks, the named events every server on the desktop
+/// shares (the pause and the chord marks), the clipboard, and starting or stopping processes.</item>
 /// </list>
 /// </summary>
 public class NativeCallGuardTests
@@ -57,7 +57,8 @@ public class NativeCallGuardTests
     private static readonly Type[] ActionWrappers =
     [
         typeof(NativeWindowWrapper), typeof(NativeInputWrapper), typeof(NativeProcessWrapper),
-        typeof(NativeThreadInputWrapper), typeof(NativeHotkeyWrapper), typeof(NativeClipboardWrapper)
+        typeof(NativeThreadInputWrapper), typeof(NativeHotkeyWrapper), typeof(NativeClipboardWrapper),
+        typeof(NativeWinEventWrapper)
     ];
 
     /// <summary>
@@ -409,6 +410,7 @@ public class NativeCallGuardTests
     [InlineData(typeof(PopupService))]
     [InlineData(typeof(ElementReadService))]
     [InlineData(typeof(ElementWaitService))]
+    [InlineData(typeof(ElementEventSource))]
     [InlineData(typeof(ElementActionService))]
     [InlineData(typeof(AppWindowProbe))]
     [InlineData(typeof(BrowserReadingService))]
@@ -546,6 +548,33 @@ public class NativeCallGuardTests
         callers[typeof(NativeHotkeyWrapper)].Should().Contain(c => c.EndsWith("Hotkey.RegisterHotKey"));
         Unexpected(callers, typeof(NativeHotkeyWrapper), NativeMethodsType).Should().BeEmpty(
             "registering hotkeys and running the hotkey thread's message loop must go through INativeHotkeyWrapper so tests can fake it");
+    }
+
+    [Fact]
+    public void WinEventHooks_AreOnlyInstalledByNativeWinEventWrapper()
+    {
+        // Arrange - a WinEvent hook listens to every process on the desktop, and its thread's message loop calls it
+        // (roadmap M3.F22: wait_for_window's wake-ups). Installing, removing and pumping must stay behind the seam that
+        // WindowEventSource's tests replace with a fake, so no test installs a real hook. The SetWinEventHook and
+        // UnhookWinEvent declarations live in their own class, with that thread's message calls
+        var winEventsType = NativeMethodsType.GetNestedType("WinEvents", BindingFlags.NonPublic | BindingFlags.Public);
+        winEventsType.Should().NotBeNull();
+
+        // Act
+        var callers = FindCallers(callee => callee.DeclaringType == winEventsType);
+        var hookCallers = FindCallers(callee =>
+            callee.DeclaringType != null && OutermostType(callee.DeclaringType) == NativeMethodsType &&
+            callee.Name is "SetWinEventHook" or "UnhookWinEvent");
+
+        // Assert
+        callers.Keys.Should().Contain(typeof(NativeWinEventWrapper),
+            "the scan must see the wrapper's own SetWinEventHook and GetMessage calls");
+        callers[typeof(NativeWinEventWrapper)].Should().Contain(c => c.EndsWith("WinEvents.SetWinEventHook"))
+            .And.Contain(c => c.EndsWith("WinEvents.UnhookWinEvent"));
+        Unexpected(callers, typeof(NativeWinEventWrapper), NativeMethodsType).Should().BeEmpty(
+            "installing WinEvent hooks and running their thread's message loop must go through INativeWinEventWrapper so tests can fake it");
+        Unexpected(hookCallers, typeof(NativeWinEventWrapper), NativeMethodsType).Should().BeEmpty(
+            "SetWinEventHook and UnhookWinEvent are declared only in NativeMethods.WinEvents");
     }
 
     [Fact]

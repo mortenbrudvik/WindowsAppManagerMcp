@@ -112,6 +112,25 @@ public class UiaTargetsTests
     }
 
     [Fact]
+    public void ReadVerdict_TheSecurityPromptOfExplorer_IsRefusedByDefault()
+    {
+        // Arrange - Windows' "Open File - Security Warning" in explorer.exe, recognized by its controls (roadmap M3.F5)
+        var prompt = new nint(0x900);
+        Window(prompt, "#32770", 5001, "explorer");
+        SecurityPromptWindows.Add(_windows, prompt);
+        var policy = new TargetPolicy(TargetPolicySettings.Default, _windows.Object);
+
+        // Act
+        var verdict = UiaTargets.ReadVerdict(_windows.Object, policy, prompt);
+
+        // Assert
+        verdict.Allowed.Should().BeFalse();
+        UiaTargets.PolicyRefusal(_windows.Object, policy, prompt).Should().Contain("Open File - Security Warning")
+            .And.Contain("Nothing was read");
+        UiaTargets.ReadVerdict(_windows.Object, policy, Notepad).Allowed.Should().BeTrue();
+    }
+
+    [Fact]
     public void ReadVerdict_WindowWhoseProcessCannotBeNamed_FailsClosed_WhileThePolicyDeniesAnything()
     {
         // Arrange - the process name cannot be read

@@ -19,9 +19,10 @@ public static class UiaTargets
     /// covers captures (capture_window, capture_with_elements), so no element of an app the user denies is read, named or
     /// not. Matched on the window's process and, for a UWP frame window (an ApplicationFrameWindow, or another window of
     /// ApplicationFrameHost), on the app whose CoreWindow it hosts (see <see cref="UwpFrames"/>), as the window listings
-    /// name them. Fails closed: a window whose process name cannot be read, or that cannot be checked, is refused while the
-    /// policy denies anything. Allowed without a policy or a window wrapper, and for a handle that is no window (the read
-    /// then reports that).
+    /// name them, and then on the window itself, which is refused when it is a security prompt that a shared process shows
+    /// (<see cref="ITargetPolicy.EvaluateWindow"/>). Fails closed: a window whose process name cannot be read, or that
+    /// cannot be checked, is refused while the policy denies anything. Allowed without a policy or a window wrapper, and for
+    /// a handle that is no window (the read then reports that).
     /// </summary>
     /// <param name="windows">The window wrapper, or null to check nothing.</param>
     /// <param name="policy">The target policy, or null to check nothing.</param>
@@ -60,7 +61,18 @@ public static class UiaTargets
             }
 
             var verdict = policy.Evaluate(names);
-            if (!verdict.Allowed || (processId != 0 && names.All(name => !string.IsNullOrWhiteSpace(name))))
+            if (!verdict.Allowed)
+            {
+                return verdict;
+            }
+
+            // A security prompt that a shared process shows, by its structure (roadmap M3.F5)
+            if (policy.EvaluateWindow(windowHandle) is { Allowed: false } prompt)
+            {
+                return prompt;
+            }
+
+            if (processId != 0 && names.All(name => !string.IsNullOrWhiteSpace(name)))
             {
                 return verdict;
             }

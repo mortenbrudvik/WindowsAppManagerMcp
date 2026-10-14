@@ -176,7 +176,7 @@ public class InputTargetGuardTests
 
     private InputTargetGuard CreateSut(InputGuardOptions? options = null) => new(
         _windows.Object, _hitTest.Object, _threads.Object, _processes.Object, _windowService.Object, _foreground.Object,
-        _security.Object, _hostGuard.Object, new TargetPolicy(_policy), options ?? InputGuardOptions.Default);
+        _security.Object, _hostGuard.Object, new TargetPolicy(_policy, _windows.Object), options ?? InputGuardOptions.Default);
 
     private static InputTarget To(nint handle, bool allowHostTarget = false) => InputTarget.Window(handle, allowHostTarget);
 
@@ -447,6 +447,75 @@ public class InputTargetGuardTests
         // Assert - the keys would go to the prompt, which the policy denies
         result.ErrorCode.Should().Be(InputErrorCode.TargetDeniedByPolicy);
         result.ReceivingWindow!.Handle.Should().Be(CredentialPrompt);
+    }
+
+    private static readonly nint ExplorerPrompt = 0x940; // "Open File - Security Warning", drawn in explorer.exe (see SecurityPromptOfExplorer())
+
+    /// <summary>
+    /// File Explorer opened a downloaded file, and Windows' "Open File - Security Warning" came up in explorer.exe, owned by
+    /// the File Explorer window: a dialog box the policy recognizes by its controls (roadmap M3.F5).
+    /// </summary>
+    private void SecurityPromptOfExplorer()
+    {
+        Shell();
+        Window(ExplorerPrompt, ExplorerPid, "explorer", "Open File - Security Warning", owner: ExplorerFolder);
+        SecurityPromptWindows.Add(_windows, ExplorerPrompt);
+    }
+
+    [Fact]
+    public void CheckTarget_TheSecurityPromptOfExplorer_IsTargetDeniedByPolicy_EvenWithAllowHostTarget()
+    {
+        // Arrange
+        SecurityPromptOfExplorer();
+
+        // Act
+        var result = CreateSut().CheckTarget(To(ExplorerPrompt, allowHostTarget: true));
+
+        // Assert - explorer is on no list: the prompt is recognized by its structure, and only the user answers it
+        result.ErrorCode.Should().Be(InputErrorCode.TargetDeniedByPolicy);
+        result.Error.Should().Contain("\"Open File - Security Warning\"").And.Contain("only the user answers it").And.Contain("ask the user");
+        CreateSut().CheckTarget(To(ExplorerFolder)).Allowed.Should().BeTrue();
+        VerifyNoActivation();
+    }
+
+    [Fact]
+    public void Keyboard_ToFileExplorer_WhoseSecurityPromptComesToTheFront_IsRefused()
+    {
+        // Arrange - the keys meant for File Explorer would answer its prompt
+        SecurityPromptOfExplorer();
+        _foreground.Setup(f => f.EnsureForeground(ExplorerFolder, It.IsAny<int>())).Returns(() =>
+        {
+            _inFront = ExplorerPrompt;
+            return new FocusOutcome { Target = ExplorerFolder, IsForeground = true, Method = FocusMethod.Already, ForegroundHandle = ExplorerPrompt };
+        });
+
+        // Act
+        var result = CreateSut().CheckKeyboard(To(ExplorerFolder), KeyboardInputKind.Keys, SendKeysParser.Parse("{ENTER}"));
+
+        // Assert
+        result.ErrorCode.Should().Be(InputErrorCode.TargetDeniedByPolicy);
+        result.ReceivingWindow!.Handle.Should().Be(ExplorerPrompt);
+    }
+
+    [Fact]
+    public void Mouse_OnAButtonOfTheSecurityPromptOfExplorer_IsRefused()
+    {
+        // Arrange - the point is on the prompt's Open button
+        SecurityPromptOfExplorer();
+        At(SecurityPromptWindows.Control(ExplorerPrompt, 10), root: ExplorerPrompt);
+
+        // Act & Assert
+        CreateSut().CheckMouse(500, 300, InputTarget.None).ErrorCode.Should().Be(InputErrorCode.TargetDeniedByPolicy);
+    }
+
+    [Fact]
+    public void CheckTarget_TheSecurityPromptOfExplorer_IsAllowed_WhenTheDenyListLeavesOutTheDefaults()
+    {
+        // The prompt goes with the default list's security prompts: a deny list without "default" drops it with them
+        SecurityPromptOfExplorer();
+        _policy = TargetPolicySettings.FromEnvironment(name => name == TargetPolicySettings.DenyVariable ? "KeePass" : null);
+
+        CreateSut().CheckTarget(To(ExplorerPrompt)).Allowed.Should().BeTrue();
     }
 
     [Fact]

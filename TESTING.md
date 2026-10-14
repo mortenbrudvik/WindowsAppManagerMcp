@@ -1944,6 +1944,17 @@ Rules for new tests:
   pause and the chord marks themselves, so no other code can open the objects every server on the
   desktop shares. The E2E `WrapperCatalog` classifies the wrapper's members, and the shared pause's Set
   and Reset, as `GlobalHotkey`, which no tier allows.
+- Never install a real WinEvent hook. wait_for_window's wake-ups (roadmap M3.F22) listen to window events through
+  `INativeWinEventWrapper`, on the event thread of `WindowEventSource`, which starts with the first wait that sleeps;
+  tests use `FakeWinEventWrapper`, whose message loop reads an in-memory queue (`Raise()` queues a window event and the
+  loop calls the hooks that cover it, on the loop's own thread), or `FakeWindowEventSource` in front of a wait.
+  `WinEventHooks_AreOnlyInstalledByNativeWinEventWrapper` pins SetWinEventHook, UnhookWinEvent and that thread's message
+  calls to the wrapper. The E2E `WrapperCatalog` classifies its members as reads: an out-of-context hook loads nothing
+  into another process and changes no window. In the same way, no unit test registers a real UI Automation event handler:
+  wait_for_element's wake-ups add theirs through `IUiaTree` (`AddStructureChangedHandler`, `AddPropertyChangedHandler`),
+  which `FakeUiaTree` replaces (`RaiseStructureChanged()`, `RaisePropertyChanged()`, and `OnAddHandler` or
+  `OnRemoveHandler` to block or fail a call as a hung provider does), and the `Uia3Tree` tests run them over mocks of the
+  COM client; `FakeElementEventSource` stands in front of a wait.
 - For the input session (pause, held keys, stuck-input recovery), use `FakeInputWrapper`: it records
   every SendInput batch, keeps a key state the way Windows does (`Press()` and `Lift()` stand in for
   the user's fingers), and can insert fewer events than asked, throw or block, so short counts,

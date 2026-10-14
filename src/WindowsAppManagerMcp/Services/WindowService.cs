@@ -1228,9 +1228,10 @@ public class WindowService : IWindowService
         var process = ResolveProcess(handle, className, title, _nativeWrapper.GetWindowThreadProcessId(handle), session);
 
         // A process that cannot be named cannot be checked, so it is refused while the policy denies anything, as the input
-        // guard, the captures and the UI Automation reads refuse it
+        // guard, the captures and the UI Automation reads refuse it; a security prompt of a shared process is refused by its
+        // structure (roadmap M3.F5)
         var name = session.ProcessName(process.ProcessId);
-        return _targetPolicy.EvaluateFailClosed(process.HostProcessId is { } hostId ? [name, session.ProcessName(hostId)] : [name]);
+        return _targetPolicy.EvaluateFailClosed(handle, process.HostProcessId is { } hostId ? [name, session.ProcessName(hostId)] : [name]);
     }
 
     /// <summary>

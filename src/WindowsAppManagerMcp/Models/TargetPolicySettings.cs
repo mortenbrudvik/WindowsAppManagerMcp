@@ -7,7 +7,8 @@ namespace WindowsAppManagerMcp.Models;
 /// optionally the only processes it may. It covers input (with element_action, respond_to_dialog and file_dialog, which
 /// the input guard checks), the window changes (focus, move, resize, state, snap, their batches and apply_layout), close,
 /// kill, the captures (capture_window, capture_with_elements), the UI Automation reads, and the launch tools' placement and
-/// reuseExisting. While it denies anything, a window whose process cannot be named is refused as well, since it cannot be
+/// reuseExisting. With the default list it also refuses Windows' "Open File - Security Warning" in any process, recognized
+/// by its structure (roadmap M3.F5). While it denies anything, a window whose process cannot be named is refused as well, since it cannot be
 /// checked (it fails closed). The user sets it in the server's environment; no tool argument can change it, because the
 /// agent acts on untrusted screen and web content and sets its own confirm flags.
 /// </summary>
@@ -52,8 +53,9 @@ public sealed record TargetPolicySettings(
     /// (CHXSmartScreen.exe, a UWP app, and smartscreen.exe, the reputation broker that starts it); and the
     /// Windows Security app (SecHealthUI.exe). The UWP ones are matched through the app that their
     /// ApplicationFrameHost frame hosts. A browser extension password manager runs inside the browser and
-    /// cannot be told apart by process, and neither can a security prompt that runs inside a shared process
-    /// (such as Explorer's "Open File - Security Warning").
+    /// cannot be told apart by process. Neither can a security prompt that runs inside a shared process, so
+    /// while the deny list includes this list, the policy also refuses Windows' "Open File - Security Warning",
+    /// whichever process shows it, by its structure (roadmap M3.F5; <see cref="Services.SecurityPrompts"/>).
     /// </summary>
     public static IReadOnlyList<string> DefaultDeniedProcesses { get; } =
     [

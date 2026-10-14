@@ -53,6 +53,8 @@ public interface IWindowWaitService
     /// (InvalidHandle) or not resolving to one window at the start (its resolution's errorCode, with candidates), and
     /// input_idle finding several windows (AmbiguousWindow). Only reads windows; the one wait on an application,
     /// WaitForInputIdle, is bounded to 250 ms per poll. Progress (elapsed of total ms) is reported about once a second.
+    /// A window event (<see cref="IWindowEventSource"/>, roadmap M3.F22) ends the sleep between two polls early, so the
+    /// next poll comes sooner; the polls alone decide.
     /// </remarks>
     /// <exception cref="OperationCanceledException"><paramref name="cancellationToken"/> was cancelled.</exception>
     Task<WindowConditionResult> WaitForConditionAsync(

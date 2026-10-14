@@ -16,8 +16,8 @@ namespace WindowsAppManagerMcp.Services.Interfaces;
 /// <para>Errors: a node that disappeared, or whose window is gone, throws
 /// <see cref="UiaElementUnavailableException"/>. A provider that does not answer in time can throw
 /// <see cref="TimeoutException"/>. Other failures surface as the provider's exception.</para>
-/// <para>The tree's own methods only read, except <see cref="SetFocus"/>. Acting is done through the pattern objects of
-/// <see cref="GetPattern{TPattern}"/> (see <see cref="IUiaPattern"/>).</para>
+/// <para>The tree's own methods only read (its event handlers, roadmap M3.F22, only listen), except <see cref="SetFocus"/>.
+/// Acting is done through the pattern objects of <see cref="GetPattern{TPattern}"/> (see <see cref="IUiaPattern"/>).</para>
 /// </remarks>
 public interface IUiaTree
 {
@@ -173,6 +173,41 @@ public interface IUiaTree
     /// </summary>
     /// <exception cref="InvalidOperationException">The element cannot take focus (it is not focusable or not enabled).</exception>
     void SetFocus(IUiaNode node);
+
+    /// <summary>
+    /// Calls <paramref name="changed"/> whenever the provider reports a structure change in the node's subtree (an element
+    /// added, removed or re-created below it: StructureChanged with the subtree scope), until the returned registration is
+    /// disposed (roadmap M3.F22, wait_for_element's wake-ups). <paramref name="changed"/> runs on UI Automation's event
+    /// threads, so it must only signal and make no UI Automation call. Only listens: it changes nothing in the application.
+    /// </summary>
+    /// <remarks>Adding the handler, and removing it (the registration's Dispose), cross into the provider's process and can
+    /// block on a hung one, as any call here can: make both on a thread of their own under a bound, never on the read
+    /// worker and never on an event thread (removing a handler from its own event thread can deadlock).</remarks>
+    IDisposable AddStructureChangedHandler(IUiaNode node, Action changed);
+
+    /// <summary>
+    /// Calls <paramref name="changed"/> whenever the provider reports that one of <paramref name="properties"/> changed on
+    /// the node or an element below it (PropertyChanged with the subtree scope), until the returned registration is disposed
+    /// (roadmap M3.F22). The same rules as <see cref="AddStructureChangedHandler"/> apply: <paramref name="changed"/> only
+    /// signals, and adding and removing run on a thread of their own under a bound.
+    /// </summary>
+    IDisposable AddPropertyChangedHandler(IUiaNode node, IReadOnlyCollection<UiaWatchedProperty> properties, Action changed);
+}
+
+/// <summary>The properties whose changes <see cref="IUiaTree.AddPropertyChangedHandler"/> can report (roadmap M3.F22).</summary>
+public enum UiaWatchedProperty
+{
+    Name,
+    IsEnabled,
+    IsOffscreen,
+    BoundingRectangle,
+    HasKeyboardFocus,
+
+    /// <summary>The Value pattern's value (UIA_ValueValuePropertyId).</summary>
+    Value,
+
+    /// <summary>The Toggle pattern's state (UIA_ToggleToggleStatePropertyId).</summary>
+    ToggleState
 }
 
 /// <summary>An element of the UI Automation tree. Only the <see cref="IUiaTree"/> that returned it can read it.</summary>
