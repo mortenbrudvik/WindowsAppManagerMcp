@@ -17,7 +17,7 @@ public readonly record struct KeyStroke(ushort VirtualKey, KeyModifiers Modifier
 /// <summary>
 /// One keyboard layout as send_keys reads it for one call (roadmap M4.1): which key types a character, with which
 /// modifiers, and each key's scan code. Built from the layout of the window the keys go to, and the Caps Lock state at
-/// the start of the call. Not thread-safe; each call builds its own.
+/// the start of the call. Not thread-safe; each call builds its own (the shared <see cref="Invariant"/> keeps nothing).
 /// </summary>
 public sealed class KeyboardLayout
 {
@@ -66,12 +66,18 @@ public sealed class KeyboardLayout
     public KeyStroke? Map(char character, bool capsLockApplies)
     {
         var caps = capsLockApplies && CapsLock;
+        if (_native == null)
+        {
+            // Not cached: the invariant layout is shared by every call
+            return InvariantStroke(character, caps);
+        }
+
         if (_strokes.TryGetValue((character, caps), out var known))
         {
             return known;
         }
 
-        var stroke = _native == null ? InvariantStroke(character, caps) : NativeStroke(character, caps);
+        var stroke = NativeStroke(character, caps);
         _strokes[(character, caps)] = stroke;
         return stroke;
     }
