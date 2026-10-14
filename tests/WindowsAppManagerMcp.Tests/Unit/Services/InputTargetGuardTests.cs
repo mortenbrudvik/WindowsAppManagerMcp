@@ -529,6 +529,57 @@ public class InputTargetGuardTests
         result.ErrorCode.Should().Be(InputErrorCode.TargetDeniedByPolicy);
     }
 
+    /// <summary>
+    /// A prompt of CredDialogHost (on the default deny list) that comes up in a window of ApplicationFrameHost of another
+    /// class than ApplicationFrameWindow and hosts the prompt's CoreWindow (roadmap M3.F7). The window service that reads
+    /// it is the real one, on the mocked window wrapper, so the guard sees the window as the window tools report it.
+    /// </summary>
+    private nint HostedPrompt()
+    {
+        var frame = new nint(0x930);
+        var content = new nint(0x931);
+        Window(frame, 9301, "ApplicationFrameHost", "Windows Security");
+        _windows.Setup(w => w.GetClassName(frame)).Returns("PromptFrameWindow");
+        _windows.Setup(w => w.GetWindowRect(frame)).Returns((400, 200, 800, 500));
+        _windows.Setup(w => w.GetClassName(content)).Returns("Windows.UI.Core.CoreWindow");
+        _windows.Setup(w => w.GetWindowThreadProcessId(content)).Returns(9401u);
+        _windows.Setup(w => w.GetProcessName(9401u)).Returns("CredDialogHost");
+        _windows.Setup(w => w.EnumChildWindows(frame, It.IsAny<Func<nint, bool>>()))
+            .Callback((nint _, Func<nint, bool> callback) => callback(content));
+
+        var reader = new WindowService(TestDataFactory.CreateMockMonitorService().Object, _windows.Object, _hostGuard.Object);
+        _windowService.Setup(s => s.GetWindowInfo(frame)).Returns(() => reader.GetWindowInfo(frame));
+        return frame;
+    }
+
+    [Fact]
+    public void Keyboard_NoTarget_DeniedPromptInAFrameOfAnotherClassInFront_IsTargetDeniedByPolicy()
+    {
+        // Arrange
+        _inFront = HostedPrompt();
+
+        // Act
+        var result = CreateSut().CheckKeyboard(InputTarget.None, KeyboardInputKind.Text, null);
+
+        // Assert - the prompt is matched by the app its frame hosts, not only by ApplicationFrameHost
+        result.ErrorCode.Should().Be(InputErrorCode.TargetDeniedByPolicy);
+        result.Error.Should().Contain("CredDialogHost");
+    }
+
+    [Fact]
+    public void Mouse_NoTarget_PointOnADeniedPromptInAFrameOfAnotherClass_IsTargetDeniedByPolicy()
+    {
+        // Arrange
+        At(HostedPrompt());
+
+        // Act
+        var result = CreateSut().CheckMouse(500, 300, InputTarget.None);
+
+        // Assert
+        result.ErrorCode.Should().Be(InputErrorCode.TargetDeniedByPolicy);
+        result.Error.Should().Contain("CredDialogHost");
+    }
+
     [Fact]
     public void Policy_DenyListWinsOverTheAllowList()
     {

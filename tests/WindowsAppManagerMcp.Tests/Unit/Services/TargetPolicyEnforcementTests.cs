@@ -135,6 +135,30 @@ public class TargetPolicyEnforcementTests
     }
 
     [Fact]
+    public void EvaluateTargetPolicy_FrameHostWindowOfAnotherClassThatHostsADeniedPrompt_IsDeniedByDefault()
+    {
+        // Arrange - a prompt may come up in a window of ApplicationFrameHost of another class than ApplicationFrameWindow,
+        // which hosts the prompt's CoreWindow (roadmap M3.F7)
+        var frame = AddWindow(0x400, "PromptFrameWindow", 500, "ApplicationFrameHost");
+        var coreWindow = new nint(0x401);
+        _native.Setup(n => n.EnumChildWindows(frame, It.IsAny<Func<nint, bool>>()))
+            .Callback((nint _, Func<nint, bool> callback) => callback(coreWindow));
+        _native.Setup(n => n.GetClassName(coreWindow)).Returns("Windows.UI.Core.CoreWindow");
+        _native.Setup(n => n.GetWindowThreadProcessId(coreWindow)).Returns(600u);
+        _native.Setup(n => n.GetProcessName(600u)).Returns("CredDialogHost");
+        var sut = CreateWindowService(new TargetPolicy(TargetPolicySettings.Default));
+
+        // Act
+        var verdict = sut.EvaluateTargetPolicy(frame);
+
+        // Assert
+        verdict.Allowed.Should().BeFalse();
+        verdict.ProcessName.Should().Be("CredDialogHost");
+        sut.CloseWindow(frame, force: true).ErrorCode.Should().Be(WindowErrorCode.TargetDeniedByPolicy);
+        _native.Verify(n => n.PostMessage(It.IsAny<nint>(), It.IsAny<uint>(), It.IsAny<nint>(), It.IsAny<nint>()), Times.Never);
+    }
+
+    [Fact]
     public void CloseWindow_AllowList_RefusesUnlistedWindows()
     {
         // Arrange

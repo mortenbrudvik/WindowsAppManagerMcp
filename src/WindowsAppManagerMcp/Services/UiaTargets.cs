@@ -17,10 +17,11 @@ public static class UiaTargets
     /// <summary>
     /// The target policy's verdict on a UI Automation read of the window: the policy covers the reads of a window as it
     /// covers captures (capture_window, capture_with_elements), so no element of an app the user denies is read, named or
-    /// not. Matched on the window's process and, for a UWP frame window (ApplicationFrameWindow), on the app whose
-    /// CoreWindow it hosts (see <see cref="UwpFrames"/>), as the window listings name them. Fails closed: a window whose
-    /// process name cannot be read, or that cannot be checked, is refused while the policy denies anything. Allowed without
-    /// a policy or a window wrapper, and for a handle that is no window (the read then reports that).
+    /// not. Matched on the window's process and, for a UWP frame window (an ApplicationFrameWindow, or another window of
+    /// ApplicationFrameHost), on the app whose CoreWindow it hosts (see <see cref="UwpFrames"/>), as the window listings
+    /// name them. Fails closed: a window whose process name cannot be read, or that cannot be checked, is refused while the
+    /// policy denies anything. Allowed without a policy or a window wrapper, and for a handle that is no window (the read
+    /// then reports that).
     /// </summary>
     /// <param name="windows">The window wrapper, or null to check nothing.</param>
     /// <param name="policy">The target policy, or null to check nothing.</param>
@@ -47,13 +48,15 @@ public static class UiaTargets
             var names = new List<string?>();
             if (processId != 0)
             {
-                if (WindowClassification.IsApplicationFrameWindow(windows.GetClassName(windowHandle)) &&
+                // The window's own name is read anyway, so a frame of any class costs no other lookup (roadmap M3.F7)
+                var windowName = processName(processId);
+                if (UwpFrames.IsFrame(windows.GetClassName(windowHandle), processId, _ => windowName) &&
                     UwpFrames.FindHostedAppProcessId(windows, windowHandle, processId) is { } app)
                 {
                     names.Add(processName(app));
                 }
 
-                names.Add(processName(processId));
+                names.Add(windowName);
             }
 
             var verdict = policy.Evaluate(names);
@@ -87,11 +90,11 @@ public static class UiaTargets
     /// <summary>
     /// Why the window must not be read, or null when it responds (or cannot be checked): Windows reports its thread hung
     /// (IsHungAppWindow), or it does not answer a no-op message within <see cref="RespondTimeoutMs"/> (SendMessageTimeout
-    /// WM_NULL with SMTO_ABORTIFHUNG). For a UWP frame window (ApplicationFrameWindow), the CoreWindow it hosts is checked
-    /// the same way: the frame's thread is the shared ApplicationFrameHost's, while the app's elements are served by the
-    /// CoreWindow's thread in the app's own process (see <see cref="UwpFrames"/>). A handle that is no window is left to the
-    /// UI Automation lookup, which reports WindowNotFound. A check that throws does not stop the read: the read's own
-    /// deadline still bounds it.
+    /// WM_NULL with SMTO_ABORTIFHUNG). For a UWP frame window (an ApplicationFrameWindow, or another window of
+    /// ApplicationFrameHost: <see cref="UwpFrames.IsFrame"/>), the CoreWindow it hosts is checked the same way: the frame's
+    /// thread is the shared ApplicationFrameHost's, while the app's elements are served by the CoreWindow's thread in the
+    /// app's own process. A handle that is no window is left to the UI Automation lookup, which reports WindowNotFound. A
+    /// check that throws does not stop the read: the read's own deadline still bounds it.
     /// </summary>
     /// <param name="windows">The window wrapper, or null to check nothing.</param>
     /// <param name="windowHandle">The window to check.</param>
@@ -117,7 +120,7 @@ public static class UiaTargets
 
             // A UWP app answers on its CoreWindow's thread, not the frame host's
             var processId = windows.GetWindowThreadProcessId(windowHandle);
-            return processId != 0 && WindowClassification.IsApplicationFrameWindow(windows.GetClassName(windowHandle)) &&
+            return processId != 0 && UwpFrames.IsFrame(windows.GetClassName(windowHandle), processId, windows.GetProcessName) &&
                    UwpFrames.FindHostedCoreWindow(windows, windowHandle, processId) is { } core
                 ? Unresponsive(windows, core.Window, windowHandle, what)
                 : null;

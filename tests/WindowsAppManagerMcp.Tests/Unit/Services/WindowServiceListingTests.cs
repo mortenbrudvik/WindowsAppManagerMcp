@@ -387,6 +387,65 @@ public class WindowServiceListingTests
         _desktop.Native.Verify(n => n.GetClassName(It.Is<nint>(h => h != window)), Times.Never);
     }
 
+    [Fact]
+    public void FrameHostWindowOfAnotherClass_IsReportedUnderTheAppItHosts_WithApplicationFrameHostAsHost()
+    {
+        // Arrange - a prompt may come up in a window of ApplicationFrameHost of another class than ApplicationFrameWindow,
+        // which hosts the prompt's CoreWindow (roadmap M3.F7)
+        var frame = _desktop.Add("Windows Security", "PromptFrameWindow", processId: FrameHostProcessId, processName: "ApplicationFrameHost");
+        var coreWindow = _desktop.Add("Windows Security", "Windows.UI.Core.CoreWindow", processId: 620, processName: "CredDialogHost", topLevel: false);
+        _desktop.SetChildren(frame, coreWindow);
+        var sut = CreateSut();
+
+        // Act
+        var listed = sut.GetAllWindows().Should().ContainSingle().Which;
+        var read = sut.GetWindowInfo(frame)!;
+
+        // Assert
+        foreach (var info in new[] { listed, read })
+        {
+            info.ProcessName.Should().Be("CredDialogHost");
+            info.ProcessId.Should().Be(620);
+            info.HostProcessName.Should().Be("ApplicationFrameHost");
+            info.HostProcessId.Should().Be((int)FrameHostProcessId);
+            info.ClassName.Should().Be("PromptFrameWindow");
+        }
+    }
+
+    [Fact]
+    public void FrameHostWindowOfAnotherClass_WithoutACoreWindowChild_IsNotMatchedByTitle()
+    {
+        // Arrange - only an ApplicationFrameWindow's app is looked for among the top-level CoreWindows by its title
+        var frame = _desktop.Add("Windows Security", "PromptFrameWindow", processId: FrameHostProcessId, processName: "ApplicationFrameHost");
+        _desktop.Add("Windows Security", "Windows.UI.Core.CoreWindow", cloaked: true, processId: 620, processName: "CredDialogHost");
+        var sut = CreateSut();
+
+        // Act
+        var info = sut.GetWindowInfo(frame)!;
+
+        // Assert
+        info.ProcessName.Should().Be("ApplicationFrameHost");
+        info.HostProcessId.Should().BeNull();
+    }
+
+    [Fact]
+    public void WindowOfAnotherProcess_WithACoreWindowChild_KeepsItsOwnProcess_WithoutListingChildren()
+    {
+        // Arrange - only ApplicationFrameHost hosts apps: a CoreWindow of another process elsewhere attributes nothing
+        var window = _desktop.Add("Host", "HostWindow", processId: 700, processName: "host");
+        var coreWindow = _desktop.Add("", "Windows.UI.Core.CoreWindow", processId: 710, processName: "app", topLevel: false);
+        _desktop.SetChildren(window, coreWindow);
+        var sut = CreateSut();
+
+        // Act
+        var info = sut.GetWindowInfo(window)!;
+
+        // Assert
+        info.ProcessName.Should().Be("host");
+        info.HostProcessId.Should().BeNull();
+        _desktop.Native.Verify(n => n.EnumChildWindows(It.IsAny<nint>(), It.IsAny<Func<nint, bool>>()), Times.Never);
+    }
+
     private nint AddCalculatorFrame()
     {
         var frame = _desktop.Add("Calculator", "ApplicationFrameWindow", processId: FrameHostProcessId, processName: "ApplicationFrameHost");
