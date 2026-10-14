@@ -116,15 +116,33 @@ public partial class InputSimulationService : IInputSimulationService
 
     public ClickResult Click(int x, int y, InputTarget target = default, bool releaseHeldModifiers = false,
         CancellationToken cancellationToken = default) =>
-        ClickAt(x, y, target, "left", MouseButton.Primary, clicks: 1, releaseHeldModifiers, cancellationToken);
+        ClickAt(x, y, target, "left", MouseButton.Primary, clicks: 1, [], releaseHeldModifiers, cancellationToken);
 
     public ClickResult RightClick(int x, int y, InputTarget target = default, bool releaseHeldModifiers = false,
         CancellationToken cancellationToken = default) =>
-        ClickAt(x, y, target, "right", MouseButton.Secondary, clicks: 1, releaseHeldModifiers, cancellationToken);
+        ClickAt(x, y, target, "right", MouseButton.Secondary, clicks: 1, [], releaseHeldModifiers, cancellationToken);
 
     public ClickResult DoubleClick(int x, int y, InputTarget target = default, bool releaseHeldModifiers = false,
         CancellationToken cancellationToken = default) =>
-        ClickAt(x, y, target, "double", MouseButton.Primary, clicks: 2, releaseHeldModifiers, cancellationToken);
+        ClickAt(x, y, target, "double", MouseButton.Primary, clicks: 2, [], releaseHeldModifiers, cancellationToken);
+
+    public ClickResult MouseClick(int x, int y, MouseButton button, int clickCount, IReadOnlyList<MouseModifier> modifiers,
+        InputTarget target = default, bool releaseHeldModifiers = false, CancellationToken cancellationToken = default)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(clickCount, 1);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(clickCount, InputBatchBuilder.MaxClicks);
+        ArgumentNullException.ThrowIfNull(modifiers);
+        var held = modifiers.Distinct().ToList();
+        return ClickAt(x, y, target, ToolEnum<MouseButton>.Name(button), button, clickCount, held, releaseHeldModifiers, cancellationToken) with
+        {
+            ClickCount = clickCount,
+            Modifiers = ModifierNames(held)
+        };
+    }
+
+    /// <summary>The names of <paramref name="modifiers"/> for a result ("ctrl", "shift", ...); null without any.</summary>
+    private static IReadOnlyList<string>? ModifierNames(IReadOnlyList<MouseModifier> modifiers) =>
+        modifiers.Count == 0 ? null : modifiers.Select(ToolEnum<MouseModifier>.Name).ToList();
 
     public MouseMoveResult MoveMouse(int x, int y, InputTarget target = default, bool releaseHeldModifiers = false,
         CancellationToken cancellationToken = default)
@@ -767,6 +785,24 @@ public partial class InputSimulationService : IInputSimulationService
                 ErrorCode: InputErrorCode.InvalidKeySpecification);
         }
 
+        return await SendStepsAsync(keys, spec, target, releaseHeldModifiers, Math.Clamp(delayMs, 0, MaxSendKeysDelayMs), holdMs: 0,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Sends the steps of send_keys or press_keys (roadmap M4.1, M4.3), after the pause chord, the held input and the guard
+    /// (destructive chords, keys after a focus change) have checked all of them. Without <paramref name="delayMs"/> and
+    /// <paramref name="holdMs"/> every step goes in one SendInput call, so no other input can come between them; otherwise
+    /// each step is a batch of its own, checked again right before it, with <paramref name="delayMs"/> before every step but
+    /// the first. With <paramref name="holdMs"/> a step's leading key-downs go first, and its key-ups follow that much later
+    /// without a check of their own (they only release what went down; the session releases them anyway if the call stops
+    /// meanwhile).
+    /// </summary>
+    private async Task<SendKeysResult> SendStepsAsync(string keys, KeySpec spec, InputTarget target, bool releaseHeldModifiers,
+        int delayMs, int holdMs, CancellationToken cancellationToken)
+    {
+        var inputs = spec.Events;
+
         // The agent must never pause or resume itself: the chord would reach the hotkey like a real key press
         if (_session.FindPauseChord(inputs) is { } pauseChord)
         {
@@ -775,9 +811,8 @@ public partial class InputSimulationService : IInputSimulationService
                 "may press it. Nothing was sent.", InputErrorCode.PauseChordNotAllowed);
         }
 
-        // Without a delay every key goes in one SendInput call, so no other input can come between them
-        delayMs = Math.Clamp(delayMs, 0, MaxSendKeysDelayMs);
-        var batches = delayMs == 0 ? [inputs] : spec.Steps;
+        var batches = KeyBatches(spec, delayMs, holdMs);
+        var oneBatch = delayMs == 0 && holdMs == 0;
         var total = spec.Steps.Count;
         var keysSent = 0;
 
@@ -824,47 +859,51 @@ public partial class InputSimulationService : IInputSimulationService
 
                 for (var b = 0; b < batches.Count; b++)
                 {
-                    var batch = batches[b];
-                    if (b > 0)
+                    var (batch, wait, release, endsStep) = batches[b];
+                    if (wait > 0)
                     {
-                        await Task.Delay(delayMs, call.Token).ConfigureAwait(false);
+                        await Task.Delay(wait, call.Token).ConfigureAwait(false);
                     }
 
                     call.Token.ThrowIfCancellationRequested();
 
-                    // Right before every batch: the window in front may have changed while the guard read it, or since the
-                    // last batch
-                    var recheck = _guard.RecheckKeyboard(approved);
-                    if (!recheck.Allowed)
+                    // A release batch only lets go of what the step before it pressed
+                    if (!release)
                     {
-                        return held.Apply(Finish(new SendKeysResult(false, keys, $"{KeysSentSoFar(keysSent, total, approved)} {recheck.Error}",
-                            recheck.ErrorCode) { KeysSent = keysSent }, recheck));
-                    }
-
-                    approved = recheck;
-
-                    // Again right before the keys: a modifier the user pressed while the guard activated the target would
-                    // turn them into shortcuts, and the keys' own modifier key-ups would release it. A modifier an earlier
-                    // batch of these keys holds down ({SHIFT down}) is the server's own.
-                    if (ModifiersDownNow("sent", ignoreServerHeld: b > 0) is { } downNow)
-                    {
-                        return held.Apply(Finish(new SendKeysResult(false, keys,
-                            b == 0 ? downNow.Error : $"{KeysSentSoFar(keysSent, total, approved)} {downNow.Error}", InputErrorCode.ModifiersHeld)
+                        // Right before every batch: the window in front may have changed while the guard read it, or since the
+                        // last batch
+                        var recheck = _guard.RecheckKeyboard(approved);
+                        if (!recheck.Allowed)
                         {
-                            HeldModifiers = downNow.Names,
-                            KeysSent = keysSent
-                        }, approved));
-                    }
+                            return held.Apply(Finish(new SendKeysResult(false, keys, $"{KeysSentSoFar(keysSent, total, approved)} {recheck.Error}",
+                                recheck.ErrorCode) { KeysSent = keysSent }, recheck));
+                        }
 
-                    // Right before the keys: a paste must not put the user's clipboard where the agent can read it. The first
-                    // check reads the whole call, so a copy in one batch and its paste in a later one are refused together
-                    if (PasteRefusal(b == 0 ? inputs : batch, approved) is { } pasteRefused)
-                    {
-                        return held.Apply(Finish(new SendKeysResult(false, keys,
-                            b == 0 ? pasteRefused : $"{KeysSentSoFar(keysSent, total, approved)} {pasteRefused}", InputErrorCode.PasteNotAllowed)
+                        approved = recheck;
+
+                        // Again right before the keys: a modifier the user pressed while the guard activated the target would
+                        // turn them into shortcuts, and the keys' own modifier key-ups would release it. A modifier an earlier
+                        // batch of these keys holds down ({SHIFT down}) is the server's own.
+                        if (ModifiersDownNow("sent", ignoreServerHeld: b > 0) is { } downNow)
                         {
-                            KeysSent = keysSent
-                        }, approved));
+                            return held.Apply(Finish(new SendKeysResult(false, keys,
+                                b == 0 ? downNow.Error : $"{KeysSentSoFar(keysSent, total, approved)} {downNow.Error}", InputErrorCode.ModifiersHeld)
+                            {
+                                HeldModifiers = downNow.Names,
+                                KeysSent = keysSent
+                            }, approved));
+                        }
+
+                        // Right before the keys: a paste must not put the user's clipboard where the agent can read it. The first
+                        // check reads the whole call, so a copy in one batch and its paste in a later one are refused together
+                        if (PasteRefusal(b == 0 ? inputs : batch, approved) is { } pasteRefused)
+                        {
+                            return held.Apply(Finish(new SendKeysResult(false, keys,
+                                b == 0 ? pasteRefused : $"{KeysSentSoFar(keysSent, total, approved)} {pasteRefused}", InputErrorCode.PasteNotAllowed)
+                            {
+                                KeysSent = keysSent
+                            }, approved));
+                        }
                     }
 
                     var sent = Send(batch, approved);
@@ -876,7 +915,7 @@ public partial class InputSimulationService : IInputSimulationService
 
                     if (!sent.Complete)
                     {
-                        if (delayMs == 0)
+                        if (oneBatch)
                         {
                             keysSent = StepsWithin(spec, sent.Inserted);
                         }
@@ -887,7 +926,10 @@ public partial class InputSimulationService : IInputSimulationService
                             InputErrorCode.SendInputFailed) { KeysSent = keysSent }, approved));
                     }
 
-                    keysSent = delayMs == 0 ? total : keysSent + 1;
+                    if (endsStep)
+                    {
+                        keysSent = oneBatch ? total : keysSent + 1;
+                    }
                 }
 
                 return held.Apply(Finish(new SendKeysResult(Success: true, Keys: keys) { KeysSent = keysSent }, approved));
@@ -906,6 +948,90 @@ public partial class InputSimulationService : IInputSimulationService
 
     /// <summary>send_keys waits at most this long between keys (delayMs).</summary>
     public const int MaxSendKeysDelayMs = 500;
+
+    /// <summary>press_keys holds a chord's keys down at most this long (holdMs).</summary>
+    public const int MaxPressKeysHoldMs = 5000;
+
+    /// <summary>press_keys waits at most this long between chords (delayBetweenMs).</summary>
+    public const int MaxPressKeysDelayMs = 1000;
+
+    /// <summary>
+    /// The longest a press_keys call may take by its waits: presses x (holdMs + delayBetweenMs). The input gate is held
+    /// throughout, so every other input and window call waits for it.
+    /// </summary>
+    public const int MaxPressKeysDurationMs = 10_000;
+
+    public async Task<SendKeysResult> PressKeysAsync(KeyList keys, int repeat, int holdMs, int delayBetweenMs, InputTarget target = default,
+        bool releaseHeldModifiers = false, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(keys);
+        ArgumentOutOfRangeException.ThrowIfLessThan(repeat, 1);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(repeat, PressKeysParser.MaxRepeat);
+        ArgumentOutOfRangeException.ThrowIfLessThan(holdMs, 0);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(holdMs, MaxPressKeysHoldMs);
+        ArgumentOutOfRangeException.ThrowIfLessThan(delayBetweenMs, 0);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(delayBetweenMs, MaxPressKeysDelayMs);
+
+        KeySpec spec;
+        try
+        {
+            spec = PressKeysParser.Parse(keys, repeat, LayoutFor(target));
+        }
+        catch (KeySyntaxException ex)
+        {
+            return new SendKeysResult(false, keys.Text, $"{ex.Message} Nothing was sent.", InputErrorCode.InvalidKeySpecification);
+        }
+        catch (ArgumentException ex) when (ex is not ArgumentOutOfRangeException)
+        {
+            return new SendKeysResult(false, keys.Text,
+                $"{ex.Message}. Key names: ctrl, shift, alt, win, enter, tab, esc, space, backspace, delete, up, down, left, right, " +
+                "home, end, pgup, pgdn, f1-f24, plus, comma, star, or a single character. Nothing was sent.", InputErrorCode.UnknownKey);
+        }
+
+        var duration = (long)spec.Steps.Count * (holdMs + delayBetweenMs);
+        if (duration > MaxPressKeysDurationMs)
+        {
+            throw new ArgumentException(
+                $"{spec.Steps.Count} presses x (holdMs {holdMs} + delayBetweenMs {delayBetweenMs}) is {duration} ms; one call takes at " +
+                $"most {MaxPressKeysDurationMs} ms, because every other input call waits for it.", nameof(holdMs));
+        }
+
+        return await SendStepsAsync(keys.Text, spec, target, releaseHeldModifiers, delayBetweenMs, holdMs, cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// The SendInput batches of <paramref name="spec"/>: all its steps in one without waits; otherwise each step, after
+    /// <paramref name="delayMs"/> (not before the first), split with <paramref name="holdMs"/> into its leading key-downs and,
+    /// that much later, the rest (a release batch, which <see cref="SendStepsAsync"/> does not check again).
+    /// </summary>
+    private static List<(IReadOnlyList<InputEvent> Events, int Wait, bool Release, bool EndsStep)> KeyBatches(KeySpec spec, int delayMs,
+        int holdMs)
+    {
+        var batches = new List<(IReadOnlyList<InputEvent> Events, int Wait, bool Release, bool EndsStep)>();
+        if (delayMs == 0 && holdMs == 0)
+        {
+            batches.Add((spec.Events, 0, false, true));
+            return batches;
+        }
+
+        for (var i = 0; i < spec.Steps.Count; i++)
+        {
+            var step = spec.Steps[i];
+            var wait = i == 0 ? 0 : delayMs;
+            var downs = holdMs == 0 ? step.Count : step.TakeWhile(e => (e.Flags & NativeEnums.KEYEVENTF_KEYUP) == 0).Count();
+            if (downs == step.Count || downs == 0)
+            {
+                batches.Add((step, wait, false, true));
+                continue;
+            }
+
+            batches.Add((step.Take(downs).ToList(), wait, false, false));
+            batches.Add((step.Skip(downs).ToList(), holdMs, true, true));
+        }
+
+        return batches;
+    }
 
     /// <summary>
     /// The layout keys are mapped with: that of the target window's thread, or of the foreground window's when there is no
@@ -942,10 +1068,12 @@ public partial class InputSimulationService : IInputSimulationService
     /// right before the press, since moving the cursor can open a popup there. The clicks are sent in one SendInput call
     /// together with a move to the checked point (<see cref="InputBatchBuilder"/>), so a user moving the mouse cannot make
     /// them land elsewhere (SendInput does not interleave other input with the events of one call), and a double click is
-    /// one double click whatever the double-click time. A pointer that is not at the point afterwards is CursorClamped.
+    /// one double click whatever the double-click time. <paramref name="modifiers"/> go down before the move and up after
+    /// the clicks, in the same batch (mouse_click, roadmap M4.3), so none stays down whatever happens to the call. A pointer
+    /// that is not at the point afterwards is CursorClamped.
     /// </summary>
     private ClickResult ClickAt(int x, int y, InputTarget target, string clickType, MouseButton button, int clicks,
-        bool releaseHeldModifiers, CancellationToken cancellationToken)
+        IReadOnlyList<MouseModifier> modifiers, bool releaseHeldModifiers, CancellationToken cancellationToken)
     {
         const string NothingClicked = "Nothing was clicked: ";
 
@@ -1050,10 +1178,12 @@ public partial class InputSimulationService : IInputSimulationService
                     return held.Apply(Finish(new ClickResult(false, x, y, clickType, NothingClicked + buttonsNow, InputErrorCode.MouseInUse), approved));
                 }
 
-                var batch = NewBatch().MoveTo(x, y).Click(button, clicks).Build();
+                // The modifiers take the scan codes of the target's layout, as send_keys' keys do; a plain click reads no layout
+                var batch = NewBatch(modifiers.Count > 0 ? LayoutFor(target) : null)
+                    .ModifiersDown(modifiers).MoveTo(x, y).Click(button, clicks).ModifiersUp(modifiers).Build();
 
-                // A right click in a terminal pastes
-                if (button == MouseButton.Secondary && PasteRefusal(batch.AsUnswapped, approved) is { } pasteRefused)
+                // A right or middle click in a terminal pastes
+                if (button is MouseButton.Secondary or MouseButton.Middle && PasteRefusal(batch.AsUnswapped, approved) is { } pasteRefused)
                 {
                     return held.Apply(Finish(new ClickResult(false, x, y, clickType, NothingClicked + pasteRefused, InputErrorCode.PasteNotAllowed), approved));
                 }
@@ -1067,13 +1197,13 @@ public partial class InputSimulationService : IInputSimulationService
 
                 if (!sent.Complete)
                 {
-                    return held.Apply(Finish(new ClickResult(false, x, y, clickType, ClickBatchCutShort(sent, clicks), InputErrorCode.SendInputFailed),
-                        approved));
+                    return held.Apply(Finish(new ClickResult(false, x, y, clickType, ClickBatchCutShort(sent, clicks, modifiers.Count),
+                        InputErrorCode.SendInputFailed), approved));
                 }
 
                 if (PointerAwayAfterBatch(x, y) is { } at)
                 {
-                    var what = clicks == 1 ? "The click" : "The double click";
+                    var what = clicks switch { 1 => "The click", 2 => "The double click", _ => "The triple click" };
                     return held.Apply(Finish(new ClickResult(false, x, y, clickType, PointerClamped(what, x, y, at), InputErrorCode.CursorClamped),
                         approved));
                 }
@@ -1095,18 +1225,21 @@ public partial class InputSimulationService : IInputSimulationService
 
     /// <summary>
     /// The SendInputFailed message of a click batch SendInput inserted only part of: how many of its clicks went in. The
-    /// session has already released a button whose press went in without its release.
+    /// session has already released a button whose press went in without its release, and the modifier keys that went down.
     /// </summary>
-    private static string ClickBatchCutShort(InputSendOutcome sent, int clicks)
+    private static string ClickBatchCutShort(InputSendOutcome sent, int clicks, int modifiers)
     {
-        var buttonEvents = Math.Max(0, sent.Inserted - 1);
+        var buttonEvents = Math.Clamp(sent.Inserted - modifiers - 1, 0, 2 * clicks);
         var done = buttonEvents / 2;
         var clicked = clicks == 1
             ? done == 0 ? "the click was not sent" : "the click went in"
             : $"{done} of its {clicks} clicks went in";
         var halfway = buttonEvents % 2 == 1 ? ", and the press after them went in without its release, which was sent at once" : string.Empty;
-        return $"SendInput inserted {sent.Inserted} of {sent.Requested} events (the move to the point, then a press and a release " +
-               $"for each click), so {clicked}{halfway}. Check the window before clicking again.";
+        var events = modifiers == 0
+            ? "the move to the point, then a press and a release for each click"
+            : "the modifier keys, the move to the point, a press and a release for each click, then the modifier keys' release";
+        return $"SendInput inserted {sent.Inserted} of {sent.Requested} events ({events}), so {clicked}{halfway}. Check the window " +
+               "before clicking again.";
     }
 
     /// <summary>
@@ -1114,9 +1247,10 @@ public partial class InputSimulationService : IInputSimulationService
     /// for every batch, since the user can change either at any time. Without the system reads (tests), the monitors'
     /// bounding rectangle and unswapped buttons.
     /// </summary>
-    private InputBatchBuilder NewBatch() =>
+    /// <param name="layout">The layout a batch's modifier keys take their scan codes from (mouse_click and drag); null for none.</param>
+    private InputBatchBuilder NewBatch(KeyboardLayout? layout = null) =>
         new(_systemInfo?.GetVirtualScreen() is { Width: > 0, Height: > 0 } screen ? screen : InputBatchBuilder.VirtualScreenOf(_monitorService.GetAllMonitors()),
-            _systemInfo?.AreMouseButtonsSwapped() ?? false);
+            _systemInfo?.AreMouseButtonsSwapped() ?? false, layout);
 
     /// <summary>
     /// Where the pointer is after a batch that moved it to (x, y), when that is not the point; null when it is there, or its
@@ -1548,5 +1682,7 @@ public partial class InputSimulationService : IInputSimulationService
         public TypeTextResult Apply(TypeTextResult result) => result with { HeldModifiers = result.HeldModifiers ?? Held, ReleasedModifiers = Released };
 
         public SendKeysResult Apply(SendKeysResult result) => result with { HeldModifiers = result.HeldModifiers ?? Held, ReleasedModifiers = Released };
+
+        public DragResult Apply(DragResult result) => result with { HeldModifiers = result.HeldModifiers ?? Held, ReleasedModifiers = Released };
     }
 }

@@ -165,8 +165,11 @@ public class DesktopStateContractTests
     [InlineData("click")]
     [InlineData("right_click")]
     [InlineData("double_click")]
+    [InlineData("mouse_click")]
+    [InlineData("drag")]
     [InlineData("type_text")]
     [InlineData("send_keys")]
+    [InlineData("press_keys")]
     [InlineData("respond_to_dialog")]
     public async Task AnInputOrDialogTool_WithObserveScreenshot_ReturnsTheCaptureFirst_AndItsOwnResultWithTheObservation(string tool)
     {

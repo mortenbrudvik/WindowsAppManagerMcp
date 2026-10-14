@@ -779,6 +779,17 @@ public class ClipboardOriginTests
         ClipboardOrigin.PasteTrigger(LeftClick, "ConsoleWindowClass").Should().BeNull();
     }
 
+    [Fact]
+    public void AMiddleClickPastes_InATerminalToo()
+    {
+        // mintty and PuTTY paste on the middle button, which mouse_click and drag can press (roadmap M4.3)
+        InputEvent[] middleClick = [InputEvent.MouseMoveAbsolute(1, 1), InputEvent.Mouse(0x0020), InputEvent.Mouse(0x0040)];
+
+        ClipboardOrigin.PasteTrigger(middleClick, "mintty").Should().Be(ClipboardPasteKind.Paste);
+        ClipboardOrigin.PasteTrigger(middleClick, "Notepad").Should().BeNull();
+        ClipboardOrigin.CopiesBeforePaste([.. SendKeysParser.Parse("^c"), .. middleClick], "mintty").Should().BeTrue();
+    }
+
     /// <summary>
     /// Terminals whose window class is not their own (roadmap M2 follow-up F2): the class of Electron apps
     /// (Chrome_WidgetWin_1) is shared with every Chromium browser, and Alacritty keeps winit's default class ("Window

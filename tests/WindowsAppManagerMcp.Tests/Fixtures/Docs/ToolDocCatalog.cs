@@ -103,12 +103,15 @@ public static class ToolDocCatalog
             new("click", "Left click at coordinates, on the named window", "x", "y", "windowHandle", "captureId (x, y on its image)"),
             new("right_click", "Right click at coordinates", "x", "y", "windowHandle", "captureId"),
             new("double_click", "Double left click", "x", "y", "delayMs", "windowHandle", "captureId"),
+            new("mouse_click", "Any button, 1-3 clicks, with modifier keys held (ctrl+click, middle, triple, x1/x2)", "x", "y", "button", "clickCount", "modifiers", "windowHandle", "captureId"),
+            new("drag", "Press, move and release: drag and drop, sliders, selections; nothing stays held", "fromX", "fromY", "toX", "toY", "button", "modifiers", "windowHandle", "toWindowHandle"),
             new("mouse_move", "Move cursor (no click)", "x", "y", "windowHandle", "captureId"),
             new("scroll", "Turn the mouse wheel over the named window", "windowHandle", "deltaY", "deltaX", "x", "y"),
             new("type_text", "Type text into the named window", "text", "windowHandle", "delayMs"),
             new("send_keys", "Send keys to the named window", "keys (e.g., `^c`, `{ENTER}`)", "windowHandle"),
+            new("press_keys", "Press key chords by name (ctrl+shift+t) or sequences (tab*3 enter); nothing stays held", "keys", "repeat", "holdMs", "delayBetweenMs", "windowHandle"),
         ],
-        SkillNote: "All seven also take `allowHostTarget` (default false): only for input to your own host window, named as " +
+        SkillNote: "All ten also take `allowHostTarget` (default false): only for input to your own host window, named as " +
                    "`windowHandle`, when the user asked for it; and `releaseHeldModifiers` (default false): only for a stuck " +
                    "modifier key (see `ModifiersHeld`)."),
         new("Input Control",

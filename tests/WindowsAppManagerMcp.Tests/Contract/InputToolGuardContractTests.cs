@@ -15,7 +15,8 @@ namespace WindowsAppManagerMcp.Tests.Contract;
 /// </summary>
 public class InputToolGuardContractTests
 {
-    private static readonly string[] InputTools = ["click", "right_click", "double_click", "mouse_move", "scroll", "type_text", "send_keys"];
+    private static readonly string[] InputTools =
+        ["click", "right_click", "double_click", "mouse_click", "drag", "mouse_move", "scroll", "type_text", "send_keys", "press_keys"];
 
     private static readonly nint Terminal = 0x100;
     private static readonly nint Notepad = 0x200;
@@ -212,6 +213,49 @@ public class InputToolGuardContractTests
     }
 
     [Fact]
+    public async Task PressKeys_TheSameChordReading_CtrlWNeedsWindowHandle_AndKeysAfterAltTabAreRefused()
+    {
+        // press_keys' chords become the same input events as send_keys', which the guard reads the same way (roadmap M4.3)
+        _inFront = Notepad;
+        await using var server = await StartServerAsync();
+
+        var closing = ParsePayload(await server.CallToolAsync("press_keys", new Dictionary<string, object?> { ["keys"] = "ctrl+w" }));
+        var asArray = ParsePayload(await server.CallToolAsync("press_keys", new Dictionary<string, object?> { ["keys"] = new[] { "ctrl", "w" } }));
+        var afterAltTab = ParsePayload(await server.CallToolAsync("press_keys", new Dictionary<string, object?>
+        {
+            ["keys"] = "alt+tab enter",
+            ["windowHandle"] = (long)Notepad
+        }));
+
+        closing.GetProperty("errorCode").GetString().Should().Be(nameof(InputErrorCode.DestructiveChordNeedsTarget));
+        asArray.GetProperty("errorCode").GetString().Should().Be(nameof(InputErrorCode.DestructiveChordNeedsTarget));
+        asArray.GetProperty("keys").GetString().Should().Be("ctrl+w");
+        afterAltTab.GetProperty("errorCode").GetString().Should().Be(nameof(InputErrorCode.KeysAfterFocusChange));
+        VerifyNothingSent();
+
+        // ... and ctrl+w is sent with windowHandle
+        var sent = ParsePayload(await server.CallToolAsync("press_keys", new Dictionary<string, object?>
+        {
+            ["keys"] = "ctrl+w",
+            ["windowHandle"] = (long)Notepad
+        }));
+        sent.GetProperty("success").GetBoolean().Should().BeTrue();
+        sent.GetProperty("keysSent").GetInt32().Should().Be(1);
+        _input.Verify(i => i.SendInput(It.IsAny<IReadOnlyList<InputEvent>>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task PressKeys_KeysThatAreNeitherAStringNorAnArrayOfStrings_AreAToolError()
+    {
+        await using var server = await StartServerAsync();
+
+        var result = await server.CallToolAsync("press_keys", new Dictionary<string, object?> { ["keys"] = 5 });
+
+        result.IsError.Should().BeTrue();
+        VerifyNothingSent();
+    }
+
+    [Fact]
     public async Task SendKeys_KeysAfterAltTab_AreRefusedEvenWithWindowHandle()
     {
         // Arrange - Alt+Tab goes to the previous window (often the agent's terminal) before the command and Enter
@@ -295,6 +339,89 @@ public class InputToolGuardContractTests
         payload.GetProperty("success").GetBoolean().Should().BeTrue();
         payload.GetProperty("receivingWindow").GetProperty("handle").GetInt64().Should().Be(Terminal);
         _input.Verify(i => i.SetCursorPos(400, 300), Times.Once);
+    }
+
+    [Fact]
+    public async Task MouseClick_ACtrlClickOnTheTarget_SendsCtrlAroundTheClick_InOneBatch()
+    {
+        // Arrange
+        At(Notepad);
+        await using var server = await StartServerAsync();
+        var batches = new List<IReadOnlyList<InputEvent>>();
+        _input.Setup(i => i.SendInput(It.IsAny<IReadOnlyList<InputEvent>>()))
+            .Callback((IReadOnlyList<InputEvent> events) => batches.Add(events.ToList()))
+            .Returns((IReadOnlyList<InputEvent> events) => (uint)events.Count);
+
+        // Act
+        var payload = ParsePayload(await server.CallToolAsync("mouse_click", new Dictionary<string, object?>
+        {
+            ["x"] = 400,
+            ["y"] = 300,
+            ["modifiers"] = new[] { "ctrl" },
+            ["windowHandle"] = (long)Notepad
+        }));
+
+        // Assert
+        payload.GetProperty("success").GetBoolean().Should().BeTrue();
+        payload.GetProperty("clickType").GetString().Should().Be("primary");
+        payload.GetProperty("modifiers").EnumerateArray().Select(m => m.GetString()).Should().Equal("ctrl");
+        var batch = batches.Should().ContainSingle().Subject;
+        batch[0].Should().Be(InputEvent.Key(0xA2, 0));
+        batch[^1].Should().Be(InputEvent.Key(0xA2, 0x0002));
+    }
+
+    [Fact]
+    public async Task Drag_ADropOnTheAgentsTerminal_IsRefused_EvenNamedAsToWindowHandle_AndNothingIsSent()
+    {
+        // Arrange - from Notepad onto the terminal: a drop is input to the window there
+        At(Notepad);
+        _hitTest.Setup(h => h.WindowFromPoint(900, 300)).Returns(Terminal);
+        await using var server = await StartServerAsync();
+
+        // Act
+        var payload = ParsePayload(await server.CallToolAsync("drag", new Dictionary<string, object?>
+        {
+            ["fromX"] = 400,
+            ["fromY"] = 300,
+            ["toX"] = 900,
+            ["toY"] = 300,
+            ["windowHandle"] = (long)Notepad,
+            ["toWindowHandle"] = (long)Terminal
+        }));
+
+        // Assert
+        payload.GetProperty("errorCode").GetString().Should().Be(nameof(InputErrorCode.TargetIsAgentHost));
+        payload.GetProperty("pressed").GetBoolean().Should().BeFalse();
+        payload.GetProperty("receivingWindow").GetProperty("handle").GetInt64().Should().Be(Notepad);
+        VerifyNothingSent();
+    }
+
+    [Fact]
+    public async Task Drag_ADropOnAnotherWindow_WithoutToWindowHandle_IsTargetOccluded_AndNothingIsSent()
+    {
+        // Arrange - to must be on windowHandle's window unless toWindowHandle names the drop's window
+        At(Notepad);
+        var other = (nint)0x300;
+        Window(other, 3001, "explorer", "Downloads");
+        _hitTest.Setup(h => h.WindowFromPoint(900, 300)).Returns(other);
+        _hitTest.Setup(h => h.GetRootWindow(other)).Returns(other);
+        await using var server = await StartServerAsync();
+
+        // Act
+        var payload = ParsePayload(await server.CallToolAsync("drag", new Dictionary<string, object?>
+        {
+            ["fromX"] = 400,
+            ["fromY"] = 300,
+            ["toX"] = 900,
+            ["toY"] = 300,
+            ["windowHandle"] = (long)Notepad
+        }));
+
+        // Assert
+        payload.GetProperty("errorCode").GetString().Should().Be(nameof(InputErrorCode.TargetOccluded));
+        payload.GetProperty("error").GetString().Should().StartWith("The to point:");
+        payload.GetProperty("dropWindow").GetProperty("handle").GetInt64().Should().Be(0x300);
+        VerifyNothingSent();
     }
 
     [Fact]

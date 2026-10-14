@@ -41,7 +41,7 @@ public static class InputGateToolFilter
     /// <summary>The input tools. They hold the gate themselves (InputSimulationService), not through this filter.</summary>
     public static IReadOnlySet<string> InputTools { get; } = new HashSet<string>(StringComparer.Ordinal)
     {
-        "click", "right_click", "double_click", "mouse_move", "scroll", "type_text", "send_keys"
+        "click", "right_click", "double_click", "mouse_click", "drag", "mouse_move", "scroll", "type_text", "send_keys", "press_keys"
     };
 
     /// <summary>

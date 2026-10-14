@@ -29,6 +29,7 @@ namespace WindowsAppManagerMcp.Models;
 /// <param name="Result">The numbers and booleans of the result, such as charactersTyped or windowsArranged, and get_clipboard's origin.</param>
 /// <param name="ServerPid">The server's process ID: several servers can write the same day's file.</param>
 /// <param name="RequestId">The JSON-RPC request ID, as the server's stderr call log names it.</param>
+/// <param name="DropWindow">drag (roadmap M4.3): the window at the drop point, where the drop went or would have gone.</param>
 public sealed record AuditEntry(
     DateTimeOffset Ts,
     string Tool,
@@ -41,7 +42,8 @@ public sealed record AuditEntry(
     JsonObject? Args,
     JsonObject? Result,
     int ServerPid,
-    string? RequestId);
+    string? RequestId,
+    AuditTarget? DropWindow = null);
 
 /// <summary>A window, process or program in an <see cref="AuditEntry"/>; what is unknown is left out.</summary>
 /// <param name="Handle">The window handle.</param>

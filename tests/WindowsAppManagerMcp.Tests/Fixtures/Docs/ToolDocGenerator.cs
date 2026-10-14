@@ -235,6 +235,12 @@ public static partial class ToolDocGenerator
     /// <summary>The JSON type of a schema: integer, string, boolean, number, object, or T[] for an array.</summary>
     public static string TypeName(JsonNode? property)
     {
+        // A string or an array of strings (press_keys' keys)
+        if (property?["type"] is JsonArray { Count: 2 } either && either.Select(t => (string?)t).SequenceEqual(["string", "array"]))
+        {
+            return $"string or {TypeName(property["items"])}[]";
+        }
+
         var type = PrimaryType(property) ?? "any";
 
         if (type == "array")

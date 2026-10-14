@@ -1246,6 +1246,219 @@
       }
     },
     {
+      "name": "drag",
+      "title": "Drag",
+      "description": "Press a mouse button at one point, move to another and release it there: drag and drop (files, list items, text), sliders, selections. The button goes down at from, waits holdBeforeMoveMs, moves in steps (the first beyond Windows' drag threshold) with stepDelayMs after each, and comes up at to; modifiers stay held throughout (ctrl+drag copies in Explorer). Both points take space and captureId as click's x and y. Pass windowHandle: from must be on it, and to as well unless toWindowHandle names the drop's window; both are checked as a click's point before the press (TargetOccluded, BlockedByModal, TargetIsAgentHost, MouseInUse), and to again right before the drop. A drag stopped after the press (to refused then, the pointer kept off it, a cancelled request) goes back to from and releases there; the user's pause releases where the pointer is. pressed says whether anything was sent; nothing stays held after the call. Refused, with nothing sent, for windows of apps running as administrator (TargetElevated), apps the user's policy denies (TargetDeniedByPolicy), a locked session (SessionLocked) or a UAC prompt (DesktopUnavailable). The result reports receivingWindow (where the input went) and foregroundAfter. While the user has paused input with the pause hotkey, nothing is sent (PausedByUser): stop and ask the user, and never try to resume. Refused while a modifier key is held down (ModifiersHeld) unless releaseHeldModifiers is true, and after waiting 30 s for another call (InputBusy).",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "fromX": {
+            "description": "Where the button goes down: x as click's (screen pixels, or as space says)",
+            "type": "integer"
+          },
+          "fromY": {
+            "description": "Where the button goes down: y",
+            "type": "integer"
+          },
+          "toX": {
+            "description": "Where it comes up (the drop): x",
+            "type": "integer"
+          },
+          "toY": {
+            "description": "Where it comes up: y",
+            "type": "integer"
+          },
+          "button": {
+            "description": "The button held; primary is the user's main one. Default: 'primary'",
+            "default": "primary",
+            "type": "string",
+            "enum": [
+              "primary",
+              "secondary",
+              "middle",
+              "x1",
+              "x2"
+            ]
+          },
+          "modifiers": {
+            "description": "Modifier keys held down around the mouse events. Default: none",
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string",
+              "enum": [
+                "ctrl",
+                "shift",
+                "alt",
+                "win"
+              ]
+            },
+            "default": null
+          },
+          "steps": {
+            "description": "Moves from the press to the drop, 1-100. Default: 10",
+            "type": "integer",
+            "default": 10
+          },
+          "stepDelayMs": {
+            "description": "Wait after each move, 0-1000 ms. Default: 20",
+            "type": "integer",
+            "default": 20
+          },
+          "holdBeforeMoveMs": {
+            "description": "Wait between the press and the first move, 0-2000 ms. steps x stepDelayMs + holdBeforeMoveMs is at most 10000. Default: 100",
+            "type": "integer",
+            "default": 100
+          },
+          "windowHandle": {
+            "description": "The window the input is for (handle from find_windows). Strongly recommended: the input is sent only if the point is on this window or a popup or dialog of it (otherwise errorCode TargetOccluded) and the window is not disabled by a modal dialog (BlockedByModal). A child window's handle stands for its top-level window. Default: none",
+            "type": [
+              "integer",
+              "null"
+            ],
+            "default": null
+          },
+          "window": {
+            "description": "Alternative to windowHandle: a window selector with find_windows' filters (processName is the whole name; plus foreground, index), resolved to exactly one window and then used as windowHandle. {\"foreground\": true} alone counts as no windowHandle, and allowHostTarget needs the window named by handle. A window that no longer matches the selector once the call's turn comes (another document or tab) gets nothing (HandleMismatch).",
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "handle": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "titleContains": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "titleEquals": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "titleRegex": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "processName": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "processNameContains": {
+                "type": "boolean"
+              },
+              "processId": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "className": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "foreground": {
+                "type": "boolean"
+              },
+              "index": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "includeCloaked": {
+                "type": "boolean"
+              },
+              "includeUntitled": {
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": false,
+            "default": null
+          },
+          "toWindowHandle": {
+            "description": "The window the drop is for, when not windowHandle's (from File Explorer into an app): to must be on it, checked as windowHandle is; window and client points of to are measured from it. Default: windowHandle",
+            "type": [
+              "integer",
+              "null"
+            ],
+            "default": null
+          },
+          "allowHostTarget": {
+            "description": "Allow input to the agent's own host window: the terminal, editor or chat app this server was started from. Works only together with windowHandle (or window.handle) naming that window; set it only when the user explicitly asked for input there. Default: false",
+            "type": "boolean",
+            "default": false
+          },
+          "releaseHeldModifiers": {
+            "description": "Release modifier keys (Shift, Ctrl, Alt, Windows) that are down before the input is sent, instead of refusing with ModifiersHeld. Set it only when nobody is pressing them (a stuck key) or the user asked. Nothing is released while a modifier of the user's pause hotkey is down. Default: false",
+            "type": "boolean",
+            "default": false
+          },
+          "space": {
+            "description": "What x and y are measured in: 'screen' (physical virtual-desktop pixels), 'window' (from the top-left corner of the windowHandle window's rectangle, find_windows' bounds), 'client' (from the top-left corner of its client area) or 'image' (pixels of the image a capture returned, with captureId). The server converts the point; the result's x and y are the screen point and requested echoes what was given. Default: 'image' with captureId, else 'screen'",
+            "default": null,
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "screen",
+              "window",
+              "client",
+              "image",
+              null
+            ]
+          },
+          "captureId": {
+            "description": "The captureId of a take_screenshot, capture_region, capture_window or capture_with_elements result: x and y are then pixels of that image as returned, converted through its imageToScreen. A window capture's window is the input's target (another windowHandle is refused). Nothing is sent when the captured window moved or resized by more than 2 pixels, closed or was minimized since, or the monitors changed (StaleCapture), or when the id is unknown or older than 10 minutes (CaptureNotFound): capture again. Default: none",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "observe": {
+            "description": "'state' adds get_desktop_state's observation of the window acted on (else of the window in front) after the action, as observed; 'screenshot' also a capture of it as image content. Default: 'none'.",
+            "default": "none",
+            "type": "string",
+            "enum": [
+              "none",
+              "state",
+              "screenshot"
+            ]
+          }
+        },
+        "required": [
+          "fromX",
+          "fromY",
+          "toX",
+          "toY"
+        ]
+      },
+      "annotations": {
+        "title": "Drag",
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      }
+    },
+    {
       "name": "element_action",
       "title": "Act on UI Element",
       "description": "Act on one UI element through UI Automation patterns, without moving the mouse or needing the window in front: invoke, click, toggle, set_value, append_text, select, add_to_selection, remove_from_selection, expand, collapse, scroll_into_view, scroll, set_range_value, realize, focus; double_click and right_click are guarded mouse clicks; window_close, window_minimize and window_maximize are for windows inside an application (a top-level window: close_window, set_window_state); menu_path opens the menu path in value, such as 'File>Save As' (each item expanded, the last invoked, through the submenus they open), from the window or a menu bar's or open menu's ref. Name the element by ref (from find_ui_elements or get_ui_elements), or by handle or window plus name, automationId, controlType or className (in its open menus and dialogs too while its app is in front: scope), which must match exactly one element (else AmbiguousElement or ElementNotFound; OperationTimedOut when the search did not finish). Returns method, before and after (value, toggle, expand and selection state, name, enabled), outcomeVerified and openedPopup (a window of the app that appeared). A disabled or offscreen element is refused (ElementNotEnabled, ElementOffscreen: use scroll_into_view); an element without the pattern is PatternNotSupported unless fallback mouse allows a guarded click. An action that waits for a dialog it opened returns status InvokedPendingModal with openedPopup: answer the dialog. realize makes an item of a virtualized list real and scrolls it into view; by criteria it also finds items the list has not realized (maxScrolls: by scrolling the list). A password field's value is never read or returned. Refused, with nothing done, for apps the user's policy denies (TargetDeniedByPolicy), the agent's own host window (TargetIsAgentHost), elevated apps (TargetElevated), a window a modal dialog blocks (BlockedByModal), and while the user has paused input (PausedByUser: stop and ask the user, never try to resume). observe 'state' adds get_desktop_state's observation of the window after the action (observed), 'screenshot' also a capture of it as image content.",
@@ -3706,6 +3919,191 @@
       }
     },
     {
+      "name": "mouse_click",
+      "title": "Mouse Click",
+      "description": "Click any mouse button 1-3 times at a point, with modifier keys held if asked: ctrl+click, shift+click, a middle click, a triple click (selects a line), x1/x2 (Back/Forward). The modifier key-downs, the move, the clicks and the key-ups go in one batch, so nothing stays held. A right or middle click in a terminal pastes, so there it follows send_keys' paste rule (PasteNotAllowed). To act on an element, element_action with its ref needs no point; pass a point seen on a capture with its captureId. Pass windowHandle with the window you mean (without it the click goes to whatever window is at the point: check it with get_foreground_window); the same checks as for click apply (TargetOccluded, BlockedByModal, TargetIsAgentHost, CursorNotAtPoint, CursorClamped, MouseInUse). Refused, with nothing sent, for windows of apps running as administrator (TargetElevated), apps the user's policy denies (TargetDeniedByPolicy), a locked session (SessionLocked) or a UAC prompt (DesktopUnavailable). The result reports receivingWindow (where the input went) and foregroundAfter. While the user has paused input with the pause hotkey, nothing is sent (PausedByUser): stop and ask the user, and never try to resume. Refused while a modifier key is held down (ModifiersHeld) unless releaseHeldModifiers is true, and after waiting 30 s for another call (InputBusy).",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "x": {
+            "description": "X coordinate: physical virtual-desktop pixels (negative left of the primary monitor), or as space says",
+            "type": "integer"
+          },
+          "y": {
+            "description": "Y coordinate: physical virtual-desktop pixels (negative above the primary monitor), or as space says",
+            "type": "integer"
+          },
+          "button": {
+            "description": "The button; primary is the user's main one (left unless swapped). Default: 'primary'",
+            "default": "primary",
+            "type": "string",
+            "enum": [
+              "primary",
+              "secondary",
+              "middle",
+              "x1",
+              "x2"
+            ]
+          },
+          "clickCount": {
+            "description": "1, 2 (double click) or 3 (triple click), in one batch within the double-click time. Default: 1",
+            "type": "integer",
+            "default": 1
+          },
+          "modifiers": {
+            "description": "Modifier keys held down around the mouse events. Default: none",
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string",
+              "enum": [
+                "ctrl",
+                "shift",
+                "alt",
+                "win"
+              ]
+            },
+            "default": null
+          },
+          "windowHandle": {
+            "description": "The window the input is for (handle from find_windows). Strongly recommended: the input is sent only if the point is on this window or a popup or dialog of it (otherwise errorCode TargetOccluded) and the window is not disabled by a modal dialog (BlockedByModal). A child window's handle stands for its top-level window. Default: none",
+            "type": [
+              "integer",
+              "null"
+            ],
+            "default": null
+          },
+          "window": {
+            "description": "Alternative to windowHandle: a window selector with find_windows' filters (processName is the whole name; plus foreground, index), resolved to exactly one window and then used as windowHandle. {\"foreground\": true} alone counts as no windowHandle, and allowHostTarget needs the window named by handle. A window that no longer matches the selector once the call's turn comes (another document or tab) gets nothing (HandleMismatch).",
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "handle": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "titleContains": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "titleEquals": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "titleRegex": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "processName": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "processNameContains": {
+                "type": "boolean"
+              },
+              "processId": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "className": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "foreground": {
+                "type": "boolean"
+              },
+              "index": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "includeCloaked": {
+                "type": "boolean"
+              },
+              "includeUntitled": {
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": false,
+            "default": null
+          },
+          "allowHostTarget": {
+            "description": "Allow input to the agent's own host window: the terminal, editor or chat app this server was started from. Works only together with windowHandle (or window.handle) naming that window; set it only when the user explicitly asked for input there. Default: false",
+            "type": "boolean",
+            "default": false
+          },
+          "releaseHeldModifiers": {
+            "description": "Release modifier keys (Shift, Ctrl, Alt, Windows) that are down before the input is sent, instead of refusing with ModifiersHeld. Set it only when nobody is pressing them (a stuck key) or the user asked. Nothing is released while a modifier of the user's pause hotkey is down. Default: false",
+            "type": "boolean",
+            "default": false
+          },
+          "space": {
+            "description": "What x and y are measured in: 'screen' (physical virtual-desktop pixels), 'window' (from the top-left corner of the windowHandle window's rectangle, find_windows' bounds), 'client' (from the top-left corner of its client area) or 'image' (pixels of the image a capture returned, with captureId). The server converts the point; the result's x and y are the screen point and requested echoes what was given. Default: 'image' with captureId, else 'screen'",
+            "default": null,
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "screen",
+              "window",
+              "client",
+              "image",
+              null
+            ]
+          },
+          "captureId": {
+            "description": "The captureId of a take_screenshot, capture_region, capture_window or capture_with_elements result: x and y are then pixels of that image as returned, converted through its imageToScreen. A window capture's window is the input's target (another windowHandle is refused). Nothing is sent when the captured window moved or resized by more than 2 pixels, closed or was minimized since, or the monitors changed (StaleCapture), or when the id is unknown or older than 10 minutes (CaptureNotFound): capture again. Default: none",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "observe": {
+            "description": "'state' adds get_desktop_state's observation of the window acted on (else of the window in front) after the action, as observed; 'screenshot' also a capture of it as image content. Default: 'none'.",
+            "default": "none",
+            "type": "string",
+            "enum": [
+              "none",
+              "state",
+              "screenshot"
+            ]
+          }
+        },
+        "required": [
+          "x",
+          "y"
+        ]
+      },
+      "annotations": {
+        "title": "Mouse Click",
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      }
+    },
+    {
       "name": "mouse_move",
       "title": "Move Mouse Pointer",
       "description": "Move the mouse cursor to the specified screen coordinates, or to a point of a capture's image with its captureId, without clicking. Useful for hovering over elements to trigger tooltips or hover states. Pass windowHandle with the window you mean; the same checks as for click apply (TargetOccluded, BlockedByModal, TargetIsAgentHost, MouseInUse); a pointer that does not get to the point is CursorClamped. Refused, with nothing sent, for windows of apps running as administrator (TargetElevated), apps the user's policy denies (TargetDeniedByPolicy), a locked session (SessionLocked) or a UAC prompt (DesktopUnavailable). The result reports receivingWindow (where the input went) and foregroundAfter. While the user has paused input with the pause hotkey, nothing is sent (PausedByUser): stop and ask the user, and never try to resume. Refused while a modifier key is held down (ModifiersHeld) unless releaseHeldModifiers is true, and after waiting 30 s for another call (InputBusy).",
@@ -4087,6 +4485,150 @@
         "title": "Move Window to Monitor",
         "destructiveHint": false,
         "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      }
+    },
+    {
+      "name": "press_keys",
+      "title": "Press Keys",
+      "description": "Press keys by name: a chord such as 'ctrl+shift+t' (or ['ctrl','shift','t']), or a sequence such as 'tab*3 enter' or 'ctrl+a delete'. Every key is released before the call returns; holdMs keeps a chord down within the call. Pass windowHandle with the window you mean. Without it the keys go to the current foreground window, whichever it is, so call get_foreground_window immediately before and check its handle; the keys are refused when that window is the agent's own host (terminal, editor or chat app; TargetIsAgentHost). Refused, with nothing sent, for windows of apps running as administrator (TargetElevated), apps the user's policy denies (TargetDeniedByPolicy), a locked session (SessionLocked) or a UAC prompt (DesktopUnavailable). The result reports receivingWindow (where the input went) and foregroundAfter. While the user has paused input with the pause hotkey, nothing is sent (PausedByUser): stop and ask the user, and never try to resume. Refused while a modifier key is held down (ModifiersHeld) unless releaseHeldModifiers is true, and after waiting 30 s for another call (InputBusy). As for send_keys: chords that close, quit or lock need windowHandle (DestructiveChordNeedsTarget), a chord that hands the keyboard to another window (alt+tab, win, alt+space) must be the last (KeysAfterFocusChange), the user's pause hotkey is refused (PauseChordNotAllowed) and a paste follows the paste rule (PasteNotAllowed). To close a window, use close_window. Windows never lets injected keys press Ctrl+Alt+Del or lock the session.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "keys": {
+            "description": "A chord of names joined by '+' (modifiers ctrl, shift, alt, win, then one key), or chords separated by spaces, each optionally '*n' (n presses, 1-100); or an array: one chord (['ctrl','shift','t']) or a sequence (['ctrl+a','delete']). Keys: enter, tab, esc, space, backspace, delete, up, down, left, right, home, end, pgup, pgdn, f1-f24 and send_keys' other names, or one character (a letter or digit is its key, so 'ctrl+1' works on any layout); write + , * as plus, comma, star.",
+            "type": [
+              "string",
+              "array"
+            ],
+            "items": {
+              "type": "string"
+            }
+          },
+          "repeat": {
+            "description": "How often to press the whole sequence, 1-100 (at most 200 presses in all). Default: 1",
+            "type": "integer",
+            "default": 1
+          },
+          "holdMs": {
+            "description": "Milliseconds each chord's keys stay down before they are released, 0-5000. Default: 0",
+            "type": "integer",
+            "default": 0
+          },
+          "delayBetweenMs": {
+            "description": "Milliseconds between presses, 0-1000 (default 0: one batch). presses x (holdMs + delayBetweenMs) is at most 10000",
+            "type": "integer",
+            "default": 0
+          },
+          "windowHandle": {
+            "description": "The window the input is for (handle from find_windows). Strongly recommended: the server brings it to the foreground first and sends the keys only while it, or a dialog it owns, is the foreground window (otherwise errorCode TargetNotForeground, or BlockedByModal when a modal dialog disables it). A child window's handle stands for its top-level window; click the field first to put the caret in it. Default: none",
+            "type": [
+              "integer",
+              "null"
+            ],
+            "default": null
+          },
+          "window": {
+            "description": "Alternative to windowHandle: a window selector with find_windows' filters (processName is the whole name; plus foreground, index), resolved to exactly one window and then used as windowHandle. {\"foreground\": true} alone counts as no windowHandle, and allowHostTarget needs the window named by handle. A window that no longer matches the selector once the call's turn comes (another document or tab) gets nothing (HandleMismatch).",
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "handle": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "titleContains": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "titleEquals": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "titleRegex": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "processName": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "processNameContains": {
+                "type": "boolean"
+              },
+              "processId": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "className": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "foreground": {
+                "type": "boolean"
+              },
+              "index": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "includeCloaked": {
+                "type": "boolean"
+              },
+              "includeUntitled": {
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": false,
+            "default": null
+          },
+          "allowHostTarget": {
+            "description": "Allow input to the agent's own host window: the terminal, editor or chat app this server was started from. Works only together with windowHandle (or window.handle) naming that window; set it only when the user explicitly asked for input there. Default: false",
+            "type": "boolean",
+            "default": false
+          },
+          "releaseHeldModifiers": {
+            "description": "Release modifier keys (Shift, Ctrl, Alt, Windows) that are down before the input is sent, instead of refusing with ModifiersHeld. Set it only when nobody is pressing them (a stuck key) or the user asked. Nothing is released while a modifier of the user's pause hotkey is down. Default: false",
+            "type": "boolean",
+            "default": false
+          },
+          "observe": {
+            "description": "'state' adds get_desktop_state's observation of the window acted on (else of the window in front) after the action, as observed; 'screenshot' also a capture of it as image content. Default: 'none'.",
+            "default": "none",
+            "type": "string",
+            "enum": [
+              "none",
+              "state",
+              "screenshot"
+            ]
+          }
+        },
+        "required": [
+          "keys"
+        ]
+      },
+      "annotations": {
+        "title": "Press Keys",
+        "destructiveHint": true,
+        "idempotentHint": false,
         "openWorldHint": false,
         "readOnlyHint": false
       }

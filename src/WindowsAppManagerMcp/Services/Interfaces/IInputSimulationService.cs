@@ -39,6 +39,44 @@ public interface IInputSimulationService
     ClickResult DoubleClick(int x, int y, InputTarget target, bool releaseHeldModifiers, CancellationToken cancellationToken);
 
     /// <summary>
+    /// press_keys (roadmap M4.3): structured chords such as 'ctrl+shift+t', ['ctrl','shift','t'] or 'tab*3 enter'
+    /// (<see cref="PressKeysParser"/>), mapped with the target window's keyboard layout and sent exactly as send_keys sends
+    /// its keys: the pause chord is refused, the guard checks every chord first (DestructiveChordNeedsTarget,
+    /// KeysAfterFocusChange), and each batch is checked again before it is sent. Without holdMs and delayBetweenMs every
+    /// press goes in one batch; with holdMs a chord's keys stay down that long, within this call only. KeysSent counts the
+    /// presses sent.
+    /// </summary>
+    /// <exception cref="ArgumentOutOfRangeException">repeat, holdMs or delayBetweenMs is out of range.</exception>
+    /// <exception cref="ArgumentException">The presses would take longer than <see cref="InputSimulationService.MaxPressKeysDurationMs"/>.</exception>
+    Task<SendKeysResult> PressKeysAsync(KeyList keys, int repeat, int holdMs, int delayBetweenMs, InputTarget target, bool releaseHeldModifiers,
+        CancellationToken cancellationToken);
+
+    /// <summary>
+    /// mouse_click (roadmap M4.3): <paramref name="clickCount"/> clicks (1 to 3) of any button at a screen point, with
+    /// <paramref name="modifiers"/> held around them. The modifier key-downs, the move to the point, the clicks and the
+    /// modifier key-ups go in one SendInput batch, after every check <see cref="Click"/> makes; a right or middle click in a
+    /// terminal follows the paste rule (PasteNotAllowed). click, right_click and double_click are this with the primary or
+    /// secondary button and no modifiers.
+    /// </summary>
+    /// <exception cref="ArgumentOutOfRangeException">clickCount outside 1 to 3.</exception>
+    ClickResult MouseClick(int x, int y, MouseButton button, int clickCount, IReadOnlyList<MouseModifier> modifiers, InputTarget target,
+        bool releaseHeldModifiers, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// drag (roadmap M4.3): presses the button at the from point (with the modifiers down first), waits, moves the pointer to
+    /// the to point in absolute moves (<see cref="DragPath"/>) and releases the button and the modifiers there. Not one batch:
+    /// a pause or cancellation takes effect between the moves. Before the press the guard checks the from point against
+    /// <paramref name="target"/> and the to point against <paramref name="dropTarget"/>, both as a click's point; the from
+    /// point again after the pointer moved there; and the to point right before the release
+    /// (<see cref="IInputTargetGuard.RecheckDrop"/>). A drag that must not drop (the to point refused then, the pointer kept
+    /// away from it, a cancelled request) goes back to the from point and releases there. The user's pause releases the
+    /// button at once, where the pointer is. Nothing stays held when it returns.
+    /// </summary>
+    /// <exception cref="ArgumentException">The request is out of range (<see cref="DragRequest.Invalid"/>).</exception>
+    Task<DragResult> DragAsync(DragRequest request, InputTarget target, InputTarget dropTarget, bool releaseHeldModifiers,
+        CancellationToken cancellationToken);
+
+    /// <summary>
     /// Moves the mouse cursor to the specified screen coordinates without clicking, with an injected absolute move (roadmap
     /// M4.2); a pointer that is not at the point afterwards is CursorClamped.
     /// </summary>

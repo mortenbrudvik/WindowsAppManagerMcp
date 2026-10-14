@@ -10,6 +10,9 @@ public class InputBatchBuilderTests
     // Win32 mouse flags (NativeEnums is internal to the server assembly)
     private const uint LeftDown = 0x0002, LeftUp = 0x0004, RightDown = 0x0008, RightUp = 0x0010, MiddleDown = 0x0020, MiddleUp = 0x0040;
     private const uint AbsoluteMove = 0x0001 | 0x4000 | 0x8000;
+    private const uint XDown = 0x0080, XUp = 0x0100;
+    private const uint KeyDown = 0x0000, ExtendedKey = 0x0001, KeyUp = 0x0002;
+    private const ushort VkLShift = 0xA0, VkLControl = 0xA2, VkLMenu = 0xA4, VkLWin = 0x5B;
 
     private static readonly VirtualScreenBounds OneMonitor = new(0, 0, 1920, 1080);
 
@@ -236,6 +239,77 @@ public class InputBatchBuilderTests
 
         batch.Events.Select(e => e.Flags).Should().Equal(AbsoluteMove, RightDown, AbsoluteMove, RightUp);
         batch.AsUnswapped.Select(e => e.Flags).Should().Equal(AbsoluteMove, LeftDown, AbsoluteMove, LeftUp);
+    }
+
+    [Theory]
+    [InlineData(MouseButton.X1, 1u)]
+    [InlineData(MouseButton.X2, 2u)]
+    public void Click_XButton_SendsXDownAndXUp_NamingTheButtonInMouseData(MouseButton button, uint xButton)
+    {
+        // Swapping does not change the X buttons (roadmap M4.3)
+        foreach (var swapped in new[] { false, true })
+        {
+            var batch = new InputBatchBuilder(OneMonitor, swapped).MoveTo(500, 300).Click(button, 2).Build();
+
+            batch.Events.Skip(1).Should().Equal(InputEvent.Mouse(XDown, xButton), InputEvent.Mouse(XUp, xButton),
+                InputEvent.Mouse(XDown, xButton), InputEvent.Mouse(XUp, xButton));
+            batch.AsUnswapped.Should().Equal(batch.Events);
+        }
+    }
+
+    [Fact]
+    public void Modifiers_GoDownBeforeTheMouseEvents_AndUpAfterThem_LastPressedFirst()
+    {
+        var batch = new InputBatchBuilder(OneMonitor, buttonsSwapped: false)
+            .ModifiersDown([MouseModifier.Ctrl, MouseModifier.Shift]).MoveTo(500, 300).Click(MouseButton.Primary)
+            .ModifiersUp([MouseModifier.Ctrl, MouseModifier.Shift]).Build();
+
+        batch.Events.Should().Equal(
+            InputEvent.Key(VkLControl, KeyDown), InputEvent.Key(VkLShift, KeyDown),
+            batch.Events[2], InputEvent.Mouse(LeftDown), InputEvent.Mouse(LeftUp),
+            InputEvent.Key(VkLShift, KeyUp), InputEvent.Key(VkLControl, KeyUp));
+        batch.Events[2].Flags.Should().Be(AbsoluteMove);
+        batch.AsUnswapped.Should().Equal(batch.Events);
+    }
+
+    [Theory]
+    [InlineData(MouseModifier.Alt, VkLMenu, 0u)]
+    [InlineData(MouseModifier.Win, VkLWin, ExtendedKey)]
+    public void ModifiersUp_AltOrWin_IsMaskedSoNoMenuOpens(MouseModifier modifier, ushort key, uint extended)
+    {
+        // Alt or Windows going up with no key pressed since it went down opens the menu bar or the Start menu; the
+        // unassigned masking key in between stops that, as the session's releases do
+        var batch = new InputBatchBuilder(OneMonitor, buttonsSwapped: false)
+            .ModifiersDown([modifier]).MoveTo(5, 5).Click(MouseButton.Primary).ModifiersUp([modifier]).Build();
+
+        batch.Events[0].Should().Be(InputEvent.Key(key, KeyDown | extended));
+        batch.Events.TakeLast(3).Should().Equal(
+            InputEvent.Key(HeldInputTracker.MaskKey, KeyDown), InputEvent.Key(HeldInputTracker.MaskKey, KeyUp),
+            InputEvent.Key(key, KeyUp | extended));
+    }
+
+    [Fact]
+    public void Modifiers_WithALayout_CarryItsScanCodes_AsSendKeysSendsThem()
+    {
+        // The left Ctrl is scan 1D, the left Windows key E0 5B (an extended key); the masking key has none
+        var layout = KeyboardLayout.Of(new FakeKeyboardLayoutWrapper { Layout = FakeKeyboardLayoutWrapper.Us }, 0, capsLock: false);
+
+        var batch = new InputBatchBuilder(OneMonitor, buttonsSwapped: false, layout)
+            .ModifiersDown([MouseModifier.Ctrl, MouseModifier.Win]).ModifiersUp([MouseModifier.Ctrl, MouseModifier.Win]).Build();
+
+        batch.Events.Should().Equal(
+            InputEvent.Key(VkLControl, KeyDown, 0x1D), InputEvent.Key(VkLWin, ExtendedKey, 0x5B),
+            InputEvent.Key(HeldInputTracker.MaskKey, KeyDown), InputEvent.Key(HeldInputTracker.MaskKey, KeyUp),
+            InputEvent.Key(VkLWin, ExtendedKey | KeyUp, 0x5B), InputEvent.Key(VkLControl, KeyUp, 0x1D));
+    }
+
+    [Fact]
+    public void Modifiers_NamedTwice_GoDownOnce()
+    {
+        var batch = new InputBatchBuilder(OneMonitor, buttonsSwapped: false)
+            .ModifiersDown([MouseModifier.Ctrl, MouseModifier.Ctrl]).ModifiersUp([MouseModifier.Ctrl, MouseModifier.Ctrl]).Build();
+
+        batch.Events.Should().Equal(InputEvent.Key(VkLControl, KeyDown), InputEvent.Key(VkLControl, KeyUp));
     }
 
     [Fact]

@@ -15,7 +15,7 @@ public interface IClipboardPasteGuard
     /// not be sent (InputErrorCode.PasteNotAllowed). Call it right before the batch is sent, inside the input gate.
     /// </summary>
     /// <param name="batch">The input about to be sent.</param>
-    /// <param name="receivingWindow">The top-level window it goes to (a right click pastes in a terminal); 0 when unknown.</param>
+    /// <param name="receivingWindow">The top-level window it goes to (a right or middle click pastes in a terminal); 0 when unknown.</param>
     string? Check(IReadOnlyList<InputEvent> batch, nint receivingWindow);
 }
 
@@ -62,10 +62,10 @@ public sealed class ClipboardPasteGuard : IClipboardPasteGuard
     {
         ArgumentNullException.ThrowIfNull(batch);
 
-        // The class and process of the window are read only for a right click, the one mouse input that can paste
-        var rightButton = batch.Any(e => e.Kind == InputEventKind.Mouse && (e.Flags & Native.NativeEnums.MOUSEEVENTF_RIGHTDOWN) != 0);
-        var receivingClass = rightButton && receivingWindow != nint.Zero ? _windows.GetClassName(receivingWindow) : null;
-        var receivingProcess = rightButton && receivingWindow != nint.Zero ? ProcessNameOf(receivingWindow) : null;
+        // The class and process of the window are read only for a right or middle click, the mouse input that can paste
+        var pastingButton = batch.Any(ClipboardOrigin.PressesAPastingButton);
+        var receivingClass = pastingButton && receivingWindow != nint.Zero ? _windows.GetClassName(receivingWindow) : null;
+        var receivingProcess = pastingButton && receivingWindow != nint.Zero ? ProcessNameOf(receivingWindow) : null;
 
         // A paste after a copy in the same call pastes what the copy takes, which this check cannot see
         if (CopyThenPasteRefusal(batch, receivingClass, receivingProcess: receivingProcess) is { } copyThenPaste)
@@ -85,8 +85,8 @@ public sealed class ClipboardPasteGuard : IClipboardPasteGuard
                       "set_clipboard and paste it with '^v', or type it with type_text.";
         }
 
-        var what = rightButton
-            ? "A right click in a terminal pastes the clipboard"
+        var what = pastingButton
+            ? "A right or middle click in a terminal pastes the clipboard"
             : "The input pastes the clipboard (Ctrl+V, Shift+Insert or the SYN character)";
 
         // Decided on the number read while the clipboard is open, which belongs to the content that would be pasted
@@ -148,7 +148,7 @@ public sealed class ClipboardPasteGuard : IClipboardPasteGuard
         string nothingDone = "Nothing was sent.", string? receivingProcess = null) =>
         ClipboardOrigin.CopiesBeforePaste(input, receivingClass, receivingProcess)
             ? "The input copies and then pastes in the same call (copy keys, or the ETX or CAN character, before Ctrl+V, " +
-              "Shift+Insert, the SYN character or a right click in a terminal). The paste would paste what the copy takes " +
+              "Shift+Insert, the SYN character or a right or middle click in a terminal). The paste would paste what the copy takes " +
               "before the server can check it, content a password manager marks private included. " + nothingDone +
               " Send the copy and the paste in separate calls: the paste is then checked against what the copy put on " +
               "the clipboard."

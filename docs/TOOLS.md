@@ -1,7 +1,7 @@
 # Windows App Manager - MCP Tools Reference
 
 <!-- tools:begin summary (generated from tools/list: run the tests with UPDATE_SNAPSHOTS=1, see TESTING.md) -->
-A comprehensive guide to all 64 MCP tools for managing Windows applications, windows, and layouts.
+A comprehensive guide to all 67 MCP tools for managing Windows applications, windows, and layouts.
 
 ## Quick Reference
 
@@ -14,7 +14,7 @@ A comprehensive guide to all 64 MCP tools for managing Windows applications, win
 | [Screenshot](#screenshot) | [list_screens](#list_screens), [take_screenshot](#take_screenshot), [capture_region](#capture_region), [capture_window](#capture_window), [capture_with_elements](#capture_with_elements) | 5 |
 | [UI Automation](#ui-automation) | [get_desktop_state](#get_desktop_state), [get_ui_elements](#get_ui_elements), [find_ui_elements](#find_ui_elements), [element_action](#element_action), [respond_to_dialog](#respond_to_dialog), [file_dialog](#file_dialog), [get_focused_element](#get_focused_element), [get_element_at_point](#get_element_at_point), [get_active_popups](#get_active_popups), [read_element_text](#read_element_text), [read_table](#read_table), [wait_for_element](#wait_for_element) | 12 |
 | [Browser Reading](#browser-reading) | [get_browser_url](#get_browser_url), [get_active_browser_url](#get_active_browser_url), [get_browser_content](#get_browser_content), [launch_browser_with_debug](#launch_browser_with_debug) | 4 |
-| [Input Simulation](#input-simulation) | [click](#click), [right_click](#right_click), [double_click](#double_click), [mouse_move](#mouse_move), [scroll](#scroll), [type_text](#type_text), [send_keys](#send_keys) | 7 |
+| [Input Simulation](#input-simulation) | [click](#click), [right_click](#right_click), [double_click](#double_click), [mouse_click](#mouse_click), [drag](#drag), [mouse_move](#mouse_move), [scroll](#scroll), [type_text](#type_text), [send_keys](#send_keys), [press_keys](#press_keys) | 10 |
 | [Input Control](#input-control) | [get_control_status](#get_control_status), [resume_input](#resume_input), [release_all_input](#release_all_input) | 3 |
 | [App Launch](#app-launch) | [launch_application](#launch_application), [list_processes](#list_processes), [kill_process](#kill_process), [close_application](#close_application) | 4 |
 | [Clipboard](#clipboard) | [get_clipboard](#get_clipboard), [set_clipboard](#set_clipboard) | 2 |
@@ -30,14 +30,14 @@ A comprehensive guide to all 64 MCP tools for managing Windows applications, win
 
 The input tools send real mouse and keyboard input to the user's desktop. Every input call goes through the server's input guard before each batch of input it sends, with or without a target, and is refused with nothing sent when the input would land somewhere it must not. See [Input guard](#input-guard) for the rules and the error codes.
 
-- **Pass `windowHandle`** with the window you mean to every `click`, `right_click`, `double_click`, `mouse_move`, `scroll`, `type_text` and `send_keys` call. For keys the server brings that window to the front first and sends them only while it (or a dialog it owns) is in front; for the mouse it sends the input only if the point is on that window or a popup of it. Without `windowHandle`, keys go to whatever window is in the foreground and clicks to whatever window is at the point.
+- **Pass `windowHandle`** with the window you mean to every `click`, `right_click`, `double_click`, `mouse_click`, `drag`, `mouse_move`, `scroll`, `type_text`, `send_keys` and `press_keys` call. For keys the server brings that window to the front first and sends them only while it (or a dialog it owns) is in front; for the mouse it sends the input only if the point is on that window or a popup of it. Without `windowHandle`, keys go to whatever window is in the foreground and clicks to whatever window is at the point.
 - Input never reaches the agent's own host (the terminal, editor or chat app the server was started from) unless the call names that window as `windowHandle` and passes `allowHostTarget: true`. Do that only when the user explicitly asked for it. A window of this server's own process (a prompt Windows showed for it, such as a downloaded file's security warning) never gets input, whatever the arguments (`TargetIsAgentHost`; while the deny list includes the default list, the [target policy](#target-policy) refuses "Open File - Security Warning" first, with `TargetDeniedByPolicy`).
 - Key chords that close, quit or open Task Manager (Alt+F4 `%{F4}`, Ctrl+W, Ctrl+Q, Ctrl+F4, Ctrl+Shift+Esc) are refused without `windowHandle` (`DestructiveChordNeedsTarget`). A chord that hands the keyboard to another window (Alt+Tab, Alt+Esc, Ctrl+Esc, the Windows key, Alt+Space, or a closing chord) must be the last key of a `send_keys` call (`KeysAfterFocusChange`). Also be careful with Ctrl+A followed by Delete, and Enter on a confirmation dialog. In a terminal, typed text followed by `{ENTER}` runs as a shell command.
 - To close a window, use [close_window](#close_window) or [close_windows_batch](#close_windows_batch) with the window's handle. Do not use Alt+F4. They refuse the desktop shell and the agent's own terminal or editor (`ProtectedWindow`); pass `force: true` only when the user explicitly asked to close such a window (when the client can ask, the user is asked before `force` closes a protected window; when it cannot, `force` needs `confirm: true` too). Closing more than 3 windows at once ([close_windows_batch](#close_windows_batch), [close_application](#close_application)) needs a confirmation: the user is asked when the client supports it (elicitation), otherwise pass `confirm: true` after checking the list.
-- Input that pastes (Ctrl+V, Shift+Insert, a right click in a terminal) is sent only when the clipboard holds what the agent put there or copied, or what the user let it read (`PasteNotAllowed` otherwise); see [Clipboard](#clipboard).
+- Input that pastes (Ctrl+V, Shift+Insert, a right or middle click in a terminal) is sent only when the clipboard holds what the agent put there or copied, or what the user let it read (`PasteNotAllowed` otherwise); see [Clipboard](#clipboard).
 - The user can deny windows of chosen apps (password managers and credential prompts by default) to the agent; such calls return `TargetDeniedByPolicy`, which no tool argument overrides. See [Target policy](#target-policy).
 - The user can pause the input of every Windows App Manager server on the desktop at any time with the pause hotkey (Ctrl+Alt+Shift+Pause by default). While input is paused, every input tool and every tool that changes windows or starts or stops processes ([focus_window](#focus_window), [close_window](#close_window), [launch_application](#launch_application), ...) return `PausedByUser` and do nothing, and a running input call stops; tools that only read keep working. Then stop and ask the user; never try to resume input yourself or send the hotkey's keys. See [Input Control](#input-control).
-- Input is refused while a modifier key (Shift, Ctrl, Alt, Windows) is held down (`ModifiersHeld`): the user is using the keyboard, or a key is stuck. Clicks and mouse moves are also refused while a mouse button is held down or another window has captured the mouse (`MouseInUse`): the user is dragging, selecting or has a menu open. No key or mouse button the server presses stays down after a call.
+- Input is refused while a modifier key (Shift, Ctrl, Alt, Windows) is held down (`ModifiersHeld`): the user is using the keyboard, or a key is stuck. Clicks, drags and mouse moves are also refused while a mouse button is held down or another window has captured the mouse (`MouseInUse`): the user is dragging, selecting or has a menu open. No key or mouse button the server presses stays down after a call: there are no tools that press a key or button in one call and release it in another, and [drag](#drag) releases its button before it returns.
 - [element_action](#element_action), [respond_to_dialog](#respond_to_dialog) and [file_dialog](#file_dialog) act on UI elements through UI Automation patterns, without input where a pattern does it: the same pause, target policy, host and modal checks apply to the window of the element or dialog, and their mouse and keyboard paths go through the input guard like the tools above. respond_to_dialog presses a button (other than `cancel`) only in a dialog the call names, by the `dialogHandle` a read returned or its owner window, and file_dialog completes only a dialog the call names.
 - After each action, check the result (`success`, `receivingWindow`, `foregroundAfter`) before the next step.
 
@@ -82,7 +82,7 @@ automatically, what to run in parallel and what to ask the user about:
 | Hint | Tools |
 |------|-------|
 | `readOnlyHint: true` | The find, get and list tools (get_desktop_state and get_active_popups among them), the text and table reads (read_element_text, read_table), the waits (wait_for_window, wait_for_element), the browser reads (get_browser_url, get_active_browser_url, get_browser_content), get_control_status, get_server_info and get_clipboard (it may ask the user, which changes nothing). They change nothing, write no file and run without the input gate; [read-only mode](#toolsets) serves exactly these |
-| `destructiveHint: true` | close_window, close_windows_batch, close_application, kill_process, delete_layout, save_layout (it replaces a preset of the same name), click, right_click, double_click, type_text and send_keys (input can confirm, delete or send anything), element_action, respond_to_dialog and file_dialog (they press buttons, set values and choose menu items, answer dialogs and save files), scroll (the wheel over a combo box, slider or number box changes its value), set_clipboard (it replaces what the user copied), launch_application and launch_applications_batch (they start any program with its arguments; a command interpreter or script host only without arguments, and no script, see [Commands and scripts](#commands-and-scripts)), launch_browser_with_debug (its debug port lets any program on the computer control that browser), and the four captures (with `overwrite: true` they replace the image file at `outputPath`) |
+| `destructiveHint: true` | close_window, close_windows_batch, close_application, kill_process, delete_layout, save_layout (it replaces a preset of the same name), click, right_click, double_click, mouse_click, drag, type_text, send_keys and press_keys (input can confirm, delete, move or send anything), element_action, respond_to_dialog and file_dialog (they press buttons, set values and choose menu items, answer dialogs and save files), scroll (the wheel over a combo box, slider or number box changes its value), set_clipboard (it replaces what the user copied), launch_application and launch_applications_batch (they start any program with its arguments; a command interpreter or script host only without arguments, and no script, see [Commands and scripts](#commands-and-scripts)), launch_browser_with_debug (its debug port lets any program on the computer control that browser), and the four captures (with `overwrite: true` they replace the image file at `outputPath`) |
 | `idempotentHint: true` | The read-only tools, and the changes that end in the same place when repeated: move, resize, bounds, snap and move-to-monitor (and their batches), focus_window, mouse_move, save_layout, delete_layout, resume_input, release_all_input and set_clipboard |
 | `openWorldHint: true` | launch_application, launch_applications_batch and launch_browser_with_debug (they start any program or open any URI), apply_layout (with `launchMissing: true` it runs the launch commands in the preset file, with launch_application's checks), and get_browser_content (its text comes from a website) |
 
@@ -126,7 +126,7 @@ to do anything for it, and cannot turn it off.
   (one per agent session) write the same day's file; `serverPid` tells their lines apart.
 - **Kept:** 7 days. The first line a server writes on a day deletes the day files that are 7 or more days old. Only
   files named like a day's file are deleted; nothing else in the folder is touched.
-- **Audited tools:** click, right_click, double_click, mouse_move, type_text, send_keys, release_all_input,
+- **Audited tools:** click, right_click, double_click, mouse_click, drag, mouse_move, type_text, send_keys, press_keys, release_all_input,
   scroll, element_action, respond_to_dialog, file_dialog, close_window, close_windows_batch, close_application, kill_process, launch_application,
   launch_applications_batch, launch_browser_with_debug, apply_layout, save_layout, delete_layout, set_clipboard and
   get_clipboard (the one read that can return the user's own clipboard; its line keeps `format` and the result's
@@ -175,6 +175,7 @@ Each line is one JSON object:
 | `durationMs` | How long the call took, including the wait for other input and window calls and for the user's answer to a confirmation |
 | `target` | What the arguments named: the window (`handle`, with its `title`, `process` and `processId` read before the call, so a closed window is still named; for a [window selector](#window-selectors), the window it resolved to, as the tool noted it before acting; for [respond_to_dialog](#respond_to_dialog) and [file_dialog](#file_dialog), the dialog they found and answered, also when the call named its owner window, a selector or no window), the process of a kill, or the `executable` of a launch with the `processId` and window `handle` it started, and its `placement`: what was asked for (`snap` and `state` only when they are valid values, `monitorIndex`, `bounds`, `focus`) and what it did (`finalBounds`, `finalState`, `focused`, `reapplied`, `errorCode`) |
 | `receivingWindow` | For input: the window the input went to, or would have gone to when it was refused |
+| `dropWindow` | [drag](#drag): the window at the drop point, where the drop went or would have gone |
 | `items` | For a batch: each window or application, in request order, with its `success`, `errorCode` and, for closes, its `status` (`closed`, `promptShown`, `notSent`, ...); for launches, `status` is the item's `launchStatus` and `placement` its placement, as for `target`. For close_application: each window it was asked to close, with its `title`, `process`, `status` and `errorCode`. For apply_layout: each placement's window, `status` (`applied`, `notFound`, ...), `launched` and the program its launch command ran (as `executable`, cut like a launch's) |
 | `args` | The arguments, summarized as above |
 | `result` | The numbers and true/false values of the result, such as `charactersTyped`, `windowsArranged`, `forced` or `failed`, a launch's `launchStatus` (`alreadyOpen` when nothing was started), element_action's `method` and `status`, type_text's `method`, and get_clipboard's `origin` |
@@ -219,7 +220,7 @@ A window can move after it was captured, so convert only from a fresh capture, a
 
 ### Coordinate spaces for the mouse tools
 
-[click](#click), [right_click](#right_click), [double_click](#double_click), [mouse_move](#mouse_move) and [scroll](#scroll) take `space`, which says what `x` and `y` are measured in, and `captureId`:
+[click](#click), [right_click](#right_click), [double_click](#double_click), [mouse_click](#mouse_click), [mouse_move](#mouse_move) and [scroll](#scroll) take `space`, which says what `x` and `y` are measured in, and `captureId`; [drag](#drag) takes them for both of its points (`fromX`, `fromY` and `toX`, `toY`):
 
 | `space` | `x`, `y` are | Needs |
 |---------|--------------|-------|
@@ -263,7 +264,7 @@ A tool that can take long stops when the client cancels the request (`notificati
 | [apply_layout](#apply_layout) | The placements not arranged yet, and a launch's wait for its window | After each placement: `i of n` and its outcome |
 | [set_windows_bounds_batch](#set_windows_bounds_batch), [snap_windows_batch](#snap_windows_batch), [set_windows_state_batch](#set_windows_state_batch), [close_windows_batch](#close_windows_batch) | The windows not changed yet, and the pause between two windows | - |
 | [kill_process](#kill_process) | The wait for the process to exit; the close request or termination already sent stands | - |
-| [type_text](#type_text), [send_keys](#send_keys) | The keys not sent yet (see [Input guard](#input-guard)); a paste whose Ctrl+V went out still waits and puts the clipboard back | - |
+| [type_text](#type_text), [send_keys](#send_keys), [press_keys](#press_keys) | The keys not sent yet (see [Input guard](#input-guard)); a chord press_keys holds is released; a paste whose Ctrl+V went out still waits and puts the clipboard back | - |
 | [get_browser_url](#get_browser_url), [get_browser_content](#get_browser_content), [get_active_browser_url](#get_active_browser_url) | The CDP requests | - |
 
 The launch, layout and window batch tools run inside the input gate (see [Window Control](#window-control)), so cancelling one also lets the input and window calls waiting for it go ahead at once. kill_process and the close tools hold the gate only while they send, so their wait for the process or window never holds it.
@@ -292,7 +293,7 @@ Every tool the server serves sits in the agent's context on every turn, and a lo
 | `monitors` | on | The monitors: bounds, work areas, scale factors. | [get_monitors](#get_monitors), [get_primary_monitor](#get_primary_monitor), [list_screens](#list_screens) |
 | `capture` | on | Screenshots of monitors, regions and windows, as image content. | [take_screenshot](#take_screenshot), [capture_region](#capture_region), [capture_window](#capture_window), [capture_with_elements](#capture_with_elements) |
 | `elements` | on | UI Automation: one-call desktop observations, element trees, searches that return element refs (also in menus, dropdowns and dialogs), waits for elements, the focused element, the element at a point, an app's open popups, an element's text and a table's cells. | [get_desktop_state](#get_desktop_state), [get_ui_elements](#get_ui_elements), [find_ui_elements](#find_ui_elements), [get_focused_element](#get_focused_element), [get_element_at_point](#get_element_at_point), [get_active_popups](#get_active_popups), [read_element_text](#read_element_text), [read_table](#read_table), [wait_for_element](#wait_for_element) |
-| `input` | on | Guarded mouse and keyboard input to a named window, and actions on UI elements through UI Automation patterns: menu paths, answering dialogs, completing Open and Save As dialogs. | [click](#click), [right_click](#right_click), [double_click](#double_click), [mouse_move](#mouse_move), [scroll](#scroll), [type_text](#type_text), [send_keys](#send_keys), [element_action](#element_action), [respond_to_dialog](#respond_to_dialog), [file_dialog](#file_dialog) |
+| `input` | on | Guarded mouse and keyboard input to a named window (clicks of any button with modifiers, drags, key chords), and actions on UI elements through UI Automation patterns: menu paths, answering dialogs, completing Open and Save As dialogs. | [click](#click), [right_click](#right_click), [double_click](#double_click), [mouse_click](#mouse_click), [drag](#drag), [mouse_move](#mouse_move), [scroll](#scroll), [type_text](#type_text), [send_keys](#send_keys), [press_keys](#press_keys), [element_action](#element_action), [respond_to_dialog](#respond_to_dialog), [file_dialog](#file_dialog) |
 | `clipboard` | on | Read what the agent copied, put text on the clipboard to paste it; the user's own clipboard only with their consent. | [get_clipboard](#get_clipboard), [set_clipboard](#set_clipboard) |
 | `launch` | on | Start applications, optionally waiting for their window. | [launch_application](#launch_application), [launch_applications_batch](#launch_applications_batch) |
 | `process` | on | List processes and close or end one, or close an application's windows gracefully. | [list_processes](#list_processes), [kill_process](#kill_process), [close_application](#close_application) |
@@ -3764,7 +3765,7 @@ Tools for simulating mouse and keyboard input. To act on a UI element, prefer [e
 
 Input calls never interleave. If several input tools are called in parallel, each one finishes sending its input before the next one starts, so typed text is not mixed and a click is not split by another mouse move. The tools that can change which window is in front (the [Window Control](#window-control) tools, [focus_window](#focus_window), [close_window](#close_window), [close_application](#close_application), [apply_layout](#apply_layout), [launch_application](#launch_application), [kill_process](#kill_process) and the other tools that start, stop, move or close something), [element_action](#element_action), [respond_to_dialog](#respond_to_dialog) and [file_dialog](#file_dialog) (while they act) and [set_clipboard](#set_clipboard) also wait until an input call has finished, so a parallel call cannot bring another window to the front between the guard's check and the input. The order in which parallel calls run is not guaranteed, so make steps that depend on each other one call at a time. An input call waits at most 30 seconds for another call to finish, then gives up with `InputBusy` and sends nothing. A window-changing tool waits at most 30 seconds as well, then returns a tool error (`isError: true`) with `InputBusy` and does nothing; a pause during the wait returns `PausedByUser` at once. Each single wait is bounded, and the close tools and kill_process release the gate before they wait for the window or process, but a batch holds the gate for its whole length (its `delayBetweenMs` per window, up to 5 seconds per launched application's start plus one `waitTimeoutMs` for the windows of a launch batch, and up to 5 seconds for each application that does not answer), so long batches make the other calls wait.
 
-Every input call can be stopped. Cancelling the MCP request (`notifications/cancelled`) stops `type_text` between batches and ends the wait for another call; the request then gets no result. The user's [pause hotkey](#pause-hotkey) stops a running call between batches, and it returns `PausedByUser` with `charactersTyped`. Either way, no key or mouse button stays down: every batch sends its own key-ups and button-ups, and a batch that Windows inserts only partly (a desktop switch or input block in the middle of it) or that fails is followed at once by the up events of what went down.
+Every input call can be stopped. Cancelling the MCP request (`notifications/cancelled`) stops `type_text` between batches, stops `drag` between its moves (it goes back to its from point and releases there) and ends the wait for another call; the request then gets no result. The user's [pause hotkey](#pause-hotkey) stops a running call between batches, and it returns `PausedByUser` with `charactersTyped` (`drag`: with `pressed`, its button released where the pointer was). Either way, no key or mouse button stays down: every batch sends its own key-ups and button-ups, and a batch that Windows inserts only partly (a desktop switch or input block in the middle of it) or that fails is followed at once by the up events of what went down.
 
 ### Input guard
 
@@ -3772,12 +3773,12 @@ An argument the input tool does not declare is refused before anything else, wit
 
 Right before every batch of input it sends, each input tool checks where the input would land. The checks run in this order; the first one that fails is returned with `success: false`, and nothing (more) is sent:
 
-1. **The request.** `send_keys` with a chord that closes, quits or locks and no `windowHandle`: `DestructiveChordNeedsTarget`. The default chords are `%{F4}`, `^w`, `^q`, `^{F4}`, `^+{ESC}` and `#l`; the same key with more modifiers counts too, such as `^+w`. The user can change the list with `WAM_DESTRUCTIVE_CHORDS` (see [Target policy](#target-policy)). Then, with or without `windowHandle`, `send_keys` with more keys after a chord that hands the keyboard to another window: Alt+Tab, Alt+Esc, Ctrl+Esc, the Windows key (`{WIN}`) or any chord with it (`#r` opens Run), Alt+Space (the window menu) or one of the destructive chords (`KeysAfterFocusChange`). Those keys would reach a window the guard never checked, such as the agent's own terminal after Alt+Tab. Make that chord the last key and send the rest in a new call, which is checked again.
+1. **The request.** `send_keys` or `press_keys` with a chord that closes, quits or locks and no `windowHandle`: `DestructiveChordNeedsTarget`. The default chords are `%{F4}`, `^w`, `^q`, `^{F4}`, `^+{ESC}` and `#l`; the same key with more modifiers counts too, such as `^+w`. The user can change the list with `WAM_DESTRUCTIVE_CHORDS` (see [Target policy](#target-policy)). Then, with or without `windowHandle`, `send_keys` or `press_keys` with more keys after a chord that hands the keyboard to another window: Alt+Tab, Alt+Esc, Ctrl+Esc, the Windows key (`{WIN}`) or any chord with it (`#r` opens Run), Alt+Space (the window menu) or one of the destructive chords (`KeysAfterFocusChange`). Those keys would reach a window the guard never checked, such as the agent's own terminal after Alt+Tab. Make that chord the last key and send the rest in a new call, which is checked again.
 2. **The desktop.** The session is locked (`SessionLocked`), or the input desktop cannot be reached because a UAC prompt or the Ctrl+Alt+Del screen is shown or the session is disconnected (`DesktopUnavailable`).
 3. **The target** (`windowHandle`, when given). It must be a window (`InvalidHandle`); a child window's handle stands for its top-level window. A target named by a `window` selector is resolved before the call waits for the input gate, and checked against the selector again once it holds the gate, before the first batch: a window that no longer matches (another document or tab, another title, a reused handle) is refused with `HandleMismatch`, and a `titleRegex` that runs longer than 100 ms on the window's title then with `InvalidArguments`, as the window tools report it; nothing is sent. Then the window checks below. Then it must not be disabled by a modal dialog (`BlockedByModal`, with the dialog in `blockingWindow`): clicks on such a window are ignored, and keys would go to the dialog.
 4. **The receiving window.** For keys, the foreground window: with a target, the server first brings the target to the front (as [focus_window](#focus_window) does), and the foreground window must then be the target or a window it owns, such as its dialog (`TargetNotForeground`); a modal dialog of a window the target owns is `BlockedByModal`, so keys never answer a modal prompt. For the mouse, the top-level window at the point (no window there: `TargetOccluded`). With a target it must be the target, a window the target owns, or a popup (no title bar) of the target's process or of a program the target started itself (a direct child process, such as the WebView2 process that shows an app's dropdowns), otherwise `TargetOccluded`. Another main window of the same process counts as covering the target, and so do the desktop and the taskbar. The child-process rule does not apply to File Explorer windows and the desktop shell (explorer.exe), which start almost every program. Then the window checks below.
 5. **`type_text` only.** A menu is active in the receiving window, so letters would select menu items (`TargetInMenuMode`). Close it with `send_keys` `{ESC}`, or click into the field.
-6. **The mouse only.** Another window has captured the mouse, so the click or move would go to it instead of the window at the point (`MouseInUse`): the foreground app is in a selection, a drag or an open menu, or the window at the point's own thread captured it for another window. A capture by the window at the point, or by a window of its thread that the input may reach (an open menu captures the mouse for its owner), is fine. When the capture of either thread cannot be read (for example the window closed just then), it is not known where the input would go, so the guard fails closed with `MouseInUse` as well; try again. Right before the pointer is placed and before every press, the click, move and scroll tools also refuse while a mouse button is held down (`MouseInUse`): the user is dragging or selecting, and the press would go to the window under that button.
+6. **The mouse only.** Another window has captured the mouse, so the click or move would go to it instead of the window at the point (`MouseInUse`): the foreground app is in a selection, a drag or an open menu, or the window at the point's own thread captured it for another window. A capture by the window at the point, or by a window of its thread that the input may reach (an open menu captures the mouse for its owner), is fine. When the capture of either thread cannot be read (for example the window closed just then), it is not known where the input would go, so the guard fails closed with `MouseInUse` as well; try again. Right before the pointer is placed and before every press, the click, drag, move and scroll tools also refuse while a mouse button (X1 and X2 included) is held down (`MouseInUse`): the user is dragging or selecting, and the press would go to the window under that button.
 7. **`scroll` only.** Windows sends the wheel to the window under the pointer when "Scroll inactive windows when I hover over them" is on (the default since Windows 10). When the user turned it off, or the setting cannot be read, it goes to the window with the keyboard focus instead, so the window at the point must be the foreground window (`WheelFollowsFocus`, checked before the pointer moves and again right before the wheel). Call [focus_window](#focus_window) first.
 
 The window checks, in order: the window's process runs at a higher integrity level than the server, for example as administrator, so Windows would silently drop the input (`TargetElevated`); the server's [target policy](#target-policy) refuses the process, or the process cannot be named while the policy denies anything, or the window is Windows' "Open File - Security Warning" in any process (`TargetDeniedByPolicy`); the window is the agent's own host or a window it owns (`TargetIsAgentHost`), unless the call names that host window as `windowHandle` with `allowHostTarget: true`. `allowHostTarget` lifts this check only for the `windowHandle` window and the windows it owns, never for a popup that is accepted because of its process, and never for a window of this server's own process or a window one owns (`TargetIsAgentHost` whatever the arguments): the server shows no window of its own, so such a window is a prompt Windows showed for it, such as the security warning of a downloaded file that [launch_application](#launch_application) opens, and only the user answers it.
@@ -3786,7 +3787,7 @@ Right before every batch the guard checks the foreground window or the point aga
 
 What the guard cannot rule out: the user or another program can still change the foreground window between the last check and the moment Windows delivers the input (a few milliseconds), and an application can react to a key by opening or activating another window (Enter in File Explorer opens a file, Alt+F then X picks File, Exit); keys after such a key go to that window. Send keys that may open, close or switch windows as the last key of a call, and check `foregroundAfter`. A popup-like window (no title bar) of a program the target started itself, such as a borderless game started by a launcher, counts as part of the target.
 
-**Observe after the input** (roadmap M3.F32). [click](#click), [right_click](#right_click), [double_click](#double_click), [type_text](#type_text) and [send_keys](#send_keys) take [element_action](#element_action)'s `observe`: `"state"` adds `observed`, [get_desktop_state](#get_desktop_state)'s default observation read after the input, of the `windowHandle` window (or the window a captureId named), else of `receivingWindow`, or of the window in front once that window closed (and when the input was refused for it with `TargetDeniedByPolicy` or `TargetIsAgentHost`: a window the agent may not act on is not read by name). `"screenshot"` adds a capture of that window too, as image content before the JSON. Both are refused before anything is sent (`InvalidArguments`) when get_desktop_state is not served, and the screenshot when capture_window is not served. The observation is made also when the input failed (what covers the window helps after `TargetOccluded`), and a part it could not read is listed in `observed.errors`. Default `none`: the result is the input's alone, as before.
+**Observe after the input** (roadmap M3.F32). [click](#click), [right_click](#right_click), [double_click](#double_click), [mouse_click](#mouse_click), [drag](#drag) (of the drop's window), [type_text](#type_text), [send_keys](#send_keys) and [press_keys](#press_keys) take [element_action](#element_action)'s `observe`: `"state"` adds `observed`, [get_desktop_state](#get_desktop_state)'s default observation read after the input, of the `windowHandle` window (or the window a captureId named), else of `receivingWindow`, or of the window in front once that window closed (and when the input was refused for it with `TargetDeniedByPolicy` or `TargetIsAgentHost`: a window the agent may not act on is not read by name). `"screenshot"` adds a capture of that window too, as image content before the JSON. Both are refused before anything is sent (`InvalidArguments`) when get_desktop_state is not served, and the screenshot when capture_window is not served. The observation is made also when the input failed (what covers the window helps after `TargetOccluded`), and a part it could not read is listed in `observed.errors`. Default `none`: the result is the input's alone, as before.
 
 Every input result reports:
 
@@ -3808,15 +3809,15 @@ Every input result reports:
 | `PausedByUser` | The user paused the server's input with the pause hotkey; nothing (more) was sent | Stop and tell the user. Do not retry, do not try to resume, never send the hotkey's keys. Continue only when the user says so; then they press the hotkey again or confirm [resume_input](#resume_input) |
 | `ModifiersHeld` | Shift, Ctrl, Alt or Windows is down (`heldModifiers`): the user is using the keyboard, or a key is stuck | Wait and retry. If nobody is pressing it, retry with `releaseHeldModifiers: true` or call [release_all_input](#release_all_input). While any modifier of the pause hotkey is down, no modifier is released that way, so if it stays down, ask the user |
 | `InputBusy` | Another input or window call held the input gate for 30 seconds | Retry when your other calls have finished |
-| `PauseChordNotAllowed` | `send_keys`: the keys contain the user's pause hotkey chord | Never send it; only the user may press it |
-| `PasteNotAllowed` | `send_keys`, `type_text` and `right_click` (in a terminal): the input pastes, and the clipboard holds content get_clipboard would not return (the user's, content marked private, or clipboard history for Win+V); or the call copies and then pastes (`^c^v`); or copy keys sent moments ago have not copied yet: retry shortly or call [get_clipboard](#get_clipboard) first. `type_text` with `method: "paste"`: the window is a terminal, or the clipboard changed right before Ctrl+V | Put the text on the clipboard with [set_clipboard](#set_clipboard) and paste again, or type it. Send a copy and its paste in separate calls. To paste what the user copied, call [get_clipboard](#get_clipboard) first; see [Clipboard](#clipboard) |
+| `PauseChordNotAllowed` | `send_keys`, `press_keys`: the keys contain the user's pause hotkey chord | Never send it; only the user may press it |
+| `PasteNotAllowed` | `send_keys`, `type_text`, `right_click`, and `mouse_click` and `drag` with the secondary or middle button (in a terminal): the input pastes, and the clipboard holds content get_clipboard would not return (the user's, content marked private, or clipboard history for Win+V); or the call copies and then pastes (`^c^v`); or copy keys sent moments ago have not copied yet: retry shortly or call [get_clipboard](#get_clipboard) first. `type_text` with `method: "paste"`: the window is a terminal, or the clipboard changed right before Ctrl+V | Put the text on the clipboard with [set_clipboard](#set_clipboard) and paste again, or type it. Send a copy and its paste in separate calls. To paste what the user copied, call [get_clipboard](#get_clipboard) first; see [Clipboard](#clipboard) |
 | `TargetIsAgentHost` | The input would reach the agent's own terminal, editor or chat app, or a window of this server's own process (a prompt Windows showed for it, such as a downloaded file's security warning; `allowHostTarget` does not lift that) | Pass `windowHandle` with the window you mean. For the host window itself, and only when the user asked: its handle as `windowHandle` with `allowHostTarget: true`. A window of the server's process: ask the user to answer it |
 | `TargetNotForeground` | Keys: the target could not be brought to the front, or no window is in the foreground | Check `receivingWindow` (what is in front instead); call [focus_window](#focus_window) for details, or ask the user |
 | `TargetOccluded` | Mouse: another window, or no window, is at the point | Bring the target to the front, or take fresh coordinates from `get_ui_elements` |
 | `BlockedByModal` | A modal dialog disables the target, or opened while typing | Deal with `blockingWindow` first (read it with [respond_to_dialog](#respond_to_dialog) and its handle), or ask the user |
 | `TargetLostFocus` | Keys: another window came to the front before or while the keys were sent; `charactersTyped` characters were typed | Check the field, then type the rest |
-| `DestructiveChordNeedsTarget` | `send_keys`: a closing, quitting or locking chord without `windowHandle` | Pass `windowHandle`; to close a window, use [close_window](#close_window) |
-| `KeysAfterFocusChange` | `send_keys`: keys after a chord that hands the keyboard to another window, a Windows-key chord included | Make that chord the last key; send the rest in a new call. For the character #, write `{#}` |
+| `DestructiveChordNeedsTarget` | `send_keys`, `press_keys`: a closing, quitting or locking chord without `windowHandle` | Pass `windowHandle`; to close a window, use [close_window](#close_window) |
+| `KeysAfterFocusChange` | `send_keys`, `press_keys`: keys after a chord that hands the keyboard to another window, a Windows-key chord included | Make that chord the last key; send the rest in a new call. For the character #, write `{#}` |
 | `CursorNotAtPoint` | Mouse: the pointer does not stay at the point; nothing was sent | Try again; if it repeats, ask the user (a game or remote session may hold the mouse) |
 | `CursorClamped` | Mouse: the input **was sent**, but right after it the pointer is not at the point (`actualX`, `actualY`): it was confined to a window just then, or the user or the application moved it at once. The click or wheel may have landed where the pointer is | Look at the window (a capture or get_ui_elements) before you send it again; do not simply retry |
 | `WheelFollowsFocus` | `scroll`: Windows sends the wheel to the focused window ("Scroll inactive windows" is off, or cannot be read), and the window at the point is not in front | Bring the window to the front with [focus_window](#focus_window), then scroll again |
@@ -3999,6 +4000,191 @@ Perform a double left (primary) click at the specified screen coordinates, or at
 ```
 
 **Response:** as [click](#click), with `clickType` `double`. The point is checked right before the batch that holds both clicks, so either both are sent or neither is; when SendInput inserts only part of the batch, `SendInputFailed` says how many clicks went in.
+
+---
+
+### mouse_click
+
+Click any mouse button one to three times at a point, with modifier keys held around the clicks (roadmap M4.3): a Ctrl+click or Shift+click that adds to a selection, a middle click that opens a link in a new tab, a triple click that selects a line or a paragraph, `x1` or `x2` for Back and Forward. The point (`space`, `captureId`), the target and every [Input guard](#input-guard) check are [click](#click)'s. [click](#click), [right_click](#right_click) and [double_click](#double_click) are mouse_click with the primary or secondary button and no modifiers; they stay as they are.
+
+The modifier key-downs, the absolute move to the point, the clicks and the modifier key-ups go in one SendInput batch, so no other input comes between them, a double or triple click is one whatever the double-click time, and no key stays down whatever happens to the call. When SendInput inserts only part of the batch, what went down is sent up at once, and `SendInputFailed` says how many clicks went in. The modifiers are sent as the left-hand keys (left Ctrl, Shift, Alt or Windows), with the scan codes of the target window's keyboard layout as [send_keys](#send_keys)' keys are (drag's too), and a modifier named twice goes down once. When Alt or Windows is among them, an unassigned key (VK 0xE8) goes down and up right before they are released, so their release opens neither the menu bar nor the Start menu. A modifier the user holds is still refused before anything is sent (`ModifiersHeld`), and so is a mouse button the user holds, X1 and X2 included (`MouseInUse`). `primary` and `secondary` are the user's buttons, as for click (the right and the left one when the user swapped them in Windows' mouse settings); `left` and `right` are accepted for them. `middle`, `x1` and `x2` are never swapped. A right or a middle click in a terminal pastes (mintty and PuTTY paste on the middle button), so there it follows the paste rule (`PasteNotAllowed`, see [Clipboard](#clipboard)).
+
+Windows keeps Ctrl+Alt+Del (the secure attention sequence) and Win+L (lock) from injected input: no input tool can produce either, so `win` in `modifiers` never locks the computer.
+
+mouse_click takes no `ref`: to click an element by its ref, [element_action](#element_action) clicks, double-clicks or right-clicks it at a point it hit-tests with UI Automation. For a modifier click or a triple click on an element, take its `clickPoint` from [find_ui_elements](#find_ui_elements).
+
+<!-- tools:begin params:mouse_click -->
+**Parameters:**
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| x | integer | Yes | - | X coordinate: physical virtual-desktop pixels (can be negative), or as `space` says (pixels of the image with `captureId`) |
+| y | integer | Yes | - | Y coordinate: physical virtual-desktop pixels (can be negative), or as `space` says (pixels of the image with `captureId`) |
+| button | string (one of: `"primary"`, `"secondary"`, `"middle"`, `"x1"`, `"x2"`) | No | "primary" | The button: `primary` and `secondary` are the user's (the right and the left one when the buttons are swapped; `left` and `right` are accepted for them); `middle`, `x1` (Back) and `x2` (Forward) |
+| clickCount | integer | No | 1 | 1, 2 (a double click) or 3 (a triple click, which selects a line or paragraph), in the one batch. Outside 1 to 3: `InvalidArguments` |
+| modifiers | string (one of: `"ctrl"`, `"shift"`, `"alt"`, `"win"`)[] | No | none | Modifier keys held around the clicks: down right before the move, up right after the last click, in the same batch |
+| windowHandle | integer | No | none | The window the click is for. Sent only if the point is on this window or a popup or dialog of it (see [Input guard](#input-guard)) |
+| window | object | No | - | Alternative to windowHandle: the window as a selector, resolved to exactly one window or refused (WindowNotFound; AmbiguousWindow with candidates), then used as windowHandle. Filters as in find_windows (processName is the whole name); index picks a match in z-order; foreground is the window in front, and alone counts as no windowHandle; handle plus filters must still match (HandleMismatch). |
+| allowHostTarget | boolean | No | false | Allow the agent's own host window, only when it is `windowHandle` (or `window.handle`; refused beside a selector without a handle). Set it only when the user explicitly asked |
+| releaseHeldModifiers | boolean | No | false | Send modifier keys that are down (Shift, Ctrl, Alt, Windows) up first, instead of refusing with `ModifiersHeld`. Only when nobody is pressing them (a stuck key) or the user asked (see [Input guard](#input-guard)) |
+| space | string (one of: `"screen"`, `"window"`, `"client"`, `"image"`) | No | screen (image with `captureId`) | What `x`/`y` are measured in: screen pixels, from the window rectangle's corner, from the client area's corner, or pixels of a capture's image (see [Coordinate spaces for the mouse tools](#coordinate-spaces-for-the-mouse-tools)) |
+| captureId | string | No | - | The `captureId` of a capture result; `x`/`y` are pixels of its image. `StaleCapture` when the captured window moved, `CaptureNotFound` when unknown or older than 10 minutes |
+| observe | string (one of: `"none"`, `"state"`, `"screenshot"`) | No | "none" | What to return after the action: 'none' (default), 'state' (get_desktop_state's default observation of the window acted on, or of the window in front once that closed, as observed; needs get_desktop_state to be served) or 'screenshot' (as state, plus a capture of that window as image content; needs capture_window too). |
+<!-- tools:end params:mouse_click -->
+
+**Example:**
+> "Ctrl+click the file at 200, 190 in File Explorer (handle 23456) to add it to the selection"
+
+```json
+{
+  "name": "mouse_click",
+  "arguments": {
+    "x": 200,
+    "y": 190,
+    "modifiers": ["ctrl"],
+    "windowHandle": 23456
+  }
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "x": 200,
+  "y": 190,
+  "clickType": "primary",
+  "errorCode": "None",
+  "clickCount": 1,
+  "modifiers": ["ctrl"],
+  "receivingWindow": { "handle": 23456, "title": "Downloads - File Explorer", "processName": "explorer", "processId": 6012 },
+  "foregroundAfter": { "handle": 23456, "title": "Downloads - File Explorer", "processName": "explorer", "processId": 6012 },
+  "actualX": 200,
+  "actualY": 190
+}
+```
+
+**Example: select a line with a triple click** in Notepad (handle 12345):
+
+```json
+{ "name": "mouse_click", "arguments": { "x": 300, "y": 240, "clickCount": 3, "windowHandle": 12345 } }
+```
+
+`clickType` is the button (`primary`, `secondary`, `middle`, `x1` or `x2`), `clickCount` the number of clicks and `modifiers` the keys held (left out without any). The error codes are click's.
+
+---
+
+### drag
+
+Press a mouse button at one point, move the pointer to another and release it there (roadmap M4.3): drag and drop of files, list items and text, a slider's thumb, a scroll bar, a selection, a splitter. drag is the one input tool that holds a button down across several SendInput batches, since a drag needs time between its press, its moves and its drop; the hold never outlives the call.
+
+How a drag runs:
+
+1. Both points are converted as click's point is: `space` and `captureId` apply to `fromX`, `fromY` and `toX`, `toY` alike (see [Coordinate spaces for the mouse tools](#coordinate-spaces-for-the-mouse-tools)); `window` and `client` points of the to point are measured from `toWindowHandle`'s window when it is given. The result's `fromX`, `fromY`, `toX`, `toY` are the screen points, and `requestedFrom`, `requestedTo` echo points that were not screen points.
+2. Inside the input gate, the guard checks the from point against `windowHandle` and the to point against the drop's window (below), each as a click's point: `TargetOccluded`, `BlockedByModal`, `TargetElevated`, `TargetDeniedByPolicy`, `TargetIsAgentHost`, `MouseInUse`, `StaleCapture`. A refusal sends nothing; its `error` starts with "The from point:" or "The to point:", and `dropWindow` names the window at the to point.
+3. The pointer moves to the from point; 10 ms later the point is checked again, as before a click, and the pointer must stay there (`CursorNotAtPoint`). A modifier key or mouse button the user pressed meanwhile refuses the drag (`ModifiersHeld`, `MouseInUse`).
+4. One batch: the modifier key-downs, an absolute move to the from point and the press. `pressed` is `true` from here on.
+5. `holdBeforeMoveMs`, then `steps` absolute moves along the straight line to the to point, with `stepDelayMs` after each, the last one too. Windows and applications start a drag only once the pointer leaves a rectangle around the press (`SM_CXDRAG` by `SM_CYDRAG`, 4 pixels by default), and some look only at the first move after the press, so the first move goes more than twice that far whenever the drag is that long (an application on a monitor at twice the system's scale measures in its own pixels); the rest follow evenly. A drag shorter than that goes straight to the to point.
+6. The pointer must be at the to point (`CursorClamped` otherwise), and the to point is checked again right before the drop: another window or a popup there now is refused as before the press. This check leaves out the mouse capture check, because the drag's source holds the mouse capture while its button is down, as every drag does.
+7. One batch: a move to the to point, the release and the modifier key-ups.
+
+**The drop's window.** A drop is input to the window at the to point (it can move, copy or delete what is dropped), so the to point is checked as a click's point. Without `toWindowHandle` it must be on `windowHandle`'s window or a popup of it (`TargetOccluded` otherwise), so a drag stays inside the window you named. To drop into another window, such as a file from File Explorer into an app, name that window as `toWindowHandle`: the to point must be on it, and it gets every check `windowHandle` gets, so a drop on an app the user's [target policy](#target-policy) denies (`TargetDeniedByPolicy`), on an elevated window (`TargetElevated`) or on the agent's own terminal (`TargetIsAgentHost`; `allowHostTarget` lifts that only for a window named by its handle, as always) is refused before anything is pressed. Without `windowHandle`, each point goes to whatever window is there, with the checks of a click without `windowHandle`. A `captureId` of a window capture makes the captured window the target of both points; a drop into another window then is `InvalidArguments`, so take screen points or a monitor capture for it.
+
+**When a drag stops.** No key or button stays down after the call:
+
+- Refused before the press: nothing was sent (`pressed: false`).
+- The to point refused right before the drop, the pointer kept off it (`CursorClamped`), or the request cancelled after the press: the pointer goes back to the from point and the button and the modifiers are released there, in one batch, where a drop usually changes nothing (an item returns to its place, a slider to its value). The error says so; look at the window before you try again. A cancelled request gets no result.
+- The user's [pause hotkey](#pause-hotkey): the server releases the button and the modifiers at once, where the pointer is, which may drop there. Nothing more is sent (no move back: input is paused), and the call returns `PausedByUser` with `pressed: true`.
+- SendInput refuses a move or the drop (`SendInputFailed`): what is down is released at once, where the pointer is; the error says which batch failed.
+- Anything else: whatever is still down is released when the call ends.
+
+**Bounds.** `steps` 1 to 100, `stepDelayMs` 0 to 1000, `holdBeforeMoveMs` 0 to 2000, and `steps` × `stepDelayMs` + `holdBeforeMoveMs` at most 10,000 ms; anything else is `InvalidArguments`, with nothing sent. The input gate is held for the whole drag, so other input and window calls wait for it (`InputBusy` after 30 seconds).
+
+There is no `mouse_down` or `key_down` tool: a button or key held across calls could stay down after the agent's turn. A drag holds its button only within its own call.
+
+<!-- tools:begin params:drag -->
+**Parameters:**
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| fromX | integer | Yes | - | Where the button goes down: x in physical virtual-desktop pixels (can be negative), or as `space` says (pixels of the image with `captureId`) |
+| fromY | integer | Yes | - | Where the button goes down: y |
+| toX | integer | Yes | - | Where the button comes up (the drop): x, in the same `space` |
+| toY | integer | Yes | - | Where the button comes up: y |
+| button | string (one of: `"primary"`, `"secondary"`, `"middle"`, `"x1"`, `"x2"`) | No | "primary" | The button held, as [mouse_click](#mouse_click)'s `button` |
+| modifiers | string (one of: `"ctrl"`, `"shift"`, `"alt"`, `"win"`)[] | No | none | Modifier keys held from right before the press until right after the release (Ctrl+drag copies in File Explorer, Shift+drag moves) |
+| steps | integer | No | 10 | Moves from the press to the drop, 1 to 100; the first goes beyond the drag threshold |
+| stepDelayMs | integer | No | 20 | Wait after each move, the last one too, 0 to 1000 ms |
+| holdBeforeMoveMs | integer | No | 100 | Wait between the press and the first move, 0 to 2000 ms (some lists start a drag only after a pause). `steps` × `stepDelayMs` + `holdBeforeMoveMs` is at most 10,000 ms |
+| windowHandle | integer | No | none | The window the drag is for: the from point must be on it or a popup or dialog of it, and so must the to point unless `toWindowHandle` is given (see [Input guard](#input-guard)) |
+| window | object | No | - | Alternative to windowHandle: the window as a selector, resolved to exactly one window or refused (WindowNotFound; AmbiguousWindow with candidates), then used as windowHandle. Filters as in find_windows (processName is the whole name); index picks a match in z-order; foreground is the window in front, and alone counts as no windowHandle; handle plus filters must still match (HandleMismatch). |
+| toWindowHandle | integer | No | windowHandle | The window the drop is for, when it is another window (a file from File Explorer into an app): the to point must be on it, with every check `windowHandle` gets (policy, elevation, host, modal); `window` and `client` points of the to point are measured from it |
+| allowHostTarget | boolean | No | false | Allow the agent's own host window, only when it is `windowHandle` (or `window.handle`; refused beside a selector without a handle). Set it only when the user explicitly asked |
+| releaseHeldModifiers | boolean | No | false | Send modifier keys that are down (Shift, Ctrl, Alt, Windows) up first, instead of refusing with `ModifiersHeld`. Only when nobody is pressing them (a stuck key) or the user asked (see [Input guard](#input-guard)) |
+| space | string (one of: `"screen"`, `"window"`, `"client"`, `"image"`) | No | screen (image with `captureId`) | What both points are measured in, as click's `x`/`y` (see [Coordinate spaces for the mouse tools](#coordinate-spaces-for-the-mouse-tools)) |
+| captureId | string | No | - | The `captureId` of a capture result; both points are pixels of its image. `StaleCapture` when the captured window moved, `CaptureNotFound` when unknown or older than 10 minutes |
+| observe | string (one of: `"none"`, `"state"`, `"screenshot"`) | No | "none" | What to return after the action: 'none' (default), 'state' (get_desktop_state's default observation of the window acted on, or of the window in front once that closed, as observed; needs get_desktop_state to be served) or 'screenshot' (as state, plus a capture of that window as image content; needs capture_window too). |
+<!-- tools:end params:drag -->
+
+**Example:**
+> "Drag the report from File Explorer (handle 23456) into the Outlook message (handle 34567)"
+
+```json
+{
+  "name": "drag",
+  "arguments": {
+    "fromX": 260,
+    "fromY": 214,
+    "toX": 1400,
+    "toY": 620,
+    "windowHandle": 23456,
+    "toWindowHandle": 34567
+  }
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "fromX": 260,
+  "fromY": 214,
+  "toX": 1400,
+  "toY": 620,
+  "errorCode": "None",
+  "button": "primary",
+  "pressed": true,
+  "receivingWindow": { "handle": 23456, "title": "Downloads - File Explorer", "processName": "explorer", "processId": 6012 },
+  "dropWindow": { "handle": 34567, "title": "Untitled - Message (HTML)", "processName": "OUTLOOK", "processId": 7720 },
+  "foregroundAfter": { "handle": 34567, "title": "Untitled - Message (HTML)", "processName": "OUTLOOK", "processId": 7720 },
+  "actualX": 1400,
+  "actualY": 620
+}
+```
+
+**Example: move a slider's thumb seen on a capture** of the window: both points are image points, and the captured window is the target of both:
+
+```json
+{ "name": "drag", "arguments": { "fromX": 120, "fromY": 300, "toX": 420, "toY": 300, "captureId": "c7-3fa91c" } }
+```
+
+**Error Response:** another window came over the drop point while the pointer moved, so the drop was not sent.
+```json
+{
+  "success": false,
+  "fromX": 260,
+  "fromY": 214,
+  "toX": 1400,
+  "toY": 620,
+  "error": "Right before the drop the to point was checked again, and the drop was not sent: The point (1400, 620) is on 'Chat' (ms-teams, handle 45678), not on window 34567 or a popup of it, so nothing was sent. Bring the window to the front with focus_window, or take fresh coordinates from get_ui_elements, then try again. The drag was cancelled: the pointer went back to the from point (260, 214) and the button was released there, where a drop usually changes nothing. Check the window before you try again.",
+  "errorCode": "TargetOccluded",
+  "button": "primary",
+  "pressed": true,
+  "receivingWindow": { "handle": 23456, "title": "Downloads - File Explorer", "processName": "explorer", "processId": 6012 },
+  "dropWindow": { "handle": 45678, "title": "Chat", "processName": "ms-teams", "processId": 8840 },
+  "foregroundAfter": { "handle": 45678, "title": "Chat", "processName": "ms-teams", "processId": 8840 },
+  "actualX": 260,
+  "actualY": 214
+}
+```
 
 ---
 
@@ -4460,7 +4646,86 @@ This deletes everything in the focused control. Pass `windowHandle`, and check w
 }
 ```
 
-`UnknownKey`, `InvalidKeySpecification` and `EmptyText` are reported before anything is checked or sent; the guard's codes are listed under [Input guard](#input-guard). `#` is the Windows key (roadmap M4.1; it was an ordinary character before): type the character as `{#}`. A Windows-key chord opens a part of Windows (Run, Search, Explorer, the clipboard history), so it must be the last key of the call: `#hashtag` is Win+H followed by more keys and is refused with `KeysAfterFocusChange`, while `{#}hashtag` types it. Keys that press the user's [pause hotkey](#pause-hotkey) (`^%+{PAUSE}` for the default chord, also written with `{BREAK}` or with more modifiers) are refused with `PauseChordNotAllowed` and nothing is sent: they would reach the hotkey like the user's own key press, so the agent could pause or resume itself.
+`UnknownKey`, `InvalidKeySpecification` and `EmptyText` are reported before anything is checked or sent; the guard's codes are listed under [Input guard](#input-guard). For key chords by name (`ctrl+shift+t`, `tab*3`), [press_keys](#press_keys) takes the same keys with the same checks. `#` is the Windows key (roadmap M4.1; it was an ordinary character before): type the character as `{#}`. A Windows-key chord opens a part of Windows (Run, Search, Explorer, the clipboard history), so it must be the last key of the call: `#hashtag` is Win+H followed by more keys and is refused with `KeysAfterFocusChange`, while `{#}hashtag` types it. Keys that press the user's [pause hotkey](#pause-hotkey) (`^%+{PAUSE}` for the default chord, also written with `{BREAK}` or with more modifiers) are refused with `PauseChordNotAllowed` and nothing is sent: they would reach the hotkey like the user's own key press, so the agent could pause or resume itself.
+
+---
+
+### press_keys
+
+Press keys by name (roadmap M4.3): a chord such as `ctrl+shift+t`, or a sequence such as `tab*3 enter` or `ctrl+a delete`. Structured chords are easier to get right than [send_keys](#send_keys)' `^+t` punctuation, and they go through exactly the same path: the chords become the same input events, mapped with the target window's keyboard layout and sent with scan codes, so the [Input guard](#input-guard) reads them as it reads send_keys' keys.
+
+**The keys.** `keys` is a string or an array of strings:
+
+| `keys` | Presses |
+|--------|---------|
+| `"ctrl+shift+t"` or `["ctrl", "shift", "t"]` | One chord: Ctrl and Shift go down in that order, then T goes down and up, then Shift and Ctrl come up |
+| `"tab*3"` | Tab three times (`*n`: 1 to 100) |
+| `"ctrl+a delete"`, `"ctrl+a, delete"` or `["ctrl+a", "delete"]` | Ctrl+A, then Delete: chords separated by spaces or commas, or the items of an array that is not one chord |
+| `"alt"` | Alt alone, pressed and released (it shows the menu bar's access keys) |
+
+An array is one chord when every item but the last is a modifier and no item holds `+`, `*`, a comma or a space (`["ctrl", "shift", "t"]`); otherwise each item is a chord (`["tab", "tab"]` presses Tab twice). A chord has modifiers (`ctrl`, `shift`, `alt`, `win`, also `windows`, and the left and right forms `lctrl`, `rctrl`, `lshift`, `rshift`, `lalt`, `ralt`, `lwin`, `rwin`) and at most one other key: a [send_keys](#send_keys) key name (`enter`, `tab`, `esc`, `space`, `backspace`, `delete`, `insert`, `up`, `down`, `left`, `right`, `home`, `end`, `pgup`, `pgdn`, `f1` to `f24`, `numpad0` to `numpad9`, `apps`, `volume_mute`, ...; case does not matter) or a single character. A letter or digit is its key, A to Z or 0 to 9, with no Shift of its own: `ctrl+t` and `ctrl+T` are the same chord, and `ctrl+1` is the shortcut on any layout, AZERTY included. Any other character is the key the window's keyboard layout types it with, plus the Shift or AltGr it needs (`ctrl+?` is Ctrl+Shift+/ on a US keyboard); a character no key types is sent as Unicode. `+`, `,` and `*` are part of the syntax, so write them `plus`, `comma` and `star`. `repeat` runs the whole sequence again (1 to 100), and one call presses at most 200 chords in all.
+
+**Timing.** Without `holdMs` and `delayBetweenMs` every press goes in one SendInput batch, so no other input comes between them. `delayBetweenMs` (0 to 1000) waits between presses, each its own batch, with the foreground window checked again before each, as send_keys' `delayMs` does. `holdMs` (0 to 5000) keeps each chord's keys down that long before they come up: for an app that reads a long press, or a key repeat. presses × (`holdMs` + `delayBetweenMs`) is at most 10,000 ms; outside any range the call is refused with `InvalidArguments` and nothing is sent.
+
+**Nothing stays held.** A chord's keys come up in the same call that pressed them, and press_keys has no key-down or key-up of its own. When a call stops while a chord is held (the user's [pause hotkey](#pause-hotkey), a cancelled request, a failure), the server releases its keys at once. There are no `key_down` or `mouse_down` tools: a key held across calls could stay down after the agent's turn.
+
+**The same checks as send_keys.** Every chord is read before anything is sent: a chord that closes, quits or locks (`ctrl+w`, `alt+f4`, `ctrl+q`, `win+l`, ...) needs `windowHandle` (`DestructiveChordNeedsTarget`); a chord that hands the keyboard to another window (`alt+tab`, `win`, `win+r`, `alt+space`, a closing chord) must be the last (`KeysAfterFocusChange`); the user's pause hotkey chord is refused (`PauseChordNotAllowed`); and a paste (`ctrl+v`, `shift+insert`) follows the paste rule (`PasteNotAllowed`, see [Clipboard](#clipboard)). Windows never lets injected input press Ctrl+Alt+Del (the secure attention sequence) or lock the session with Win+L, whatever the tool. A key name that is not one is `UnknownKey`, and a chord with two keys (`ctrl+a+b`), an empty name (`ctrl++`) or a bad count (`tab*0`) is `InvalidKeySpecification`; both are reported before anything is checked or sent. The result is send_keys': `keys` echoes the keys (an array joined, `ctrl+shift+t` or `ctrl+a delete`) and `keysSent` counts the presses sent.
+
+<!-- tools:begin params:press_keys -->
+**Parameters:**
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| keys | string or string[] | Yes | - | A chord (`"ctrl+shift+t"`, or the array `["ctrl", "shift", "t"]`), or a sequence of chords separated by spaces or commas (`"ctrl+a delete"`, or the array `["ctrl+a", "delete"]`), each optionally `*n` (pressed n times, 1-100: `"tab*3"`). Names as above |
+| repeat | integer | No | 1 | How often to press the whole sequence, 1 to 100; at most 200 presses in all |
+| holdMs | integer | No | 0 | Milliseconds each chord's keys stay down before they come up, 0 to 5000 |
+| delayBetweenMs | integer | No | 0 | Milliseconds between presses, 0 to 1000; 0 sends every press in one batch. presses × (`holdMs` + `delayBetweenMs`) is at most 10,000 |
+| windowHandle | integer | No | none | The window the keys are for. The server brings it to the front first and sends only while it, or a dialog it owns, is in front (see [Input guard](#input-guard)) |
+| window | object | No | - | Alternative to windowHandle: the window as a selector, resolved to exactly one window or refused (WindowNotFound; AmbiguousWindow with candidates), then used as windowHandle. Filters as in find_windows (processName is the whole name); index picks a match in z-order; foreground is the window in front, and alone counts as no windowHandle; handle plus filters must still match (HandleMismatch). |
+| allowHostTarget | boolean | No | false | Allow the agent's own host window, only when it is `windowHandle` (or `window.handle`; refused beside a selector without a handle). Set it only when the user explicitly asked |
+| releaseHeldModifiers | boolean | No | false | Send modifier keys that are down (Shift, Ctrl, Alt, Windows) up first, instead of refusing with `ModifiersHeld`. Only when nobody is pressing them (a stuck key) or the user asked (see [Input guard](#input-guard)) |
+| observe | string (one of: `"none"`, `"state"`, `"screenshot"`) | No | "none" | What to return after the action: 'none' (default), 'state' (get_desktop_state's default observation of the window acted on, or of the window in front once that closed, as observed; needs get_desktop_state to be served) or 'screenshot' (as state, plus a capture of that window as image content; needs capture_window too). |
+<!-- tools:end params:press_keys -->
+
+**Example:**
+> "Reopen the last closed tab in Edge (handle 45678)"
+
+```json
+{
+  "name": "press_keys",
+  "arguments": {
+    "keys": ["ctrl", "shift", "t"],
+    "windowHandle": 45678
+  }
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "keys": "ctrl+shift+t",
+  "errorCode": "None",
+  "keysSent": 1,
+  "receivingWindow": { "handle": 45678, "title": "New tab - Microsoft Edge", "processName": "msedge", "processId": 9010 },
+  "foregroundAfter": { "handle": 45678, "title": "New tab - Microsoft Edge", "processName": "msedge", "processId": 9010 }
+}
+```
+
+**Example: move down three rows and open the item**, one key every 50 ms, in File Explorer (handle 23456):
+
+```json
+{ "name": "press_keys", "arguments": { "keys": "down*3 enter", "delayBetweenMs": 50, "windowHandle": 23456 } }
+```
+
+**Error Response:** a chord with two keys.
+```json
+{
+  "success": false,
+  "keys": "ctrl+a+b",
+  "error": "'ctrl+a+b' has more than one key besides its modifiers; a chord has one key. To press keys one after another, separate them with spaces ('ctrl+a delete'). Nothing was sent.",
+  "errorCode": "InvalidKeySpecification"
+}
+```
 
 ---
 
@@ -5135,7 +5400,7 @@ Content marked private is never returned, whoever copied it and whatever the use
 
 Only one question about the clipboard is open at a time: a get_clipboard call while another call waits for the user's answer returns `ConfirmationDeclined` without asking. A read of the user's clipboard is recorded in the [audit log](#audit-log) with its format, origin and length, never the content.
 
-Pasting follows the same rule, because a paste followed by a read (get_ui_elements, a capture, get_browser_content) would disclose what the user copied. Input that pastes is sent only when the clipboard holds what set_clipboard put there, the agent's own copy, or content the user let get_clipboard read (a yes for that content, or `WAM_ALLOW_USER_CLIPBOARD`), and never content marked private unless set_clipboard put it there; otherwise it is refused with `PasteNotAllowed` and nothing is sent. Input that pastes: Ctrl+V (with any other modifiers, so Ctrl+Shift+V counts) and Shift+Insert in [send_keys](#send_keys), the SYN character (U+0016, which an edit control takes as Ctrl+V) in [type_text](#type_text), type_text's own paste (`method: "paste"` or `auto`, which lends the clipboard to its text and checks it right before Ctrl+V, see [Typing or pasting](#typing-or-pasting)), and a [right_click](#right_click) in a terminal (the console, Windows Terminal, PuTTY, KiTTY, mintty, ConEmu, WezTerm and Alacritty, and anywhere in a window of VS Code, the editors built on it (Code - Insiders, VSCodium, Cursor, Windsurf) or the Electron terminals Hyper and Tabby: their integrated terminal pastes on a right click, and the server cannot tell it from the rest of the window, whose class every Chromium browser shares, so it decides by the window's process). Win+V opens clipboard history, which holds what the user copied before, so it is sent only with `WAM_ALLOW_USER_CLIPBOARD` (send_keys has no Windows-key modifier, so it cannot send Win+V today; the rule is a safety net). A clipboard that cannot be checked refuses the paste. The check reads the clipboard as it is before the call's input, which cannot show what a copy in the same call takes, so a call that copies and then pastes (copy keys such as `^c`, `^x`, `^{INSERT}` or `+{DELETE}`, or the ETX or CAN character in type_text, before the paste: `^c^v`, `^c{TAB}^v`) is refused with `PasteNotAllowed` whatever the clipboard holds, and nothing is sent. Send the copy and the paste in separate calls: the paste is then checked against what the copy put there, so a copy marked private is not pasted. A paste sent while copy keys the agent sent moments ago have not copied yet (the application has not acted on them; at most 5 seconds) is refused too, because those keys wait ahead of the paste: send it again in a moment, or call get_clipboard first, which waits for the copy. A paste before a copy (`^v^c`) is checked as any paste. Not covered: a paste chosen from an application's own menu (Edit > Paste, or a context menu's Paste item, by a click or its access key), drag and drop, paste shortcuts an application or the user defined, a right click in a terminal outside the list above (an Electron terminal or editor of another name, or a terminal started under another process name), and clipboard history opened by clicks (the clipboard tab of the emoji panel or the touch keyboard); the check runs right before the input, so content the user copies in that instant can still be pasted.
+Pasting follows the same rule, because a paste followed by a read (get_ui_elements, a capture, get_browser_content) would disclose what the user copied. Input that pastes is sent only when the clipboard holds what set_clipboard put there, the agent's own copy, or content the user let get_clipboard read (a yes for that content, or `WAM_ALLOW_USER_CLIPBOARD`), and never content marked private unless set_clipboard put it there; otherwise it is refused with `PasteNotAllowed` and nothing is sent. Input that pastes: Ctrl+V (with any other modifiers, so Ctrl+Shift+V counts) and Shift+Insert in [send_keys](#send_keys), the SYN character (U+0016, which an edit control takes as Ctrl+V) in [type_text](#type_text), type_text's own paste (`method: "paste"` or `auto`, which lends the clipboard to its text and checks it right before Ctrl+V, see [Typing or pasting](#typing-or-pasting)), and a [right_click](#right_click) in a terminal (and a right or middle click or press of [mouse_click](#mouse_click) or [drag](#drag); mintty and PuTTY paste on the middle button) (the console, Windows Terminal, PuTTY, KiTTY, mintty, ConEmu, WezTerm and Alacritty, and anywhere in a window of VS Code, the editors built on it (Code - Insiders, VSCodium, Cursor, Windsurf) or the Electron terminals Hyper and Tabby: their integrated terminal pastes on a right click, and the server cannot tell it from the rest of the window, whose class every Chromium browser shares, so it decides by the window's process). Win+V opens clipboard history, which holds what the user copied before, so it is sent only with `WAM_ALLOW_USER_CLIPBOARD` (send_keys has no Windows-key modifier, so it cannot send Win+V today; the rule is a safety net). A clipboard that cannot be checked refuses the paste. The check reads the clipboard as it is before the call's input, which cannot show what a copy in the same call takes, so a call that copies and then pastes (copy keys such as `^c`, `^x`, `^{INSERT}` or `+{DELETE}`, or the ETX or CAN character in type_text, before the paste: `^c^v`, `^c{TAB}^v`) is refused with `PasteNotAllowed` whatever the clipboard holds, and nothing is sent. Send the copy and the paste in separate calls: the paste is then checked against what the copy put there, so a copy marked private is not pasted. A paste sent while copy keys the agent sent moments ago have not copied yet (the application has not acted on them; at most 5 seconds) is refused too, because those keys wait ahead of the paste: send it again in a moment, or call get_clipboard first, which waits for the copy. A paste before a copy (`^v^c`) is checked as any paste. Not covered: a paste chosen from an application's own menu (Edit > Paste, or a context menu's Paste item, by a click or its access key), drag and drop, paste shortcuts an application or the user defined, a right click in a terminal outside the list above (an Electron terminal or editor of another name, or a terminal started under another process name), and clipboard history opened by clicks (the clipboard tab of the emoji panel or the touch keyboard); the check runs right before the input, so content the user copies in that instant can still be pasted.
 
 Every clipboard call opens the clipboard on a thread of its own, retries for about 300 ms while another application holds it (`ClipboardBusy`), and gives up after 5 seconds when the application that owns the clipboard does not answer.
 
@@ -6421,6 +6686,30 @@ the new tools; their sections have the rest.
   sends a chat message or submits a form; `\r\n` and a lone `\r` are typed as one `\n`, which `charactersTyped` counts.
   A client that typed multi-line text must pass `controlChars: "unicode"` for what it did before (without the `\r`).
   element_action's keyboard typing (`mode: "type"`) types line breaks as `unicode` does.
+- **mouse_click and drag (roadmap M4.3, mouse_click and drag).** Two new input tools in the `input` toolset, both
+  destructive, audited and inside the input gate like click. [mouse_click](#mouse_click) clicks any button (`primary`,
+  `secondary`, `middle`, `x1`, `x2`) one to three times (`clickCount`) with modifier keys held (`modifiers`: `ctrl`,
+  `shift`, `alt`, `win`): the modifier key-downs, the move, the clicks and the key-ups go in one SendInput batch, with
+  every check click makes; its result adds `clickCount` and `modifiers`, and `clickType` is the button. [drag](#drag)
+  presses a button at `fromX`, `fromY`, waits `holdBeforeMoveMs` (default 100), moves in `steps` absolute moves (default
+  10, the first beyond the drag threshold) with `stepDelayMs` after each (default 20), and releases at `toX`, `toY`,
+  with `modifiers` held throughout; both points take `space` and `captureId` (roadmap M3.F28). The to point must be on
+  `windowHandle`'s window, or on `toWindowHandle`'s for a drop into another app, and is checked as a click's point
+  before the press and again right before the drop. A drag stopped after the press goes back to the from point and
+  releases there; the user's pause releases where the pointer is; nothing stays held after the call (`pressed` says
+  whether anything was sent); the audit log records its `dropWindow`. The X buttons are now tracked as held input like
+  the others, so a partial insert or a pause releases them too, and a held X1 or X2 refuses mouse input (`MouseInUse`).
+  A middle click (or press) in a terminal now follows the paste rule as a right click does (`PasteNotAllowed`). click,
+  right_click and double_click are unchanged.
+- **press_keys (roadmap M4.3, press_keys).** A new input tool in the `input` toolset, destructive, audited and inside
+  the input gate: [press_keys](#press_keys) presses keys by name, as a chord (`"ctrl+shift+t"` or `["ctrl", "shift",
+  "t"]`) or a sequence (`"tab*3 enter"`, `["ctrl+a", "delete"]`), with `repeat` (1 to 100, at most 200 presses),
+  `holdMs` (0 to 5000: the chord's keys stay down that long, within the call) and `delayBetweenMs` (0 to 1000), and
+  presses × (holdMs + delayBetweenMs) at most 10,000 ms. Key names are send_keys' (M4.1), a letter or digit is its key
+  on any layout, and other characters are mapped with the window's keyboard layout and sent with scan codes. The chords
+  become the same input events as send_keys' keys, so the same checks apply: `DestructiveChordNeedsTarget` (`ctrl+w`
+  needs `windowHandle`), `KeysAfterFocusChange`, `PauseChordNotAllowed`, `PasteNotAllowed`. The result is send_keys'
+  (`keys`, `keysSent`). Nothing stays held after the call; there are no key_down or mouse_down tools.
 - **type_text: paste mode and bounded text (roadmap M4.4).** New `method`: `unicode` (what type_text did), `keys` (each
   character with the key of the window's keyboard layout, as send_keys types it, for remote desktops and virtual machines
   that drop Unicode keystrokes; a character the layout has no key for is still Unicode), `paste` (lends the clipboard:
@@ -6529,7 +6818,7 @@ table, it gives more detail.
 | `CannotTerminateHost` | [kill_process](#kill_process) | The PID belongs to the agent's host (an ancestor of this server such as its terminal or editor, the process that shows its console or the console server behind it, or the app in front when it started), or, with `forceKill`, one of its child processes does |
 | `CannotTerminateSelf` | [kill_process](#kill_process) | The PID is this server |
 | `CaptureFailed` | [Screenshot](#screenshot) tools | Windows could not capture the pixels: PrintWindow and the copy of the window's device context both failed, the window (or the virtual screen, `monitorIndex: -1`) is over the 64-megapixel budget, or it closed during the capture; `error` has the reason |
-| `CaptureNotFound` | [click](#click), right_click, double_click, mouse_move, [scroll](#scroll) | The `captureId` names no capture: mistyped, from an earlier run of the server, older than 10 minutes, or 32 newer captures pushed it out; nothing was sent. Capture again (see [Coordinate spaces for the mouse tools](#coordinate-spaces-for-the-mouse-tools)) |
+| `CaptureNotFound` | [click](#click), right_click, double_click, [mouse_click](#mouse_click), [drag](#drag), mouse_move, [scroll](#scroll) | The `captureId` names no capture: mistyped, from an earlier run of the server, older than 10 minutes, or 32 newer captures pushed it out; nothing was sent. Capture again (see [Coordinate spaces for the mouse tools](#coordinate-spaces-for-the-mouse-tools)) |
 | `CdpDialogOpen` | [Browser Reading](#browser-reading) tools | The page has a JavaScript dialog open. Inspect it and decide deliberately how to close it, or ask the user, then retry (do not press Enter blindly) |
 | `CdpEvaluationFailed` | [Browser Reading](#browser-reading) tools | The page threw, or the browser rejected the script |
 | `CdpPortOwnerMismatch` | [Browser Reading](#browser-reading) tools | The CDP port belongs to a different process than the window |
@@ -6548,14 +6837,14 @@ table, it gives more detail.
 | `ConfirmationDeclined` | [kill_process](#kill_process), [close_windows_batch](#close_windows_batch), [close_application](#close_application) (tool error), [close_window](#close_window) (`force` on a protected window), [get_clipboard](#get_clipboard) | The MCP client asked the user to confirm (elicitation), and the user declined, dismissed or did not tick the question, or did not answer within 2 minutes; nothing was done (get_clipboard: nothing was read; also while another get_clipboard call's question is open). Ask the user how to continue |
 | `ConfirmationRequired` | [kill_process](#kill_process), [close_windows_batch](#close_windows_batch), [close_application](#close_application) (tool error), [close_window](#close_window) (`force` on a protected window) | `confirm` was not true (close_windows_batch and close_application: more than 3 windows; close_window and close_windows_batch: `force` on a protected window), and the MCP client cannot ask the user; nothing was done |
 | `ContentExtractionFailed` | [get_browser_content](#get_browser_content) | The page content could not be found or read |
-| `CoordinatesOutOfBounds` | [click](#click), right_click, double_click, mouse_move, [scroll](#scroll), [get_element_at_point](#get_element_at_point) | The coordinates are outside the screen; scroll without a point: the window has no client area on screen (minimized). With `captureId`: the point is outside the capture's image; with `space` `window` or `client`: the window is minimized |
-| `CursorClamped` | [click](#click), right_click, double_click, mouse_move, [scroll](#scroll), [element_action](#element_action) (mouse paths) | The input **was sent**, but right after it the mouse pointer is not at the point (`actualX`, `actualY`): it was confined to a window (a game or remote session), the point is on no monitor, or the user or the application moved it at once. The click, move or wheel may have landed where the pointer is. Look at the window before you send it again; do not simply retry (roadmap M4.2) |
-| `CursorNotAtPoint` | [click](#click), right_click, double_click, [scroll](#scroll), [element_action](#element_action) (mouse paths) | The mouse pointer does not stay at the point (it is confined to a window, or the user is moving the mouse), so a click would land where the guard did not check; nothing was clicked |
-| `CursorPositionFailed` | [click](#click), right_click, double_click, [scroll](#scroll), [element_action](#element_action) (mouse paths) | Windows did not move the mouse pointer to the point (SetCursorPos failed), for example because the input desktop cannot be reached; nothing was clicked |
+| `CoordinatesOutOfBounds` | [click](#click), right_click, double_click, [mouse_click](#mouse_click), [drag](#drag), mouse_move, [scroll](#scroll), [get_element_at_point](#get_element_at_point) | The coordinates are outside the screen; scroll without a point: the window has no client area on screen (minimized). With `captureId`: the point is outside the capture's image; with `space` `window` or `client`: the window is minimized |
+| `CursorClamped` | [click](#click), right_click, double_click, [mouse_click](#mouse_click), [drag](#drag), mouse_move, [scroll](#scroll), [element_action](#element_action) (mouse paths) | The input **was sent**, but right after it the mouse pointer is not at the point (`actualX`, `actualY`): it was confined to a window (a game or remote session), the point is on no monitor, or the user or the application moved it at once. The click, move or wheel may have landed where the pointer is. Look at the window before you send it again; do not simply retry (roadmap M4.2) |
+| `CursorNotAtPoint` | [click](#click), right_click, double_click, [mouse_click](#mouse_click), [drag](#drag), [scroll](#scroll), [element_action](#element_action) (mouse paths) | The mouse pointer does not stay at the point (it is confined to a window, or the user is moving the mouse), so a click would land where the guard did not check; nothing was clicked |
+| `CursorPositionFailed` | [click](#click), right_click, double_click, [mouse_click](#mouse_click), [drag](#drag), [scroll](#scroll), [element_action](#element_action) (mouse paths) | Windows did not move the mouse pointer to the point (SetCursorPos failed), for example because the input desktop cannot be reached; nothing was clicked |
 | `DebugLaunchFailed` | [launch_browser_with_debug](#launch_browser_with_debug) | The browser could not be started. A launch_application error code can appear instead |
 | `DeleteFailed` | [delete_layout](#delete_layout) | The preset file could not be deleted |
 | `DesktopUnavailable` | [Input Simulation](#input-simulation) tools, [element_action](#element_action), [respond_to_dialog](#respond_to_dialog), [file_dialog](#file_dialog) | The input desktop cannot be reached: a UAC prompt or the Ctrl+Alt+Del screen is shown, or the session is disconnected; nothing was sent |
-| `DestructiveChordNeedsTarget` | [send_keys](#send_keys) | The keys contain a chord that closes, quits or locks (such as Alt+F4) and no `windowHandle` was given; nothing was sent |
+| `DestructiveChordNeedsTarget` | [send_keys](#send_keys), [press_keys](#press_keys) | The keys contain a chord that closes, quits or locks (such as Alt+F4) and no `windowHandle` was given; nothing was sent |
 | `DialogNotCompleted` | [file_dialog](#file_dialog) | The dialog's file name box did not hold the path after it was set (nothing was pressed); or Open or Save was pressed but the dialog did not close: it showed a prompt file_dialog does not answer (in `prompt`: answer it with respond_to_dialog) or could not read, it showed a folder, or `timeoutMs` passed |
 | `DialogNotFound` | [respond_to_dialog](#respond_to_dialog), [file_dialog](#file_dialog) | No dialog: no window is in front, or the window in front (or named) is no dialog and has no open dialog (a dialog drawn inside its window, close_window's `inWindowDialog`, has no window of its own: press its button with [element_action](#element_action)); file_dialog: also a dialog without a file dialog's file name box, or `open` asked of a Save As dialog. Nothing was done |
 | `ElementAccessFailed` | [UI Automation](#ui-automation) tools, [capture_with_elements](#capture_with_elements), [element_action](#element_action) | An element that was being read is no longer available. element_action: also an element whose identity could not be read, or that belongs to another process with no window of its own to check; nothing was done |
@@ -6587,7 +6876,7 @@ table, it gives more detail.
 | `InvalidFormat` | [Screenshot](#screenshot) tools, [get_clipboard](#get_clipboard) (tool error) | `format` is not auto, png, jpeg or jpg (get_clipboard: text, html or files); `error` lists them |
 | `InvalidHandle` | [Window Control](#window-control) tools, close_windows_batch (per window), [get_owned_windows](#get_owned_windows), [get_window_info](#get_window_info), [close_application](#close_application) (tool error), [Browser Reading](#browser-reading) tools, [get_ui_elements](#get_ui_elements), [find_ui_elements](#find_ui_elements), [get_desktop_state](#get_desktop_state), [get_active_popups](#get_active_popups), [capture_window](#capture_window), [capture_with_elements](#capture_with_elements), the [Input Simulation](#input-simulation) tools (`windowHandle`), [element_action](#element_action), [respond_to_dialog](#respond_to_dialog), [file_dialog](#file_dialog), [wait_for_window](#wait_for_window), [wait_for_element](#wait_for_element) | The window handle is zero or invalid, or the window no longer exists. wait_for_window and wait_for_element: the window its `window.handle` names (or title_changed's window) closed, so the condition can never hold; the wait ended at once |
 | `InvalidImageSize` | [Screenshot](#screenshot) tools | `maxDimension` is negative or `maxWidth` is not positive |
-| `InvalidKeySpecification` | [send_keys](#send_keys) | The keys string breaks the [syntax](#send_keys), such as a `{` without its `}`, a modifier with no key after it (`100%`; write `100{%}`), an unclosed group or a count outside 1-100; nothing was sent. Fix the string (an unknown key name in braces is `UnknownKey`) |
+| `InvalidKeySpecification` | [send_keys](#send_keys), [press_keys](#press_keys) | The keys string breaks the [syntax](#send_keys), such as a `{` without its `}`, a modifier with no key after it (`100%`; write `100{%}`), an unclosed group or a count outside 1-100; press_keys: a chord with two keys (`ctrl+a+b`), an empty name (`ctrl++`; write `plus`), a modifier named twice, a count outside 1-100, no keys, or more than 200 presses; nothing was sent. Fix the string (an unknown key name is `UnknownKey`) |
 | `InvalidMatchBy` | [apply_layout](#apply_layout) (tool error) | `matchBy` is not process_and_title, process_only or title_only; nothing was arranged |
 | `InvalidMonitorIndex` | [take_screenshot](#take_screenshot), [snap_window](#snap_window), [move_window_to_monitor](#move_window_to_monitor), snap_windows_batch (per window), [apply_layout](#apply_layout) (per placement: its `monitorIndex`), [launch_application](#launch_application) and launch_applications_batch (a `placement`; tool error or per item, nothing launched) | `monitorIndex` is not a monitor; `error` gives the valid range (see [get_monitors](#get_monitors) or [list_screens](#list_screens)). Nothing was changed: the window is never put on another monitor instead |
 | `InvalidName` | [save_layout](#save_layout), [delete_layout](#delete_layout) | The name is empty or longer than 128 characters |
@@ -6602,11 +6891,11 @@ table, it gives more detail.
 | `InvalidTimeout` | [kill_process](#kill_process) | `gracefulTimeoutMs` is out of range |
 | `InvalidUri` | [launch_application](#launch_application), launch_applications_batch | The URI is malformed, holds a quote, a control character or (except http/https) whitespace or another character a URI cannot hold (percent-encode it), or a file URI does not name an absolute local or UNC path |
 | `InvalidWorkingDirectory` | [launch_application](#launch_application), launch_applications_batch | The working directory contains invalid characters |
-| `KeysAfterFocusChange` | [send_keys](#send_keys) | Keys follow a chord that hands the keyboard to another window (Alt+Tab, Alt+Esc, Ctrl+Esc, the Windows key, Alt+Space, or a closing chord such as Alt+F4), so they would reach a window the guard never checked; nothing was sent. Make that chord the last key, and send the rest in a new call |
+| `KeysAfterFocusChange` | [send_keys](#send_keys), [press_keys](#press_keys) | Keys follow a chord that hands the keyboard to another window (Alt+Tab, Alt+Esc, Ctrl+Esc, the Windows key, Alt+Space, or a closing chord such as Alt+F4), so they would reach a window the guard never checked; nothing was sent. Make that chord the last key, and send the rest in a new call |
 | `LaunchException` | [launch_application](#launch_application), launch_applications_batch | Windows failed to start the target; `error` has the reason |
 | `LaunchFailed` | [apply_layout](#apply_layout) | A missing app could not be launched, its window did not appear, or the window it brought up was already given to another placement (a single-instance app) |
 | `ModifiersHeld` | [Input Simulation](#input-simulation) tools, [element_action](#element_action) (mouse and keyboard paths), [release_all_input](#release_all_input) (`releaseHeldModifiers`) | Shift, Ctrl, Alt or Windows is down (`heldModifiers`), held by the user or stuck, or keys the server pressed earlier could not be released; nothing (more) was sent. Wait and retry; for a stuck key pass `releaseHeldModifiers: true` or call [release_all_input](#release_all_input) (element_action has no `releaseHeldModifiers`: call release_all_input). While any modifier of the [pause hotkey](#pause-hotkey) is down, no modifier is released for the agent: ask the user |
-| `MouseInUse` | [click](#click), right_click, double_click, mouse_move, [scroll](#scroll), [element_action](#element_action) (mouse paths) | A mouse button is held down (the user is dragging or selecting), or another window has captured the mouse, so the input would go to that window instead of the one at the point, or the capture could not be read; nothing (more) was sent |
+| `MouseInUse` | [click](#click), right_click, double_click, [mouse_click](#mouse_click), [drag](#drag), mouse_move, [scroll](#scroll), [element_action](#element_action) (mouse paths) | A mouse button is held down (the user is dragging or selecting), or another window has captured the mouse, so the input would go to that window instead of the one at the point, or the capture could not be read; nothing (more) was sent |
 | `MoveFailed` | move_window, set_window_bounds, snap_window, move_window_to_monitor (see [Window Control](#window-control)), their batches (per window) | Windows did not move the window (`error` gives the Win32 error); a minimized or maximized window did not return to normal, or is hidden, so it was not placed; or move_window_to_monitor did not get the window onto the monitor asked for (with `positioning: "maximize"` it is then not maximized) |
 | `NoBrowserInForeground` | [get_active_browser_url](#get_active_browser_url) | The foreground window is not a browser |
 | `NoClosableWindow` | [kill_process](#kill_process), [close_application](#close_application) | Graceful mode: the process has no closable main window and was left running (when the client can ask the user, a process without a main window is refused before the question). close_application: the application has no window in the Alt+Tab set of the current virtual desktop; nothing was sent |
@@ -6619,10 +6908,10 @@ table, it gives more detail.
 | `NoWindowsCaptured` | [save_layout](#save_layout) | No visible window matched the filters, so nothing was saved |
 | `OperationException` | [Browser Reading](#browser-reading) tools, [UI Automation](#ui-automation) tools, [capture_with_elements](#capture_with_elements), [capture_window](#capture_window) (`ref`) | Unexpected error while reading; see `error` |
 | `OperationTimedOut` | [UI Automation](#ui-automation) tools, [capture_with_elements](#capture_with_elements), [capture_window](#capture_window) (`ref`), the UI Automation reads of the [Browser Reading](#browser-reading) tools | UI Automation did not answer in time (the application may be hung). The browser reading tools: the read did not finish within `timeoutMs`; nothing is returned. get_ui_elements returns a partial tree with `truncated: true`, and find_ui_elements the matches found with `truncationReason: Timeout`, when they read some (a read stuck in a UI Automation call is given up 2 s after `timeoutMs`); get_desktop_state lists a part not read by its deadline in `errors`. read_element_text and element_action by criteria: also a search that did not finish (it ran out of time, hit the search limit, skipped parts or left windows of its scope out) with one match or none so far; nothing was read or done. element_action's `menu_path`: the path's time (`timeoutMs` per item, at most 60 s) ran out, or an item's search did not finish; `realize` with `maxScrolls`: the time passed while scrolling. A read that misses its deadline keeps running in the background; while two such reads of one application have not returned, further reads of that application fail at once, and reads of other applications go on (all reads fail at once only while 16 reads are stuck). A Store (UWP) app counts as its own application, not as the `ApplicationFrameHost` that hosts every UWP app's window |
-| `PasteNotAllowed` | [send_keys](#send_keys), [type_text](#type_text) (the SYN character; `method: "paste"` into a terminal, or when the clipboard changed right before Ctrl+V), [right_click](#right_click) (in a terminal, and in any window of VS Code, the editors built on it, Hyper and Tabby), [element_action](#element_action) (`right_click` and `mode: "paste"`) | The input pastes (Ctrl+V, Shift+Insert, Win+V, the SYN character, or a right click in a terminal), and the clipboard holds content [get_clipboard](#get_clipboard) would not return: the user's (not allowed by the user), content marked private, or clipboard history; or the clipboard could not be checked; or the call copies and then pastes, or copy keys sent moments ago have not copied yet. Nothing (more) was sent. Put the text on the clipboard with set_clipboard, or type it; send a copy and its paste in separate calls; see [Clipboard](#clipboard) |
+| `PasteNotAllowed` | [send_keys](#send_keys), [type_text](#type_text) (the SYN character; `method: "paste"` into a terminal, or when the clipboard changed right before Ctrl+V), [right_click](#right_click), and [mouse_click](#mouse_click) and [drag](#drag) with the secondary or middle button (in a terminal, and in any window of VS Code, the editors built on it, Hyper and Tabby), [element_action](#element_action) (`right_click` and `mode: "paste"`) | The input pastes (Ctrl+V, Shift+Insert, Win+V, the SYN character, or a right or middle click in a terminal), and the clipboard holds content [get_clipboard](#get_clipboard) would not return: the user's (not allowed by the user), content marked private, or clipboard history; or the clipboard could not be checked; or the call copies and then pastes, or copy keys sent moments ago have not copied yet. Nothing (more) was sent. Put the text on the clipboard with set_clipboard, or type it; send a copy and its paste in separate calls; see [Clipboard](#clipboard) |
 | `PathTraversal` | [launch_application](#launch_application), launch_applications_batch | A path contains `..` |
 | `PatternNotSupported` | [read_table](#read_table), [element_action](#element_action) | read_table: the element supports neither the Grid pattern nor rows (DataItem, ListItem or TreeItem children, or Custom children holding DataItem cells), so it is no table; nothing was read. Read its text with read_element_text, or find the table inside it. element_action: the element has none of the patterns the action needs (`error` lists the ones it has), and no mouse fallback was allowed; or `mode` `type` or `paste` names an element that is not a text field (a list, grid, pane or button); `focus` on an element that is not keyboard-focusable; a `menu_path` item before the last that has no submenu (it is not invoked). Nothing was done. `fallback: "mouse"` sends a guarded click for `invoke`, `click` and `select` |
-| `PauseChordNotAllowed` | [send_keys](#send_keys) | The keys contain the user's [pause hotkey](#pause-hotkey) chord, which only the user may press; nothing was sent |
+| `PauseChordNotAllowed` | [send_keys](#send_keys), [press_keys](#press_keys) | The keys contain the user's [pause hotkey](#pause-hotkey) chord, which only the user may press; nothing was sent |
 | `PausedByUser` | [Input Simulation](#input-simulation) tools, [element_action](#element_action), [respond_to_dialog](#respond_to_dialog) (with `button`), [file_dialog](#file_dialog), [release_all_input](#release_all_input) (`releaseHeldModifiers`); tool error from every tool that changes windows or starts or stops processes ([Window Control](#window-control), [Batch Operations](#batch-operations), [close_application](#close_application), [apply_layout](#apply_layout), [launch_application](#launch_application), [kill_process](#kill_process), [launch_browser_with_debug](#launch_browser_with_debug)), from [set_clipboard](#set_clipboard), and from [capture_window](#capture_window) and [capture_with_elements](#capture_with_elements) with `restoreIfMinimized`; [focus_window](#focus_window) when the pause comes during the activation, and [apply_layout](#apply_layout) (named in an `ArrangeFailed` error, see [apply_layout](#apply_layout)) when it comes during a `focus` placement's activation | The user paused the input of the servers on the desktop with the [pause hotkey](#pause-hotkey); nothing (more) was sent, activated or changed. Stop and ask the user; never try to resume input yourself |
 | `PortInUse` | [launch_browser_with_debug](#launch_browser_with_debug) | The port is already in use; pick another port |
 | `PresetNotFound` | [get_layout](#get_layout) (tool error), [apply_layout](#apply_layout), [delete_layout](#delete_layout) | No preset has that name |
@@ -6641,7 +6930,7 @@ table, it gives more detail.
 | `ScriptFile` | [launch_application](#launch_application), launch_applications_batch, [apply_layout](#apply_layout) (in `LaunchFailed`'s `error`) | The launch would run a script (`.bat`, `.cmd`, `.ps1`, `.vbs`, `.py`, ...), as the target, through a bare name that resolves to one (`code` is `code.cmd`: use `code.exe`) or through `explorer` (see [Commands and scripts](#commands-and-scripts)). Nothing was started; ask the user to run it |
 | `SendInputFailed` | [Input Simulation](#input-simulation) tools, [release_all_input](#release_all_input) | Windows did not accept the input (SendInput failed; send_keys reports `keysSent`, type_text `charactersTyped`, and the keys pressed are released again; after a paste's partial Ctrl+V the text may or may not have been pasted); release_all_input: some keys or buttons could not be released (`stillHeld`). A pointer that could not be moved is `CursorPositionFailed` |
 | `SessionLocked` | [Input Simulation](#input-simulation) tools, [element_action](#element_action), [respond_to_dialog](#respond_to_dialog), [file_dialog](#file_dialog) | The session is locked; nothing was sent |
-| `StaleCapture` | [click](#click), right_click, double_click, mouse_move, [scroll](#scroll) | The point was given with a `captureId` and what the capture showed changed: the captured window moved or resized by more than 2 pixels, closed, was minimized or its handle now belongs to another process, a client-area capture's client area moved, or the monitors changed since a monitor or region capture; or, with `space` `window` or `client` (or a `captureId`), the window moved while the call waited for the input gate. Nothing was sent. Capture again and use the new `captureId` (see [Coordinate spaces for the mouse tools](#coordinate-spaces-for-the-mouse-tools)) |
+| `StaleCapture` | [click](#click), right_click, double_click, [mouse_click](#mouse_click), [drag](#drag), mouse_move, [scroll](#scroll) | The point was given with a `captureId` and what the capture showed changed: the captured window moved or resized by more than 2 pixels, closed, was minimized or its handle now belongs to another process, a client-area capture's client area moved, or the monitors changed since a monitor or region capture; or, with `space` `window` or `client` (or a `captureId`), the window moved while the call waited for the input gate. Nothing was sent. Capture again and use the new `captureId` (see [Coordinate spaces for the mouse tools](#coordinate-spaces-for-the-mouse-tools)) |
 | `StateChangeFailed` | [set_window_state](#set_window_state), set_windows_state_batch (per window) | The window was not seen in the requested state within 300 ms: the application refused or delayed it, or it runs with higher privileges; `error` says the state it is in |
 | `StillOpen` | [close_window](#close_window), close_windows_batch (per window), [close_application](#close_application) | The close message was sent, but the window was still open and visible when the wait (`waitMs`, `timeoutMs`) ended, without a prompt: the app is busy or slow, or ignores the request. Check it, wait longer, or end the app with kill_process |
 | `StorageUnavailable` | [Layout Presets](#layout-presets) tools (tool error from get_layout and list_layouts) | The layouts folder cannot be created or used |
@@ -6651,13 +6940,13 @@ table, it gives more detail.
 | `TargetIsAgentHost` | [Input Simulation](#input-simulation) tools, [element_action](#element_action), [respond_to_dialog](#respond_to_dialog), [file_dialog](#file_dialog), [get_desktop_state](#get_desktop_state) (in `errors`), [get_active_popups](#get_active_popups) | The input would reach the agent's own terminal, editor or chat app, which only `windowHandle` (element_action: `ref` or `handle`; the dialog tools: `handle`) naming it with `allowHostTarget: true` allows; nothing was sent. A window of this server's own process (a security warning Windows showed for a launch) is refused even with `allowHostTarget`: ask the user to answer it. get_desktop_state: the window in front, or the focus, is the agent's own host and was not named, so it was not read. get_active_popups: no window was named and the window in front is the agent's own host, so nothing was listed or read |
 | `TargetLostFocus` | [type_text](#type_text), [send_keys](#send_keys), [element_action](#element_action) (keyboard paths) | Another window came to the front after the check and before or while the keys were sent; `charactersTyped` says how much was typed before typing stopped |
 | `TargetNotForeground` | [type_text](#type_text), [send_keys](#send_keys), [element_action](#element_action) (`focus`, mouse and keyboard paths) | The target window could not be brought to the foreground (also a hidden or cloaked one), or no window is in the foreground; nothing was sent |
-| `TargetOccluded` | [click](#click), right_click, double_click, mouse_move, [scroll](#scroll), [element_action](#element_action) (mouse paths) | Another window, not the target or a popup of it, is at the point, or no window can be found there; nothing was sent (double_click: the result says when the first click was sent). element_action: also another element of the window covers the element at every point tried (UI Automation's hit test); nothing was clicked |
+| `TargetOccluded` | [click](#click), right_click, double_click, [mouse_click](#mouse_click), [drag](#drag), mouse_move, [scroll](#scroll), [element_action](#element_action) (mouse paths) | Another window, not the target or a popup of it, is at the point, or no window can be found there; nothing was sent (double_click: the result says when the first click was sent). element_action: also another element of the window covers the element at every point tried (UI Automation's hit test); nothing was clicked |
 | `TerminationException` | [kill_process](#kill_process) | Unexpected error |
 | `TerminationNotConfirmed` | [kill_process](#kill_process) | Force mode: the process had not exited when the wait ended |
 | `TextTooLong` | [type_text](#type_text) | More than 5,000 characters to type (`unicode`, `keys`, or `auto` when it types), or more than 1,000,000 to paste; nothing was typed. Paste long text, or send it in parts (see [Typing or pasting](#typing-or-pasting)) |
 | `ToolError` | any tool (tool error) | The tool reported an error without a more specific code (see [Tool errors](#tool-errors)) |
 | `UnhandledException` | any tool (tool error) | The tool threw an unexpected exception, or its result could not be serialized (see [Tool errors](#tool-errors)) |
-| `UnknownKey` | [send_keys](#send_keys) | Unknown key name in braces; nothing was sent (see the [key names](#send_keys)) |
+| `UnknownKey` | [send_keys](#send_keys), [press_keys](#press_keys) | Unknown key name (in braces, or in a press_keys chord); nothing was sent (see the [key names](#send_keys)) |
 | `UnknownProtocol` | [launch_application](#launch_application), launch_applications_batch | The URI scheme is not one of the built-in schemes (http, https, mailto, tel, ms-settings, `shell:AppsFolder\<AppUserModelID>`; file URIs are checked as paths) or the schemes the user allows in `WAM_ALLOWED_PROTOCOLS`; `get_server_info` lists them as `safety.allowedProtocols` |
 | `UnsafeBatchArguments` | [launch_application](#launch_application), launch_applications_batch | An argument would be interpreted by `cmd.exe` (see [launch_application](#launch_application)) |
 | `UnsupportedBrowser` | [launch_browser_with_debug](#launch_browser_with_debug) (tool error) | `browser` is not chrome, edge or brave |

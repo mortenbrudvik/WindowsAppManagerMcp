@@ -8,6 +8,7 @@ public class HeldInputTrackerTests
 {
     private const uint KeyDown = 0x0000, ExtendedKey = 0x0001, KeyUp = 0x0002;
     private const uint LeftDown = 0x0002, LeftUp = 0x0004, RightDown = 0x0008, RightUp = 0x0010, Move = 0x0001;
+    private const uint XDown = 0x0080, XUp = 0x0100, XButton1 = 1, XButton2 = 2;
     private const ushort VkControl = 0x11, VkMenu = 0x12, VkC = 0x43, VkRControl = 0xA3, VkLWin = 0x5B, VkLShift = 0xA0;
 
     private static readonly InputEvent[] CtrlC =
@@ -51,6 +52,30 @@ public class HeldInputTrackerTests
 
         afterDown.Should().Equal("left mouse button");
         tracker.IsEmpty.Should().BeTrue();
+    }
+
+    [Fact]
+    public void Apply_XButtons_AreTrackedByTheButtonInMouseData()
+    {
+        // XDOWN and XUP name the button in mouseData, so X1 and X2 are two buttons under the same flag (roadmap M4.3)
+        var tracker = new HeldInputTracker();
+
+        tracker.Apply([InputEvent.Mouse(XDown, XButton1), InputEvent.Mouse(XDown, XButton2)], 2);
+        var bothDown = tracker.Held.Select(h => h.Name).ToList();
+        tracker.Apply([InputEvent.Mouse(XUp, XButton1)], 1);
+
+        bothDown.Should().Equal("X1 mouse button", "X2 mouse button");
+        tracker.Held.Should().ContainSingle().Which.Name.Should().Be("X2 mouse button");
+    }
+
+    [Fact]
+    public void Apply_AnXEventNamingBothButtons_PressesBoth()
+    {
+        var tracker = new HeldInputTracker();
+
+        tracker.Apply([InputEvent.Mouse(XDown, XButton1 | XButton2)], 1);
+
+        tracker.Held.Select(h => h.Name).Should().Equal("X1 mouse button", "X2 mouse button");
     }
 
     [Fact]
@@ -122,6 +147,14 @@ public class HeldInputTrackerTests
     }
 
     [Fact]
+    public void ReleaseEvents_XButtons_GetAnXUpNamingTheirButton()
+    {
+        var events = HeldInputTracker.ReleaseEvents([HeldInput.XButton(XButton2), HeldInput.Button(LeftDown)]);
+
+        events.Should().Equal(InputEvent.Mouse(XUp, XButton2), InputEvent.Mouse(LeftUp));
+    }
+
+    [Fact]
     public void Pressed_ListsEveryDownOfTheBatch()
     {
         InputEvent[] events = [.. CtrlC, InputEvent.Mouse(Move | LeftDown), InputEvent.Mouse(LeftUp)];
@@ -134,6 +167,8 @@ public class HeldInputTrackerTests
     {
         HeldInputTracker.StateKey(HeldInput.Button(LeftDown)).Should().Be((ushort)0x01);
         HeldInputTracker.StateKey(HeldInput.Button(RightDown)).Should().Be((ushort)0x02);
+        HeldInputTracker.StateKey(HeldInput.XButton(XButton1)).Should().Be((ushort)0x05);
+        HeldInputTracker.StateKey(HeldInput.XButton(XButton2)).Should().Be((ushort)0x06);
         HeldInputTracker.StateKey(HeldInput.Key(VkControl)).Should().Be(VkControl);
         HeldInputTracker.StateKey(new HeldInput(InputEventKind.Unicode, 'x')).Should().BeNull();
     }

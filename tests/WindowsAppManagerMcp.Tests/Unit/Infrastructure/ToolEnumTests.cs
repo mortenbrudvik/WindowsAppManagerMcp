@@ -34,7 +34,8 @@ public class ToolEnumTests
             typeof(ElementWaitCondition),
             typeof(ElementActionKind), typeof(ElementActionFallback), typeof(ElementValueMode), typeof(ElementScrollDirection),
             typeof(ElementScrollAmount), typeof(CaptureElementDetail), typeof(DesktopStateSection), typeof(DesktopStateScope),
-            typeof(ObserveMode), typeof(FileDialogAction), typeof(TextControlChars), typeof(TextInputMethod)
+            typeof(ObserveMode), typeof(FileDialogAction), typeof(TextControlChars), typeof(MouseButton), typeof(MouseModifier),
+            typeof(TextInputMethod)
         });
     }
 

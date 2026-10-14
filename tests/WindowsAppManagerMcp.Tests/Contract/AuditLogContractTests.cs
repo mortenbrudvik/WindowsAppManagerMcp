@@ -53,8 +53,8 @@ public class AuditLogContractTests
     public void TheAuditedTools_AreTheInputCloseKillLaunchLayoutScrollAndClipboardTools()
     {
         AuditLogToolFilter.AuditedTools.Should().BeEquivalentTo(
-            "click", "right_click", "double_click", "mouse_move", "type_text", "send_keys", "scroll", "release_all_input",
-            "element_action", "respond_to_dialog", "file_dialog", "close_window", "close_windows_batch", "close_application", "kill_process",
+            "click", "right_click", "double_click", "mouse_click", "drag", "mouse_move", "type_text", "send_keys", "press_keys", "scroll",
+            "release_all_input", "element_action", "respond_to_dialog", "file_dialog", "close_window", "close_windows_batch", "close_application", "kill_process",
             "launch_application", "launch_applications_batch", "launch_browser_with_debug",
             "apply_layout", "save_layout", "delete_layout", "set_clipboard", "get_clipboard");
     }
@@ -389,6 +389,18 @@ public class AuditLogContractTests
         var line = lines.Single();
         var named = new[] { "target", "items", "receivingWindow" }.Where(p => line.TryGetProperty(p, out _)).ToList();
         named.Should().NotBeEmpty("the line of '{0}' must say what it acted on: {1}", tool, line.GetRawText());
+    }
+
+    [Fact]
+    public async Task Drag_RecordsTheDropWindow_AndItsPointsAsNumbers()
+    {
+        var (_, lines) = await CallAsync("drag", EveryToolContractTests.ArgumentsFor("drag"));
+
+        var line = lines.Single();
+        line.GetProperty("dropWindow").GetProperty("handle").GetInt64().Should().Be(TypicalDesktop.NotepadHandle);
+        line.GetProperty("receivingWindow").GetProperty("handle").GetInt64().Should().Be(TypicalDesktop.NotepadHandle);
+        line.GetProperty("args").GetProperty("toX").GetInt32().Should().Be(760);
+        line.GetProperty("result").GetProperty("pressed").GetBoolean().Should().BeTrue();
     }
 
     [Fact]

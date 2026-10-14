@@ -201,7 +201,8 @@ public static class WrapperCatalog
                 [nameof(INativeSystemInfoWrapper.GetSessionId)] = WrapperMember.Read,
                 [nameof(INativeSystemInfoWrapper.GetMouseWheelRouting)] = WrapperMember.Read,
                 [nameof(INativeSystemInfoWrapper.GetVirtualScreen)] = WrapperMember.Read,
-                [nameof(INativeSystemInfoWrapper.AreMouseButtonsSwapped)] = WrapperMember.Read
+                [nameof(INativeSystemInfoWrapper.AreMouseButtonsSwapped)] = WrapperMember.Read,
+                [nameof(INativeSystemInfoWrapper.GetDragThreshold)] = WrapperMember.Read
             },
             // The keyboard layout send_keys maps characters with (roadmap M4.1): ToUnicodeEx is called so that it changes no
             // keyboard state

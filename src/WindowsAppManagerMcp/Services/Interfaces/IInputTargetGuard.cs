@@ -76,6 +76,15 @@ public interface IInputTargetGuard
     /// </summary>
     InputGuardResult RecheckMouse(int x, int y, InputGuardResult approved);
 
+    /// <summary>
+    /// Checks a drag's drop point again right before the release (roadmap M4.3), as <see cref="RecheckMouse"/> does but
+    /// without the mouse capture check: the drag's own button is down, so its source (or the drag-and-drop loop) has captured
+    /// the mouse, as every drag does. A converted point is checked against what it was measured on (StaleCapture); then
+    /// allowed while the same window is at the point, otherwise the new window is checked in full (TargetOccluded, policy,
+    /// elevation, host). Reads only.
+    /// </summary>
+    InputGuardResult RecheckDrop(int x, int y, InputGuardResult approved);
+
     /// <summary>The foreground window now, for the results' ForegroundAfter; null when there is none.</summary>
     WindowSummary? DescribeForeground();
 

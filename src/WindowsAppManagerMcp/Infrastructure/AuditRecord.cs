@@ -128,7 +128,8 @@ public static class AuditRecord
             SummarizeArguments(call.Arguments, call.DeclaredTypes, call.Tool),
             body == null ? null : Scalars(body, call.Tool),
             serverPid,
-            call.RequestId);
+            call.RequestId,
+            body != null && body.TryGetPropertyValue("dropWindow", out var drop) && drop is JsonObject dropWindow ? Window(dropWindow) : null);
     }
 
     /// <summary>The entry as one line of JSON, without the line break.</summary>

@@ -546,7 +546,8 @@ public sealed class InputSession : IInputSession, IDisposable
 
     private static bool Releases(InputEvent e, HeldInput key) => key.Kind switch
     {
-        InputEventKind.Mouse => e.Kind == InputEventKind.Mouse && (e.Flags & ((uint)key.Code << 1)) != 0,
+        InputEventKind.Mouse => e.Kind == InputEventKind.Mouse && (e.Flags & ((uint)key.Code << 1)) != 0 &&
+                                (key.Code != NativeEnums.MOUSEEVENTF_XDOWN || (e.MouseData & key.Flags) != 0),
         _ => e.Kind == key.Kind && e.Code == key.Code && (e.Flags & NativeEnums.KEYEVENTF_KEYUP) != 0
     };
 

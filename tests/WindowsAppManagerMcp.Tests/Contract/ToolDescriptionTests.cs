@@ -33,6 +33,7 @@ public class ToolDescriptionTests
     [Theory]
     [InlineData("type_text")]
     [InlineData("send_keys")]
+    [InlineData("press_keys")]
     public void KeyboardToolDescription_SaysInputGoesToTheForegroundWindowAndHowToConfirmIt(string toolName)
     {
         var description = ServerToolCatalog.Description(toolName);
@@ -53,6 +54,7 @@ public class ToolDescriptionTests
     [InlineData("click")]
     [InlineData("right_click")]
     [InlineData("double_click")]
+    [InlineData("mouse_click")]
     [InlineData("mouse_move")]
     public void MouseToolDescription_PointsToRefsAndImagePoints_NotToScreenBoundsTheLegendLeavesOut(string toolName)
     {
@@ -77,6 +79,7 @@ public class ToolDescriptionTests
     [InlineData("click")]
     [InlineData("right_click")]
     [InlineData("double_click")]
+    [InlineData("mouse_click")]
     public void ClickToolDescription_SaysToConfirmTheTargetWindowFirst(string toolName)
     {
         ServerToolCatalog.Description(toolName).Should().Contain("get_foreground_window",
@@ -87,10 +90,13 @@ public class ToolDescriptionTests
     [InlineData("click")]
     [InlineData("right_click")]
     [InlineData("double_click")]
+    [InlineData("mouse_click")]
+    [InlineData("drag")]
     [InlineData("mouse_move")]
     [InlineData("scroll")]
     [InlineData("type_text")]
     [InlineData("send_keys")]
+    [InlineData("press_keys")]
     public void InputToolDescription_RecommendsWindowHandleAndNamesTheGuardResults(string toolName)
     {
         var description = ServerToolCatalog.Description(toolName);
@@ -113,6 +119,7 @@ public class ToolDescriptionTests
     public void SendKeysDescription_SaysDestructiveChordsNeedWindowHandle()
     {
         ServerToolCatalog.Description("send_keys").Should().Contain("DestructiveChordNeedsTarget");
+        ServerToolCatalog.Description("press_keys").Should().Contain("DestructiveChordNeedsTarget").And.Contain("KeysAfterFocusChange");
     }
 
     [Fact]
@@ -125,6 +132,7 @@ public class ToolDescriptionTests
     [InlineData("click")]
     [InlineData("right_click")]
     [InlineData("double_click")]
+    [InlineData("mouse_click")]
     public void ClickDescription_NamesCursorNotAtPoint(string toolName)
     {
         ServerToolCatalog.Description(toolName).Should().Contain("CursorNotAtPoint");
@@ -317,9 +325,9 @@ public class ToolDescriptionTests
     public void TheWaitsTheServerClamps_StateTheirRange()
     {
         // A batch's delay and a launch's wait for its window are waited out inside the input gate, so the server
-        // clamps them; the agent reads the range in tools/list
+        // clamps them; the agent reads the range in tools/list. press_keys refuses a delayBetweenMs out of its range instead
         var waits = ServerToolCatalog.AllDescriptions()
-            .Where(d => d.Source.EndsWith(".delayBetweenMs", StringComparison.Ordinal) ||
+            .Where(d => (d.Source.EndsWith(".delayBetweenMs", StringComparison.Ordinal) && !d.Source.StartsWith("press_keys.", StringComparison.Ordinal)) ||
                         d.Source.EndsWith(".waitTimeoutMs", StringComparison.Ordinal))
             .ToList();
 

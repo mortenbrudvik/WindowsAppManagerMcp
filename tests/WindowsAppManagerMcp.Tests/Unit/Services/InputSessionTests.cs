@@ -143,6 +143,23 @@ public class InputSessionTests
     }
 
     [Fact]
+    public void Send_AnXButtonLeftDown_IsReleasedWithItsOwnButton()
+    {
+        // The X buttons share XDOWN and XUP and differ in mouseData: X2 going up must not count as X1's release
+        var sut = CreateSut();
+
+        sut.Send([InputEvent.Mouse(0x0080, 1), InputEvent.Mouse(0x0080, 2), InputEvent.Mouse(0x0100, 2)]);
+        var held = sut.ServerHeld.Select(h => h.Name).ToList();
+        var release = sut.ReleaseHeldInput("end of the call");
+
+        held.Should().Equal("X1 mouse button");
+        release.Released.Should().Equal("X1 mouse button");
+        _input.Batches[^1].Should().Equal(InputEvent.Mouse(0x0100, 1));
+        _input.IsKeyDown(0x05).Should().BeFalse();
+        sut.ServerHeld.Should().BeEmpty();
+    }
+
+    [Fact]
     public void ReleaseHeldInput_WithNothingHeld_SendsNothing()
     {
         var sut = CreateSut();

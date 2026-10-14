@@ -246,6 +246,8 @@ public static class TestDataFactory
         mock.Setup(g => g.RecheckKeyboard(It.IsAny<InputGuardResult>())).Returns((InputGuardResult approved) => approved);
         mock.Setup(g => g.RecheckMouse(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<InputGuardResult>()))
             .Returns((int _, int _, InputGuardResult approved) => approved);
+        mock.Setup(g => g.RecheckDrop(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<InputGuardResult>()))
+            .Returns((int _, int _, InputGuardResult approved) => approved);
         mock.Setup(g => g.DescribeForeground()).Returns(window);
 
         return mock;

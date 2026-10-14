@@ -18,8 +18,11 @@ public sealed class HeldInputTracker
     /// </summary>
     public const ushort MaskKey = 0xE8;
 
-    /// <summary>VK_LBUTTON, VK_RBUTTON and VK_MBUTTON: the key-state codes of the mouse buttons.</summary>
-    private const ushort VkLButton = 0x01, VkRButton = 0x02, VkMButton = 0x04;
+    /// <summary>VK_LBUTTON, VK_RBUTTON, VK_MBUTTON, VK_XBUTTON1 and VK_XBUTTON2: the key-state codes of the mouse buttons.</summary>
+    private const ushort VkLButton = 0x01, VkRButton = 0x02, VkMButton = 0x04, VkXButton1 = 0x05, VkXButton2 = 0x06;
+
+    /// <summary>The X buttons, which share MOUSEEVENTF_XDOWN and XUP and are told apart by the event's mouseData.</summary>
+    private static readonly uint[] XButtons = [NativeEnums.XBUTTON1, NativeEnums.XBUTTON2];
 
     private static readonly (uint Down, uint Up)[] Buttons =
     [
@@ -36,7 +39,7 @@ public sealed class HeldInputTracker
     /// <summary>True when nothing is held.</summary>
     public bool IsEmpty => _held.Count == 0;
 
-    /// <summary>True when <paramref name="input"/> is held (the extended-key flag is ignored).</summary>
+    /// <summary>True when <paramref name="input"/> is held (the extended-key flag is ignored; which X button is not).</summary>
     public bool Contains(HeldInput input) => _held.Exists(h => SameKey(h, input));
 
     /// <summary>Applies the first <paramref name="count"/> events of a batch, the ones SendInput inserted.</summary>
@@ -96,8 +99,8 @@ public sealed class HeldInputTracker
 
     /// <summary>
     /// The virtual-key code Windows reports the state of <paramref name="input"/> under (GetAsyncKeyState):
-    /// the key itself, or VK_LBUTTON, VK_RBUTTON or VK_MBUTTON; null for a character sent as Unicode, which
-    /// has no state of its own.
+    /// the key itself, or VK_LBUTTON, VK_RBUTTON, VK_MBUTTON, VK_XBUTTON1 or VK_XBUTTON2; null for a character sent as
+    /// Unicode, which has no state of its own.
     /// </summary>
     public static ushort? StateKey(HeldInput input) => input.Kind switch
     {
@@ -105,6 +108,8 @@ public sealed class HeldInputTracker
         InputEventKind.Mouse when input.Code == NativeEnums.MOUSEEVENTF_LEFTDOWN => VkLButton,
         InputEventKind.Mouse when input.Code == NativeEnums.MOUSEEVENTF_RIGHTDOWN => VkRButton,
         InputEventKind.Mouse when input.Code == NativeEnums.MOUSEEVENTF_MIDDLEDOWN => VkMButton,
+        InputEventKind.Mouse when input.Code == NativeEnums.MOUSEEVENTF_XDOWN && input.Flags == NativeEnums.XBUTTON1 => VkXButton1,
+        InputEventKind.Mouse when input.Code == NativeEnums.MOUSEEVENTF_XDOWN && input.Flags == NativeEnums.XBUTTON2 => VkXButton2,
         _ => null
     };
 
@@ -135,7 +140,8 @@ public sealed class HeldInputTracker
 
         foreach (var input in held.Where(h => h.Kind == InputEventKind.Mouse))
         {
-            events.Add(InputEvent.Mouse((uint)input.Code << 1));
+            // An X button's up names the button in mouseData, as its down did
+            events.Add(InputEvent.Mouse((uint)input.Code << 1, input.Code == NativeEnums.MOUSEEVENTF_XDOWN ? input.Flags : 0));
         }
 
         return events;
@@ -170,9 +176,24 @@ public sealed class HeldInputTracker
                     }
                 }
 
+                foreach (var xButton in XButtons.Where(xButton => (e.MouseData & xButton) != 0))
+                {
+                    if ((e.Flags & NativeEnums.MOUSEEVENTF_XDOWN) != 0)
+                    {
+                        yield return (HeldInput.XButton(xButton), true);
+                    }
+
+                    if ((e.Flags & NativeEnums.MOUSEEVENTF_XUP) != 0)
+                    {
+                        yield return (HeldInput.XButton(xButton), false);
+                    }
+                }
+
                 break;
         }
     }
 
-    private static bool SameKey(HeldInput a, HeldInput b) => a.Kind == b.Kind && a.Code == b.Code;
+    /// <summary>The same key or button: an extended key is the key itself; X1 and X2 share a code and differ in their flags.</summary>
+    private static bool SameKey(HeldInput a, HeldInput b) =>
+        a.Kind == b.Kind && a.Code == b.Code && (a.Kind != InputEventKind.Mouse || a.Flags == b.Flags);
 }
