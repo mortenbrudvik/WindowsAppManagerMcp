@@ -14,6 +14,15 @@ internal static partial class NativeMethods
         /// <summary>Unicode text, null-terminated UTF-16.</summary>
         public const uint CF_UNICODETEXT = 13;
 
+        /// <summary>ANSI text; Windows makes it from CF_UNICODETEXT and back.</summary>
+        public const uint CF_TEXT = 1;
+
+        /// <summary>OEM text; Windows makes it from CF_UNICODETEXT and back.</summary>
+        public const uint CF_OEMTEXT = 7;
+
+        /// <summary>The locale of the text formats; Windows adds it to text.</summary>
+        public const uint CF_LOCALE = 16;
+
         /// <summary>A list of copied files (an HDROP).</summary>
         public const uint CF_HDROP = 15;
 
@@ -56,6 +65,10 @@ internal static partial class NativeMethods
 
         [LibraryImport("user32.dll")]
         public static partial uint GetClipboardSequenceNumber();
+
+        /// <summary>The format after <paramref name="format"/> on the open clipboard (0 starts); 0 after the last one.</summary>
+        [LibraryImport("user32.dll", SetLastError = true)]
+        public static partial uint EnumClipboardFormats(uint format);
 
         /// <summary>The window that owns the clipboard (the one that emptied it last); zero when there is none.</summary>
         [LibraryImport("user32.dll", SetLastError = true)]

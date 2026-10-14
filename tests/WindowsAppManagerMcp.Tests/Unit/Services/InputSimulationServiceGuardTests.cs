@@ -253,31 +253,31 @@ public class InputSimulationServiceGuardTests
     }
 
     [Fact]
-    public async Task TypeText_LongText_GoesInBatchesOf32Characters_WithARecheckRightBeforeEachBatch()
+    public async Task TypeText_LongText_GoesInBatchesOf64Characters_WithARecheckRightBeforeEachBatch()
     {
         // Arrange
-        var text = new string('x', 70);
+        var text = new string('x', 140);
 
         // Act
         var result = await CreateSut().TypeTextAsync(text);
 
-        // Assert
+        // Assert - two events (down and up) per character
         result.Success.Should().BeTrue();
-        result.CharactersTyped.Should().Be(70);
-        _batches.Select(b => b.Count).Should().Equal(64, 64, 12);
+        result.CharactersTyped.Should().Be(140);
+        _batches.Select(b => b.Count).Should().Equal(128, 128, 24);
         _guard.Verify(g => g.RecheckKeyboard(It.IsAny<InputGuardResult>()), Times.Exactly(3));
-        InputSimulationService.TypeTextBatchSize.Should().Be(32);
+        InputSimulationService.TypeTextBatchSize.Should().Be(64);
     }
 
     [Fact]
     public async Task TypeText_ForegroundChangesMidway_StopsWithTargetLostFocusAndTheCharactersTyped()
     {
-        // Arrange - the third re-check (before characters 65-96) finds another window in front
+        // Arrange - the third re-check (before characters 129-192) finds another window in front
         var rechecks = 0;
         _guard.Setup(g => g.RecheckKeyboard(It.IsAny<InputGuardResult>()))
             .Returns((InputGuardResult approved) =>
                 ++rechecks <= 2 ? approved : Refused(InputErrorCode.TargetLostFocus, Notepad));
-        var text = new string('x', 100);
+        var text = new string('x', 200);
 
         // Act
         var result = await CreateSut().TypeTextAsync(text);
@@ -285,11 +285,11 @@ public class InputSimulationServiceGuardTests
         // Assert
         result.Success.Should().BeFalse();
         result.ErrorCode.Should().Be(InputErrorCode.TargetLostFocus);
-        result.CharactersTyped.Should().Be(64);
-        result.Error.Should().Contain("Typing stopped after 64 of 100 characters").And.Contain("Untitled - Notepad");
+        result.CharactersTyped.Should().Be(128);
+        result.Error.Should().Contain("Typing stopped after 128 of 200 characters").And.Contain("Untitled - Notepad");
         result.ReceivingWindow.Should().Be(Notepad);
         result.ForegroundAfter.Should().Be(Terminal);
-        _batches.Sum(b => b.Count).Should().Be(128, "only the first two batches were sent");
+        _batches.Sum(b => b.Count).Should().Be(256, "only the first two batches were sent");
     }
 
     [Fact]
@@ -323,17 +323,18 @@ public class InputSimulationServiceGuardTests
     }
 
     [Fact]
-    public async Task TypeText_SurrogatePairAtABatchBoundary_StaysInOneBatch()
+    public async Task TypeText_SurrogatePairAtABatchBoundary_StaysInOneBatch_AndCountsAsOneCharacter()
     {
-        // Arrange - an emoji (two UTF-16 code units) would straddle the 32-character boundary
-        var text = new string('a', 31) + "\U0001F600" + "b";
+        // Arrange - an emoji (two UTF-16 code units) is the 64th character, the last of the first batch
+        var text = new string('a', 63) + "\U0001F600" + "b";
 
         // Act
         var result = await CreateSut().TypeTextAsync(text);
 
         // Assert
-        result.CharactersTyped.Should().Be(text.Length);
-        _batches.Select(b => b.Count).Should().Equal(66, 2);
+        result.CharactersTyped.Should().Be(65);
+        result.Length.Should().Be(65);
+        _batches.Select(b => b.Count).Should().Equal(130, 2);
     }
 
     [Fact]

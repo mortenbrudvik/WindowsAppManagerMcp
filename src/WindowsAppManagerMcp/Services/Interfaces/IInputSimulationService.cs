@@ -71,10 +71,12 @@ public interface IInputSimulationService
     bool IsValidScreenCoordinate(int x, int y);
 
     /// <summary>
-    /// Types text by simulating keyboard input using Unicode characters. With a target, brings it to the
-    /// front first; the foreground window is checked again before every batch of characters, and typing
-    /// stops (TargetLostFocus, with CharactersTyped) when another window comes to the front, and
-    /// (ModifiersHeld) when a modifier key goes down.
+    /// Types text by simulating keyboard input using Unicode characters or the keys of the window's layout, or pastes it
+    /// through the clipboard (roadmap M4.4). With a target, brings it to the front first; the foreground window is checked
+    /// again before every batch of characters and right before a paste, and typing stops (TargetLostFocus, with
+    /// CharactersTyped) when another window comes to the front, and (ModifiersHeld) when a modifier key goes down. Typing
+    /// takes at most <see cref="InputSimulationService.MaxTypedLength"/> characters and a paste at most
+    /// <see cref="InputSimulationService.MaxPasteLength"/> (TextTooLong).
     /// </summary>
     /// <param name="text">The text to type.</param>
     /// <param name="delayBetweenKeysMs">Delay between keystrokes in milliseconds (0-100).</param>
@@ -84,9 +86,13 @@ public interface IInputSimulationService
     /// What the text's line breaks (a Windows line break and a lone carriage return count as a line feed) and tabs do;
     /// null refuses text that has any (InvalidArguments).
     /// </param>
-    /// <param name="cancellationToken">The request's token: cancelling it stops typing between batches.</param>
+    /// <param name="method">
+    /// unicode, keys or paste; auto pastes text longer than <see cref="InputSimulationService.AutoPasteThreshold"/> characters
+    /// when it can, and types the rest as unicode.
+    /// </param>
+    /// <param name="cancellationToken">The request's token: cancelling it stops typing between batches (not a paste once sent).</param>
     Task<TypeTextResult> TypeTextAsync(string text, int delayBetweenKeysMs, InputTarget target, bool releaseHeldModifiers,
-        TextControlChars? controlChars, CancellationToken cancellationToken);
+        TextControlChars? controlChars, TextInputMethod method, CancellationToken cancellationToken);
 
     /// <summary>
     /// Sends keys and key combinations in send_keys' grammar (<see cref="KeySpecParser"/>), every character mapped with the

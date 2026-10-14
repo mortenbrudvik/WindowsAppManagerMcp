@@ -157,16 +157,43 @@ public record MouseMoveResult(
 }
 
 /// <summary>
-/// Result of a text typing operation.
+/// Result of a text typing operation. It never echoes the text (roadmap M4.4): a password or a long document would come
+/// back into the agent's context, and the audit log keeps only the numbers.
 /// </summary>
+/// <param name="Length">
+/// How many characters the text has, counted as <paramref name="CharactersTyped"/> counts them: Unicode code points (an
+/// emoji is one), with a Windows line break (\r\n) as one.
+/// </param>
+/// <param name="CharactersTyped">
+/// How many of them went in: all of them on success, how far typing got when it stopped part way; for a paste all of
+/// them or none.
+/// </param>
 public record TypeTextResult(
     bool Success,
-    string Text,
+    int Length,
     int CharactersTyped,
     string? Error = null,
     InputErrorCode ErrorCode = InputErrorCode.None
 )
 {
+    /// <summary>
+    /// How the text went in, or was to go in when the call failed: unicode, keys or paste (what auto chose). Null when
+    /// the call was refused before a method was chosen (empty text).
+    /// </summary>
+    public string? Method { get; init; }
+
+    /// <summary>
+    /// paste: true when the clipboard holds what it held before the paste again (or is empty again), false when it does
+    /// not (<see cref="Warning"/> says what it holds). Null when the clipboard was not used.
+    /// </summary>
+    public bool? ClipboardRestored { get; init; }
+
+    /// <summary>
+    /// Something to know about a call that went through: auto typed instead of pasting (and why), or the clipboard was
+    /// not put back after a paste.
+    /// </summary>
+    public string? Warning { get; init; }
+
     /// <summary>
     /// The window the keys went to (the foreground window, which can be a dialog of the target), or would
     /// have gone to when the call was refused. Null when nothing was checked (empty text).
@@ -471,7 +498,23 @@ public enum InputErrorCode
     /// it at once. The input may have landed where the pointer is. Not CursorNotAtPoint, which is found before anything is
     /// sent.
     /// </summary>
-    CursorClamped = 48
+    CursorClamped = 48,
+
+    // type_text paste mode and bounded text (roadmap M4.4). Nothing was sent.
+
+    /// <summary>
+    /// type_text: the text is longer than its method takes: more than <see cref="Services.InputSimulationService.MaxTypedLength"/>
+    /// characters to type (unicode, keys, or auto when it types), or more than
+    /// <see cref="Services.InputSimulationService.MaxPasteLength"/> to paste. Nothing was typed.
+    /// </summary>
+    TextTooLong = 49,
+
+    /// <summary>
+    /// type_text with method paste: the clipboard cannot be lent to the paste. It holds content the server could not put
+    /// back afterwards (formatted text, an image, files, an application's own data, content marked private, or very long
+    /// text), or it could not be opened, read or written. Nothing was pasted, and the clipboard is as it was.
+    /// </summary>
+    ClipboardUnavailable = 50
 }
 
 /// <summary>

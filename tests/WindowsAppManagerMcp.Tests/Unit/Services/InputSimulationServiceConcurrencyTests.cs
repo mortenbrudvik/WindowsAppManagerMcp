@@ -9,9 +9,9 @@ public class InputSimulationServiceConcurrencyTests
 {
     private static readonly TimeSpan TestTimeout = TimeSpan.FromSeconds(10);
 
-    // Longer than one type_text batch (32 characters), so each call sends several batches
-    private static readonly string As = new('a', 40);
-    private static readonly string Bs = new('b', 40);
+    // Longer than one type_text batch (64 characters), so each call sends several batches
+    private static readonly string As = new('a', 80);
+    private static readonly string Bs = new('b', 80);
 
     private readonly Mock<IMonitorService> _mockMonitorService;
 
@@ -64,8 +64,8 @@ public class InputSimulationServiceConcurrencyTests
         // Act
         await RunOverlapping(wrapper, () => sut.TypeTextAsync(As), () => sut.SendKeysAsync("^c"));
 
-        // Assert - the text goes in batches of up to 32 characters, and the keys come after all of them
-        wrapper.Operations.Should().Equal(As[..32], As[32..], "keys");
+        // Assert - the text goes in batches of up to 64 characters, and the keys come after all of them
+        wrapper.Operations.Should().Equal(As[..64], As[64..], "keys");
     }
 
     [Fact]

@@ -1719,13 +1719,13 @@ public sealed class ElementActionServiceTests : IDisposable
         _input.Setup(i => i.SendKeysAsync(It.IsAny<string>(), InputTarget.Window(Handle, false), false, It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .Callback((string k, InputTarget _, bool _, int _, CancellationToken _) => keys.Add(k))
             .ReturnsAsync((string k, InputTarget _, bool _, int _, CancellationToken _) => new SendKeysResult(true, k) { ReceivingWindow = Main });
-        _input.Setup(i => i.TypeTextAsync("Ada", 0, InputTarget.Window(Handle, false), false, It.IsAny<TextControlChars?>(), It.IsAny<CancellationToken>()))
+        _input.Setup(i => i.TypeTextAsync("Ada", 0, InputTarget.Window(Handle, false), false, It.IsAny<TextControlChars?>(), It.IsAny<TextInputMethod>(), It.IsAny<CancellationToken>()))
             .Callback(() =>
             {
                 keys.Add("Ada");
                 value.Value = "Ada";
             })
-            .ReturnsAsync(new TypeTextResult(true, "Ada", 3) { ReceivingWindow = Main });
+            .ReturnsAsync(new TypeTextResult(true, 3, 3) { ReceivingWindow = Main });
 
         // Act
         var result = await ActAsync(name, ElementActionKind.SetValue, "Ada", ElementValueMode.Type);
@@ -1841,13 +1841,13 @@ public sealed class ElementActionServiceTests : IDisposable
         var search = new FakeUiaNode("Edit", "Search") { ProcessId = Pid, IsKeyboardFocusable = true };
         _input.Setup(i => i.SendKeysAsync("^a", It.IsAny<InputTarget>(), false, It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((string k, InputTarget target, bool _, int _, CancellationToken _) => SendKeysAsTheGuardWould(k, target));
-        _input.Setup(i => i.TypeTextAsync("Ada", 0, It.IsAny<InputTarget>(), false, It.IsAny<TextControlChars?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((string text, int _, InputTarget target, bool _, TextControlChars? _, CancellationToken _) =>
+        _input.Setup(i => i.TypeTextAsync("Ada", 0, It.IsAny<InputTarget>(), false, It.IsAny<TextControlChars?>(), It.IsAny<TextInputMethod>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string text, int _, InputTarget target, bool _, TextControlChars? _, TextInputMethod _, CancellationToken _) =>
             {
                 _tree.Focused = search;
                 return target.FocusRecheck?.Invoke() is { } moved
-                    ? new TypeTextResult(false, text, 0, $"Nothing was typed. {moved.Error}", InputErrorCode.TargetLostFocus) { ReceivingWindow = Main }
-                    : new TypeTextResult(true, text, text.Length) { ReceivingWindow = Main };
+                    ? new TypeTextResult(false, text.Length, 0, $"Nothing was typed. {moved.Error}", InputErrorCode.TargetLostFocus) { ReceivingWindow = Main }
+                    : new TypeTextResult(true, text.Length, text.Length) { ReceivingWindow = Main };
             });
 
         // Act
@@ -1898,8 +1898,8 @@ public sealed class ElementActionServiceTests : IDisposable
         _tree.Focused = text;
         _input.Setup(i => i.SendKeysAsync("^a", It.IsAny<InputTarget>(), false, It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new SendKeysResult(true, "^a"));
-        _input.Setup(i => i.TypeTextAsync("Calibri", 0, It.IsAny<InputTarget>(), false, It.IsAny<TextControlChars?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new TypeTextResult(true, "Calibri", 7));
+        _input.Setup(i => i.TypeTextAsync("Calibri", 0, It.IsAny<InputTarget>(), false, It.IsAny<TextControlChars?>(), It.IsAny<TextInputMethod>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new TypeTextResult(true, 7, 7));
 
         // Act
         var result = await ActAsync(comboRef, ElementActionKind.SetValue, "Calibri", ElementValueMode.Type);
@@ -1981,8 +1981,8 @@ public sealed class ElementActionServiceTests : IDisposable
         _input.Setup(i => i.SendKeysAsync(It.IsAny<string>(), It.IsAny<InputTarget>(), false, It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .Callback((string k, InputTarget _, bool _, int _, CancellationToken _) => keys.Add(k))
             .ReturnsAsync((string k, InputTarget _, bool _, int _, CancellationToken _) => new SendKeysResult(true, k));
-        _input.Setup(i => i.TypeTextAsync(", world", 0, It.IsAny<InputTarget>(), false, It.IsAny<TextControlChars?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new TypeTextResult(true, ", world", 7));
+        _input.Setup(i => i.TypeTextAsync(", world", 0, It.IsAny<InputTarget>(), false, It.IsAny<TextControlChars?>(), It.IsAny<TextInputMethod>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new TypeTextResult(true, 7, 7));
 
         var result = await ActAsync(name, ElementActionKind.AppendText, ", world", ElementValueMode.Type);
 

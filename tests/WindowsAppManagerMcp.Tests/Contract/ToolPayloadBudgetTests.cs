@@ -98,7 +98,7 @@ public class ToolPayloadBudgetTests
         ["right_click"] = 150, // 80
         ["double_click"] = 150, // 80
         ["mouse_move"] = 150, // 75
-        ["type_text"] = 150, // 77: echoes the typed text
+        ["type_text"] = 150, // 77: the length and method, never the text (M4.4)
         ["send_keys"] = 150, // 67
         ["scroll"] = 150, // 81
 
@@ -131,11 +131,11 @@ public class ToolPayloadBudgetTests
     /// <summary>
     /// The token budget of the whole tools/list result (every tool's name, title, description, schemas and annotations), as
     /// clients that load every tool up front pay it for the whole session. A ratchet, not a margin: it sits just above the
-    /// measured size (52,543 tokens, 210,172 bytes for 64 tools, October 2026, after M3.F32's screenshotMarks and observe on six action tools, M3.F8's launch arguments description, M3.F38's markPrefix, M4.2's CursorClamped and mouse buttons, and M4.1's key grammar, send_keys' delayMs and keysSent, and type_text's controlChars), so every addition to the surface is a decision. When a change
+    /// measured size (52,736 tokens, 210,943 bytes for 64 tools, October 2026, after M3.F32's screenshotMarks and observe on six action tools, M3.F8's launch arguments description, M3.F38's markPrefix, M4.2's CursorClamped and mouse buttons, M4.1's key grammar, send_keys' delayMs and keysSent, and type_text's controlChars, and M4.4's type_text method and paste), so every addition to the surface is a decision. When a change
     /// adds to the surface on purpose, raise it in the same change by what the failure message measures; when a change
     /// trims descriptions, lower it.
     /// </summary>
-    public const int ToolListTokenBudget = 52_579;
+    public const int ToolListTokenBudget = 52_772;
 
     public static TheoryData<string> ServedTools() => EveryToolContractTests.ServedTools();
 

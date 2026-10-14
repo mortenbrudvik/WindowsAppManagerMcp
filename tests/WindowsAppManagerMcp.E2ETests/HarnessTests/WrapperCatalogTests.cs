@@ -194,6 +194,7 @@ public class WrapperCatalogTests
     [InlineData(typeof(INativeClipboardWrapper), nameof(INativeClipboardWrapper.GetOwnerProcessId), WrapperCallKind.Read)]
     [InlineData(typeof(INativeClipboardWrapper), nameof(INativeClipboardWrapper.Read), WrapperCallKind.Clipboard)]
     [InlineData(typeof(INativeClipboardWrapper), nameof(INativeClipboardWrapper.WriteText), WrapperCallKind.Clipboard)]
+    [InlineData(typeof(INativeClipboardWrapper), nameof(INativeClipboardWrapper.ReplaceText), WrapperCallKind.Clipboard)]
     [InlineData(typeof(INativeHitTestWrapper), nameof(INativeHitTestWrapper.GetClientAreaOnScreen), WrapperCallKind.Read)]
     [InlineData(typeof(INativeSystemInfoWrapper), nameof(INativeSystemInfoWrapper.GetMouseWheelRouting), WrapperCallKind.Read)]
     [InlineData(typeof(INativeWindowWrapper), nameof(INativeWindowWrapper.RespondsWithin), WrapperCallKind.Read)]

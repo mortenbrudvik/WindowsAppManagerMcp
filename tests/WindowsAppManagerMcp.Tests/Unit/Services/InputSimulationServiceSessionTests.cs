@@ -53,7 +53,7 @@ public class InputSimulationServiceSessionTests
                 var scroll = sut.Scroll(100, 100, 3, 0, InputTarget.None, releaseHeldModifiers, token);
                 return (scroll.Success, scroll.ErrorCode, scroll.Error, scroll.HeldModifiers, scroll.ReleasedModifiers);
             case "type_text":
-                var typed = await sut.TypeTextAsync("hello", 0, InputTarget.None, releaseHeldModifiers, null, token);
+                var typed = await sut.TypeTextAsync("hello", 0, InputTarget.None, releaseHeldModifiers, null, TextInputMethod.Unicode, token);
                 return (typed.Success, typed.ErrorCode, typed.Error, typed.HeldModifiers, typed.ReleasedModifiers);
             default:
                 var keys = await sut.SendKeysAsync("^c", InputTarget.None, releaseHeldModifiers, 0, token);
@@ -100,8 +100,8 @@ public class InputSimulationServiceSessionTests
     [Fact]
     public async Task Pause_BetweenBatches_StopsALongTypeText_WithWhatWasTyped()
     {
-        // Arrange - the user presses the hotkey right before the third batch of 32 characters
-        var text = new string('x', 100);
+        // Arrange - the user presses the hotkey right before the third batch of 64 characters
+        var text = new string('x', 200);
         var rechecks = 0;
         _guard.Setup(g => g.RecheckKeyboard(It.IsAny<InputGuardResult>()))
             .Returns((InputGuardResult approved) =>
@@ -119,8 +119,8 @@ public class InputSimulationServiceSessionTests
 
         // Assert - two batches went in, nothing after the pause, and nothing is held down
         result.ErrorCode.Should().Be(InputErrorCode.PausedByUser);
-        result.CharactersTyped.Should().Be(64);
-        result.Error.Should().StartWith("Typing stopped after 64 of 100 characters");
+        result.CharactersTyped.Should().Be(128);
+        result.Error.Should().StartWith("Typing stopped after 128 of 200 characters");
         result.ReceivingWindow.Should().NotBeNull();
         _input.Batches.Should().HaveCount(2);
         VerifyNothingIsDown();
@@ -203,7 +203,7 @@ public class InputSimulationServiceSessionTests
         };
 
         // Act
-        var act = () => CreateSut().TypeTextAsync("abcdefghij", 10, InputTarget.None, false, null, cancel.Token);
+        var act = () => CreateSut().TypeTextAsync("abcdefghij", 10, InputTarget.None, false, null, TextInputMethod.Unicode, cancel.Token);
 
         // Assert - the SDK reports the cancellation; nothing more is typed and nothing stays down
         await act.Should().ThrowAsync<OperationCanceledException>();
@@ -323,13 +323,13 @@ public class InputSimulationServiceSessionTests
         _input.BeforeSend = _ => _input.Press(VkRShift);
 
         // Act
-        var result = await CreateSut().TypeTextAsync(new string('x', 40));
+        var result = await CreateSut().TypeTextAsync(new string('x', 80));
 
         // Assert
         result.ErrorCode.Should().Be(InputErrorCode.ModifiersHeld);
-        result.CharactersTyped.Should().Be(32);
+        result.CharactersTyped.Should().Be(64);
         result.HeldModifiers.Should().Equal("RightShift");
-        result.Error.Should().StartWith("Typing stopped after 32 of 40 characters");
+        result.Error.Should().StartWith("Typing stopped after 64 of 80 characters");
         _input.Batches.Should().ContainSingle();
     }
 

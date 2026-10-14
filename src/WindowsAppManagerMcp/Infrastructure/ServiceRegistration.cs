@@ -209,6 +209,7 @@ public static class ServiceRegistration
         services.AddSingleton(_ => ClipboardOptions.FromEnvironment());
         services.AddSingleton<IClipboardService, ClipboardService>();
         services.AddSingleton<IClipboardPasteGuard, ClipboardPasteGuard>();
+        services.AddSingleton<IPasteClipboard, PasteClipboard>();
 
         // MCP tool classes
         services.AddSingleton<WindowFinderTools>();

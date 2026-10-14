@@ -507,14 +507,14 @@ public class WindowSelectorToolTests
     public async Task TypeText_WithABareForegroundSelectorAndAllowHostTarget_GivesAllowHostTargetNoWindow_SoItHasNoEffect()
     {
         var input = new Mock<IInputSimulationService>();
-        input.Setup(i => i.TypeTextAsync(It.IsAny<string>(), It.IsAny<int>(), It.IsAny<InputTarget>(), It.IsAny<bool>(), It.IsAny<TextControlChars?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new TypeTextResult(true, "hello", 5));
+        input.Setup(i => i.TypeTextAsync(It.IsAny<string>(), It.IsAny<int>(), It.IsAny<InputTarget>(), It.IsAny<bool>(), It.IsAny<TextControlChars?>(), It.IsAny<TextInputMethod>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new TypeTextResult(true, 5, 5));
         var tools = new InputSimulationTools(input.Object, _windows.Object);
 
         await tools.TypeText("hello", window: new WindowSelector { Foreground = true }, allowHostTarget: true);
 
         // InputTarget.HasWindow is false: the host guard ignores allowHostTarget without a window named by handle
-        input.Verify(i => i.TypeTextAsync("hello", It.IsAny<int>(), new InputTarget(null, true), false, It.IsAny<TextControlChars?>(), It.IsAny<CancellationToken>()), Times.Once);
+        input.Verify(i => i.TypeTextAsync("hello", It.IsAny<int>(), new InputTarget(null, true), false, It.IsAny<TextControlChars?>(), It.IsAny<TextInputMethod>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Theory]

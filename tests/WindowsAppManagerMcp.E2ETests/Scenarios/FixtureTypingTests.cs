@@ -42,7 +42,7 @@ public class FixtureTypingTests
             UiaReads.FocusedAutomationId(processId) + "'. Nothing was typed");
 
         // Act 2 - type_text without a target; the input guard checks the foreground window before every batch
-        var typed = await e2e.Server.Input.TypeTextAsync(Text, 0, InputTarget.None, releaseHeldModifiers: false, null, CancellationToken.None);
+        var typed = await e2e.Server.Input.TypeTextAsync(Text, 0, InputTarget.None, releaseHeldModifiers: false, null, TextInputMethod.Unicode, CancellationToken.None);
 
         // Assert 2 - the server's result, the fixture's own record and the edit box all agree
         typed.Success.Should().BeTrue(typed.Error);

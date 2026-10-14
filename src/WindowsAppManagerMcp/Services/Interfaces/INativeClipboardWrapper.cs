@@ -18,6 +18,11 @@ namespace WindowsAppManagerMcp.Services.Interfaces;
 /// <param name="Files">files: the paths, at most the asked number.</param>
 /// <param name="FileCount">files: how many paths there are.</param>
 /// <param name="Error">Why the content of a format the clipboard holds could not be read (with the Win32 error); null when it was.</param>
+/// <param name="HasOtherFormats">
+/// The clipboard holds a format besides plain text: HTML, files, an image, rich text or an application's own data. The
+/// text formats Windows makes from text, the privacy markers and OLE's bookkeeping formats do not count. Only a clipboard
+/// without it can be put back after type_text's paste (roadmap M4.4).
+/// </param>
 public sealed record ClipboardSnapshot(
     bool Opened,
     uint SequenceNumber = 0,
@@ -30,7 +35,8 @@ public sealed record ClipboardSnapshot(
     byte[]? Html = null,
     IReadOnlyList<string>? Files = null,
     int FileCount = 0,
-    string? Error = null)
+    string? Error = null,
+    bool HasOtherFormats = false)
 {
     /// <summary>
     /// The most "HTML Format" bytes a read takes. The fragment's offsets point into the whole data, and an Office copy
@@ -54,7 +60,12 @@ public sealed record ClipboardSnapshot(
 /// </param>
 /// <param name="ExcludedFromHistory">True when the formats that keep the text out of clipboard history are on it too.</param>
 /// <param name="Error">Why the text is not on the clipboard (with the Win32 error); null on success.</param>
-public sealed record ClipboardWriteOutcome(bool Opened, bool Success, uint SequenceNumber = 0, bool ExcludedFromHistory = false, string? Error = null);
+/// <param name="Changed">
+/// <see cref="INativeClipboardWrapper.ReplaceText"/>: the clipboard no longer had the expected sequence number, so nothing
+/// was changed.
+/// </param>
+public sealed record ClipboardWriteOutcome(bool Opened, bool Success, uint SequenceNumber = 0, bool ExcludedFromHistory = false, string? Error = null,
+    bool Changed = false);
 
 /// <summary>
 /// The Windows clipboard (roadmap M2.16): the one way the server reads or replaces it. Each read or write opens the
@@ -98,4 +109,12 @@ public interface INativeClipboardWrapper
     /// and CanUploadToCloudClipboard = 0.
     /// </summary>
     ClipboardWriteOutcome WriteText(string text);
+
+    /// <summary>
+    /// As <see cref="WriteText"/>, but only while the clipboard's sequence number, read while the server holds it open, is
+    /// still <paramref name="expectedSequence"/>; otherwise nothing is changed (<see cref="ClipboardWriteOutcome.Changed"/>).
+    /// With <paramref name="text"/> null it empties the clipboard instead. type_text's paste (roadmap M4.4) lends the
+    /// clipboard with it and gives it back, never over content another application put there meanwhile.
+    /// </summary>
+    ClipboardWriteOutcome ReplaceText(string? text, uint expectedSequence);
 }

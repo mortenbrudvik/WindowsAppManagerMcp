@@ -830,7 +830,7 @@ public class InputSimulationServiceTests
 
         // Assert
         result.Success.Should().BeTrue();
-        result.Text.Should().Be("Hi!");
+        result.Length.Should().Be(3);
         result.CharactersTyped.Should().Be(3);
         _sentEvents.Should().Equal(
             InputEvent.Unicode('H', KeyDown), InputEvent.Unicode('H', KeyUp),
@@ -870,7 +870,7 @@ public class InputSimulationServiceTests
 
         // Assert
         result.Success.Should().BeTrue();
-        result.Text.Should().Be("a");
+        result.Length.Should().Be(1);
     }
 
     #endregion

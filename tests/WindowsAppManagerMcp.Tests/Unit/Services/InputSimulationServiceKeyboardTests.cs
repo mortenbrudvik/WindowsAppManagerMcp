@@ -286,7 +286,8 @@ public class InputSimulationServiceKeyboardTests
 
         result.Success.Should().BeTrue();
         result.CharactersTyped.Should().Be(5);
-        result.Text.Should().Be("a\r\nb\tc");
+        result.Length.Should().Be(5);
+        result.Method.Should().Be("unicode");
         _input.Events.Should().Equal([.. Unicode('a'), .. Unicode('\n'), .. Unicode('b'), .. Unicode('\t'), .. Unicode('c')]);
     }
 

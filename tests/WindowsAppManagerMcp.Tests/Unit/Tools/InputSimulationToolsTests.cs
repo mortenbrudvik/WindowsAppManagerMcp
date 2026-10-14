@@ -66,10 +66,10 @@ public class InputSimulationToolsTests
         mock.Setup(s => s.GetCursorPosition())
             .Returns((500, 500));
 
-        mock.Setup(s => s.TypeTextAsync(It.IsAny<string>(), It.IsAny<int>(), It.IsAny<InputTarget>(), It.IsAny<bool>(), It.IsAny<TextControlChars?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((string text, int delay, InputTarget _, bool _, TextControlChars? _, CancellationToken _) => new TypeTextResult(
+        mock.Setup(s => s.TypeTextAsync(It.IsAny<string>(), It.IsAny<int>(), It.IsAny<InputTarget>(), It.IsAny<bool>(), It.IsAny<TextControlChars?>(), It.IsAny<TextInputMethod>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string text, int delay, InputTarget _, bool _, TextControlChars? _, TextInputMethod _, CancellationToken _) => new TypeTextResult(
                 Success: success,
-                Text: text,
+                Length: text?.Length ?? 0,
                 CharactersTyped: text?.Length ?? 0,
                 Error: error,
                 ErrorCode: errorCode));
@@ -371,7 +371,7 @@ public class InputSimulationToolsTests
         await sut.TypeText("Hello World");
 
         // Assert
-        _mockInputService.Verify(s => s.TypeTextAsync("Hello World", 0, InputTarget.None, false, It.IsAny<TextControlChars?>(), It.IsAny<CancellationToken>()), Times.Once);
+        _mockInputService.Verify(s => s.TypeTextAsync("Hello World", 0, InputTarget.None, false, It.IsAny<TextControlChars?>(), It.IsAny<TextInputMethod>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -384,7 +384,7 @@ public class InputSimulationToolsTests
         await sut.TypeText("Hello", delayMs: 50);
 
         // Assert
-        _mockInputService.Verify(s => s.TypeTextAsync("Hello", 50, InputTarget.None, false, It.IsAny<TextControlChars?>(), It.IsAny<CancellationToken>()), Times.Once);
+        _mockInputService.Verify(s => s.TypeTextAsync("Hello", 50, InputTarget.None, false, It.IsAny<TextControlChars?>(), It.IsAny<TextInputMethod>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -397,7 +397,7 @@ public class InputSimulationToolsTests
         await sut.TypeText("Hello", delayMs: -10);
 
         // Assert
-        _mockInputService.Verify(s => s.TypeTextAsync("Hello", 0, InputTarget.None, false, It.IsAny<TextControlChars?>(), It.IsAny<CancellationToken>()), Times.Once);
+        _mockInputService.Verify(s => s.TypeTextAsync("Hello", 0, InputTarget.None, false, It.IsAny<TextControlChars?>(), It.IsAny<TextInputMethod>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -410,15 +410,15 @@ public class InputSimulationToolsTests
         await sut.TypeText("Hello", delayMs: 500);
 
         // Assert
-        _mockInputService.Verify(s => s.TypeTextAsync("Hello", 100, InputTarget.None, false, It.IsAny<TextControlChars?>(), It.IsAny<CancellationToken>()), Times.Once);
+        _mockInputService.Verify(s => s.TypeTextAsync("Hello", 100, InputTarget.None, false, It.IsAny<TextControlChars?>(), It.IsAny<TextInputMethod>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
     public async Task TypeText_ReturnsServiceResult()
     {
         // Arrange
-        var expectedResult = new TypeTextResult(true, "Hello", 5);
-        _mockInputService.Setup(s => s.TypeTextAsync("Hello", 0, InputTarget.None, false, It.IsAny<TextControlChars?>(), It.IsAny<CancellationToken>())).ReturnsAsync(expectedResult);
+        var expectedResult = new TypeTextResult(true, 5, 5);
+        _mockInputService.Setup(s => s.TypeTextAsync("Hello", 0, InputTarget.None, false, It.IsAny<TextControlChars?>(), It.IsAny<TextInputMethod>(), It.IsAny<CancellationToken>())).ReturnsAsync(expectedResult);
         var sut = CreateSut();
 
         // Act
@@ -434,11 +434,11 @@ public class InputSimulationToolsTests
         // Arrange
         var errorResult = new TypeTextResult(
             Success: false,
-            Text: "",
+            Length: 0,
             CharactersTyped: 0,
             Error: "Text cannot be empty",
             ErrorCode: InputErrorCode.EmptyText);
-        _mockInputService.Setup(s => s.TypeTextAsync("", 0, InputTarget.None, false, It.IsAny<TextControlChars?>(), It.IsAny<CancellationToken>())).ReturnsAsync(errorResult);
+        _mockInputService.Setup(s => s.TypeTextAsync("", 0, InputTarget.None, false, It.IsAny<TextControlChars?>(), It.IsAny<TextInputMethod>(), It.IsAny<CancellationToken>())).ReturnsAsync(errorResult);
         var sut = CreateSut();
 
         // Act
@@ -491,7 +491,45 @@ public class InputSimulationToolsTests
         await CreateSut().TypeText("a\nb", controlChars: controlChars);
 
         // Assert (roadmap M4.1): the service refuses a line break without it
-        _mockInputService.Verify(s => s.TypeTextAsync("a\nb", 0, InputTarget.None, false, controlChars, It.IsAny<CancellationToken>()), Times.Once);
+        _mockInputService.Verify(s => s.TypeTextAsync("a\nb", 0, InputTarget.None, false, controlChars, It.IsAny<TextInputMethod>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task TypeText_DefaultsToAuto()
+    {
+        // Act (roadmap M4.4): auto types short text, as type_text always did, and pastes long text
+        await CreateSut().TypeText("Hello");
+
+        // Assert
+        _mockInputService.Verify(s => s.TypeTextAsync("Hello", 0, InputTarget.None, false, null, TextInputMethod.Auto, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Theory]
+    [InlineData(TextInputMethod.Unicode)]
+    [InlineData(TextInputMethod.Keys)]
+    [InlineData(TextInputMethod.Paste)]
+    public async Task TypeText_PassesTheMethod_AsGiven(TextInputMethod method)
+    {
+        await CreateSut().TypeText("Hello", method: method);
+
+        _mockInputService.Verify(s => s.TypeTextAsync("Hello", 0, InputTarget.None, false, null, method, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task TypeText_TheToolResult_HasTheLengthButNeverTheText()
+    {
+        // Arrange
+        _mockInputService.Setup(s => s.TypeTextAsync(It.IsAny<string>(), It.IsAny<int>(), It.IsAny<InputTarget>(), It.IsAny<bool>(),
+                It.IsAny<TextControlChars?>(), It.IsAny<TextInputMethod>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new TypeTextResult(true, 15, 15) { Method = "paste", ClipboardRestored = true });
+
+        // Act
+        var result = await CreateSut().TypeText("my secret words", method: TextInputMethod.Paste);
+
+        // Assert
+        var json = string.Concat(result.Content.OfType<ModelContextProtocol.Protocol.TextContentBlock>().Select(b => b.Text));
+        json.Should().Contain("\"length\":15").And.Contain("\"method\":\"paste\"").And.Contain("\"clipboardRestored\":true");
+        json.Should().NotContain("secret").And.NotContain("\"text\"");
     }
 
     [Fact]
@@ -596,7 +634,7 @@ public class InputSimulationToolsTests
         await sut.SendKeys("{ENTER}", releaseHeldModifiers: true, cancellationToken: request.Token);
 
         // Assert
-        _mockInputService.Verify(s => s.TypeTextAsync("x", 0, InputTarget.None, true, null, request.Token), Times.Once);
+        _mockInputService.Verify(s => s.TypeTextAsync("x", 0, InputTarget.None, true, null, It.IsAny<TextInputMethod>(), request.Token), Times.Once);
         _mockInputService.Verify(s => s.SendKeysAsync("{ENTER}", InputTarget.None, true, 0, request.Token), Times.Once);
     }
 

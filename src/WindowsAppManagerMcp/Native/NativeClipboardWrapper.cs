@@ -34,6 +34,16 @@ public sealed class NativeClipboardWrapper : INativeClipboardWrapper
     private const string ViewerIgnoreFormat = "Clipboard Viewer Ignore";
     private const string HtmlFormat = "HTML Format";
 
+    /// <summary>
+    /// The registered formats that say nothing about the content: the privacy markers, and the formats OLE adds for its
+    /// data object (OleSetClipboard), whose real formats are listed on their own.
+    /// </summary>
+    private static readonly string[] BookkeepingFormats =
+    [
+        ExcludeFromMonitorFormat, HistoryFormat, CloudFormat, ViewerIgnoreFormat, "DataObject", "Ole Private Data",
+        "OleClipboardPersistOnFlush"
+    ];
+
     private readonly SemaphoreSlim _oneAtATime = new(1, 1);
 
     public uint GetSequenceNumber() => NativeMethods.Clipboard.GetClipboardSequenceNumber();
@@ -62,8 +72,15 @@ public sealed class NativeClipboardWrapper : INativeClipboardWrapper
     public ClipboardWriteOutcome WriteText(string text)
     {
         ArgumentNullException.ThrowIfNull(text);
+        return Write(text, expectedSequence: null);
+    }
+
+    public ClipboardWriteOutcome ReplaceText(string? text, uint expectedSequence) => Write(text, expectedSequence);
+
+    private ClipboardWriteOutcome Write(string? text, uint? expectedSequence)
+    {
         return RunOnClipboardThread(
-            owner => WriteOpen(owner, text),
+            owner => WriteOpen(owner, text, expectedSequence),
             notStarted: new ClipboardWriteOutcome(false, false),
             timedOut: new ClipboardWriteOutcome(false, false, Error:
                 $"The clipboard did not answer within {CallTimeout.TotalSeconds:0} s (the application that owns it may not be " +
@@ -156,7 +173,8 @@ public sealed class NativeClipboardWrapper : INativeClipboardWrapper
                 Markers: ReadMarkers(),
                 HasText: NativeMethods.Clipboard.IsClipboardFormatAvailable(NativeMethods.Clipboard.CF_UNICODETEXT),
                 HasHtml: htmlFormat != 0 && NativeMethods.Clipboard.IsClipboardFormatAvailable(htmlFormat),
-                HasFiles: NativeMethods.Clipboard.IsClipboardFormatAvailable(NativeMethods.Clipboard.CF_HDROP));
+                HasFiles: NativeMethods.Clipboard.IsClipboardFormatAvailable(NativeMethods.Clipboard.CF_HDROP),
+                HasOtherFormats: HasOtherFormats());
 
             // Private content is not even read into the server's memory unless it is the server's own, by the number of
             // the content that is open now (the clipboard may have changed since the caller looked)
@@ -202,6 +220,25 @@ public sealed class NativeClipboardWrapper : INativeClipboardWrapper
         }
 
         return markers;
+    }
+
+    /// <summary>
+    /// True when the open clipboard holds a format besides plain text (see <see cref="ClipboardSnapshot.HasOtherFormats"/>).
+    /// Fails closed: a bookkeeping format whose name cannot be registered is not recognised, so it counts.
+    /// </summary>
+    private static bool HasOtherFormats()
+    {
+        var bookkeeping = BookkeepingFormats.Select(NativeMethods.Clipboard.RegisterClipboardFormatW).Where(f => f != 0).ToHashSet();
+        for (var format = NativeMethods.Clipboard.EnumClipboardFormats(0); format != 0; format = NativeMethods.Clipboard.EnumClipboardFormats(format))
+        {
+            if (format is not (NativeMethods.Clipboard.CF_UNICODETEXT or NativeMethods.Clipboard.CF_TEXT or
+                    NativeMethods.Clipboard.CF_OEMTEXT or NativeMethods.Clipboard.CF_LOCALE) && !bookkeeping.Contains(format))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static bool IsAvailableOrUnknown(string name, out uint format)
@@ -316,7 +353,12 @@ public sealed class NativeClipboardWrapper : INativeClipboardWrapper
         return snapshot with { Files = files, FileCount = count };
     }
 
-    private static unsafe ClipboardWriteOutcome WriteOpen(nint owner, string text)
+    /// <summary>
+    /// Replaces the clipboard's content with <paramref name="text"/> and the privacy markers, or empties it when
+    /// <paramref name="text"/> is null; with <paramref name="expectedSequence"/>, only while the clipboard still has that
+    /// sequence number (read once it is open, so nobody can change it in between).
+    /// </summary>
+    private static unsafe ClipboardWriteOutcome WriteOpen(nint owner, string? text, uint? expectedSequence)
     {
         if (owner == nint.Zero)
         {
@@ -329,42 +371,51 @@ public sealed class NativeClipboardWrapper : INativeClipboardWrapper
             return new ClipboardWriteOutcome(false, false);
         }
 
-        bool excluded;
+        var excluded = false;
         try
         {
+            if (expectedSequence is { } expected && NativeMethods.Clipboard.GetClipboardSequenceNumber() != expected)
+            {
+                return new ClipboardWriteOutcome(true, false, Changed: true);
+            }
+
             if (!NativeMethods.Clipboard.EmptyClipboard())
             {
                 return new ClipboardWriteOutcome(true, false, Error: Win32Error("EmptyClipboard"));
             }
 
-            // The markers that keep the text out of Win+V history and cloud sync; Windows reads them when the clipboard is closed
-            excluded = PutDword(ExcludeFromMonitorFormat, 0) & PutDword(HistoryFormat, 0) & PutDword(CloudFormat, 0);
-
-            var bytes = (nuint)(((long)text.Length + 1) * sizeof(char));
-            var memory = NativeMethods.Clipboard.GlobalAlloc(NativeMethods.Clipboard.GMEM_MOVEABLE, bytes);
-            if (memory == nint.Zero)
+            // Null empties the clipboard: nothing goes on it
+            if (text != null)
             {
-                return new ClipboardWriteOutcome(true, false, Error: Win32Error("GlobalAlloc"));
-            }
+                // The markers that keep the text out of Win+V history and cloud sync; Windows reads them when the clipboard is closed
+                excluded = PutDword(ExcludeFromMonitorFormat, 0) & PutDword(HistoryFormat, 0) & PutDword(CloudFormat, 0);
 
-            var data = NativeMethods.Clipboard.GlobalLock(memory);
-            if (data == nint.Zero)
-            {
-                var error = Win32Error("GlobalLock");
-                NativeMethods.Clipboard.GlobalFree(memory);
-                return new ClipboardWriteOutcome(true, false, Error: error);
-            }
+                var bytes = (nuint)(((long)text.Length + 1) * sizeof(char));
+                var memory = NativeMethods.Clipboard.GlobalAlloc(NativeMethods.Clipboard.GMEM_MOVEABLE, bytes);
+                if (memory == nint.Zero)
+                {
+                    return new ClipboardWriteOutcome(true, false, Error: Win32Error("GlobalAlloc"));
+                }
 
-            var destination = new Span<char>((void*)data, text.Length + 1);
-            text.AsSpan().CopyTo(destination);
-            destination[text.Length] = '\0';
-            NativeMethods.Clipboard.GlobalUnlock(memory);
+                var data = NativeMethods.Clipboard.GlobalLock(memory);
+                if (data == nint.Zero)
+                {
+                    var error = Win32Error("GlobalLock");
+                    NativeMethods.Clipboard.GlobalFree(memory);
+                    return new ClipboardWriteOutcome(true, false, Error: error);
+                }
 
-            if (NativeMethods.Clipboard.SetClipboardData(NativeMethods.Clipboard.CF_UNICODETEXT, memory) == nint.Zero)
-            {
-                var error = Win32Error("SetClipboardData");
-                NativeMethods.Clipboard.GlobalFree(memory);
-                return new ClipboardWriteOutcome(true, false, Error: error);
+                var destination = new Span<char>((void*)data, text.Length + 1);
+                text.AsSpan().CopyTo(destination);
+                destination[text.Length] = '\0';
+                NativeMethods.Clipboard.GlobalUnlock(memory);
+
+                if (NativeMethods.Clipboard.SetClipboardData(NativeMethods.Clipboard.CF_UNICODETEXT, memory) == nint.Zero)
+                {
+                    var error = Win32Error("SetClipboardData");
+                    NativeMethods.Clipboard.GlobalFree(memory);
+                    return new ClipboardWriteOutcome(true, false, Error: error);
+                }
             }
         }
         finally

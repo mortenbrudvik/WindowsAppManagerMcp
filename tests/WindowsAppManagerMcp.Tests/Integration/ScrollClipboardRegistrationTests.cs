@@ -59,6 +59,20 @@ public sealed class ScrollClipboardRegistrationTests : IDisposable
     }
 
     [Fact]
+    public void TheInputService_GetsThePasteClipboard_WithTheSameOrigin()
+    {
+        // Without it type_text's auto would always type, and its paste would be refused (roadmap M4.4); with another
+        // origin the paste rule would not know the lent text as the agent's
+        var input = _provider.GetRequiredService<IInputSimulationService>();
+        var paste = _provider.GetRequiredService<IPasteClipboard>();
+
+        Field(input, "_pasteClipboard").Should().BeSameAs(paste).And.BeOfType<PasteClipboard>();
+        Field(paste, "_origin").Should().BeSameAs(_provider.GetRequiredService<IClipboardOrigin>());
+        Field(paste, "_clipboard").Should().BeSameAs(_provider.GetRequiredService<INativeClipboardWrapper>());
+        Field(input, "_pasteSettleTime").Should().Be(InputSimulationService.PasteSettleTime);
+    }
+
+    [Fact]
     public void TheClipboardService_UsesTheSameOrigin_AndTheUsersSetting()
     {
         var clipboard = _provider.GetRequiredService<IClipboardService>();

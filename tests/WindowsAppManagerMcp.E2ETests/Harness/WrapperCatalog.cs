@@ -225,7 +225,8 @@ public static class WrapperCatalog
                 [nameof(INativeClipboardWrapper.GetOwnerProcessId)] = WrapperMember.Read,
                 // The user's clipboard: refused in every tier
                 [nameof(INativeClipboardWrapper.Read)] = WrapperMember.Clipboard,
-                [nameof(INativeClipboardWrapper.WriteText)] = WrapperMember.Clipboard
+                [nameof(INativeClipboardWrapper.WriteText)] = WrapperMember.Clipboard,
+                [nameof(INativeClipboardWrapper.ReplaceText)] = WrapperMember.Clipboard
             },
             [typeof(INativeMonitorWrapper)] = new Dictionary<string, WrapperMember>
             {

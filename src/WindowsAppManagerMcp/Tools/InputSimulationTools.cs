@@ -324,20 +324,28 @@ public class InputSimulationTools
     }
 
     [McpServerTool(Name = "type_text", Title = "Type Text", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = false)]
-    [Description("Type text by simulating Unicode keyboard input. Works with any language/characters." + KeyboardTargetNote +
-                 " The foreground window is checked again every 32 characters: if another window comes to the front, typing stops with " +
+    [Description("Type text by simulating Unicode keyboard input (any language), or paste it (method)." + KeyboardTargetNote +
+                 " The foreground window is checked again every 64 characters: if another window comes to the front, typing stops with " +
                  "TargetLostFocus and charactersTyped says how much was typed. Refused while a menu is open (TargetInMenuMode)." +
-                 " Cancelling the request, or the user's pause, stops typing between batches.")]
+                 " Cancelling the request, or the user's pause, stops typing between batches. Typing takes at most 5000 characters, " +
+                 "a paste 1,000,000 (TextTooLong). The result has the text's length, never the text.")]
     [ToolResultPayload(typeof(TypeTextResult))]
     public async Task<CallToolResult> TypeText(
         [Description("The text to type")]
         string text,
         [Description("Delay between keystrokes in milliseconds (0-100, default 0). Use for visible typing effect.")]
         int delayMs = 0,
-        [Description("What line breaks and tabs do; required when the text has any. 'unicode': typed as characters, no " +
+        [Description("What line breaks and tabs do when typed; required when typed text has any. 'unicode': typed as characters, no " +
                      "Enter or Tab key (editors insert them). 'keys': Enter and Tab (can send a chat message or submit a " +
-                     "form). 'shiftEnter': Shift+Enter (a new line in chat apps), tabs as characters. Default: none")]
+                     "form). 'shiftEnter': Shift+Enter (a new line in chat apps), tabs as characters. A paste pastes them as " +
+                     "they are. Default: none")]
         TextControlChars? controlChars = null,
+        [Description("'unicode': type Unicode characters. 'keys': type with the keys of the window's keyboard layout, for " +
+                     "remote desktops and VMs that drop Unicode. 'paste': put the text on the clipboard, press Ctrl+V and put " +
+                     "the clipboard's text back (fast, no autocomplete; never into terminals; ClipboardUnavailable when the " +
+                     "clipboard holds more than plain text). 'auto': paste text over 200 characters when it can, else type " +
+                     "unicode. Default: 'auto'")]
+        TextInputMethod method = TextInputMethod.Auto,
         [Description(KeyboardWindowHandleDescription)]
         long? windowHandle = null,
         [Description(WindowTargeting.InputWindowDescription)]
@@ -353,7 +361,8 @@ public class InputSimulationTools
         ActionObservation.Check(_desktopState, observe, NothingSent);
         delayMs = Math.Clamp(delayMs, 0, 100);
         var target = Target(windowHandle, window, allowHostTarget);
-        var result = await _inputService.TypeTextAsync(text, delayMs, target, releaseHeldModifiers, controlChars, cancellationToken).ConfigureAwait(false);
+        var result = await _inputService.TypeTextAsync(text, delayMs, target, releaseHeldModifiers, controlChars, method, cancellationToken)
+            .ConfigureAwait(false);
         return await ActionObservation.ResultAsync(result, result.Success, Acted(target, result.ReceivingWindow),
             ActionObservation.RefusesWindow(result.ErrorCode.ToString()), observe, (typed, observed) => typed with { Observed = observed },
             _desktopState, _windowService, cancellationToken).ConfigureAwait(false);

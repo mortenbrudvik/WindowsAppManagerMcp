@@ -29,6 +29,9 @@ public sealed class FakeClipboardWrapper : INativeClipboardWrapper
 
     public IReadOnlyList<string>? Files { get; set; }
 
+    /// <summary>A format besides text, HTML and files is on the clipboard too: an image, rich text or an app's own data.</summary>
+    public bool OtherFormats { get; set; }
+
     /// <summary>When false, the clipboard cannot be opened (another app holds it).</summary>
     public bool CanOpen { get; set; } = true;
 
@@ -47,6 +50,12 @@ public sealed class FakeClipboardWrapper : INativeClipboardWrapper
     public int Reads { get; private set; }
 
     public int Writes { get; private set; }
+
+    /// <summary>The text of every <see cref="ReplaceText"/> call, in order (null: empty the clipboard).</summary>
+    public List<string?> Replacements { get; } = [];
+
+    /// <summary>Runs at the start of every <see cref="ReplaceText"/>, before the clipboard is "opened".</summary>
+    public Action<string?>? OnReplace { get; set; }
 
     /// <summary>The privateContentSequence argument of the last read.</summary>
     public uint? LastPrivateContentSequence { get; private set; }
@@ -68,6 +77,7 @@ public sealed class FakeClipboardWrapper : INativeClipboardWrapper
             Text = text;
             Html = null;
             Files = null;
+            OtherFormats = false;
             Markers = markers;
         }
     }
@@ -106,7 +116,8 @@ public sealed class FakeClipboardWrapper : INativeClipboardWrapper
                 return ClipboardSnapshot.NotOpened;
             }
 
-            var snapshot = new ClipboardSnapshot(true, Sequence, Markers, Text != null, Html != null, Files != null);
+            var snapshot = new ClipboardSnapshot(true, Sequence, Markers, Text != null, Html != null, Files != null,
+                HasOtherFormats: OtherFormats || Html != null || Files != null);
             if (snapshot.IsPrivate && (privateContentSequence == 0 || privateContentSequence != Sequence))
             {
                 return snapshot;
@@ -150,8 +161,50 @@ public sealed class FakeClipboardWrapper : INativeClipboardWrapper
             Text = text;
             Html = null;
             Files = null;
+            OtherFormats = false;
             Markers = ClipboardPrivacyMarkers.ExcludeFromMonitorProcessing | ClipboardPrivacyMarkers.NotForClipboardHistory;
             return new ClipboardWriteOutcome(true, true, Sequence, ExcludedFromHistory: true);
+        }
+    }
+
+    public ClipboardWriteOutcome ReplaceText(string? text, uint expectedSequence)
+    {
+        OnReplace?.Invoke(text);
+        lock (_lock)
+        {
+            Replacements.Add(text);
+            if (!CanOpen)
+            {
+                return new ClipboardWriteOutcome(false, false);
+            }
+
+            if (Sequence != expectedSequence)
+            {
+                return new ClipboardWriteOutcome(true, false, Changed: true);
+            }
+        }
+
+        if (text != null)
+        {
+            return WriteText(text);
+        }
+
+        lock (_lock)
+        {
+            Writes++;
+            if (WriteError != null)
+            {
+                return new ClipboardWriteOutcome(true, false, Error: WriteError);
+            }
+
+            Sequence++; // EmptyClipboard
+            OwnerProcessId = ServerProcessId;
+            Text = null;
+            Html = null;
+            Files = null;
+            OtherFormats = false;
+            Markers = ClipboardPrivacyMarkers.None;
+            return new ClipboardWriteOutcome(true, true, Sequence);
         }
     }
 }

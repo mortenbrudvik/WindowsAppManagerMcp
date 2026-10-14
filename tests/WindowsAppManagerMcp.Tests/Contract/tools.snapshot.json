@@ -5955,7 +5955,7 @@
     {
       "name": "type_text",
       "title": "Type Text",
-      "description": "Type text by simulating Unicode keyboard input. Works with any language/characters. Pass windowHandle with the window you mean. Without it the keys go to the current foreground window, whichever it is, so call get_foreground_window immediately before and check its handle; the keys are refused when that window is the agent's own host (terminal, editor or chat app; TargetIsAgentHost). Refused, with nothing sent, for windows of apps running as administrator (TargetElevated), apps the user's policy denies (TargetDeniedByPolicy), a locked session (SessionLocked) or a UAC prompt (DesktopUnavailable). The result reports receivingWindow (where the input went) and foregroundAfter. While the user has paused input with the pause hotkey, nothing is sent (PausedByUser): stop and ask the user, and never try to resume. Refused while a modifier key is held down (ModifiersHeld) unless releaseHeldModifiers is true, and after waiting 30 s for another call (InputBusy). The foreground window is checked again every 32 characters: if another window comes to the front, typing stops with TargetLostFocus and charactersTyped says how much was typed. Refused while a menu is open (TargetInMenuMode). Cancelling the request, or the user's pause, stops typing between batches.",
+      "description": "Type text by simulating Unicode keyboard input (any language), or paste it (method). Pass windowHandle with the window you mean. Without it the keys go to the current foreground window, whichever it is, so call get_foreground_window immediately before and check its handle; the keys are refused when that window is the agent's own host (terminal, editor or chat app; TargetIsAgentHost). Refused, with nothing sent, for windows of apps running as administrator (TargetElevated), apps the user's policy denies (TargetDeniedByPolicy), a locked session (SessionLocked) or a UAC prompt (DesktopUnavailable). The result reports receivingWindow (where the input went) and foregroundAfter. While the user has paused input with the pause hotkey, nothing is sent (PausedByUser): stop and ask the user, and never try to resume. Refused while a modifier key is held down (ModifiersHeld) unless releaseHeldModifiers is true, and after waiting 30 s for another call (InputBusy). The foreground window is checked again every 64 characters: if another window comes to the front, typing stops with TargetLostFocus and charactersTyped says how much was typed. Refused while a menu is open (TargetInMenuMode). Cancelling the request, or the user's pause, stops typing between batches. Typing takes at most 5000 characters, a paste 1,000,000 (TextTooLong). The result has the text's length, never the text.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -5969,7 +5969,7 @@
             "default": 0
           },
           "controlChars": {
-            "description": "What line breaks and tabs do; required when the text has any. 'unicode': typed as characters, no Enter or Tab key (editors insert them). 'keys': Enter and Tab (can send a chat message or submit a form). 'shiftEnter': Shift+Enter (a new line in chat apps), tabs as characters. Default: none",
+            "description": "What line breaks and tabs do when typed; required when typed text has any. 'unicode': typed as characters, no Enter or Tab key (editors insert them). 'keys': Enter and Tab (can send a chat message or submit a form). 'shiftEnter': Shift+Enter (a new line in chat apps), tabs as characters. A paste pastes them as they are. Default: none",
             "default": null,
             "type": [
               "string",
@@ -5980,6 +5980,17 @@
               "keys",
               "shiftEnter",
               null
+            ]
+          },
+          "method": {
+            "description": "'unicode': type Unicode characters. 'keys': type with the keys of the window's keyboard layout, for remote desktops and VMs that drop Unicode. 'paste': put the text on the clipboard, press Ctrl+V and put the clipboard's text back (fast, no autocomplete; never into terminals; ClipboardUnavailable when the clipboard holds more than plain text). 'auto': paste text over 200 characters when it can, else type unicode. Default: 'auto'",
+            "default": "auto",
+            "type": "string",
+            "enum": [
+              "auto",
+              "unicode",
+              "keys",
+              "paste"
             ]
           },
           "windowHandle": {

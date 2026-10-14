@@ -652,15 +652,16 @@ public sealed partial class ElementActionService : IElementActionService
                     $"Only {selectKey} was sent; nothing was pasted.");
         }
 
-        var typed = await _input.TypeTextAsync(text, 0, target, releaseHeldModifiers: false, TextControlChars.Unicode, cancellationToken).ConfigureAwait(false);
+        var typed = await _input.TypeTextAsync(text, 0, target, releaseHeldModifiers: false, TextControlChars.Unicode, TextInputMethod.Unicode,
+            cancellationToken).ConfigureAwait(false);
         return typed.Success
             ? new InputStep(null, typed.ReceivingWindow ?? receiving)
             : Failed(typed.ErrorCode, typed.ReceivingWindow,
                 $"{InputError(typed.ErrorCode, typed.Error, "The text was not typed.")} " +
-                $"({typed.CharactersTyped} of {text.Length} characters were typed.)",
+                $"({typed.CharactersTyped} of {typed.Length} characters were typed.)",
                 typed.CharactersTyped == 0
                     ? $"Only {selectKey} was sent; nothing was typed."
-                    : $"{typed.CharactersTyped} of {text.Length} characters were typed before it moved.");
+                    : $"{typed.CharactersTyped} of {typed.Length} characters were typed before it moved.");
     }
 
     /// <summary>Why the keyboard path's focus recheck refused keys (roadmap M3.F17); both null while it allowed them.</summary>

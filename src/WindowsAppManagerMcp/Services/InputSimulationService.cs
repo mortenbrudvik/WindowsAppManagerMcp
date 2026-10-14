@@ -10,14 +10,26 @@ namespace WindowsAppManagerMcp.Services;
 /// where the input went. Every batch goes through the <see cref="IInputSession"/>, which refuses it while
 /// the user has paused input and releases what an interrupted batch left down.
 /// </summary>
-public class InputSimulationService : IInputSimulationService
+public partial class InputSimulationService : IInputSimulationService
 {
     /// <summary>
     /// type_text sends at most this many characters in one SendInput batch, and the guard checks the
     /// foreground window again before each batch, so typing stops within this many characters of a focus
     /// change. With a delay between keystrokes every character is its own batch.
     /// </summary>
-    public const int TypeTextBatchSize = 32;
+    public const int TypeTextBatchSize = 64;
+
+    /// <summary>
+    /// type_text types at most this many characters (roadmap M4.4), so a runaway call cannot type for minutes; longer text
+    /// is pasted (method paste or auto).
+    /// </summary>
+    public const int MaxTypedLength = 5000;
+
+    /// <summary>type_text pastes at most this many characters, as set_clipboard takes at most.</summary>
+    public const int MaxPasteLength = 1_000_000;
+
+    /// <summary>type_text's method auto pastes text longer than this many characters, and types the rest.</summary>
+    public const int AutoPasteThreshold = 200;
 
     /// <summary>The most wheel notches scroll sends in one direction in one call.</summary>
     public const int MaxScrollNotches = 100;
@@ -39,6 +51,8 @@ public class InputSimulationService : IInputSimulationService
     private readonly IClipboardOrigin? _clipboardOrigin;
     private readonly IClipboardPasteGuard? _pasteGuard;
     private readonly INativeKeyboardLayoutWrapper? _keyboardLayout;
+    private readonly IPasteClipboard? _pasteClipboard;
+    private readonly TimeSpan _pasteSettleTime;
 
     /// <param name="monitorService">The monitors, for coordinate checks.</param>
     /// <param name="inputWrapper">The native input layer, for cursor reads; input itself goes through <paramref name="session"/>.</param>
@@ -61,6 +75,11 @@ public class InputSimulationService : IInputSimulationService
     /// The keyboard layout queries send_keys maps characters with (roadmap M4.1). The server always passes it; without it
     /// keys are mapped with <see cref="KeyboardLayout.Invariant"/>.
     /// </param>
+    /// <param name="pasteClipboard">
+    /// The clipboard type_text's paste lends (roadmap M4.4). The server always passes it; without it method auto always
+    /// types, and method paste cannot be used.
+    /// </param>
+    /// <param name="pasteSettleTime">How long a paste keeps the text on the clipboard after Ctrl+V; default <see cref="PasteSettleTime"/>.</param>
     public InputSimulationService(
         IMonitorService monitorService,
         INativeInputWrapper inputWrapper,
@@ -71,7 +90,9 @@ public class InputSimulationService : IInputSimulationService
         INativeSystemInfoWrapper? systemInfo = null,
         IClipboardOrigin? clipboardOrigin = null,
         IClipboardPasteGuard? pasteGuard = null,
-        INativeKeyboardLayoutWrapper? keyboardLayout = null)
+        INativeKeyboardLayoutWrapper? keyboardLayout = null,
+        IPasteClipboard? pasteClipboard = null,
+        TimeSpan? pasteSettleTime = null)
     {
         _monitorService = monitorService;
         _inputWrapper = inputWrapper;
@@ -83,6 +104,8 @@ public class InputSimulationService : IInputSimulationService
         _clipboardOrigin = clipboardOrigin;
         _pasteGuard = pasteGuard;
         _keyboardLayout = keyboardLayout;
+        _pasteClipboard = pasteClipboard;
+        _pasteSettleTime = pasteSettleTime ?? PasteSettleTime;
     }
 
     /// <summary>
@@ -433,43 +456,56 @@ public class InputSimulationService : IInputSimulationService
     }
 
     public async Task<TypeTextResult> TypeTextAsync(string text, int delayBetweenKeysMs = 0, InputTarget target = default,
-        bool releaseHeldModifiers = false, TextControlChars? controlChars = null, CancellationToken cancellationToken = default)
+        bool releaseHeldModifiers = false, TextControlChars? controlChars = null, TextInputMethod method = TextInputMethod.Unicode,
+        CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrEmpty(text))
         {
             return new TypeTextResult(
                 Success: false,
-                Text: text ?? "",
+                Length: 0,
                 CharactersTyped: 0,
                 Error: "Text cannot be empty",
                 ErrorCode: InputErrorCode.EmptyText);
         }
 
-        // charactersTyped counts this text: a Windows line break is one character, as it is one key press
+        // Every count is of this text, in code points: a Windows line break is one character, as it is one key press, and an
+        // emoji is one too
         var typed = NormalizeLineBreaks(text);
-        if (controlChars == null && typed.AsSpan().IndexOfAny('\n', '\t') >= 0)
-        {
-            return new TypeTextResult(false, text, 0, ControlCharsNeededMessage, InputErrorCode.InvalidArguments);
-        }
-
-        var mode = controlChars ?? TextControlChars.Unicode;
-        var layout = mode == TextControlChars.Unicode ? KeyboardLayout.Invariant : LayoutFor(target);
-
-        // The text goes out in several batches, each checked on its own: a copy (ETX, CAN) in one and the paste (SYN) in a
-        // later one would paste what the copy took unchecked, so the order is checked on the whole text first
-        if (_pasteGuard != null && ClipboardPasteGuard.CopyThenPasteRefusal(TextInputs(typed, mode, layout), receivingClass: null,
-                "Nothing was typed.") is { } copyThenPaste)
-        {
-            return new TypeTextResult(false, text, 0, copyThenPaste, InputErrorCode.PasteNotAllowed);
-        }
-
+        var length = CountCharacters(typed);
         delayBetweenKeysMs = Math.Clamp(delayBetweenKeysMs, 0, 100);
-        var charactersTyped = 0;
+        var viaLayout = method == TextInputMethod.Keys;
+        var typingMethod = ToolEnum<TextInputMethod>.Name(viaLayout ? TextInputMethod.Keys : TextInputMethod.Unicode);
+        var pasteMethod = ToolEnum<TextInputMethod>.Name(TextInputMethod.Paste);
+
+        // auto pastes long text where a paste puts in what typing would: not with delayMs, and not when line breaks or tabs
+        // are to press keys
+        var pastes = method == TextInputMethod.Paste ||
+                     (method == TextInputMethod.Auto && _pasteClipboard != null && length > AutoPasteThreshold && delayBetweenKeysMs == 0 &&
+                      (controlChars is null or TextControlChars.Unicode || typed.AsSpan().IndexOfAny('\n', '\t') < 0));
+        var planned = pastes ? pasteMethod : typingMethod;
+        if (pastes && PasteRefusalBeforeInput(method == TextInputMethod.Paste, length, delayBetweenKeysMs) is { } pasteRefused)
+        {
+            return new TypeTextResult(false, length, 0, pasteRefused.Error, pasteRefused.Code) { Method = pasteMethod };
+        }
+
+        // Text that is typed is checked whole before anything is sent; auto checks it when it types instead of pasting
+        List<InputEvent[]>? characters = null;
+        if (!pastes)
+        {
+            var prepared = PrepareTyping(typed, length, controlChars, viaLayout, target);
+            if (prepared.Characters == null)
+            {
+                return new TypeTextResult(false, length, 0, prepared.Error, prepared.Code) { Method = typingMethod };
+            }
+
+            characters = prepared.Characters;
+        }
 
         using var call = new InputCall(_session, cancellationToken);
         if (call.IsPaused)
         {
-            return new TypeTextResult(false, text, 0, PausedMessage("Nothing was typed."), InputErrorCode.PausedByUser);
+            return new TypeTextResult(false, length, 0, PausedMessage("Nothing was typed."), InputErrorCode.PausedByUser) { Method = planned };
         }
 
         IDisposable? gate;
@@ -479,12 +515,12 @@ public class InputSimulationService : IInputSimulationService
         }
         catch (OperationCanceledException) when (call.IsPaused)
         {
-            return new TypeTextResult(false, text, 0, PausedMessage("Nothing was typed."), InputErrorCode.PausedByUser);
+            return new TypeTextResult(false, length, 0, PausedMessage("Nothing was typed."), InputErrorCode.PausedByUser) { Method = planned };
         }
 
         if (gate == null)
         {
-            return new TypeTextResult(false, text, 0, BusyMessage("typed"), InputErrorCode.InputBusy);
+            return new TypeTextResult(false, length, 0, BusyMessage("typed"), InputErrorCode.InputBusy) { Method = planned };
         }
 
         using (gate)
@@ -496,80 +532,67 @@ public class InputSimulationService : IInputSimulationService
                 held = CheckHeldInput(releaseHeldModifiers, "typed");
                 if (!held.Ok)
                 {
-                    return held.Apply(new TypeTextResult(false, text, 0, held.Error, held.Code));
+                    return held.Apply(new TypeTextResult(false, length, 0, held.Error, held.Code) { Method = planned });
                 }
 
                 approved = _guard.CheckKeyboard(target, KeyboardInputKind.Text, keys: null);
                 if (!approved.Allowed)
                 {
                     return call.IsPaused
-                        ? held.Apply(Finish(new TypeTextResult(false, text, 0, PausedMessage("Nothing was typed."), InputErrorCode.PausedByUser), approved))
-                        : held.Apply(Finish(new TypeTextResult(false, text, 0, approved.Error, approved.ErrorCode), approved));
+                        ? held.Apply(Finish(new TypeTextResult(false, length, 0, PausedMessage("Nothing was typed."), InputErrorCode.PausedByUser) { Method = planned }, approved))
+                        : held.Apply(Finish(new TypeTextResult(false, length, 0, approved.Error, approved.ErrorCode) { Method = planned }, approved));
                 }
 
-                foreach (var batch in Batches(typed, delayBetweenKeysMs == 0 ? TypeTextBatchSize : 1))
+                string? notPasted = null;
+                ClipboardReturn? back = null;
+                if (pastes)
                 {
-                    if (charactersTyped > 0 && delayBetweenKeysMs > 0)
+                    // Not even the clipboard is touched once the user paused input or the request was cancelled (the pause
+                    // reaches call.Token a moment later, so it is read itself)
+                    if (call.IsPaused)
                     {
-                        await Task.Delay(delayBetweenKeysMs, call.Token).ConfigureAwait(false);
+                        return held.Apply(Finish(new TypeTextResult(false, length, 0, PausedMessage("Nothing was typed."),
+                            InputErrorCode.PausedByUser) { Method = pasteMethod }, approved));
                     }
 
                     call.Token.ThrowIfCancellationRequested();
-
-                    // Right before every batch, the first one too: still the same window, or a dialog of the target?
-                    var recheck = _guard.RecheckKeyboard(approved);
-                    if (!recheck.Allowed)
+                    var attempt = await PasteAsync(typed, length, method == TextInputMethod.Paste, target, approved).ConfigureAwait(false);
+                    if (attempt.Result is { } pasted)
                     {
-                        return held.Apply(Finish(new TypeTextResult(false, text, charactersTyped,
-                            $"{TypedSoFar(typed, charactersTyped, approved)} {recheck.Error}", recheck.ErrorCode), recheck));
+                        return held.Apply(pasted with { Method = pasteMethod });
                     }
 
-                    approved = recheck;
-
-                    // A modifier going down now is the user taking the keyboard (or starting the pause chord)
-                    if (ModifiersDownNow("typed") is { } downNow)
+                    // auto types instead, when the text may be typed
+                    approved = attempt.Approved;
+                    notPasted = attempt.NotPasted;
+                    back = attempt.Back;
+                    var prepared = PrepareTyping(typed, length, controlChars, viaLayout, target);
+                    if (prepared.Characters == null)
                     {
-                        return held.Apply(Finish(new TypeTextResult(false, text, charactersTyped,
-                            $"{TypedSoFar(typed, charactersTyped, approved)} {downNow.Error}", InputErrorCode.ModifiersHeld)
-                        {
-                            HeldModifiers = downNow.Names
-                        }, approved));
+                        var typingRefused = prepared.Code == InputErrorCode.TextTooLong
+                            ? $"Typing it was refused too: it has {Count(length)} characters, more than the {Count(MaxTypedLength)} type_text " +
+                              "types. Nothing was typed. Ask the user to empty the clipboard (or to copy plain text), or send the text in parts."
+                            : prepared.Error;
+                        return held.Apply(Finish(new TypeTextResult(false, length, 0,
+                            $"The text was not pasted: {notPasted}. {typingRefused}", prepared.Code) { Method = typingMethod }, approved));
                     }
 
-                    var inputs = TextInputs(batch, mode, layout);
-
-                    // The SYN character pastes in an edit control, as Ctrl+V does
-                    if (PasteRefusal(inputs, approved) is { } pasteRefused)
-                    {
-                        return held.Apply(Finish(new TypeTextResult(false, text, charactersTyped,
-                            $"{TypedSoFar(typed, charactersTyped, approved)} {pasteRefused}", InputErrorCode.PasteNotAllowed), approved));
-                    }
-
-                    var sent = _session.Send(inputs);
-                    if (sent.PausedByUser)
-                    {
-                        return held.Apply(Finish(new TypeTextResult(false, text, charactersTyped,
-                            PausedMessage(TypedSoFar(typed, charactersTyped, approved)), InputErrorCode.PausedByUser), approved));
-                    }
-
-                    if (!sent.Complete)
-                    {
-                        // A character counts once all its events were inserted; the session has already sent the key-ups
-                        // of whatever went down alone
-                        charactersTyped += CharactersWithin(batch, mode, sent.Inserted);
-                        return held.Apply(Finish(new TypeTextResult(false, text, charactersTyped,
-                            $"SendInput failed at character {charactersTyped}", InputErrorCode.SendInputFailed), approved));
-                    }
-
-                    charactersTyped += batch.Length;
+                    characters = prepared.Characters;
                 }
 
-                return held.Apply(Finish(new TypeTextResult(Success: true, Text: text, CharactersTyped: charactersTyped), approved));
+                var result = await TypeCharactersAsync(characters!, delayBetweenKeysMs, approved, call).ConfigureAwait(false);
+                // A clipboard lent before auto typed instead is reported as after a paste
+                return held.Apply(result with
+                {
+                    Method = typingMethod,
+                    ClipboardRestored = back?.Restored,
+                    Warning = notPasted == null ? null : $"Typed instead of pasted: {notPasted}.{(back?.Warning is { } lost ? " " + lost : string.Empty)}"
+                });
             }
             catch (OperationCanceledException) when (call.IsPaused)
             {
-                var paused = new TypeTextResult(false, text, charactersTyped,
-                    PausedMessage(TypedSoFar(typed, charactersTyped, approved)), InputErrorCode.PausedByUser);
+                // Typing reports how far it got itself, so this is a pause before anything was typed
+                var paused = new TypeTextResult(false, length, 0, PausedMessage("Nothing was typed."), InputErrorCode.PausedByUser) { Method = planned };
                 return held.Apply(approved == null ? paused : Finish(paused, approved));
             }
             finally
@@ -577,6 +600,120 @@ public class InputSimulationService : IInputSimulationService
                 _session.ReleaseHeldInput("the end of the input call");
             }
         }
+    }
+
+    /// <summary>
+    /// Types <paramref name="characters"/> (one array of events per character) inside the input gate, after the guard
+    /// approved the window: in batches of <see cref="TypeTextBatchSize"/> characters, or one character per batch with
+    /// <paramref name="delayBetweenKeysMs"/>, with the window, the modifiers and the paste rule checked again right before
+    /// every batch. Reports how many characters went in when it stops part way, at the user's pause too.
+    /// </summary>
+    private async Task<TypeTextResult> TypeCharactersAsync(List<InputEvent[]> characters, int delayBetweenKeysMs,
+        InputGuardResult approved, InputCall call)
+    {
+        var length = characters.Count;
+        var charactersTyped = 0;
+        try
+        {
+            foreach (var batch in characters.Chunk(delayBetweenKeysMs == 0 ? TypeTextBatchSize : 1))
+            {
+                if (charactersTyped > 0 && delayBetweenKeysMs > 0)
+                {
+                    await Task.Delay(delayBetweenKeysMs, call.Token).ConfigureAwait(false);
+                }
+
+                call.Token.ThrowIfCancellationRequested();
+
+                // Right before every batch, the first one too: still the same window, or a dialog of the target?
+                var recheck = _guard.RecheckKeyboard(approved);
+                if (!recheck.Allowed)
+                {
+                    return Finish(new TypeTextResult(false, length, charactersTyped,
+                        $"{TypedSoFar(length, charactersTyped, approved)} {recheck.Error}", recheck.ErrorCode), recheck);
+                }
+
+                approved = recheck;
+
+                // A modifier going down now is the user taking the keyboard (or starting the pause chord)
+                if (ModifiersDownNow("typed") is { } downNow)
+                {
+                    return Finish(new TypeTextResult(false, length, charactersTyped,
+                        $"{TypedSoFar(length, charactersTyped, approved)} {downNow.Error}", InputErrorCode.ModifiersHeld)
+                    {
+                        HeldModifiers = downNow.Names
+                    }, approved);
+                }
+
+                var inputs = batch.SelectMany(character => character).ToList();
+
+                // The SYN character pastes in an edit control, as Ctrl+V does
+                if (PasteRefusal(inputs, approved) is { } pasteRefused)
+                {
+                    return Finish(new TypeTextResult(false, length, charactersTyped,
+                        $"{TypedSoFar(length, charactersTyped, approved)} {pasteRefused}", InputErrorCode.PasteNotAllowed), approved);
+                }
+
+                var sent = _session.Send(inputs);
+                if (sent.PausedByUser)
+                {
+                    return Finish(new TypeTextResult(false, length, charactersTyped,
+                        PausedMessage(TypedSoFar(length, charactersTyped, approved)), InputErrorCode.PausedByUser), approved);
+                }
+
+                if (!sent.Complete)
+                {
+                    // A character counts once all its events were inserted; the session has already sent the key-ups
+                    // of whatever went down alone
+                    charactersTyped += CharactersWithin(batch, sent.Inserted);
+                    return Finish(new TypeTextResult(false, length, charactersTyped,
+                        $"SendInput failed at character {charactersTyped}", InputErrorCode.SendInputFailed), approved);
+                }
+
+                charactersTyped += batch.Length;
+            }
+
+            return Finish(new TypeTextResult(Success: true, Length: length, CharactersTyped: charactersTyped), approved);
+        }
+        catch (OperationCanceledException) when (call.IsPaused)
+        {
+            return Finish(new TypeTextResult(false, length, charactersTyped,
+                PausedMessage(TypedSoFar(length, charactersTyped, approved)), InputErrorCode.PausedByUser), approved);
+        }
+    }
+
+    /// <summary>
+    /// The events that type <paramref name="typed"/>, one array per character; or why it must not be typed: more than
+    /// <see cref="MaxTypedLength"/> characters (TextTooLong), a line break or tab without controlChars (InvalidArguments), or
+    /// a copy followed by a paste among its control characters (PasteNotAllowed). Nothing is sent.
+    /// </summary>
+    private (List<InputEvent[]>? Characters, InputErrorCode Code, string? Error) PrepareTyping(string typed, int length,
+        TextControlChars? controlChars, bool viaLayout, InputTarget target)
+    {
+        if (length > MaxTypedLength)
+        {
+            return (null, InputErrorCode.TextTooLong,
+                $"The text has {Count(length)} characters, more than the {Count(MaxTypedLength)} type_text types, so that a runaway call " +
+                "cannot type for minutes. Nothing was typed. Paste it with method 'paste' (or 'auto'), or type it in parts.");
+        }
+
+        if (controlChars == null && typed.AsSpan().IndexOfAny('\n', '\t') >= 0)
+        {
+            return (null, InputErrorCode.InvalidArguments, ControlCharsNeededMessage);
+        }
+
+        var mode = controlChars ?? TextControlChars.Unicode;
+        var layout = mode == TextControlChars.Unicode && !viaLayout ? KeyboardLayout.Invariant : LayoutFor(target);
+        var characters = CharacterInputs(typed, mode, layout, viaLayout);
+
+        // The text goes out in several batches, each checked on its own: a copy (ETX, CAN) in one and the paste (SYN) in a
+        // later one would paste what the copy took unchecked, so the order is checked on the whole text first
+        if (_pasteGuard != null && ClipboardPasteGuard.CopyThenPasteRefusal(characters.SelectMany(c => c).ToList(), receivingClass: null,
+                "Nothing was typed.") is { } copyThenPaste)
+        {
+            return (null, InputErrorCode.PasteNotAllowed, copyThenPaste);
+        }
+
+        return (characters, InputErrorCode.None, null);
     }
 
     /// <summary>type_text's refusal of text with a line break or a tab and no controlChars (InvalidArguments).</summary>
@@ -1196,9 +1333,9 @@ public class InputSimulationService : IInputSimulationService
         $"Another input or window call held the input gate for {_gateTimeout.TotalSeconds:0.#} s, so nothing was {action}. Try again " +
         "when it has finished.";
 
-    private static string TypedSoFar(string text, int charactersTyped, InputGuardResult? approved) => charactersTyped == 0
+    private static string TypedSoFar(int length, int charactersTyped, InputGuardResult? approved) => charactersTyped == 0
         ? "Nothing was typed."
-        : $"Typing stopped after {charactersTyped} of {text.Length} characters, which went to {Describe(approved?.ReceivingWindow)}.";
+        : $"Typing stopped after {charactersTyped} of {length} characters, which went to {Describe(approved?.ReceivingWindow)}.";
 
     /// <summary>Waits <paramref name="milliseconds"/>, or less when the call is cancelled or paused (then throws).</summary>
     private static void Wait(int milliseconds, InputCall call)
@@ -1264,65 +1401,71 @@ public class InputSimulationService : IInputSimulationService
     };
 
     /// <summary>
-    /// Splits <paramref name="text"/> into batches of at most <paramref name="size"/> UTF-16 code units,
-    /// never between the two halves of a surrogate pair (an emoji, for example), so a batch that is not
-    /// sent never leaves half a character typed.
+    /// How many characters <paramref name="text"/> has, as type_text counts them: code points, so an emoji (a surrogate
+    /// pair) is one, and a lone surrogate is one too.
     /// </summary>
-    private static IEnumerable<string> Batches(string text, int size)
+    private static int CountCharacters(string text)
     {
-        var start = 0;
-        while (start < text.Length)
+        var count = 0;
+        for (var i = 0; i < text.Length; i++)
         {
-            var length = Math.Min(size, text.Length - start);
-            if (start + length < text.Length && char.IsHighSurrogate(text[start + length - 1]))
+            if (char.IsHighSurrogate(text[i]) && i + 1 < text.Length && char.IsLowSurrogate(text[i + 1]))
             {
-                length++;
+                i++;
             }
 
-            yield return text.Substring(start, length);
-            start += length;
+            count++;
         }
+
+        return count;
     }
 
     /// <summary>The text with every Windows line break (\r\n) and every lone \r as \n.</summary>
     private static string NormalizeLineBreaks(string text) => text.Replace("\r\n", "\n").Replace('\r', '\n');
 
     /// <summary>
-    /// The events that type <paramref name="text"/>: a key-down and key-up as Unicode for every UTF-16 code unit, except a
-    /// line break or tab that <paramref name="mode"/> presses as a key.
+    /// The events that type <paramref name="text"/>, one array per character (<see cref="CountCharacters"/>), so a batch
+    /// that is not sent never leaves half a character typed: a key-down and key-up as Unicode for every UTF-16 code unit,
+    /// except a line break or tab that <paramref name="mode"/> presses as a key; with <paramref name="viaLayout"/>
+    /// (method keys, roadmap M4.4) every other character as send_keys types it, with the key of
+    /// <paramref name="layout"/> and the Shift or AltGr it needs, or as Unicode when the layout has no key for it.
     /// </summary>
-    private static List<InputEvent> TextInputs(string text, TextControlChars mode, KeyboardLayout layout)
+    private static List<InputEvent[]> CharacterInputs(string text, TextControlChars mode, KeyboardLayout layout, bool viaLayout)
     {
-        var inputs = new List<InputEvent>(text.Length * 2);
-        foreach (var character in text)
+        var characters = new List<InputEvent[]>(text.Length);
+        for (var i = 0; i < text.Length; i++)
         {
-            switch (character)
+            var character = text[i];
+            if (char.IsHighSurrogate(character) && i + 1 < text.Length && char.IsLowSurrogate(text[i + 1]))
             {
-                case '\n' when mode == TextControlChars.Keys:
-                    AddPress(NativeEnums.VK_RETURN);
-                    break;
-                case '\n' when mode == TextControlChars.ShiftEnter:
-                    inputs.Add(KeyEvent(NativeEnums.VK_SHIFT, NativeEnums.KEYEVENTF_KEYDOWN, layout));
-                    AddPress(NativeEnums.VK_RETURN);
-                    inputs.Add(KeyEvent(NativeEnums.VK_SHIFT, NativeEnums.KEYEVENTF_KEYUP, layout));
-                    break;
-                case '\t' when mode == TextControlChars.Keys:
-                    AddPress(NativeEnums.VK_TAB);
-                    break;
-                default:
-                    inputs.Add(InputEvent.Unicode(character, NativeEnums.KEYEVENTF_KEYDOWN));
-                    inputs.Add(InputEvent.Unicode(character, NativeEnums.KEYEVENTF_KEYUP));
-                    break;
+                characters.Add([.. Unicode(character), .. Unicode(text[++i])]);
+                continue;
             }
+
+            characters.Add(character switch
+            {
+                '\n' when mode == TextControlChars.Keys => Press(NativeEnums.VK_RETURN),
+                '\n' when mode == TextControlChars.ShiftEnter =>
+                [
+                    KeyEvent(NativeEnums.VK_SHIFT, NativeEnums.KEYEVENTF_KEYDOWN, layout), .. Press(NativeEnums.VK_RETURN),
+                    KeyEvent(NativeEnums.VK_SHIFT, NativeEnums.KEYEVENTF_KEYUP, layout)
+                ],
+                '\t' when mode == TextControlChars.Keys => Press(NativeEnums.VK_TAB),
+                '\n' or '\t' => Unicode(character),
+                // A character in braces is that character to send_keys (roadmap M4.1), mapped as it maps characters
+                _ when viaLayout && !char.IsControl(character) && !char.IsSurrogate(character) =>
+                    [.. KeySpecParser.Parse("{" + character + "}", layout).Events],
+                _ => Unicode(character)
+            });
         }
 
-        return inputs;
+        return characters;
 
-        void AddPress(ushort virtualKey)
-        {
-            inputs.Add(KeyEvent(virtualKey, NativeEnums.KEYEVENTF_KEYDOWN, layout));
-            inputs.Add(KeyEvent(virtualKey, NativeEnums.KEYEVENTF_KEYUP, layout));
-        }
+        InputEvent[] Press(ushort virtualKey) =>
+            [KeyEvent(virtualKey, NativeEnums.KEYEVENTF_KEYDOWN, layout), KeyEvent(virtualKey, NativeEnums.KEYEVENTF_KEYUP, layout)];
+
+        static InputEvent[] Unicode(char c) =>
+            [InputEvent.Unicode(c, NativeEnums.KEYEVENTF_KEYDOWN), InputEvent.Unicode(c, NativeEnums.KEYEVENTF_KEYUP)];
     }
 
     private static InputEvent KeyEvent(ushort virtualKey, uint flags, KeyboardLayout layout)
@@ -1332,12 +1475,12 @@ public class InputSimulationService : IInputSimulationService
     }
 
     /// <summary>How many characters of <paramref name="batch"/> have all their events within the first <paramref name="inserted"/>.</summary>
-    private static int CharactersWithin(string batch, TextControlChars mode, int inserted)
+    private static int CharactersWithin(InputEvent[][] batch, int inserted)
     {
         var characters = 0;
         foreach (var character in batch)
         {
-            inserted -= character == '\n' && mode == TextControlChars.ShiftEnter ? 4 : 2;
+            inserted -= character.Length;
             if (inserted < 0)
             {
                 break;

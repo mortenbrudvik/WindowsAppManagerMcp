@@ -49,7 +49,9 @@ public static class AuditRecord
         "ref", "action", "mode", "direction", "amount", "fallback", "observe",
         // respond_to_dialog (roadmap M3.5): the button pressed, a standard name, id or caption. file_dialog's path is
         // recorded as pathLength: a file name can say what the user works on
-        "button"
+        "button",
+        // type_text (roadmap M4.1, M4.4): fixed values; its text is recorded as textLength
+        "controlChars", "method"
     };
 
     /// <summary>
@@ -79,6 +81,11 @@ public static class AuditRecord
 
     /// <summary>element_action's result properties kept as identifiers: its method and status.</summary>
     private static readonly string[] ElementActionIdentifiers = ["method", "status"];
+
+    private const string TypeTextTool = "type_text";
+
+    /// <summary>type_text's result property kept as an identifier: the method it used (roadmap M4.4).</summary>
+    private const string TypeTextMethodProperty = "method";
 
     /// <summary>The key under which the arguments a tool does not declare are counted.</summary>
     public const string UnknownArgumentsCount = "unknownArgumentsCount";
@@ -560,6 +567,12 @@ public static class AuditRecord
                     scalars[property] = identifier;
                 }
             }
+        }
+
+        // type_text (roadmap M4.4): whether it typed or pasted, a fixed identifier
+        if (tool == TypeTextTool && Identifier(body, TypeTextMethodProperty) is { } method)
+        {
+            scalars[TypeTextMethodProperty] = method;
         }
 
         // get_clipboard's origin (user, setClipboard, agentInput): whose clipboard content the agent read, never the content

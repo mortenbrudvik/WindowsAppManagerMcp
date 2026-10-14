@@ -34,7 +34,7 @@ public class FixtureSessionTests
             .Should().BeTrue("keyboard focus should be on the fixture's edit box; nothing was typed");
 
         // Act - one character every 50 ms; the user pauses once a few have arrived
-        var typing = e2e.Server.Input.TypeTextAsync(Text, 50, InputTarget.Window(main), releaseHeldModifiers: false, null, CancellationToken.None);
+        var typing = e2e.Server.Input.TypeTextAsync(Text, 50, InputTarget.Window(main), releaseHeldModifiers: false, null, TextInputMethod.Unicode, CancellationToken.None);
         Wait.Until(() => (UiaReads.ReadValue(main, FixtureContract.Ids.EditBox) ?? string.Empty).Length >= 5, SettleTimeout)
             .Should().BeTrue("typing should have started");
         session.Pause(InputControlSources.Hotkey);
@@ -59,7 +59,7 @@ public class FixtureSessionTests
         // After the resume, typing works again
         session.Resume(InputControlSources.Hotkey);
         var rest = await e2e.Server.Input.TypeTextAsync(Text[paused.CharactersTyped..], 0, InputTarget.Window(main),
-            releaseHeldModifiers: false, null, CancellationToken.None);
+            releaseHeldModifiers: false, null, TextInputMethod.Unicode, CancellationToken.None);
         rest.Success.Should().BeTrue(rest.Error);
         e2e.Fixture.WaitForEvent(
             FixtureContract.Events.TextChanged,

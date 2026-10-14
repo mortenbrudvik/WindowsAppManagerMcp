@@ -72,7 +72,7 @@ public class FixtureKeyboardTests
         // Act - to the end of the text, then a line break as Enter
         var end = await e2e.Server.Input.SendKeysAsync("^{END}", InputTarget.Window(document), releaseHeldModifiers: false, 0, CancellationToken.None);
         var typed = await e2e.Server.Input.TypeTextAsync("\nline two", 0, InputTarget.Window(document), releaseHeldModifiers: false,
-            TextControlChars.Keys, CancellationToken.None);
+            TextControlChars.Keys, TextInputMethod.Unicode, CancellationToken.None);
         _output.WriteLine($"send_keys: {end.ErrorCode} {end.Error}; type_text: {typed.ErrorCode} {typed.Error}");
 
         // Assert
@@ -91,10 +91,48 @@ public class FixtureKeyboardTests
     {
         using var e2e = StartOnTheEditBox(out var main);
 
-        var typed = await e2e.Server.Input.TypeTextAsync("a\nb", 0, InputTarget.Window(main), releaseHeldModifiers: false, null, CancellationToken.None);
+        var typed = await e2e.Server.Input.TypeTextAsync("a\nb", 0, InputTarget.Window(main), releaseHeldModifiers: false, null, TextInputMethod.Unicode, CancellationToken.None);
 
         typed.ErrorCode.Should().Be(InputErrorCode.InvalidArguments, typed.Error);
         UiaReads.ReadValue(main, FixtureContract.Ids.EditBox).Should().BeEmpty();
+    }
+
+    [DesktopFact]
+    public async Task TypeText_KeysMethod_TypesCapitalsPunctuationAndAltGrCharacters_WithTheLayoutsKeys()
+    {
+        // Roadmap M4.4: method keys types as send_keys does, for remote desktops that drop Unicode keystrokes; a character the
+        // layout has no key for (the emoji) still goes as Unicode
+        using var e2e = StartOnTheEditBox(out var main);
+        const string Text = "Hello, World! a-b/c;d'e[f]g=h_i?j\"k<l>m@{}$|~^`+%#()\U0001F600";
+
+        var typed = await e2e.Server.Input.TypeTextAsync(Text, 0, InputTarget.Window(main), releaseHeldModifiers: false, null,
+            TextInputMethod.Keys, CancellationToken.None);
+        _output.WriteLine($"type_text keys: {typed.ErrorCode} {typed.Error}; {typed.CharactersTyped} of {typed.Length}");
+
+        typed.Success.Should().BeTrue(typed.Error);
+        typed.Method.Should().Be("keys");
+        typed.CharactersTyped.Should().Be(Text.Length - 1, "the emoji is one character");
+        e2e.Fixture.WaitForEvent(
+            FixtureContract.Events.TextChanged,
+            e => e.GetString("id") == FixtureContract.Ids.EditBox && e.GetString("text") == Text);
+        UiaReads.ReadValue(main, FixtureContract.Ids.EditBox).Should().Be(Text);
+    }
+
+    [DesktopFact]
+    public async Task TypeText_TextLongerThanOneBatch_ArrivesWhole()
+    {
+        // 64 characters go in a batch, with the window checked again before each (roadmap M4.4)
+        using var e2e = StartOnTheEditBox(out var main);
+        var text = string.Concat(Enumerable.Range(0, 30).Select(i => $"word{i} "));
+
+        var typed = await e2e.Server.Input.TypeTextAsync(text, 0, InputTarget.Window(main), releaseHeldModifiers: false, null,
+            TextInputMethod.Unicode, CancellationToken.None);
+
+        typed.Success.Should().BeTrue(typed.Error);
+        typed.CharactersTyped.Should().Be(text.Length).And.BeGreaterThan(WindowsAppManagerMcp.Services.InputSimulationService.TypeTextBatchSize * 2);
+        e2e.Fixture.WaitForEvent(
+            FixtureContract.Events.TextChanged,
+            e => e.GetString("id") == FixtureContract.Ids.EditBox && e.GetString("text") == text);
     }
 
     /// <summary>

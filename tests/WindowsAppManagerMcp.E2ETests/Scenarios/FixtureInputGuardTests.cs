@@ -31,7 +31,7 @@ public class FixtureInputGuardTests
 
         // Act
         var click = e2e.Server.Input.Click(editBox.CenterX, editBox.CenterY, InputTarget.Window(main), releaseHeldModifiers: false, CancellationToken.None);
-        var typed = await e2e.Server.Input.TypeTextAsync(Text, 0, InputTarget.Window(main), releaseHeldModifiers: false, null, CancellationToken.None);
+        var typed = await e2e.Server.Input.TypeTextAsync(Text, 0, InputTarget.Window(main), releaseHeldModifiers: false, null, TextInputMethod.Unicode, CancellationToken.None);
         _output.WriteLine($"click: {click.ErrorCode} {click.Error}");
         _output.WriteLine($"type_text: {typed.ErrorCode} {typed.Error}");
 
@@ -70,7 +70,7 @@ public class FixtureInputGuardTests
         _output.WriteLine("In front: " + UiaReads.DescribeWindow(foreground));
 
         // Act
-        var typed = await e2e.Server.Input.TypeTextAsync("exit", 0, InputTarget.None, releaseHeldModifiers: false, null, CancellationToken.None);
+        var typed = await e2e.Server.Input.TypeTextAsync("exit", 0, InputTarget.None, releaseHeldModifiers: false, null, TextInputMethod.Unicode, CancellationToken.None);
 
         // Assert
         typed.ErrorCode.Should().Be(InputErrorCode.TargetIsAgentHost, typed.Error);
@@ -97,7 +97,7 @@ public class FixtureInputGuardTests
         var documentText = UiaReads.ReadValue(document, FixtureContract.Ids.DocumentTextBox);
 
         // Act - type_text names the main window: the guard brings it back to the front before typing
-        var typed = await e2e.Server.Input.TypeTextAsync(Text, 0, InputTarget.Window(main), releaseHeldModifiers: false, null, CancellationToken.None);
+        var typed = await e2e.Server.Input.TypeTextAsync(Text, 0, InputTarget.Window(main), releaseHeldModifiers: false, null, TextInputMethod.Unicode, CancellationToken.None);
         _output.WriteLine($"type_text: {typed.ErrorCode} {typed.Error}; receiving {typed.ReceivingWindow}; after {typed.ForegroundAfter}");
 
         // Assert - the server's result, the fixture's own record and both text boxes agree

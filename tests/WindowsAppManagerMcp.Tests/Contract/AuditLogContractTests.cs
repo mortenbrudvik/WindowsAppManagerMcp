@@ -353,6 +353,25 @@ public class AuditLogContractTests
         line.GetProperty("result").GetProperty("charactersTyped").GetInt32().Should().Be(23);
     }
 
+    [Fact]
+    public async Task TypeText_RecordsTheMethod_AndThePastesOutcome_NeverTheText()
+    {
+        // Act - roadmap M4.4: the method asked for and used are fixed values
+        var (_, lines) = await CallAsync("type_text", new Dictionary<string, object?>
+        {
+            ["text"] = "hunter2 is the password", ["windowHandle"] = TypicalDesktop.NotepadHandle, ["method"] = "paste"
+        });
+
+        // Assert
+        var line = lines.Single();
+        line.GetRawText().Should().NotContain("hunter2");
+        line.GetProperty("args").GetProperty("method").GetString().Should().Be("paste");
+        var result = line.GetProperty("result");
+        result.GetProperty("method").GetString().Should().Be("paste");
+        result.GetProperty("length").GetInt32().Should().Be(23);
+        result.GetProperty("clipboardRestored").GetBoolean().Should().BeTrue();
+    }
+
     /// <summary>The audited tools whose typical call aims at nothing a line can name: no window, process, program or item.</summary>
     private static readonly string[] Untargeted = ["release_all_input", "save_layout", "delete_layout", "set_clipboard", "get_clipboard"]; // the clipboard tools act on no window; get_clipboard records the origin and length instead
 
