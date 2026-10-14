@@ -73,8 +73,12 @@ public partial class ElementActionTools
                 VisibleOnly: true,
                 MaxResults: MaxListsRead,
                 Timeout: Remaining(timeout, stopwatch),
-                // The window's own lists, not a dropdown's
-                Scope: ElementSearchScope.Window), cancellationToken).ConfigureAwait(false);
+                // The window's own lists, not a dropdown's; its open popups' too only when the criteria's scope names them
+                // (roadmap M3.F19), not by the default that follows the app being in front
+                Scope: query.Scope == ElementSearchScope.WindowAndPopups ? ElementSearchScope.WindowAndPopups : ElementSearchScope.Window)
+            {
+                IncludeHostPopups = query.IncludeHostPopups
+            }, cancellationToken).ConfigureAwait(false);
             cancellationToken.ThrowIfCancellationRequested();
             if (!lists.Success || lists.Elements is not { Count: > 0 } found || found[0].Ref == null)
             {
@@ -98,6 +102,10 @@ public partial class ElementActionTools
             listName = $"{chosen.ControlType}{(string.IsNullOrEmpty(chosen.Name) ? string.Empty : $" '{chosen.Name}'")} ({listRef})";
         }
 
+        // A list in a popup is an element of the popup's own window, so each page is searched there
+        var listWindow = _registry.Lookup(listRef) is { Success: true, WindowHandle: var registered } && registered != nint.Zero
+            ? registered
+            : query.WindowHandle;
         var direction = ElementScrollDirection.Down;
         var turned = false;
         var pages = 0;
@@ -137,6 +145,7 @@ public partial class ElementActionTools
                 pages++;
                 var item = await FindOneAsync(query with
                 {
+                    WindowHandle = listWindow,
                     WithinRef = listRef,
                     Scope = null,
                     SearchVirtualized = false,

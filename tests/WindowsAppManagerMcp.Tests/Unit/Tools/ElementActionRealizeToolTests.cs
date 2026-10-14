@@ -278,6 +278,43 @@ public class ElementActionRealizeToolTests
         _requests.Should().OnlyContain(r => r.ScrollPercent == null);
     }
 
+    [Theory]
+    [InlineData(null, ElementSearchScope.Window)]
+    [InlineData(ElementSearchScope.Window, ElementSearchScope.Window)]
+    [InlineData(ElementSearchScope.Desktop, ElementSearchScope.Window)]
+    [InlineData(ElementSearchScope.WindowAndPopups, ElementSearchScope.WindowAndPopups)]
+    public async Task Realize_WithMaxScrolls_LooksForTheListInThePopupsToo_OnlyWhenTheScopeSaysSo(
+        ElementSearchScope? scope, ElementSearchScope listScope)
+    {
+        // Act - an open dropdown's list is scrolled only when the agent asked for the window's popups (roadmap M3.F19)
+        await CreateSut().ElementAction(ElementActionKind.Realize, handle: Handle, name: "Old message", maxScrolls: 10, scope: scope);
+
+        // Assert
+        _queries.Single(q => q.ControlTypes != null && q.ControlTypes.Contains("List")).Scope.Should().Be(listScope);
+    }
+
+    [Fact]
+    public async Task Realize_WithMaxScrolls_ScrollsAListInAPopup_AndSearchesIt_InThePopupsWindow()
+    {
+        // Arrange - the one list is in a popup of the window: its ref is registered under the popup's own window
+        nint popup = 0x8300;
+        _firstSearch = query => query.ControlTypes is { } types && types.Contains("List")
+            ? Found(1, new FoundElement("w2e5", "Suggestions", "List", null, null, null, null, true, false, ["Scroll"]))
+            : null;
+        _itemList = "w2e5";
+        _registry.Setup(r => r.Lookup("w2e5")).Returns(new ElementLookup("w2e5", popup, null, 2));
+
+        // Act
+        var result = await CreateSut().ElementAction(ElementActionKind.Realize, handle: Handle, name: "Old message", maxScrolls: 10,
+            scope: ElementSearchScope.WindowAndPopups).Payload<ElementActionResult>();
+
+        // Assert - each page scrolls the popup's list through the action service, and is searched in the popup's window
+        result.Success.Should().BeTrue(result.Error);
+        result.Ref.Should().Be("w1e9");
+        _requests.Where(r => r.Action == ElementActionKind.Scroll).Should().OnlyContain(r => r.Ref == "w2e5");
+        _queries.Where(q => q.WithinRef == "w2e5").Should().HaveCount(3).And.OnlyContain(q => q.WindowHandle == popup);
+    }
+
     [Fact]
     public async Task Realize_WithMaxScrolls_AndSeveralListsThatScroll_IsAmbiguous_AndNothingIsScrolled()
     {
