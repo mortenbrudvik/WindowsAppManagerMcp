@@ -201,6 +201,8 @@ public class WrapperCatalogTests
     [InlineData(typeof(IUiaTree), nameof(IUiaTree.GetPattern), WrapperCallKind.Read)]
     [InlineData(typeof(IUiaTree), nameof(IUiaTree.ReadVirtualizedItem), WrapperCallKind.Read)]
     [InlineData(typeof(IUiaTree), nameof(IUiaTree.SetFocus), WrapperCallKind.UiaAction)]
+    [InlineData(typeof(IUiaTree), nameof(IUiaTree.AddStructureChangedHandler), WrapperCallKind.Read)]
+    [InlineData(typeof(IUiaTree), nameof(IUiaTree.AddPropertyChangedHandler), WrapperCallKind.Read)]
     [InlineData(typeof(IUiaInvokePattern), nameof(IUiaInvokePattern.Invoke), WrapperCallKind.UiaAction)]
     [InlineData(typeof(IUiaValuePattern), nameof(IUiaValuePattern.SetValue), WrapperCallKind.UiaAction)]
     [InlineData(typeof(IUiaWindowPattern), nameof(IUiaWindowPattern.Close), WrapperCallKind.UiaAction)]

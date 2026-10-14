@@ -410,6 +410,7 @@ public class NativeCallGuardTests
     [InlineData(typeof(PopupService))]
     [InlineData(typeof(ElementReadService))]
     [InlineData(typeof(ElementWaitService))]
+    [InlineData(typeof(ElementEventSource))]
     [InlineData(typeof(ElementActionService))]
     [InlineData(typeof(AppWindowProbe))]
     [InlineData(typeof(BrowserReadingService))]

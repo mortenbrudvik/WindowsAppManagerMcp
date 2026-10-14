@@ -309,7 +309,11 @@ public static class WrapperCatalog
                 // Getting a pattern object reads only whether the element supports it
                 [nameof(IUiaTree.GetPattern)] = WrapperMember.Read,
                 // Gives the element keyboard focus, which can bring its window to the front (element_action, roadmap M3.6)
-                [nameof(IUiaTree.SetFocus)] = WrapperMember.UiaAction
+                [nameof(IUiaTree.SetFocus)] = WrapperMember.UiaAction,
+                // wait_for_element's wake-ups (roadmap M3.F22): a StructureChanged or PropertyChanged handler only listens, and
+                // its registration's Dispose (not a wrapper, so not guarded) only stops listening; neither changes the app
+                [nameof(IUiaTree.AddStructureChangedHandler)] = WrapperMember.Read,
+                [nameof(IUiaTree.AddPropertyChangedHandler)] = WrapperMember.Read
             },
             // The pattern objects of IUiaTree.GetPattern: their state reads are reads, their actions UiaAction
             [typeof(IUiaInvokePattern)] = new Dictionary<string, WrapperMember>

@@ -504,6 +504,49 @@ public sealed class Uia3Tree : IUiaTree
         UiaComErrors.Run(element.SetFocus);
     }
 
+    /// <inheritdoc />
+    /// <remarks>
+    /// IUIAutomation.AddStructureChangedEventHandler on the subtree, with no cache request; the client calls the handler on
+    /// its own event threads. The connection and transaction timeouts bound the call as any other.
+    /// </remarks>
+    public IDisposable AddStructureChangedHandler(IUiaNode node, Action changed)
+    {
+        ArgumentNullException.ThrowIfNull(changed);
+        var element = Unwrap(node);
+        var client = Started();
+        var handler = new StructureChangedHandler(changed);
+        UiaComErrors.Run(() => client.Automation.AddStructureChangedEventHandler(element, TreeScope.TreeScope_Subtree, null, handler));
+        return new HandlerRegistration(() =>
+            UiaComErrors.Run(() => client.Automation.RemoveStructureChangedEventHandler(element, handler)));
+    }
+
+    /// <inheritdoc />
+    /// <remarks>IUIAutomation.AddPropertyChangedEventHandler on the subtree, for the properties' ids, with no cache request.</remarks>
+    public IDisposable AddPropertyChangedHandler(IUiaNode node, IReadOnlyCollection<UiaWatchedProperty> properties, Action changed)
+    {
+        ArgumentNullException.ThrowIfNull(properties);
+        ArgumentNullException.ThrowIfNull(changed);
+        var element = Unwrap(node);
+        var client = Started();
+        var handler = new PropertyChangedHandler(changed);
+        var ids = properties.Select(PropertyId).ToArray();
+        UiaComErrors.Run(() => client.Automation.AddPropertyChangedEventHandler(element, TreeScope.TreeScope_Subtree, null, handler, ids));
+        return new HandlerRegistration(() =>
+            UiaComErrors.Run(() => client.Automation.RemovePropertyChangedEventHandler(element, handler)));
+    }
+
+    private static int PropertyId(UiaWatchedProperty property) => property switch
+    {
+        UiaWatchedProperty.Name => UiaIds.NameProperty,
+        UiaWatchedProperty.IsEnabled => UiaIds.IsEnabledProperty,
+        UiaWatchedProperty.IsOffscreen => UiaIds.IsOffscreenProperty,
+        UiaWatchedProperty.BoundingRectangle => UiaIds.BoundingRectangleProperty,
+        UiaWatchedProperty.HasKeyboardFocus => UiaIds.HasKeyboardFocusProperty,
+        UiaWatchedProperty.Value => UiaIds.ValueValueProperty,
+        UiaWatchedProperty.ToggleState => UiaIds.ToggleToggleStateProperty,
+        _ => throw new ArgumentOutOfRangeException(nameof(property), property, null)
+    };
+
     /// <summary>
     /// Creates the CUIAutomation8 client, one thread at a time, in the multithreaded apartment: the worker threads that
     /// use it are MTA threads, and a client created on an STA thread would belong to that thread's apartment.
@@ -853,6 +896,50 @@ public sealed class Uia3Tree : IUiaTree
     private sealed class Node(IUIAutomationElement element) : IUiaNode
     {
         public IUIAutomationElement Element { get; } = element;
+    }
+
+    /// <summary>
+    /// A StructureChanged handler: on the client's event threads it only calls <paramref name="changed"/>, which only
+    /// signals, and lets nothing escape to the client.
+    /// </summary>
+    private sealed class StructureChangedHandler(Action changed) : IUIAutomationStructureChangedEventHandler
+    {
+        public void HandleStructureChangedEvent(IUIAutomationElement sender, StructureChangeType changeType, int[] runtimeId) =>
+            HandlerRegistration.Signal(changed);
+    }
+
+    /// <summary>A PropertyChanged handler, as <see cref="StructureChangedHandler"/>.</summary>
+    private sealed class PropertyChangedHandler(Action changed) : IUIAutomationPropertyChangedEventHandler
+    {
+        public void HandlePropertyChangedEvent(IUIAutomationElement sender, int propertyId, object newValue) =>
+            HandlerRegistration.Signal(changed);
+    }
+
+    /// <summary>An added handler; disposing it removes the handler, once.</summary>
+    private sealed class HandlerRegistration(Action remove) : IDisposable
+    {
+        private int _removed;
+
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref _removed, 1) == 0)
+            {
+                remove();
+            }
+        }
+
+        /// <summary>Calls a handler's callback; nothing may reach UI Automation's event thread.</summary>
+        public static void Signal(Action changed)
+        {
+            try
+            {
+                changed();
+            }
+            catch (Exception)
+            {
+                // The callback only signals a wait; the client must never see its failure
+            }
+        }
     }
 
     private sealed class InvokePattern(IUIAutomationInvokePattern pattern) : IUiaInvokePattern

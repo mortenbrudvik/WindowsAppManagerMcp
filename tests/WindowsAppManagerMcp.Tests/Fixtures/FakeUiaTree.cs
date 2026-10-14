@@ -15,6 +15,9 @@ public sealed class FakeUiaTree : IUiaTree
     private readonly ConcurrentQueue<string> _childListings = new();
     private readonly ConcurrentQueue<string> _childProbes = new();
     private readonly ConcurrentQueue<string> _finds = new();
+    private readonly ConcurrentDictionary<int, FakeUiaHandler> _handlers = new();
+    private readonly ConcurrentQueue<(FakeUiaHandler, int)> _removedHandlers = new();
+    private int _nextHandler;
 
     /// <summary>The engine the fake claims to be.</summary>
     public UiaEngine Engine { get; set; } = UiaEngine.Uia3;
@@ -351,6 +354,72 @@ public sealed class FakeUiaTree : IUiaTree
     /// <summary>Whether <see cref="SetFocus"/> moves focus to its node (false: an application that ignores it).</summary>
     public bool SetFocusMovesFocus { get; set; } = true;
 
+    /// <summary>
+    /// Runs before a handler is added (roadmap M3.F22), with its kind ("Structure" or "Property") and node: it can block, as
+    /// a hung provider does, or throw, as a provider that refuses does.
+    /// </summary>
+    public Action<string, FakeUiaNode>? OnAddHandler { get; set; }
+
+    /// <summary>Runs before a handler is removed, with its kind: it can block or throw.</summary>
+    public Action<string>? OnRemoveHandler { get; set; }
+
+    /// <summary>The event handlers added and not removed.</summary>
+    public IReadOnlyList<FakeUiaHandler> Handlers => _handlers.Values.OrderBy(h => h.Id).ToList();
+
+    /// <summary>Every handler removed, with the managed thread that removed it, in order.</summary>
+    public IReadOnlyList<(FakeUiaHandler Handler, int Thread)> RemovedHandlers => _removedHandlers.ToList();
+
+    /// <summary>A structure change below a watched node: every structure handler is called, on the caller's thread.</summary>
+    public void RaiseStructureChanged()
+    {
+        foreach (var handler in Handlers.Where(h => h.Kind == "Structure"))
+        {
+            handler.Changed();
+        }
+    }
+
+    /// <summary>A change of <paramref name="property"/>: every property handler that watches it is called, on the caller's thread.</summary>
+    public void RaisePropertyChanged(UiaWatchedProperty property)
+    {
+        foreach (var handler in Handlers.Where(h => h.Kind == "Property" && h.Properties.Contains(property)))
+        {
+            handler.Changed();
+        }
+    }
+
+    public IDisposable AddStructureChangedHandler(IUiaNode node, Action changed) => AddHandler("Structure", Fake(node), [], changed);
+
+    public IDisposable AddPropertyChangedHandler(IUiaNode node, IReadOnlyCollection<UiaWatchedProperty> properties, Action changed) =>
+        AddHandler("Property", Fake(node), properties, changed);
+
+    private IDisposable AddHandler(string kind, FakeUiaNode node, IReadOnlyCollection<UiaWatchedProperty> properties, Action changed)
+    {
+        ArgumentNullException.ThrowIfNull(changed);
+        OnAddHandler?.Invoke(kind, node);
+        var handler = new FakeUiaHandler(Interlocked.Increment(ref _nextHandler), kind, node, properties, changed,
+            Environment.CurrentManagedThreadId, Thread.CurrentThread.GetApartmentState());
+        _handlers[handler.Id] = handler;
+        return new HandlerRegistration(() =>
+        {
+            OnRemoveHandler?.Invoke(kind);
+            _handlers.TryRemove(handler.Id, out _);
+            _removedHandlers.Enqueue((handler, Environment.CurrentManagedThreadId));
+        });
+    }
+
+    private sealed class HandlerRegistration(Action remove) : IDisposable
+    {
+        private int _disposed;
+
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref _disposed, 1) == 0)
+            {
+                remove();
+            }
+        }
+    }
+
     /// <summary>Every <see cref="FindAll"/> call as "RootName:Scope", in call order.</summary>
     public IReadOnlyList<string> Finds => _finds.ToList();
 
@@ -473,6 +542,10 @@ public sealed class FakeUiaTree : IUiaTree
     public static UiaElementUnavailableException Vanished(string what = "element") =>
         new($"The {what} is no longer available.");
 }
+
+/// <summary>An event handler added to a <see cref="FakeUiaTree"/>, with the managed thread (and its apartment) that added it.</summary>
+public sealed record FakeUiaHandler(
+    int Id, string Kind, FakeUiaNode Node, IReadOnlyCollection<UiaWatchedProperty> Properties, Action Changed, int Thread, ApartmentState Apartment);
 
 /// <summary>A node of <see cref="FakeUiaTree"/>. Every property can be set with an object initializer.</summary>
 public sealed class FakeUiaNode : IUiaNode
