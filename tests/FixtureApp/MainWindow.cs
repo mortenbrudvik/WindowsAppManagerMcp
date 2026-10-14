@@ -36,7 +36,7 @@ internal sealed class MainWindow : Window
         Title = MainTitle(options.Instance);
         Width = 760;
         Height = 540;
-        WindowStartupLocation = WindowStartupLocation.CenterScreen;
+        FixturePlacement.CenterOnPrimaryMonitor(this);
         ShowActivated = !options.NoActivate;
         UseLayoutRounding = true;
         Background = Brushes.White;

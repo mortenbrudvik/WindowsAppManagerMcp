@@ -27,7 +27,7 @@ internal sealed class DocumentWindow : Window
         Title = DocumentTitle(options.Instance, dirty: true);
         Width = 480;
         Height = 320;
-        WindowStartupLocation = WindowStartupLocation.CenterScreen;
+        FixturePlacement.CenterOnPrimaryMonitor(this);
         ShowActivated = !options.NoActivate;
 
         var text = new TextBox
