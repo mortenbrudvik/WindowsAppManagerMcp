@@ -192,6 +192,60 @@ public class ElementSearchVirtualizedTests
     }
 
     [Fact]
+    public async Task ANameInAnotherCase_IsAskedForAgainInTheUsualCases_WhenNoItemHasItExactly()
+    {
+        // Act - the tree search ignores case, WPF's FindItemByProperty does not (roadmap M3.F19)
+        var result = await Find(name: "item 05000");
+
+        // Assert - exact first, then upper case, then a capital first letter, which the list has
+        result.Elements.Should().ContainSingle().Which.Should().Match<FoundElement>(e => e.Name == "Item 05000" && e.Virtualized == true);
+        result.Truncated.Should().BeFalse();
+        _list.Probes.Should().Equal(
+            "Name=item 05000 after start", "Name=ITEM 05000 after start", "Name=Item 05000 after start", "Name=Item 05000 after Item 05000");
+    }
+
+    [Fact]
+    public async Task AnAutomationIdInAnotherCase_IsAskedForAgain_AndStopsAtTheCaseThatMatches()
+    {
+        var result = await Find(automationId: "ROW-6000");
+
+        result.Elements.Should().ContainSingle().Which.Name.Should().Be("Item 06000");
+        _list.Probes.Should().StartWith(["AutomationId=ROW-6000 after start", "AutomationId=row-6000 after start"])
+            .And.NotContain(p => p.StartsWith("AutomationId=Row-6000", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task ATextThatMatchesNoItemInAnyCase_IsAskedForOnceInEachOtherCase_AndIsNotFound()
+    {
+        var result = await Find(name: "Old Report");
+
+        result.MatchCount.Should().Be(0);
+        result.Truncated.Should().BeFalse();
+        _list.Probes.Should().Equal("Name=Old Report after start", "Name=old report after start", "Name=OLD REPORT after start",
+            "Name=Old report after start");
+    }
+
+    [Fact]
+    public async Task AnItemTheListHasInTheExactCase_IsNotAskedForInOtherCases_EvenWhenTheOtherCriteriaDropIt()
+    {
+        var result = await Find(name: "Item 05000", controlTypes: ["Button"]);
+
+        result.MatchCount.Should().Be(0);
+        _list.Probes.Should().OnlyContain(p => p.StartsWith("Name=Item 05000 ", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task ATimeout_IsNotFollowedByTheOtherCases()
+    {
+        _list.FindException = new TimeoutException("UI Automation did not answer");
+
+        var result = await Find(name: "item 05000");
+
+        result.TruncationReason.Should().Be(ElementSearchTruncation.Timeout);
+        _list.Probes.Should().ContainSingle();
+    }
+
+    [Fact]
     public async Task ARealizedItem_TheTreeSearchFound_IsNotReportedTwice()
     {
         var result = await Find(name: "Item 00003");

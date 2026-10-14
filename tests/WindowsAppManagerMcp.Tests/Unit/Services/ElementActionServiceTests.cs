@@ -84,6 +84,13 @@ public sealed class ElementActionServiceTests : IDisposable
         return _registry.Register(Handle, _tree.ReadElement(node), new ElementOrigin(_registry.NextGeneration()))!;
     }
 
+    /// <summary>Makes <paramref name="handle"/> another top-level window of the application, as a popup it opened is.</summary>
+    private void AppWindow(nint handle)
+    {
+        _windows.Setup(w => w.IsWindow(handle)).Returns(true);
+        _windows.Setup(w => w.GetWindowThreadProcessId(handle)).Returns((uint)Pid);
+    }
+
     private Task<ElementActionResult> ActAsync(
         string elementRef, ElementActionKind action, string? value = null, ElementValueMode mode = ElementValueMode.Value,
         ElementScrollDirection? direction = null, ElementActionFallback fallback = ElementActionFallback.None) =>
@@ -757,6 +764,72 @@ public sealed class ElementActionServiceTests : IDisposable
         _probe.Verify(p => p.Snapshot(It.Is<IReadOnlyCollection<int>>(ids => ids.Contains(Pid))), Times.Once);
     }
 
+    [Fact]
+    public async Task AnOpenedPopup_HasTheRefOfItsWindowsRootElement_RegisteredUnderItsOwnWindow()
+    {
+        // Arrange - the dropdown's window is in the tree (roadmap M3.F19)
+        nint popupHandle = 0x7700;
+        var combo = RefOf(new FakeUiaNode("ComboBox", "Font") { ActionPatterns = ["ExpandCollapse"], ProcessId = Pid }
+            .WithPattern<IUiaExpandCollapsePattern>(new FakeExpandCollapsePattern(UiaExpandCollapseState.Collapsed)));
+        var list = new FakeUiaNode("List", "Fonts") { ProcessId = Pid, NativeWindowHandle = popupHandle };
+        _tree.WithWindow(popupHandle, list);
+        AppWindow(popupHandle);
+        _probe.Setup(p => p.OpenedSince(It.IsAny<AppWindowSnapshot>()))
+            .Returns(new AppWindowsOpened([], [new OpenedWindow(popupHandle, "", "ComboLBox", Pid, "app")]));
+
+        // Act
+        var result = await ActAsync(combo, ElementActionKind.Expand);
+
+        // Assert - a ref of the popup's window, as get_active_popups gives, that resolves to the popup's root element
+        var popupRef = result.OpenedPopup!.Ref;
+        popupRef.Should().NotBeNull();
+        _registry.Lookup(popupRef!).WindowHandle.Should().Be(popupHandle);
+        _registry.Resolve(popupRef!, CancellationToken.None).Element!.Node.Should().BeSameAs(list);
+        _guard.Verify(g => g.CheckElementWindow(It.IsAny<InputTarget>(), popupHandle), Times.Once,
+            "the popup's own window passes the target checks before it is read");
+    }
+
+    [Fact]
+    public async Task AnOpenedPopup_ThatTheTargetChecksRefuse_IsNotRead_AndHasNoRef()
+    {
+        // Arrange - the policy denies the popup's process
+        nint popupHandle = 0x7700;
+        var combo = RefOf(new FakeUiaNode("ComboBox", "Font") { ActionPatterns = ["ExpandCollapse"], ProcessId = Pid }
+            .WithPattern<IUiaExpandCollapsePattern>(new FakeExpandCollapsePattern(UiaExpandCollapseState.Collapsed)));
+        _tree.WithWindow(popupHandle, new FakeUiaNode("List", "Fonts") { ProcessId = Pid });
+        AppWindow(popupHandle);
+        var dropdown = new OpenedWindow(popupHandle, "", "ComboLBox", Pid, "app");
+        _probe.Setup(p => p.OpenedSince(It.IsAny<AppWindowSnapshot>())).Returns(new AppWindowsOpened([], [dropdown]));
+        _guard.Setup(g => g.CheckElementWindow(It.IsAny<InputTarget>(), popupHandle)).Returns((InputTarget target, nint _) =>
+            InputGuardResult.Refuse(InputErrorCode.TargetDeniedByPolicy, "Denied by the policy.", target));
+
+        // Act
+        var result = await ActAsync(combo, ElementActionKind.Expand);
+
+        // Assert - the action's own result, the popup named without a ref
+        result.Success.Should().BeTrue(result.Error);
+        result.OpenedPopup.Should().Be(dropdown);
+        _tree.ReadNodes.Should().NotContain("Fonts");
+    }
+
+    [Fact]
+    public async Task AnOpenedPopup_WhoseRootCannotBeRead_HasNoRef_AndTheActionStillSucceeds()
+    {
+        nint popupHandle = 0x7700;
+        var combo = RefOf(new FakeUiaNode("ComboBox", "Font") { ActionPatterns = ["ExpandCollapse"], ProcessId = Pid }
+            .WithPattern<IUiaExpandCollapsePattern>(new FakeExpandCollapsePattern(UiaExpandCollapseState.Collapsed)));
+        _tree.WithWindow(popupHandle, new FakeUiaNode("List", "Fonts") { ProcessId = Pid });
+        AppWindow(popupHandle);
+        _tree.FromHandleFailure = handle => handle == popupHandle ? new TimeoutException("no answer") : null;
+        var dropdown = new OpenedWindow(popupHandle, "", "ComboLBox", Pid, "app");
+        _probe.Setup(p => p.OpenedSince(It.IsAny<AppWindowSnapshot>())).Returns(new AppWindowsOpened([], [dropdown]));
+
+        var result = await ActAsync(combo, ElementActionKind.Expand);
+
+        result.Success.Should().BeTrue(result.Error);
+        result.OpenedPopup.Should().Be(dropdown);
+    }
+
     [Theory]
     [InlineData(ElementActionKind.Select, false, true)]
     [InlineData(ElementActionKind.AddToSelection, false, true)]
@@ -793,6 +866,59 @@ public sealed class ElementActionServiceTests : IDisposable
         result.Scroll.AtEnd.Should().BeFalse();
         result.Scroll.ContainerRef.Should().NotBeNull().And.NotBe(item);
         result.OutcomeVerified.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task Scroll_OfAnItem_ReportsItsScrollableAncestorsPercent_BeforeAndAfter()
+    {
+        // Arrange - the item has no Scroll pattern: before and after carry the position of the list it scrolls (roadmap M3.F19)
+        var scroll = new FakeScrollPattern(vertical: 40);
+        var list = new FakeUiaNode("List", "Files") { OtherPatterns = UiaPatterns.Scroll, ProcessId = Pid }.WithPattern<IUiaScrollPattern>(scroll);
+        _window.With(list);
+        var item = RefOf(new FakeUiaNode("ListItem", "a.txt") { ProcessId = Pid }, list);
+
+        // Act
+        var result = await ActAsync(item, ElementActionKind.Scroll, direction: ElementScrollDirection.Down);
+
+        // Assert
+        result.Before!.VerticalScrollPercent.Should().Be(40);
+        result.After!.VerticalScrollPercent.Should().Be(65);
+        result.Before.HorizontalScrollPercent.Should().BeNull("the list does not scroll horizontally");
+    }
+
+    [Fact]
+    public async Task Scroll_ToAPercent_SetsTheScrollPercentOnTheAxisOfItsDirection_AndIsVerified()
+    {
+        // Arrange - realize's scroll fallback puts a list back where it was (roadmap M3.F19)
+        var scroll = new FakeScrollPattern(vertical: 100);
+        var list = RefOf(new FakeUiaNode("List", "Files") { OtherPatterns = UiaPatterns.Scroll }.WithPattern<IUiaScrollPattern>(scroll));
+
+        // Act
+        var result = await CreateSut().ActAsync(new ElementActionRequest(list, ElementActionKind.Scroll, Direction: ElementScrollDirection.Up,
+            ScrollPercent: 40));
+
+        // Assert - one SetScrollPercent, not a page
+        result.Success.Should().BeTrue(result.Error);
+        result.Method.Should().Be(ElementActionMethod.Scroll);
+        scroll.Vertical.Should().Be(40);
+        scroll.Scrolls.Should().BeEmpty();
+        result.Scroll!.VerticalPercent.Should().Be(40);
+        result.OutcomeVerified.Should().BeTrue();
+        _runner.Runs.Should().Be(1, "it is a pattern action like any scroll");
+    }
+
+    [Fact]
+    public async Task Scroll_ToThePercentItIsAt_DoesNothing()
+    {
+        var scroll = new FakeScrollPattern(vertical: 40);
+        var list = RefOf(new FakeUiaNode("List", "Files") { OtherPatterns = UiaPatterns.Scroll }.WithPattern<IUiaScrollPattern>(scroll));
+
+        var result = await CreateSut().ActAsync(new ElementActionRequest(list, ElementActionKind.Scroll, Direction: ElementScrollDirection.Up,
+            ScrollPercent: 40));
+
+        result.Method.Should().Be(ElementActionMethod.None);
+        result.OutcomeVerified.Should().BeTrue();
+        _runner.Runs.Should().Be(0);
     }
 
     [Fact]
@@ -1147,6 +1273,26 @@ public sealed class ElementActionServiceTests : IDisposable
         result.OpenedPopup.Should().Be(dialog);
         result.OutcomeVerified.Should().BeNull();
         result.Warnings.Should().Contain(w => w.Contains("Save As"));
+    }
+
+    [Fact]
+    public async Task AnActionStillBlockedAtTheTimeout_GivesTheDialogItWaitsFor_ItsRootsRef()
+    {
+        // Arrange - the dialog answers while the Invoke waits for it (roadmap M3.F19)
+        _runner.Outcome = UiaActionStatus.Pending;
+        var save = RefOf(Button("Save As..."));
+        nint dialogHandle = 0x7800;
+        _tree.WithWindow(dialogHandle, new FakeUiaNode("Window", "Save As") { ProcessId = Pid, NativeWindowHandle = dialogHandle });
+        AppWindow(dialogHandle);
+        _probe.Setup(p => p.OpenedSince(It.IsAny<AppWindowSnapshot>()))
+            .Returns(new AppWindowsOpened([new OpenedWindow(dialogHandle, "Save As", "#32770", Pid, "app")], []));
+
+        // Act
+        var result = await ActAsync(save, ElementActionKind.Invoke);
+
+        // Assert
+        result.Status.Should().Be(ElementActionStatus.InvokedPendingModal);
+        _registry.Lookup(result.OpenedPopup!.Ref!).WindowHandle.Should().Be(dialogHandle);
     }
 
     [Fact]
@@ -1804,6 +1950,17 @@ public sealed class ElementActionServiceTests : IDisposable
         ElementActionKind action, string? value, ElementValueMode mode, ElementScrollDirection? direction, string expected)
     {
         ElementActionService.ArgumentError(new ElementActionRequest("w1e1", action, value, mode, direction))
+            .Should().Contain(expected);
+    }
+
+    [Theory]
+    [InlineData(ElementActionKind.Invoke, null, 40.0, "scrollPercent is for scroll")]
+    [InlineData(ElementActionKind.Scroll, ElementScrollDirection.Up, 140.0, "0 to 100")]
+    [InlineData(ElementActionKind.Scroll, ElementScrollDirection.Up, double.NaN, "0 to 100")]
+    public void ArgumentError_RefusesAScrollPercent_OtherThanForScroll_OrOutsideTheRange(
+        ElementActionKind action, ElementScrollDirection? direction, double percent, string expected)
+    {
+        ElementActionService.ArgumentError(new ElementActionRequest("w1e1", action, Direction: direction, ScrollPercent: percent))
             .Should().Contain(expected);
     }
 

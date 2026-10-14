@@ -10,6 +10,12 @@ public sealed partial class ElementActionService
     /// <summary>How many ancestors scroll looks through for a scrollable container.</summary>
     private const int MaxScrollAncestors = 16;
 
+    /// <summary>How far a scroll to a percent may end from it and still be there: a provider that scrolls by items rounds it.</summary>
+    private const double ScrollPercentTolerance = 0.5;
+
+    /// <summary>SetScrollPercent's value for an axis it leaves where it is (UIA_ScrollPatternNoScroll).</summary>
+    private const double NoScroll = -1;
+
     /// <summary>How many ancestors are looked through for the window an element of another process belongs to.</summary>
     private const int MaxWindowAncestors = 32;
 
@@ -512,6 +518,10 @@ public sealed partial class ElementActionService
         if (containerElement != null)
         {
             element.ContainerRef = TryRead(() => _registry.Register(call.Window, containerElement, new ElementOrigin(_registry.NextGeneration())));
+
+            // An element that scrolls through its ancestor has the ancestor's position as its own (roadmap M3.F19)
+            element.Before = WithScroll(element.Before, state);
+            call.Before = element.Before;
         }
 
         var direction = request.Direction!.Value;
@@ -520,6 +530,16 @@ public sealed partial class ElementActionService
         {
             element.Warnings.Add($"The container does not scroll {(vertical ? "vertically" : "horizontally")}: all of its content fits.");
             return element.Use(new Plan(PlanKind.Nothing, ElementActionMethod.None));
+        }
+
+        if (request.ScrollPercent is { } percent)
+        {
+            // A position rather than a page: realize's scroll fallback puts a list back where it was (roadmap M3.F19)
+            return Math.Abs((vertical ? state.VerticalPercent : state.HorizontalPercent) - percent) <= ScrollPercentTolerance
+                ? element.Use(new Plan(PlanKind.Nothing, ElementActionMethod.None))
+                : element.Use(Plan.Pattern(ElementActionMethod.Scroll, vertical
+                    ? () => scroll.SetScrollPercent(NoScroll, percent)
+                    : () => scroll.SetScrollPercent(percent, NoScroll)));
         }
 
         if (AtEnd(direction, state))
@@ -751,6 +771,11 @@ public sealed partial class ElementActionService
             var scroll = element.ScrollContainer is { } container
                 ? TryRead(() => _tree.GetPattern<IUiaScrollPattern>(container)?.State)
                 : null;
+            if (scroll != null && !ReferenceEquals(element.ScrollContainer, element.Node))
+            {
+                state = WithScroll(state, scroll);
+            }
+
             return ReadOutcome<AfterRead>.Of(new AfterRead(state, fullValue, scroll, Gone: false, Warning: null));
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -819,6 +844,11 @@ public sealed partial class ElementActionService
         }
 
         var vertical = direction is ElementScrollDirection.Up or ElementScrollDirection.Down;
+        if (request.ScrollPercent is { } percent)
+        {
+            return Math.Abs((vertical ? now.VerticalPercent : now.HorizontalPercent) - percent) <= ScrollPercentTolerance;
+        }
+
         var moved = vertical ? now.VerticalPercent != then.VerticalPercent : now.HorizontalPercent != then.HorizontalPercent;
         return moved || AtEnd(direction, now);
     }
@@ -844,6 +874,13 @@ public sealed partial class ElementActionService
         ElementScrollDirection.Up => !state.VerticallyScrollable || state.VerticalPercent <= 0.01,
         ElementScrollDirection.Right => !state.HorizontallyScrollable || state.HorizontalPercent >= 99.99,
         _ => !state.HorizontallyScrollable || state.HorizontalPercent <= 0.01
+    };
+
+    /// <summary><paramref name="state"/> with the position of the scrollable ancestor it scrolls through.</summary>
+    private static ElementState WithScroll(ElementState state, UiaScrollState scroll) => state with
+    {
+        HorizontalScrollPercent = Percent(scroll.HorizontallyScrollable, scroll.HorizontalPercent),
+        VerticalScrollPercent = Percent(scroll.VerticallyScrollable, scroll.VerticalPercent)
     };
 
     private static double? Percent(bool? scrollable, double? percent) =>
@@ -1028,7 +1065,8 @@ public sealed partial class ElementActionService
         /// </summary>
         public bool PasswordUnknown { get; init; }
 
-        public ElementState Before { get; } = before;
+        /// <summary>The state before the action; for a scroll through an ancestor, with the ancestor's position.</summary>
+        public ElementState Before { get; set; } = before;
 
         /// <summary>The whole value before the action (null for a password field, or without a Value pattern).</summary>
         public string? FullValue { get; } = fullValue;

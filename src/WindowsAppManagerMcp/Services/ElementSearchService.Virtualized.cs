@@ -1,3 +1,4 @@
+using System.Globalization;
 using WindowsAppManagerMcp.Models;
 using WindowsAppManagerMcp.Services.Interfaces;
 
@@ -107,6 +108,7 @@ public sealed partial class ElementSearchService
         var known = total.Matches.Select(m => m.Element.RuntimeId).OfType<IReadOnlyList<int>>().ToList();
         var items = new List<UiaElement>();
         var more = false;
+        var matched = false;
 
         // Why the lookup did not finish: every way it stops early is reported as truncation, so a caller that needs exactly
         // one match (element_action) does not take a partial lookup for a complete one. A timeout outranks a skipped part
@@ -132,33 +134,13 @@ public sealed partial class ElementSearchService
 
         try
         {
-            foreach (var container in containers.Where(c => (c.Patterns & UiaPatterns.ItemContainer) != 0))
+            // The tree search ignores case, but a list compares the text as it is (WPF: case-sensitively): when no list has an
+            // item with the exact text, the lists are asked again with it in the usual other cases (roadmap M3.F19)
+            var asking = new List<string> { value };
+            for (var pass = 0; pass < asking.Count; pass++)
             {
-                if (token.IsCancellationRequested)
-                {
-                    Stopped(ElementSearchTruncation.Timeout, TimedOutNote);
-                    break;
-                }
-
-                IUiaItemContainerPattern? pattern;
-                try
-                {
-                    pattern = _tree.GetPattern<IUiaItemContainerPattern>(container.Node);
-                }
-                catch (TimeoutException)
-                {
-                    Stopped(ElementSearchTruncation.Timeout, NoAnswerNote);
-                    break;
-                }
-                catch (Exception ex) when (ex is not OperationCanceledException)
-                {
-                    Stopped(ElementSearchTruncation.PartsSkipped, $"A list's ItemContainer pattern could not be read: {ex.Message}");
-                    continue;
-                }
-
-                IUiaNode? after = null;
-                var finished = pattern == null;
-                for (var probe = 0; pattern != null && probe < MaxVirtualizedProbes; probe++)
+                var asked = asking[pass];
+                foreach (var container in containers.Where(c => (c.Patterns & UiaPatterns.ItemContainer) != 0))
                 {
                     if (token.IsCancellationRequested)
                     {
@@ -166,11 +148,10 @@ public sealed partial class ElementSearchService
                         break;
                     }
 
-                    IUiaNode? item;
-                    UiaElement element;
+                    IUiaItemContainerPattern? pattern;
                     try
                     {
-                        item = pattern.FindItemByProperty(after, property, value);
+                        pattern = _tree.GetPattern<IUiaItemContainerPattern>(container.Node);
                     }
                     catch (TimeoutException)
                     {
@@ -179,71 +160,110 @@ public sealed partial class ElementSearchService
                     }
                     catch (Exception ex) when (ex is not OperationCanceledException)
                     {
-                        // This list's provider failed (or the item to start after went away): its other items are not known, so
-                        // the lookup is not complete. The next list is searched
-                        Stopped(ElementSearchTruncation.PartsSkipped, $"A list's provider failed, so not all of its items were searched: {ex.Message}");
-                        finished = true;
-                        break;
-                    }
-
-                    if (item == null)
-                    {
-                        finished = true;
-                        break;
-                    }
-
-                    after = item;
-                    try
-                    {
-                        element = ReadItem(item);
-                    }
-                    catch (TimeoutException)
-                    {
-                        Stopped(ElementSearchTruncation.Timeout, NoAnswerNote);
-                        break;
-                    }
-                    catch (Exception ex) when (ex is not OperationCanceledException)
-                    {
-                        // An item that went away, or a placeholder that does not even name itself: the provider matched it, but it
-                        // cannot be checked or named. The next one is asked for
-                        Stopped(ElementSearchTruncation.PartsSkipped, "An item a list matched could not be read, so it was skipped.");
+                        Stopped(ElementSearchTruncation.PartsSkipped, $"A list's ItemContainer pattern could not be read: {ex.Message}");
                         continue;
                     }
 
-                    if ((evaluate && !UiaConditionEvaluator.Matches(condition, element)) || (filter != null && !filter(element)))
+                    IUiaNode? after = null;
+                    var finished = pattern == null;
+                    for (var probe = 0; pattern != null && probe < MaxVirtualizedProbes; probe++)
                     {
-                        continue;
-                    }
+                        if (token.IsCancellationRequested)
+                        {
+                            Stopped(ElementSearchTruncation.Timeout, TimedOutNote);
+                            break;
+                        }
 
-                    if (element.RuntimeId is { } id)
-                    {
-                        if (known.Any(k => k.SequenceEqual(id)))
+                        IUiaNode? item;
+                        UiaElement element;
+                        try
+                        {
+                            item = pattern.FindItemByProperty(after, property, asked);
+                        }
+                        catch (TimeoutException)
+                        {
+                            Stopped(ElementSearchTruncation.Timeout, NoAnswerNote);
+                            break;
+                        }
+                        catch (Exception ex) when (ex is not OperationCanceledException)
+                        {
+                            // This list's provider failed (or the item to start after went away): its other items are not known, so
+                            // the lookup is not complete. The next list is searched
+                            Stopped(ElementSearchTruncation.PartsSkipped, $"A list's provider failed, so not all of its items were searched: {ex.Message}");
+                            finished = true;
+                            break;
+                        }
+
+                        if (item == null)
+                        {
+                            finished = true;
+                            break;
+                        }
+
+                        matched = true;
+                        after = item;
+                        try
+                        {
+                            element = ReadItem(item);
+                        }
+                        catch (TimeoutException)
+                        {
+                            Stopped(ElementSearchTruncation.Timeout, NoAnswerNote);
+                            break;
+                        }
+                        catch (Exception ex) when (ex is not OperationCanceledException)
+                        {
+                            // An item that went away, or a placeholder that does not even name itself: the provider matched it, but it
+                            // cannot be checked or named. The next one is asked for
+                            Stopped(ElementSearchTruncation.PartsSkipped, "An item a list matched could not be read, so it was skipped.");
+                            continue;
+                        }
+
+                        if ((evaluate && !UiaConditionEvaluator.Matches(condition, element)) || (filter != null && !filter(element)))
                         {
                             continue;
                         }
 
-                        known.Add(id);
+                        if (element.RuntimeId is { } id)
+                        {
+                            if (known.Any(k => k.SequenceEqual(id)))
+                            {
+                                continue;
+                            }
+
+                            known.Add(id);
+                        }
+
+                        if (items.Count >= room)
+                        {
+                            more = true;
+                            break;
+                        }
+
+                        items.Add(element);
                     }
 
-                    if (items.Count >= room)
+                    if (more || stop == ElementSearchTruncation.Timeout)
                     {
-                        more = true;
                         break;
                     }
 
-                    items.Add(element);
+                    if (!finished)
+                    {
+                        Stopped(ElementSearchTruncation.PartsSkipped,
+                            $"A list kept matching after {MaxVirtualizedProbes} items were asked for, so the rest of it was not searched. " +
+                            "Add criteria (automationId), or search below the list with withinRef.");
+                    }
                 }
 
-                if (more || stop == ElementSearchTruncation.Timeout)
+                if (more || stop == ElementSearchTruncation.Timeout || matched)
                 {
                     break;
                 }
 
-                if (!finished)
+                if (pass == 0)
                 {
-                    Stopped(ElementSearchTruncation.PartsSkipped,
-                        $"A list kept matching after {MaxVirtualizedProbes} items were asked for, so the rest of it was not searched. " +
-                        "Add criteria (automationId), or search below the list with withinRef.");
+                    asking.AddRange(OtherCases(value));
                 }
             }
         }
@@ -253,6 +273,20 @@ public sealed partial class ElementSearchService
         }
 
         return new VirtualizedLookup(items, more, containers, notes.Count == 0 ? null : string.Join(" ", notes), stop);
+    }
+
+    /// <summary>
+    /// <paramref name="value"/> in the cases a list's text is usually in, other than its own: all lower case, all upper case,
+    /// a capital first letter, and capital words (roadmap M3.F19). A provider compares one whole property as it is, so a
+    /// name the tree search finds ignoring case is asked for in these when no item has it exactly.
+    /// </summary>
+    private static IEnumerable<string> OtherCases(string value)
+    {
+        var lower = value.ToLowerInvariant();
+        var sentence = lower.Length == 0 ? lower : char.ToUpperInvariant(lower[0]) + lower[1..];
+        return new[] { lower, value.ToUpperInvariant(), sentence, CultureInfo.InvariantCulture.TextInfo.ToTitleCase(lower) }
+            .Where(c => !string.Equals(c, value, StringComparison.Ordinal))
+            .Distinct(StringComparer.Ordinal);
     }
 
     /// <summary>

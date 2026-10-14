@@ -98,6 +98,9 @@ public sealed partial class ElementActionService : IElementActionService
     /// <summary>How long to wait after the action before its state is read (and between the reads that verify it).</summary>
     public TimeSpan SettleDelay { get; init; } = TimeSpan.FromMilliseconds(100);
 
+    /// <summary>How long the read of an opened popup's root element, for its ref, may take (roadmap M3.F19).</summary>
+    public TimeSpan PopupRefTimeout { get; init; } = TimeSpan.FromSeconds(1);
+
     /// <summary>How long to wait for the input gate; default <see cref="InputGateToolFilter.GateWaitTimeout"/>.</summary>
     public TimeSpan? GateTimeout { get; init; }
 
@@ -159,6 +162,19 @@ public sealed partial class ElementActionService : IElementActionService
             return $"direction is for scroll, not {action}.";
         }
 
+        if (request.ScrollPercent is { } percent)
+        {
+            if (request.Action != ElementActionKind.Scroll)
+            {
+                return $"scrollPercent is for scroll, not {action}.";
+            }
+
+            if (!double.IsFinite(percent) || percent is < 0 or > 100)
+            {
+                return $"scrollPercent is a position from 0 to 100 (got {percent.ToString(CultureInfo.InvariantCulture)}).";
+            }
+        }
+
         if (request.Fallback == ElementActionFallback.Mouse && request.Action is not (ElementActionKind.Invoke or ElementActionKind.Click
                 or ElementActionKind.Select))
         {
@@ -210,13 +226,53 @@ public sealed partial class ElementActionService : IElementActionService
             return call.Fail(ex.ErrorCode, ex.Message);
         }
 
+        ElementActionResult result;
         try
         {
-            return await ActInsideGateAsync(call, gate, cancellationToken).ConfigureAwait(false);
+            result = await ActInsideGateAsync(call, gate, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
             gate.Dispose();
+        }
+
+        return await WithPopupRefAsync(call, result, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// The result with its openedPopup's ref (roadmap M3.F19): the popup window's root element, read on the worker and
+    /// registered under that window, as get_active_popups registers a popup's, once the window has passed the target checks
+    /// of an element's own window (policy, elevation, host: Win32 reads) and answers messages. A hint, as openedPopup is: when
+    /// the window is refused or its root cannot be read within <see cref="PopupRefTimeout"/>, the popup is named without a ref.
+    /// </summary>
+    private async Task<ElementActionResult> WithPopupRefAsync(ActionCall call, ElementActionResult result, CancellationToken cancellationToken)
+    {
+        if (result.OpenedPopup is not { Ref: null } popup)
+        {
+            return result;
+        }
+
+        var handle = (nint)popup.Handle;
+        if (UiaTargets.NotRespondingReason(_windows, handle) != null ||
+            !_guard.CheckElementWindow(InputTarget.Window(call.Window, call.Request.AllowHostTarget), handle).Allowed)
+        {
+            return result;
+        }
+
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        deadline.CancelAfter(PopupRefTimeout);
+        try
+        {
+            var popupRef = await _worker.RunAsync(popup.ProcessId, _ => _tree.FromHandle(handle) is { } root
+                    ? _registry.Register(handle, _tree.ReadElement(root), new ElementOrigin(_registry.NextGeneration()))
+                    : null,
+                deadline.Token, TimeSpan.Zero).ConfigureAwait(false);
+            return popupRef == null ? result : result with { OpenedPopup = popup with { Ref = popupRef } };
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+        {
+            // It closed meanwhile, its provider failed or did not answer: named without a ref
+            return result;
         }
     }
 
