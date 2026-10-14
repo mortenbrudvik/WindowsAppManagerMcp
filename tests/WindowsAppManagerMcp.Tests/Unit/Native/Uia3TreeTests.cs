@@ -764,6 +764,74 @@ public class Uia3TreeTests
         FluentActions.Invoking(() => UiaCondition.And()).Should().Throw<ArgumentException>();
     }
 
+    private const PropertyConditionFlags MatchSubstring = PropertyConditionFlags.PropertyConditionFlags_MatchSubstring;
+
+    /// <summary>What the COM client throws for E_INVALIDARG, as it does for a flag the system does not know.</summary>
+    private static Exception InvalidArgument => Marshal.GetExceptionForHR(unchecked((int)0x80070057))!;
+
+    [Theory]
+    [InlineData(true, PropertyConditionFlags.PropertyConditionFlags_IgnoreCase | PropertyConditionFlags.PropertyConditionFlags_MatchSubstring)]
+    [InlineData(false, PropertyConditionFlags.PropertyConditionFlags_MatchSubstring)]
+    public void FindAll_OfAPropertyThatContainsAText_AsksForASubstringMatch(bool ignoreCase, PropertyConditionFlags expected)
+    {
+        // Arrange - roadmap M3.F12: the provider tests the text, on Windows 10 1809 and later
+        var sut = CreateSut();
+        var window = new Mock<IUIAutomationElement>();
+        var node = NodeOf(sut, window);
+        window.Setup(e => e.FindAllBuildCache(It.IsAny<TreeScope>(), It.IsAny<IUIAutomationCondition>(), It.IsAny<IUIAutomationCacheRequest>()))
+            .Returns(ArrayOf(Cached("Save As", 50000)).Object);
+
+        // Act
+        var result = sut.FindAll(node, UiaScope.Descendants, UiaCondition.PropertyContains(UiaProperty.Name, "save", ignoreCase), CancellationToken.None);
+
+        // Assert
+        result.Select(e => e.Properties.Name).Should().Equal("Save As");
+        _automation.Verify(a => a.CreatePropertyConditionEx(UiaIds.NameProperty, "save", expected), Times.Once);
+    }
+
+    [Fact]
+    public void FindAll_WhereWindowsRefusesTheSubstringFlag_IsNotSupported_AndTheClientIsNotAskedAgain()
+    {
+        // Arrange - before Windows 10 1809 the client does not know PropertyConditionFlags_MatchSubstring (E_INVALIDARG)
+        var sut = CreateSut();
+        var window = new Mock<IUIAutomationElement>();
+        var node = NodeOf(sut, window);
+        _automation.Setup(a => a.CreatePropertyConditionEx(It.IsAny<int>(), It.IsAny<object>(), It.Is<PropertyConditionFlags>(f => (f & MatchSubstring) != 0)))
+            .Throws(InvalidArgument);
+        window.Setup(e => e.FindAllBuildCache(It.IsAny<TreeScope>(), It.IsAny<IUIAutomationCondition>(), It.IsAny<IUIAutomationCacheRequest>()))
+            .Returns(ArrayOf(Cached("Save", 50000)).Object);
+        var contains = UiaCondition.PropertyContains(UiaProperty.Name, "save", ignoreCase: true);
+
+        // Act & Assert - the search (ElementSearch) goes on without it; the refusal is remembered for this engine
+        sut.Invoking(t => t.FindAll(node, UiaScope.Descendants, contains, CancellationToken.None)).Should().Throw<UiaConditionNotSupportedException>();
+        sut.Invoking(t => t.FindAll(node, UiaScope.Descendants, contains, CancellationToken.None)).Should().Throw<UiaConditionNotSupportedException>();
+        sut.FindAll(node, UiaScope.Descendants, UiaCondition.PropertyEquals(UiaProperty.ControlType, "Button"), CancellationToken.None)
+            .Should().ContainSingle();
+        _automation.Verify(a => a.CreatePropertyConditionEx(It.IsAny<int>(), It.IsAny<object>(), It.Is<PropertyConditionFlags>(f => (f & MatchSubstring) != 0)),
+            Times.Once);
+        window.Verify(e => e.FindAllBuildCache(It.IsAny<TreeScope>(), It.IsAny<IUIAutomationCondition>(), It.IsAny<IUIAutomationCacheRequest>()), Times.Once);
+    }
+
+    [Fact]
+    public void FindAll_WhenTheSearchRefusesASubstringCondition_IsNotSupported_AndTheClientIsNotAskedAgain()
+    {
+        // Arrange - a client that takes the condition but fails the search with it
+        var sut = CreateSut();
+        var window = new Mock<IUIAutomationElement>();
+        var node = NodeOf(sut, window);
+        window.Setup(e => e.FindAllBuildCache(It.IsAny<TreeScope>(), It.IsAny<IUIAutomationCondition>(), It.IsAny<IUIAutomationCacheRequest>()))
+            .Throws(InvalidArgument);
+        var contains = UiaCondition.PropertyContains(UiaProperty.Name, "save", ignoreCase: true);
+
+        // Act & Assert
+        sut.Invoking(t => t.FindAll(node, UiaScope.Descendants, contains, CancellationToken.None)).Should().Throw<UiaConditionNotSupportedException>();
+        sut.Invoking(t => t.FindAll(node, UiaScope.Descendants, contains, CancellationToken.None)).Should().Throw<UiaConditionNotSupportedException>();
+        window.Verify(e => e.FindAllBuildCache(It.IsAny<TreeScope>(), It.IsAny<IUIAutomationCondition>(), It.IsAny<IUIAutomationCacheRequest>()), Times.Once);
+
+        // Without a substring, the same failure is the provider's, as before
+        sut.Invoking(t => t.FindAll(node, UiaScope.Descendants, UiaCondition.True, CancellationToken.None)).Should().Throw<ArgumentException>();
+    }
+
     #endregion
 
     #region Patterns

@@ -35,8 +35,9 @@ public class ElementRegistryTests
     private static ElementCriteria ByAutomationId(string automationId) =>
         new(AutomationId: automationId, ControlTypes: ["Button"]);
 
-    private ElementRegistry CreateSut(int capacity = ElementRegistry.DefaultCapacity) =>
-        new(_tree, _worker, _windows.Object, capacity, firstWindowNumber: 1, TimeProvider.System);
+    private ElementRegistry CreateSut(int capacity = ElementRegistry.DefaultCapacity, bool providerContains = false) =>
+        new(_tree, _worker, _windows.Object, capacity, firstWindowNumber: 1, TimeProvider.System,
+            new ProviderContainsOptions(providerContains));
 
     private FakeUiaNode Window(nint handle, params FakeUiaNode[] children)
     {
@@ -715,6 +716,36 @@ public class ElementRegistryTests
 
         // Assert - the selector ran again, and the fingerprint picked the element (Open document also contains no "save")
         resolution.Element!.Should().Match<ResolvedElement>(r => ReferenceEquals(r.Node, recreated) && r.Via == ElementResolutionPath.Selector);
+    }
+
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    [InlineData(false, false)]
+    public void Resolve_ByAContainsSelector_NarrowsTheSearchInTheProviderWhenAsked_OrSearchesWithoutWhereTheEngineRefuses(
+        bool providerContains, bool refuses)
+    {
+        // Arrange - with WAM_UIA_PROVIDER_CONTAINS=1 the provider tests the name's text (roadmap M3.F12), unless the engine
+        // refuses the substring flag; a level too wide to split, so the provider searches it
+        var sut = CreateSut(providerContains: providerContains);
+        var save = Button("Save document");
+        var pane = new FakeUiaNode("Pane", "Toolbar").With(save)
+            .With(Enumerable.Range(1, ElementSearch.MaxExpandWidth).Select(i => Button($"Open document {i}")).ToArray());
+        Window(Handle, pane);
+        var saveRef = Register(sut, save, selector: new ElementCriteria(Name: "save", NameMatch: ElementNameMatch.Contains, ControlTypes: ["Button"]));
+        var conditions = new List<UiaCondition>();
+        _tree.OnFindAll = (_, condition) => conditions.Add(condition);
+        _tree.RefusesSubstrings = refuses;
+
+        // Act
+        save.Vanish();
+        var recreated = Button("Save document");
+        pane.With(recreated);
+        var resolution = sut.Resolve(saveRef!, None);
+
+        // Assert
+        resolution.Element!.Should().Match<ResolvedElement>(r => ReferenceEquals(r.Node, recreated) && r.Via == ElementResolutionPath.Selector);
+        conditions.Any(FakeUiaTree.HasSubstring).Should().Be(providerContains);
     }
 
     [Fact]

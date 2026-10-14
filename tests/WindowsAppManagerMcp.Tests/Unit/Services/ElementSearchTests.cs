@@ -274,6 +274,204 @@ public class ElementSearchTests
         during.Matches.Should().HaveCount(10);
     }
 
+    #region A name that contains a text, narrowed by the provider (roadmap M3.F12)
+
+    private static UiaCondition ContainsSave => UiaCondition.PropertyContains(UiaProperty.Name, "save", ignoreCase: true);
+
+    private static Func<UiaElement, bool> NameContains(string text) =>
+        e => (e.Properties.Name ?? string.Empty).Contains(text, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Window "Documents" > List "Recent" (60 buttons, every seventh "Save n", the rest "Open n"), List "Pinned" (the same)
+    /// and a Button "SAVE all" (a level read while the tree is split).
+    /// </summary>
+    private static FakeUiaNode Documents()
+    {
+        FakeUiaNode List(string name) => new FakeUiaNode("List", name).With(Enumerable.Range(1, 60)
+            .Select(i => new FakeUiaNode("Button", i % 7 == 0 ? $"Save {name} {i}" : $"Open {name} {i}")).ToArray());
+        return new FakeUiaNode("Window", "Documents").With(List("Recent"), List("Pinned"), new FakeUiaNode("Button", "SAVE all"));
+    }
+
+    private static ElementSearchOutcome ServerOnly(FakeUiaNode root, int keep = 50) =>
+        new ElementSearch(new FakeUiaTree { Engine = UiaEngine.Uia2 }, IsButton, NameContains("save"), keep).Run(root, None);
+
+    private ElementSearchOutcome Narrowed(FakeUiaNode root, int keep = 50) =>
+        new ElementSearch(_tree, IsButton, NameContains("save"), keep, narrowing: ContainsSave).Run(root, None);
+
+    private static void ShouldBeTheSame(ElementSearchOutcome narrowed, ElementSearchOutcome serverOnly)
+    {
+        narrowed.Matches.Select(m => m.Properties.Name).Should().Equal(serverOnly.Matches.Select(m => m.Properties.Name));
+        narrowed.MatchCount.Should().Be(serverOnly.MatchCount);
+        narrowed.Stop.Should().Be(serverOnly.Stop);
+        narrowed.SkippedParts.Should().Be(serverOnly.SkippedParts);
+    }
+
+    [Theory]
+    [InlineData(50)]
+    [InlineData(3)]
+    public void Run_WithANarrowing_TheProviderTestsTheSubstring_AndFindsWhatTheServerAloneFinds(int keep)
+    {
+        // Arrange
+        var conditions = new List<UiaCondition>();
+        _tree.OnFindAll = (_, condition) => conditions.Add(condition);
+
+        // Act
+        var serverOnly = ServerOnly(Documents(), keep);
+        var narrowed = Narrowed(Documents(), keep);
+
+        // Assert - the same matches, in the same order, and the same count beyond the kept ones; the provider returned
+        // only the elements whose name has the text
+        ShouldBeTheSame(narrowed, serverOnly);
+        narrowed.MatchCount.Should().Be(17);
+        narrowed.Candidates.Should().Be(17);
+        serverOnly.Candidates.Should().Be(121);
+        conditions.Should().NotBeEmpty().And.OnlyContain(c => FakeUiaTree.HasSubstring(c));
+    }
+
+    [Fact]
+    public void Run_WithANarrowing_TheServerStillTestsEveryElementTheProviderReturns()
+    {
+        // Arrange - a provider that ignores the flag (matches every name), and the name's test on the server is stricter
+        // than the narrowing (a narrowing is only a part of the text)
+        _tree.SubstringTest = (_, _) => true;
+        var search = new ElementSearch(_tree, IsButton, NameContains("save recent"), keep: 50,
+            narrowing: UiaCondition.PropertyContains(UiaProperty.Name, "save", ignoreCase: true));
+
+        // Act
+        var outcome = search.Run(Documents(), None);
+
+        // Assert
+        outcome.Matches.Select(m => m.Properties.Name).Should().Equal(
+            Enumerable.Range(1, 8).Select(i => $"Save Recent {i * 7}"));
+    }
+
+    [Fact]
+    public void Run_WithAProviderThatMisappliesTheNarrowing_FindsWhatTheServerAloneFinds()
+    {
+        // A provider that adds elements the text is not in (here the "Open" rows ending in 1) is caught by the server's test.
+        // One that left out a match could not be caught, which is why the narrowing is made only of characters whose case
+        // every provider folds alike (ElementCriteria.NameNarrowing)
+        _tree.SubstringTest = (node, _) => node.Name?.StartsWith("Open", StringComparison.Ordinal) != true || node.Name.EndsWith('1');
+
+        ShouldBeTheSame(Narrowed(Documents()), ServerOnly(Documents()));
+    }
+
+    [Fact]
+    public void Run_WhenTheEngineRefusesTheNarrowing_SearchesOnWithoutIt_AndFindsWhatTheServerAloneFinds()
+    {
+        // Arrange - Windows before 10 1809 refuses PropertyConditionFlags_MatchSubstring
+        var conditions = new List<UiaCondition>();
+        _tree.OnFindAll = (_, condition) => conditions.Add(condition);
+        _tree.RefusesSubstrings = true;
+
+        // Act
+        var narrowed = Narrowed(Documents());
+
+        // Assert - asked once; the rest of the search went without it, and the split was not done again
+        ShouldBeTheSame(narrowed, ServerOnly(Documents()));
+        conditions.Count(FakeUiaTree.HasSubstring).Should().Be(1);
+        conditions.Should().HaveCount(3);
+        _tree.ChildListings.Should().OnlyHaveUniqueItems();
+    }
+
+    [Fact]
+    public void Run_WhenTheEngineRefusesTheBaseConditionToo_Throws()
+    {
+        // Without the narrowing it is the caller's fallback (the managed client and AppBar), as before
+        _tree.OnFindAll = (_, _) => throw new UiaConditionNotSupportedException("uia2");
+
+        FluentActions.Invoking(() => Narrowed(Documents())).Should().Throw<UiaConditionNotSupportedException>();
+    }
+
+    [Fact]
+    public void Run_UnderTheManagedEngine_PassesNoNarrowing()
+    {
+        // Arrange - System.Windows.Automation has no substring flag
+        _tree.Engine = UiaEngine.Uia2;
+        var conditions = new List<UiaCondition>();
+        _tree.OnFindAll = (_, condition) => conditions.Add(condition);
+
+        // Act
+        var narrowed = Narrowed(Documents());
+
+        // Assert
+        ShouldBeTheSame(narrowed, ServerOnly(Documents()));
+        conditions.Should().NotBeEmpty().And.NotContain(c => FakeUiaTree.HasSubstring(c));
+    }
+
+    [Fact]
+    public void Run_WithANarrowing_ReachesFurtherBeforeTheCandidateLimit_KeepingTheServerOnlyMatchesFirst()
+    {
+        // Arrange - the limit counts what the provider matched: 3000 buttons without the narrowing, 30 with it
+        var window = new FakeUiaNode("Window", "App").With(WideList("A", 1000), WideList("B", 1000), WideList("C", 1000));
+        var sevens = UiaCondition.PropertyContains(UiaProperty.Name, "77", ignoreCase: true);
+
+        // Act
+        var serverOnly = new ElementSearch(new FakeUiaTree(), IsButton, NameContains("77"), 100).Run(window, None);
+        var narrowed = new ElementSearch(_tree, IsButton, NameContains("77"), 100, narrowing: sevens).Run(window, None);
+
+        // Assert - the cost limit stops the server-only search after two lists; the narrowed one finishes, and what the
+        // server-only search found comes first, in the same order
+        serverOnly.Stop.Should().Be(ElementSearchStop.CandidateLimit);
+        narrowed.Complete.Should().BeTrue();
+        narrowed.Matches.Select(m => m.Properties.Name).Should().StartWith(serverOnly.Matches.Select(m => m.Properties.Name));
+        narrowed.MatchCount.Should().Be(3 * 19);
+    }
+
+    [Theory]
+    [InlineData("Save", "Save")]
+    [InlineData("save as", "save as")]
+    [InlineData("Find in files", "nd ")]
+    [InlineData("Café menu", " menu")]
+    [InlineData("FILE", "LE")]
+    [InlineData("i", null)]
+    [InlineData("日本語", null)]
+    public void NameNarrowing_ForContains_IsTheLongestRunOfCharactersEveryProviderFoldsAlike(string name, string? expected)
+    {
+        // ASCII only (no other character equals an ASCII one ignoring case ordinally), and no i or I: a Turkish or Azerbaijani
+        // comparison folds them to the dotted and dotless I, so a provider that compares by the user's locale could miss them
+        var narrowing = new ElementCriteria(Name: name, NameMatch: ElementNameMatch.Contains).NameNarrowing;
+
+        if (expected == null)
+        {
+            narrowing.Should().BeNull();
+        }
+        else
+        {
+            narrowing.Should().Be(UiaCondition.PropertyContains(UiaProperty.Name, expected, ignoreCase: true));
+        }
+    }
+
+    [Fact]
+    public void NameNarrowing_ForAnExactNameAPatternOrNoName_IsNull()
+    {
+        // An exact name is already the provider's condition; a pattern has no text every match contains
+        new ElementCriteria(Name: "Save").NameNarrowing.Should().BeNull();
+        new ElementCriteria(Name: "Save", NameMatch: ElementNameMatch.Regex).NameNarrowing.Should().BeNull();
+        new ElementCriteria(AutomationId: "SaveBtn", NameMatch: ElementNameMatch.Contains).NameNarrowing.Should().BeNull();
+    }
+
+    [Fact]
+    public void NameNarrowing_IsNotPartOfTheCompiledCondition_TheServersTestStays()
+    {
+        var (condition, filter) = new ElementCriteria(Name: "Save", NameMatch: ElementNameMatch.Contains).Compile();
+
+        FakeUiaTree.HasSubstring(condition).Should().BeFalse();
+        filter.Should().NotBeNull();
+    }
+
+    [Fact]
+    public void Conditions_ASubstring_IsOfAStringPropertyAndNotEmpty()
+    {
+        UiaCondition.PropertyContains(UiaProperty.Name, "Save", ignoreCase: true)
+            .Should().Be(new UiaPropertyContainsCondition(UiaProperty.Name, "Save", IgnoreCase: true));
+        FluentActions.Invoking(() => UiaCondition.PropertyContains(UiaProperty.Name, "")).Should().Throw<ArgumentException>();
+        FluentActions.Invoking(() => UiaCondition.PropertyContains(UiaProperty.ControlType, "Button")).Should().Throw<ArgumentException>();
+        FluentActions.Invoking(() => UiaCondition.PropertyContains(UiaProperty.ProcessId, "7")).Should().Throw<ArgumentException>();
+    }
+
+    #endregion
+
     #region The condition evaluator
 
     private static UiaElement Element(string controlType, string? name = null, string? automationId = null, string? className = null,
@@ -292,6 +490,20 @@ public class ElementSearchTests
         UiaConditionEvaluator.Matches(UiaCondition.PropertyEquals(UiaProperty.AutomationId, "SaveBtn"), save).Should().BeTrue();
         UiaConditionEvaluator.Matches(UiaCondition.PropertyEquals(UiaProperty.ClassName, "button", ignoreCase: true), save).Should().BeTrue();
         UiaConditionEvaluator.Matches(UiaCondition.PropertyEquals(UiaProperty.Name, ""), Element("Pane")).Should().BeTrue();
+    }
+
+    [Fact]
+    public void Evaluator_TestsASubstringOrdinally_IgnoringCaseOnlyWhenAsked_AndAMissingStringAsEmpty()
+    {
+        var save = Element("Button", "Save As", "SaveAsBtn", "Button");
+
+        UiaConditionEvaluator.Matches(UiaCondition.PropertyContains(UiaProperty.Name, "E A", ignoreCase: true), save).Should().BeTrue();
+        UiaConditionEvaluator.Matches(UiaCondition.PropertyContains(UiaProperty.Name, "e a"), save).Should().BeFalse();
+        UiaConditionEvaluator.Matches(UiaCondition.PropertyContains(UiaProperty.AutomationId, "AsB"), save).Should().BeTrue();
+        UiaConditionEvaluator.Matches(UiaCondition.PropertyContains(UiaProperty.ClassName, "UTT", ignoreCase: true), save).Should().BeTrue();
+        UiaConditionEvaluator.Matches(UiaCondition.PropertyContains(UiaProperty.Name, "a"), Element("Pane")).Should().BeFalse();
+        UiaConditionEvaluator.CanEvaluate(UiaCondition.And(IsButton, UiaCondition.PropertyContains(UiaProperty.Name, "a"))).Should().BeTrue();
+        UiaConditionEvaluator.CanEvaluate(UiaCondition.PropertyContains(UiaProperty.FrameworkId, "WPF")).Should().BeFalse();
     }
 
     [Fact]

@@ -211,6 +211,29 @@ public abstract record UiaCondition
             property, value is IReadOnlyList<int> runtimeId ? runtimeId.ToArray() : value, ignoreCase);
     }
 
+    /// <summary>
+    /// Matches elements whose string <paramref name="property"/> contains <paramref name="value"/> anywhere, ignoring case
+    /// when asked (roadmap M3.F12). Only the UIA3 engine can express it (PropertyConditionFlags_MatchSubstring, Windows 10
+    /// 1809 and later); the managed client, and the UIA3 engine where Windows refuses the flag, throw
+    /// <see cref="UiaConditionNotSupportedException"/> for it.
+    /// </summary>
+    /// <exception cref="ArgumentException">The property is not a string property, or the value is empty.</exception>
+    public static UiaCondition PropertyContains(UiaProperty property, string value, bool ignoreCase = false)
+    {
+        ArgumentNullException.ThrowIfNull(value);
+        if (property is not (UiaProperty.Name or UiaProperty.AutomationId or UiaProperty.ClassName or UiaProperty.FrameworkId))
+        {
+            throw new ArgumentException($"{property} is not a string property a substring can be searched in.", nameof(property));
+        }
+
+        if (value.Length == 0)
+        {
+            throw new ArgumentException("The text to search for is empty.", nameof(value));
+        }
+
+        return new UiaPropertyContainsCondition(property, value, ignoreCase);
+    }
+
     /// <summary>Matches elements that match every condition.</summary>
     public static UiaCondition And(params UiaCondition[] conditions) => new UiaAndCondition(Validated(conditions));
 
@@ -238,6 +261,9 @@ public sealed record UiaTrueCondition : UiaCondition;
 
 /// <summary>A property comparison (<see cref="UiaCondition.PropertyEquals"/>).</summary>
 public sealed record UiaPropertyCondition(UiaProperty Property, object Value, bool IgnoreCase) : UiaCondition;
+
+/// <summary>A property that contains a text (<see cref="UiaCondition.PropertyContains"/>).</summary>
+public sealed record UiaPropertyContainsCondition(UiaProperty Property, string Value, bool IgnoreCase) : UiaCondition;
 
 /// <summary>All of the conditions (<see cref="UiaCondition.And"/>).</summary>
 public sealed record UiaAndCondition(IReadOnlyList<UiaCondition> Conditions) : UiaCondition;

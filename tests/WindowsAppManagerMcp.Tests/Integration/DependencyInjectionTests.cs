@@ -168,11 +168,13 @@ public class DependencyInjectionTests : IDisposable
         search.Should().BeOfType<ElementSearchService>().And.BeSameAs(_serviceProvider.GetRequiredService<IElementSearchService>());
         registry.Count.Should().Be(0);
 
-        // The production constructor numbers windows from a random start in eight million (the test-only one takes it)
+        // The production constructor numbers windows from a random start in eight million (the test-only one takes it); both
+        // take WAM_UIA_PROVIDER_CONTAINS (roadmap M3.F12), which the container holds as read from the environment
         var production = typeof(ElementRegistry).GetConstructors()
-            .Single(c => c.GetParameters().Length == 3);
+            .Single(c => c.GetParameters().Length == 4);
         production.GetParameters().Select(p => p.ParameterType).Should()
-            .Equal(typeof(IUiaTree), typeof(IUiaWorker), typeof(INativeWindowWrapper));
+            .Equal(typeof(IUiaTree), typeof(IUiaWorker), typeof(INativeWindowWrapper), typeof(ProviderContainsOptions));
+        _serviceProvider.GetRequiredService<ProviderContainsOptions>().Should().Be(ProviderContainsOptions.FromEnvironment());
     }
 
     [Fact]

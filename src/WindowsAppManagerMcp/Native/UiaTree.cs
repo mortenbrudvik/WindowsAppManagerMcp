@@ -608,14 +608,19 @@ public sealed class UiaTree : IUiaTree
         _ => throw new ArgumentOutOfRangeException(nameof(scope), scope, "Unknown scope.")
     };
 
-    /// <summary>The managed condition for a seam condition.</summary>
-    private static Condition ToCondition(UiaCondition condition) => condition switch
+    /// <summary>
+    /// The managed condition for a seam condition. A substring (roadmap M3.F12) throws
+    /// <see cref="UiaConditionNotSupportedException"/>: System.Windows.Automation has no MatchSubstring flag.
+    /// </summary>
+    public static Condition ToCondition(UiaCondition condition) => condition switch
     {
         UiaTrueCondition => Condition.TrueCondition,
         UiaPropertyCondition property => new PropertyCondition(
             ToProperty(property.Property),
             PropertyValue(property.Property, property.Value),
             property.IgnoreCase ? PropertyConditionFlags.IgnoreCase : PropertyConditionFlags.None),
+        UiaPropertyContainsCondition => throw new UiaConditionNotSupportedException(
+            "The managed UI Automation client (WAM_UIA_ENGINE=uia2) cannot search for a substring; the UIA3 engine can."),
         UiaAndCondition { Conditions.Count: 1 } single => ToCondition(single.Conditions[0]),
         UiaAndCondition and => new AndCondition(and.Conditions.Select(ToCondition).ToArray()),
         UiaOrCondition { Conditions.Count: 1 } single => ToCondition(single.Conditions[0]),

@@ -75,6 +75,7 @@ public sealed class ElementRegistry : IElementRegistry
     private readonly INativeWindowWrapper _windows;
     private readonly TimeProvider _clock;
     private readonly int _capacity;
+    private readonly ProviderContainsOptions _providerContains;
 
     // The live window records by handle. Window numbers are issued in order from _firstWindowSeq, so a number below
     // _nextWindowSeq was issued; nothing is kept for a window once it is dropped
@@ -91,8 +92,9 @@ public sealed class ElementRegistry : IElementRegistry
     /// The production registry: window numbers start at a random value in
     /// [<see cref="FirstWindowNumberMin"/>, <see cref="FirstWindowNumberMax"/>).
     /// </summary>
-    public ElementRegistry(IUiaTree tree, IUiaWorker worker, INativeWindowWrapper windows)
-        : this(tree, worker, windows, DefaultCapacity, Random.Shared.Next(FirstWindowNumberMin, FirstWindowNumberMax), TimeProvider.System)
+    public ElementRegistry(IUiaTree tree, IUiaWorker worker, INativeWindowWrapper windows, ProviderContainsOptions? providerContains = null)
+        : this(tree, worker, windows, DefaultCapacity, Random.Shared.Next(FirstWindowNumberMin, FirstWindowNumberMax), TimeProvider.System,
+            providerContains)
     {
     }
 
@@ -102,7 +104,11 @@ public sealed class ElementRegistry : IElementRegistry
     /// <param name="capacity">How many refs to keep.</param>
     /// <param name="firstWindowNumber">The number of the first window (tests pass 1).</param>
     /// <param name="clock">The clock of the entries' last use.</param>
-    public ElementRegistry(IUiaTree tree, IUiaWorker worker, INativeWindowWrapper windows, int capacity, int firstWindowNumber, TimeProvider clock)
+    /// <param name="providerContains">WAM_UIA_PROVIDER_CONTAINS: whether the provider narrows a selector's contains name search
+    /// (roadmap M3.F12); without it, off.</param>
+    public ElementRegistry(
+        IUiaTree tree, IUiaWorker worker, INativeWindowWrapper windows, int capacity, int firstWindowNumber, TimeProvider clock,
+        ProviderContainsOptions? providerContains = null)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(capacity, 1);
         ArgumentOutOfRangeException.ThrowIfLessThan(firstWindowNumber, 1);
@@ -112,6 +118,7 @@ public sealed class ElementRegistry : IElementRegistry
         _capacity = capacity;
         _firstWindowSeq = _nextWindowSeq = firstWindowNumber;
         _clock = clock;
+        _providerContains = providerContains ?? ProviderContainsOptions.Default;
     }
 
     /// <inheritdoc />
@@ -559,13 +566,15 @@ public sealed class ElementRegistry : IElementRegistry
         var leaveOut = OwnedWindows.Below(_windows, handle);
         try
         {
-            return new ElementSearch(_tree, condition, filter, ResolutionKeep, leaveOut: leaveOut).Run(window, cancellationToken);
+            return new ElementSearch(_tree, condition, filter, ResolutionKeep, leaveOut: leaveOut, narrowing: _providerContains.NarrowingFor(criteria))
+                .Run(window, cancellationToken);
         }
         catch (UiaConditionNotSupportedException) when (criteria.ControlTypes is { Count: > 0 })
         {
             var (serverCondition, serverFilter) = criteria.Compile(controlTypesOnServer: true);
             return new ElementSearch(
-                    _tree, serverCondition, e => (serverFilter == null || serverFilter(e)) && filter(e), ResolutionKeep, leaveOut: leaveOut)
+                    _tree, serverCondition, e => (serverFilter == null || serverFilter(e)) && filter(e), ResolutionKeep, leaveOut: leaveOut,
+                    narrowing: _providerContains.NarrowingFor(criteria))
                 .Run(window, cancellationToken);
         }
     }

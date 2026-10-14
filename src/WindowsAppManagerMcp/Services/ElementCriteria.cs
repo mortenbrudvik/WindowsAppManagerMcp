@@ -16,7 +16,8 @@ namespace WindowsAppManagerMcp.Services;
 /// (<see cref="EnabledOnly"/>). Server side, on the properties each element came with: a name that contains a text or
 /// matches a regular expression, and the control types the engine cannot search for (Unknown always; AppBar and
 /// SemanticZoom under the managed client, which throws UiaConditionNotSupportedException for them: compile again with
-/// <c>controlTypesOnServer</c>).
+/// <c>controlTypesOnServer</c>). A name that contains a text can also be narrowed in the provider (<see cref="NameNarrowing"/>,
+/// roadmap M3.F12), which leaves the server's test in place.
 /// </remarks>
 /// <param name="ControlTypes">Canonical control type names (UiaControlTypes.Names), or null for any.</param>
 /// <param name="NameRegex">The compiled name pattern for <see cref="ElementNameMatch.Regex"/>, with its match timeout.</param>
@@ -59,6 +60,58 @@ public sealed record ElementCriteria(
     public bool HasIdentity =>
         !string.IsNullOrEmpty(Name) || !string.IsNullOrEmpty(AutomationId) || ControlTypes is { Count: > 0 } ||
         !string.IsNullOrEmpty(ClassName);
+
+    /// <summary>
+    /// For a name that contains a text: a substring condition the provider can test to leave out the elements whose names
+    /// cannot match (roadmap M3.F12), or null when there is none. It is never the test itself: <see cref="Compile"/> still
+    /// gives the server's test, which <see cref="ElementSearch"/> runs on every element the provider returns, so a provider
+    /// that ignores the condition or adds elements to it changes nothing.
+    /// </summary>
+    /// <remarks>
+    /// The condition must also never leave out an element the server's test accepts, and providers do not all fold case as
+    /// <see cref="StringComparison.OrdinalIgnoreCase"/> does. So it is the longest run of the name's characters that are ASCII
+    /// and not i or I, searched ignoring case: no character outside ASCII equals an ASCII one under OrdinalIgnoreCase, so a
+    /// name the server accepts has the run in it, ASCII character for ASCII character; the case of an ASCII letter folds alike
+    /// in every comparison, ordinal or by locale, except i and I, which a Turkish or Azerbaijani comparison folds to the
+    /// dotted and dotless I. A name with no such character (one in Japanese, say) has no narrowing.
+    /// </remarks>
+    public UiaCondition? NameNarrowing
+    {
+        get
+        {
+            if (NameMatch != ElementNameMatch.Contains || string.IsNullOrEmpty(Name))
+            {
+                return null;
+            }
+
+            var (start, length) = (0, 0);
+            for (var i = 0; i < Name.Length;)
+            {
+                if (!FoldsAlike(Name[i]))
+                {
+                    i++;
+                    continue;
+                }
+
+                var end = i;
+                while (end < Name.Length && FoldsAlike(Name[end]))
+                {
+                    end++;
+                }
+
+                if (end - i > length)
+                {
+                    (start, length) = (i, end - i);
+                }
+
+                i = end;
+            }
+
+            return length == 0 ? null : UiaCondition.PropertyContains(UiaProperty.Name, Name.Substring(start, length), ignoreCase: true);
+        }
+    }
+
+    private static bool FoldsAlike(char c) => char.IsAscii(c) && c is not ('i' or 'I');
 
     /// <summary>A short description for messages, for example "name 'Save', controlType Button".</summary>
     public string Describe()

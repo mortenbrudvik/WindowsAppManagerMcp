@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text.RegularExpressions;
+using WindowsAppManagerMcp.Models;
 using WindowsAppManagerMcp.Native;
 using WindowsAppManagerMcp.Services.Interfaces;
 
@@ -70,6 +71,18 @@ public sealed record ElementSearchOutcome(
 /// (the managed client cannot search for AppBar or SemanticZoom) is thrown to the caller, which can move that criterion
 /// into the client filter. An exception of the client filter (a name pattern that
 /// ran too long) ends the search and goes to the caller.</para>
+/// <para>Narrowing (roadmap M3.F12): a caller whose client filter tests a name that contains a text can pass a substring
+/// condition (<see cref="ElementCriteria.NameNarrowing"/>) that every element the filter accepts also matches (the server's
+/// callers pass it only with WAM_UIA_PROVIDER_CONTAINS=1, <see cref="ProviderContainsOptions"/>, until Windows' substring
+/// search is checked on a real desktop). Under the UIA3
+/// engine it is added to the condition, so the provider returns, and the limits count, only the elements whose names have the
+/// text in them; the filter still runs on every element returned, so a provider that ignores the condition or misapplies it
+/// adds nothing. The managed engine has no substring flag and is never given it. When the engine refuses it
+/// (<see cref="UiaConditionNotSupportedException"/>: Windows before 10 1809, which the UIA3 engine then remembers), the search
+/// goes on without it, from the part that refused it, without splitting again. A complete search finds the same matches,
+/// in the same order, with or without it. Only the cost limits can tell them apart: the candidate limit counts what the
+/// provider matched, so a search that the limit stopped without the narrowing gets further with it, and finds what it
+/// found without it first, in the same order; and, costing less, a search gets further before the deadline.</para>
 /// <para>It runs on a UI Automation worker thread. <see cref="Snapshot"/> can be read from another thread while it runs, so
 /// a caller whose worker abandoned the search still gets what it had found.</para>
 /// </remarks>
@@ -107,6 +120,9 @@ public sealed class ElementSearch
 
     // The matches inside the owned windows of a root searched whole, by runtime id: they are not the root's
     private HashSet<string>? _leftOut;
+
+    // The condition with the narrowing, until the engine refuses it; null without one
+    private UiaCondition? _narrowed;
     private int _matchCount;
     private int _candidates;
     private int _skippedParts;
@@ -122,9 +138,11 @@ public sealed class ElementSearch
     /// limit for all of them.</param>
     /// <param name="leaveOut">The root's children to leave out with everything below them (see the remarks:
     /// <see cref="OwnedWindows.Below"/> for a window's root), or null to search everything below the root.</param>
+    /// <param name="narrowing">A condition every element <paramref name="filter"/> accepts also matches, for the provider to
+    /// test under the UIA3 engine (see the remarks: <see cref="ElementCriteria.NameNarrowing"/>), or null.</param>
     public ElementSearch(
         IUiaTree tree, UiaCondition condition, Func<UiaElement, bool>? filter, int keep, int maxCandidates = MaxCandidates,
-        Func<UiaElement, bool>? leaveOut = null)
+        Func<UiaElement, bool>? leaveOut = null, UiaCondition? narrowing = null)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(keep, 1);
         ArgumentOutOfRangeException.ThrowIfLessThan(maxCandidates, 1);
@@ -134,7 +152,11 @@ public sealed class ElementSearch
         _leaveOut = leaveOut;
         _keep = keep;
         _maxCandidates = Math.Min(maxCandidates, MaxCandidates);
+        _narrowed = narrowing != null && tree.Engine == UiaEngine.Uia3 ? UiaCondition.And(condition, narrowing) : null;
     }
+
+    /// <summary>The condition the provider and the split test: with the narrowing while the engine takes it.</summary>
+    private UiaCondition Condition => _narrowed ?? _condition;
 
     /// <summary>Searches the elements below <paramref name="root"/> (not the root itself).</summary>
     /// <exception cref="UiaConditionNotSupportedException">The engine cannot express the condition.</exception>
@@ -143,7 +165,7 @@ public sealed class ElementSearch
     {
         try
         {
-            var parts = UiaConditionEvaluator.CanEvaluate(_condition)
+            var parts = UiaConditionEvaluator.CanEvaluate(Condition)
                 ? Split(root, cancellationToken)
                 : [root];
             foreach (var part in parts)
@@ -156,7 +178,7 @@ public sealed class ElementSearch
                 IReadOnlyList<UiaElement> found;
                 try
                 {
-                    found = _tree.FindAll(part, UiaScope.Descendants, _condition, cancellationToken);
+                    found = Find(part, UiaScope.Descendants, cancellationToken);
                 }
                 catch (Exception ex) when (ex is not (UiaConditionNotSupportedException or TimeoutException or OperationCanceledException)
                                            && !ReferenceEquals(part, root))
@@ -274,7 +296,7 @@ public sealed class ElementSearch
             }
 
             // The children read here are tested here: the parts' FindAll calls search only below them
-            foreach (var child in children.Where(c => UiaConditionEvaluator.Matches(_condition, c)))
+            foreach (var child in children.Where(c => UiaConditionEvaluator.Matches(Condition, c)))
             {
                 Consider(child);
             }
@@ -313,7 +335,7 @@ public sealed class ElementSearch
             IReadOnlyList<UiaElement> inside;
             try
             {
-                inside = _tree.FindAll(children[i], UiaScope.Subtree, _condition, cancellationToken);
+                inside = Find(children[i], UiaScope.Subtree, cancellationToken);
             }
             catch (Exception ex) when (ex is not (NotSupportedException or TimeoutException or OperationCanceledException))
             {
@@ -330,6 +352,28 @@ public sealed class ElementSearch
                 }
             }
         }
+    }
+
+    /// <summary>
+    /// The provider's search of <paramref name="node"/>: with the narrowing while the engine takes it, else (and from then on)
+    /// with the condition alone.
+    /// </summary>
+    private IReadOnlyList<UiaElement> Find(IUiaNode node, UiaScope scope, CancellationToken cancellationToken)
+    {
+        if (_narrowed is { } narrowed)
+        {
+            try
+            {
+                return _tree.FindAll(node, scope, narrowed, cancellationToken);
+            }
+            catch (UiaConditionNotSupportedException)
+            {
+                // The engine cannot search for a substring: the client filter alone tests the name, as without a narrowing
+                _narrowed = null;
+            }
+        }
+
+        return _tree.FindAll(node, scope, _condition, cancellationToken);
     }
 
     private static string RuntimeKey(IReadOnlyList<int> runtimeId) =>
@@ -404,8 +448,9 @@ public sealed class ElementSearch
 
 /// <summary>
 /// Tests a <see cref="UiaCondition"/> on the properties an element was read with (<see cref="UiaElement"/>), the way a
-/// provider would test it: strings compared ordinally (ignoring case when the condition says so), a missing string as
-/// empty, control types by id when the engine read one and by name otherwise, runtime ids element by element.
+/// provider would test it: strings compared ordinally (ignoring case when the condition says so), a substring searched for
+/// the same way, a missing string as empty, control types by id when the engine read one and by name otherwise, runtime
+/// ids element by element.
 /// </summary>
 public static class UiaConditionEvaluator
 {
@@ -417,6 +462,7 @@ public static class UiaConditionEvaluator
     {
         UiaTrueCondition => true,
         UiaPropertyCondition property => property.Property is not (UiaProperty.FrameworkId or UiaProperty.ProcessId),
+        UiaPropertyContainsCondition contains => contains.Property is not UiaProperty.FrameworkId,
         UiaAndCondition and => and.Conditions.All(CanEvaluate),
         UiaOrCondition or => or.Conditions.All(CanEvaluate),
         UiaNotCondition not => CanEvaluate(not.Condition),
@@ -429,6 +475,7 @@ public static class UiaConditionEvaluator
     {
         UiaTrueCondition => true,
         UiaPropertyCondition property => PropertyMatches(property, element),
+        UiaPropertyContainsCondition contains => ContainsMatches(contains, element),
         UiaAndCondition and => and.Conditions.All(c => Matches(c, element)),
         UiaOrCondition or => or.Conditions.Any(c => Matches(c, element)),
         UiaNotCondition not => !Matches(not.Condition, element),
@@ -450,6 +497,19 @@ public static class UiaConditionEvaluator
             UiaProperty.RuntimeId => element.RuntimeId is { } id && id.SequenceEqual((IReadOnlyList<int>)condition.Value),
             _ => throw new NotSupportedException($"{condition.Property} is not read with an element.")
         };
+    }
+
+    private static bool ContainsMatches(UiaPropertyContainsCondition condition, UiaElement element)
+    {
+        var value = condition.Property switch
+        {
+            UiaProperty.Name => element.Properties.Name,
+            UiaProperty.AutomationId => element.Properties.AutomationId,
+            UiaProperty.ClassName => element.ClassName,
+            _ => throw new NotSupportedException($"{condition.Property} is not read with an element.")
+        };
+        return (value ?? string.Empty).Contains(
+            condition.Value, condition.IgnoreCase ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
     }
 
     private static bool ControlTypeMatches(UiaElement element, string name) =>

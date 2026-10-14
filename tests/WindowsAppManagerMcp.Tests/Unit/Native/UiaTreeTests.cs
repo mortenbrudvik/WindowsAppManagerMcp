@@ -36,6 +36,14 @@ public class UiaTreeTests
     }
 
     [Fact]
+    public void Conditions_ASubstring_IsNotSupportedByTheManagedClient()
+    {
+        // System.Windows.Automation has no MatchSubstring flag (roadmap M3.F12): the search goes on without it
+        FluentActions.Invoking(() => UiaTree.ToCondition(UiaCondition.PropertyContains(UiaProperty.Name, "save", ignoreCase: true)))
+            .Should().Throw<UiaConditionNotSupportedException>();
+    }
+
+    [Fact]
     public void IsAvailable_OnWindows_IsTrue()
     {
         new UiaTree().IsAvailable().Should().BeTrue();

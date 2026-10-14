@@ -34,6 +34,20 @@ public sealed class FakeUiaTree : IUiaTree
     /// <summary>Runs when any search starts, with its root and condition (it can throw, as a provider would).</summary>
     public Action<FakeUiaNode, UiaCondition>? OnFindAll { get; set; }
 
+    /// <summary>
+    /// How the fake's provider tests a substring condition (<see cref="UiaCondition.PropertyContains"/>, roadmap M3.F12), or
+    /// null to test it as UI Automation documents PropertyConditionFlags_MatchSubstring: the text anywhere in the property,
+    /// ignoring case when the condition asks. A test sets it for a provider that ignores the flag or misapplies it.
+    /// </summary>
+    public Func<FakeUiaNode, UiaPropertyContainsCondition, bool>? SubstringTest { get; set; }
+
+    /// <summary>
+    /// When true, a search whose condition has a substring in it throws <see cref="UiaConditionNotSupportedException"/>
+    /// (after <see cref="OnFindAll"/>), as the UIA3 engine does where Windows refuses PropertyConditionFlags_MatchSubstring
+    /// (before Windows 10 1809) and the managed engine always does.
+    /// </summary>
+    public bool RefusesSubstrings { get; set; }
+
     /// <summary>Thrown by <see cref="FromHandle"/> when set.</summary>
     public Exception? FromHandleException { get; set; }
 
@@ -246,6 +260,11 @@ public sealed class FakeUiaTree : IUiaTree
         _finds.Enqueue($"{fake.Name ?? fake.ControlType}:{scope}");
         OnFindAll?.Invoke(fake, condition);
         fake.OnFindAll?.Invoke(condition);
+        if (RefusesSubstrings && HasSubstring(condition))
+        {
+            throw new UiaConditionNotSupportedException("This engine cannot search for a substring (PropertyConditionFlags_MatchSubstring).");
+        }
+
         ThrowIfSet(fake.FindAllException);
         IEnumerable<FakeUiaNode> candidates = scope switch
         {
@@ -254,8 +273,18 @@ public sealed class FakeUiaTree : IUiaTree
             UiaScope.Subtree => Descendants(fake).Prepend(fake),
             _ => throw new ArgumentOutOfRangeException(nameof(scope))
         };
-        return candidates.Where(n => Matches(n, condition)).Select(ReadCached).ToList();
+        return candidates.Where(n => Matches(n, condition, SubstringTest)).Select(ReadCached).ToList();
     }
+
+    /// <summary>Whether the condition has a substring condition anywhere in it.</summary>
+    public static bool HasSubstring(UiaCondition condition) => condition switch
+    {
+        UiaPropertyContainsCondition => true,
+        UiaAndCondition and => and.Conditions.Any(HasSubstring),
+        UiaOrCondition or => or.Conditions.Any(HasSubstring),
+        UiaNotCondition not => HasSubstring(not.Condition),
+        _ => false
+    };
 
     public UiaElementTree ReadSubtree(IUiaNode root, int maxElements)
     {
@@ -358,16 +387,36 @@ public sealed class FakeUiaTree : IUiaTree
     private static IEnumerable<FakeUiaNode> Descendants(FakeUiaNode node) =>
         node.Children.SelectMany(child => Descendants(child).Prepend(child));
 
-    /// <summary>Evaluates a condition as a provider would.</summary>
-    public static bool Matches(FakeUiaNode node, UiaCondition condition) => condition switch
+    /// <summary>
+    /// Evaluates a condition as a provider would; a substring condition with <paramref name="substringTest"/> when one is
+    /// given (<see cref="SubstringTest"/>).
+    /// </summary>
+    public static bool Matches(
+        FakeUiaNode node, UiaCondition condition, Func<FakeUiaNode, UiaPropertyContainsCondition, bool>? substringTest = null) =>
+        condition switch
+        {
+            UiaTrueCondition => true,
+            UiaAndCondition and => and.Conditions.All(c => Matches(node, c, substringTest)),
+            UiaOrCondition or => or.Conditions.Any(c => Matches(node, c, substringTest)),
+            UiaNotCondition not => !Matches(node, not.Condition, substringTest),
+            UiaPropertyCondition property => PropertyMatches(node, property),
+            UiaPropertyContainsCondition contains => substringTest?.Invoke(node, contains) ?? ContainsMatches(node, contains),
+            _ => throw new ArgumentException("Unknown condition", nameof(condition))
+        };
+
+    private static bool ContainsMatches(FakeUiaNode node, UiaPropertyContainsCondition condition)
     {
-        UiaTrueCondition => true,
-        UiaAndCondition and => and.Conditions.All(c => Matches(node, c)),
-        UiaOrCondition or => or.Conditions.Any(c => Matches(node, c)),
-        UiaNotCondition not => !Matches(node, not.Condition),
-        UiaPropertyCondition property => PropertyMatches(node, property),
-        _ => throw new ArgumentException("Unknown condition", nameof(condition))
-    };
+        var actual = condition.Property switch
+        {
+            UiaProperty.Name => node.Name,
+            UiaProperty.AutomationId => node.AutomationId,
+            UiaProperty.ClassName => node.ClassName,
+            UiaProperty.FrameworkId => node.FrameworkId,
+            _ => throw new ArgumentOutOfRangeException(nameof(condition))
+        };
+        return actual != null &&
+               actual.Contains(condition.Value, condition.IgnoreCase ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
+    }
 
     private static bool PropertyMatches(FakeUiaNode node, UiaPropertyCondition condition)
     {
