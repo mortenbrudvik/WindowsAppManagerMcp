@@ -14,8 +14,11 @@ public class FixtureWebViewTests
 
     private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(10);
 
-    /// <summary>Deep enough for the page: the window, the WebView2 control's panes, the document and its elements.</summary>
-    private const int TreeDepth = 12;
+    /// <summary>
+    /// Deep enough for the page as the walk lists it (roadmap M3.F35): the window, the WebView2 control's panes, the render
+    /// widget's pane and the page's elements; within get_ui_elements' maximum (10).
+    /// </summary>
+    private const int TreeDepth = 8;
 
     private readonly ITestOutputHelper _output;
 
@@ -66,15 +69,13 @@ public class FixtureWebViewTests
         warmup.Status.Should().Be(AccessibilityWarmupStatus.Ready, warmup.Warning);
         warmup.DocumentChildCount.Should().BeGreaterThan(0);
 
-        // The page lies below Chromium's own views, deeper than a walk of the window reaches (WebView2 runtime 155, roadmap
-        // M3.F35); the render widget's own window holds it: its element is the "Chrome Legacy Window" pane whose children are
-        // the page's elements, with no Document element above them
-        var widget = E2ENative.FindVisibleChild(window, "Chrome_RenderWidgetHostHWND");
-        widget.Should().NotBe(nint.Zero, "WebView2 renders the page into a Chrome_RenderWidgetHostHWND inside the window");
-        var page = await e2e.Server.UiElements.GetUIElementsAsync(widget, maxDepth: 3);
-        page.Success.Should().BeTrue(page.Error);
-        UiaReads.Flatten(page.Elements).Should().Contain(e => e.ControlType == "Button" && e.Name == FixtureContract.WebButtonName,
-            "the read after the warm-up sees the page's own elements, not an empty page");
+        // The page lies below Chromium's own views, deeper than the walk reaches (WebView2 runtime 155), so the walk lists it
+        // under the element of the render widget's parent window, a few levels below the window (roadmap M3.F35)
+        var button = elements.Should().Contain(e => e.ControlType == "Button" && e.Name == FixtureContract.WebButtonName,
+            "the walk of the window lists the page's own elements, not an empty page").Which;
+        _output.WriteLine($"  {button.Ref} Button '{button.Name}' bounds={button.Bounds} depthReached={result.DepthReached}");
+        button.Ref.Should().NotBeNull("the page's elements get refs of the window like any walked element");
+        button.Bounds.Should().NotBeNull();
     }
 
     [DesktopNoInputFact(Requires = typeof(WebView2Runtime))]

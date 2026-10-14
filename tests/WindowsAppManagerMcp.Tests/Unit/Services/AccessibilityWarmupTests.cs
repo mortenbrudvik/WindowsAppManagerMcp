@@ -35,6 +35,8 @@ public class AccessibilityWarmupTests
             .Returns((nint h) => _desktop.TryGetValue(h, out var w) && w.Alive ? w.ProcessId : 0u);
         _windows.Setup(w => w.GetProcessName(BrowserProcess)).Returns("chrome");
         _windows.Setup(w => w.GetProcessName(WebViewProcess)).Returns("msedgewebview2");
+        _windows.Setup(w => w.GetAncestor(It.IsAny<nint>(), WindowAncestor.Parent))
+            .Returns((nint h, WindowAncestor _) => _desktop.TryGetValue(h, out var w) ? w.Parent : nint.Zero);
         _windows.Setup(w => w.EnumChildWindows(It.IsAny<nint>(), It.IsAny<Func<nint, bool>>()))
             .Callback((nint parent, Func<nint, bool> callback) =>
             {
@@ -871,6 +873,251 @@ public class AccessibilityWarmupTests
         // Assert
         info!.Status.Should().Be(AccessibilityWarmupStatus.Ready);
         info.DocumentChildCount.Should().Be(2);
+    }
+
+    #endregion
+
+    #region The pages a walk lists (roadmap M3.F35)
+
+    private const nint WebViewHost = 0x200;
+
+    /// <summary>
+    /// A WPF window hosting a WebView2 (runtime 155): the render widget of msedgewebview2.exe sits in a Chrome_WidgetWin_1
+    /// window inside the app's window, and its element is the "Chrome Legacy Window" pane holding the page's elements.
+    /// </summary>
+    private FakeUiaNode WpfWithWebView2()
+    {
+        _desktop[Browser] = new FakeWindow("HwndWrapper[Fixture;;1]", BrowserProcess, 0);
+        _desktop[WebViewHost] = new FakeWindow("Chrome_WidgetWin_1", WebViewProcess, Browser);
+        _desktop[RenderWidget] = new FakeWindow(AccessibilityWarmup.RenderWidgetHostClass, WebViewProcess, WebViewHost);
+        var pane = new FakeUiaNode("Pane", "Chrome Legacy Window") { FrameworkId = "Win32" }.With(
+            new FakeUiaNode("Text", "Heading") { FrameworkId = "Chrome" },
+            new FakeUiaNode("Button", "Web button") { FrameworkId = "Chrome" });
+        _tree.WithWindow(Browser, new FakeUiaNode("Window", "Fixture") { FrameworkId = "WPF" });
+        _tree.WithWindow(RenderWidget, pane);
+        return pane;
+    }
+
+    [Fact]
+    public void FindPages_OfAWindowHostingAWebView2_GivesThePage_UnderTheRenderWidgetsParent()
+    {
+        // Arrange
+        var pane = WpfWithWebView2();
+
+        // Act
+        var pages = CreateSut().FindPages(Browser, CancellationToken.None);
+
+        // Assert - the pane holds the page's elements with no Document above them, so it is the page
+        pages.Should().Equal(new RenderWidgetPage(RenderWidget, WebViewHost, pane));
+    }
+
+    [Fact]
+    public void FindPages_OfABrowserWindow_GivesThePagesDocument_UnderTheWindowItself()
+    {
+        // Arrange - Chrome's render widget is a child of the browser's own window
+        var document = ChromeWithPage(documentChildren: 2);
+
+        // Act
+        var pages = CreateSut().FindPages(Browser, CancellationToken.None);
+
+        // Assert
+        pages.Should().Equal(new RenderWidgetPage(RenderWidget, Browser, document));
+    }
+
+    [Fact]
+    public void FindPages_GivesTheDocumentAFewPanesBelowTheRenderWidget()
+    {
+        // Arrange
+        _desktop[Browser] = new FakeWindow("Chrome_WidgetWin_1", BrowserProcess, 0);
+        _desktop[RenderWidget] = new FakeWindow(AccessibilityWarmup.RenderWidgetHostClass, BrowserProcess, Browser);
+        var document = new FakeUiaNode("Document", "Page");
+        AddChildren(document, 2);
+        _tree.WithWindow(RenderWidget, new FakeUiaNode("Pane", "Chrome Legacy Window").With(new FakeUiaNode("Pane").With(document)));
+
+        // Act
+        var pages = CreateSut().FindPages(Browser, CancellationToken.None);
+
+        // Assert
+        pages.Should().ContainSingle().Which.Root.Should().BeSameAs(document);
+    }
+
+    [Fact]
+    public void FindPages_LeavesHiddenPagesOut_SuchAsBackgroundTabs()
+    {
+        // Arrange
+        WpfWithWebView2();
+        _desktop[RenderWidget].Visible = false;
+
+        // Act
+        var pages = CreateSut().FindPages(Browser, CancellationToken.None);
+
+        // Assert
+        pages.Should().BeEmpty();
+        _tree.Reads.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void FindPages_OfARenderWidgetItself_GivesNone_ItsOwnTreeIsThePage()
+    {
+        // Arrange
+        ChromeWithPage(documentChildren: 2);
+
+        // Act
+        var pages = CreateSut().FindPages(RenderWidget, CancellationToken.None);
+
+        // Assert
+        pages.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void FindPages_GivesAtMostMaxRenderWidgets()
+    {
+        // Arrange - more shown pages than the warm-up handles
+        _desktop[Browser] = new FakeWindow("Chrome_WidgetWin_1", BrowserProcess, 0);
+        for (var i = 0; i < AccessibilityWarmup.MaxRenderWidgets + 2; i++)
+        {
+            var widget = (nint)(0x110 + i);
+            _desktop[widget] = new FakeWindow(AccessibilityWarmup.RenderWidgetHostClass, BrowserProcess, Browser);
+            var document = new FakeUiaNode("Document", $"Page {i}");
+            AddChildren(document, 1);
+            _tree.WithWindow(widget, document);
+        }
+
+        // Act
+        var pages = CreateSut().FindPages(Browser, CancellationToken.None);
+
+        // Assert
+        pages.Should().HaveCount(AccessibilityWarmup.MaxRenderWidgets);
+    }
+
+    [Fact]
+    public void FindPages_AfterTheWarmUpOfTheWindow_ReusesTheRenderWidgetsItFound()
+    {
+        // Arrange
+        var pane = WpfWithWebView2();
+        var sut = CreateSut();
+        sut.WarmUp(Browser, Budget, CancellationToken.None).Should().NotBeNull();
+
+        // Act
+        var pages = sut.FindPages(Browser, CancellationToken.None);
+
+        // Assert
+        pages.Should().Equal(new RenderWidgetPage(RenderWidget, WebViewHost, pane));
+        _windows.Verify(w => w.EnumChildWindows(Browser, It.IsAny<Func<nint, bool>>()), Times.Once);
+    }
+
+    [Fact]
+    public void FindPages_AfterTheWarmUpOfAWindowWithoutWebContent_MakesNoFurtherCall()
+    {
+        // Arrange
+        _desktop[Browser] = new FakeWindow("Notepad", BrowserProcess, 0);
+        _desktop[RenderWidget] = new FakeWindow("RichEditD2DPT", BrowserProcess, Browser);
+        var sut = CreateSut();
+        sut.WarmUp(Browser, Budget, CancellationToken.None).Should().BeNull();
+
+        // Act
+        var pages = sut.FindPages(Browser, CancellationToken.None);
+
+        // Assert
+        pages.Should().BeEmpty();
+        _windows.Verify(w => w.EnumChildWindows(It.IsAny<nint>(), It.IsAny<Func<nint, bool>>()), Times.Once);
+        _tree.Reads.Should().BeEmpty();
+        _tree.ChildListings.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void FindPages_AfterTheWarmUpOfAnotherWindow_LooksForTheRenderWidgetsItself()
+    {
+        // Arrange
+        var pane = WpfWithWebView2();
+        _desktop[App] = new FakeWindow("Notepad", AppProcess, 0);
+        var sut = CreateSut();
+        sut.WarmUp(Browser, Budget, CancellationToken.None);
+        sut.WarmUp(App, Budget, CancellationToken.None);
+
+        // Act
+        var pages = sut.FindPages(Browser, CancellationToken.None);
+
+        // Assert
+        pages.Should().Equal(new RenderWidgetPage(RenderWidget, WebViewHost, pane));
+    }
+
+    [Fact]
+    public void FindPages_ASecondTimeAfterOneWarmUp_LooksForTheRenderWidgetsAgain()
+    {
+        // Arrange - the render widgets a warm-up found serve the one walk that follows it; the tab is hidden since
+        WpfWithWebView2();
+        var sut = CreateSut();
+        sut.WarmUp(Browser, Budget, CancellationToken.None);
+        sut.FindPages(Browser, CancellationToken.None).Should().ContainSingle();
+        _desktop[RenderWidget].Visible = false;
+
+        // Act
+        var pages = sut.FindPages(Browser, CancellationToken.None);
+
+        // Assert
+        pages.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void FindPages_LeavesAPageWithoutAnElementOut()
+    {
+        // Arrange - the render widget has no UI Automation element (yet)
+        _desktop[Browser] = new FakeWindow("Chrome_WidgetWin_1", BrowserProcess, 0);
+        _desktop[RenderWidget] = new FakeWindow(AccessibilityWarmup.RenderWidgetHostClass, BrowserProcess, Browser);
+
+        // Act
+        var pages = CreateSut().FindPages(Browser, CancellationToken.None);
+
+        // Assert
+        pages.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void FindPages_WhenTheTreeFails_GivesNoneInsteadOfThrowing()
+    {
+        // Arrange
+        WpfWithWebView2();
+        _tree.FromHandleException = new InvalidOperationException("provider exploded");
+
+        // Act
+        var pages = CreateSut().FindPages(Browser, CancellationToken.None);
+
+        // Assert
+        pages.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void FindPages_WhenAProviderTimesOut_StopsLookingWithoutThrowing()
+    {
+        // Arrange - two shown pages; the first one's provider does not answer
+        _desktop[Browser] = new FakeWindow("Chrome_WidgetWin_1", BrowserProcess, 0);
+        _desktop[0x110] = new FakeWindow(AccessibilityWarmup.RenderWidgetHostClass, BrowserProcess, Browser);
+        _desktop[0x111] = new FakeWindow(AccessibilityWarmup.RenderWidgetHostClass, BrowserProcess, Browser);
+        _tree.WithWindow(0x110, new FakeUiaNode("Document", "Stuck") { ReadException = new TimeoutException("no answer") });
+        _tree.WithWindow(0x111, new FakeUiaNode("Document", "Fine"));
+
+        // Act
+        var pages = CreateSut().FindPages(Browser, CancellationToken.None);
+
+        // Assert
+        pages.Should().BeEmpty();
+        _tree.ReadNodes.Should().NotContain("Fine", "every further call would wait as long");
+    }
+
+    [Fact]
+    public void FindPages_OfTheDesktopWindow_GivesNone()
+    {
+        // Arrange
+        _desktop[0x10010] = new FakeWindow("#32769", 0, 0);
+        _desktop[RenderWidget] = new FakeWindow(AccessibilityWarmup.RenderWidgetHostClass, BrowserProcess, 0x10010);
+
+        // Act
+        var pages = CreateSut().FindPages(0x10010, CancellationToken.None);
+
+        // Assert
+        pages.Should().BeEmpty();
+        _windows.Verify(w => w.EnumChildWindows(It.IsAny<nint>(), It.IsAny<Func<nint, bool>>()), Times.Never);
     }
 
     #endregion
