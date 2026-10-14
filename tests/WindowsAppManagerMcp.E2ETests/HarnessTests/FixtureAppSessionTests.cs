@@ -91,6 +91,27 @@ public class FixtureAppSessionTests
         options.DpiAwareness.Should().Be(FixtureDpiAwareness.System);
     }
 
+    [Fact]
+    public void BuildOptions_PassesTheSurfacesToOpenAtStart()
+    {
+        // Arrange - the M3.F4 surfaces a no-input test cannot open with a click
+        var launch = new FixtureLaunchOptions { OpenTable = true };
+
+        // Act
+        var options = FixtureAppSession.BuildOptions(DesktopTier.NoInput, launch, "abc", "events.jsonl", 1);
+
+        // Assert
+        options.OpenTable.Should().BeTrue();
+    }
+
+    [Fact]
+    public void BuildOptions_ByDefault_OpensNoExtraSurface()
+    {
+        var options = FixtureAppSession.BuildOptions(DesktopTier.Input, new FixtureLaunchOptions(), "abc", "events.jsonl", 1);
+
+        options.OpenTable.Should().BeFalse();
+    }
+
     [Theory]
     [InlineData(FixtureDpiAwareness.PerMonitorV2, "perMonitorV2")]
     [InlineData(FixtureDpiAwareness.PerMonitor, "perMonitor")]

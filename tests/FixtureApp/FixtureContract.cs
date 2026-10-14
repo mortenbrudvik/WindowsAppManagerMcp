@@ -1,3 +1,5 @@
+using System.Globalization;
+
 namespace WindowsAppManagerMcp.FixtureApp;
 
 /// <summary>
@@ -26,8 +28,14 @@ public static class FixtureContract
     /// <summary>Start of the title of the save prompt the document shows when it is closed with unsaved changes.</summary>
     public const string SavePromptTitlePrefix = "WAM Fixture Save Prompt";
 
+    /// <summary>Start of the table window's title.</summary>
+    public const string TableTitlePrefix = "WAM Fixture Table";
+
     /// <summary>Number of items in the virtualized list.</summary>
     public const int VirtualListItemCount = 10_000;
+
+    /// <summary>Number of rows of the table window's data grid: far more than it realizes.</summary>
+    public const int TableRowCount = 1_000;
 
     /// <summary>Title of the main window of fixture instance <paramref name="instance"/>.</summary>
     public static string MainTitle(string instance) => $"{MainTitlePrefix} {instance}";
@@ -42,8 +50,25 @@ public static class FixtureContract
     /// <summary>Title of the save prompt of fixture instance <paramref name="instance"/>.</summary>
     public static string SavePromptTitle(string instance) => $"{SavePromptTitlePrefix} {instance}";
 
+    /// <summary>Title of the table window of fixture instance <paramref name="instance"/>.</summary>
+    public static string TableTitle(string instance) => $"{TableTitlePrefix} {instance}";
+
     /// <summary>Text of item <paramref name="index"/> of the virtualized list.</summary>
     public static string VirtualListItem(int index) => $"Item {index:D5}";
+
+    /// <summary>The column headers of the table window's data grid, in order.</summary>
+    public static readonly IReadOnlyList<string> TableColumns = ["Name", "Quantity", "Price"];
+
+    /// <summary>The cells of row <paramref name="index"/> of the data grid, one per column of <see cref="TableColumns"/>.</summary>
+    public static IReadOnlyList<string> TableRow(int index) =>
+    [
+        $"Row {index:D4}",
+        (index % 7 + 1).ToString(CultureInfo.InvariantCulture),
+        (index * 0.25m + 1m).ToString("0.00", CultureInfo.InvariantCulture)
+    ];
+
+    /// <summary>The row header of row <paramref name="index"/> of the data grid.</summary>
+    public static string TableRowHeader(int index) => $"#{index + 1}";
 
     /// <summary>The combo box items, in order. The first one is selected at start.</summary>
     public static readonly IReadOnlyList<string> ComboBoxItems = ["Alpha", "Bravo", "Charlie", "Delta"];
@@ -88,6 +113,9 @@ public static class FixtureContract
         // Document window
         public const string DocumentTextBox = "documentTextBox";
         public const string DocumentSaveButton = "documentSaveButton";
+
+        // Table window
+        public const string DataGrid = "dataGrid";
     }
 
     /// <summary>
@@ -138,6 +166,9 @@ public static class FixtureContract
 
         /// <summary>The document window closed. Fields: <c>result</c> (saved, discarded or clean).</summary>
         public const string DocumentClosed = "documentClosed";
+
+        /// <summary>The table window is shown. Fields: <c>hwnd</c>.</summary>
+        public const string TableOpened = "tableOpened";
 
         /// <summary>The context menu opened.</summary>
         public const string ContextMenuOpened = "contextMenuOpened";

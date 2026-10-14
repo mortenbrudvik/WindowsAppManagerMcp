@@ -1983,10 +1983,11 @@ mocks cannot reproduce gets tested: the foreground lock, UI Automation trees, ca
 combo box, a button that opens a modal dialog (the main window is disabled while it is open), a
 button that opens a document window that shows a Yes/No/Cancel save prompt when it is closed with
 unsaved changes, a context menu, three solid color swatches and a virtualized list of 10,000
-items. It has no WebView2 pane yet: that would add a package and a runtime dependency to every
-build. Its command line (`FixtureOptions`) sets an instance token that appears in every window
-title, shows the windows without activating them, opens the modal or the document at start, and
-sets the process DPI awareness. A watchdog thread ends the fixture when the test host exits or
+items. A table window holds a WPF DataGrid of 1,000 rows with column and row headers, of which it
+realizes only the rows around what it shows (roadmap M3.F4). It has no WebView2 pane yet: that would
+add a package and a runtime dependency to every build. Its command line (`FixtureOptions`) sets an
+instance token that appears in every window title, shows the windows without activating them, opens
+the modal, the document or the table window at start, and sets the process DPI awareness. A watchdog thread ends the fixture when the test host exits or
 after its maximum lifetime (5 minutes by default), so a crashed run cannot leave it behind.
 
 **The event log.** The fixture writes one JSON object per line to the file given with
@@ -2102,7 +2103,7 @@ process, shown without activation and destroyed in `Dispose`. `E2ETestGateTests`
 | `FixtureElementActionTests` | Input | element_action's pattern actions, checked against the fixture's event log (M3.6) |
 | `FixtureWindowWaitTests` | No input | wait_for_window (M3.7) |
 | `FixtureElementWaitTests` | No input | wait_for_element (M3.8) |
-| `FixtureElementReadTests` | No input | read_element_text and read_table (M3.9) |
+| `FixtureElementReadTests` | No input | read_element_text and read_table (M3.9); read_table of the table window's DataGrid through its realized rows, with column and row headers (M3.F4) |
 | `FixtureVirtualizedListTests` | Both | searchVirtualized in the no-input tier, element_action realize in the input tier (M3.10) |
 | `FixtureCaptureIdTests`, `FixtureSetOfMarksTests` | No input | captureId points, Set-of-Marks marks and legend centres, capture_window's ref crop (M3.11) |
 | `FixtureDesktopStateTests` | No input | get_desktop_state (M3.12) |

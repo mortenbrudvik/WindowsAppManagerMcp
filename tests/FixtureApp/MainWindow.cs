@@ -25,6 +25,7 @@ internal sealed class MainWindow : Window
     private readonly TextBox _editBox = new() { Width = 320, Margin = new Thickness(0, 4, 0, 12) };
     private readonly TextBlock _statusText = new() { Margin = new Thickness(0, 12, 0, 0), Text = "Starting" };
     private DocumentWindow? _document;
+    private TableWindow? _table;
     private bool _readyReported;
 
     public MainWindow(FixtureOptions options, FixtureEventLog events, string dpiAwareness)
@@ -251,6 +252,10 @@ internal sealed class MainWindow : Window
         {
             OpenDocument();
         }
+        if (_options.OpenTable)
+        {
+            OpenTable();
+        }
         if (_options.OpenModal)
         {
             // After the ready event: ShowDialog does not return until the dialog closes.
@@ -290,6 +295,18 @@ internal sealed class MainWindow : Window
         _document = new DocumentWindow(_options, _events);
         _document.Closed += (_, _) => _document = null;
         _document.Show();
+    }
+
+    private void OpenTable()
+    {
+        if (_table != null)
+        {
+            return;
+        }
+
+        _table = new TableWindow(_options, _events);
+        _table.Closed += (_, _) => _table = null;
+        _table.Show();
     }
 
     private void Log(string name, params (string Key, JsonNode? Value)[] fields)

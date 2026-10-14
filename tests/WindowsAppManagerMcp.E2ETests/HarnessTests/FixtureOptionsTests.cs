@@ -18,7 +18,8 @@ public class FixtureOptionsTests
             NoActivate: true,
             OpenModal: true,
             OpenDocument: true,
-            DpiAwareness: FixtureDpiAwareness.Unaware);
+            DpiAwareness: FixtureDpiAwareness.Unaware,
+            OpenTable: true);
 
         // Act
         var parsed = FixtureOptions.Parse(options.ToArguments());
@@ -60,6 +61,19 @@ public class FixtureOptionsTests
         options.EffectiveMaxLifetime.Should().Be(FixtureOptions.DefaultMaxLifetime);
         options.NoActivate.Should().BeFalse();
         options.DpiAwareness.Should().Be(FixtureDpiAwareness.PerMonitorV2);
+        options.OpenTable.Should().BeFalse("an ordinary start opens no extra window");
+    }
+
+    [Theory]
+    [InlineData("--open-table")]
+    public void Parse_ReadsAnOpenOption_AsAFlag_ThatWritesBackAlone(string option)
+    {
+        // Act
+        var options = FixtureOptions.Parse([option]);
+
+        // Assert - the flag takes no value, opens a window an ordinary start does not, and is all ToArguments adds
+        options.Should().NotBe(new FixtureOptions(FixtureOptions.DefaultInstance));
+        options.ToArguments().Should().Equal(FixtureOptions.InstanceOption, FixtureOptions.DefaultInstance, option);
     }
 
     [Theory]
@@ -74,6 +88,8 @@ public class FixtureOptionsTests
     [InlineData("--max-lifetime-seconds", "3601")]
     [InlineData("--dpi-awareness", "perMonitorV3")]
     [InlineData("--no-activate", "--no-activate")]
+    [InlineData("--open-table", "--open-table")]
+    [InlineData("--open-table", "yes")]
     public void Parse_RejectsInvalidCommandLines(params string[] args)
     {
         var act = () => FixtureOptions.Parse(args);
@@ -98,7 +114,8 @@ public class FixtureOptionsTests
             FixtureContract.MainTitle("abc"),
             FixtureContract.ModalTitle("abc"),
             FixtureContract.DocumentTitle("abc", dirty: true),
-            FixtureContract.SavePromptTitle("abc")
+            FixtureContract.SavePromptTitle("abc"),
+            FixtureContract.TableTitle("abc")
         };
 
         // Assert
