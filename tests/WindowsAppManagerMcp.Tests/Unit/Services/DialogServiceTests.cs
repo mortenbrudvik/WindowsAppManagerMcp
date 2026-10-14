@@ -178,6 +178,25 @@ public class DialogServiceTests
     }
 
     [Fact]
+    public async Task Read_LeavesACaptionButtonOut_ThatReachesPastTheTitleBarsEdge()
+    {
+        // Arrange - a MessageBox on a real desktop (roadmap M3.F3): its Close button reaches 5 pixels above the TitleBar and
+        // 2 to its right, so it is not wholly inside it
+        _buttons =
+        [
+            Element("w1t0", null, "TitleBar", "TitleBar", bounds: new BoundsDto(1802, 992, 264, 42)),
+            Element("w1t1", "Close", "Close", "Button", bounds: new BoundsDto(2015, 987, 53, 45)),
+            Element("w1e1", "OK", "2", "Button", bounds: new BoundsDto(1980, 1080, 75, 23))
+        ];
+
+        // Act
+        var content = (await CreateSut().ReadAsync(Dialog, TimeSpan.FromSeconds(1))).Content!;
+
+        // Assert
+        content.Buttons.Select(b => b.Name).Should().Equal("OK");
+    }
+
+    [Fact]
     public async Task Read_CutsLongButtonNames()
     {
         _buttons = [Element("w1e1", new string('x', 500), "1", "Button")];
