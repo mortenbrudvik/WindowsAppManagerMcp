@@ -64,6 +64,32 @@ public class InputSimulationServiceMouseClickTests
     }
 
     [Fact]
+    public void MouseClick_TheModifiers_CarryTheTargetLayoutsScanCodes()
+    {
+        var layouts = new FakeKeyboardLayoutWrapper { Layout = FakeKeyboardLayoutWrapper.Us };
+        var sut = new InputSimulationService(_monitors.Object, _input, _guard.Object, _session, systemInfo: _systemInfo.Object,
+            keyboardLayout: layouts);
+
+        sut.MouseClick(500, 300, MouseButton.Primary, 1, [MouseModifier.Ctrl, MouseModifier.Shift], InputTarget.Window(0x5150));
+
+        var batch = _input.Batches.Should().ContainSingle().Subject;
+        batch.Where(e => e.Kind == InputEventKind.VirtualKey).Select(e => e.Scan).Should().Equal(0x1D, 0x2A, 0x2A, 0x1D);
+        layouts.LayoutQueries.Should().Equal((nint)0x5150);
+    }
+
+    [Fact]
+    public void MouseClick_WithoutModifiers_ReadsNoLayout()
+    {
+        var layouts = new FakeKeyboardLayoutWrapper();
+        var sut = new InputSimulationService(_monitors.Object, _input, _guard.Object, _session, systemInfo: _systemInfo.Object,
+            keyboardLayout: layouts);
+
+        sut.MouseClick(500, 300, MouseButton.Primary, 1, []);
+
+        layouts.LayoutQueries.Should().BeEmpty();
+    }
+
+    [Fact]
     public void MouseClick_ATripleClick_SendsThreeClicksAtThePoint()
     {
         var result = CreateSut().MouseClick(40, 50, MouseButton.Primary, 3, []);

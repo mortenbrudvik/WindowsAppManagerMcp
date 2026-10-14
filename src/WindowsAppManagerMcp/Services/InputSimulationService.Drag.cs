@@ -62,6 +62,7 @@ public partial class InputSimulationService
             InputGuardResult? approved = null, drop = null;
             HeldCheck held = default;
             var pressed = false;
+            KeyboardLayout? layout = null;
             try
             {
                 held = CheckHeldInput(releaseHeldModifiers, "dragged");
@@ -135,7 +136,9 @@ public partial class InputSimulationService
                     return held.Apply(Finish(Result($"{NothingDragged} {buttonsNow}", InputErrorCode.MouseInUse), approved, drop));
                 }
 
-                var press = NewBatch().ModifiersDown(modifiers).MoveTo(r.FromX, r.FromY).Press(r.Button).Build();
+                // The modifiers take the scan codes of the target's layout, as send_keys' keys do
+                layout = modifiers.Count > 0 ? LayoutFor(target) : null;
+                var press = NewBatch(layout).ModifiersDown(modifiers).MoveTo(r.FromX, r.FromY).Press(r.Button).Build();
 
                 // A right or middle press in a terminal pastes
                 if (r.Button is MouseButton.Secondary or MouseButton.Middle && PasteRefusal(press.AsUnswapped, approved) is { } pasteRefused)
@@ -194,19 +197,19 @@ public partial class InputSimulationService
                 {
                     return held.Apply(Finish(Result(
                         $"The pointer did not get to the to point ({r.ToX}, {r.ToY}); it is at ({at.X}, {at.Y}) (confined to a window, or " +
-                        $"moved by the user or the application). {CancelDrag(r)}", InputErrorCode.CursorClamped, pressed: true), approved, drop));
+                        $"moved by the user or the application). {CancelDrag(r, layout)}", InputErrorCode.CursorClamped, pressed: true), approved, drop));
                 }
 
                 // Right before the release: the window at the drop point may have changed while the pointer moved
                 var dropNow = _guard.RecheckDrop(r.ToX, r.ToY, drop);
                 if (!dropNow.Allowed)
                 {
-                    return held.Apply(Finish(Result($"Right before the drop the to point was checked again, and the drop was not sent: {dropNow.Error} {CancelDrag(r)}", dropNow.ErrorCode,
+                    return held.Apply(Finish(Result($"Right before the drop the to point was checked again, and the drop was not sent: {dropNow.Error} {CancelDrag(r, layout)}", dropNow.ErrorCode,
                         pressed: true), approved, dropNow) with { BlockingWindow = dropNow.BlockingWindow });
                 }
 
                 drop = dropNow;
-                var release = Send(NewBatch().MoveTo(r.ToX, r.ToY).Release(r.Button).ModifiersUp(modifiers).Build(), drop);
+                var release = Send(NewBatch(layout).MoveTo(r.ToX, r.ToY).Release(r.Button).ModifiersUp(modifiers).Build(), drop);
                 if (release.PausedByUser)
                 {
                     throw new OperationCanceledException(call.Token);
@@ -240,7 +243,7 @@ public partial class InputSimulationService
             catch (OperationCanceledException) when (pressed)
             {
                 // The request was cancelled mid-drag: no drop at a point on the way
-                CancelDrag(r);
+                CancelDrag(r, layout);
                 throw;
             }
             finally
@@ -257,9 +260,9 @@ public partial class InputSimulationService
     /// released them at once, or SendInput failed, after which the session releases what it can), they were released where
     /// the pointer was.
     /// </summary>
-    private string CancelDrag(DragRequest r)
+    private string CancelDrag(DragRequest r, KeyboardLayout? layout)
     {
-        var sent = _session.Send(NewBatch().MoveTo(r.FromX, r.FromY).Release(r.Button).ModifiersUp(r.Modifiers).Build().Events);
+        var sent = _session.Send(NewBatch(layout).MoveTo(r.FromX, r.FromY).Release(r.Button).ModifiersUp(r.Modifiers).Build().Events);
         return sent.Complete
             ? $"The drag was cancelled: the pointer went back to the from point ({r.FromX}, {r.FromY}) and the button was released there, " +
               "where a drop usually changes nothing. Check the window before you try again."

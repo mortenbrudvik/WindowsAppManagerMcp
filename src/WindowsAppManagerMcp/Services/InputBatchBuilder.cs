@@ -33,12 +33,17 @@ public sealed class InputBatchBuilder
 
     private readonly VirtualScreenBounds _screen;
     private readonly bool _buttonsSwapped;
+    private readonly KeyboardLayout _layout;
     private readonly List<InputEvent> _events = new();
     private readonly List<InputEvent> _asUnswapped = new();
 
     /// <param name="screen">The virtual screen the move's normalized coordinates span (see <see cref="ToAbsolute"/>).</param>
     /// <param name="buttonsSwapped">Whether the user swapped the mouse buttons (GetSystemMetrics SM_SWAPBUTTON).</param>
-    public InputBatchBuilder(VirtualScreenBounds screen, bool buttonsSwapped)
+    /// <param name="layout">
+    /// The keyboard layout the modifier keys take their scan codes from, as send_keys' keys do (roadmap M4.1); without it,
+    /// <see cref="KeyboardLayout.Invariant"/>, which has none.
+    /// </param>
+    public InputBatchBuilder(VirtualScreenBounds screen, bool buttonsSwapped, KeyboardLayout? layout = null)
     {
         ArgumentNullException.ThrowIfNull(screen);
         if (screen.Width <= 0 || screen.Height <= 0)
@@ -48,6 +53,7 @@ public sealed class InputBatchBuilder
 
         _screen = screen;
         _buttonsSwapped = buttonsSwapped;
+        _layout = layout ?? KeyboardLayout.Invariant;
     }
 
     /// <summary>
@@ -79,7 +85,7 @@ public sealed class InputBatchBuilder
         ArgumentNullException.ThrowIfNull(modifiers);
         foreach (var key in modifiers.Distinct().Select(KeyOf))
         {
-            Add(InputEvent.Key(key, ExtendedFlag(key)));
+            Add(ModifierKey(key, NativeEnums.KEYEVENTF_KEYDOWN));
         }
 
         return this;
@@ -102,7 +108,7 @@ public sealed class InputBatchBuilder
 
         foreach (var key in Enumerable.Reverse(keys))
         {
-            Add(InputEvent.Key(key, ExtendedFlag(key) | NativeEnums.KEYEVENTF_KEYUP));
+            Add(ModifierKey(key, NativeEnums.KEYEVENTF_KEYUP));
         }
 
         return this;
@@ -179,7 +185,12 @@ public sealed class InputBatchBuilder
         _ => throw new ArgumentOutOfRangeException(nameof(modifier), modifier, "Unknown modifier")
     };
 
-    private static uint ExtendedFlag(ushort key) => KeyNames.IsExtended(key) ? NativeEnums.KEYEVENTF_EXTENDEDKEY : 0;
+    /// <summary>A modifier key's event, with the layout's scan code and extended-key flag (the left Windows key is E0 5B).</summary>
+    private InputEvent ModifierKey(ushort key, uint flags)
+    {
+        var (scan, extended) = _layout.ScanOf(key);
+        return InputEvent.Key(key, flags | (extended ? NativeEnums.KEYEVENTF_EXTENDEDKEY : 0), scan);
+    }
 
     /// <summary>The MOUSEEVENTF_*UP flag of the physical button that is <paramref name="button"/>.</summary>
     public static uint UpFlag(MouseButton button, bool buttonsSwapped) => DownFlag(button, buttonsSwapped) << 1;

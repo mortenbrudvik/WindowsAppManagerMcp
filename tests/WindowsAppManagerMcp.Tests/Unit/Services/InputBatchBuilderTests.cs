@@ -289,6 +289,21 @@ public class InputBatchBuilderTests
     }
 
     [Fact]
+    public void Modifiers_WithALayout_CarryItsScanCodes_AsSendKeysSendsThem()
+    {
+        // The left Ctrl is scan 1D, the left Windows key E0 5B (an extended key); the masking key has none
+        var layout = KeyboardLayout.Of(new FakeKeyboardLayoutWrapper { Layout = FakeKeyboardLayoutWrapper.Us }, 0, capsLock: false);
+
+        var batch = new InputBatchBuilder(OneMonitor, buttonsSwapped: false, layout)
+            .ModifiersDown([MouseModifier.Ctrl, MouseModifier.Win]).ModifiersUp([MouseModifier.Ctrl, MouseModifier.Win]).Build();
+
+        batch.Events.Should().Equal(
+            InputEvent.Key(VkLControl, KeyDown, 0x1D), InputEvent.Key(VkLWin, ExtendedKey, 0x5B),
+            InputEvent.Key(HeldInputTracker.MaskKey, KeyDown), InputEvent.Key(HeldInputTracker.MaskKey, KeyUp),
+            InputEvent.Key(VkLWin, ExtendedKey | KeyUp, 0x5B), InputEvent.Key(VkLControl, KeyUp, 0x1D));
+    }
+
+    [Fact]
     public void Modifiers_NamedTwice_GoDownOnce()
     {
         var batch = new InputBatchBuilder(OneMonitor, buttonsSwapped: false)

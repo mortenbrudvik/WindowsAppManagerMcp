@@ -1041,7 +1041,9 @@ public partial class InputSimulationService : IInputSimulationService
                     return held.Apply(Finish(new ClickResult(false, x, y, clickType, NothingClicked + buttonsNow, InputErrorCode.MouseInUse), approved));
                 }
 
-                var batch = NewBatch().ModifiersDown(modifiers).MoveTo(x, y).Click(button, clicks).ModifiersUp(modifiers).Build();
+                // The modifiers take the scan codes of the target's layout, as send_keys' keys do; a plain click reads no layout
+                var batch = NewBatch(modifiers.Count > 0 ? LayoutFor(target) : null)
+                    .ModifiersDown(modifiers).MoveTo(x, y).Click(button, clicks).ModifiersUp(modifiers).Build();
 
                 // A right or middle click in a terminal pastes
                 if (button is MouseButton.Secondary or MouseButton.Middle && PasteRefusal(batch.AsUnswapped, approved) is { } pasteRefused)
@@ -1108,9 +1110,10 @@ public partial class InputSimulationService : IInputSimulationService
     /// for every batch, since the user can change either at any time. Without the system reads (tests), the monitors'
     /// bounding rectangle and unswapped buttons.
     /// </summary>
-    private InputBatchBuilder NewBatch() =>
+    /// <param name="layout">The layout a batch's modifier keys take their scan codes from (mouse_click and drag); null for none.</param>
+    private InputBatchBuilder NewBatch(KeyboardLayout? layout = null) =>
         new(_systemInfo?.GetVirtualScreen() is { Width: > 0, Height: > 0 } screen ? screen : InputBatchBuilder.VirtualScreenOf(_monitorService.GetAllMonitors()),
-            _systemInfo?.AreMouseButtonsSwapped() ?? false);
+            _systemInfo?.AreMouseButtonsSwapped() ?? false, layout);
 
     /// <summary>
     /// Where the pointer is after a batch that moved it to (x, y), when that is not the point; null when it is there, or its

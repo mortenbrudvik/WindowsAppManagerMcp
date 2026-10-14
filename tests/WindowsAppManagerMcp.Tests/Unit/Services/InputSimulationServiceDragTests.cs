@@ -101,6 +101,23 @@ public class InputSimulationServiceDragTests
     }
 
     [Fact]
+    public async Task Drag_TheModifiers_CarryTheLayoutsScanCodes_AtThePress_TheDrop_AndACancel()
+    {
+        var layouts = new FakeKeyboardLayoutWrapper { Layout = FakeKeyboardLayoutWrapper.Us };
+        var sut = new InputSimulationService(_monitors.Object, _input, _guard.Object, _session, systemInfo: _systemInfo.Object,
+            keyboardLayout: layouts);
+
+        await sut.DragAsync(Request(modifiers: [MouseModifier.Ctrl]), Source, Source, false, CancellationToken.None);
+        _guard.Setup(g => g.RecheckDrop(300, 100, It.IsAny<InputGuardResult>())).Returns(
+            InputGuardResult.Refuse(InputErrorCode.TargetOccluded, "covered", Source));
+        await sut.DragAsync(Request(modifiers: [MouseModifier.Ctrl]), Source, Source, false, CancellationToken.None);
+
+        _input.Events.Where(e => e.Kind == InputEventKind.VirtualKey).Should().OnlyContain(e => e.Scan == 0x1D)
+            .And.HaveCount(4, "a down and an up in each drag, the second released by the cancel");
+        VerifyNothingIsDown();
+    }
+
+    [Fact]
     public async Task Drag_WithAnXButton_PressesAndReleasesThatButton()
     {
         await CreateSut().DragAsync(Request(button: MouseButton.X1, steps: 1), Source, Source, false, CancellationToken.None);
