@@ -20,6 +20,9 @@ namespace WindowsAppManagerMcp.Native;
 /// properties in one call (BuildUpdatedCache), and <see cref="GetChildElements"/> a whole level with its properties
 /// (FindAllBuildCache), instead of one call per property.</item>
 /// <item>LegacyIAccessible (the MSAA bridge, DoDefaultAction).</item>
+/// <item>Substring conditions (roadmap M3.F12): PropertyConditionFlags_MatchSubstring, Windows 10 1809 and later. Where the
+/// client refuses the flag (E_INVALIDARG), <see cref="FindAll"/> throws <see cref="UiaConditionNotSupportedException"/>, and
+/// from then on throws it for every substring condition without asking the client again.</item>
 /// </list>
 /// <para>The client object is created on first use, behind a lock: the first UI Automation call of a process
 /// failed with E_FAIL in the managed client when threads made it at once (<see cref="UiaClientStartup"/>), so
@@ -64,6 +67,9 @@ public sealed class Uia3Tree : IUiaTree
     private readonly Func<IUIAutomation2> _createClient;
     private readonly object _startLock = new();
     private volatile Client? _client;
+
+    // The client refused a substring condition: Windows before 10 1809 does not know PropertyConditionFlags_MatchSubstring
+    private volatile bool _substringRefused;
 
     /// <summary>The production adapter: creates the CUIAutomation8 client on first use.</summary>
     public Uia3Tree()
@@ -378,12 +384,51 @@ public sealed class Uia3Tree : IUiaTree
         ArgumentNullException.ThrowIfNull(condition);
         var client = Started();
         cancellationToken.ThrowIfCancellationRequested();
-        return UiaComErrors.Run(() =>
+        var substring = HasSubstring(condition);
+        if (substring && _substringRefused)
         {
-            var search = client.Automation.CreateAndCondition(client.ControlView, ToCondition(client.Automation, condition));
-            return Elements(element.FindAllBuildCache(ToTreeScope(scope), search, client.WalkRequest));
-        });
+            throw SubstringRefused(null);
+        }
+
+        try
+        {
+            return UiaComErrors.Run(() =>
+            {
+                var search = client.Automation.CreateAndCondition(client.ControlView, ToCondition(client.Automation, condition));
+                IUIAutomationElementArray found;
+                try
+                {
+                    found = element.FindAllBuildCache(ToTreeScope(scope), search, client.WalkRequest);
+                }
+                catch (ArgumentException ex) when (substring)
+                {
+                    // E_INVALIDARG for a search with a substring in it: a client that took the condition but not the search
+                    throw SubstringRefused(ex);
+                }
+
+                return Elements(found);
+            });
+        }
+        catch (UiaConditionNotSupportedException) when (substring)
+        {
+            _substringRefused = true;
+            throw;
+        }
     }
+
+    /// <summary>Whether the condition has a substring condition anywhere in it.</summary>
+    private static bool HasSubstring(UiaCondition condition) => condition switch
+    {
+        UiaPropertyContainsCondition => true,
+        UiaAndCondition and => and.Conditions.Any(HasSubstring),
+        UiaOrCondition or => or.Conditions.Any(HasSubstring),
+        UiaNotCondition not => HasSubstring(not.Condition),
+        _ => false
+    };
+
+    private static UiaConditionNotSupportedException SubstringRefused(Exception? cause) =>
+        new("This system's UI Automation client cannot search for a substring (PropertyConditionFlags_MatchSubstring needs " +
+            "Windows 10 1809 or later)" + (cause == null ? "." : $": {cause.Message}"));
 
     /// <inheritdoc />
     public UiaElementTree ReadSubtree(IUiaNode root, int maxElements)
@@ -650,11 +695,35 @@ public sealed class Uia3Tree : IUiaTree
                 UiaIds.PropertyId(property.Property), PropertyValue(property.Property, property.Value),
                 PropertyConditionFlags.PropertyConditionFlags_IgnoreCase)
             : automation.CreatePropertyCondition(UiaIds.PropertyId(property.Property), PropertyValue(property.Property, property.Value)),
+        UiaPropertyContainsCondition contains => SubstringCondition(automation, contains),
         UiaAndCondition and => and.Conditions.Select(c => ToCondition(automation, c)).Aggregate(automation.CreateAndCondition),
         UiaOrCondition or => or.Conditions.Select(c => ToCondition(automation, c)).Aggregate(automation.CreateOrCondition),
         UiaNotCondition not => automation.CreateNotCondition(ToCondition(automation, not.Condition)),
         _ => throw new ArgumentException($"Unknown condition {condition.GetType().Name}.", nameof(condition))
     };
+
+    /// <summary>
+    /// A substring condition (roadmap M3.F12): PropertyConditionFlags_MatchSubstring, with IgnoreCase when asked.
+    /// </summary>
+    /// <exception cref="UiaConditionNotSupportedException">The client does not know the flag (E_INVALIDARG: Windows before 10
+    /// 1809).</exception>
+    private static IUIAutomationCondition SubstringCondition(IUIAutomation2 automation, UiaPropertyContainsCondition contains)
+    {
+        var flags = PropertyConditionFlags.PropertyConditionFlags_MatchSubstring;
+        if (contains.IgnoreCase)
+        {
+            flags |= PropertyConditionFlags.PropertyConditionFlags_IgnoreCase;
+        }
+
+        try
+        {
+            return automation.CreatePropertyConditionEx(UiaIds.PropertyId(contains.Property), contains.Value, flags);
+        }
+        catch (ArgumentException ex)
+        {
+            throw SubstringRefused(ex);
+        }
+    }
 
     /// <summary>
     /// A condition value as the COM client compares it: a control type name becomes its id, and a runtime id an int array

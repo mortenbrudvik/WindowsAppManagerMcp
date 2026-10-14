@@ -236,7 +236,9 @@ public class ElementSearchScopeTests
     public async Task Find_SharesOneCandidateLimitAcrossTheWindows()
     {
         // Arrange - each window holds 1500 buttons that the provider matches before a contains filter: the popup's search
-        // stops at the 1000 it may use (the named window's share is kept for it), the window's at the other 1000
+        // stops at the 1000 it may use (the named window's share is kept for it), the window's at the other 1000. The managed
+        // engine, which leaves the whole name to the filter (the UIA3 engine would narrow the search, roadmap M3.F12)
+        _tree.Engine = UiaEngine.Uia2;
         var big = Enumerable.Range(0, 1500).Select(i => new FakeUiaNode("Button", $"B{i}")).ToArray();
         _tree.WithWindow(Menu, new FakeUiaNode("Pane", "Popup").With(new FakeUiaNode("Pane", "Inner").With(big)));
         _tree.WithWindow(Main, new FakeUiaNode("Window", "Editor").With(new FakeUiaNode("Pane", "Inner").With(
@@ -276,7 +278,9 @@ public class ElementSearchScopeTests
     [Fact]
     public async Task Find_APopupWithThousandsOfCandidates_LeavesTheNamedWindowItsShare_SoItsMatchIsFound()
     {
-        // Arrange - a palette in front with 3000 buttons the provider matches before the contains filter
+        // Arrange - a palette in front with 3000 buttons the provider matches before the contains filter (the managed engine,
+        // which leaves the whole name to the filter; the UIA3 engine would narrow the search, roadmap M3.F12)
+        _tree.Engine = UiaEngine.Uia2;
         _tree.WithWindow(Menu, new FakeUiaNode("Pane", "Palette").With(new FakeUiaNode("Pane", "Inner").With(
             Enumerable.Range(0, 3000).Select(i => new FakeUiaNode("Button", $"Tool {i}")).ToArray())));
         SetPopups(Popup(Menu, PopupKind.Window));

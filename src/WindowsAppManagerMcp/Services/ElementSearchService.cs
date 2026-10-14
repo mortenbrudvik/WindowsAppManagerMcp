@@ -388,7 +388,7 @@ public sealed partial class ElementSearchService : IElementSearchService
                 {
                     try
                     {
-                        outcome = Run(compiled, keep, candidatesLeft, target, node, leaveOut, started, token);
+                        outcome = Run(compiled, criteria.NameNarrowing, keep, candidatesLeft, target, node, leaveOut, started, token);
                     }
                     catch (UiaConditionNotSupportedException) when (criteria.ControlTypes is { Count: > 0 } && !controlTypesOnServer)
                     {
@@ -396,7 +396,7 @@ public sealed partial class ElementSearchService : IElementSearchService
                         // window and the next ones
                         controlTypesOnServer = true;
                         compiled = criteria.Compile(controlTypesOnServer: true);
-                        outcome = Run(compiled, keep, candidatesLeft, target, node, leaveOut, started, token);
+                        outcome = Run(compiled, criteria.NameNarrowing, keep, candidatesLeft, target, node, leaveOut, started, token);
                     }
                 }
                 catch (Exception ex) when (!isNamed && !token.IsCancellationRequested &&
@@ -513,10 +513,10 @@ public sealed partial class ElementSearchService : IElementSearchService
     }
 
     private ElementSearchOutcome Run(
-        (UiaCondition Condition, Func<UiaElement, bool>? Filter) compiled, int keep, int maxCandidates, nint window, IUiaNode root,
-        Func<UiaElement, bool>? leaveOut, SearchStarted started, CancellationToken token)
+        (UiaCondition Condition, Func<UiaElement, bool>? Filter) compiled, UiaCondition? narrowing, int keep, int maxCandidates,
+        nint window, IUiaNode root, Func<UiaElement, bool>? leaveOut, SearchStarted started, CancellationToken token)
     {
-        var search = new ElementSearch(_tree, compiled.Condition, compiled.Filter, keep, maxCandidates, leaveOut);
+        var search = new ElementSearch(_tree, compiled.Condition, compiled.Filter, keep, maxCandidates, leaveOut, narrowing);
         started.Begin(window, search);
         return search.Run(root, token);
     }
@@ -679,7 +679,7 @@ public sealed partial class ElementSearchService : IElementSearchService
             var fingerprint = ElementRegistry.Fingerprint(match, null);
             var proof = new ElementSearch(
                     _tree, condition, e => (filter == null || filter(e)) && ElementRegistry.SameElement(fingerprint, e), keep: 2,
-                    leaveOut: OwnedWindows.Below(_windows, window.Handle))
+                    leaveOut: OwnedWindows.Below(_windows, window.Handle), narrowing: identity.NameNarrowing)
                 .Run(window.Node, budget);
             return proof.MatchCount switch
             {

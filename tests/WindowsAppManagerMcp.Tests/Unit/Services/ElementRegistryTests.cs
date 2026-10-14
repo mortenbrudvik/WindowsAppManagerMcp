@@ -717,6 +717,34 @@ public class ElementRegistryTests
         resolution.Element!.Should().Match<ResolvedElement>(r => ReferenceEquals(r.Node, recreated) && r.Via == ElementResolutionPath.Selector);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Resolve_ByAContainsSelector_NarrowsTheSearchInTheProvider_OrSearchesWithoutWhereTheEngineRefuses(bool refuses)
+    {
+        // Arrange - the provider tests the name's text (roadmap M3.F12), unless the engine refuses the substring flag; a level
+        // too wide to split, so the provider searches it
+        var sut = CreateSut();
+        var save = Button("Save document");
+        var pane = new FakeUiaNode("Pane", "Toolbar").With(save)
+            .With(Enumerable.Range(1, ElementSearch.MaxExpandWidth).Select(i => Button($"Open document {i}")).ToArray());
+        Window(Handle, pane);
+        var saveRef = Register(sut, save, selector: new ElementCriteria(Name: "save", NameMatch: ElementNameMatch.Contains, ControlTypes: ["Button"]));
+        var conditions = new List<UiaCondition>();
+        _tree.OnFindAll = (_, condition) => conditions.Add(condition);
+        _tree.RefusesSubstrings = refuses;
+
+        // Act
+        save.Vanish();
+        var recreated = Button("Save document");
+        pane.With(recreated);
+        var resolution = sut.Resolve(saveRef!, None);
+
+        // Assert
+        resolution.Element!.Should().Match<ResolvedElement>(r => ReferenceEquals(r.Node, recreated) && r.Via == ElementResolutionPath.Selector);
+        conditions.Should().Contain(c => FakeUiaTree.HasSubstring(c));
+    }
+
     [Fact]
     public void Resolve_ToAnElementThatHasARefOfItsOwn_ReturnsThatRef_AndDropsTheOldOne()
     {

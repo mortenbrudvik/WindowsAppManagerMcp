@@ -109,6 +109,64 @@ public class ElementSearchServiceTests
             .Select(e => e.Name).Should().Equal("Save");
     }
 
+    /// <summary>
+    /// Window "Files" > ToolBar "Standard" (Save, Save As, Open, a disabled Save All) and List "Recent" (60 items, every fifth
+    /// "Autosave n", the rest "Draft n"), built anew for each tree.
+    /// </summary>
+    private static FakeUiaNode Files() =>
+        new FakeUiaNode("Window", "Files").With(
+            new FakeUiaNode("ToolBar", "Standard").With(
+                new FakeUiaNode("Button", "Save"), new FakeUiaNode("Button", "Save As"), new FakeUiaNode("Button", "Open"),
+                new FakeUiaNode("Button", "SAVE ALL") { IsEnabled = false }),
+            new FakeUiaNode("List", "Recent").With(Enumerable.Range(1, 60)
+                .Select(i => new FakeUiaNode("ListItem", i % 5 == 0 ? $"Autosave {i}" : $"Draft {i}")).ToArray()));
+
+    [Theory]
+    [InlineData(20, false)]
+    [InlineData(5, false)]
+    [InlineData(5, true)]
+    public async Task Find_ByContains_NarrowedByTheProvider_ReportsWhatTheServerAloneReports(int maxResults, bool enabledOnly)
+    {
+        // Arrange - the default engine lets the provider test the text (roadmap M3.F12); the managed one cannot, so it
+        // searches as before, the server testing every name
+        var managed = new FakeUiaTree { Engine = UiaEngine.Uia2 }.WithWindow(Handle, Files());
+        _tree.WithWindow(Handle, Files());
+        var conditions = new List<UiaCondition>();
+        _tree.OnFindAll = (_, condition) => conditions.Add(condition);
+        var query = Query(name: "SAVE", nameMatch: ElementNameMatch.Contains, maxResults: maxResults, enabledOnly: enabledOnly);
+
+        // Act
+        var narrowed = await Find(query);
+        var serverOnly = await new ElementSearchService(managed, _worker,
+                new ElementRegistry(managed, _worker, _windows.Object, ElementRegistry.DefaultCapacity, 1, TimeProvider.System), _windows.Object)
+            .FindAsync(query);
+
+        // Assert - the same elements under the same refs, the same count and the same truncation
+        narrowed.Success.Should().BeTrue(narrowed.Error);
+        narrowed.Elements!.Select(e => (e.Ref, e.Name)).Should().Equal(serverOnly.Elements!.Select(e => (e.Ref, e.Name)));
+        narrowed.MatchCount.Should().Be(serverOnly.MatchCount).And.Be(enabledOnly ? 14 : 15);
+        narrowed.Truncated.Should().Be(serverOnly.Truncated);
+        narrowed.TruncationReason.Should().Be(serverOnly.TruncationReason);
+        conditions.Should().Contain(c => FakeUiaTree.HasSubstring(c));
+    }
+
+    [Fact]
+    public async Task Find_ByContains_WhenTheEngineRefusesTheSubstring_FindsTheSame()
+    {
+        // Arrange - the UIA3 engine where Windows refuses PropertyConditionFlags_MatchSubstring (before Windows 10 1809)
+        _tree.WithWindow(Handle, Files());
+        _tree.RefusesSubstrings = true;
+
+        // Act
+        var result = await Find(Query(name: "save", nameMatch: ElementNameMatch.Contains));
+
+        // Assert
+        result.Success.Should().BeTrue(result.Error);
+        result.MatchCount.Should().Be(15);
+        result.Truncated.Should().BeFalse();
+        result.Elements!.Select(e => e.Name).Should().StartWith(new[] { "Save", "Save As", "SAVE ALL", "Autosave 5" });
+    }
+
     [Fact]
     public async Task Find_ByControlTypes_MatchesAnyOfThem()
     {

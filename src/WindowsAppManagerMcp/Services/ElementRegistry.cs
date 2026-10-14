@@ -559,13 +559,15 @@ public sealed class ElementRegistry : IElementRegistry
         var leaveOut = OwnedWindows.Below(_windows, handle);
         try
         {
-            return new ElementSearch(_tree, condition, filter, ResolutionKeep, leaveOut: leaveOut).Run(window, cancellationToken);
+            return new ElementSearch(_tree, condition, filter, ResolutionKeep, leaveOut: leaveOut, narrowing: criteria.NameNarrowing)
+                .Run(window, cancellationToken);
         }
         catch (UiaConditionNotSupportedException) when (criteria.ControlTypes is { Count: > 0 })
         {
             var (serverCondition, serverFilter) = criteria.Compile(controlTypesOnServer: true);
             return new ElementSearch(
-                    _tree, serverCondition, e => (serverFilter == null || serverFilter(e)) && filter(e), ResolutionKeep, leaveOut: leaveOut)
+                    _tree, serverCondition, e => (serverFilter == null || serverFilter(e)) && filter(e), ResolutionKeep, leaveOut: leaveOut,
+                    narrowing: criteria.NameNarrowing)
                 .Run(window, cancellationToken);
         }
     }
