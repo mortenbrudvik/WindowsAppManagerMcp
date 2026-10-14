@@ -24,12 +24,14 @@ public class LayoutServiceTests : IDisposable
         _mockForegroundService = TestDataFactory.CreateMockForegroundService();
     }
 
+    // The launched windows' placement watches them on a manual clock, so a launch test does not wait (roadmap M3.F27)
     private LayoutService CreateSut() => new LayoutService(
         _mockWindowService.Object,
         _mockMonitorService.Object,
         _mockProcessService.Object,
         _mockForegroundService.Object,
-        _testLayoutPath);
+        _testLayoutPath,
+        TestDataFactory.CreateInstantLaunchPlacement(_mockWindowService.Object, _mockForegroundService.Object));
 
     public void Dispose()
     {

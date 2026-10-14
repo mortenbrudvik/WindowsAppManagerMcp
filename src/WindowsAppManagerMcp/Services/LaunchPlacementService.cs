@@ -75,6 +75,8 @@ public sealed class LaunchPlacementService : ILaunchPlacementService
         var placed = new Frame?[count];
         var reapplied = new bool[count];
         var warnings = new string?[count];
+        var steps = new LaunchPlacementStep[count];
+        var activations = new FocusOutcome?[count];
 
         // 1. Each window placed as its plan asks, in order
         for (var i = 0; i < count; i++)
@@ -82,13 +84,15 @@ public sealed class LaunchPlacementService : ILaunchPlacementService
             cancellationToken.ThrowIfCancellationRequested();
             var (handle, plan) = placements[i];
             failures[i] = Refusal(handle);
+            steps[i] = LaunchPlacementStep.Check;
             if (failures[i] != null || !plan.ChangesGeometry)
                 continue;
 
-            var result = Apply(handle, plan);
+            var (result, failedStep) = Apply(handle, plan);
             if (!result.Success)
             {
                 failures[i] = result;
+                steps[i] = failedStep;
                 continue;
             }
 
@@ -105,7 +109,7 @@ public sealed class LaunchPlacementService : ILaunchPlacementService
 
         // 2. All of them together: watched until each stays where it was placed, and placed again when the app moves it back
         if (placed.Any(p => p != null))
-            await SettleAsync(placements, placed, failures, reapplied, warnings, cancellationToken).ConfigureAwait(false);
+            await SettleAsync(placements, placed, failures, steps, reapplied, warnings, cancellationToken).ConfigureAwait(false);
 
         // 3. Focus, in order, so the last window that asks for it ends in front
         for (var i = 0; i < count; i++)
@@ -115,7 +119,13 @@ public sealed class LaunchPlacementService : ILaunchPlacementService
                 continue;
 
             cancellationToken.ThrowIfCancellationRequested();
-            failures[i] = Focus(handle);
+            var activation = activations[i] = Focus(handle);
+            if (!activation.IsForeground)
+            {
+                failures[i] = WindowChangeResult.Failed(handle, activation.ErrorCode == None ? FocusFailed : activation.ErrorCode,
+                    activation.Error ?? "The window did not come to the front.");
+                steps[i] = LaunchPlacementStep.Focus;
+            }
         }
 
         // 4. Every window as it is now
@@ -132,7 +142,9 @@ public sealed class LaunchPlacementService : ILaunchPlacementService
                 Reapplied: reapplied[i],
                 ErrorCode: failure?.ErrorCode ?? None,
                 Error: failure?.Error,
-                Warning: failure == null ? warnings[i] : null));
+                Warning: failure == null ? warnings[i] : null,
+                FailedStep: failure == null ? LaunchPlacementStep.None : steps[i],
+                Activation: activations[i]));
         }
 
         return outcomes;
@@ -153,6 +165,7 @@ public sealed class LaunchPlacementService : ILaunchPlacementService
         IReadOnlyList<(nint Handle, LaunchPlacementPlan Plan)> placements,
         Frame?[] placed,
         WindowChangeResult?[] failures,
+        LaunchPlacementStep[] steps,
         bool[] reapplied,
         string?[] warnings,
         CancellationToken cancellationToken)
@@ -179,6 +192,7 @@ public sealed class LaunchPlacementService : ILaunchPlacementService
             foreach (var i in watched)
             {
                 var (handle, plan) = placements[i];
+                steps[i] = LaunchPlacementStep.Settle;
                 var frame = _windows.IsValidWindow(handle) ? Read(handle) : null;
                 if (frame == null)
                 {
@@ -218,7 +232,7 @@ public sealed class LaunchPlacementService : ILaunchPlacementService
 
                 reapplies[i]++;
                 reapplied[i] = true;
-                var again = Apply(handle, plan);
+                var (again, _) = Apply(handle, plan);
                 if (!again.Success)
                 {
                     failures[i] = again with
@@ -268,28 +282,44 @@ public sealed class LaunchPlacementService : ILaunchPlacementService
     }
 
     /// <summary>
-    /// The plan's geometry: snap or bounds (placing restores the window to normal first, without activating it), or a move
-    /// to monitorIndex (maximized there for state maximized), or the state alone; then minimized for state minimized. A
-    /// window that does not answer is NotResponding.
+    /// The plan's geometry: snap or bounds (the visible frame, or for <see cref="BoundsFrame.Outer"/> the window rect;
+    /// placing restores the window to normal first, without activating it), or a move to monitorIndex (maximized there for
+    /// state maximized), or the state alone; then minimized for state minimized. Returns the step that failed with its
+    /// result: <see cref="LaunchPlacementStep.Place"/> when the window was not placed, <see cref="LaunchPlacementStep.Minimize"/>
+    /// when it was placed but not minimized.
     /// </summary>
-    private WindowChangeResult Apply(nint handle, LaunchPlacementPlan plan)
+    private (WindowChangeResult Result, LaunchPlacementStep FailedStep) Apply(nint handle, LaunchPlacementPlan plan)
+    {
+        var placed = Guarded(handle, () => plan switch
+        {
+            { Snap: { } snap } => _windows.SnapWindow(handle, snap, plan.MonitorIndex, bringToFront: true),
+            { Bounds: { } b, Frame: BoundsFrame.Outer } => _windows.SetWindowBounds(handle, b.X, b.Y, b.Width, b.Height, bringToFront: true),
+            { Bounds: { } b } => _windows.SetWindowFrame(handle, b.X, b.Y, b.Width, b.Height, bringToFront: true),
+            { MonitorIndex: { } monitor } => _windows.MoveWindowToMonitor(handle, monitor,
+                plan.State == LaunchWindowState.Maximized ? MonitorPositioning.Maximize : MonitorPositioning.Center, bringToFront: true),
+            { State: LaunchWindowState.Maximized } => _windows.SetWindowState(handle, WindowStateRequest.Maximize),
+            { State: LaunchWindowState.Normal } => RestoreToNormal(handle),
+            _ => WindowChangeResult.Done(handle)
+        });
+        if (!placed.Success)
+            return (placed, LaunchPlacementStep.Place);
+
+        if (plan.State != LaunchWindowState.Minimized)
+            return (placed, LaunchPlacementStep.None);
+
+        var minimized = Guarded(handle, () => _windows.SetWindowState(handle, WindowStateRequest.Minimize));
+        return (minimized, minimized.Success ? LaunchPlacementStep.None : LaunchPlacementStep.Minimize);
+    }
+
+    /// <summary>
+    /// Runs a change of the window's geometry or state: a window that does not answer is NotResponding, and an unexpected
+    /// failure MoveFailed.
+    /// </summary>
+    private static WindowChangeResult Guarded(nint handle, Func<WindowChangeResult> change)
     {
         try
         {
-            var result = plan switch
-            {
-                { Snap: { } snap } => _windows.SnapWindow(handle, snap, plan.MonitorIndex, bringToFront: true),
-                { Bounds: { } b } => _windows.SetWindowFrame(handle, b.X, b.Y, b.Width, b.Height, bringToFront: true),
-                { MonitorIndex: { } monitor } => _windows.MoveWindowToMonitor(handle, monitor,
-                    plan.State == LaunchWindowState.Maximized ? MonitorPositioning.Maximize : MonitorPositioning.Center, bringToFront: true),
-                { State: LaunchWindowState.Maximized } => _windows.SetWindowState(handle, WindowStateRequest.Maximize),
-                { State: LaunchWindowState.Normal } => RestoreToNormal(handle),
-                _ => WindowChangeResult.Done(handle)
-            };
-
-            return result.Success && plan.State == LaunchWindowState.Minimized
-                ? _windows.SetWindowState(handle, WindowStateRequest.Minimize)
-                : result;
+            return change();
         }
         catch (WindowNotRespondingException ex)
         {
@@ -303,26 +333,23 @@ public sealed class LaunchPlacementService : ILaunchPlacementService
     }
 
     /// <summary>
-    /// Brings the window to the front as focus_window does (<see cref="IForegroundService.EnsureForeground"/>); null when
-    /// it is in front, else why not (FocusFailed for an unexpected failure, which never hides the launch).
+    /// Brings the window to the front as focus_window does (<see cref="IForegroundService.EnsureForeground"/>) and returns
+    /// what the activation found; a window that does not answer is NotResponding, and an unexpected failure (which never
+    /// hides the launch) FocusFailed.
     /// </summary>
-    private WindowChangeResult? Focus(nint handle)
+    private FocusOutcome Focus(nint handle)
     {
         try
         {
-            var outcome = _foreground.EnsureForeground(handle);
-            return outcome.IsForeground
-                ? null
-                : WindowChangeResult.Failed(handle, outcome.ErrorCode == None ? FocusFailed : outcome.ErrorCode,
-                    outcome.Error ?? "The window did not come to the front.");
+            return _foreground.EnsureForeground(handle);
         }
         catch (WindowNotRespondingException ex)
         {
-            return WindowChangeResult.Failed(handle, NotResponding, ex.Message);
+            return new FocusOutcome { Target = handle, ErrorCode = NotResponding, Error = ex.Message };
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            return WindowChangeResult.Failed(handle, FocusFailed, $"Bringing the window to the front failed: {ex.Message}");
+            return new FocusOutcome { Target = handle, ErrorCode = FocusFailed, Error = $"Bringing the window to the front failed: {ex.Message}" };
         }
     }
 

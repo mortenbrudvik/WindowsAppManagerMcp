@@ -59,7 +59,8 @@ public static class ServiceRegistration
         services.AddSingleton<IProcessService, ProcessService>();
         // Finds the window a launch opens, whichever process owns it (launch tools and apply_layout's launchMissing)
         services.AddSingleton<IWindowWaitService, WindowWaitService>();
-        // Places the launch tools' windows (placement, roadmap M3.13) through the window and foreground services
+        // Places the launch tools' windows (placement, roadmap M3.13) and apply_layout's launched ones (roadmap M3.F27)
+        // through the window and foreground services
         services.AddSingleton<ILaunchPlacementService>(sp => new LaunchPlacementService(
             sp.GetRequiredService<IWindowService>(), sp.GetRequiredService<IForegroundService>(), sp.GetRequiredService<IInputSession>()));
         services.AddSingleton<IScreenCaptureWrapper, ScreenCaptureWrapper>();
@@ -119,7 +120,10 @@ public static class ServiceRegistration
             var monitorService = sp.GetRequiredService<IMonitorService>();
             var processService = sp.GetRequiredService<IProcessService>();
             var foregroundService = sp.GetRequiredService<IForegroundService>();
-            return new LayoutService(windowService, monitorService, processService, foregroundService, createLayoutStorage());
+
+            // launchMissing's windows are placed as the launch tools place theirs (roadmap M3.F27)
+            return new LayoutService(windowService, monitorService, processService, foregroundService, createLayoutStorage(),
+                launchPlacement: sp.GetRequiredService<ILaunchPlacementService>());
         });
 
         // Verified window activation (focus_window, apply_layout, and the input guard): all attach and

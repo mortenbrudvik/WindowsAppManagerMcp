@@ -23,8 +23,10 @@ public class LayoutServiceMatchingTests : IDisposable
             Directory.Delete(_layoutsPath, recursive: true);
     }
 
+    // The launched windows' placement watches them on a manual clock, so a launch test does not wait (roadmap M3.F27)
     private LayoutService CreateSut() =>
-        new(_windows.Object, _monitors.Object, _processes.Object, _foreground.Object, _layoutsPath);
+        new(_windows.Object, _monitors.Object, _processes.Object, _foreground.Object, _layoutsPath,
+            TestDataFactory.CreateInstantLaunchPlacement(_windows.Object, _foreground.Object));
 
     private static WindowInfo Window(
         int handle, string title, string process, int pid, int x, int y, int width, int height,

@@ -50,6 +50,12 @@ public class LaunchPlacementServiceTests
                 _calls.Add($"frame {x},{y},{width},{height}");
                 return Place(h, new WindowRect(x, y, width, height));
             });
+        _windows.Setup(w => w.SetWindowBounds(It.IsAny<nint>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>()))
+            .Returns<nint, int, int, int, int, bool>((h, x, y, width, height, _) =>
+            {
+                _calls.Add($"bounds {x},{y},{width},{height}");
+                return Place(h, new WindowRect(x + 7, y, width - 14, height - 7));
+            });
         _windows.Setup(w => w.MoveWindowToMonitor(It.IsAny<nint>(), It.IsAny<int>(), It.IsAny<MonitorPositioning>(), It.IsAny<bool>()))
             .Returns<nint, int, MonitorPositioning, bool>((h, monitor, positioning, _) =>
             {
@@ -266,6 +272,7 @@ public class LaunchPlacementServiceTests
         var outcome = await PlaceOneAsync(Code, new LaunchPlacement(Snap: "left_half", Focus: true));
 
         outcome.ErrorCode.Should().Be(WindowErrorCode.InvalidHandle);
+        outcome.FailedStep.Should().Be(LaunchPlacementStep.Settle);
         outcome.Error.Should().Contain("closed");
         outcome.Window.Should().BeNull();
         Actions.Should().Equal("snap LeftHalf ");
@@ -291,7 +298,9 @@ public class LaunchPlacementServiceTests
         var outcome = await PlaceOneAsync(Code, new LaunchPlacement(Snap: "left_half", Focus: true));
 
         outcome.Success.Should().BeTrue();
+        outcome.FailedStep.Should().Be(LaunchPlacementStep.None);
         outcome.Focused.Should().BeTrue();
+        outcome.Activation.Should().BeEquivalentTo(new { Target = Code, IsForeground = true, Method = FocusMethod.SetForeground });
         _calls.Should().Equal("snap LeftHalf ", "delay", "delay", "delay", $"focus {Code}");
     }
 
@@ -315,6 +324,8 @@ public class LaunchPlacementServiceTests
 
         outcome.Success.Should().BeFalse();
         outcome.ErrorCode.Should().Be(WindowErrorCode.Cloaked);
+        outcome.FailedStep.Should().Be(LaunchPlacementStep.Focus);
+        outcome.Activation!.ErrorCode.Should().Be(WindowErrorCode.Cloaked);
         outcome.Error.Should().Be("cloaked");
         outcome.Focused.Should().BeFalse();
         outcome.Window.Should().NotBeNull("the window is still reported");
@@ -329,6 +340,8 @@ public class LaunchPlacementServiceTests
         var outcome = await PlaceOneAsync(Code, new LaunchPlacement(Snap: "left_half", Focus: true));
 
         outcome.ErrorCode.Should().Be(WindowErrorCode.AccessDenied);
+        outcome.FailedStep.Should().Be(LaunchPlacementStep.Place);
+        outcome.Activation.Should().BeNull("nothing was focused");
         outcome.Error.Should().Be("elevated");
         outcome.Window!.VisibleBounds.Should().Be(SavedBounds);
         _foreground.Verify(f => f.EnsureForeground(It.IsAny<nint>(), It.IsAny<int>()), Times.Never);
@@ -372,6 +385,8 @@ public class LaunchPlacementServiceTests
         var outcome = await PlaceOneAsync(Code, new LaunchPlacement(Focus: true));
 
         outcome.ErrorCode.Should().Be(WindowErrorCode.FocusFailed);
+        outcome.FailedStep.Should().Be(LaunchPlacementStep.Focus);
+        outcome.Activation.Should().BeEquivalentTo(new { Target = Code, IsForeground = false, ErrorCode = WindowErrorCode.FocusFailed });
         outcome.Error.Should().Contain("boom");
     }
 
@@ -383,6 +398,7 @@ public class LaunchPlacementServiceTests
         var outcome = await PlaceOneAsync(Terminal, new LaunchPlacement(Snap: "right_half", Focus: true));
 
         outcome.ErrorCode.Should().Be(WindowErrorCode.ProtectedWindow);
+        outcome.FailedStep.Should().Be(LaunchPlacementStep.Check);
         outcome.Error.Should().Contain("agent's own host").And.Contain("snap_window");
         _calls.Should().BeEmpty();
     }
@@ -395,6 +411,7 @@ public class LaunchPlacementServiceTests
         var outcome = await PlaceOneAsync(Code, new LaunchPlacement(Focus: true));
 
         outcome.ErrorCode.Should().Be(WindowErrorCode.TargetDeniedByPolicy);
+        outcome.FailedStep.Should().Be(LaunchPlacementStep.Check);
         _calls.Should().BeEmpty();
     }
 
@@ -406,6 +423,7 @@ public class LaunchPlacementServiceTests
         var outcome = await PlaceOneAsync(Code, new LaunchPlacement(Snap: "left_half"));
 
         outcome.ErrorCode.Should().Be(WindowErrorCode.PausedByUser);
+        outcome.FailedStep.Should().Be(LaunchPlacementStep.Check);
         _calls.Should().BeEmpty();
     }
 
@@ -421,6 +439,7 @@ public class LaunchPlacementServiceTests
         var outcome = await PlaceOneAsync(Code, new LaunchPlacement(Snap: "left_half"));
 
         outcome.ErrorCode.Should().Be(WindowErrorCode.PausedByUser);
+        outcome.FailedStep.Should().Be(LaunchPlacementStep.Settle);
         outcome.Reapplied.Should().BeFalse();
         _calls.Should().Equal("snap LeftHalf ", "delay");
     }
@@ -431,6 +450,7 @@ public class LaunchPlacementServiceTests
         var outcome = await PlaceOneAsync(0x9999, new LaunchPlacement(Snap: "left_half"));
 
         outcome.ErrorCode.Should().Be(WindowErrorCode.InvalidHandle);
+        outcome.FailedStep.Should().Be(LaunchPlacementStep.Check);
         outcome.Window.Should().BeNull();
         _calls.Should().BeEmpty();
     }
@@ -461,6 +481,59 @@ public class LaunchPlacementServiceTests
 
         outcome.Window!.State.Should().Be(WindowState.Minimized);
         Actions.Should().Equal("snap LeftHalf ", "state Minimize");
+    }
+
+    [Fact]
+    public async Task AMinimizeThatFails_AfterThePlacement_IsTheMinimizeStep()
+    {
+        _windows.Setup(w => w.SetWindowState(Code, WindowStateRequest.Minimize))
+            .Returns(WindowChangeResult.Failed(Code, WindowErrorCode.StateChangeFailed, "The window did not become minimized."));
+
+        var outcome = await PlaceOneAsync(Code, new LaunchPlacement(Snap: "left_half", State: "minimized"));
+
+        outcome.ErrorCode.Should().Be(WindowErrorCode.StateChangeFailed);
+        outcome.FailedStep.Should().Be(LaunchPlacementStep.Minimize, "the window was placed; only the minimize failed");
+        outcome.Window!.VisibleBounds.Should().Be(LeftHalf);
+        _delays.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task APlacementOnceMoreThatFails_IsTheSettleStep()
+    {
+        At(100, () =>
+        {
+            Place(Code, SavedBounds);
+            _windows.Setup(w => w.SnapWindow(Code, It.IsAny<SnapPosition>(), It.IsAny<int?>(), It.IsAny<bool>()))
+                .Returns(WindowChangeResult.Failed(Code, WindowErrorCode.AccessDenied, "elevated"));
+        });
+
+        var outcome = await PlaceOneAsync(Code, new LaunchPlacement(Snap: "left_half"));
+
+        outcome.ErrorCode.Should().Be(WindowErrorCode.AccessDenied);
+        outcome.FailedStep.Should().Be(LaunchPlacementStep.Settle);
+        outcome.Reapplied.Should().BeTrue();
+        outcome.Error.Should().Contain("moved it again").And.Contain("elevated");
+    }
+
+    [Fact]
+    public async Task OuterBounds_PlaceTheWindowRect_AsLayoutsDo()
+    {
+        // apply_layout's presets hold the window rect with its invisible borders (roadmap M3.F27)
+        var plan = new LaunchPlacementPlan(null, null, new WindowRect(0, 0, 974, 1047), null, false) { Frame = BoundsFrame.Outer };
+
+        var outcome = (await CreateSut().PlaceAsync([(Code, plan)])).Single();
+
+        outcome.Success.Should().BeTrue();
+        outcome.Reapplied.Should().BeFalse();
+        Actions.Should().Equal("bounds 0,0,974,1047");
+        _windows.Verify(w => w.SetWindowFrame(It.IsAny<nint>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public void APlan_PlacesTheVisibleFrame_UnlessItSaysOtherwise()
+    {
+        Plan(new LaunchPlacement(Bounds: new BoundsDto(10, 20, 800, 600))).Frame.Should().Be(BoundsFrame.Visible);
     }
 
     [Fact]
