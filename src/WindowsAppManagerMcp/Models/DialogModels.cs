@@ -58,7 +58,7 @@ public sealed record DialogResponseRequest(nint Window, string? Button, bool All
 /// <param name="DialogClosed">True when the dialog window was gone (or hidden) after the press; false when it stayed open
 /// (a Help or Apply button, an input the dialog refused, or a further dialog it opened, see <paramref name="NextDialog"/>).</param>
 /// <param name="NextDialog">A new dialog the press opened (a confirmation), which the dialog waits for: answer it next. Its
-/// title is at most 200 characters.</param>
+/// title is at most 200 characters; its ref is the press's openedPopup's (roadmap M3.F19).</param>
 public sealed record DialogResponseResult(
     bool Success,
     long DialogHandle = 0,

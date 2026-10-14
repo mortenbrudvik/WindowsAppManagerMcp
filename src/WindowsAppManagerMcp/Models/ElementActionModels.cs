@@ -234,7 +234,9 @@ public sealed record ElementScrollPosition(double? HorizontalPercent, double? Ve
 
 /// <summary>A top-level window of the element's application that appeared during the action (roadmap M3.6).</summary>
 /// <param name="Title">Its window text, cut to <see cref="AppText.MaxLength"/> characters (roadmap M3.F14).</param>
-public sealed record OpenedWindow(long Handle, string Title, string? ClassName, int ProcessId, string? ProcessName);
+/// <param name="Ref">The ref of the window's root element, registered under the window as get_active_popups registers a
+/// popup's (roadmap M3.F19); null when it could not be read, or the window did not pass the target checks.</param>
+public sealed record OpenedWindow(long Handle, string Title, string? ClassName, int ProcessId, string? ProcessName, string? Ref = null);
 
 /// <summary>Result of element_action (roadmap M3.6).</summary>
 /// <param name="Ref">The element's ref: the one given, the one the element has now when it was found again, or the one the
