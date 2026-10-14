@@ -157,6 +157,7 @@ public class TargetPolicyTests
     [InlineData(@"C:\Windows\SystemApps\microsoft.creddialoghost_cw5n1h2txyewy\CredDialogHost.exe")]
     [InlineData(@"C:\Windows\SystemApps\Microsoft.AAD.BrokerPlugin_cw5n1h2txyewy\Microsoft.AAD.BrokerPlugin.exe")] // roadmap M3.F6: Entra ID and Microsoft account sign-in
     [InlineData("SecurityHealthHost")] // roadmap M3.F6: Windows Security's notifications and prompts
+    [InlineData(@"C:\Windows\System32\WWAHost.exe")] // roadmap M3.F3: the Microsoft account sign-in window of Settings' "Connect"
     public void Evaluate_DefaultDenyList_RefusesTheWindowsSecurityPrompts_InTheirUwpFrame(string processName)
     {
         // Act - a UWP window goes by its app's process and by its frame host
