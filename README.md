@@ -20,7 +20,7 @@ An MCP (Model Context Protocol) server that enables AI assistants like Claude to
 - **Multi-Monitor Support** - Move windows between monitors, get display information
 - **Screenshot Capture** - Capture screens, regions, windows or one element of a window; Set-of-Marks captures box each control with its ref and list it in a legend; captures come back as images the model sees, sized for vision, with a `captureId` that the mouse tools take to click a point seen in the image
 - **UI Automation** - Retrieve UI element trees with bounding boxes and refs, list a window's open menus, dropdowns and dialogs, and check which element has keyboard focus or sits at a screen point; read through the UI Automation 3 COM client with per-call timeouts by default (`WAM_UIA_ENGINE`); the first read of a page in a Chromium browser or an Electron app waits briefly for its accessibility tree (`launch_application` `forceAccessibility` builds it from the start)
-- **Input Simulation** - Click, right-click, double-click, move the mouse cursor, scroll, type text and send key combinations, aimed at a named window and kept off the agent's own terminal, elevated windows and denied apps
+- **Input Simulation** - Click, right-click, double-click, click any button with modifier keys (Ctrl+click, middle and triple clicks), drag and drop, move the mouse cursor, scroll, type text and send key combinations, aimed at a named window and kept off the agent's own terminal, elevated windows and denied apps
 - **Clipboard** - Read what the agent copied and put text on the clipboard to paste it; the user's own clipboard is read, and pasted, only with the user's consent, and content password managers mark as private never
 - **Browser Reading** - Read the URL and page text of browser windows through UI Automation or the Chrome DevTools Protocol
 - **Application Launch** - Start applications with arguments, open URLs, Settings pages and Store apps, and get back the window the launch opened, whichever process owns it; place it in the same call (snap, bounds, monitor, state, focus), or use a window of the app that is already open
@@ -103,7 +103,7 @@ so `serverInfo.version` shows a different commit SHA (`X.Y.Z+<tag commit>` for t
 `X.Y.Z+<commit before the release commit>` for the plugin exe).
 
 <!-- tools:begin tool-table (generated from tools/list: run the tests with UPDATE_SNAPSHOTS=1, see TESTING.md) -->
-## Available Tools (64)
+## Available Tools (66)
 
 | Category | Tools |
 |----------|-------|
@@ -114,7 +114,7 @@ so `serverInfo.version` shows a different commit SHA (`X.Y.Z+<tag commit>` for t
 | Screenshot | `list_screens`, `take_screenshot`, `capture_region`, `capture_window`, `capture_with_elements` |
 | UI Automation | `get_desktop_state`, `get_ui_elements`, `find_ui_elements`, `element_action`, `respond_to_dialog`, `file_dialog`, `get_focused_element`, `get_element_at_point`, `get_active_popups`, `read_element_text`, `read_table`, `wait_for_element` |
 | Browser Reading | `get_browser_url`, `get_active_browser_url`, `get_browser_content`, `launch_browser_with_debug` |
-| Input Simulation | `click`, `right_click`, `double_click`, `mouse_move`, `scroll`, `type_text`, `send_keys` |
+| Input Simulation | `click`, `right_click`, `double_click`, `mouse_click`, `drag`, `mouse_move`, `scroll`, `type_text`, `send_keys` |
 | Input Control | `get_control_status`, `resume_input`, `release_all_input` |
 | App Launch | `launch_application`, `list_processes`, `kill_process`, `close_application` |
 | Clipboard | `get_clipboard`, `set_clipboard` |
@@ -200,6 +200,8 @@ Once configured, you can ask Claude to:
 - "Click at position 500, 300"
 - "Right-click at 600, 400"
 - "Double-click the file at position 200, 150"
+- "Ctrl+click the second file in the Explorer window"
+- "Drag the report from Explorer into the Outlook message"
 - "Move the mouse to 800, 600"
 - "Type 'Hello World' into the text field"
 - "Press Ctrl+C to copy"
@@ -207,7 +209,7 @@ Once configured, you can ask Claude to:
 - "Scroll the Settings list down until Bluetooth is visible"
 - "Copy the error lines in the terminal and read them"
 
-> **Input is guarded.** Every input tool takes an optional `windowHandle`: keys are sent only after the server has brought that window to the front and only while it (or its dialog) is in front, and clicks only when the point is on that window or a popup of it. Without `windowHandle`, input goes to the foreground window or the window at the point, but never to the agent's own terminal, editor or chat app (`TargetIsAgentHost`), to windows of apps running as administrator (`TargetElevated`) or to apps the user denies through `WAM_DENY_PROCESSES` (`TargetDeniedByPolicy`, password managers by default). Chords that close, quit or lock, such as Alt+F4, need `windowHandle`, and a chord that switches windows, such as Alt+Tab, must be the last key of a `send_keys` call. A paste (Ctrl+V, Shift+Insert, a right click in a terminal) is sent only when the clipboard holds what the agent put there or copied, or what you let it read (`PasteNotAllowed`). A click is pressed exactly at the point the guard checked. Every result reports `receivingWindow` and `foregroundAfter`. Close windows with `close_window`, never with Alt+F4. See [Input guard](docs/TOOLS.md#input-guard) and the safety rules in [SKILL.md](skills/using-windows-app-manager/SKILL.md).
+> **Input is guarded.** Every input tool takes an optional `windowHandle`: keys are sent only after the server has brought that window to the front and only while it (or its dialog) is in front, and clicks only when the point is on that window or a popup of it. Without `windowHandle`, input goes to the foreground window or the window at the point, but never to the agent's own terminal, editor or chat app (`TargetIsAgentHost`), to windows of apps running as administrator (`TargetElevated`) or to apps the user denies through `WAM_DENY_PROCESSES` (`TargetDeniedByPolicy`, password managers by default). Chords that close, quit or lock, such as Alt+F4, need `windowHandle`, and a chord that switches windows, such as Alt+Tab, must be the last key of a `send_keys` call. A paste (Ctrl+V, Shift+Insert, a right or middle click in a terminal) is sent only when the clipboard holds what the agent put there or copied, or what you let it read (`PasteNotAllowed`). A click is pressed exactly at the point the guard checked. Every result reports `receivingWindow` and `foregroundAfter`. Close windows with `close_window`, never with Alt+F4. See [Input guard](docs/TOOLS.md#input-guard) and the safety rules in [SKILL.md](skills/using-windows-app-manager/SKILL.md).
 
 > **Pause hotkey.** Press **Ctrl+Alt+Shift+Pause** at any time to pause the input of every Windows App Manager server on your desktop (each MCP client session runs its own server, and they share the pause): running input stops, keys the servers hold are released, and every input tool, element action and dialog answer and every tool that changes windows or starts or stops processes returns `PausedByUser` until you press it again (or confirm an agent's `resume_input` request, which resumes them all). A second press within 2 seconds of the pause is ignored. The agent cannot resume itself. Set another chord with the `WAM_PAUSE_HOTKEY` environment variable (for example `Ctrl+Alt+F12`, or `none` to turn it off). See [Pause hotkey](docs/TOOLS.md#pause-hotkey).
 

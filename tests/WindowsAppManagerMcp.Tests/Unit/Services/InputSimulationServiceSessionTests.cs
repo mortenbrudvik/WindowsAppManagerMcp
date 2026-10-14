@@ -30,7 +30,8 @@ public class InputSimulationServiceSessionTests
         new(_monitors.Object, _input, _guard.Object, session ?? _session, gateTimeout);
 
     /// <summary>Every input path, as the tools call it.</summary>
-    public static TheoryData<string> InputPaths() => new() { "click", "right_click", "double_click", "mouse_move", "scroll", "type_text", "send_keys" };
+    public static TheoryData<string> InputPaths() =>
+        new() { "click", "right_click", "double_click", "mouse_click", "drag", "mouse_move", "scroll", "type_text", "send_keys" };
 
     private static async Task<(bool Success, InputErrorCode Code, string? Error, IReadOnlyList<string>? Held, IReadOnlyList<string>? Released)> Call(
         InputSimulationService sut, string path, bool releaseHeldModifiers = false, CancellationToken token = default)
@@ -46,6 +47,13 @@ public class InputSimulationServiceSessionTests
             case "double_click":
                 var twice = sut.DoubleClick(100, 100, InputTarget.None, releaseHeldModifiers, token);
                 return (twice.Success, twice.ErrorCode, twice.Error, twice.HeldModifiers, twice.ReleasedModifiers);
+            case "mouse_click":
+                var mouse = sut.MouseClick(100, 100, MouseButton.Middle, 3, [], InputTarget.None, releaseHeldModifiers, token);
+                return (mouse.Success, mouse.ErrorCode, mouse.Error, mouse.HeldModifiers, mouse.ReleasedModifiers);
+            case "drag":
+                var drag = await sut.DragAsync(new DragRequest(100, 100, 200, 100, MouseButton.Primary, [], 2, 0, 0), InputTarget.None,
+                    InputTarget.None, releaseHeldModifiers, token);
+                return (drag.Success, drag.ErrorCode, drag.Error, drag.HeldModifiers, drag.ReleasedModifiers);
             case "mouse_move":
                 var move = sut.MoveMouse(100, 100, InputTarget.None, releaseHeldModifiers, token);
                 return (move.Success, move.ErrorCode, move.Error, move.HeldModifiers, move.ReleasedModifiers);
@@ -358,6 +366,8 @@ public class InputSimulationServiceSessionTests
     [Theory]
     [InlineData("click")]
     [InlineData("double_click")]
+    [InlineData("mouse_click")]
+    [InlineData("drag")]
     [InlineData("scroll")] // Ctrl turns the wheel into zoom
     public async Task Click_AModifierPressedBeforeThePress_IsModifiersHeld_AndNothingIsClicked(string path)
     {
@@ -455,7 +465,7 @@ public class InputSimulationServiceSessionTests
     #region Held mouse buttons
 
     /// <summary>The input paths that move the pointer or press a button.</summary>
-    public static TheoryData<string> MousePaths() => new() { "click", "right_click", "double_click", "mouse_move", "scroll" };
+    public static TheoryData<string> MousePaths() => new() { "click", "right_click", "double_click", "mouse_click", "drag", "mouse_move", "scroll" };
 
     [Theory]
     [MemberData(nameof(MousePaths))]
@@ -479,6 +489,8 @@ public class InputSimulationServiceSessionTests
     [Theory]
     [InlineData("click")]
     [InlineData("double_click")]
+    [InlineData("mouse_click")]
+    [InlineData("drag")]
     [InlineData("scroll")]
     public async Task Click_AMouseButtonPressedBeforeThePress_IsMouseInUse_AndNothingIsClicked(string path)
     {
@@ -518,6 +530,7 @@ public class InputSimulationServiceSessionTests
 
     [Theory]
     [InlineData("click")]
+    [InlineData("drag")]
     [InlineData("scroll")]
     public async Task APauseWhileThePointerIsPlacedAgain_IsPausedByUser_NotCursorNotAtPoint(string path)
     {

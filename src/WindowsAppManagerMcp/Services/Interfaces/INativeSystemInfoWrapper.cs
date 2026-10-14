@@ -46,4 +46,11 @@ public interface INativeSystemInfoWrapper
     /// reverse, injected ones too. Null means unknown; the native wrapper always answers, so only a fake returns null.
     /// </summary>
     bool? AreMouseButtonsSwapped();
+
+    /// <summary>
+    /// How far the pointer must move with a button down before Windows and applications count it as a drag (GetSystemMetrics
+    /// SM_CXDRAG and SM_CYDRAG, 4 by default): the rectangle around the press that DragDetect and drag-and-drop wait for the
+    /// pointer to leave. Null when it cannot be read.
+    /// </summary>
+    (int Width, int Height)? GetDragThreshold();
 }

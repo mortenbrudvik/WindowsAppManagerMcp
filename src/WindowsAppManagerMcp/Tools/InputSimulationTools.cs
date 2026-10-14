@@ -79,6 +79,8 @@ public class InputSimulationTools
 
     private const string NothingSent = "Nothing was sent.";
 
+    private const string ModifiersDescription = "Modifier keys held down around the mouse events. Default: none";
+
     private readonly IInputSimulationService _inputService;
     private readonly IWindowService? _windowService;
     private readonly ICoordinateSpaceResolver? _coordinates;
@@ -210,6 +212,147 @@ public class InputSimulationTools
 
         return await ObserveAsync(Echo(_inputService.DoubleClick(point.X, point.Y, point.Target,
             releaseHeldModifiers, cancellationToken), point.Requested), point.Target, observe, cancellationToken).ConfigureAwait(false);
+    }
+
+    [McpServerTool(Name = "mouse_click", Title = "Mouse Click", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = false)]
+    [Description("Click any mouse button 1-3 times at a point, with modifier keys held if asked: ctrl+click, shift+click, a middle " +
+                 "click, a triple click (selects a line), x1/x2 (Back/Forward). The modifier key-downs, the move, the clicks and the " +
+                 "key-ups go in one batch, so nothing stays held. A right or middle click in a terminal pastes, so there it follows " +
+                 "send_keys' paste rule (PasteNotAllowed). To act on an element, element_action with its ref needs no point; pass a " +
+                 "point seen on a capture with its captureId. Pass windowHandle with the window you mean (without it the click goes to " +
+                 "whatever window is at the point: check it with get_foreground_window); the same checks as for click apply " +
+                 "(TargetOccluded, BlockedByModal, TargetIsAgentHost, CursorNotAtPoint, CursorClamped, MouseInUse)." + GuardNote)]
+    [ToolResultPayload(typeof(ClickResult))]
+    public async Task<CallToolResult> MouseClick(
+        [Description(XDescription)]
+        int x,
+        [Description(YDescription)]
+        int y,
+        [Description("The button; primary is the user's main one (left unless swapped). Default: 'primary'")]
+        MouseButton button = MouseButton.Primary,
+        [Description("1, 2 (double click) or 3 (triple click), in one batch within the double-click time. Default: 1")]
+        int clickCount = 1,
+        [Description(ModifiersDescription)]
+        MouseModifier[]? modifiers = null,
+        [Description(MouseWindowHandleDescription)]
+        long? windowHandle = null,
+        [Description(WindowTargeting.InputWindowDescription)]
+        WindowSelector? window = null,
+        [Description(AllowHostTargetDescription)]
+        bool allowHostTarget = false,
+        [Description(ReleaseHeldModifiersDescription)]
+        bool releaseHeldModifiers = false,
+        [Description(SpaceDescription)]
+        CoordinateSpace? space = null,
+        [Description(CaptureIdDescription)]
+        string? captureId = null,
+        [Description(ActionObservation.ObserveDescription)]
+        ObserveMode observe = ObserveMode.None,
+        CancellationToken cancellationToken = default)
+    {
+        if (clickCount is < 1 or > InputBatchBuilder.MaxClicks)
+        {
+            throw new ToolErrorException(ToolErrorReporting.InvalidArgumentsErrorCode,
+                $"clickCount must be 1, 2 or 3 (got {clickCount}). {NothingSent}");
+        }
+
+        ActionObservation.Check(_desktopState, observe, NothingSent);
+        var point = Point(x, y, space, captureId, windowHandle, window, allowHostTarget);
+        if (point.Failure is { } failure)
+        {
+            return await ObserveAsync(new ClickResult(false, x, y, ToolEnum<MouseButton>.Name(button), failure.Error, failure.ErrorCode)
+            {
+                Requested = point.Requested
+            }, point.Target, observe, cancellationToken).ConfigureAwait(false);
+        }
+
+        return await ObserveAsync(Echo(_inputService.MouseClick(point.X, point.Y, button, clickCount, modifiers ?? [], point.Target,
+            releaseHeldModifiers, cancellationToken), point.Requested), point.Target, observe, cancellationToken).ConfigureAwait(false);
+    }
+
+    [McpServerTool(Name = "drag", Title = "Drag", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = false)]
+    [Description("Press a mouse button at one point, move to another and release it there: drag and drop (files, list items, " +
+                 "text), sliders, selections. The button goes down at from, waits holdBeforeMoveMs, moves in steps (the first beyond " +
+                 "Windows' drag threshold) with stepDelayMs after each, and comes up at to; modifiers stay held throughout (ctrl+drag " +
+                 "copies in Explorer). Both points take space and captureId as click's x and y. Pass windowHandle: from must be on " +
+                 "it, and to as well unless toWindowHandle names the drop's window; both are checked as a click's point before the " +
+                 "press (TargetOccluded, BlockedByModal, TargetIsAgentHost, MouseInUse), and to again right before the drop. A drag " +
+                 "stopped after the press (to refused then, the pointer kept off it, a cancelled request) goes back to from and " +
+                 "releases there; the user's pause releases where the pointer is. pressed says whether anything was sent; nothing " +
+                 "stays held after the call." + GuardNote)]
+    [ToolResultPayload(typeof(DragResult))]
+    public async Task<CallToolResult> Drag(
+        [Description("Where the button goes down: x as click's (screen pixels, or as space says)")]
+        int fromX,
+        [Description("Where the button goes down: y")]
+        int fromY,
+        [Description("Where it comes up (the drop): x")]
+        int toX,
+        [Description("Where it comes up: y")]
+        int toY,
+        [Description("The button held; primary is the user's main one. Default: 'primary'")]
+        MouseButton button = MouseButton.Primary,
+        [Description(ModifiersDescription)]
+        MouseModifier[]? modifiers = null,
+        [Description("Moves from the press to the drop, 1-100. Default: 10")]
+        int steps = DragRequest.DefaultSteps,
+        [Description("Wait after each move, 0-1000 ms. Default: 20")]
+        int stepDelayMs = DragRequest.DefaultStepDelayMs,
+        [Description("Wait between the press and the first move, 0-2000 ms. steps x stepDelayMs + holdBeforeMoveMs is at most 10000. Default: 100")]
+        int holdBeforeMoveMs = DragRequest.DefaultHoldBeforeMoveMs,
+        [Description(MouseWindowHandleDescription)]
+        long? windowHandle = null,
+        [Description(WindowTargeting.InputWindowDescription)]
+        WindowSelector? window = null,
+        [Description("The window the drop is for, when not windowHandle's (from File Explorer into an app): to must be on it, " +
+                     "checked as windowHandle is; window and client points of to are measured from it. Default: windowHandle")]
+        long? toWindowHandle = null,
+        [Description(AllowHostTargetDescription)]
+        bool allowHostTarget = false,
+        [Description(ReleaseHeldModifiersDescription)]
+        bool releaseHeldModifiers = false,
+        [Description(SpaceDescription)]
+        CoordinateSpace? space = null,
+        [Description(CaptureIdDescription)]
+        string? captureId = null,
+        [Description(ActionObservation.ObserveDescription)]
+        ObserveMode observe = ObserveMode.None,
+        CancellationToken cancellationToken = default)
+    {
+        var request = new DragRequest(fromX, fromY, toX, toY, button, modifiers ?? [], steps, stepDelayMs, holdBeforeMoveMs);
+        if (request.Invalid() is { } invalid)
+        {
+            throw new ToolErrorException(ToolErrorReporting.InvalidArgumentsErrorCode, $"{invalid} {NothingSent}");
+        }
+
+        ActionObservation.Check(_desktopState, observe, NothingSent);
+
+        // The window is resolved once; each point is converted against its own window (to against toWindowHandle when given)
+        var effective = EffectiveSpace(space, captureId);
+        var target = Target(windowHandle, window, allowHostTarget);
+        var from = Point(fromX, fromY, effective, captureId, target);
+        var to = Point(toX, toY, effective, captureId, toWindowHandle is { } dropHandle ? Target(dropHandle, null, allowHostTarget) : target);
+
+        DragResult result;
+        if ((from.Failure ?? to.Failure) is { } failure)
+        {
+            result = new DragResult(false, from.X, from.Y, to.X, to.Y,
+                $"The {(from.Failure != null ? "from" : "to")} point: {failure.Error}", failure.ErrorCode)
+            {
+                Button = ToolEnum<MouseButton>.Name(button),
+                Modifiers = modifiers is { Length: > 0 } ? modifiers.Distinct().Select(ToolEnum<MouseModifier>.Name).ToList() : null
+            };
+        }
+        else
+        {
+            result = await _inputService.DragAsync(request with { FromX = from.X, FromY = from.Y, ToX = to.X, ToY = to.Y }, from.Target,
+                to.Target, releaseHeldModifiers, cancellationToken).ConfigureAwait(false);
+        }
+
+        result = result with { RequestedFrom = from.Requested, RequestedTo = to.Requested };
+        return await ActionObservation.ResultAsync(result, result.Success, Acted(to.Target, result.DropWindow ?? result.ReceivingWindow),
+            ActionObservation.RefusesWindow(result.ErrorCode.ToString()), observe, (dragged, observed) => dragged with { Observed = observed },
+            _desktopState, _windowService, cancellationToken).ConfigureAwait(false);
     }
 
     [McpServerTool(Name = "mouse_move", Title = "Move Mouse Pointer", ReadOnly = false, Destructive = false, Idempotent = true, OpenWorld = false)]
@@ -438,6 +581,14 @@ public class InputSimulationTools
     private MousePoint Point(int x, int y, CoordinateSpace? space, string? captureId, long? windowHandle, WindowSelector? window,
         bool allowHostTarget)
     {
+        var effective = EffectiveSpace(space, captureId);
+        return Point(x, y, effective, captureId, Target(windowHandle, window, allowHostTarget));
+    }
+
+    /// <summary>The space x and y are in: <paramref name="space"/>, else image with a captureId, else screen.</summary>
+    /// <exception cref="ToolErrorException">InvalidArguments: a captureId with another space, or image without a captureId.</exception>
+    private static CoordinateSpace EffectiveSpace(CoordinateSpace? space, string? captureId)
+    {
         var effective = space ?? (captureId != null ? CoordinateSpace.Image : CoordinateSpace.Screen);
         if (captureId != null && effective != CoordinateSpace.Image)
         {
@@ -452,7 +603,12 @@ public class InputSimulationTools
                 "space 'image' needs captureId: the captureId of the capture whose image x and y were measured on. Nothing was sent.");
         }
 
-        var target = Target(windowHandle, window, allowHostTarget);
+        return effective;
+    }
+
+    /// <summary>The point converted to the screen against an already resolved <paramref name="target"/> (see above).</summary>
+    private MousePoint Point(int x, int y, CoordinateSpace effective, string? captureId, InputTarget target)
+    {
         if (effective == CoordinateSpace.Screen)
         {
             return new MousePoint(x, y, target, null, null);

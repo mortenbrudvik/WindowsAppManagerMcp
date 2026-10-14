@@ -115,10 +115,10 @@ public static class Toolsets
                 ["get_desktop_state", "get_ui_elements", "find_ui_elements", "get_focused_element", "get_element_at_point",
                     "get_active_popups", "read_element_text", "read_table", "wait_for_element"]),
             new("input", OnByDefault: true,
-                "Guarded mouse and keyboard input to a named window, and actions on UI elements through UI Automation patterns: " +
-                "menu paths, answering dialogs, completing Open and Save As dialogs.",
-                ["click", "right_click", "double_click", "mouse_move", "scroll", "type_text", "send_keys", "element_action",
-                    "respond_to_dialog", "file_dialog"]),
+                "Guarded mouse and keyboard input to a named window (clicks of any button with modifiers, drags), and actions on UI " +
+                "elements through UI Automation patterns: menu paths, answering dialogs, completing Open and Save As dialogs.",
+                ["click", "right_click", "double_click", "mouse_click", "drag", "mouse_move", "scroll", "type_text", "send_keys",
+                    "element_action", "respond_to_dialog", "file_dialog"]),
             new("clipboard", OnByDefault: true,
                 "Read what the agent copied, put text on the clipboard to paste it; the user's own clipboard only with their consent.",
                 ["get_clipboard", "set_clipboard"]),

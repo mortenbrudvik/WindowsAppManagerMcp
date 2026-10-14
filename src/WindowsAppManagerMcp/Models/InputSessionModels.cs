@@ -8,7 +8,10 @@ namespace WindowsAppManagerMcp.Models;
 /// </summary>
 /// <param name="Kind">A virtual key, a character sent as Unicode, or a mouse button.</param>
 /// <param name="Code">The virtual-key code, the character, or the button's MOUSEEVENTF_*DOWN flag.</param>
-/// <param name="Flags">For a virtual key, KEYEVENTF_EXTENDEDKEY when the key was sent as an extended key; otherwise 0.</param>
+/// <param name="Flags">
+/// For a virtual key, KEYEVENTF_EXTENDEDKEY when the key was sent as an extended key; for an X button (MOUSEEVENTF_XDOWN),
+/// which one: XBUTTON1 or XBUTTON2, as in the event's mouseData; otherwise 0.
+/// </param>
 public readonly record struct HeldInput(InputEventKind Kind, ushort Code, uint Flags = 0)
 {
     /// <summary>A virtual key.</summary>
@@ -17,6 +20,9 @@ public readonly record struct HeldInput(InputEventKind Kind, ushort Code, uint F
 
     /// <summary>A mouse button, by its MOUSEEVENTF_LEFTDOWN, RIGHTDOWN or MIDDLEDOWN flag.</summary>
     public static HeldInput Button(uint downFlag) => new(InputEventKind.Mouse, (ushort)downFlag);
+
+    /// <summary>An X button (roadmap M4.3), by its mouseData: XBUTTON1 or XBUTTON2.</summary>
+    public static HeldInput XButton(uint xButton) => new(InputEventKind.Mouse, (ushort)NativeEnums.MOUSEEVENTF_XDOWN, xButton);
 
     /// <summary>The name reported to the agent, such as "LeftCtrl", "A" or "left mouse button".</summary>
     public string Name => Kind switch
@@ -30,6 +36,8 @@ public readonly record struct HeldInput(InputEventKind Kind, ushort Code, uint F
             (ushort)NativeEnums.MOUSEEVENTF_LEFTDOWN => "left mouse button",
             (ushort)NativeEnums.MOUSEEVENTF_RIGHTDOWN => "right mouse button",
             (ushort)NativeEnums.MOUSEEVENTF_MIDDLEDOWN => "middle mouse button",
+            (ushort)NativeEnums.MOUSEEVENTF_XDOWN when Flags == NativeEnums.XBUTTON1 => "X1 mouse button",
+            (ushort)NativeEnums.MOUSEEVENTF_XDOWN when Flags == NativeEnums.XBUTTON2 => "X2 mouse button",
             _ => $"mouse button 0x{Code:X}"
         }
     };

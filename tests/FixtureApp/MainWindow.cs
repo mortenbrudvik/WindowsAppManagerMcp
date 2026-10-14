@@ -63,6 +63,7 @@ internal sealed class MainWindow : Window
 
         AddHandler(Keyboard.GotKeyboardFocusEvent, new KeyboardFocusChangedEventHandler(OnGotKeyboardFocus), handledEventsToo: true);
         AddHandler(PreviewMouseDownEvent, new MouseButtonEventHandler(OnPreviewMouseDown), handledEventsToo: true);
+        AddHandler(PreviewMouseUpEvent, new MouseButtonEventHandler(OnPreviewMouseUp), handledEventsToo: true);
         Loaded += OnLoaded;
         ContentRendered += OnContentRendered;
         Closed += (_, _) => ShuttingDown = true;
@@ -236,26 +237,57 @@ internal sealed class MainWindow : Window
         _events.Write(Events.KeyboardFocus, ("id", id ?? ""));
     }
 
-    /// <summary>Logs every press in the window, with the pixel it went down at (roadmap M4.2: a click lands on its pixel).</summary>
+    /// <summary>
+    /// Logs every press in the window, with the pixel it went down at (roadmap M4.2: a click lands on its pixel) and the
+    /// modifier keys held (roadmap M4.3).
+    /// </summary>
     private void OnPreviewMouseDown(object sender, MouseButtonEventArgs e)
     {
         // The button message's own point: exact physical pixels, with no DIP conversion in between
         var position = NativeMethods.GetMessagePos();
+        _events.Write(
+            Events.MouseDown,
+            ("button", ButtonName(e.ChangedButton)),
+            ("clickCount", e.ClickCount),
+            ("x", (int)(short)(position & 0xFFFF)),
+            ("y", (int)(short)(position >> 16)),
+            ("id", AutomationIdAt(e.OriginalSource as DependencyObject)),
+            ("modifiers", ModifierNames(Keyboard.Modifiers)));
+    }
+
+    /// <summary>Logs every release in the window: where a drag dropped, with the modifier keys held (roadmap M4.3).</summary>
+    private void OnPreviewMouseUp(object sender, MouseButtonEventArgs e)
+    {
+        var position = NativeMethods.GetMessagePos();
+        _events.Write(
+            Events.MouseUp,
+            ("button", ButtonName(e.ChangedButton)),
+            ("x", (int)(short)(position & 0xFFFF)),
+            ("y", (int)(short)(position >> 16)),
+            ("id", AutomationIdAt(e.OriginalSource as DependencyObject)),
+            ("modifiers", ModifierNames(Keyboard.Modifiers)));
+    }
+
+    private static string ButtonName(MouseButton button) => button.ToString().ToLowerInvariant().Replace("xbutton", "x");
+
+    /// <summary>The AutomationId of <paramref name="element"/>, or of the nearest element above it that has one; empty when none has.</summary>
+    private static string AutomationIdAt(DependencyObject? element)
+    {
         var id = "";
-        for (var element = e.OriginalSource as DependencyObject; element != null && id.Length == 0;
+        for (; element != null && id.Length == 0;
              element = element is Visual ? VisualTreeHelper.GetParent(element) : LogicalTreeHelper.GetParent(element))
         {
             id = AutomationProperties.GetAutomationId(element) ?? "";
         }
 
-        _events.Write(
-            Events.MouseDown,
-            ("button", e.ChangedButton.ToString().ToLowerInvariant().Replace("xbutton", "x")),
-            ("clickCount", e.ClickCount),
-            ("x", (int)(short)(position & 0xFFFF)),
-            ("y", (int)(short)(position >> 16)),
-            ("id", id));
+        return id;
     }
+
+    /// <summary>"ctrl", "shift", "alt" and "win" joined by '+', in that order; empty for none.</summary>
+    private static string ModifierNames(ModifierKeys modifiers) => string.Join("+", new[]
+    {
+        (ModifierKeys.Control, "ctrl"), (ModifierKeys.Shift, "shift"), (ModifierKeys.Alt, "alt"), (ModifierKeys.Windows, "win")
+    }.Where(m => modifiers.HasFlag(m.Item1)).Select(m => m.Item2));
 
     private void OnContentRendered(object? sender, EventArgs e)
     {

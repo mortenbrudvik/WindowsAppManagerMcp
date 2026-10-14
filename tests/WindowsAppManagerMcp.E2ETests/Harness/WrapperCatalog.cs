@@ -201,7 +201,8 @@ public static class WrapperCatalog
                 [nameof(INativeSystemInfoWrapper.GetSessionId)] = WrapperMember.Read,
                 [nameof(INativeSystemInfoWrapper.GetMouseWheelRouting)] = WrapperMember.Read,
                 [nameof(INativeSystemInfoWrapper.GetVirtualScreen)] = WrapperMember.Read,
-                [nameof(INativeSystemInfoWrapper.AreMouseButtonsSwapped)] = WrapperMember.Read
+                [nameof(INativeSystemInfoWrapper.AreMouseButtonsSwapped)] = WrapperMember.Read,
+                [nameof(INativeSystemInfoWrapper.GetDragThreshold)] = WrapperMember.Read
             },
             [typeof(INativeVirtualDesktopWrapper)] = new Dictionary<string, WrapperMember>
             {

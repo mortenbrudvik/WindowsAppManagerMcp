@@ -109,6 +109,8 @@ internal static class NativeEnums
 
     // GetSystemMetrics constants
     public const int SM_SWAPBUTTON = 23;
+    public const int SM_CXDRAG = 68;
+    public const int SM_CYDRAG = 69;
     public const int SM_XVIRTUALSCREEN = 76;
     public const int SM_YVIRTUALSCREEN = 77;
     public const int SM_CXVIRTUALSCREEN = 78;
@@ -133,6 +135,10 @@ internal static class NativeEnums
     public const uint MOUSEEVENTF_HWHEEL = 0x1000;
     public const uint MOUSEEVENTF_VIRTUALDESK = 0x4000;
     public const uint MOUSEEVENTF_ABSOLUTE = 0x8000;
+
+    // The X button of a MOUSEEVENTF_XDOWN or XUP event, in MOUSEINPUT.mouseData
+    public const uint XBUTTON1 = 0x0001;
+    public const uint XBUTTON2 = 0x0002;
 
     // Keyboard event flags for SendInput
     public const uint KEYEVENTF_KEYDOWN = 0x0000;

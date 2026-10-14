@@ -82,7 +82,7 @@ public class ToolAnnotationContractTests
         string[] destructive =
         [
             "close_window", "close_windows_batch", "close_application", "kill_process", "delete_layout", "save_layout",
-            "click", "right_click", "double_click", "scroll", "type_text", "send_keys", "element_action",
+            "click", "right_click", "double_click", "mouse_click", "drag", "scroll", "type_text", "send_keys", "element_action",
             // respond_to_dialog presses a dialog's button (Don't Save loses work); file_dialog can replace a file (roadmap M3.5, M3.14)
             "respond_to_dialog", "file_dialog",
             "launch_application", "launch_applications_batch", "launch_browser_with_debug",

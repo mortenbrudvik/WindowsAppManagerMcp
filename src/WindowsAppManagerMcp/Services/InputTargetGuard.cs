@@ -288,6 +288,25 @@ public sealed class InputTargetGuard : IInputTargetGuard
             : CheckHitWithoutTarget(x, y, hit, approved.Target));
     }
 
+    public InputGuardResult RecheckDrop(int x, int y, InputGuardResult approved)
+    {
+        ArgumentNullException.ThrowIfNull(approved);
+        if (PointRefusal(approved.Target) is { } stale)
+        {
+            return stale;
+        }
+
+        var hit = RootAt(x, y);
+        if (hit == approved.Receiving)
+        {
+            return approved;
+        }
+
+        return approved.Target.HasWindow
+            ? CheckHitForTarget(x, y, hit, approved.Target, approved.Anchor)
+            : CheckHitWithoutTarget(x, y, hit, approved.Target);
+    }
+
     /// <summary>
     /// <paramref name="result"/>, unless another window has captured the mouse (SetCapture) and the input would
     /// go there instead of to the approved window at the point: then <see cref="InputErrorCode.MouseInUse"/>.

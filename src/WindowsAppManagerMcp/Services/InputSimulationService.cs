@@ -10,7 +10,7 @@ namespace WindowsAppManagerMcp.Services;
 /// where the input went. Every batch goes through the <see cref="IInputSession"/>, which refuses it while
 /// the user has paused input and releases what an interrupted batch left down.
 /// </summary>
-public class InputSimulationService : IInputSimulationService
+public partial class InputSimulationService : IInputSimulationService
 {
     /// <summary>
     /// type_text sends at most this many characters in one SendInput batch, and the guard checks the
@@ -86,15 +86,33 @@ public class InputSimulationService : IInputSimulationService
 
     public ClickResult Click(int x, int y, InputTarget target = default, bool releaseHeldModifiers = false,
         CancellationToken cancellationToken = default) =>
-        ClickAt(x, y, target, "left", MouseButton.Primary, clicks: 1, releaseHeldModifiers, cancellationToken);
+        ClickAt(x, y, target, "left", MouseButton.Primary, clicks: 1, [], releaseHeldModifiers, cancellationToken);
 
     public ClickResult RightClick(int x, int y, InputTarget target = default, bool releaseHeldModifiers = false,
         CancellationToken cancellationToken = default) =>
-        ClickAt(x, y, target, "right", MouseButton.Secondary, clicks: 1, releaseHeldModifiers, cancellationToken);
+        ClickAt(x, y, target, "right", MouseButton.Secondary, clicks: 1, [], releaseHeldModifiers, cancellationToken);
 
     public ClickResult DoubleClick(int x, int y, InputTarget target = default, bool releaseHeldModifiers = false,
         CancellationToken cancellationToken = default) =>
-        ClickAt(x, y, target, "double", MouseButton.Primary, clicks: 2, releaseHeldModifiers, cancellationToken);
+        ClickAt(x, y, target, "double", MouseButton.Primary, clicks: 2, [], releaseHeldModifiers, cancellationToken);
+
+    public ClickResult MouseClick(int x, int y, MouseButton button, int clickCount, IReadOnlyList<MouseModifier> modifiers,
+        InputTarget target = default, bool releaseHeldModifiers = false, CancellationToken cancellationToken = default)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(clickCount, 1);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(clickCount, InputBatchBuilder.MaxClicks);
+        ArgumentNullException.ThrowIfNull(modifiers);
+        var held = modifiers.Distinct().ToList();
+        return ClickAt(x, y, target, ToolEnum<MouseButton>.Name(button), button, clickCount, held, releaseHeldModifiers, cancellationToken) with
+        {
+            ClickCount = clickCount,
+            Modifiers = ModifierNames(held)
+        };
+    }
+
+    /// <summary>The names of <paramref name="modifiers"/> for a result ("ctrl", "shift", ...); null without any.</summary>
+    private static IReadOnlyList<string>? ModifierNames(IReadOnlyList<MouseModifier> modifiers) =>
+        modifiers.Count == 0 ? null : modifiers.Select(ToolEnum<MouseModifier>.Name).ToList();
 
     public MouseMoveResult MoveMouse(int x, int y, InputTarget target = default, bool releaseHeldModifiers = false,
         CancellationToken cancellationToken = default)
@@ -712,10 +730,12 @@ public class InputSimulationService : IInputSimulationService
     /// right before the press, since moving the cursor can open a popup there. The clicks are sent in one SendInput call
     /// together with a move to the checked point (<see cref="InputBatchBuilder"/>), so a user moving the mouse cannot make
     /// them land elsewhere (SendInput does not interleave other input with the events of one call), and a double click is
-    /// one double click whatever the double-click time. A pointer that is not at the point afterwards is CursorClamped.
+    /// one double click whatever the double-click time. <paramref name="modifiers"/> go down before the move and up after
+    /// the clicks, in the same batch (mouse_click, roadmap M4.3), so none stays down whatever happens to the call. A pointer
+    /// that is not at the point afterwards is CursorClamped.
     /// </summary>
     private ClickResult ClickAt(int x, int y, InputTarget target, string clickType, MouseButton button, int clicks,
-        bool releaseHeldModifiers, CancellationToken cancellationToken)
+        IReadOnlyList<MouseModifier> modifiers, bool releaseHeldModifiers, CancellationToken cancellationToken)
     {
         const string NothingClicked = "Nothing was clicked: ";
 
@@ -820,10 +840,10 @@ public class InputSimulationService : IInputSimulationService
                     return held.Apply(Finish(new ClickResult(false, x, y, clickType, NothingClicked + buttonsNow, InputErrorCode.MouseInUse), approved));
                 }
 
-                var batch = NewBatch().MoveTo(x, y).Click(button, clicks).Build();
+                var batch = NewBatch().ModifiersDown(modifiers).MoveTo(x, y).Click(button, clicks).ModifiersUp(modifiers).Build();
 
-                // A right click in a terminal pastes
-                if (button == MouseButton.Secondary && PasteRefusal(batch.AsUnswapped, approved) is { } pasteRefused)
+                // A right or middle click in a terminal pastes
+                if (button is MouseButton.Secondary or MouseButton.Middle && PasteRefusal(batch.AsUnswapped, approved) is { } pasteRefused)
                 {
                     return held.Apply(Finish(new ClickResult(false, x, y, clickType, NothingClicked + pasteRefused, InputErrorCode.PasteNotAllowed), approved));
                 }
@@ -837,13 +857,13 @@ public class InputSimulationService : IInputSimulationService
 
                 if (!sent.Complete)
                 {
-                    return held.Apply(Finish(new ClickResult(false, x, y, clickType, ClickBatchCutShort(sent, clicks), InputErrorCode.SendInputFailed),
-                        approved));
+                    return held.Apply(Finish(new ClickResult(false, x, y, clickType, ClickBatchCutShort(sent, clicks, modifiers.Count),
+                        InputErrorCode.SendInputFailed), approved));
                 }
 
                 if (PointerAwayAfterBatch(x, y) is { } at)
                 {
-                    var what = clicks == 1 ? "The click" : "The double click";
+                    var what = clicks switch { 1 => "The click", 2 => "The double click", _ => "The triple click" };
                     return held.Apply(Finish(new ClickResult(false, x, y, clickType, PointerClamped(what, x, y, at), InputErrorCode.CursorClamped),
                         approved));
                 }
@@ -865,18 +885,21 @@ public class InputSimulationService : IInputSimulationService
 
     /// <summary>
     /// The SendInputFailed message of a click batch SendInput inserted only part of: how many of its clicks went in. The
-    /// session has already released a button whose press went in without its release.
+    /// session has already released a button whose press went in without its release, and the modifier keys that went down.
     /// </summary>
-    private static string ClickBatchCutShort(InputSendOutcome sent, int clicks)
+    private static string ClickBatchCutShort(InputSendOutcome sent, int clicks, int modifiers)
     {
-        var buttonEvents = Math.Max(0, sent.Inserted - 1);
+        var buttonEvents = Math.Clamp(sent.Inserted - modifiers - 1, 0, 2 * clicks);
         var done = buttonEvents / 2;
         var clicked = clicks == 1
             ? done == 0 ? "the click was not sent" : "the click went in"
             : $"{done} of its {clicks} clicks went in";
         var halfway = buttonEvents % 2 == 1 ? ", and the press after them went in without its release, which was sent at once" : string.Empty;
-        return $"SendInput inserted {sent.Inserted} of {sent.Requested} events (the move to the point, then a press and a release " +
-               $"for each click), so {clicked}{halfway}. Check the window before clicking again.";
+        var events = modifiers == 0
+            ? "the move to the point, then a press and a release for each click"
+            : "the modifier keys, the move to the point, a press and a release for each click, then the modifier keys' release";
+        return $"SendInput inserted {sent.Inserted} of {sent.Requested} events ({events}), so {clicked}{halfway}. Check the window " +
+               "before clicking again.";
     }
 
     /// <summary>
@@ -1252,5 +1275,7 @@ public class InputSimulationService : IInputSimulationService
         public TypeTextResult Apply(TypeTextResult result) => result with { HeldModifiers = result.HeldModifiers ?? Held, ReleasedModifiers = Released };
 
         public SendKeysResult Apply(SendKeysResult result) => result with { HeldModifiers = result.HeldModifiers ?? Held, ReleasedModifiers = Released };
+
+        public DragResult Apply(DragResult result) => result with { HeldModifiers = result.HeldModifiers ?? Held, ReleasedModifiers = Released };
     }
 }

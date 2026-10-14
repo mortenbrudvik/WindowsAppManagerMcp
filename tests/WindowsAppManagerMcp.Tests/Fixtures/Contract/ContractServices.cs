@@ -406,6 +406,21 @@ public sealed class ContractServices : IDisposable
             .Returns((int x, int y, InputTarget _, bool _, CancellationToken _) => Clicked(x, y, "right", receiving));
         Input.Setup(i => i.DoubleClick(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<InputTarget>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .Returns((int x, int y, InputTarget _, bool _, CancellationToken _) => Clicked(x, y, "double", receiving));
+        Input.Setup(i => i.MouseClick(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<MouseButton>(), It.IsAny<int>(),
+                It.IsAny<IReadOnlyList<MouseModifier>>(), It.IsAny<InputTarget>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Returns((int x, int y, MouseButton button, int count, IReadOnlyList<MouseModifier> modifiers, InputTarget _, bool _, CancellationToken _) =>
+                Clicked(x, y, ToolEnum<MouseButton>.Name(button), receiving) with
+                {
+                    ClickCount = count,
+                    Modifiers = modifiers.Count == 0 ? null : modifiers.Select(ToolEnum<MouseModifier>.Name).ToList()
+                });
+        Input.Setup(i => i.DragAsync(It.IsAny<DragRequest>(), It.IsAny<InputTarget>(), It.IsAny<InputTarget>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((DragRequest r, InputTarget _, InputTarget _, bool _, CancellationToken _) => new DragResult(true, r.FromX, r.FromY, r.ToX, r.ToY)
+            {
+                Button = ToolEnum<MouseButton>.Name(r.Button),
+                Pressed = true,
+                ReceivingWindow = receiving, DropWindow = receiving, ForegroundAfter = receiving, ActualX = r.ToX, ActualY = r.ToY
+            });
         Input.Setup(i => i.MoveMouse(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<InputTarget>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .Returns((int x, int y, InputTarget _, bool _, CancellationToken _) => new MouseMoveResult(true, x, y)
             {
@@ -581,6 +596,13 @@ public sealed class ContractServices : IDisposable
             .Returns((int x, int y, InputTarget _, bool _, CancellationToken _) => new ClickResult(false, x, y, "right", host, InputErrorCode.TargetIsAgentHost));
         Input.Setup(i => i.DoubleClick(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<InputTarget>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .Returns((int x, int y, InputTarget _, bool _, CancellationToken _) => new ClickResult(false, x, y, "double", host, InputErrorCode.TargetIsAgentHost));
+        Input.Setup(i => i.MouseClick(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<MouseButton>(), It.IsAny<int>(),
+                It.IsAny<IReadOnlyList<MouseModifier>>(), It.IsAny<InputTarget>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Returns((int x, int y, MouseButton button, int _, IReadOnlyList<MouseModifier> _, InputTarget _, bool _, CancellationToken _) =>
+                new ClickResult(false, x, y, ToolEnum<MouseButton>.Name(button), host, InputErrorCode.TargetIsAgentHost));
+        Input.Setup(i => i.DragAsync(It.IsAny<DragRequest>(), It.IsAny<InputTarget>(), It.IsAny<InputTarget>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((DragRequest r, InputTarget _, InputTarget _, bool _, CancellationToken _) =>
+                new DragResult(false, r.FromX, r.FromY, r.ToX, r.ToY, host, InputErrorCode.TargetIsAgentHost));
         Input.Setup(i => i.MoveMouse(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<InputTarget>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .Returns((int x, int y, InputTarget _, bool _, CancellationToken _) => new MouseMoveResult(false, x, y, host, InputErrorCode.TargetIsAgentHost));
         Input.Setup(i => i.TypeTextAsync(It.IsAny<string>(), It.IsAny<int>(), It.IsAny<InputTarget>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))

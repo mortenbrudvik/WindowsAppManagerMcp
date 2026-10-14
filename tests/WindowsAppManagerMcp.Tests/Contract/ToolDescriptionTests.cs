@@ -53,6 +53,7 @@ public class ToolDescriptionTests
     [InlineData("click")]
     [InlineData("right_click")]
     [InlineData("double_click")]
+    [InlineData("mouse_click")]
     [InlineData("mouse_move")]
     public void MouseToolDescription_PointsToRefsAndImagePoints_NotToScreenBoundsTheLegendLeavesOut(string toolName)
     {
@@ -77,6 +78,7 @@ public class ToolDescriptionTests
     [InlineData("click")]
     [InlineData("right_click")]
     [InlineData("double_click")]
+    [InlineData("mouse_click")]
     public void ClickToolDescription_SaysToConfirmTheTargetWindowFirst(string toolName)
     {
         ServerToolCatalog.Description(toolName).Should().Contain("get_foreground_window",
@@ -87,6 +89,8 @@ public class ToolDescriptionTests
     [InlineData("click")]
     [InlineData("right_click")]
     [InlineData("double_click")]
+    [InlineData("mouse_click")]
+    [InlineData("drag")]
     [InlineData("mouse_move")]
     [InlineData("scroll")]
     [InlineData("type_text")]
@@ -125,6 +129,7 @@ public class ToolDescriptionTests
     [InlineData("click")]
     [InlineData("right_click")]
     [InlineData("double_click")]
+    [InlineData("mouse_click")]
     public void ClickDescription_NamesCursorNotAtPoint(string toolName)
     {
         ServerToolCatalog.Description(toolName).Should().Contain("CursorNotAtPoint");

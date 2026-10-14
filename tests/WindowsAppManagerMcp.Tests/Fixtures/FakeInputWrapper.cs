@@ -20,6 +20,11 @@ public sealed class FakeInputWrapper : INativeInputWrapper
         (0x0020, 0x0040, 0x04)  // middle
     ];
 
+    /// <summary>XDOWN and XUP, and the X buttons (their mouseData) with their key-state codes.</summary>
+    private const uint XDown = 0x0080, XUp = 0x0100;
+
+    private static readonly (uint XButton, ushort Vk)[] XButtons = [(1, 0x05), (2, 0x06)];
+
     private readonly object _lock = new();
     private readonly List<IReadOnlyList<InputEvent>> _batches = new();
     private readonly HashSet<ushort> _down = new();
@@ -205,6 +210,19 @@ public sealed class FakeInputWrapper : INativeInputWrapper
                     }
 
                     if ((e.Flags & up) != 0)
+                    {
+                        _down.Remove(vk);
+                    }
+                }
+
+                foreach (var (xButton, vk) in XButtons.Where(x => (e.MouseData & x.XButton) != 0))
+                {
+                    if ((e.Flags & XDown) != 0)
+                    {
+                        _down.Add(vk);
+                    }
+
+                    if ((e.Flags & XUp) != 0)
                     {
                         _down.Remove(vk);
                     }

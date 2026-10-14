@@ -304,9 +304,16 @@ public static class FixtureContract
         /// the second press of a double click, 3 for a triple click), <c>x</c> and <c>y</c> (where the press was, in screen
         /// coordinates: GetMessagePos of the button message, physical pixels unless the fixture runs DPI unaware) and
         /// <c>id</c> (the AutomationId of the element under it, or of the nearest element above that has one; empty when
-        /// none has).
+        /// none has), and <c>modifiers</c> (roadmap M4.3: the modifier keys down as the window handles the press, "ctrl",
+        /// "shift", "alt" and "win" joined by '+', empty when none is).
         /// </summary>
         public const string MouseDown = "mouseDown";
+
+        /// <summary>
+        /// A mouse button came up in the main window (roadmap M4.3: a drag's drop). Fields as <see cref="MouseDown"/>'s, without
+        /// <c>clickCount</c>.
+        /// </summary>
+        public const string MouseUp = "mouseUp";
 
         /// <summary>The fixture is exiting. Fields: <c>reason</c> (closed, parentExited or maxLifetime).</summary>
         public const string Exiting = "exiting";

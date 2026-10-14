@@ -265,7 +265,16 @@ public class ClipboardPasteGuardTests
     {
         _clipboard.UserCopies("rm -rf ~");
 
-        Guard().Check(RightClick, Terminal).Should().Contain("right click in a terminal");
+        Guard().Check(RightClick, Terminal).Should().Contain("right or middle click in a terminal");
+    }
+
+    [Fact]
+    public void AMiddleClickInATerminal_IsAPaste()
+    {
+        _clipboard.UserCopies("rm -rf ~");
+
+        Guard().Check([InputEvent.MouseMoveAbsolute(1, 1), InputEvent.Mouse(0x0020), InputEvent.Mouse(0x0040)], Terminal)
+            .Should().Contain("right or middle click in a terminal");
     }
 
     [Fact]
@@ -281,7 +290,7 @@ public class ClipboardPasteGuardTests
         _windows.Setup(w => w.GetProcessName(chromeProcess)).Returns("chrome");
         _clipboard.UserCopies("rm -rf ~");
 
-        Guard().Check(RightClick, code).Should().Contain("right click in a terminal");
+        Guard().Check(RightClick, code).Should().Contain("right or middle click in a terminal");
         Guard().Check(Keys("^c").Concat(RightClick).ToList(), code).Should().Contain("copies and then pastes");
         Guard().Check(RightClick, chrome).Should().BeNull("a right click in a browser opens its context menu");
     }

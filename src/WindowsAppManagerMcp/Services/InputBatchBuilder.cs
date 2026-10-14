@@ -15,14 +15,16 @@ public sealed record MouseBatch(IReadOnlyList<InputEvent> Events, IReadOnlyList<
 /// Builds the one SendInput batch of a mouse operation (roadmap M4.2): an absolute move to the point across the virtual
 /// desktop, then the button or wheel events. SendInput does not interleave other input with the events of one call, so the
 /// press lands on the pixel the guard checked wherever the pointer was before, and a user moving the mouse cannot put it
-/// elsewhere. click, right_click, double_click, mouse_move, scroll and element_action's mouse path build their batches here.
+/// elsewhere. click, right_click, double_click, mouse_click, drag, mouse_move, scroll and element_action's mouse path build
+/// their batches here. mouse_click and drag (roadmap M4.3) also put modifier keys around the mouse events.
 /// </summary>
 /// <remarks>
 /// Buttons are the user's (<see cref="MouseButton"/>): with swapped buttons a primary click is sent as the right button's
 /// events, which Windows swaps back. The clicks of a double or triple click follow each other in the batch with no move in
 /// between, so every press is at the same pixel (within SM_CXDOUBLECLK x SM_CYDOUBLECLK of the first) and, since SendInput
 /// stamps every event of a call with the time it inserts them, well within the double-click time (GetDoubleClickTime): no
-/// gap is needed, and a batch cannot hold one.
+/// gap is needed, and a batch cannot hold one. The X buttons share MOUSEEVENTF_XDOWN and XUP, and name the button in the
+/// event's mouseData (XBUTTON1, XBUTTON2).
 /// </remarks>
 public sealed class InputBatchBuilder
 {
@@ -60,11 +62,51 @@ public sealed class InputBatchBuilder
 
     /// <summary>Presses <paramref name="button"/> where the pointer is.</summary>
     public InputBatchBuilder Press(MouseButton button) =>
-        Add(InputEvent.Mouse(DownFlag(button, _buttonsSwapped)), InputEvent.Mouse(DownFlag(button, buttonsSwapped: false)));
+        Add(InputEvent.Mouse(DownFlag(button, _buttonsSwapped), XButtonOf(button)),
+            InputEvent.Mouse(DownFlag(button, buttonsSwapped: false), XButtonOf(button)));
 
     /// <summary>Releases <paramref name="button"/> where the pointer is.</summary>
     public InputBatchBuilder Release(MouseButton button) =>
-        Add(InputEvent.Mouse(UpFlag(button, _buttonsSwapped)), InputEvent.Mouse(UpFlag(button, buttonsSwapped: false)));
+        Add(InputEvent.Mouse(UpFlag(button, _buttonsSwapped), XButtonOf(button)),
+            InputEvent.Mouse(UpFlag(button, buttonsSwapped: false), XButtonOf(button)));
+
+    /// <summary>
+    /// Presses <paramref name="modifiers"/> (each once, in the order given) as their left-hand keys, so the mouse events after
+    /// them are Ctrl-, Shift-, Alt- or Windows-clicks (roadmap M4.3).
+    /// </summary>
+    public InputBatchBuilder ModifiersDown(IEnumerable<MouseModifier> modifiers)
+    {
+        ArgumentNullException.ThrowIfNull(modifiers);
+        foreach (var key in modifiers.Distinct().Select(KeyOf))
+        {
+            Add(InputEvent.Key(key, ExtendedFlag(key)));
+        }
+
+        return this;
+    }
+
+    /// <summary>
+    /// Releases <paramref name="modifiers"/>, last pressed first, after the masking key when Alt or Windows is among them: either
+    /// going up with no key pressed since it went down would open the menu bar or the Start menu (as the session's releases
+    /// do, <see cref="HeldInputTracker.ReleaseEvents"/>).
+    /// </summary>
+    public InputBatchBuilder ModifiersUp(IEnumerable<MouseModifier> modifiers)
+    {
+        ArgumentNullException.ThrowIfNull(modifiers);
+        var keys = modifiers.Distinct().Select(KeyOf).ToList();
+        if (keys.Any(key => key is NativeEnums.VK_LMENU or NativeEnums.VK_LWIN))
+        {
+            Add(InputEvent.Key(HeldInputTracker.MaskKey, NativeEnums.KEYEVENTF_KEYDOWN));
+            Add(InputEvent.Key(HeldInputTracker.MaskKey, NativeEnums.KEYEVENTF_KEYUP));
+        }
+
+        foreach (var key in Enumerable.Reverse(keys))
+        {
+            Add(InputEvent.Key(key, ExtendedFlag(key) | NativeEnums.KEYEVENTF_KEYUP));
+        }
+
+        return this;
+    }
 
     /// <summary>
     /// <paramref name="count"/> clicks (1 to <see cref="MaxClicks"/>) of <paramref name="button"/> where the pointer is: a press
@@ -106,14 +148,38 @@ public sealed class InputBatchBuilder
     /// <summary>The batch built so far.</summary>
     public MouseBatch Build() => new(_events.ToList(), _asUnswapped.ToList());
 
-    /// <summary>The MOUSEEVENTF_*DOWN flag of the physical button that is <paramref name="button"/>.</summary>
+    /// <summary>
+    /// The MOUSEEVENTF_*DOWN flag of the physical button that is <paramref name="button"/>: XDOWN for either X button, which
+    /// <see cref="XButtonOf"/> tells apart.
+    /// </summary>
     public static uint DownFlag(MouseButton button, bool buttonsSwapped) => button switch
     {
         MouseButton.Primary => buttonsSwapped ? NativeEnums.MOUSEEVENTF_RIGHTDOWN : NativeEnums.MOUSEEVENTF_LEFTDOWN,
         MouseButton.Secondary => buttonsSwapped ? NativeEnums.MOUSEEVENTF_LEFTDOWN : NativeEnums.MOUSEEVENTF_RIGHTDOWN,
         MouseButton.Middle => NativeEnums.MOUSEEVENTF_MIDDLEDOWN,
+        MouseButton.X1 or MouseButton.X2 => NativeEnums.MOUSEEVENTF_XDOWN,
         _ => throw new ArgumentOutOfRangeException(nameof(button), button, "Unknown mouse button")
     };
+
+    /// <summary>The mouseData of <paramref name="button"/>'s events: XBUTTON1 or XBUTTON2 for an X button, otherwise 0.</summary>
+    public static uint XButtonOf(MouseButton button) => button switch
+    {
+        MouseButton.X1 => NativeEnums.XBUTTON1,
+        MouseButton.X2 => NativeEnums.XBUTTON2,
+        _ => 0
+    };
+
+    /// <summary>The left-hand key of <paramref name="modifier"/>.</summary>
+    public static ushort KeyOf(MouseModifier modifier) => modifier switch
+    {
+        MouseModifier.Ctrl => NativeEnums.VK_LCONTROL,
+        MouseModifier.Shift => NativeEnums.VK_LSHIFT,
+        MouseModifier.Alt => NativeEnums.VK_LMENU,
+        MouseModifier.Win => NativeEnums.VK_LWIN,
+        _ => throw new ArgumentOutOfRangeException(nameof(modifier), modifier, "Unknown modifier")
+    };
+
+    private static uint ExtendedFlag(ushort key) => KeyNames.IsExtended(key) ? NativeEnums.KEYEVENTF_EXTENDEDKEY : 0;
 
     /// <summary>The MOUSEEVENTF_*UP flag of the physical button that is <paramref name="button"/>.</summary>
     public static uint UpFlag(MouseButton button, bool buttonsSwapped) => DownFlag(button, buttonsSwapped) << 1;

@@ -32,7 +32,7 @@ public enum ClipboardPasteKind
 {
     /// <summary>
     /// Pastes what is on the clipboard now: Ctrl+V (with any other modifiers, so Ctrl+Shift+V counts), Shift+Insert, the
-    /// SYN control character (U+0016, which an edit control takes as Ctrl+V), or a right click in a terminal window.
+    /// SYN control character (U+0016, which an edit control takes as Ctrl+V), or a right or middle click in a terminal window.
     /// </summary>
     Paste,
 
@@ -278,8 +278,8 @@ public sealed class ClipboardOrigin : IClipboardOrigin, IDisposable
     /// <summary>
     /// What in <paramref name="batch"/> makes an application paste: <see cref="ClipboardPasteKind.History"/> when it
     /// presses Win+V; <see cref="ClipboardPasteKind.Paste"/> when it presses Ctrl+V or Shift+Insert (with any other
-    /// modifiers), sends the SYN character (<see cref="PasteCharacter"/>), or presses the right mouse button in a
-    /// terminal's window (<see cref="IsRightClickPasteWindow"/>); otherwise null.
+    /// modifiers), sends the SYN character (<see cref="PasteCharacter"/>), or presses the right or middle mouse button in a
+    /// terminal's window (<see cref="IsRightClickPasteWindow"/>; mintty and PuTTY paste on the middle one); otherwise null.
     /// </summary>
     /// <remarks>
     /// Paste through an application's own menu (Edit, Paste, or a context menu's Paste chosen by a click or its access
@@ -303,17 +303,23 @@ public sealed class ClipboardOrigin : IClipboardOrigin, IDisposable
             return ClipboardPasteKind.Paste;
         }
 
-        return IsRightClickPasteWindow(receivingClass, receivingProcess) &&
-               batch.Any(e => e.Kind == InputEventKind.Mouse && (e.Flags & NativeEnums.MOUSEEVENTF_RIGHTDOWN) != 0)
+        return IsRightClickPasteWindow(receivingClass, receivingProcess) && batch.Any(PressesAPastingButton)
             ? ClipboardPasteKind.Paste
             : null;
     }
 
     /// <summary>
+    /// True when <paramref name="e"/> presses the right or the middle mouse button, which paste in a terminal's window
+    /// (<see cref="IsRightClickPasteWindow"/>).
+    /// </summary>
+    public static bool PressesAPastingButton(InputEvent e) =>
+        e.Kind == InputEventKind.Mouse && (e.Flags & (NativeEnums.MOUSEEVENTF_RIGHTDOWN | NativeEnums.MOUSEEVENTF_MIDDLEDOWN)) != 0;
+
+    /// <summary>
     /// True when <paramref name="batch"/> copies and then pastes: copy keys (Ctrl+C, Ctrl+X, Ctrl+Insert, Shift+Delete),
     /// or the ETX or CAN character (<see cref="CopyCharacter"/>, <see cref="CutCharacter"/>), followed later in the batch
-    /// by input that pastes what is on the clipboard (Ctrl+V, Shift+Insert, the SYN character, or a right click in a
-    /// terminal's window, <see cref="IsRightClickPasteWindow"/>). Such a paste pastes what the copy takes, which no check
+    /// by input that pastes what is on the clipboard (Ctrl+V, Shift+Insert, the SYN character, or a right or middle click in
+    /// a terminal's window, <see cref="IsRightClickPasteWindow"/>). Such a paste pastes what the copy takes, which no check
     /// made before the batch is sent can see.
     /// </summary>
     /// <param name="batch">The input of one call.</param>
@@ -351,7 +357,7 @@ public sealed class ClipboardOrigin : IClipboardOrigin, IDisposable
 
         for (var i = firstCopy + 1; i < batch.Count; i++)
         {
-            if (batch[i].Kind == InputEventKind.Mouse && (batch[i].Flags & NativeEnums.MOUSEEVENTF_RIGHTDOWN) != 0)
+            if (PressesAPastingButton(batch[i]))
             {
                 return true;
             }

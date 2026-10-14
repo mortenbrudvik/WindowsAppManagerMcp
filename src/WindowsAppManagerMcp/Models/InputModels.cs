@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace WindowsAppManagerMcp.Models;
 
 /// <summary>
@@ -73,6 +75,10 @@ public readonly record struct InputTarget(nint? WindowHandle, bool AllowHostTarg
 /// <summary>
 /// Result of a mouse click operation.
 /// </summary>
+/// <param name="ClickType">
+/// click, right_click and double_click: "left", "right" or "double"; mouse_click (roadmap M4.3): the button, "primary",
+/// "secondary", "middle", "x1" or "x2".
+/// </param>
 public record ClickResult(
     bool Success,
     int X,
@@ -82,6 +88,12 @@ public record ClickResult(
     InputErrorCode ErrorCode = InputErrorCode.None
 )
 {
+    /// <summary>mouse_click: how many clicks the batch holds (1 to 3). Null for click, right_click and double_click.</summary>
+    public int? ClickCount { get; init; }
+
+    /// <summary>mouse_click: the modifier keys held around the clicks ("ctrl", "shift", "alt", "win"); null without any.</summary>
+    public IReadOnlyList<string>? Modifiers { get; init; }
+
     /// <summary>
     /// The top-level window at the point: where the click went, or would have gone when it was refused.
     /// Null when nothing was checked (invalid coordinates).
@@ -238,14 +250,19 @@ public enum InputEventKind
 /// <param name="Dy">Mouse events: MOUSEINPUT.dy; otherwise 0.</param>
 /// <param name="MouseData">
 /// Mouse events: MOUSEINPUT.mouseData, the wheel movement of a MOUSEEVENTF_WHEEL or MOUSEEVENTF_HWHEEL event
-/// (a multiple of WHEEL_DELTA, 120, as a two's-complement DWORD); otherwise 0.
+/// (a multiple of WHEEL_DELTA, 120, as a two's-complement DWORD), or the X button of a MOUSEEVENTF_XDOWN or XUP event
+/// (XBUTTON1 = 1, XBUTTON2 = 2); otherwise 0.
 /// </param>
 public readonly record struct InputEvent(InputEventKind Kind, ushort Code, uint Flags, int Dx = 0, int Dy = 0, uint MouseData = 0)
 {
     /// <summary>One notch of the mouse wheel (WHEEL_DELTA).</summary>
     public const int WheelDelta = 120;
 
-    public static InputEvent Mouse(uint flags) => new(InputEventKind.Mouse, 0, flags);
+    /// <summary>
+    /// A mouse event of <paramref name="flags"/>; <paramref name="mouseData"/> names the button of a MOUSEEVENTF_XDOWN or
+    /// XUP event (XBUTTON1 or XBUTTON2).
+    /// </summary>
+    public static InputEvent Mouse(uint flags, uint mouseData = 0) => new(InputEventKind.Mouse, 0, flags, MouseData: mouseData);
 
     /// <summary>
     /// One vertical wheel event of <paramref name="delta"/> (MOUSEEVENTF_WHEEL): positive turns the wheel forward,
@@ -416,7 +433,7 @@ public enum InputErrorCode
     HandleMismatch = 43,
 
     /// <summary>
-    /// The input pastes (Ctrl+V, Shift+Insert, the SYN character, Win+V, or a right click in a terminal), and the
+    /// The input pastes (Ctrl+V, Shift+Insert, the SYN character, Win+V, or a right or middle click in a terminal), and the
     /// clipboard holds content get_clipboard would not return: the user's (not allowed by the user), content marked
     /// private, or clipboard history; or the clipboard could not be checked; or the call copies and then pastes (copy
     /// keys, or the ETX or CAN character, before the paste), or copy keys sent moments ago have not copied yet, so the
@@ -462,15 +479,56 @@ public enum InputErrorCode
 /// A mouse button as the user knows it (roadmap M4.2). Primary is the button the user clicks with: the left one, or the
 /// right one when the user swapped the buttons in Windows' mouse settings. SendInput names physical buttons, so
 /// <see cref="Services.InputBatchBuilder"/> sends a primary click as the right button's events when they are swapped.
+/// mouse_click and drag take it as their button (roadmap M4.3), with 'left' and 'right' accepted for primary and secondary.
 /// </summary>
+[ToolEnum(WindowsAppManagerMcp.Infrastructure.ToolErrorReporting.InvalidArgumentsErrorCode, "mouse button")]
 public enum MouseButton
 {
     /// <summary>The button that clicks, selects and drags: the left one unless the buttons are swapped.</summary>
+    [JsonStringEnumMemberName("primary")]
+    [ToolValueAlias("left", Listed = false)]
     Primary,
 
     /// <summary>The button that opens context menus: the right one unless the buttons are swapped.</summary>
+    [JsonStringEnumMemberName("secondary")]
+    [ToolValueAlias("right", Listed = false)]
     Secondary,
 
     /// <summary>The middle button (the wheel), which swapping does not change.</summary>
-    Middle
+    [JsonStringEnumMemberName("middle")]
+    Middle,
+
+    /// <summary>The first extended button (XBUTTON1), Back in browsers and File Explorer.</summary>
+    [JsonStringEnumMemberName("x1")]
+    X1,
+
+    /// <summary>The second extended button (XBUTTON2), Forward in browsers and File Explorer.</summary>
+    [JsonStringEnumMemberName("x2")]
+    X2
+}
+
+/// <summary>
+/// A modifier key mouse_click and drag hold down around their mouse events (roadmap M4.3): sent as the left-hand key, down
+/// in the batch before the first press and up after the last release.
+/// </summary>
+[ToolEnum(WindowsAppManagerMcp.Infrastructure.ToolErrorReporting.InvalidArgumentsErrorCode, "modifier")]
+public enum MouseModifier
+{
+    /// <summary>Ctrl (VK_LCONTROL).</summary>
+    [JsonStringEnumMemberName("ctrl")]
+    [ToolValueAlias("control", Listed = false)]
+    Ctrl,
+
+    /// <summary>Shift (VK_LSHIFT).</summary>
+    [JsonStringEnumMemberName("shift")]
+    Shift,
+
+    /// <summary>Alt (VK_LMENU).</summary>
+    [JsonStringEnumMemberName("alt")]
+    Alt,
+
+    /// <summary>The Windows key (VK_LWIN).</summary>
+    [JsonStringEnumMemberName("win")]
+    [ToolValueAlias("windows", Listed = false)]
+    Win
 }

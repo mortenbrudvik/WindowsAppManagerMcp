@@ -55,6 +55,13 @@ public sealed class NativeSystemInfoWrapper : INativeSystemInfoWrapper
 
     public bool? AreMouseButtonsSwapped() => NativeMethods.User32.GetSystemMetrics(NativeEnums.SM_SWAPBUTTON) != 0;
 
+    public (int Width, int Height)? GetDragThreshold()
+    {
+        var width = NativeMethods.User32.GetSystemMetrics(NativeEnums.SM_CXDRAG);
+        var height = NativeMethods.User32.GetSystemMetrics(NativeEnums.SM_CYDRAG);
+        return width > 0 && height > 0 ? (width, height) : null;
+    }
+
     public int? GetSessionId()
     {
         try
