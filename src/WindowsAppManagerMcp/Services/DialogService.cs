@@ -214,16 +214,21 @@ public sealed class DialogService : IDialogService
     /// <summary>
     /// The buttons without the title bar's caption buttons (minimize, maximize, close, the context help '?'): they are the
     /// window's, not answers of the dialog, as <see cref="WindowCloseVerifier"/> reads a prompt. A button lies in the title
-    /// bar when its bounds are inside a TitleBar element's bounds.
+    /// bar when its centre is inside a TitleBar element's bounds: a caption button can reach past the TitleBar's edge (a
+    /// MessageBox's Close button on a real desktop, 5 pixels above it and 2 to its right; roadmap M3.F3).
     /// </summary>
     internal static IReadOnlyList<FoundElement> WithoutTitleBar(IReadOnlyList<FoundElement> elements)
     {
         var titleBars = elements.Where(e => e.ControlType == TitleBarType).Select(e => e.Bounds).OfType<BoundsDto>().ToList();
-        return elements.Where(e => e.ControlType != TitleBarType && !(e.Bounds is { } b && titleBars.Any(t => Inside(b, t)))).ToList();
+        return elements.Where(e => e.ControlType != TitleBarType && !(e.Bounds is { } b && titleBars.Any(t => CentreInside(b, t)))).ToList();
     }
 
-    private static bool Inside(BoundsDto inner, BoundsDto outer) =>
-        inner.X >= outer.X && inner.Y >= outer.Y && inner.X + inner.Width <= outer.X + outer.Width && inner.Y + inner.Height <= outer.Y + outer.Height;
+    private static bool CentreInside(BoundsDto inner, BoundsDto outer)
+    {
+        var x = inner.X + inner.Width / 2.0;
+        var y = inner.Y + inner.Height / 2.0;
+        return x >= outer.X && x < outer.X + outer.Width && y >= outer.Y && y < outer.Y + outer.Height;
+    }
 
     private Task<FindElementsResult> FindAsync(nint dialog, string[] controlTypes, int maxResults, TimeSpan timeout, CancellationToken cancellationToken) =>
         _search.FindAsync(new ElementQuery(
