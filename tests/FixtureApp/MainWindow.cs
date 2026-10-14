@@ -62,6 +62,7 @@ internal sealed class MainWindow : Window
         FocusManager.SetFocusedElement(this, _editBox);
 
         AddHandler(Keyboard.GotKeyboardFocusEvent, new KeyboardFocusChangedEventHandler(OnGotKeyboardFocus), handledEventsToo: true);
+        AddHandler(PreviewMouseDownEvent, new MouseButtonEventHandler(OnPreviewMouseDown), handledEventsToo: true);
         Loaded += OnLoaded;
         ContentRendered += OnContentRendered;
         Closed += (_, _) => ShuttingDown = true;
@@ -233,6 +234,27 @@ internal sealed class MainWindow : Window
     {
         var id = e.NewFocus is DependencyObject element ? AutomationProperties.GetAutomationId(element) : null;
         _events.Write(Events.KeyboardFocus, ("id", id ?? ""));
+    }
+
+    /// <summary>Logs every press in the window, with the pixel it went down at (roadmap M4.2: a click lands on its pixel).</summary>
+    private void OnPreviewMouseDown(object sender, MouseButtonEventArgs e)
+    {
+        // The button message's own point: exact physical pixels, with no DIP conversion in between
+        var position = NativeMethods.GetMessagePos();
+        var id = "";
+        for (var element = e.OriginalSource as DependencyObject; element != null && id.Length == 0;
+             element = element is Visual ? VisualTreeHelper.GetParent(element) : LogicalTreeHelper.GetParent(element))
+        {
+            id = AutomationProperties.GetAutomationId(element) ?? "";
+        }
+
+        _events.Write(
+            Events.MouseDown,
+            ("button", e.ChangedButton.ToString().ToLowerInvariant().Replace("xbutton", "x")),
+            ("clickCount", e.ClickCount),
+            ("x", (int)(short)(position & 0xFFFF)),
+            ("y", (int)(short)(position >> 16)),
+            ("id", id));
     }
 
     private void OnContentRendered(object? sender, EventArgs e)

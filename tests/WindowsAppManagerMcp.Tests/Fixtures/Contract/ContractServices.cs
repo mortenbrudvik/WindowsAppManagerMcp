@@ -404,8 +404,8 @@ public sealed class ContractServices : IDisposable
             .Returns((int x, int y, InputTarget _, bool _, CancellationToken _) => Clicked(x, y, "left", receiving));
         Input.Setup(i => i.RightClick(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<InputTarget>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .Returns((int x, int y, InputTarget _, bool _, CancellationToken _) => Clicked(x, y, "right", receiving));
-        Input.Setup(i => i.DoubleClick(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<InputTarget>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
-            .Returns((int x, int y, int _, InputTarget _, bool _, CancellationToken _) => Clicked(x, y, "double", receiving));
+        Input.Setup(i => i.DoubleClick(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<InputTarget>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Returns((int x, int y, InputTarget _, bool _, CancellationToken _) => Clicked(x, y, "double", receiving));
         Input.Setup(i => i.MoveMouse(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<InputTarget>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .Returns((int x, int y, InputTarget _, bool _, CancellationToken _) => new MouseMoveResult(true, x, y)
             {
@@ -579,8 +579,8 @@ public sealed class ContractServices : IDisposable
             .Returns((int x, int y, InputTarget _, bool _, CancellationToken _) => new ClickResult(false, x, y, "left", host, InputErrorCode.TargetIsAgentHost));
         Input.Setup(i => i.RightClick(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<InputTarget>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .Returns((int x, int y, InputTarget _, bool _, CancellationToken _) => new ClickResult(false, x, y, "right", host, InputErrorCode.TargetIsAgentHost));
-        Input.Setup(i => i.DoubleClick(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<InputTarget>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
-            .Returns((int x, int y, int _, InputTarget _, bool _, CancellationToken _) => new ClickResult(false, x, y, "double", host, InputErrorCode.TargetIsAgentHost));
+        Input.Setup(i => i.DoubleClick(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<InputTarget>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Returns((int x, int y, InputTarget _, bool _, CancellationToken _) => new ClickResult(false, x, y, "double", host, InputErrorCode.TargetIsAgentHost));
         Input.Setup(i => i.MoveMouse(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<InputTarget>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .Returns((int x, int y, InputTarget _, bool _, CancellationToken _) => new MouseMoveResult(false, x, y, host, InputErrorCode.TargetIsAgentHost));
         Input.Setup(i => i.TypeTextAsync(It.IsAny<string>(), It.IsAny<int>(), It.IsAny<InputTarget>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))

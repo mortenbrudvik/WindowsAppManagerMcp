@@ -33,9 +33,9 @@ public class ActionObserveToolTests
             .Returns((int x, int y, InputTarget _, bool _, CancellationToken _) => new ClickResult(true, x, y, "left") { ReceivingWindow = notepad });
         _input.Setup(s => s.RightClick(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<InputTarget>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .Returns((int x, int y, InputTarget _, bool _, CancellationToken _) => new ClickResult(true, x, y, "right") { ReceivingWindow = notepad });
-        _input.Setup(s => s.DoubleClick(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<InputTarget>(), It.IsAny<bool>(),
+        _input.Setup(s => s.DoubleClick(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<InputTarget>(), It.IsAny<bool>(),
                 It.IsAny<CancellationToken>()))
-            .Returns((int x, int y, int _, InputTarget _, bool _, CancellationToken _) => new ClickResult(true, x, y, "double") { ReceivingWindow = notepad });
+            .Returns((int x, int y, InputTarget _, bool _, CancellationToken _) => new ClickResult(true, x, y, "double") { ReceivingWindow = notepad });
         _input.Setup(s => s.TypeTextAsync(It.IsAny<string>(), It.IsAny<int>(), It.IsAny<InputTarget>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .Callback(() => _order.Add("type"))
             .ReturnsAsync((string text, int _, InputTarget _, bool _, CancellationToken _) =>

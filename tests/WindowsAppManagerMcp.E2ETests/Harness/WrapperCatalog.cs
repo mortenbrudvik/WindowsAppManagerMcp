@@ -199,7 +199,9 @@ public static class WrapperCatalog
                 [nameof(INativeSystemInfoWrapper.GetDpiAwareness)] = WrapperMember.Read,
                 [nameof(INativeSystemInfoWrapper.GetForegroundLockTimeout)] = WrapperMember.Read,
                 [nameof(INativeSystemInfoWrapper.GetSessionId)] = WrapperMember.Read,
-                [nameof(INativeSystemInfoWrapper.GetMouseWheelRouting)] = WrapperMember.Read
+                [nameof(INativeSystemInfoWrapper.GetMouseWheelRouting)] = WrapperMember.Read,
+                [nameof(INativeSystemInfoWrapper.GetVirtualScreen)] = WrapperMember.Read,
+                [nameof(INativeSystemInfoWrapper.AreMouseButtonsSwapped)] = WrapperMember.Read
             },
             [typeof(INativeVirtualDesktopWrapper)] = new Dictionary<string, WrapperMember>
             {

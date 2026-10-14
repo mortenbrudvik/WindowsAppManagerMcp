@@ -1586,7 +1586,7 @@ public sealed class ElementActionServiceTests : IDisposable
     public async Task AGuardedClickTheInputGuardRefuses_ReportsItsCode()
     {
         var target = RefOf(Button("Save"));
-        _input.Setup(i => i.DoubleClick(It.IsAny<int>(), It.IsAny<int>(), 50, It.IsAny<InputTarget>(), false, It.IsAny<CancellationToken>()))
+        _input.Setup(i => i.DoubleClick(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<InputTarget>(), false, It.IsAny<CancellationToken>()))
             .Returns(new ClickResult(false, 140, 212, "double", "Covered by another window.", InputErrorCode.TargetOccluded));
 
         var result = await ActAsync(target, ElementActionKind.DoubleClick);

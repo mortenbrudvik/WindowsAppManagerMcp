@@ -108,6 +108,7 @@ internal static class NativeEnums
     public const uint PW_RENDERFULLCONTENT = 0x00000002;
 
     // GetSystemMetrics constants
+    public const int SM_SWAPBUTTON = 23;
     public const int SM_XVIRTUALSCREEN = 76;
     public const int SM_YVIRTUALSCREEN = 77;
     public const int SM_CXVIRTUALSCREEN = 78;

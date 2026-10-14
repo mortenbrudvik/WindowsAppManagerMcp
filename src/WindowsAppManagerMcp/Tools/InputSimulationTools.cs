@@ -58,6 +58,7 @@ public class InputSimulationTools
         "and is refused when that is the agent's own host (terminal, editor or chat app; TargetIsAgentHost), or in the cases below." +
         " To act on an element, element_action with its ref needs no point; to click one, take find_ui_elements' clickPoint, the centre of its get_ui_elements bounds, or its capture_with_elements legend centre with that capture's captureId (any point you see on a capture works so: the server converts it)." +
         " The button is pressed exactly at the checked point; if the pointer does not stay there (it is confined to a window, or the user is moving the mouse), nothing is clicked (CursorNotAtPoint)." +
+        " If it is elsewhere right after, the click was sent but may have landed there (CursorClamped)." +
         " Refused while a mouse button is held down or another window has captured the mouse (MouseInUse): the press would go there. " +
         "MouseInUse also when the capture cannot be read (a window just closed): retry." +
         GuardNote;
@@ -100,7 +101,7 @@ public class InputSimulationTools
     }
 
     [McpServerTool(Name = "click", Title = "Click", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = false)]
-    [Description("Perform a left mouse click at the specified screen coordinates, or at a point of a capture's image (space)." + ClickTargetNote +
+    [Description("Perform a left (primary) mouse click at the specified screen coordinates, or at a point of a capture's image (space)." + ClickTargetNote +
                  " Mouse results also report actualX and actualY, the cursor position afterwards.")]
     [ToolResultPayload(typeof(ClickResult))]
     public async Task<CallToolResult> Click(
@@ -137,7 +138,7 @@ public class InputSimulationTools
     }
 
     [McpServerTool(Name = "right_click", Title = "Right-Click", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = false)]
-    [Description("Perform a right mouse click at the specified screen coordinates, or at a point of a capture's image (space)." +
+    [Description("Perform a right (secondary) mouse click at the specified screen coordinates, or at a point of a capture's image (space)." +
                  " In a terminal (console, Windows Terminal, PuTTY, and anywhere in VS Code) a right click pastes the clipboard, so there it follows send_keys' paste rule (PasteNotAllowed)." + ClickTargetNote)]
     [ToolResultPayload(typeof(ClickResult))]
     public async Task<CallToolResult> RightClick(
@@ -181,7 +182,7 @@ public class InputSimulationTools
         int x,
         [Description(YDescription)]
         int y,
-        [Description("Delay between clicks in milliseconds (default: 50, range: 10-500)")]
+        [Description("Ignored: both clicks go in one batch, always within the double-click time. Kept so older calls still work")]
         int delayMs = 50,
         [Description(MouseWindowHandleDescription)]
         long? windowHandle = null,
@@ -207,13 +208,13 @@ public class InputSimulationTools
                 point.Target, observe, cancellationToken).ConfigureAwait(false);
         }
 
-        return await ObserveAsync(Echo(_inputService.DoubleClick(point.X, point.Y, Math.Clamp(delayMs, 10, 500), point.Target,
+        return await ObserveAsync(Echo(_inputService.DoubleClick(point.X, point.Y, point.Target,
             releaseHeldModifiers, cancellationToken), point.Requested), point.Target, observe, cancellationToken).ConfigureAwait(false);
     }
 
     [McpServerTool(Name = "mouse_move", Title = "Move Mouse Pointer", ReadOnly = false, Destructive = false, Idempotent = true, OpenWorld = false)]
     [Description("Move the mouse cursor to the specified screen coordinates, or to a point of a capture's image with its captureId, without clicking. Useful for hovering over elements to trigger tooltips or hover states." +
-                 " Pass windowHandle with the window you mean; the same checks as for click apply (TargetOccluded, BlockedByModal, TargetIsAgentHost, CursorNotAtPoint, MouseInUse)." + GuardNote)]
+                 " Pass windowHandle with the window you mean; the same checks as for click apply (TargetOccluded, BlockedByModal, TargetIsAgentHost, MouseInUse); a pointer that does not get to the point is CursorClamped." + GuardNote)]
     public MouseMoveResult MouseMove(
         [Description(XDescription)]
         int x,
@@ -252,7 +253,7 @@ public class InputSimulationTools
                  "call focus_window first; even then the wheel reaches the control with the keyboard focus, not the one at the " +
                  "point, so click into the content first. The wheel over a combo box, slider or number box changes its value, so point at the " +
                  "content, not at such a control. To see whether the content moved, read it again (get_ui_elements, a capture)." +
-                 " The same checks as for click apply (TargetOccluded, BlockedByModal, TargetIsAgentHost, CursorNotAtPoint, MouseInUse)." +
+                 " The same checks as for click apply (TargetOccluded, BlockedByModal, TargetIsAgentHost, CursorNotAtPoint, MouseInUse, CursorClamped)." +
                  GuardNote)]
     public ScrollResult Scroll(
         [Description(MouseWindowHandleDescription)]

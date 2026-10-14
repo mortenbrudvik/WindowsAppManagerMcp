@@ -19,24 +19,28 @@ namespace WindowsAppManagerMcp.Services.Interfaces;
 public interface IInputSimulationService
 {
     /// <summary>
-    /// Performs a left mouse click at the specified screen coordinates. With a target, the point must be on
-    /// the target or a popup of it.
+    /// Clicks the primary mouse button (the left one, or the right one when the user swapped the buttons) at the specified
+    /// screen coordinates. With a target, the point must be on the target or a popup of it. The move to the point and the
+    /// click go in one SendInput batch (roadmap M4.2); a pointer that is not at the point afterwards is CursorClamped, with
+    /// the click sent.
     /// </summary>
     ClickResult Click(int x, int y, InputTarget target, bool releaseHeldModifiers, CancellationToken cancellationToken);
 
     /// <summary>
-    /// Performs a right mouse click at the specified screen coordinates.
+    /// Clicks the secondary mouse button (the right one, or the left one when the user swapped the buttons) at the specified
+    /// screen coordinates, as <see cref="Click"/> does.
     /// </summary>
     ClickResult RightClick(int x, int y, InputTarget target, bool releaseHeldModifiers, CancellationToken cancellationToken);
 
     /// <summary>
-    /// Performs a double left click at the specified screen coordinates. The window at the point is
-    /// checked again before the second click.
+    /// Double-clicks the primary mouse button at the specified screen coordinates, as <see cref="Click"/> does: both clicks
+    /// go in the one batch with the move, so Windows counts them as one double click whatever its double-click time.
     /// </summary>
-    ClickResult DoubleClick(int x, int y, int delayMs, InputTarget target, bool releaseHeldModifiers, CancellationToken cancellationToken);
+    ClickResult DoubleClick(int x, int y, InputTarget target, bool releaseHeldModifiers, CancellationToken cancellationToken);
 
     /// <summary>
-    /// Moves the mouse cursor to the specified screen coordinates without clicking.
+    /// Moves the mouse cursor to the specified screen coordinates without clicking, with an injected absolute move (roadmap
+    /// M4.2); a pointer that is not at the point afterwards is CursorClamped.
     /// </summary>
     MouseMoveResult MoveMouse(int x, int y, InputTarget target, bool releaseHeldModifiers, CancellationToken cancellationToken);
 

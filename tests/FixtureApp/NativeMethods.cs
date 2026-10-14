@@ -100,6 +100,10 @@ internal static class NativeMethods
     [DllImport("user32.dll")]
     public static extern uint GetDpiForWindow(nint hwnd);
 
+    /// <summary>Where the cursor was when the last message read from the queue was posted: a button message's point.</summary>
+    [DllImport("user32.dll")]
+    public static extern uint GetMessagePos();
+
     [DllImport("user32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool GetWindowRect(nint hwnd, out RECT rect);

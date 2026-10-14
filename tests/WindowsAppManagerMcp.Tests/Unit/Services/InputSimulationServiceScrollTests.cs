@@ -54,21 +54,9 @@ public class InputSimulationServiceScrollTests
         _guard.Verify(g => g.CheckMouse(500, 300, NotepadTarget), Times.Once);
         _guard.Verify(g => g.RecheckMouse(500, 300, It.IsAny<InputGuardResult>()), Times.Once);
 
-        var absolute = InputSimulationService.ToVirtualDesktopAbsolute(500, 300, _monitors.Object.GetAllMonitors());
+        var (dx, dy) = InputBatchBuilder.ToAbsolute(500, 300, new VirtualScreenBounds(0, 0, 1920, 1080));
         _input.Batches.Should().ContainSingle().Which.Should().Equal(
-            [InputEvent.MouseMoveAbsolute(absolute.X, absolute.Y), .. Wheel(3, -120)]);
-    }
-
-    [Fact]
-    public void ScrollInputs_Up_IsPositive_AndHorizontalComesAfterVertical()
-    {
-        var inputs = InputSimulationService.ScrollInputs((10, 20), deltaY: -2, deltaX: 3);
-
-        inputs.Should().Equal(
-            InputEvent.MouseMoveAbsolute(10, 20),
-            InputEvent.Wheel(120), InputEvent.Wheel(120),
-            InputEvent.HorizontalWheel(120), InputEvent.HorizontalWheel(120), InputEvent.HorizontalWheel(120));
-        InputSimulationService.ScrollInputs((10, 20), 0, -1).Should().Equal(InputEvent.MouseMoveAbsolute(10, 20), InputEvent.HorizontalWheel(-120));
+            [InputEvent.MouseMoveAbsolute(dx, dy), .. Wheel(3, -120)]);
     }
 
     [Fact]

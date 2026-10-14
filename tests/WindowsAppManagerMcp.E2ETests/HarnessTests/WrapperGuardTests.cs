@@ -790,12 +790,12 @@ public class WrapperGuardTests
         inner.Setup(w => w.SendInput(It.IsAny<IReadOnlyList<InputEvent>>())).Returns(3u);
         var desktop = new FakeDesktop { Foreground = FixtureWindow, Cursor = (500, 300), WindowAtCursor = FixtureWindow };
         desktop.WindowsAtPoints[(500, 300)] = FixtureWindow;
-        var absolute = InputSimulationService.ToVirtualDesktopAbsolute(500, 300,
-            [new MonitorInfo(0, "\\\\.\\DISPLAY1", true, new MonitorRect(0, 0, 1920, 1080), new MonitorRect(0, 0, 1920, 1040), 1.0)]);
+        var batch = new InputBatchBuilder(new VirtualScreenBounds(0, 0, 1920, 1080), buttonsSwapped: false)
+            .MoveTo(500, 300).Wheel(deltaY: 2, deltaX: 0).Build();
         var guarded = WrapperGuard.Create(inner.Object, FixtureOnly(desktop));
 
         // Act & Assert
-        guarded.SendInput(InputSimulationService.ScrollInputs(absolute, deltaY: 2, deltaX: 0)).Should().Be(3u);
+        guarded.SendInput(batch.Events).Should().Be(3u);
     }
 
     [Fact]
@@ -856,12 +856,13 @@ public class WrapperGuardTests
         inner.Setup(w => w.SendInput(It.IsAny<IReadOnlyList<InputEvent>>())).Returns(3u);
         var desktop = new FakeDesktop { Cursor = (10, 10), WindowAtCursor = FixtureWindow };
         desktop.WindowsAtPoints[(500, 300)] = FixtureWindow;
-        var (dx, dy) = InputSimulationService.ToVirtualDesktopAbsolute(500, 300,
-            [new MonitorInfo(0, "\\\\.\\DISPLAY1", true, new MonitorRect(0, 0, 1920, 1080), new MonitorRect(0, 0, 1920, 1040), 1.0)]);
+        var batch = new InputBatchBuilder(new VirtualScreenBounds(0, 0, 1920, 1080), buttonsSwapped: false)
+            .MoveTo(500, 300).Click(MouseButton.Primary).Build();
         var guarded = WrapperGuard.Create(inner.Object, FixtureOnly(desktop));
 
         // Act & Assert
-        guarded.SendInput([InputEvent.MouseMoveAbsolute(dx, dy), InputEvent.Mouse(0x0002), InputEvent.Mouse(0x0004)]).Should().Be(3u);
+        batch.Events.Skip(1).Should().Equal(InputEvent.Mouse(0x0002), InputEvent.Mouse(0x0004));
+        guarded.SendInput(batch.Events).Should().Be(3u);
     }
 
     [Fact]
@@ -877,6 +878,35 @@ public class WrapperGuardTests
         var act = () => guarded.SendInput([InputEvent.MouseMoveAbsolute(32768, 32768), InputEvent.Mouse(0x0002)]);
 
         // Assert
+        act.Should().Throw<E2EGuardException>().WithMessage("*after the move to (960, 540)*");
+        inner.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public void FixtureOnlyGuard_AllowsAMoveOnlyBatchThatEndsOverTheFixture_WhereverTheCursorIs()
+    {
+        // Arrange - mouse_move's batch (roadmap M4.2) is judged as SetCursorPos is: by where it puts the pointer
+        var inner = new Mock<INativeInputWrapper>(MockBehavior.Strict);
+        inner.Setup(w => w.SendInput(It.IsAny<IReadOnlyList<InputEvent>>())).Returns(1u);
+        var desktop = new FakeDesktop { Cursor = (10, 10), WindowAtCursor = OtherWindow };
+        desktop.WindowsAtPoints[(500, 300)] = FixtureWindow;
+        var batch = new InputBatchBuilder(new VirtualScreenBounds(0, 0, 1920, 1080), buttonsSwapped: false).MoveTo(500, 300).Build();
+        var guarded = WrapperGuard.Create(inner.Object, FixtureOnly(desktop));
+
+        // Act & Assert
+        guarded.SendInput(batch.Events).Should().Be(1u);
+    }
+
+    [Fact]
+    public void FixtureOnlyGuard_RefusesAMoveOnlyBatchThatEndsOverAnotherWindow()
+    {
+        var inner = new Mock<INativeInputWrapper>(MockBehavior.Strict);
+        var desktop = new FakeDesktop { Cursor = (10, 10), WindowAtCursor = FixtureWindow };
+        desktop.WindowsAtPoints[(960, 540)] = OtherWindow;
+        var guarded = WrapperGuard.Create(inner.Object, FixtureOnly(desktop));
+
+        var act = () => guarded.SendInput([InputEvent.MouseMoveAbsolute(32768, 32768)]);
+
         act.Should().Throw<E2EGuardException>().WithMessage("*after the move to (960, 540)*");
         inner.VerifyNoOtherCalls();
     }

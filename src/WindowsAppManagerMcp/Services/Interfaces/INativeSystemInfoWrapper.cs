@@ -30,4 +30,20 @@ public interface INativeSystemInfoWrapper
     /// setting and sends the wheel to the focus window).
     /// </summary>
     MouseWheelRouting? GetMouseWheelRouting();
+
+    /// <summary>
+    /// The virtual screen, the bounding rectangle of every monitor in physical pixels (GetSystemMetrics SM_XVIRTUALSCREEN,
+    /// SM_YVIRTUALSCREEN, SM_CXVIRTUALSCREEN and SM_CYVIRTUALSCREEN, which a per-monitor DPI aware thread reads unscaled):
+    /// what Windows maps a MOUSEEVENTF_VIRTUALDESK move's normalized coordinates across. Its origin is negative when a
+    /// monitor is left of or above the primary one. Null when it cannot be read (no size); the native wrapper reads it on
+    /// every call, so a monitor change is seen at once.
+    /// </summary>
+    VirtualScreenBounds? GetVirtualScreen();
+
+    /// <summary>
+    /// True when the user swapped the mouse buttons ("Primary mouse button: Right" in Windows' mouse settings;
+    /// GetSystemMetrics SM_SWAPBUTTON): Windows then turns the left button's events into right-button messages and the
+    /// reverse, injected ones too. Null means unknown; the native wrapper always answers, so only a fake returns null.
+    /// </summary>
+    bool? AreMouseButtonsSwapped();
 }

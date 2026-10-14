@@ -43,8 +43,8 @@ public class InputSimulationToolsTests
                 Error: error,
                 ErrorCode: errorCode));
 
-        mock.Setup(s => s.DoubleClick(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<InputTarget>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
-            .Returns((int x, int y, int delay, InputTarget _, bool _, CancellationToken _) => new ClickResult(
+        mock.Setup(s => s.DoubleClick(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<InputTarget>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Returns((int x, int y, InputTarget _, bool _, CancellationToken _) => new ClickResult(
                 Success: success,
                 X: x,
                 Y: y,
@@ -217,59 +217,24 @@ public class InputSimulationToolsTests
         await sut.DoubleClick(500, 600);
 
         // Assert
-        _mockInputService.Verify(s => s.DoubleClick(500, 600, 50, InputTarget.None, false, It.IsAny<CancellationToken>()), Times.Once);
+        _mockInputService.Verify(s => s.DoubleClick(500, 600, InputTarget.None, false, It.IsAny<CancellationToken>()), Times.Once);
     }
 
-    [Fact]
-    public async Task DoubleClick_WithCustomDelay_PassesClampedDelay()
+    [Theory]
+    [InlineData(1)]
+    [InlineData(100)]
+    [InlineData(1000)]
+    public async Task DoubleClick_DelayMs_IsAcceptedAndIgnored(int delayMs)
     {
-        // Arrange
+        // Arrange - roadmap M4.2: both clicks go in one batch, so there is no delay to pass; the parameter stays declared, so
+        // a call that passes it is not refused as an undeclared argument
         var sut = CreateSut();
 
         // Act
-        await sut.DoubleClick(500, 600, delayMs: 100);
+        await sut.DoubleClick(500, 600, delayMs: delayMs);
 
         // Assert
-        _mockInputService.Verify(s => s.DoubleClick(500, 600, 100, InputTarget.None, false, It.IsAny<CancellationToken>()), Times.Once);
-    }
-
-    [Fact]
-    public async Task DoubleClick_WithDelayBelowMinimum_ClampsTo10()
-    {
-        // Arrange
-        var sut = CreateSut();
-
-        // Act
-        await sut.DoubleClick(500, 600, delayMs: 1);
-
-        // Assert
-        _mockInputService.Verify(s => s.DoubleClick(500, 600, 10, InputTarget.None, false, It.IsAny<CancellationToken>()), Times.Once);
-    }
-
-    [Fact]
-    public async Task DoubleClick_WithDelayAboveMaximum_ClampsTo500()
-    {
-        // Arrange
-        var sut = CreateSut();
-
-        // Act
-        await sut.DoubleClick(500, 600, delayMs: 1000);
-
-        // Assert
-        _mockInputService.Verify(s => s.DoubleClick(500, 600, 500, InputTarget.None, false, It.IsAny<CancellationToken>()), Times.Once);
-    }
-
-    [Fact]
-    public async Task DoubleClick_WithNegativeDelay_ClampsTo10()
-    {
-        // Arrange
-        var sut = CreateSut();
-
-        // Act
-        await sut.DoubleClick(500, 600, delayMs: -50);
-
-        // Assert
-        _mockInputService.Verify(s => s.DoubleClick(500, 600, 10, InputTarget.None, false, It.IsAny<CancellationToken>()), Times.Once);
+        _mockInputService.Verify(s => s.DoubleClick(500, 600, InputTarget.None, false, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -277,7 +242,7 @@ public class InputSimulationToolsTests
     {
         // Arrange
         var expectedResult = new ClickResult(true, 500, 600, "double");
-        _mockInputService.Setup(s => s.DoubleClick(500, 600, 50, InputTarget.None, false, It.IsAny<CancellationToken>())).Returns(expectedResult);
+        _mockInputService.Setup(s => s.DoubleClick(500, 600, InputTarget.None, false, It.IsAny<CancellationToken>())).Returns(expectedResult);
         var sut = CreateSut();
 
         // Act
@@ -587,7 +552,7 @@ public class InputSimulationToolsTests
         // Assert
         _mockInputService.Verify(s => s.Click(1, 2, InputTarget.None, true, request.Token), Times.Once);
         _mockInputService.Verify(s => s.RightClick(1, 2, InputTarget.None, true, request.Token), Times.Once);
-        _mockInputService.Verify(s => s.DoubleClick(1, 2, 50, InputTarget.None, true, request.Token), Times.Once);
+        _mockInputService.Verify(s => s.DoubleClick(1, 2, InputTarget.None, true, request.Token), Times.Once);
         _mockInputService.Verify(s => s.MoveMouse(1, 2, InputTarget.None, true, request.Token), Times.Once);
     }
 
