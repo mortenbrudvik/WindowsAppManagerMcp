@@ -599,6 +599,26 @@ public class DesktopStateServiceTests
     }
 
     [Fact]
+    public async Task TheWindowWalksWarnings_GoWithTheElements_AndOnlyWhenThereAreAny()
+    {
+        // Arrange - an elevated window, whose tree UI Automation cannot read, comes back empty (roadmap M3.F16)
+        var (plain, _) = await CreateSut().GetStateAsync(Request(), CancellationToken.None);
+        const string elevated = "TargetElevated: Window 1706796 belongs to a process that runs at a higher integrity level.";
+        _elements.Setup(e => e.GetUIElementsAsync(It.IsAny<nint>(), It.IsAny<int>(), It.IsAny<UIElementFilter?>(),
+                It.IsAny<IProgress<OperationProgress>?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Walk(Notepad) with { Warnings = [elevated] });
+
+        // Act
+        var (state, _) = await CreateSut().GetStateAsync(Request(), CancellationToken.None);
+
+        // Assert - the empty tree is explained, not just empty
+        plain.Elements!.Warnings.Should().BeNull();
+        state.Elements!.Count.Should().Be(0);
+        state.Elements.Text.Should().BeNull();
+        state.Elements.Warnings.Should().Equal(elevated);
+    }
+
+    [Fact]
     public async Task TheElementsWalk_StopsWithTheDeadline_KeepingWhatItRead()
     {
         // A cooperative walk returns what it read when its token is cancelled

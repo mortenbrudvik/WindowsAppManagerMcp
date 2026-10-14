@@ -113,6 +113,17 @@ public class DependencyInjectionTests : IDisposable
     }
 
     [Fact]
+    public void TheTreeWalk_GetsTheSecurityProbe_ForItsElevationWarning()
+    {
+        // get_ui_elements warns about a window it cannot read because it runs elevated (roadmap M3.F16), with the probe the
+        // input guard uses; a walk built without it would never say so
+        var walk = _serviceProvider.GetRequiredService<IUIElementService>();
+
+        typeof(UIElementService).GetField("_security", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(walk)
+            .Should().BeSameAs(_serviceProvider.GetRequiredService<IProcessSecurityProbe>());
+    }
+
+    [Fact]
     public void TheDialogAndMenuPathServices_ActOnlyThroughTheOneElementActionService_AndTheirToolsResolve()
     {
         // respond_to_dialog, file_dialog and menu_path (roadmap M3.5, M3.14) press, set and expand through element_action's

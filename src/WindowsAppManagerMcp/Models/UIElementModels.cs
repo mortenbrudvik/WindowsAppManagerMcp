@@ -60,6 +60,10 @@ public record UIElementInfo(
 /// <param name="OwnedWindows">The windows the window owns (an open dialog or popup) that UI Automation listed among its
 /// children, which the walk left out with everything inside them (roadmap M3.F9): each is a window of its own, read by its
 /// handle, and its elements get refs only there. Null when there were none.</param>
+/// <param name="Warnings">Why a tree may not show what the window holds (roadmap M3.F16, D-UIA-07), one sentence each that
+/// starts with a stable code and a colon (<see cref="UIElementWarnings"/>): the window is minimized, so its elements are
+/// offscreen, or it runs at a higher integrity level than the server, so UI Automation cannot read it. Null when there is
+/// nothing to say.</param>
 public record UIElementResult(
     bool Success,
     long WindowHandle,
@@ -78,8 +82,30 @@ public record UIElementResult(
     string? Text = null,
     string? FrameworkId = null,
     AccessibilityWarmupInfo? AccessibilityWarmup = null,
-    IReadOnlyList<long>? OwnedWindows = null
+    IReadOnlyList<long>? OwnedWindows = null,
+    IReadOnlyList<string>? Warnings = null
 );
+
+/// <summary>
+/// The warnings a UI element walk can carry (roadmap M3.F16). Each one starts with a stable code and a colon, as the
+/// captures' warnings do (<see cref="CaptureWarnings"/>), so an agent can match on the code; the rest of the sentence says
+/// what it means and what to do.
+/// </summary>
+public static class UIElementWarnings
+{
+    /// <summary>
+    /// The window, or the top-level window it is in, is minimized: UI Automation reports all its elements offscreen, so
+    /// visibleOnly leaves them out, and the bounds of those returned are not where they will be once it is restored.
+    /// </summary>
+    public const string WindowMinimized = "WindowMinimized";
+
+    /// <summary>
+    /// The window's process runs at a higher integrity level than the server (for example as administrator): Windows
+    /// keeps UI Automation from the server out of it, so its tree comes back empty or with only what Windows itself
+    /// reports about the window. The same name as the input guard's code, which refuses input to it.
+    /// </summary>
+    public const string TargetElevated = "TargetElevated";
+}
 
 /// <summary>
 /// Why a UI element tree is incomplete.
