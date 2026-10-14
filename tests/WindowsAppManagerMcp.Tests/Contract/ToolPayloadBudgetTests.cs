@@ -71,7 +71,7 @@ public class ToolPayloadBudgetTests
         ["take_screenshot"] = 150, // 131
         ["capture_region"] = 150, // 118
         ["capture_window"] = 150, // 126
-        ["capture_with_elements"] = 2_150, // 1,410: the legend of the typical tree's 120 elements, one line each (roadmap M3.11; was 6,544 with the elements list, now detail full)
+        ["capture_with_elements"] = 2_150, // 1,416: the legend of the typical tree's 120 elements, one line each (roadmap M3.11; was 6,544 with the elements list, now detail full), and markPrefix (roadmap M3.F38)
 
         // UI Automation
         ["get_desktop_state"] = 3_200, // 2,129: 15 window rows, the focus, 2 popups and 80 element lines with refs (roadmap M3.12)
@@ -131,11 +131,11 @@ public class ToolPayloadBudgetTests
     /// <summary>
     /// The token budget of the whole tools/list result (every tool's name, title, description, schemas and annotations), as
     /// clients that load every tool up front pay it for the whole session. A ratchet, not a margin: it sits just above the
-    /// measured size (52,199 tokens, 208,794 bytes for 64 tools, October 2026, after M3.F32's screenshotMarks and observe on six action tools and M3.F8's launch arguments description), so every addition to the surface is a decision. When a change
+    /// measured size (52,235 tokens, 208,937 bytes for 64 tools, October 2026, after M3.F32's screenshotMarks and observe on six action tools, M3.F8's launch arguments description and M3.F38's markPrefix), so every addition to the surface is a decision. When a change
     /// adds to the surface on purpose, raise it in the same change by what the failure message measures; when a change
     /// trims descriptions, lower it.
     /// </summary>
-    public const int ToolListTokenBudget = 52_220;
+    public const int ToolListTokenBudget = 52_271;
 
     public static TheoryData<string> ServedTools() => EveryToolContractTests.ServedTools();
 

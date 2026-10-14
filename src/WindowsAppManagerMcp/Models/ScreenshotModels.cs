@@ -24,6 +24,8 @@ public interface ICaptureMetadata
 /// ref it resolved to (the one asked for, or the element's own ref when it was found again under another).
 /// <see cref="RefMoved"/> is true when that ref was moved to a re-created element that alone fits its description (the
 /// element it was given for is gone), with a RefMoved warning; null otherwise.
+/// <see cref="MarkPrefix"/> is set for get_desktop_state's screenshot with marks (roadmap M3.F32, M3.F38): the window part
+/// its tags leave out, as <see cref="AnnotatedScreenshotResult.MarkPrefix"/>; null otherwise.
 /// </summary>
 public record ScreenshotResult(
     bool Success,
@@ -46,7 +48,8 @@ public record ScreenshotResult(
     IReadOnlyList<string>? Warnings = null,
     string? CaptureId = null,
     string? Ref = null,
-    bool? RefMoved = null
+    bool? RefMoved = null,
+    string? MarkPrefix = null
 ) : ICaptureMetadata;
 
 /// <summary>
@@ -130,6 +133,10 @@ public record VirtualScreenBounds(
 /// the automation id and the mark's centre in pixels of the returned image (a click there with <see cref="CaptureId"/>
 /// lands on it); see Tools.ElementMarkLegend. Null when there are no marks. capture_with_elements leaves
 /// <see cref="Elements"/> out unless detail is full.
+/// <see cref="MarkPrefix"/> (roadmap M3.F38) is the window part of the refs, such as <c>w4120035</c>, when every mark's ref
+/// has it: the tags then leave it out and show only the element part (<c>e17</c>), so a tag is the ref
+/// <c>w4120035e17</c> with the prefix before it. Null when no tags were drawn or the refs are of more than one window (the
+/// tags then show whole refs). The legend always gives whole refs.
 /// <see cref="OwnedWindows"/> names the windows the window owns (an open dialog or popup) that the walk left out, as
 /// <see cref="UIElementResult.OwnedWindows"/> (roadmap M3.F9): they get no marks, and are captured and marked by their
 /// own handle. Null when there were none.
@@ -165,7 +172,8 @@ public record AnnotatedScreenshotResult(
     AccessibilityWarmupInfo? AccessibilityWarmup = null,
     string? CaptureId = null,
     string? Legend = null,
-    IReadOnlyList<long>? OwnedWindows = null
+    IReadOnlyList<long>? OwnedWindows = null,
+    string? MarkPrefix = null
 ) : ICaptureMetadata;
 
 /// <summary>

@@ -303,7 +303,7 @@ public class ScreenshotTools
 
     [McpServerTool(Name = "capture_with_elements", Title = "Capture Window with Element Boxes", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = false)]
     [Description("Capture a window with its UI elements drawn on it as numbered marks (Set-of-Marks): a box per element and a filled tag with " +
-                 "the element's ref, such as w4120035e17. Pick a target in the image, then act on it with element_action(ref) (no coordinates), " +
+                 "the element's ref, such as w4120035e17; when all marks' refs share their window part, the tags leave it out (e17) and markPrefix gives it (w4120035). Pick a target in the image, then act on it with element_action(ref) (no coordinates), " +
                  "or click the legend's center with this captureId. " + ImageResultDescription +
                  "The metadata's legend has one line per mark: '[ref] Type 'Name' #automationId center=(x,y)', center in pixels of the returned image. " +
                  "By default only elements with an action pattern (button, edit, check box, list item, menu item, ...) are marked, at most 80; " +

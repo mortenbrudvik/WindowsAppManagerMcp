@@ -75,7 +75,7 @@ public class DesktopStateTools
         int screenshotMaxLongEdge = DefaultScreenshotLongEdge,
         [Description("The one deadline of the whole call in milliseconds (default: 5000, min: 1000, max: 30000).")]
         int timeoutMs = DefaultTimeoutMs,
-        [Description("Draw the window's element lines on the screenshot as Set-of-Marks boxes tagged with their refs (not the " +
+        [Description("Draw the window's element lines on the screenshot as Set-of-Marks boxes tagged with their refs, less screenshot.markPrefix (not the " +
                      "popups' lines); the capture then waits for the walk. Needs 'screenshot' and 'elements' in include. Default: false.")]
         bool screenshotMarks = false,
         CancellationToken cancellationToken = default)

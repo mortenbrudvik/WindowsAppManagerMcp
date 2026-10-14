@@ -998,7 +998,7 @@ public class DesktopStateServiceTests
                 new AnnotatedScreenshotResult(true, "png", "image/png", 1280, 720, Notepad, "notes.txt - Notepad",
                     new CapturedRegion(0, 0, 1280, 720), new ImageToScreenTransform(0, 0, 1, 1), [], _marked!.Elements.Count, 4, 1,
                     MonitorScaleFactor: 1.25, CaptureMethod: "PrintWindow", Warnings: warnings, CaptureId: warnings == null ? "c2-ab12" : null,
-                    Legend: "[w4120035e7] Button 'Save' center=(50,32)"),
+                    Legend: "[w4120035e7] Button 'Save' center=(50,32)", MarkPrefix: "w4120035"),
                 new EncodedImage([1, 2, 3], "image/png")));
     }
 
@@ -1025,6 +1025,7 @@ public class DesktopStateServiceTests
         state.Screenshot!.CaptureId.Should().Be("c2-ab12");
         state.Screenshot.Width.Should().Be(1280);
         state.Screenshot.ScaleFactor.Should().Be(1.25);
+        state.Screenshot.MarkPrefix.Should().Be("w4120035", "the tags leave out the window part their refs share (roadmap M3.F38)");
         state.Errors.Should().BeNull();
         _screenshots.Verify(s => s.CaptureWindow(It.IsAny<nint>(), It.IsAny<bool>(), It.IsAny<CaptureOptions>()), Times.Never);
     }

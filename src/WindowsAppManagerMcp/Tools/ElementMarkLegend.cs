@@ -8,8 +8,9 @@ namespace WindowsAppManagerMcp.Tools;
 /// <c>[w4120035e17] Button 'Save' #btnSave center=(392,196)</c>.
 /// </summary>
 /// <remarks>
-/// <para>A line is: the ref drawn in the mark's tag in square brackets (<c>[-]</c> for an element without a ref, which
-/// element_action cannot name); the control type; the name in single quotes, escaped and cut as in get_ui_elements' text
+/// <para>A line is: the mark's whole ref in square brackets (<c>[-]</c> for an element without a ref, which element_action
+/// cannot name), also when its tag leaves out the window part the marks share (the capture's markPrefix, roadmap M3.F38);
+/// the control type; the name in single quotes, escaped and cut as in get_ui_elements' text
 /// format (<see cref="UIElementTextFormat"/>) but at <see cref="MaxNameLength"/> characters, left out when there is none;
 /// <c>#</c> and the automation id (quoted the same way when it holds a space, a quote, a backslash, '@', '[' or ']'), when
 /// there is one; <c>center=(x,y)</c>; and <c>[disabled]</c> for a disabled element.</para>
