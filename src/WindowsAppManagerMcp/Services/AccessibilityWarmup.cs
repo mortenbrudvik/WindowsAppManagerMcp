@@ -432,7 +432,10 @@ public sealed class AccessibilityWarmup : IAccessibilityWarmup
 
     /// <summary>
     /// The page's Document of a render widget: the widget's own element when it is the Document, or the first Document
-    /// within <see cref="DocumentSearchDepth"/> levels of panes and groups below it. Null when there is none (yet).
+    /// within <see cref="DocumentSearchDepth"/> levels of panes and groups below it, or else the widget's own element when
+    /// its children are Chromium's: WebView2 (runtime 155, roadmap M3.F33) gives the widget the Win32 pane "Chrome Legacy
+    /// Window", whose children are the page's own elements with no Document element above them. Null when there is none
+    /// (yet).
     /// </summary>
     private IUiaNode? FindDocument(nint widget, CancellationToken cancellationToken)
     {
@@ -441,9 +444,16 @@ public sealed class AccessibilityWarmup : IAccessibilityWarmup
             return null;
         }
 
-        return IsDocument(_tree.Read(root).ControlType)
-            ? root
-            : FindDocumentBelow(root, DocumentSearchDepth, DocumentSearchListings, _ => true, cancellationToken);
+        if (IsDocument(_tree.Read(root).ControlType))
+        {
+            return root;
+        }
+
+        return FindDocumentBelow(root, DocumentSearchDepth, DocumentSearchListings, _ => true, cancellationToken) ??
+               (_tree.GetChildElements(root, cancellationToken).Any(child =>
+                   string.Equals(child.Properties.FrameworkId, ChromeFrameworkId, StringComparison.OrdinalIgnoreCase))
+                   ? root
+                   : null);
     }
 
     /// <summary>

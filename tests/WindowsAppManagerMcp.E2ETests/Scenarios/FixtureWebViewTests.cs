@@ -65,9 +65,16 @@ public class FixtureWebViewTests
         warmup!.Host.Should().Be(WebContentHost.WebView2, "the render widget belongs to msedgewebview2.exe");
         warmup.Status.Should().Be(AccessibilityWarmupStatus.Ready, warmup.Warning);
         warmup.DocumentChildCount.Should().BeGreaterThan(0);
-        elements.Should().Contain(e => e.ControlType == "Document", "the page's document is in the tree");
-        elements.Should().Contain(e => e.ControlType == "Button" && e.Name == FixtureContract.WebButtonName,
-            "the read after the warm-up sees the page's own elements, not an empty document");
+
+        // The page lies below Chromium's own views, deeper than a walk of the window reaches (WebView2 runtime 155, roadmap
+        // M3.F35); the render widget's own window holds it: its element is the "Chrome Legacy Window" pane whose children are
+        // the page's elements, with no Document element above them
+        var widget = E2ENative.FindVisibleChild(window, "Chrome_RenderWidgetHostHWND");
+        widget.Should().NotBe(nint.Zero, "WebView2 renders the page into a Chrome_RenderWidgetHostHWND inside the window");
+        var page = await e2e.Server.UiElements.GetUIElementsAsync(widget, maxDepth: 3);
+        page.Success.Should().BeTrue(page.Error);
+        UiaReads.Flatten(page.Elements).Should().Contain(e => e.ControlType == "Button" && e.Name == FixtureContract.WebButtonName,
+            "the read after the warm-up sees the page's own elements, not an empty page");
     }
 
     [DesktopNoInputFact(Requires = typeof(WebView2Runtime))]

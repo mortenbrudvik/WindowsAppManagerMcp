@@ -88,6 +88,33 @@ internal static class E2ENative
         return text.ToString();
     }
 
+    /// <summary>The first visible window of <paramref name="className"/> below <paramref name="parent"/>, or zero.</summary>
+    public static nint FindVisibleChild(nint parent, string className)
+    {
+        nint found = 0;
+        EnumChildWindows(parent, (child, _) =>
+        {
+            if (IsWindowVisible(child) && GetClassName(child) == className)
+            {
+                found = child;
+                return false;
+            }
+
+            return true;
+        }, 0);
+        return found;
+    }
+
+    private delegate bool EnumChildProc(nint hwnd, nint lParam);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool EnumChildWindows(nint parent, EnumChildProc callback, nint lParam);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool IsWindowVisible(nint hwnd);
+
     public static string GetClassName(nint hwnd)
     {
         var name = new StringBuilder(256);
