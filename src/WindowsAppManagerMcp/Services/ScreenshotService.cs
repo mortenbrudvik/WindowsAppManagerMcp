@@ -321,15 +321,22 @@ public class ScreenshotService : IScreenshotService
             window = WithClientArea(window, capture);
 
             // The elements were read before the pixels: a window that moved or resized meanwhile shows them elsewhere than
-            // their bounds say, so a click at a mark would land beside its element. No captureId then (roadmap M3.11)
+            // their bounds say, so a click at a mark would land beside its element. No captureId then (roadmap M3.11), and
+            // no marks at all when the caller would rather have none than offset ones (roadmap M3.F32)
             if (walkedWindow != null && window != null &&
                 (walkedWindow.ProcessId != window.ProcessId || !CoordinateSpaceResolver.WithinTolerance(walkedWindow.WindowRect, window.WindowRect)))
             {
                 warnings.Add(CaptureWarnings.Format(CaptureWarnings.WindowMoved,
                     $"the window moved or resized while its elements were read (its rectangle was {Describe(walkedWindow.WindowRect)}, " +
-                    $"then {Describe(window.WindowRect)}), so the marks and the legend are offset from the controls in the image, and " +
-                    "the capture has no captureId. Capture it again, or act by ref with element_action."));
+                    $"then {Describe(window.WindowRect)}), so " + (overlays.MarkMovedWindow
+                        ? "the marks and the legend are offset from the controls in the image, and the capture has no captureId. " +
+                          "Capture it again, or act by ref with element_action."
+                        : "no marks were drawn and the capture has no captureId. Read it again, or act by ref with element_action.")));
                 window = null;
+                if (!overlays.MarkMovedWindow)
+                {
+                    elements = [];
+                }
             }
             var monitor = _monitorService.GetMonitorForWindow(windowHandle);
             AddDpiWarning(windowHandle, monitor, warnings);

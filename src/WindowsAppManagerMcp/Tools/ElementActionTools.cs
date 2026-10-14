@@ -283,44 +283,16 @@ public partial class ElementActionTools
             observe, cancellationToken).ConfigureAwait(false);
     }
 
-    /// <summary>
-    /// Why observe cannot be honoured (checked before anything is done), or null: the observation is get_desktop_state's
-    /// read, so it follows get_desktop_state being served, as the screenshot follows capture_window.
-    /// </summary>
-    private string? ObserveError(ObserveMode observe) => observe switch
-    {
-        ObserveMode.None => null,
-        _ when _desktopState == null => throw new InvalidOperationException("observe needs the desktop state service; the server always registers it."),
-        _ when _desktopState.StateUnavailable() is { } stateUnavailable => stateUnavailable,
-        ObserveMode.Screenshot => _desktopState.ScreenshotUnavailable() is { } unavailable
-            ? $"observe 'screenshot': {unavailable} Use observe 'state'."
-            : null,
-        _ => null
-    };
+    /// <summary>Why observe cannot be honoured (checked before anything is done), or null (<see cref="ActionObservation.Error"/>).</summary>
+    private string? ObserveError(ObserveMode observe) => ActionObservation.Error(_desktopState, observe);
 
     /// <summary>
     /// The tool result: the action's result, with observe (roadmap M3.12) get_desktop_state's observation of the element's window
     /// (of the window in front once that closed) after the action, and with 'screenshot' its capture as image content first.
     /// </summary>
-    private async Task<CallToolResult> ObserveAsync(ElementActionResult result, ObserveMode observe, CancellationToken cancellationToken)
-    {
-        if (observe == ObserveMode.None || _desktopState == null)
-        {
-            return ToolImages.Create(result, null, isError: !result.Success, ToolJson.SerializerOptions);
-        }
-
-        var include = observe == ObserveMode.Screenshot
-            ? new HashSet<DesktopStateSection>(DesktopStateRequest.DefaultInclude) { DesktopStateSection.Screenshot }
-            : DesktopStateRequest.DefaultInclude;
-        // A window the action was refused for (a denied app, the agent's own host) is not read by name: the agent asked for an
-        // action there, not a read, so the observation follows the default rules for the window in front
-        var refusedWindow = result.ErrorCode is nameof(InputErrorCode.TargetDeniedByPolicy) or nameof(InputErrorCode.TargetIsAgentHost);
-        nint? window = !refusedWindow && result.WindowHandle != 0 && _windowService?.IsValidWindow((nint)result.WindowHandle) != false
-            ? (nint)result.WindowHandle
-            : null;
-        var snapshot = await _desktopState.GetStateAsync(DesktopStateTools.Request(window, include), cancellationToken).ConfigureAwait(false);
-        return ToolImages.Create(result with { Observed = snapshot.State }, snapshot.Image, isError: !result.Success, ToolJson.SerializerOptions);
-    }
+    private Task<CallToolResult> ObserveAsync(ElementActionResult result, ObserveMode observe, CancellationToken cancellationToken) =>
+        ActionObservation.ResultAsync(result, result.Success, result.WindowHandle, ActionObservation.RefusesWindow(result.ErrorCode), observe,
+            (acted, observed) => acted with { Observed = observed }, _desktopState, _windowService, cancellationToken);
 
     /// <summary>menu_path (roadmap M3.5): the path's items, each acted on through element_action by the menu path service.</summary>
     private async Task<ElementActionResult> MenuPathAsync(

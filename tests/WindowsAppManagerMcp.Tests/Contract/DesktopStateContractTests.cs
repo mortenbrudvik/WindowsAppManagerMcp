@@ -5,7 +5,7 @@ using WindowsAppManagerMcp.Infrastructure;
 namespace WindowsAppManagerMcp.Tests.Contract;
 
 /// <summary>
-/// Contract: get_desktop_state and element_action's observe (roadmap M3.12) through the production tool and filter
+/// Contract: get_desktop_state and the action tools' observe (roadmap M3.12, M3.F32) through the production tool and filter
 /// registrations, with the real observation over mocked services (<see cref="ContractServices"/>). The typical observation
 /// has every default section and no image; a screenshot comes as image content before the JSON, with a captureId the mouse
 /// tools resolve; the text block round-trips into the payload type the tools declare; and a screenshot is refused before
@@ -83,6 +83,31 @@ public class DesktopStateContractTests
     }
 
     [Fact]
+    public async Task ScreenshotMarks_ComeOnTheCapture_WithTheElementLinesTheyMark()
+    {
+        // Arrange - roadmap M3.F32
+        using var services = new ContractServices(ContractMode.Typical);
+        await using var server = await StartAsync(services);
+
+        // Act
+        var result = await server.CallToolAsync("get_desktop_state", new Dictionary<string, object?>
+        {
+            ["handle"] = TypicalDesktop.NotepadHandle,
+            ["include"] = new[] { "elements", "screenshot" },
+            ["screenshotMarks"] = true
+        });
+
+        // Assert - the capture went through capture_with_elements' path, and is registered as every capture is
+        result.IsError.Should().NotBe(true);
+        result.Content[0].Should().BeOfType<ImageContentBlock>();
+        var state = result.Payload<DesktopState>();
+        state.Elements!.Text.Should().StartWith("w4120035e");
+        services.Captures.Find(state.Screenshot!.CaptureId!).Should().NotBeNull();
+        services.UiElements.Verify(u => u.GetUIElementsAsync((nint)TypicalDesktop.NotepadHandle, It.IsAny<int>(), It.IsAny<UIElementFilter?>(),
+            It.IsAny<IProgress<OperationProgress>?>(), It.IsAny<CancellationToken>()), Times.Once, "the marks are the elements walk's own");
+    }
+
+    [Fact]
     public async Task AnUnknownIncludeValue_IsRefused_WithTheAllowedValues()
     {
         using var services = new ContractServices(ContractMode.Typical);
@@ -136,6 +161,48 @@ public class DesktopStateContractTests
         payload.Should().BeEquivalentTo(TypicalDesktop.ElementActionDone(new ElementActionRequest("w4120035e17", ElementActionKind.SetValue)));
     }
 
+    [Theory]
+    [InlineData("click")]
+    [InlineData("right_click")]
+    [InlineData("double_click")]
+    [InlineData("type_text")]
+    [InlineData("send_keys")]
+    [InlineData("respond_to_dialog")]
+    public async Task AnInputOrDialogTool_WithObserveScreenshot_ReturnsTheCaptureFirst_AndItsOwnResultWithTheObservation(string tool)
+    {
+        // Arrange - roadmap M3.F32: observe as element_action has it
+        using var services = new ContractServices(ContractMode.Typical);
+        await using var server = await StartAsync(services);
+        var arguments = new Dictionary<string, object?>(EveryToolContractTests.ArgumentsFor(tool)) { ["observe"] = "screenshot" };
+
+        // Act
+        var result = await server.CallToolAsync(tool, arguments);
+
+        // Assert
+        result.IsError.Should().NotBe(true);
+        result.Content[0].Should().BeOfType<ImageContentBlock>();
+        var json = Json(result);
+        json.GetProperty("success").GetBoolean().Should().BeTrue();
+        json.GetProperty("observed").GetProperty("windowHandle").GetInt64().Should().Be(TypicalDesktop.NotepadHandle);
+        json.GetProperty("observed").GetProperty("screenshot").GetProperty("captureId").GetString().Should().NotBeNullOrEmpty();
+    }
+
+    [Theory]
+    [InlineData("click")]
+    [InlineData("type_text")]
+    [InlineData("send_keys")]
+    [InlineData("respond_to_dialog")]
+    public async Task AnInputOrDialogTool_WithoutObserve_KeepsItsResultAlone(string tool)
+    {
+        using var services = new ContractServices(ContractMode.Typical);
+        await using var server = await StartAsync(services);
+
+        var result = await server.CallToolAsync(tool, EveryToolContractTests.ArgumentsFor(tool).ToDictionary());
+
+        result.Content.Should().ContainSingle();
+        Json(result).TryGetProperty("observed", out _).Should().BeFalse();
+    }
+
     [Fact]
     public async Task TheIncludeValues_AreListedInTheInputSchema()
     {
@@ -148,6 +215,8 @@ public class DesktopStateContractTests
     [Theory]
     [InlineData("get_desktop_state", "include")]
     [InlineData("element_action", "observe")]
+    [InlineData("click", "observe")]
+    [InlineData("send_keys", "observe")]
     public async Task AScreenshot_IsRefusedBeforeAnythingIsReadOrDone_WhenTheUserTurnedCapturesOff(string tool, string argument)
     {
         // Arrange - WAM_TOOLSETS=-capture
@@ -164,6 +233,13 @@ public class DesktopStateContractTests
             arguments["ref"] = "w4120035e17";
             arguments["action"] = "invoke";
         }
+        else if (tool != "get_desktop_state")
+        {
+            foreach (var (name, value) in EveryToolContractTests.ArgumentsFor(tool))
+            {
+                arguments[name] = value;
+            }
+        }
 
         // Act
         var result = await server.CallToolAsync(tool, arguments);
@@ -172,6 +248,7 @@ public class DesktopStateContractTests
         result.IsError.Should().BeTrue();
         result.Content.OfType<TextContentBlock>().Single().Text.Should().Contain("capture_window");
         services.ElementActions.VerifyNoOtherCalls();
+        services.Input.VerifyNoOtherCalls();
         services.UiElements.Verify(u => u.GetUIElementsAsync(It.IsAny<nint>(), It.IsAny<int>(), It.IsAny<UIElementFilter?>(),
             It.IsAny<IProgress<OperationProgress>?>(), It.IsAny<CancellationToken>()), Times.Never);
     }

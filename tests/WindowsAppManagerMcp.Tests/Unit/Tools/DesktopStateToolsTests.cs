@@ -116,6 +116,37 @@ public class DesktopStateToolsTests
         _state.Verify(s => s.GetStateAsync(It.IsAny<DesktopStateRequest>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
+    [Fact]
+    public async Task ScreenshotMarks_AreOffByDefault_AndAskedForWithTheScreenshotAndTheElements()
+    {
+        // roadmap M3.F32
+        await CreateSut().GetDesktopState(include: [DesktopStateSection.Screenshot, DesktopStateSection.Elements]);
+        _request!.ScreenshotMarks.Should().BeFalse();
+
+        await CreateSut().GetDesktopState(include: [DesktopStateSection.Screenshot, DesktopStateSection.Elements], screenshotMarks: true);
+        _request.ScreenshotMarks.Should().BeTrue();
+    }
+
+    [Theory]
+    [InlineData(DesktopStateSection.Elements)]
+    [InlineData(DesktopStateSection.Screenshot)]
+    public async Task ScreenshotMarks_AreRefusedBeforeAnythingIsRead_WithoutTheScreenshotOrTheElements(DesktopStateSection only)
+    {
+        var error = await RefusedAsync(() => CreateSut().GetDesktopState(include: [only, DesktopStateSection.Windows], screenshotMarks: true));
+
+        error.ErrorCode.Should().Be(ToolErrorReporting.InvalidArgumentsErrorCode);
+        error.Message.Should().Contain("'screenshot'").And.Contain("'elements'").And.EndWith("Nothing was read.");
+        _state.Verify(s => s.GetStateAsync(It.IsAny<DesktopStateRequest>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ScreenshotMarks_AreRefused_WithTheDefaultSections_WhichHaveNoScreenshot()
+    {
+        var error = await RefusedAsync(() => CreateSut().GetDesktopState(screenshotMarks: true));
+
+        error.Message.Should().Contain("'screenshot'");
+    }
+
     [Theory]
     [InlineData(DesktopStateScope.Window, ElementSearchScope.Window)]
     [InlineData(DesktopStateScope.WindowAndPopups, ElementSearchScope.WindowAndPopups)]

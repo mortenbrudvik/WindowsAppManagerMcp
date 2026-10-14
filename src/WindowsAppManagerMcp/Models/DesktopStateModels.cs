@@ -50,7 +50,8 @@ public enum DesktopStateScope
 
 /// <summary>
 /// What an action tool returns about the desktop after it acted (roadmap M3.12): nothing, get_desktop_state's observation, or
-/// that observation with a capture of the window. element_action has it; other action tools may gain it later.
+/// that observation with a capture of the window. element_action has it, and so do click, right_click, double_click,
+/// type_text, send_keys and respond_to_dialog (roadmap M3.F32).
 /// </summary>
 [ToolEnum(ToolErrorReporting.InvalidArgumentsErrorCode, "observe value", NullMeans = "none")]
 public enum ObserveMode
@@ -78,6 +79,9 @@ public enum ObserveMode
 /// <param name="MaxWindows">The most window rows.</param>
 /// <param name="ScreenshotMaxLongEdge">The capture's long edge in pixels.</param>
 /// <param name="Timeout">The one deadline of the whole observation: what is not read by then is reported as not read.</param>
+/// <param name="ScreenshotMarks">Draw the window's element lines on the screenshot as Set-of-Marks marks, each tagged with its
+/// line's ref (roadmap M3.F32). The capture then waits for the elements walk, whose elements it marks; it needs both
+/// sections.</param>
 public sealed record DesktopStateRequest(
     nint? Window,
     IReadOnlySet<DesktopStateSection> Include,
@@ -86,7 +90,8 @@ public sealed record DesktopStateRequest(
     ElementSearchScope? Scope,
     int MaxWindows,
     int ScreenshotMaxLongEdge,
-    TimeSpan Timeout)
+    TimeSpan Timeout,
+    bool ScreenshotMarks = false)
 {
     /// <summary>The sections get_desktop_state reads when include is left out: all but the screenshot.</summary>
     public static IReadOnlySet<DesktopStateSection> DefaultInclude { get; } = new HashSet<DesktopStateSection>
@@ -160,7 +165,7 @@ public sealed record DesktopElements(
 public sealed record DesktopStateError(string Section, string ErrorCode, string Error);
 
 /// <summary>
-/// Result of get_desktop_state (roadmap M3.12), and element_action's <c>observed</c>: one compact observation of the desktop.
+/// Result of get_desktop_state (roadmap M3.12), and the action tools' <c>observed</c>: one compact observation of the desktop.
 /// <c>success</c> is false only when the window named is no window; a part that could not be read is listed in
 /// <paramref name="Errors"/> and the rest is still returned.
 /// </summary>

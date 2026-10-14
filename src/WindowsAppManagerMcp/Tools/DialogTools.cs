@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 using WindowsAppManagerMcp.Infrastructure;
 using WindowsAppManagerMcp.Models;
@@ -20,15 +21,20 @@ public class DialogTools
     private readonly IDialogService _dialogs;
     private readonly IFileDialogService _fileDialogs;
     private readonly IWindowService? _windowService;
+    private readonly IDesktopStateService? _desktopState;
 
     /// <param name="dialogs">Reads and answers dialogs.</param>
     /// <param name="fileDialogs">Completes file dialogs.</param>
     /// <param name="windowService">Resolves the window selector (roadmap M2.4); the server always passes it.</param>
-    public DialogTools(IDialogService dialogs, IFileDialogService fileDialogs, IWindowService? windowService = null)
+    /// <param name="desktopState">get_desktop_state's observation, for respond_to_dialog's observe (roadmap M3.F32); the server
+    /// always passes it.</param>
+    public DialogTools(IDialogService dialogs, IFileDialogService fileDialogs, IWindowService? windowService = null,
+        IDesktopStateService? desktopState = null)
     {
         _dialogs = dialogs;
         _fileDialogs = fileDialogs;
         _windowService = windowService;
+        _desktopState = desktopState;
     }
 
     [McpServerTool(Name = "respond_to_dialog", Title = "Respond to Dialog", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = false)]
@@ -45,7 +51,8 @@ public class DialogTools
                  "listed. Refused, with nothing read or done, for apps the user's policy denies (TargetDeniedByPolicy), the " +
                  "agent's own host (TargetIsAgentHost), elevated apps (TargetElevated), and, for a press, while the user has " +
                  "paused input (PausedByUser: stop and ask the user, never try to resume).")]
-    public async Task<DialogResponseResult> RespondToDialog(
+    [ToolResultPayload(typeof(DialogResponseResult))]
+    public async Task<CallToolResult> RespondToDialog(
         [Description("The button to press: ok, cancel, yes, no, abort, retry, ignore, close, help, tryagain, continue (by id, in " +
                      "every language), a control id such as '6', an AutomationId, or the button's visible text. Leave it out to " +
                      "only read the dialog (nothing is pressed). Any button but cancel needs the dialog named by handle or " +
@@ -63,8 +70,11 @@ public class DialogTools
         [Description("The bound of each read and how long the press may block, in milliseconds (default: 5000, min: 1000, " +
                      "max: 30000).")]
         int timeoutMs = DefaultRespondTimeoutMs,
+        [Description(ActionObservation.ObserveDescription)]
+        ObserveMode observe = ObserveMode.None,
         CancellationToken cancellationToken = default)
     {
+        ActionObservation.Check(_desktopState, observe, "Nothing was done.");
         var target = Target(handle, window, allowHostTarget);
         var timeout = TimeSpan.FromMilliseconds(Math.Clamp(timeoutMs, MinTimeoutMs, MaxRespondTimeoutMs));
         if (button != null && string.IsNullOrWhiteSpace(button))
@@ -77,7 +87,12 @@ public class DialogTools
         var result = await _dialogs.RespondAsync(new DialogResponseRequest(target, button, allowHostTarget, timeout), cancellationToken)
             .ConfigureAwait(false);
         cancellationToken.ThrowIfCancellationRequested();
-        return result;
+
+        // The dialog while it is still open (a Help button, an input it refused, a further dialog it waits for); once it
+        // closed, the window in front, usually its owner, is what the agent sees next
+        return await ActionObservation.ResultAsync(result, result.Success, result.DialogClosed == true ? 0 : result.DialogHandle,
+            ActionObservation.RefusesWindow(result.ErrorCode), observe, (answered, observed) => answered with { Observed = observed },
+            _desktopState, _windowService, cancellationToken).ConfigureAwait(false);
     }
 
     [McpServerTool(Name = "file_dialog", Title = "Complete File Dialog", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = false)]

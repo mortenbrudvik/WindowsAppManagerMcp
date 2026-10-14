@@ -681,6 +681,16 @@
               "null"
             ],
             "default": null
+          },
+          "observe": {
+            "description": "'state' adds get_desktop_state's observation of the window acted on (else of the window in front) after the action, as observed; 'screenshot' also a capture of it as image content. Default: 'none'.",
+            "default": "none",
+            "type": "string",
+            "enum": [
+              "none",
+              "state",
+              "screenshot"
+            ]
           }
         },
         "required": [
@@ -1210,6 +1220,16 @@
               "null"
             ],
             "default": null
+          },
+          "observe": {
+            "description": "'state' adds get_desktop_state's observation of the window acted on (else of the window in front) after the action, as observed; 'screenshot' also a capture of it as image content. Default: 'none'.",
+            "default": "none",
+            "type": "string",
+            "enum": [
+              "none",
+              "state",
+              "screenshot"
+            ]
           }
         },
         "required": [
@@ -2626,6 +2646,11 @@
             "description": "The one deadline of the whole call in milliseconds (default: 5000, min: 1000, max: 30000).",
             "type": "integer",
             "default": 5000
+          },
+          "screenshotMarks": {
+            "description": "Draw the window's element lines on the screenshot as Set-of-Marks boxes tagged with their refs (not the popups' lines); the capture then waits for the walk. Needs 'screenshot' and 'elements' in include. Default: false.",
+            "type": "boolean",
+            "default": false
           }
         }
       },
@@ -4515,6 +4540,16 @@
             "description": "The bound of each read and how long the press may block, in milliseconds (default: 5000, min: 1000, max: 30000).",
             "type": "integer",
             "default": 5000
+          },
+          "observe": {
+            "description": "'state' adds get_desktop_state's observation of the window acted on (else of the window in front) after the action, as observed; 'screenshot' also a capture of it as image content. Default: 'none'.",
+            "default": "none",
+            "type": "string",
+            "enum": [
+              "none",
+              "state",
+              "screenshot"
+            ]
           }
         }
       },
@@ -4668,6 +4703,16 @@
               "null"
             ],
             "default": null
+          },
+          "observe": {
+            "description": "'state' adds get_desktop_state's observation of the window acted on (else of the window in front) after the action, as observed; 'screenshot' also a capture of it as image content. Default: 'none'.",
+            "default": "none",
+            "type": "string",
+            "enum": [
+              "none",
+              "state",
+              "screenshot"
+            ]
           }
         },
         "required": [
@@ -4985,6 +5030,16 @@
             "description": "Release modifier keys (Shift, Ctrl, Alt, Windows) that are down before the input is sent, instead of refusing with ModifiersHeld. Set it only when nobody is pressing them (a stuck key) or the user asked. Nothing is released while a modifier of the user's pause hotkey is down. Default: false",
             "type": "boolean",
             "default": false
+          },
+          "observe": {
+            "description": "'state' adds get_desktop_state's observation of the window acted on (else of the window in front) after the action, as observed; 'screenshot' also a capture of it as image content. Default: 'none'.",
+            "default": "none",
+            "type": "string",
+            "enum": [
+              "none",
+              "state",
+              "screenshot"
+            ]
           }
         },
         "required": [
@@ -5996,6 +6051,16 @@
             "description": "Release modifier keys (Shift, Ctrl, Alt, Windows) that are down before the input is sent, instead of refusing with ModifiersHeld. Set it only when nobody is pressing them (a stuck key) or the user asked. Nothing is released while a modifier of the user's pause hotkey is down. Default: false",
             "type": "boolean",
             "default": false
+          },
+          "observe": {
+            "description": "'state' adds get_desktop_state's observation of the window acted on (else of the window in front) after the action, as observed; 'screenshot' also a capture of it as image content. Default: 'none'.",
+            "default": "none",
+            "type": "string",
+            "enum": [
+              "none",
+              "state",
+              "screenshot"
+            ]
           }
         },
         "required": [

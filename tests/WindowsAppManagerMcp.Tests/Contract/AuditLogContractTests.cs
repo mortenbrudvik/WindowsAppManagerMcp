@@ -248,6 +248,21 @@ public class AuditLogContractTests
     }
 
     [Fact]
+    public async Task Click_RecordsObserve_ButNotTheObservation()
+    {
+        // Act - roadmap M3.F32: the input tools' observe, as element_action's
+        var (_, lines) = await CallAsync("click", new Dictionary<string, object?>(EveryToolContractTests.ArgumentsFor("click"))
+        {
+            ["observe"] = "state"
+        });
+
+        // Assert
+        var line = lines.Single();
+        line.GetProperty("args").GetProperty("observe").GetString().Should().Be("state");
+        line.GetRawText().Should().NotContain("Problems").And.NotContain("Google Chrome", "the observed elements and windows are never logged");
+    }
+
+    [Fact]
     public async Task RespondToDialog_RecordsTheButton_AndWhetherTheDialogClosed()
     {
         var (_, lines) = await CallAsync("respond_to_dialog", EveryToolContractTests.ArgumentsFor("respond_to_dialog"), NoteTheDialogs);

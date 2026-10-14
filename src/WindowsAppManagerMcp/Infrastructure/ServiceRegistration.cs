@@ -105,7 +105,7 @@ public static class ServiceRegistration
         services.AddSingleton<IUiaActionRunner, UiaActionRunner>();
         services.AddSingleton<IAppWindowProbe, AppWindowProbe>();
         services.AddSingleton<IElementActionService, ElementActionService>();
-        // get_desktop_state (roadmap M3.12) and element_action's observe: one observation through the reads above, under one deadline
+        // get_desktop_state (roadmap M3.12) and the action tools' observe: one observation through the reads above, under one deadline
         services.AddSingleton<IDesktopStateService>(sp => new DesktopStateService(
             sp.GetRequiredService<IWindowService>(), sp.GetRequiredService<IInputSession>(), sp.GetRequiredService<INativeInputWrapper>(),
             sp.GetRequiredService<IElementInspectionService>(), sp.GetRequiredService<IUIElementService>(), sp.GetRequiredService<IPopupService>(),

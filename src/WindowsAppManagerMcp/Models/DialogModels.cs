@@ -59,6 +59,8 @@ public sealed record DialogResponseRequest(nint Window, string? Button, bool All
 /// (a Help or Apply button, an input the dialog refused, or a further dialog it opened, see <paramref name="NextDialog"/>).</param>
 /// <param name="NextDialog">A new dialog the press opened (a confirmation), which the dialog waits for: answer it next. Its
 /// title is at most 200 characters; its ref is the press's openedPopup's (roadmap M3.F19).</param>
+/// <param name="Observed">With observe 'state' or 'screenshot' (roadmap M3.F32): get_desktop_state's observation after the
+/// press, of the dialog while it is open, else of the window in front; serialized last.</param>
 public sealed record DialogResponseResult(
     bool Success,
     long DialogHandle = 0,
@@ -74,7 +76,8 @@ public sealed record DialogResponseResult(
     IReadOnlyList<string>? Warnings = null,
     string? Error = null,
     string? ErrorCode = null,
-    double ElapsedMilliseconds = 0);
+    double ElapsedMilliseconds = 0,
+    DesktopState? Observed = null);
 
 /// <summary>Whether file_dialog opens a file or saves one (roadmap M3.14).</summary>
 [ToolEnum(ToolErrorReporting.InvalidArgumentsErrorCode, "action")]

@@ -53,9 +53,9 @@ public class InputSimulationToolsSpaceTests
     private InputSimulationTools CreateSut() => new(_input.Object, _windows.Object, _resolver.Object);
 
     [Fact]
-    public void Click_WithoutSpace_SendsTheScreenPointAsBefore()
+    public async Task Click_WithoutSpace_SendsTheScreenPointAsBefore()
     {
-        var result = CreateSut().Click(300, 400);
+        var result = await CreateSut().Click(300, 400).Payload<ClickResult>();
 
         _sentPoint.Should().Be((300, 400));
         result.Requested.Should().BeNull("a screen point needs no echo");
@@ -63,10 +63,10 @@ public class InputSimulationToolsSpaceTests
     }
 
     [Fact]
-    public void Click_WithACaptureId_ConvertsTheImagePoint_AndTargetsTheCapturedWindow()
+    public async Task Click_WithACaptureId_ConvertsTheImagePoint_AndTargetsTheCapturedWindow()
     {
         // Act - space is left out: a captureId means image coordinates
-        var result = CreateSut().Click(50, 25, captureId: CaptureId);
+        var result = await CreateSut().Click(50, 25, captureId: CaptureId).Payload<ClickResult>();
 
         // Assert
         _sentPoint.Should().Be((208, 281));
@@ -79,38 +79,38 @@ public class InputSimulationToolsSpaceTests
     }
 
     [Fact]
-    public void Click_ImageSpace_WithTheCapturedWindowAsWindowHandle_KeepsItsHostRule()
+    public async Task Click_ImageSpace_WithTheCapturedWindowAsWindowHandle_KeepsItsHostRule()
     {
-        CreateSut().Click(50, 25, windowHandle: Captured, allowHostTarget: true, space: CoordinateSpace.Image, captureId: CaptureId);
+        await CreateSut().Click(50, 25, windowHandle: Captured, allowHostTarget: true, space: CoordinateSpace.Image, captureId: CaptureId);
 
         _sentTarget.Should().Be(InputTarget.Window(Captured, allowHostTarget: true));
     }
 
     [Fact]
-    public void Click_ImageSpace_WithAnotherWindowHandle_IsRefused_AndSendsNothing()
+    public async Task Click_ImageSpace_WithAnotherWindowHandle_IsRefused_AndSendsNothing()
     {
         // A capture of window A must never become a click on window B
         var act = () => CreateSut().Click(50, 25, windowHandle: Other, captureId: CaptureId);
 
-        act.Should().Throw<ToolErrorException>().Which.ErrorCode.Should().Be(ToolErrorReporting.InvalidArgumentsErrorCode);
+        (await act.Should().ThrowAsync<ToolErrorException>()).Which.ErrorCode.Should().Be(ToolErrorReporting.InvalidArgumentsErrorCode);
         _sentPoint.Should().BeNull();
     }
 
     [Fact]
-    public void Click_ImageSpace_WithAllowHostTargetButNoHandle_DoesNotLiftTheHostGuard()
+    public async Task Click_ImageSpace_WithAllowHostTargetButNoHandle_DoesNotLiftTheHostGuard()
     {
-        CreateSut().Click(50, 25, allowHostTarget: true, captureId: CaptureId);
+        await CreateSut().Click(50, 25, allowHostTarget: true, captureId: CaptureId);
 
         _sentTarget.Should().Be(InputTarget.Window(Captured, allowHostTarget: false));
     }
 
     [Fact]
-    public void Click_ImageSpace_OfAScreenCapture_KeepsTheCallsTarget()
+    public async Task Click_ImageSpace_OfAScreenCapture_KeepsTheCallsTarget()
     {
         // A monitor capture names no window: the click has the usual rules for the point, plus the recheck
         _resolver.Setup(r => r.FromImage("c4-abcdef", 100, 50)).Returns(PointResolution.At(-1820, 50, () => null));
 
-        CreateSut().Click(100, 50, captureId: "c4-abcdef");
+        await CreateSut().Click(100, 50, captureId: "c4-abcdef");
 
         _sentPoint.Should().Be((-1820, 50));
         _sentTarget.Should().Be(InputTarget.None);
@@ -121,11 +121,11 @@ public class InputSimulationToolsSpaceTests
     [InlineData(InputErrorCode.CaptureNotFound)]
     [InlineData(InputErrorCode.StaleCapture)]
     [InlineData(InputErrorCode.CoordinatesOutOfBounds)]
-    public void Click_AnImagePointThatCannotBeConverted_FailsWithItsCode_AndSendsNothing(InputErrorCode code)
+    public async Task Click_AnImagePointThatCannotBeConverted_FailsWithItsCode_AndSendsNothing(InputErrorCode code)
     {
         _resolver.Setup(r => r.FromImage(CaptureId, 50, 25)).Returns(PointResolution.Fail(code, "why"));
 
-        var result = CreateSut().Click(50, 25, captureId: CaptureId);
+        var result = await CreateSut().Click(50, 25, captureId: CaptureId).Payload<ClickResult>();
 
         result.Success.Should().BeFalse();
         result.ErrorCode.Should().Be(code);
@@ -135,42 +135,42 @@ public class InputSimulationToolsSpaceTests
     }
 
     [Fact]
-    public void Click_ImageSpaceWithoutACaptureId_IsInvalidArguments()
+    public async Task Click_ImageSpaceWithoutACaptureId_IsInvalidArguments()
     {
         var act = () => CreateSut().Click(50, 25, space: CoordinateSpace.Image);
 
-        act.Should().Throw<ToolErrorException>().Which.Message.Should().Contain("captureId");
+        (await act.Should().ThrowAsync<ToolErrorException>()).Which.Message.Should().Contain("captureId");
     }
 
     [Theory]
     [InlineData(CoordinateSpace.Screen)]
     [InlineData(CoordinateSpace.Window)]
     [InlineData(CoordinateSpace.Client)]
-    public void Click_ACaptureIdWithAnotherSpace_IsInvalidArguments(CoordinateSpace space)
+    public async Task Click_ACaptureIdWithAnotherSpace_IsInvalidArguments(CoordinateSpace space)
     {
         var act = () => CreateSut().Click(50, 25, windowHandle: Captured, space: space, captureId: CaptureId);
 
-        act.Should().Throw<ToolErrorException>().Which.ErrorCode.Should().Be(ToolErrorReporting.InvalidArgumentsErrorCode);
+        (await act.Should().ThrowAsync<ToolErrorException>()).Which.ErrorCode.Should().Be(ToolErrorReporting.InvalidArgumentsErrorCode);
         _sentPoint.Should().BeNull();
     }
 
     [Theory]
     [InlineData(CoordinateSpace.Window)]
     [InlineData(CoordinateSpace.Client)]
-    public void Click_WindowOrClientSpace_WithoutAWindow_IsInvalidArguments(CoordinateSpace space)
+    public async Task Click_WindowOrClientSpace_WithoutAWindow_IsInvalidArguments(CoordinateSpace space)
     {
         var act = () => CreateSut().Click(10, 5, space: space);
 
-        act.Should().Throw<ToolErrorException>().Which.Message.Should().Contain("windowHandle");
+        (await act.Should().ThrowAsync<ToolErrorException>()).Which.Message.Should().Contain("windowHandle");
     }
 
     [Theory]
     [InlineData(CoordinateSpace.Window, 110, 205)]
     [InlineData(CoordinateSpace.Client, 118, 236)]
-    public void Click_WindowOrClientSpace_IsRelativeToTheTarget(CoordinateSpace space, int screenX, int screenY)
+    public async Task Click_WindowOrClientSpace_IsRelativeToTheTarget(CoordinateSpace space, int screenX, int screenY)
     {
         // Act
-        var result = CreateSut().Click(10, 5, windowHandle: Captured, space: space);
+        var result = await CreateSut().Click(10, 5, windowHandle: Captured, space: space).Payload<ClickResult>();
 
         // Assert
         _resolver.Verify(r => r.FromWindow(space, Captured, 10, 5), Times.Once);
@@ -181,14 +181,14 @@ public class InputSimulationToolsSpaceTests
     }
 
     [Fact]
-    public void Click_WindowSpace_WithASelector_IsRelativeToTheWindowItNames()
+    public async Task Click_WindowSpace_WithASelector_IsRelativeToTheWindowItNames()
     {
         // Arrange
         var selector = new WindowSelector { ProcessName = "notepad" };
         _windows.Setup(w => w.ResolveWindow(selector)).Returns(WindowResolution.Found(TestDataFactory.CreateWindowInfo(handleValue: (int)Captured)));
 
         // Act
-        CreateSut().Click(10, 5, window: selector, space: CoordinateSpace.Window);
+        await CreateSut().Click(10, 5, window: selector, space: CoordinateSpace.Window);
 
         // Assert - the selector's own recheck stays, the point's is added
         _resolver.Verify(r => r.FromWindow(CoordinateSpace.Window, Captured, 10, 5), Times.Once);
@@ -198,13 +198,13 @@ public class InputSimulationToolsSpaceTests
     }
 
     [Fact]
-    public void RightClick_DoubleClick_AndMouseMove_ConvertTheirPoints()
+    public async Task RightClick_DoubleClick_AndMouseMove_ConvertTheirPoints()
     {
         var sut = CreateSut();
 
-        sut.RightClick(50, 25, captureId: CaptureId).Requested!.Space.Should().Be("image");
+        (await sut.RightClick(50, 25, captureId: CaptureId).Payload<ClickResult>()).Requested!.Space.Should().Be("image");
         _sentPoint.Should().Be((208, 281));
-        sut.DoubleClick(10, 5, windowHandle: Captured, space: CoordinateSpace.Window).X.Should().Be(110);
+        (await sut.DoubleClick(10, 5, windowHandle: Captured, space: CoordinateSpace.Window).Payload<ClickResult>()).X.Should().Be(110);
         _sentPoint.Should().Be((110, 205));
         sut.MouseMove(10, 5, windowHandle: Captured, space: CoordinateSpace.Client).Requested.Should().Be(new RequestedPoint(10, 5, "client"));
         _sentPoint.Should().Be((118, 236));

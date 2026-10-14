@@ -131,11 +131,11 @@ public class ToolPayloadBudgetTests
     /// <summary>
     /// The token budget of the whole tools/list result (every tool's name, title, description, schemas and annotations), as
     /// clients that load every tool up front pay it for the whole session. A ratchet, not a margin: it sits just above the
-    /// measured size (51,608 tokens, 206,430 bytes for 64 tools, October 2026, after M3.F25's forceAccessibility, M3.F15's rowHeaders and selectedText, M3.F24's UI Automation timeout of the browser tools and M3.F27's placement watch), so every addition to the surface is a decision. When a change
+    /// measured size (52,184 tokens, 208,734 bytes for 64 tools, October 2026, after M3.F32's screenshotMarks and observe on six action tools), so every addition to the surface is a decision. When a change
     /// adds to the surface on purpose, raise it in the same change by what the failure message measures; when a change
     /// trims descriptions, lower it.
     /// </summary>
-    public const int ToolListTokenBudget = 51_644;
+    public const int ToolListTokenBudget = 52_220;
 
     public static TheoryData<string> ServedTools() => EveryToolContractTests.ServedTools();
 

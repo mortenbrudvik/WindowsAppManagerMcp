@@ -408,7 +408,7 @@ public class WindowSelectorToolTests
     #region The input tools
 
     [Fact]
-    public void AnInputTool_WithASelector_HandsTheInputServiceARecheck_ForInsideTheGate()
+    public async Task AnInputTool_WithASelector_HandsTheInputServiceARecheck_ForInsideTheGate()
     {
         // Arrange - the input service waits for the gate (up to 30 s) after the selector was resolved
         var input = new Mock<IInputSimulationService>();
@@ -421,7 +421,7 @@ public class WindowSelectorToolTests
         _windows.Setup(w => w.ResolveWindow(selector)).Returns(WindowResolution.Found(NotepadWindow));
 
         // Act
-        tools.Click(5, 6, window: selector);
+        await tools.Click(5, 6, window: selector);
 
         // Assert - still the same document: no refusal; then the user switches the tab, and the recheck says so
         passed!.Value.SelectorRecheck.Should().NotBeNull();
@@ -433,7 +433,7 @@ public class WindowSelectorToolTests
     }
 
     [Fact]
-    public void AnInputTool_WhoseTitleRegexTimesOutInTheRecheck_GetsInvalidArguments_NotHandleMismatch()
+    public async Task AnInputTool_WhoseTitleRegexTimesOutInTheRecheck_GetsInvalidArguments_NotHandleMismatch()
     {
         // Arrange - resolved while the title was short; inside the gate the title makes the pattern time out
         var input = new Mock<IInputSimulationService>();
@@ -444,7 +444,7 @@ public class WindowSelectorToolTests
         var tools = new InputSimulationTools(input.Object, _windows.Object);
         var selector = new WindowSelector { ProcessName = "notepad", TitleRegex = "^(a+)+$" };
         _windows.Setup(w => w.ResolveWindow(selector)).Returns(WindowResolution.Found(NotepadWindow with { Title = "aaa" }));
-        tools.Click(5, 6, window: selector);
+        await tools.Click(5, 6, window: selector);
         _windows.Setup(w => w.GetWindowInfo((nint)Notepad)).Returns(NotepadWindow with { Title = new string('a', 5000) + "!" });
 
         // Act
@@ -456,7 +456,7 @@ public class WindowSelectorToolTests
     }
 
     [Fact]
-    public void AnInputTool_WithAHandleOnly_HasNoSelectorToRecheck()
+    public async Task AnInputTool_WithAHandleOnly_HasNoSelectorToRecheck()
     {
         var input = new Mock<IInputSimulationService>();
         InputTarget? passed = null;
@@ -464,13 +464,13 @@ public class WindowSelectorToolTests
             .Callback((int _, int _, InputTarget target, bool _, CancellationToken _) => passed = target)
             .Returns(new ClickResult(true, 5, 6, "left"));
 
-        new InputSimulationTools(input.Object, _windows.Object).Click(5, 6, windowHandle: Notepad);
+        await new InputSimulationTools(input.Object, _windows.Object).Click(5, 6, windowHandle: Notepad);
 
         passed!.Value.SelectorRecheck.Should().BeNull();
     }
 
     [Fact]
-    public void Click_WithASelector_TargetsTheResolvedWindow_AsWindowHandle()
+    public async Task Click_WithASelector_TargetsTheResolvedWindow_AsWindowHandle()
     {
         // Arrange - the resolved window goes to the input service as windowHandle would: its guard checks it there
         var input = new Mock<IInputSimulationService>();
@@ -479,7 +479,7 @@ public class WindowSelectorToolTests
         var tools = new InputSimulationTools(input.Object, _windows.Object);
 
         // Act
-        tools.Click(5, 6, window: NotepadSelector);
+        await tools.Click(5, 6, window: NotepadSelector);
 
         // Assert
         input.Verify(i => i.Click(5, 6, new InputTarget((nint)Notepad, false), false, It.IsAny<CancellationToken>()), Times.Once);
@@ -507,6 +507,8 @@ public class WindowSelectorToolTests
     public async Task TypeText_WithABareForegroundSelectorAndAllowHostTarget_GivesAllowHostTargetNoWindow_SoItHasNoEffect()
     {
         var input = new Mock<IInputSimulationService>();
+        input.Setup(i => i.TypeTextAsync(It.IsAny<string>(), It.IsAny<int>(), It.IsAny<InputTarget>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new TypeTextResult(true, "hello", 5));
         var tools = new InputSimulationTools(input.Object, _windows.Object);
 
         await tools.TypeText("hello", window: new WindowSelector { Foreground = true }, allowHostTarget: true);
@@ -536,16 +538,18 @@ public class WindowSelectorToolTests
     }
 
     [Fact]
-    public void AllowHostTarget_WithASelectorThatNamesTheHandle_IsPassedOn()
+    public async Task AllowHostTarget_WithASelectorThatNamesTheHandle_IsPassedOn()
     {
         // Arrange - window.handle with the process it must still be: the window was named on purpose
         var named = new WindowSelector { Handle = Notepad, ProcessId = 200 };
         _windows.Setup(w => w.ResolveWindow(named)).Returns(WindowResolution.Found(NotepadWindow));
         var input = new Mock<IInputSimulationService>();
+        input.Setup(i => i.Click(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<InputTarget>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Returns(new ClickResult(true, 5, 6, "left"));
         var tools = new InputSimulationTools(input.Object, _windows.Object);
 
         // Act
-        tools.Click(5, 6, window: named, allowHostTarget: true);
+        await tools.Click(5, 6, window: named, allowHostTarget: true);
 
         // Assert
         input.Verify(i => i.Click(5, 6, new InputTarget((nint)Notepad, true), false, It.IsAny<CancellationToken>()), Times.Once);

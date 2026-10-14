@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 using WindowsAppManagerMcp.Infrastructure;
 using WindowsAppManagerMcp.Models;
@@ -75,9 +76,12 @@ public class InputSimulationTools
         " While the user has paused input with the pause hotkey, nothing is sent (PausedByUser): stop and ask the user, and never try to resume." +
         " Refused while a modifier key is held down (ModifiersHeld) unless releaseHeldModifiers is true, and after waiting 30 s for another call (InputBusy).";
 
+    private const string NothingSent = "Nothing was sent.";
+
     private readonly IInputSimulationService _inputService;
     private readonly IWindowService? _windowService;
     private readonly ICoordinateSpaceResolver? _coordinates;
+    private readonly IDesktopStateService? _desktopState;
 
     /// <param name="inputService">The guarded input.</param>
     /// <param name="windowService">Resolves the window selector (roadmap M2.4); the server always passes it.</param>
@@ -85,18 +89,21 @@ public class InputSimulationTools
     /// Converts window, client and image points to screen points (roadmap M3.11); the server always passes it. Without it
     /// only screen points can be sent.
     /// </param>
+    /// <param name="desktopState">get_desktop_state's observation, for observe (roadmap M3.F32); the server always passes it.</param>
     public InputSimulationTools(IInputSimulationService inputService, IWindowService? windowService = null,
-        ICoordinateSpaceResolver? coordinates = null)
+        ICoordinateSpaceResolver? coordinates = null, IDesktopStateService? desktopState = null)
     {
         _inputService = inputService;
         _windowService = windowService;
         _coordinates = coordinates;
+        _desktopState = desktopState;
     }
 
     [McpServerTool(Name = "click", Title = "Click", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = false)]
     [Description("Perform a left mouse click at the specified screen coordinates, or at a point of a capture's image (space)." + ClickTargetNote +
                  " Mouse results also report actualX and actualY, the cursor position afterwards.")]
-    public ClickResult Click(
+    [ToolResultPayload(typeof(ClickResult))]
+    public async Task<CallToolResult> Click(
         [Description(XDescription)]
         int x,
         [Description(YDescription)]
@@ -113,21 +120,27 @@ public class InputSimulationTools
         CoordinateSpace? space = null,
         [Description(CaptureIdDescription)]
         string? captureId = null,
+        [Description(ActionObservation.ObserveDescription)]
+        ObserveMode observe = ObserveMode.None,
         CancellationToken cancellationToken = default)
     {
+        ActionObservation.Check(_desktopState, observe, NothingSent);
         var point = Point(x, y, space, captureId, windowHandle, window, allowHostTarget);
         if (point.Failure is { } failure)
         {
-            return new ClickResult(false, x, y, "left", failure.Error, failure.ErrorCode) { Requested = point.Requested };
+            return await ObserveAsync(new ClickResult(false, x, y, "left", failure.Error, failure.ErrorCode) { Requested = point.Requested },
+                point.Target, observe, cancellationToken).ConfigureAwait(false);
         }
 
-        return Echo(_inputService.Click(point.X, point.Y, point.Target, releaseHeldModifiers, cancellationToken), point.Requested);
+        return await ObserveAsync(Echo(_inputService.Click(point.X, point.Y, point.Target, releaseHeldModifiers, cancellationToken),
+            point.Requested), point.Target, observe, cancellationToken).ConfigureAwait(false);
     }
 
     [McpServerTool(Name = "right_click", Title = "Right-Click", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = false)]
     [Description("Perform a right mouse click at the specified screen coordinates, or at a point of a capture's image (space)." +
                  " In a terminal (console, Windows Terminal, PuTTY, and anywhere in VS Code) a right click pastes the clipboard, so there it follows send_keys' paste rule (PasteNotAllowed)." + ClickTargetNote)]
-    public ClickResult RightClick(
+    [ToolResultPayload(typeof(ClickResult))]
+    public async Task<CallToolResult> RightClick(
         [Description(XDescription)]
         int x,
         [Description(YDescription)]
@@ -144,20 +157,26 @@ public class InputSimulationTools
         CoordinateSpace? space = null,
         [Description(CaptureIdDescription)]
         string? captureId = null,
+        [Description(ActionObservation.ObserveDescription)]
+        ObserveMode observe = ObserveMode.None,
         CancellationToken cancellationToken = default)
     {
+        ActionObservation.Check(_desktopState, observe, NothingSent);
         var point = Point(x, y, space, captureId, windowHandle, window, allowHostTarget);
         if (point.Failure is { } failure)
         {
-            return new ClickResult(false, x, y, "right", failure.Error, failure.ErrorCode) { Requested = point.Requested };
+            return await ObserveAsync(new ClickResult(false, x, y, "right", failure.Error, failure.ErrorCode) { Requested = point.Requested },
+                point.Target, observe, cancellationToken).ConfigureAwait(false);
         }
 
-        return Echo(_inputService.RightClick(point.X, point.Y, point.Target, releaseHeldModifiers, cancellationToken), point.Requested);
+        return await ObserveAsync(Echo(_inputService.RightClick(point.X, point.Y, point.Target, releaseHeldModifiers, cancellationToken),
+            point.Requested), point.Target, observe, cancellationToken).ConfigureAwait(false);
     }
 
     [McpServerTool(Name = "double_click", Title = "Double-Click", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = false)]
     [Description("Perform a double left click at the specified screen coordinates, or at a point of a capture's image (space). Useful for opening files, selecting words, or other double-click actions." + ClickTargetNote)]
-    public ClickResult DoubleClick(
+    [ToolResultPayload(typeof(ClickResult))]
+    public async Task<CallToolResult> DoubleClick(
         [Description(XDescription)]
         int x,
         [Description(YDescription)]
@@ -176,16 +195,20 @@ public class InputSimulationTools
         CoordinateSpace? space = null,
         [Description(CaptureIdDescription)]
         string? captureId = null,
+        [Description(ActionObservation.ObserveDescription)]
+        ObserveMode observe = ObserveMode.None,
         CancellationToken cancellationToken = default)
     {
+        ActionObservation.Check(_desktopState, observe, NothingSent);
         var point = Point(x, y, space, captureId, windowHandle, window, allowHostTarget);
         if (point.Failure is { } failure)
         {
-            return new ClickResult(false, x, y, "double", failure.Error, failure.ErrorCode) { Requested = point.Requested };
+            return await ObserveAsync(new ClickResult(false, x, y, "double", failure.Error, failure.ErrorCode) { Requested = point.Requested },
+                point.Target, observe, cancellationToken).ConfigureAwait(false);
         }
 
-        return Echo(_inputService.DoubleClick(point.X, point.Y, Math.Clamp(delayMs, 10, 500), point.Target, releaseHeldModifiers,
-            cancellationToken), point.Requested);
+        return await ObserveAsync(Echo(_inputService.DoubleClick(point.X, point.Y, Math.Clamp(delayMs, 10, 500), point.Target,
+            releaseHeldModifiers, cancellationToken), point.Requested), point.Target, observe, cancellationToken).ConfigureAwait(false);
     }
 
     [McpServerTool(Name = "mouse_move", Title = "Move Mouse Pointer", ReadOnly = false, Destructive = false, Idempotent = true, OpenWorld = false)]
@@ -304,7 +327,8 @@ public class InputSimulationTools
                  " The foreground window is checked again every 32 characters: if another window comes to the front, typing stops with " +
                  "TargetLostFocus and charactersTyped says how much was typed. Refused while a menu is open (TargetInMenuMode)." +
                  " Cancelling the request, or the user's pause, stops typing between batches.")]
-    public Task<TypeTextResult> TypeText(
+    [ToolResultPayload(typeof(TypeTextResult))]
+    public async Task<CallToolResult> TypeText(
         [Description("The text to type")]
         string text,
         [Description("Delay between keystrokes in milliseconds (0-100, default 0). Use for visible typing effect.")]
@@ -317,10 +341,17 @@ public class InputSimulationTools
         bool allowHostTarget = false,
         [Description(ReleaseHeldModifiersDescription)]
         bool releaseHeldModifiers = false,
+        [Description(ActionObservation.ObserveDescription)]
+        ObserveMode observe = ObserveMode.None,
         CancellationToken cancellationToken = default)
     {
+        ActionObservation.Check(_desktopState, observe, NothingSent);
         delayMs = Math.Clamp(delayMs, 0, 100);
-        return _inputService.TypeTextAsync(text, delayMs, Target(windowHandle, window, allowHostTarget), releaseHeldModifiers, cancellationToken);
+        var target = Target(windowHandle, window, allowHostTarget);
+        var result = await _inputService.TypeTextAsync(text, delayMs, target, releaseHeldModifiers, cancellationToken).ConfigureAwait(false);
+        return await ActionObservation.ResultAsync(result, result.Success, Acted(target, result.ReceivingWindow),
+            ActionObservation.RefusesWindow(result.ErrorCode.ToString()), observe, (typed, observed) => typed with { Observed = observed },
+            _desktopState, _windowService, cancellationToken).ConfigureAwait(false);
     }
 
     [McpServerTool(Name = "send_keys", Title = "Send Keys", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = false)]
@@ -331,7 +362,8 @@ public class InputSimulationTools
                  " The user's pause hotkey chord is refused (PauseChordNotAllowed)." +
                  " A paste (^v, +{INSERT}) is sent only when the clipboard holds what set_clipboard put there, your own copy, or content the user let get_clipboard read; otherwise, and for content marked private, it is refused (PasteNotAllowed)." +
                  " Keys that copy and then paste (^c^v) are refused too (PasteNotAllowed): send the copy and the paste in separate calls.")]
-    public Task<SendKeysResult> SendKeys(
+    [ToolResultPayload(typeof(SendKeysResult))]
+    public async Task<CallToolResult> SendKeys(
         [Description("Keys to send in SendKeys format. Special keys: {ENTER}, {TAB}, {ESC}, {BACKSPACE}, {DELETE}, {INSERT}, {UP}, {DOWN}, {LEFT}, {RIGHT}, {HOME}, {END}, {PGUP}, {PGDN}, {F1}-{F12}, {SPACE}. Modifiers: ^ (Ctrl), % (Alt), + (Shift).")]
         string keys,
         [Description(KeyboardWindowHandleDescription)]
@@ -342,10 +374,33 @@ public class InputSimulationTools
         bool allowHostTarget = false,
         [Description(ReleaseHeldModifiersDescription)]
         bool releaseHeldModifiers = false,
+        [Description(ActionObservation.ObserveDescription)]
+        ObserveMode observe = ObserveMode.None,
         CancellationToken cancellationToken = default)
     {
-        return _inputService.SendKeysAsync(keys, Target(windowHandle, window, allowHostTarget), releaseHeldModifiers, cancellationToken);
+        ActionObservation.Check(_desktopState, observe, NothingSent);
+        var target = Target(windowHandle, window, allowHostTarget);
+        var result = await _inputService.SendKeysAsync(keys, target, releaseHeldModifiers, cancellationToken).ConfigureAwait(false);
+        return await ActionObservation.ResultAsync(result, result.Success, Acted(target, result.ReceivingWindow),
+            ActionObservation.RefusesWindow(result.ErrorCode.ToString()), observe, (sent, observed) => sent with { Observed = observed },
+            _desktopState, _windowService, cancellationToken).ConfigureAwait(false);
     }
+
+    /// <summary>
+    /// The click's tool result, with observe (roadmap M3.F32) get_desktop_state's observation of the window it was for after
+    /// it (<see cref="ActionObservation"/>).
+    /// </summary>
+    private Task<CallToolResult> ObserveAsync(ClickResult result, InputTarget target, ObserveMode observe, CancellationToken cancellationToken) =>
+        ActionObservation.ResultAsync(result, result.Success, Acted(target, result.ReceivingWindow),
+            ActionObservation.RefusesWindow(result.ErrorCode.ToString()), observe, (clicked, observed) => clicked with { Observed = observed },
+            _desktopState, _windowService, cancellationToken);
+
+    /// <summary>
+    /// The window the input was for, to observe after it: the target window, else the window it went to (the window at the
+    /// point, or the window in front for keys); zero when neither is known.
+    /// </summary>
+    private static long Acted(InputTarget target, WindowSummary? receiving) =>
+        target.WindowHandle is { } named ? (long)named : receiving?.Handle ?? 0;
 
     /// <summary>The result with the point as the call gave it, when that was not a screen point.</summary>
     private static ClickResult Echo(ClickResult result, RequestedPoint? requested) =>
