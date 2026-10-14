@@ -10,7 +10,8 @@ namespace WindowsAppManagerMcp.Services;
 /// </summary>
 /// <remarks>
 /// Elements are returned as snapshots, with a ref (roadmap M3.4) that later calls can name them by: registered under the
-/// top-level window the result reports, so the registry can find the element again in it. A window that shows web content
+/// top-level window the result reports, so the registry can find the element again in it, with the list row the element is
+/// in (roadmap M3.F10), so the ref goes stale once a recycled row shows another item. A window that shows web content
 /// (Chromium, Electron, WebView2) is warmed up first (<see cref="IAccessibilityWarmup"/>, roadmap M3.3), within a third of
 /// the timeout: the foreground window for the focused element, the window at the point for the element at a point.
 /// Otherwise the first read of such a window finds only its frame, because its page's tree is built only once asked for.
@@ -109,7 +110,7 @@ public class ElementInspectionService : IElementInspectionService
                 var (details, element) = ReadDetails(node, identity);
                 return new FocusedElementResult(
                     Success: true,
-                    Element: details with { Ref = Register(window, element) },
+                    Element: details with { Ref = Register(window, element, token) },
                     WindowHandle: window == nint.Zero ? null : window,
                     WindowTitle: WindowTitle(window),
                     ProcessId: processId,
@@ -190,7 +191,7 @@ public class ElementInspectionService : IElementInspectionService
                     Success: true,
                     X: x,
                     Y: y,
-                    Element: details with { Ref = Register(window, element) },
+                    Element: details with { Ref = Register(window, element, token) },
                     Ancestors: chain,
                     WindowHandle: window == nint.Zero ? null : window,
                     WindowTitle: WindowTitle(window),
@@ -288,18 +289,31 @@ public class ElementInspectionService : IElementInspectionService
 
     /// <summary>
     /// The element's ref under <paramref name="window"/>, or null without a window or a registry, or when the element has
-    /// no runtime id. Makes no UI Automation call.
+    /// no runtime id. The list row the element is in is read first (<see cref="ElementRows"/>: at most
+    /// <see cref="ElementRows.MaxLevels"/> ancestors) and recorded with the ref, as find_ui_elements and the walks record it,
+    /// so the ref is stale once a recycled row shows another item (roadmap M3.F10). An element whose row cannot be read is
+    /// registered without it.
     /// </summary>
-    private string? Register(nint window, UiaElement? element)
+    private string? Register(nint window, UiaElement? element, CancellationToken cancellationToken)
     {
         if (_registry == null || window == nint.Zero || element == null)
         {
             return null;
         }
 
+        ElementRow? row = null;
         try
         {
-            return _registry.Register(window, element, new ElementOrigin(_registry.NextGeneration()));
+            row = ElementRows.For(_tree).Of(element, cancellationToken);
+        }
+        catch (Exception)
+        {
+            // An ancestor that is gone, failed or did not answer, or the deadline: registered without its row
+        }
+
+        try
+        {
+            return _registry.Register(window, element, new ElementOrigin(_registry.NextGeneration(), Row: row));
         }
         catch (Exception)
         {

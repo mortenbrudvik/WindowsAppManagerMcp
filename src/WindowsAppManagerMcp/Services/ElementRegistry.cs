@@ -98,7 +98,7 @@ public sealed class ElementRegistry : IElementRegistry
 
     /// <param name="tree">The UI Automation tree.</param>
     /// <param name="worker">Runs <see cref="ResolveAsync"/>'s resolution under a deadline.</param>
-    /// <param name="windows">Tells whether a window still exists and which process it belongs to.</param>
+    /// <param name="windows">Tells whether a window still exists and which process, thread and class it has.</param>
     /// <param name="capacity">How many refs to keep.</param>
     /// <param name="firstWindowNumber">The number of the first window (tests pass 1).</param>
     /// <param name="clock">The clock of the entries' last use.</param>
@@ -654,14 +654,15 @@ public sealed class ElementRegistry : IElementRegistry
               "Find the element again with find_ui_elements.";
 
     /// <summary>
-    /// The window's record, created when the window has none (or its handle now names a window of another process or
-    /// class).
+    /// The window's record, created when the window has none (or its handle now names a window of another process, class or
+    /// thread).
     /// </summary>
     private WindowRecord WindowRecordFor(nint handle, WindowIdentity identity)
     {
         if (_windowsByHandle.TryGetValue(handle, out var record))
         {
-            if (record.Identity == identity)
+            if (record.Identity.ProcessId == identity.ProcessId && record.Identity.ClassName == identity.ClassName &&
+                SameThread(record.Identity.ThreadId, identity.ThreadId))
             {
                 return record;
             }
@@ -674,7 +675,10 @@ public sealed class ElementRegistry : IElementRegistry
         return record;
     }
 
-    /// <summary>The window's process and class, or null when the handle is no window.</summary>
+    /// <summary>
+    /// The window's process, class and thread, or null when the handle is no window. A thread that cannot be read is 0 (not
+    /// known).
+    /// </summary>
     private WindowIdentity? WindowIdentityOf(nint handle)
     {
         try
@@ -685,7 +689,9 @@ public sealed class ElementRegistry : IElementRegistry
             }
 
             var processId = _windows.GetWindowThreadProcessId(handle);
-            return processId == 0 ? null : new WindowIdentity(processId, _windows.GetClassName(handle) ?? string.Empty);
+            return processId == 0
+                ? null
+                : new WindowIdentity(processId, _windows.GetClassName(handle) ?? string.Empty, ThreadIdOf(handle));
         }
         catch (Exception)
         {
@@ -694,10 +700,11 @@ public sealed class ElementRegistry : IElementRegistry
     }
 
     /// <summary>
-    /// True when the record's window still exists with the same process and class: its handle was not reused by another
-    /// window. A reuse by a window of the same process and class is not told apart; it is rare, since a handle value comes
-    /// back only after its slot's 16-bit reuse counter wraps. A read of the process or class that fails (0, or no class)
-    /// tells nothing: only IsWindow, or a process or class read that differs, makes the window gone.
+    /// True when the record's window still exists with the same process, class and thread: its handle was not reused by
+    /// another window. The thread tells apart a reuse by a window of the same process and class (roadmap M3.F11), which is
+    /// rare, since a handle value comes back only after its slot's 16-bit reuse counter wraps; a reuse by a window of the
+    /// same thread too is not told apart. A read of the process, class or thread that fails (0, or no class) tells nothing:
+    /// only IsWindow, or a process, class or thread read that differs, makes the window gone.
     /// </summary>
     private bool IsSameWindow(WindowRecord record)
     {
@@ -711,7 +718,8 @@ public sealed class ElementRegistry : IElementRegistry
             var processId = _windows.GetWindowThreadProcessId(record.Handle);
             var className = _windows.GetClassName(record.Handle);
             return (processId == 0 || processId == record.Identity.ProcessId) &&
-                   (string.IsNullOrEmpty(className) || className == record.Identity.ClassName);
+                   (string.IsNullOrEmpty(className) || className == record.Identity.ClassName) &&
+                   SameThread(record.Identity.ThreadId, ThreadIdOf(record.Handle));
         }
         catch (Exception)
         {
@@ -719,6 +727,25 @@ public sealed class ElementRegistry : IElementRegistry
             return true;
         }
     }
+
+    /// <summary>The window's thread, or 0 when it cannot be read.</summary>
+    private uint ThreadIdOf(nint handle)
+    {
+        try
+        {
+            return _windows.GetWindowThreadId(handle);
+        }
+        catch (Exception)
+        {
+            return 0;
+        }
+    }
+
+    /// <summary>
+    /// False only when both threads are known and differ: a thread that could not be read (0), when the window was first
+    /// seen or now, tells nothing.
+    /// </summary>
+    private static bool SameThread(uint stored, uint read) => stored == 0 || read == 0 || stored == read;
 
     /// <summary>Drops a window and its refs. Under the lock.</summary>
     private void DropWindow(WindowRecord record)
@@ -838,10 +865,15 @@ public sealed class ElementRegistry : IElementRegistry
 
     private static string? EmptyToNull(string? value) => string.IsNullOrEmpty(value) ? null : value;
 
-    /// <summary>What tells a window apart from a later window that reuses its handle.</summary>
-    private readonly record struct WindowIdentity(uint ProcessId, string ClassName);
+    /// <summary>
+    /// What tells a window apart from a later window that reuses its handle. <see cref="ThreadId"/> is 0 when it could not be
+    /// read.
+    /// </summary>
+    private readonly record struct WindowIdentity(uint ProcessId, string ClassName, uint ThreadId);
 
-    /// <summary>A window whose elements have refs: its number, and the handle, process and class it was seen with.</summary>
+    /// <summary>
+    /// A window whose elements have refs: its number, and the handle, process, class and thread it was seen with.
+    /// </summary>
     private sealed class WindowRecord(int seq, nint handle, WindowIdentity identity)
     {
         public int Seq { get; } = seq;

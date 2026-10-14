@@ -105,6 +105,7 @@ public static class WrapperCatalog
                 [nameof(INativeWindowWrapper.IsZoomed)] = WrapperMember.Read,
                 [nameof(INativeWindowWrapper.GetWindowText)] = WrapperMember.Read,
                 [nameof(INativeWindowWrapper.GetWindowThreadProcessId)] = WrapperMember.Read,
+                [nameof(INativeWindowWrapper.GetWindowThreadId)] = WrapperMember.Read,
                 [nameof(INativeWindowWrapper.GetWindowRect)] = WrapperMember.Read,
                 [nameof(INativeWindowWrapper.GetForegroundWindow)] = WrapperMember.Read,
                 [nameof(INativeWindowWrapper.GetCurrentProcessId)] = WrapperMember.Read,

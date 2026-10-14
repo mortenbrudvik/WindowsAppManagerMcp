@@ -506,6 +506,29 @@ public class PopupServiceTests
     }
 
     [Fact]
+    public async Task GetActivePopups_RecordsTheRowOfAPopupWhoseElementIsInAListItem_SoItsRefIsStaleOnceTheRowShowsAnotherItem()
+    {
+        // Arrange (roadmap M3.F10) - a row's flyout that UI Automation places below the row's item, in a recycling list
+        var main = AddMain("Files");
+        var flyout = AddPopup("", "Popup", owner: main);
+        var row = new FakeUiaNode("ListItem", "report.docx");
+        var menu = new FakeUiaNode("Menu", "Row actions");
+        _tree.WithWindow(main, new FakeUiaNode("Window", "Files").With(new FakeUiaNode("List", "Items").With(row.With(menu))));
+        _tree.WithWindow(flyout, menu);
+        _desktop.SetForeground(main);
+        var sut = CreateSut();
+        var popupRef = (await sut.GetActivePopupsAsync(main, TimeSpan.FromSeconds(5), CancellationToken.None)).Popups!.Single().Ref!;
+
+        // Act
+        row.Name = "budget.xlsx";
+        var resolution = Registry.Resolve(popupRef, CancellationToken.None);
+
+        // Assert
+        resolution.ErrorCode.Should().Be(UIElementErrorCode.ElementStale);
+        resolution.Error.Should().Contain("another item");
+    }
+
+    [Fact]
     public async Task GetActivePopups_WithoutAWindow_ListsThePopupsOfTheAppThatOwnsTheWindowInFront()
     {
         // Arrange - the dialog is in front: the app is its owner

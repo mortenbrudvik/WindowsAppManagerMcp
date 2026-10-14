@@ -42,6 +42,13 @@ public interface INativeWindowWrapper
     uint GetWindowThreadProcessId(nint hWnd);
 
     /// <summary>
+    /// Gets the ID of the thread that created the window (the return value of GetWindowThreadProcessId), or 0 when the
+    /// handle is not a window. A window keeps its thread for its whole life, so the element registry tells a window from a
+    /// later window of the same process and class that got its handle by it (roadmap M3.F11).
+    /// </summary>
+    uint GetWindowThreadId(nint hWnd);
+
+    /// <summary>
     /// Gets the bounding rectangle of the specified window.
     /// Returns null if the operation fails.
     /// </summary>

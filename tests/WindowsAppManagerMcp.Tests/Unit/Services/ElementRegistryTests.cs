@@ -23,9 +23,13 @@ public class ElementRegistryTests
             .Returns((nint h) => _processes.GetValueOrDefault(h));
         _windows.Setup(w => w.RespondsWithin(It.IsAny<nint>(), It.IsAny<uint>())).Returns(true);
         _windows.Setup(w => w.GetClassName(It.IsAny<nint>())).Returns((nint h) => _classes.GetValueOrDefault(h, "AppWindow"));
+        _windows.Setup(w => w.GetWindowThreadId(It.IsAny<nint>())).Returns((nint h) => _threads.GetValueOrDefault(h));
     }
 
     private readonly Dictionary<nint, string> _classes = [];
+
+    /// <summary>The windows' thread ids; a window not listed reads 0 (not known).</summary>
+    private readonly Dictionary<nint, uint> _threads = [];
 
     /// <summary>The identity criteria find_ui_elements would store for a button with this automation id.</summary>
     private static ElementCriteria ByAutomationId(string automationId) =>
@@ -289,6 +293,82 @@ public class ElementRegistryTests
         // Assert
         lookup.ErrorCode.Should().Be(UIElementErrorCode.ElementStale);
         Register(sut, Button("OK")).Should().Be("w2e1");
+    }
+
+    [Fact]
+    public void AWindowHandleReusedByAWindowOfAnotherThread_InTheSameProcessAndClass_DropsTheOldRefs()
+    {
+        // Arrange (roadmap M3.F11)
+        _threads[Handle] = 7100;
+        var sut = CreateSut();
+        var save = Register(sut, Button("Save"));
+
+        // Act - the window closed, and the same app opened a window of the same class on another thread that got the handle
+        _threads[Handle] = 7200;
+        var lookup = sut.Lookup(save!);
+
+        // Assert
+        lookup.ErrorCode.Should().Be(UIElementErrorCode.ElementStale);
+        lookup.Error.Should().Contain("its window closed");
+        Register(sut, Button("OK")).Should().Be("w2e1");
+    }
+
+    [Fact]
+    public void Register_InAWindowWhoseHandleNowNamesAWindowOfAnotherThread_GetsANewWindowNumber()
+    {
+        // Arrange (roadmap M3.F11)
+        _threads[Handle] = 7100;
+        var sut = CreateSut();
+        var save = Register(sut, Button("Save"));
+
+        // Act
+        _threads[Handle] = 7200;
+        var next = Register(sut, Button("Save"));
+
+        // Assert
+        next.Should().Be("w2e1");
+        sut.Count.Should().Be(1, "the old window's refs were dropped");
+        sut.Lookup(save!).ErrorCode.Should().Be(UIElementErrorCode.ElementStale);
+    }
+
+    [Fact]
+    public void NextGeneration_DropsTheRefsOfAWindowWhoseHandleNowNamesAWindowOfAnotherThread()
+    {
+        // Arrange (roadmap M3.F11)
+        _threads[Handle] = 7100;
+        _threads[OtherHandle] = 7300;
+        var sut = CreateSut();
+        Register(sut, Button("Save"));
+        Register(sut, Button("OK"), OtherHandle);
+
+        // Act
+        _threads[Handle] = 7200;
+        sut.NextGeneration();
+
+        // Assert
+        sut.Count.Should().Be(1);
+    }
+
+    [Fact]
+    public void AWindowWhoseThreadCannotBeRead_IsNotTakenForClosed()
+    {
+        // Arrange - a thread read that fails (0) tells nothing, when the refs were registered and when they are looked up
+        _threads[Handle] = 7100;
+        var sut = CreateSut();
+        var save = Register(sut, Button("Save"));
+        _threads[OtherHandle] = 0;
+        var ok = Register(sut, Button("OK"), OtherHandle);
+
+        // Act
+        _threads[Handle] = 0;
+        _threads[OtherHandle] = 7300;
+        var lookups = new[] { sut.Lookup(save!), sut.Lookup(ok!) };
+        sut.NextGeneration();
+
+        // Assert - the refs are kept
+        lookups.Should().OnlyContain(l => l.Success);
+        Register(sut, Button("Open")).Should().Be("w1e2");
+        sut.Count.Should().Be(3);
     }
 
     [Fact]
