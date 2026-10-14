@@ -1,4 +1,5 @@
 using System.Text.Json.Serialization;
+using WindowsAppManagerMcp.Infrastructure;
 
 namespace WindowsAppManagerMcp.Models;
 
@@ -33,7 +34,31 @@ public record UIElementInfo(
     int? Parent = null,
     string? FrameworkId = null,
     [property: JsonPropertyOrder(-1)] string? Ref = null
-);
+)
+{
+    /// <summary>
+    /// This element with its AutomationId, and its children's, cut to <see cref="AppText.MaxLength"/> characters as get_ui_elements and
+    /// capture_with_elements return them (roadmap M3.F31); the element itself when nothing needed a cut.
+    /// </summary>
+    public UIElementInfo Bounded()
+    {
+        List<UIElementInfo>? children = null;
+        for (var i = 0; i < (Children?.Count ?? 0); i++)
+        {
+            var child = Children![i].Bounded();
+            if (!ReferenceEquals(child, Children[i]))
+            {
+                children ??= [.. Children];
+                children[i] = child;
+            }
+        }
+
+        var automationId = AppText.Cut(AutomationId);
+        return children == null && automationId == AutomationId
+            ? this
+            : this with { AutomationId = automationId, Children = children ?? Children };
+    }
+}
 
 /// <summary>
 /// Result of a UI element retrieval operation.
@@ -84,7 +109,29 @@ public record UIElementResult(
     AccessibilityWarmupInfo? AccessibilityWarmup = null,
     IReadOnlyList<long>? OwnedWindows = null,
     IReadOnlyList<string>? Warnings = null
-);
+)
+{
+    /// <summary>
+    /// This result with its window title and its elements' AutomationIds cut to <see cref="AppText.MaxLength"/> characters
+    /// (<see cref="UIElementInfo.Bounded"/>, roadmap M3.F31); the result itself when nothing needed a cut.
+    /// </summary>
+    public UIElementResult Bounded()
+    {
+        List<UIElementInfo>? elements = null;
+        for (var i = 0; i < (Elements?.Count ?? 0); i++)
+        {
+            var element = Elements![i].Bounded();
+            if (!ReferenceEquals(element, Elements[i]))
+            {
+                elements ??= [.. Elements];
+                elements[i] = element;
+            }
+        }
+
+        var title = AppText.Cut(WindowTitle);
+        return elements == null && title == WindowTitle ? this : this with { WindowTitle = title, Elements = elements ?? Elements };
+    }
+}
 
 /// <summary>
 /// The warnings a UI element walk can carry (roadmap M3.F16). Each one starts with a stable code and a colon, as the
@@ -316,7 +363,11 @@ public record UIElementDetails(
     string? Value = null,
     bool ValueTruncated = false,
     [property: JsonPropertyOrder(-1)] string? Ref = null
-);
+)
+{
+    /// <summary>This element with its AutomationId cut to <see cref="AppText.MaxLength"/> characters (roadmap M3.F31); itself when it needed none.</summary>
+    public UIElementDetails Bounded() => AppText.Cut(AutomationId) is var id && id == AutomationId ? this : this with { AutomationId = id };
+}
 
 /// <summary>
 /// An element above another one in the UI Automation tree.
@@ -329,7 +380,11 @@ public record UIElementAncestor(
     string? ClassName,
     BoundsDto? Bounds,
     string? FrameworkId = null
-);
+)
+{
+    /// <summary>This ancestor with its AutomationId cut to <see cref="AppText.MaxLength"/> characters (roadmap M3.F31); itself when it needed none.</summary>
+    public UIElementAncestor Bounded() => AppText.Cut(AutomationId) is var id && id == AutomationId ? this : this with { AutomationId = id };
+}
 
 /// <summary>
 /// Result of get_focused_element.
@@ -353,7 +408,19 @@ public record FocusedElementResult(
     string? Error = null,
     UIElementErrorCode ErrorCode = UIElementErrorCode.None,
     AccessibilityWarmupInfo? AccessibilityWarmup = null
-);
+)
+{
+    /// <summary>
+    /// This result with its window title and its element's AutomationId cut to <see cref="AppText.MaxLength"/> characters, as
+    /// get_focused_element returns them (roadmap M3.F31); the result itself when nothing needed a cut.
+    /// </summary>
+    public FocusedElementResult Bounded()
+    {
+        var element = Element?.Bounded();
+        var title = AppText.Cut(WindowTitle);
+        return ReferenceEquals(element, Element) && title == WindowTitle ? this : this with { Element = element, WindowTitle = title };
+    }
+}
 
 /// <summary>
 /// Result of get_element_at_point.
@@ -385,7 +452,23 @@ public record ElementAtPointResult(
     string? Error = null,
     UIElementErrorCode ErrorCode = UIElementErrorCode.None,
     AccessibilityWarmupInfo? AccessibilityWarmup = null
-);
+)
+{
+    /// <summary>
+    /// This result with its window title and the AutomationIds of its element and ancestors cut to <see cref="AppText.MaxLength"/>
+    /// characters, as get_element_at_point returns them (roadmap M3.F31); the result itself when nothing needed a cut.
+    /// </summary>
+    public ElementAtPointResult Bounded()
+    {
+        var element = Element?.Bounded();
+        var ancestors = Ancestors?.Select(a => a.Bounded()).ToList();
+        var title = AppText.Cut(WindowTitle);
+        var ancestorsCut = ancestors != null && ancestors.Where((a, i) => !ReferenceEquals(a, Ancestors![i])).Any();
+        return ReferenceEquals(element, Element) && !ancestorsCut && title == WindowTitle
+            ? this
+            : this with { Element = element, Ancestors = ancestorsCut ? ancestors : Ancestors, WindowTitle = title };
+    }
+}
 
 /// <summary>
 /// What the accessibility warm-up of a window with web content did (roadmap M3.3). Chromium, and the Electron and WebView2

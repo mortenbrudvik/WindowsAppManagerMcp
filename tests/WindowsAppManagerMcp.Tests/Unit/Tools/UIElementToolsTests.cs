@@ -817,6 +817,8 @@ public class UIElementToolsTests
     public async Task GetElementAtPoint_ClampsTheTimeout(int timeoutMs, int expectedMs)
     {
         // Arrange
+        _mockInspection.Setup(s => s.GetElementAtPointAsync(1, 2, 3, It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ElementAtPointResult(true, 1, 2, null, [], null, null, null, null, 1.0));
         var sut = CreateSut();
 
         // Act
@@ -825,6 +827,104 @@ public class UIElementToolsTests
         // Assert
         _mockInspection.Verify(s => s.GetElementAtPointAsync(1, 2, 3, TimeSpan.FromMilliseconds(expectedMs), It.IsAny<CancellationToken>()), Times.Once);
     }
+
+    #endregion
+
+    #region Bounded AutomationIds and titles (roadmap M3.F31)
+
+    private static readonly string LongId = "row-" + new string('7', 5000);
+    private static readonly string LongTitle = "Report - " + new string('t', 5000);
+    private static readonly string CutId = LongId[..(WindowsAppManagerMcp.Infrastructure.AppText.MaxLength - 1)] + "…";
+    private static readonly string CutTitle = LongTitle[..(WindowsAppManagerMcp.Infrastructure.AppText.MaxLength - 1)] + "…";
+
+    private static UIElementDetails Details(string? automationId) =>
+        new("Row", "ListItem", automationId, null, null, null, true, false, true, true, false, []);
+
+    [Theory]
+    [InlineData(UIElementFormat.Tree)]
+    [InlineData(UIElementFormat.Flat)]
+    public async Task GetUIElements_CutsALongWindowTitle_AndTheAutomationIdsOfTheWholeTree(UIElementFormat format)
+    {
+        // Arrange - an application chooses both, down to an element deep in the tree
+        var deep = new UIElementInfo("Cell", "DataItem", LongId, null, IsEnabled: true, IsOffscreen: false);
+        var row = new UIElementInfo("Row", "ListItem", "row-1", null, IsEnabled: true, IsOffscreen: false, Children: [deep]);
+        _mockService.Setup(s => s.GetUIElementsAsync(It.IsAny<nint>(), It.IsAny<int>(), It.IsAny<UIElementFilter?>(),
+                It.IsAny<IProgress<OperationProgress>?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new UIElementResult(true, 100, LongTitle, [row], 2, 5, 1.0));
+
+        // Act
+        var result = await CreateSut().GetUIElements(handle: 100, format: format);
+
+        // Assert
+        result.WindowTitle.Should().Be(CutTitle);
+        Flatten(result.Elements!).Select(e => e.AutomationId).Should().Contain(CutId).And.Contain("row-1").And.NotContain(LongId);
+    }
+
+    [Fact]
+    public async Task GetUIElements_InTheTextFormat_WritesTheCutAutomationId()
+    {
+        // Arrange
+        _mockService.Setup(s => s.GetUIElementsAsync(It.IsAny<nint>(), It.IsAny<int>(), It.IsAny<UIElementFilter?>(),
+                It.IsAny<IProgress<OperationProgress>?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new UIElementResult(true, 100, "Report", [new UIElementInfo("Row", "ListItem", LongId, null, IsEnabled: true, IsOffscreen: false)], 1, 5, 1.0));
+
+        // Act
+        var result = await CreateSut().GetUIElements(handle: 100, format: UIElementFormat.Text);
+
+        // Assert
+        result.Text.Should().Contain(CutId).And.NotContain(LongId);
+    }
+
+    [Fact]
+    public async Task GetUIElements_WithNothingToCut_ReturnsTheServicesResult()
+    {
+        // Arrange
+        var expected = new UIElementResult(true, 100, "Report", [new UIElementInfo("Row", "ListItem", "row-1", null, IsEnabled: true, IsOffscreen: false)], 1, 5, 1.0);
+        _mockService.Setup(s => s.GetUIElementsAsync(It.IsAny<nint>(), It.IsAny<int>(), It.IsAny<UIElementFilter?>(),
+                It.IsAny<IProgress<OperationProgress>?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(expected);
+
+        // Act
+        var result = await CreateSut().GetUIElements(handle: 100);
+
+        // Assert
+        result.Should().BeSameAs(expected);
+    }
+
+    [Fact]
+    public async Task GetFocusedElement_CutsALongAutomationIdAndWindowTitle()
+    {
+        // Arrange
+        _mockInspection.Setup(s => s.GetFocusedElementAsync(It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new FocusedElementResult(true, Details(LongId), 100, LongTitle, 2, "app", 1.0));
+
+        // Act
+        var result = await CreateSut().GetFocusedElement();
+
+        // Assert
+        result.Element!.AutomationId.Should().Be(CutId);
+        result.WindowTitle.Should().Be(CutTitle);
+    }
+
+    [Fact]
+    public async Task GetElementAtPoint_CutsTheAutomationIdsOfTheElementAndItsAncestors_AndTheWindowTitle()
+    {
+        // Arrange
+        var ancestor = new UIElementAncestor("List", "List", LongId, null, null);
+        _mockInspection.Setup(s => s.GetElementAtPointAsync(1, 2, It.IsAny<int>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ElementAtPointResult(true, 1, 2, Details(LongId), [ancestor], 100, LongTitle, 2, "app", 1.0));
+
+        // Act
+        var result = await CreateSut().GetElementAtPoint(1, 2);
+
+        // Assert
+        result.Element!.AutomationId.Should().Be(CutId);
+        result.Ancestors!.Single().AutomationId.Should().Be(CutId);
+        result.WindowTitle.Should().Be(CutTitle);
+    }
+
+    private static IEnumerable<UIElementInfo> Flatten(IEnumerable<UIElementInfo> elements) =>
+        elements.SelectMany(e => new[] { e }.Concat(Flatten(e.Children ?? [])));
 
     #endregion
 }
