@@ -47,7 +47,7 @@ The user, not the agent, decides which applications the agent may act on. The se
 
 | Variable | Default | Meaning |
 |----------|---------|---------|
-| `WAM_DENY_PROCESSES` | `1Password, Bitwarden, KeePass, KeePassXC, LastPass, Dashlane, Keeper, KeeperPasswordManager, Enpass, NordPass, ProtonPass, Proton Pass, RoboForm, pwsafe, CredentialUIBroker, CredDialogHost, consent, CHXSmartScreen, smartscreen, SecHealthUI` | Image names (with or without `.exe`, separated by commas or semicolons; a name may contain spaces, and whitespace right after `.exe` also separates) the agent may not act on. The default covers common password managers, the Windows credential prompts (`CredentialUIBroker`, `CredDialogHost`), the elevation prompt (`consent`), the SmartScreen prompt "Windows protected your PC" (`CHXSmartScreen`, and `smartscreen`, the reputation broker that starts it) and the Windows Security app (`SecHealthUI`); with it, the policy also refuses Windows' "Open File - Security Warning" in any process (see below). A value replaces the default list, so a list without the entry `default` drops these; `default` puts the default list back in, and `none` alone turns it off |
+| `WAM_DENY_PROCESSES` | `1Password, Bitwarden, KeePass, KeePassXC, LastPass, Dashlane, Keeper, KeeperPasswordManager, Enpass, NordPass, ProtonPass, Proton Pass, RoboForm, pwsafe, CredentialUIBroker, CredDialogHost, consent, CHXSmartScreen, smartscreen, SecHealthUI, SecurityHealthHost, Microsoft.AAD.BrokerPlugin` | Image names (with or without `.exe`, separated by commas or semicolons; a name may contain spaces, and whitespace right after `.exe` also separates) the agent may not act on. The default covers common password managers, the Windows credential prompts (`CredentialUIBroker`, `CredDialogHost`), the elevation prompt (`consent`), the SmartScreen prompt "Windows protected your PC" (`CHXSmartScreen`, and `smartscreen`, the reputation broker that starts it) and the Windows Security app (`SecHealthUI`) and its notifications and prompts (`SecurityHealthHost`), and the Entra ID and Microsoft account sign-in window (`Microsoft.AAD.BrokerPlugin`, which takes passwords); with it, the policy also refuses Windows' "Open File - Security Warning" in any process (see below). A value replaces the default list, so a list without the entry `default` drops these; `default` puts the default list back in, and `none` alone turns it off |
 | `WAM_ALLOW_PROCESSES` | not set | When set, the only image names the agent may act on. The deny list still wins |
 | `WAM_DESTRUCTIVE_CHORDS` | `%{F4} ^w ^q ^{F4} ^+{ESC} #l` | The `send_keys` chords that need `windowHandle`, in `send_keys` syntax, separated by spaces (`#` is the Windows key here; `send_keys` itself has no Windows-key modifier, so `#l` waits for one). `default` and `none` work as above. An entry that is not one chord (such as a comma-separated list) is ignored and logged, and the default chords then stay in force as well |
 
@@ -6160,6 +6160,10 @@ the new tools; their sections have the rest.
   app's window: input, element_action, respond_to_dialog, file_dialog, the window tools, the captures and the UI
   Automation reads. In the server's own process (after launch_application opens a downloaded file) it used to be refused
   with `TargetIsAgentHost`. No tool, parameter or error code is new.
+- **The default deny list adds the sign-in and Windows Security hosts (roadmap M3.F6).** `Microsoft.AAD.BrokerPlugin`
+  (the Entra ID and Microsoft account sign-in window, which takes passwords) and `SecurityHealthHost` (Windows
+  Security's notifications and prompts) join the default list, so input, window changes, closes, captures and UI
+  Automation reads of them return `TargetDeniedByPolicy`. A `WAM_DENY_PROCESSES` value without `default` is unchanged.
 
 ## Error Codes
 
