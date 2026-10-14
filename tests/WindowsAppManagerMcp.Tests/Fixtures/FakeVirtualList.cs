@@ -7,13 +7,15 @@ namespace WindowsAppManagerMcp.Tests.Fixtures;
 /// (<see cref="FakeUiaNode.Unrealized"/>): offscreen, without bounds, with the VirtualizedItem and ScrollItem patterns, and, as
 /// WPF's ItemAutomationPeer, it fails every read of its bounds, IsOffscreen, IsEnabled, focus, IsPassword or description, so
 /// only <see cref="FakeUiaTree.ReadVirtualizedItem"/> reads it. Its Realize makes it real and puts it in the list's children
-/// (still offscreen, as a provider whose Realize does not scroll), and ScrollIntoView brings it on screen. Nothing here is a
-/// real element.
+/// (still offscreen, as a provider whose Realize does not scroll), and ScrollIntoView brings it on screen.
+/// <see cref="WithExplorerPlaceholders"/> makes it answer as File Explorer's Items View does instead (roadmap M3.F37). Nothing
+/// here is a real element.
 /// </summary>
 public sealed class FakeVirtualList : IUiaItemContainerPattern
 {
     private readonly List<FakeUiaNode> _items = [];
     private readonly List<string> _probes = [];
+    private readonly Dictionary<int, FakeUiaNode> _placeholders = [];
 
     /// <param name="count">How many items the list holds.</param>
     /// <param name="realized">How many of the first items are realized (in the tree and on screen).</param>
@@ -79,6 +81,48 @@ public sealed class FakeVirtualList : IUiaItemContainerPattern
     /// <summary>Whether item <paramref name="index"/> is in the list's children (realized).</summary>
     public bool IsRealized(int index) => List.Children.Contains(_items[index]);
 
+    /// <summary>
+    /// Makes the list answer as File Explorer's Items View does (roadmap M3.F37), measured on Windows 11: for an item it has
+    /// not realized, FindItemByProperty returns a placeholder of its own, not the item: a Custom element (realized items are
+    /// ListItems) with the item's name and automation id, without a runtime id, offscreen and without bounds, with the
+    /// VirtualizedItem pattern only, which reads as a whole (it fails no property). Its Realize realizes the item and brings it
+    /// on screen; the placeholder itself stays as it was, and the next FindItemByProperty returns the real item.
+    /// </summary>
+    public FakeVirtualList WithExplorerPlaceholders()
+    {
+        for (var i = 0; i < _items.Count; i++)
+        {
+            var item = _items[i];
+            if (IsRealized(i))
+            {
+                continue;
+            }
+
+            item.Unrealized = false;
+            var placeholder = new FakeUiaNode("Custom", item.Name)
+            {
+                AutomationId = item.AutomationId,
+                ProcessId = item.ProcessId,
+                RuntimeId = null,
+                IsOffscreen = true,
+                Bounds = UiaRect.Empty,
+                OtherPatterns = UiaPatterns.VirtualizedItem
+            };
+            var virtualized = new FakeVirtualizedItemPattern();
+            virtualized.OnRealize = () =>
+            {
+                Realize(item);
+                item.IsOffscreen = false;
+            };
+            _placeholders[i] = placeholder.WithPattern<IUiaVirtualizedItemPattern>(virtualized);
+        }
+
+        return this;
+    }
+
+    /// <summary>The placeholder <see cref="WithExplorerPlaceholders"/> gave item <paramref name="index"/>.</summary>
+    public FakeUiaNode PlaceholderOf(int index) => _placeholders[index];
+
     public IUiaNode? FindItemByProperty(IUiaNode? startAfter, UiaProperty? property, object? value)
     {
         _probes.Add($"{property}={value} after {(startAfter is FakeUiaNode after ? after.Name : "start")}");
@@ -88,7 +132,7 @@ public sealed class FakeVirtualList : IUiaItemContainerPattern
             throw FindException;
         }
 
-        var start = startAfter == null ? 0 : _items.IndexOf((FakeUiaNode)startAfter) + 1;
+        var start = startAfter == null ? 0 : IndexOf((FakeUiaNode)startAfter) + 1;
         for (var i = start; i < _items.Count; i++)
         {
             var item = _items[i];
@@ -103,11 +147,18 @@ public sealed class FakeVirtualList : IUiaItemContainerPattern
             // As WPF compares: the whole value, case-sensitively
             if (property == null || string.Equals(actual, value as string, StringComparison.Ordinal))
             {
-                return item;
+                return _placeholders.TryGetValue(i, out var placeholder) && !IsRealized(i) ? placeholder : item;
             }
         }
 
         return null;
+    }
+
+    /// <summary>Where an item, or the placeholder of one, is in the list.</summary>
+    private int IndexOf(FakeUiaNode node)
+    {
+        var index = _items.IndexOf(node);
+        return index >= 0 ? index : _placeholders.FirstOrDefault(p => ReferenceEquals(p.Value, node), new(-1, node)).Key;
     }
 
     private void Realize(FakeUiaNode item)

@@ -142,6 +142,11 @@ public sealed partial class ElementReadService
     /// realized rows. Header rows that are grid rows (an HTML table's) are not data rows: they are left out of the page and of
     /// the row count. Each row's row header comes with it (roadmap M3.F15): through the Table pattern for a grid read through
     /// GetItem, from the row itself for one read through its rows.
+    /// <para>A grid read through its realized rows that also has the ItemContainer pattern virtualizes its items, and its
+    /// RowCount may count only the rows it has realized (roadmap M3.F36): Explorer's Items View reports 42 of a folder's 300
+    /// files. Every page of such a grid says so, and a page that starts at or past that count is not taken for the end of the
+    /// list: its realized rows there are read (a scrolled list's rows carry their own row), and where it has none the page
+    /// ends NotRealized, as any row it has not realized ends a page. A grid that has realized no row is taken to be empty.</para>
     /// </summary>
     private void ReadGrid(UiaElement element, IUiaGridPattern grid, int maxRows, TableProgress progress, CancellationToken token)
     {
@@ -155,7 +160,19 @@ public sealed partial class ElementReadService
         progress.Begin(ElementTableSource.Grid, dataRows, columnCount);
         progress.SetHeaders(headers.Names, columnCount);
 
-        var end = (int)Math.Min((long)progress.StartRow + maxRows, dataRows);
+        // GetItem reaches every row, so a grid read through it counts them all; one read through its realized rows may not
+        var virtualizing = !byItem && (element.Patterns & UiaPatterns.ItemContainer) != 0;
+        var pastCount = virtualizing && dataRows > 0 && progress.StartRow >= dataRows;
+        if (virtualizing)
+        {
+            progress.Note(
+                $"totalRows ({dataRows}) is the Grid pattern's row count, and this list virtualizes its items (ItemContainer " +
+                "pattern), so it may count only the rows the list has realized: the list may hold more. To reach them, realize an " +
+                "item (find_ui_elements searchVirtualized, then element_action 'realize') or element_action 'scroll' the list, " +
+                "then call read_table again.");
+        }
+
+        var end = (int)Math.Min((long)progress.StartRow + maxRows, pastCount ? int.MaxValue : dataRows);
         if (byItem)
         {
             ReadGridByItem(grid, RowHeadersOf(element, rowCount, columnCount, headerRows, token), headerRows, columns, end, progress, token);
@@ -165,7 +182,8 @@ public sealed partial class ElementReadService
             ReadRealizedRows(element.Node, headers, headerRows, columns, end, progress, token);
         }
 
-        progress.Finish(rowsRemain: end < dataRows);
+        // Past the count of a virtualizing list, whether rows follow is not known: the page says they may
+        progress.Finish(rowsRemain: pastCount || end < dataRows);
     }
 
     /// <summary>
@@ -710,6 +728,7 @@ public sealed partial class ElementReadService
         private bool _rowsRemain;
         private ElementTableTruncation? _stop;
         private string? _warning;
+        private string? _note;
 
         public int StartRow { get; } = startRow;
 
@@ -829,6 +848,15 @@ public sealed partial class ElementReadService
             }
         }
 
+        /// <summary>What every page of this table says, whatever ends it (a virtualizing list's row count, roadmap M3.F36).</summary>
+        public void Note(string note)
+        {
+            lock (_gate)
+            {
+                _note = note;
+            }
+        }
+
         public void Finish(bool rowsRemain)
         {
             lock (_gate)
@@ -854,7 +882,7 @@ public sealed partial class ElementReadService
                       $"again with startRow {StartRow} and a larger timeoutMs."
                     : null;
                 var moved = _refMoved ? ElementRefs.MovedWarning(_ref!) : null;
-                var warning = string.Join(" ", new[] { moved, _warning, timedOut }.OfType<string>());
+                var warning = string.Join(" ", new[] { moved, _warning, timedOut, _note }.OfType<string>());
                 return new ElementTableResult(
                     Success: true,
                     Ref: _ref,

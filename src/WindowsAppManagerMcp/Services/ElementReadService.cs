@@ -31,7 +31,9 @@ namespace WindowsAppManagerMcp.Services;
 /// they are grid items, and their rows then left out of the data rows), else from a Header among the grid's first children.
 /// The page's cells come through GetItem for the frameworks whose GetItem only looks the cell up
 /// (<see cref="GetItemFrameworks"/>), else from the grid's realized rows, placed by their cells' GridItem row: a row that is
-/// not realized ends the page (NotRealized). Otherwise a walk of the element's children: DataItem, ListItem and TreeItem
+/// not realized ends the page (NotRealized). Such a grid that also has the ItemContainer pattern may count only its realized
+/// rows: every page says so, and a page at or past its count reads the realized rows there or ends NotRealized, never as the
+/// end of the list (roadmap M3.F36). Otherwise a walk of the element's children: DataItem, ListItem and TreeItem
 /// children are the rows (read in one cached call when there are at most <see cref="CachedRowsLimit"/> children), a Header
 /// child or a first row of HeaderItems gives the headers, and a row's children but nested tree items are its cells (a row
 /// without cells is one cell, its own text). Both walks take the rows inside Group children as rows in their place, numbered

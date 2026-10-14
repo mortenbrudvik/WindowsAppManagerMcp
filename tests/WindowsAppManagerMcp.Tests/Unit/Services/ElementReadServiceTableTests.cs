@@ -445,14 +445,20 @@ public class ElementReadServiceTableTests
     /// the Grid and Table patterns, a Header child, and a DataItem child only for each realized row, whose cells
     /// ("r{row}c{column}") carry their GridItem row and column. GetItem would scroll it, so the test checks it is never called.
     /// With <paramref name="rowHeaders"/>, each row starts with a HeaderItem, named "#{row}" with
-    /// <paramref name="namedRowHeaders"/> and unnamed (as WPF's blank row headers) without.
+    /// <paramref name="namedRowHeaders"/> and unnamed (as WPF's blank row headers) without. With <paramref name="itemContainer"/>
+    /// the grid also has the ItemContainer pattern, as a virtualizing list (Explorer's Items View, whose RowCount counts only
+    /// the rows it has realized: pass those as <paramref name="rowCount"/>).
     /// </summary>
     private static (FakeUiaNode Grid, FakeGridPattern Pattern) VirtualizedGrid(
-        string? framework, int rowCount, int columns, IEnumerable<int> realized, bool rowHeaders = false, bool namedRowHeaders = false)
+        string? framework, int rowCount, int columns, IEnumerable<int> realized, bool rowHeaders = false, bool namedRowHeaders = false,
+        bool itemContainer = false)
     {
         var pattern = new FakeGridPattern(Enumerable.Repeat<IReadOnlyList<FakeUiaNode?>>([], rowCount).ToList(), columns);
         var headers = Enumerable.Range(0, columns).Select(c => new FakeUiaNode("HeaderItem", $"Column {c}")).ToArray();
-        var grid = new FakeUiaNode("DataGrid", "People") { OtherPatterns = UiaPatterns.Grid | UiaPatterns.Table, FrameworkId = framework }
+        var grid = new FakeUiaNode("DataGrid", "People")
+            {
+                OtherPatterns = UiaPatterns.Grid | UiaPatterns.Table | (itemContainer ? UiaPatterns.ItemContainer : 0), FrameworkId = framework
+            }
             .WithPattern<IUiaGridPattern>(pattern)
             .WithPattern<IUiaTablePattern>(new FakeTablePattern(headers))
             .With(new FakeUiaNode("Header").With(headers));
@@ -552,6 +558,116 @@ public class ElementReadServiceTableTests
         result.Rows.Should().HaveCount(10);
         result.TruncationReason.Should().Be(ElementTableTruncation.NotRealized);
         result.NextStartRow.Should().Be(10);
+    }
+
+    [Fact]
+    public async Task ReadTable_OfAVirtualizingListWhoseRowCountCountsOnlyItsRealizedRows_SaysTotalRowsMayCountOnlyThose()
+    {
+        // Arrange - Explorer's Items View (roadmap M3.F36): 300 files, of which it has realized the first 42, and its Grid
+        // pattern's RowCount is 42
+        var (grid, _) = VirtualizedGrid("DirectUI", 42, 4, Enumerable.Range(0, 42), itemContainer: true);
+        var elementRef = Add(grid);
+
+        // Act
+        var result = await Read(elementRef, maxRows: 50);
+
+        // Assert - the rows it has, and a warning that the count may not be the list's
+        result.Success.Should().BeTrue();
+        result.Rows.Should().HaveCount(42);
+        result.TotalRows.Should().Be(42);
+        result.Warning.Should().Contain("totalRows").And.Contain("realized").And.Contain("element_action").And.Contain("realize");
+    }
+
+    [Fact]
+    public async Task ReadTable_OfAVirtualizingList_PastItsRowCount_IsNotRealized_NotTheEndOfTheList()
+    {
+        // Arrange - as Explorer: RowCount 42, the realized rows, of 300 items
+        var (grid, pattern) = VirtualizedGrid("DirectUI", 42, 4, Enumerable.Range(0, 42), itemContainer: true);
+        var elementRef = Add(grid);
+
+        // Act
+        var result = await Read(elementRef, startRow: 200);
+
+        // Assert - an empty page that says the rows are not realized, never one that looks like the end of the list
+        pattern.Items.Should().BeEmpty();
+        result.Success.Should().BeTrue();
+        result.Rows.Should().BeEmpty();
+        result.Truncated.Should().BeTrue();
+        result.TruncationReason.Should().Be(ElementTableTruncation.NotRealized);
+        result.NextStartRow.Should().Be(200);
+        result.Warning.Should().Contain("startRow 200").And.Contain("totalRows");
+    }
+
+    [Fact]
+    public async Task ReadTable_OfAScrolledVirtualizingList_ReadsItsRealizedRowsPastItsRowCount()
+    {
+        // Arrange - scrolled down: rows 200-241 realized, placed by their cells' GridItem row, and RowCount still 42
+        var (grid, _) = VirtualizedGrid("DirectUI", 42, 2, Enumerable.Range(200, 42), itemContainer: true);
+        var elementRef = Add(grid);
+
+        // Act
+        var result = await Read(elementRef, startRow: 200, maxRows: 10);
+
+        // Assert - read as rows of the list; whether more follow is not known, so the page says rows may remain
+        result.Rows.Should().HaveCount(10);
+        result.Rows![0].Should().Equal("r200c0", "r200c1");
+        result.TruncationReason.Should().Be(ElementTableTruncation.MaxRows);
+        result.NextStartRow.Should().Be(210);
+        result.Warning.Should().Contain("totalRows");
+    }
+
+    [Fact]
+    public async Task ReadTable_OfAVirtualizingListThatHasRealizedNoRow_IsEmpty()
+    {
+        // Arrange - an empty folder: no row, and RowCount 0
+        var (grid, _) = VirtualizedGrid("DirectUI", 0, 4, [], itemContainer: true);
+        var elementRef = Add(grid);
+
+        // Act
+        var result = await Read(elementRef);
+
+        // Assert
+        result.Rows.Should().BeEmpty();
+        result.Truncated.Should().BeFalse();
+        result.NextStartRow.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task ReadTable_OfAGridWithoutItemContainer_PastItsRowCount_IsTheEndOfTheGrid_AsBefore()
+    {
+        // Arrange - a WPF grid of 30 rows, all realized, without the ItemContainer pattern: its RowCount is its rows
+        var (grid, _) = VirtualizedGrid("WPF", 30, 2, Enumerable.Range(0, 30));
+        var elementRef = Add(grid);
+
+        // Act
+        var first = await Read(elementRef, maxRows: 50);
+        var past = await Read(elementRef, startRow: 40);
+
+        // Assert
+        first.Rows.Should().HaveCount(30);
+        first.Truncated.Should().BeFalse();
+        first.Warning.Should().BeNull();
+        past.Rows.Should().BeEmpty();
+        past.Truncated.Should().BeFalse();
+        past.NextStartRow.Should().BeNull();
+        past.Warning.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task ReadTable_OfAGridReadThroughGetItem_WithItemContainer_TrustsItsRowCount()
+    {
+        // Arrange - a Win32 list view: GetItem reaches every row, so its RowCount is its items, realized or not
+        var cells = Cells(30, 2);
+        var elementRef = Add(new FakeUiaNode("List", "Files") { OtherPatterns = UiaPatterns.Grid | UiaPatterns.ItemContainer, FrameworkId = "Win32" }
+            .WithPattern<IUiaGridPattern>(new FakeGridPattern(cells)));
+
+        // Act
+        var result = await Read(elementRef, startRow: 40);
+
+        // Assert
+        result.Rows.Should().BeEmpty();
+        result.Truncated.Should().BeFalse();
+        result.Warning.Should().BeNull();
     }
 
     [Theory]

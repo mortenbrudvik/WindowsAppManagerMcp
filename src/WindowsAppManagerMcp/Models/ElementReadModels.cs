@@ -145,7 +145,8 @@ public sealed record ElementTextResult(
 /// when it disappeared while it was read, or when it is a password field.</param>
 /// <param name="StartRow">The index of the first row returned.</param>
 /// <param name="TotalRows">How many rows the table has, when known (the Grid pattern's row count without its header rows, or
-/// every row child read).</param>
+/// every row child read). A virtualizing list read through its realized rows (the ItemContainer pattern) may count only those
+/// (roadmap M3.F36), and <paramref name="Warning"/> then says so.</param>
 /// <param name="TotalColumns">How many columns the table has: the Grid pattern's column count, or the most cells or headers seen.</param>
 /// <param name="Truncated">True when the result does not hold every row from <paramref name="StartRow"/> on, or every column.</param>
 /// <param name="NextStartRow">The startRow of the next page, when rows were left out; left out too when the timeout passed
@@ -156,7 +157,8 @@ public sealed record ElementTextResult(
 /// it was given for is gone), with <paramref name="Warning"/>; left out otherwise.</param>
 /// <param name="Warning">Why the table needs a check although it was read (the ref moved), and why the page ended early and
 /// what to do (NotRealized: scroll the grid with element_action and read on; Disappeared: find the table again; Timeout before
-/// the first row: read the page again with a larger timeout); left out otherwise.</param>
+/// the first row: read the page again with a larger timeout), and, on every page of a virtualizing list read through its
+/// realized rows, that <paramref name="TotalRows"/> may count only those (roadmap M3.F36); left out otherwise.</param>
 /// <param name="RowHeaders">The row header of each row returned, in the order of <paramref name="Rows"/> (roadmap M3.F15):
 /// null for a row without one. Only for a grid: its Table pattern's row headers, or the HeaderItem that starts a row read
 /// through the tree. Left out when no row of the page has a row header with text, and for row headers that are cells of the

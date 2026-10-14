@@ -747,7 +747,7 @@ public sealed partial class ElementActionService : IElementActionService
                 await Task.Delay(SettleDelay, cancellationToken).ConfigureAwait(false);
             }
 
-            var read = await ReadAsync(call, targetProcess, _ => ReadAfter(call, element), cancellationToken).ConfigureAwait(false);
+            var read = await ReadAsync(call, targetProcess, token => ReadAfter(call, element, token), cancellationToken).ConfigureAwait(false);
             if (read.Element is not { } state)
             {
                 // The action was done; only its check failed

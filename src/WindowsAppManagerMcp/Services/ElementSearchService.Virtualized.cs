@@ -1,12 +1,14 @@
 using System.Globalization;
 using WindowsAppManagerMcp.Models;
+using WindowsAppManagerMcp.Native;
 using WindowsAppManagerMcp.Services.Interfaces;
 
 namespace WindowsAppManagerMcp.Services;
 
 // searchVirtualized (roadmap M3.10): the items of the window's lists that are not realized yet, found through the lists'
 // ItemContainer pattern. Only reads: realizing an item and scrolling it into view are element_action realize's, behind its
-// guards (the input gate, pause, target policy, host guard) and audited.
+// guards (the input gate, pause, target policy, host guard) and audited. A placeholder that does not say what it is (Custom
+// or unknown) is matched on the property the list compared and the other criteria, not on controlType (roadmap M3.F37).
 public sealed partial class ElementSearchService
 {
     /// <summary>The most lists searchVirtualized searches through their ItemContainer pattern in one call.</summary>
@@ -105,8 +107,14 @@ public sealed partial class ElementSearchService
             : (UiaProperty.Name, criteria.Name!);
         var (condition, filter) = (criteria with { VisibleOnly = false }).Compile(controlTypesOnServer: true);
         var evaluate = UiaConditionEvaluator.CanEvaluate(condition);
+
+        // A placeholder that does not say what it is (Explorer's are Custom, its realized items ListItems) is not held to
+        // controlType, which only the realized item can answer; the other criteria still apply (roadmap M3.F37)
+        var (untypedCondition, untypedFilter) = (criteria with { VisibleOnly = false, ControlTypes = null }).Compile(controlTypesOnServer: true);
+        var evaluateUntyped = UiaConditionEvaluator.CanEvaluate(untypedCondition);
+        var untypedKept = 0;
         var known = total.Matches.Select(m => m.Element.RuntimeId).OfType<IReadOnlyList<int>>().ToList();
-        var items = new List<UiaElement>();
+        var items = new List<VirtualizedItem>();
         var more = false;
         var matched = false;
 
@@ -219,7 +227,11 @@ public sealed partial class ElementSearchService
                             continue;
                         }
 
-                        if ((evaluate && !UiaConditionEvaluator.Matches(condition, element)) || (filter != null && !filter(element)))
+                        var untyped = criteria.ControlTypes is { Count: > 0 } && IsUntypedPlaceholder(element);
+                        if (untyped
+                                ? (evaluateUntyped && !UiaConditionEvaluator.Matches(untypedCondition, element)) ||
+                                  (untypedFilter != null && !untypedFilter(element))
+                                : (evaluate && !UiaConditionEvaluator.Matches(condition, element)) || (filter != null && !filter(element)))
                         {
                             continue;
                         }
@@ -240,7 +252,11 @@ public sealed partial class ElementSearchService
                             break;
                         }
 
-                        items.Add(element);
+                        items.Add(new VirtualizedItem(element, new ElementItemLocator(container, property, asked)));
+                        if (untyped && !criteria.ControlTypes!.Contains(element.Properties.ControlType, StringComparer.OrdinalIgnoreCase))
+                        {
+                            untypedKept++;
+                        }
                     }
 
                     if (more || stop == ElementSearchTruncation.Timeout)
@@ -272,8 +288,24 @@ public sealed partial class ElementSearchService
             Stopped(ElementSearchTruncation.Timeout, TimedOutNote);
         }
 
+        if (untypedKept > 0)
+        {
+            notes.Add($"{untypedKept} item{(untypedKept == 1 ? " is a placeholder" : "s are placeholders")} the list has not " +
+                      "realized that do not say what they are (control type Custom or unknown), so controlType was not tested on " +
+                      "them: they are returned with the control type they have now. element_action realize makes the item real.");
+        }
+
         return new VirtualizedLookup(items, more, containers, notes.Count == 0 ? null : string.Join(" ", notes), stop);
     }
+
+    /// <summary>
+    /// An item a list returned for one it has not realized that does not say what it is (roadmap M3.F37): a placeholder (read
+    /// property by property, or without a runtime id) whose control type is Custom or unknown. File Explorer's Items View
+    /// returns such a Custom element, without a runtime id, for an item it has not realized, and a ListItem once it has.
+    /// </summary>
+    private static bool IsUntypedPlaceholder(UiaElement element) =>
+        (element.Virtualized || element.RuntimeId is not { Count: > 0 }) &&
+        element.Properties.ControlType is "Custom" or UiaControlTypes.Unknown;
 
     /// <summary>
     /// <paramref name="value"/> in the cases a list's text is usually in, other than its own: all lower case, all upper case,
@@ -356,13 +388,19 @@ public sealed partial class ElementSearchService
         var window = query.WindowHandle;
         var mayRead = true;
         var items = new List<FoundElement>(lookup.Items.Count);
-        foreach (var item in lookup.Items)
+        foreach (var (item, locator) in lookup.Items)
         {
             string? itemRef = null;
             try
             {
-                // Not proven unique: the provider compared one property, and the list may hold look-alikes further on
-                itemRef = _registry.Register(window, item, new ElementOrigin(generation, criteria.Identity, Unique: null));
+                // Not proven unique: the provider compared one property, and the list may hold look-alikes further on. An item
+                // without a runtime id is named by the list's answer (roadmap M3.F37), unless the list gave that answer for
+                // another item too: then the two cannot be told apart, and neither gets a ref
+                var alike = item.RuntimeId is not { Count: > 0 } &&
+                            lookup.Items.Count(other => other.Element.RuntimeId is not { Count: > 0 } && other.Locator == locator) > 1;
+                itemRef = alike
+                    ? null
+                    : _registry.Register(window, item, new ElementOrigin(generation, criteria.Identity, Unique: null, Item: locator));
             }
             catch (Exception)
             {
@@ -431,7 +469,8 @@ public sealed partial class ElementSearchService
     }
 
     /// <summary>What searchVirtualized found.</summary>
-    /// <param name="Items">The matching items the tree search had not found, at most the room maxResults left.</param>
+    /// <param name="Items">The matching items the tree search had not found, at most the room maxResults left, each with the
+    /// list that returned it and what it was asked.</param>
     /// <param name="More">Another such item exists beyond <paramref name="Items"/>.</param>
     /// <param name="Containers">The lists looked at.</param>
     /// <param name="Note">Why not everything could be searched, or null.</param>
@@ -440,8 +479,11 @@ public sealed partial class ElementSearchService
     /// read, lists left out by the limits). Null when it finished, or when it did not run because the tree search's own
     /// truncation already says why.</param>
     private sealed record VirtualizedLookup(
-        IReadOnlyList<UiaElement> Items, bool More, IReadOnlyList<UiaElement> Containers, string? Note, ElementSearchTruncation? Stop = null)
+        IReadOnlyList<VirtualizedItem> Items, bool More, IReadOnlyList<UiaElement> Containers, string? Note, ElementSearchTruncation? Stop = null)
     {
         public static VirtualizedLookup Skipped(string note, ElementSearchTruncation? stop = null) => new([], false, [], note, stop);
     }
+
+    /// <summary>An item a list returned, and where: the list and the property and value it was asked for.</summary>
+    private sealed record VirtualizedItem(UiaElement Element, ElementItemLocator Locator);
 }

@@ -1,5 +1,6 @@
 using System.Text.Json;
 using WindowsAppManagerMcp.Infrastructure;
+using WindowsAppManagerMcp.Tools;
 
 namespace WindowsAppManagerMcp.Tests.Unit.Services;
 
@@ -1217,6 +1218,77 @@ public sealed class ElementActionServiceTests : IDisposable
         result.Before!.IsOffscreen.Should().BeTrue();
         result.Before.IsPassword.Should().BeNull("the placeholder does not say, and it is not reported as one");
         list.IsRealized(9000).Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task RealizeByCriteria_OfAnExplorerPlaceholderWithoutARuntimeId_RealizesIt_AndReportsTheRealItemsRef()
+    {
+        // Arrange - File Explorer (roadmap M3.F37): the list returns a Custom placeholder without a runtime id for a file it has
+        // not realized, which the action used to refuse ("The element has no runtime id")
+        var list = new FakeVirtualList(10_000, realized: 30, i => $"Item {i:D5}", Pid).WithExplorerPlaceholders();
+        _window.With(list.List);
+        var search = new ElementSearchService(_tree, _worker, _registry, _windows.Object);
+        var query = new ElementQuery(Handle, Name: "Item 09000", ControlTypes: ["ListItem"], VisibleOnly: false, EnabledOnly: false,
+            MaxResults: 2, Detail: ElementDetail.Minimal, Timeout: TimeSpan.FromSeconds(5))
+        {
+            SearchVirtualized = true,
+            IncludeHostPopups = true
+        };
+
+        // Act
+        var found = await search.FindAsync(query);
+        var placeholder = found.Elements.Should().ContainSingle().Subject;
+        var result = await ActAsync(placeholder.Ref!, ElementActionKind.Realize);
+
+        // Assert - realized through the placeholder's VirtualizedItem pattern, verified on the real item, under the same ref
+        (found.MatchCount, found.Truncated, placeholder.ControlType).Should().Be((1, false, "Custom"));
+        result.Success.Should().BeTrue(result.Error);
+        result.Method.Should().Be(ElementActionMethod.VirtualizedItem);
+        result.Before!.IsOffscreen.Should().BeTrue();
+        result.After!.IsOffscreen.Should().BeFalse();
+        result.OutcomeVerified.Should().BeTrue();
+        result.Ref.Should().Be(placeholder.Ref);
+        list.IsRealized(9000).Should().BeTrue();
+        var real = await search.FindAsync(new ElementQuery(Handle, Name: "Item 09000", ControlTypes: ["ListItem"], Timeout: TimeSpan.FromSeconds(5)));
+        real.Elements.Should().ContainSingle().Which.Ref.Should().Be(result.Ref);
+    }
+
+    [Fact]
+    public async Task RealizeByCriteria_ThroughTheTool_OfAnExplorerPlaceholder_IsDone()
+    {
+        // Arrange - the call measured on Explorer: handle, name, maxScrolls 20, and the natural controlType
+        var list = new FakeVirtualList(300, realized: 42, i => $"item-{i:D3}.txt", Pid).WithExplorerPlaceholders();
+        _window.With(list.List);
+        var tool = new ElementActionTools(CreateSut(), new ElementSearchService(_tree, _worker, _registry, _windows.Object), _registry);
+
+        // Act
+        var result = await tool.ElementAction(ElementActionKind.Realize, handle: Handle, name: "item-250.txt", controlType: "ListItem",
+            maxScrolls: 20).Payload<ElementActionResult>();
+
+        // Assert
+        result.Success.Should().BeTrue(result.Error);
+        result.Ref.Should().NotBeNull();
+        result.OutcomeVerified.Should().BeTrue();
+        list.IsRealized(250).Should().BeTrue();
+        _registry.Resolve(result.Ref!, CancellationToken.None).Element!.Node.Should().BeSameAs(list.Items[250]);
+    }
+
+    [Fact]
+    public async Task Realize_OfAnExplorerPlaceholder_IsRefused_WhenInputIsPaused_AndNothingIsRealized()
+    {
+        // Arrange
+        var list = new FakeVirtualList(100, realized: 10, i => $"Item {i:D5}", Pid).WithExplorerPlaceholders();
+        _window.With(list.List);
+        var found = await new ElementSearchService(_tree, _worker, _registry, _windows.Object).FindAsync(
+            new ElementQuery(Handle, Name: "Item 00050", Timeout: TimeSpan.FromSeconds(5)) { SearchVirtualized = true });
+        _session.Pause(InputControlSources.Hotkey);
+
+        // Act
+        var result = await ActAsync(found.Elements!.Single().Ref!, ElementActionKind.Realize);
+
+        // Assert
+        result.ErrorCode.Should().Be("PausedByUser");
+        list.IsRealized(50).Should().BeFalse();
     }
 
     [Fact]

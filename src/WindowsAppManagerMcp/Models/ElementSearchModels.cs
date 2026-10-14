@@ -75,7 +75,8 @@ public record ScreenPoint(int X, int Y);
 /// One element find_ui_elements found (roadmap M3.4). The fields after <paramref name="Patterns"/> are set only for
 /// detail standard or full, and are left out when they do not apply.
 /// </summary>
-/// <param name="Ref">The element's ref, for later calls; null when the element has no runtime id. Serialized first.</param>
+/// <param name="Ref">The element's ref, for later calls; null when the element has no runtime id, except for an item
+/// searchVirtualized found through its list, whose ref names it by the list's answer (roadmap M3.F37). Serialized first.</param>
 /// <param name="AutomationId">Cut to <see cref="AppText.MaxLength"/> characters by the tools that return it
 /// (<see cref="Bounded"/>, roadmap M3.F14); whole where a service reads it.</param>
 /// <param name="ClickPoint">Where a click hits the element: UI Automation's clickable point, or else the centre of its
@@ -202,7 +203,7 @@ public record FindElementsResult(
 /// <param name="Containers">The lists searched for, at most <see cref="Services.ElementSearchService.MaxVirtualizedContainers"/>:
 /// List, Tree, DataGrid and Table elements, withinRef's element itself when it is one.</param>
 /// <param name="Note">Why nothing more could be searched (no list, no ItemContainer pattern, the timeout, a provider that
-/// failed), or null. A lookup that did not search every list to its end also sets the result's truncation reason (Timeout or
+/// failed), and how many placeholders were not tested on controlType (roadmap M3.F37), or null. A lookup that did not search every list to its end also sets the result's truncation reason (Timeout or
 /// PartsSkipped).</param>
 public record VirtualizedSearchInfo(int ItemsFound, IReadOnlyList<VirtualizedContainer> Containers, string? Note = null);
 
@@ -254,7 +255,9 @@ public record ElementQuery(
     /// search, the List, Tree, DataGrid and Table elements of the named window (or withinRef's element) that support the
     /// ItemContainer pattern are asked for items whose automation id (else whole name) equals the criterion
     /// (FindItemByProperty, compared by the provider, usually case-sensitively; when no item has the text exactly, it is asked
-    /// for again in the usual other cases: roadmap M3.F19). Only reads: nothing is realized or scrolled.
+    /// for again in the usual other cases: roadmap M3.F19). The other criteria are tested on each item, but controlType not on
+    /// a placeholder whose control type is Custom or unknown (roadmap M3.F37: File Explorer's). Only reads: nothing is realized
+    /// or scrolled.
     /// Needs automationId, or name with nameMatch exact (<see cref="Services.ElementSearchService.VirtualizedArgumentError"/>).
     /// </summary>
     public bool SearchVirtualized { get; init; }
