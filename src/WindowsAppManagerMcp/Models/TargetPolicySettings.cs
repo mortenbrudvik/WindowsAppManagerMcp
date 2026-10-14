@@ -52,7 +52,9 @@ public sealed record TargetPolicySettings(
     /// desktop without the secure desktop); the SmartScreen prompt "Windows protected your PC"
     /// (CHXSmartScreen.exe, a UWP app, and smartscreen.exe, the reputation broker that starts it); and the
     /// Windows Security app (SecHealthUI.exe) and its notifications and prompts (SecurityHealthHost.exe); and the Entra ID and
-    /// Microsoft account sign-in window (Microsoft.AAD.BrokerPlugin.exe, a UWP app that takes passwords; roadmap M3.F6). The UWP ones are matched through the app that their
+    /// Microsoft account sign-in window (Microsoft.AAD.BrokerPlugin.exe, a UWP app that takes passwords; roadmap M3.F6); and
+    /// WWAHost.exe, which shows the Microsoft account sign-in window of Settings' "Access work or school > Connect" (found on a
+    /// real desktop, roadmap M3.F3) and other web-based system UIs, along with the rare old JavaScript Store app. The UWP ones are matched through the app that their
     /// ApplicationFrameHost frame hosts. A browser extension password manager runs inside the browser and
     /// cannot be told apart by process. Neither can a security prompt that runs inside a shared process, so
     /// while the deny list includes this list, the policy also refuses Windows' "Open File - Security Warning",
@@ -62,7 +64,7 @@ public sealed record TargetPolicySettings(
     [
         "1Password", "Bitwarden", "KeePass", "KeePassXC", "LastPass", "Dashlane", "Keeper", "KeeperPasswordManager",
         "Enpass", "NordPass", "ProtonPass", "Proton Pass", "RoboForm", "pwsafe", "CredentialUIBroker", "CredDialogHost",
-        "consent", "CHXSmartScreen", "smartscreen", "SecHealthUI", "SecurityHealthHost", "Microsoft.AAD.BrokerPlugin"
+        "consent", "CHXSmartScreen", "smartscreen", "SecHealthUI", "SecurityHealthHost", "Microsoft.AAD.BrokerPlugin", "WWAHost"
     ];
 
     /// <summary>
