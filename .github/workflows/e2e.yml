@@ -16,7 +16,7 @@ on:
           - all
         default: no-input
       runner:
-        description: 'Runner label: windows-latest, or a self-hosted runner that runs in a logged-on desktop session.'
+        description: 'Runner label: windows-latest, or a self-hosted runner (version 2.327.1 or later) that runs in a logged-on desktop session.'
         type: string
         default: windows-latest
 
@@ -83,11 +83,11 @@ jobs:
 
       - name: Checkout
         if: steps.desktop.outputs.interactive == 'true'
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup .NET
         if: steps.desktop.outputs.interactive == 'true'
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v6
         with:
           dotnet-version: '8.0.x'
 
@@ -144,7 +144,7 @@ jobs:
 
       - name: Upload test results
         if: always() && steps.desktop.outputs.interactive == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: e2e-results
           path: |

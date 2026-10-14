@@ -2102,7 +2102,8 @@ process, shown without activation and destroyed in `Dispose`. `E2ETestGateTests`
 **Running them.** Locally only with an opt-in, as above. On GitHub, `.github/workflows/e2e.yml`
 runs them on demand (Actions, "E2E", "Run workflow"), with a choice of tier and runner. It first
 checks that the runner has an interactive desktop and otherwise ends with a notice instead of
-running anything; use a self-hosted runner in a logged-on desktop session then. It fails when no
+running anything; use a self-hosted runner in a logged-on desktop session then (runner version 2.327.1 or later,
+which the workflows' Node.js 24 actions need). It fails when no
 test ran, so an opt-in that did not reach the tests cannot pass as green.
 
 ### Release gate: the UI Automation engines
@@ -2441,7 +2442,7 @@ the runner. The fixture app scenarios themselves run only in `.github/workflows/
       --logger trx
 
 - name: Upload test results
-  uses: actions/upload-artifact@v4
+  uses: actions/upload-artifact@v7
   if: always()
   with:
     name: test-results
