@@ -78,6 +78,9 @@ public enum ObserveMode
 /// <param name="MaxWindows">The most window rows.</param>
 /// <param name="ScreenshotMaxLongEdge">The capture's long edge in pixels.</param>
 /// <param name="Timeout">The one deadline of the whole observation: what is not read by then is reported as not read.</param>
+/// <param name="ScreenshotMarks">Draw the window's element lines on the screenshot as Set-of-Marks marks, each tagged with its
+/// line's ref (roadmap M3.F32). The capture then waits for the elements walk, whose elements it marks; it needs both
+/// sections.</param>
 public sealed record DesktopStateRequest(
     nint? Window,
     IReadOnlySet<DesktopStateSection> Include,
@@ -86,7 +89,8 @@ public sealed record DesktopStateRequest(
     ElementSearchScope? Scope,
     int MaxWindows,
     int ScreenshotMaxLongEdge,
-    TimeSpan Timeout)
+    TimeSpan Timeout,
+    bool ScreenshotMarks = false)
 {
     /// <summary>The sections get_desktop_state reads when include is left out: all but the screenshot.</summary>
     public static IReadOnlySet<DesktopStateSection> DefaultInclude { get; } = new HashSet<DesktopStateSection>

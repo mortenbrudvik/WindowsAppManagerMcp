@@ -968,6 +968,152 @@ public class DesktopStateServiceTests
         state.Errors.Should().ContainSingle().Which.ErrorCode.Should().Be(nameof(ScreenshotErrorCode.WindowMinimized));
     }
 
+    #region screenshotMarks (roadmap M3.F32)
+
+    private static readonly CapturedWindow WalkedNotepad = new(Notepad, 4242, new WindowRect(0, 0, 1280, 720), true);
+
+    private static readonly IReadOnlySet<DesktopStateSection> ScreenshotAndElements =
+        new HashSet<DesktopStateSection> { DesktopStateSection.Screenshot, DesktopStateSection.Elements };
+
+    /// <summary>What CaptureWindowWithElements was given, in the order of the calls the test records.</summary>
+    private sealed record MarkedCapture(IReadOnlyList<UIElementInfo> Elements, ElementOverlayOptions Overlays, CapturedWindow? WalkedWindow,
+        CaptureOptions Options);
+
+    private MarkedCapture? _marked;
+
+    private void SetUpMarkedCapture(List<string>? order = null, IReadOnlyList<string>? warnings = null)
+    {
+        _screenshots.Setup(s => s.ReadCapturedWindow(Notepad, true))
+            .Callback(() => order?.Add($"window, {_walks.Count} walks"))
+            .Returns(WalkedNotepad);
+        _screenshots.Setup(s => s.CaptureWindowWithElements(Notepad, It.IsAny<string?>(), It.IsAny<IReadOnlyList<UIElementInfo>>(), true,
+                It.IsAny<ElementOverlayOptions>(), It.IsAny<CaptureOptions>(), It.IsAny<CapturedWindow?>()))
+            .Callback((nint _, string? _, IReadOnlyList<UIElementInfo> elements, bool _, ElementOverlayOptions overlays, CaptureOptions options,
+                CapturedWindow? walked) =>
+            {
+                order?.Add($"capture, {_walks.Count} walks");
+                _marked = new MarkedCapture(elements, overlays, walked, options);
+            })
+            .Returns(() => new ScreenCapture<AnnotatedScreenshotResult>(
+                new AnnotatedScreenshotResult(true, "png", "image/png", 1280, 720, Notepad, "notes.txt - Notepad",
+                    new CapturedRegion(0, 0, 1280, 720), new ImageToScreenTransform(0, 0, 1, 1), [], _marked!.Elements.Count, 4, 1,
+                    MonitorScaleFactor: 1.25, CaptureMethod: "PrintWindow", Warnings: warnings, CaptureId: warnings == null ? "c2-ab12" : null,
+                    Legend: "[w4120035e7] Button 'Save' center=(50,32)"),
+                new EncodedImage([1, 2, 3], "image/png")));
+    }
+
+    [Fact]
+    public async Task TheScreenshotMarks_AreTheElementLinesRefs_DrawnOnACaptureMadeAfterTheWalk()
+    {
+        // Arrange - the window is read before the walk, so the capture can tell whether it moved meanwhile
+        var order = new List<string>();
+        SetUpMarkedCapture(order);
+
+        // Act
+        var (state, image) = await CreateSut().GetStateAsync(Request(include: ScreenshotAndElements) with { ScreenshotMarks = true },
+            CancellationToken.None);
+
+        // Assert - the marks are the walk's own elements, so each mark's ref starts one of the elements lines
+        order.Should().Equal("window, 0 walks", "capture, 1 walks");
+        _marked!.Elements.Select(e => e.Ref).Should().Equal("w4120035e7", "w4120035e8");
+        state.Elements!.Text!.Split('\n').Select(line => line.Split(' ')[0]).Should().Equal("w4120035e7", "w4120035e8");
+        _marked.WalkedWindow.Should().Be(WalkedNotepad);
+        _marked.Overlays.Should().Be(new ElementOverlayOptions { MarkMovedWindow = false });
+        _marked.Options.MaxDimension.Should().Be(1280);
+        _marked.Options.Output.Should().Be("image");
+        image!.MimeType.Should().Be("image/png");
+        state.Screenshot!.CaptureId.Should().Be("c2-ab12");
+        state.Screenshot.Width.Should().Be(1280);
+        state.Screenshot.ScaleFactor.Should().Be(1.25);
+        state.Errors.Should().BeNull();
+        _screenshots.Verify(s => s.CaptureWindow(It.IsAny<nint>(), It.IsAny<bool>(), It.IsAny<CaptureOptions>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task TheScreenshotMarks_LeaveThePopupsLinesOut_WhichTheWindowsCaptureDoesNotShow()
+    {
+        // Arrange
+        SetUpMarkedCapture();
+        _popups.Setup(p => p.IsInForeground(Notepad)).Returns(true);
+        _popups.Setup(p => p.GetPopupList(Notepad)).Returns(new PopupList(
+            [new PopupWindow(Menu, PopupKind.Menu, null, "#32768", 4242, 0, PopupRelation.SameProcess, null, false)], false));
+
+        // Act
+        var (state, _) = await CreateSut().GetStateAsync(Request(include: ScreenshotAndElements) with { ScreenshotMarks = true },
+            CancellationToken.None);
+
+        // Assert
+        state.Elements!.Text.Should().Contain("w4120036e1 MenuItem 'Delete'");
+        _marked!.Elements.Select(e => e.Ref).Should().Equal("w4120035e7", "w4120035e8");
+    }
+
+    [Fact]
+    public async Task TheScreenshotMarks_OfAWindowThatMovedDuringTheWalk_AreLeftOut_WithTheCapturesWarning()
+    {
+        // The service leaves the marks out (MarkMovedWindow false) and says why; the observation passes its warning on
+        SetUpMarkedCapture(warnings: [CaptureWarnings.Format(CaptureWarnings.WindowMoved, "the window moved, so no marks were drawn")]);
+
+        var (state, image) = await CreateSut().GetStateAsync(Request(include: ScreenshotAndElements) with { ScreenshotMarks = true },
+            CancellationToken.None);
+
+        image.Should().NotBeNull();
+        state.Screenshot!.CaptureId.Should().BeNull();
+        state.Screenshot.Warnings.Should().ContainSingle().Which.Should().StartWith(CaptureWarnings.WindowMoved + ":");
+    }
+
+    [Fact]
+    public async Task TheScreenshotMarks_OfAWalkThatFailed_LeaveACaptureWithoutMarks()
+    {
+        // Arrange
+        SetUpMarkedCapture();
+        _elements.Setup(e => e.GetUIElementsAsync(It.IsAny<nint>(), It.IsAny<int>(), It.IsAny<UIElementFilter?>(),
+                It.IsAny<IProgress<OperationProgress>?>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("provider failed"));
+
+        // Act
+        var (state, image) = await CreateSut().GetStateAsync(Request(include: ScreenshotAndElements) with { ScreenshotMarks = true },
+            CancellationToken.None);
+
+        // Assert
+        _marked!.Elements.Should().BeEmpty();
+        image.Should().NotBeNull();
+        state.Screenshot.Should().NotBeNull();
+        state.Errors.Should().ContainSingle().Which.Section.Should().Be("elements");
+    }
+
+    [Fact]
+    public async Task TheScreenshotMarks_OfAFailedCapture_AreReportedAsTheCapturesError()
+    {
+        _screenshots.Setup(s => s.CaptureWindowWithElements(Notepad, It.IsAny<string?>(), It.IsAny<IReadOnlyList<UIElementInfo>>(), true,
+                It.IsAny<ElementOverlayOptions>(), It.IsAny<CaptureOptions>(), It.IsAny<CapturedWindow?>()))
+            .Returns(new ScreenCapture<AnnotatedScreenshotResult>(new AnnotatedScreenshotResult(false, null, null, 0, 0, Notepad, null, null,
+                null, null, 0, 0, 0, Error: "The window is minimized.", ErrorCode: nameof(ScreenshotErrorCode.WindowMinimized)), null));
+
+        var (state, image) = await CreateSut().GetStateAsync(Request(include: ScreenshotAndElements) with { ScreenshotMarks = true },
+            CancellationToken.None);
+
+        image.Should().BeNull();
+        state.Screenshot.Should().BeNull();
+        state.Errors.Should().ContainSingle().Which.Should().BeEquivalentTo(
+            new { Section = "screenshot", ErrorCode = nameof(ScreenshotErrorCode.WindowMinimized) });
+    }
+
+    [Fact]
+    public async Task TheScreenshotMarks_AreNotDrawn_OnAnOrdinaryScreenshot()
+    {
+        _screenshots.Setup(s => s.CaptureWindow(Notepad, true, It.IsAny<CaptureOptions>()))
+            .Returns(new ScreenCapture<ScreenshotResult>(new ScreenshotResult(true, "png", "image/png", 1280, 720, null, null, 0, 1.0), null));
+
+        await CreateSut().GetStateAsync(Request(include: ScreenshotAndElements), CancellationToken.None);
+
+        _screenshots.Verify(s => s.CaptureWindow(Notepad, true, It.IsAny<CaptureOptions>()), Times.Once);
+        _screenshots.Verify(s => s.ReadCapturedWindow(It.IsAny<nint>(), It.IsAny<bool>()), Times.Never);
+        _screenshots.Verify(s => s.CaptureWindowWithElements(It.IsAny<nint>(), It.IsAny<string?>(), It.IsAny<IReadOnlyList<UIElementInfo>>(),
+            It.IsAny<bool>(), It.IsAny<ElementOverlayOptions>(), It.IsAny<CaptureOptions>(), It.IsAny<CapturedWindow?>()), Times.Never);
+    }
+
+    #endregion
+
     [Fact]
     public void TheScreenshot_IsUnavailable_WhenTheUserTurnedCapturesOff()
     {

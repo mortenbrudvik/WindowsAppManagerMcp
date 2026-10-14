@@ -177,6 +177,14 @@ public record AnnotatedScreenshotResult(
 /// <param name="HighlightInteractable">Dim the boxes of disabled elements.</param>
 public sealed record ElementOverlayOptions(bool Draw = true, bool Labels = true, bool HighlightInteractable = true)
 {
+    /// <summary>
+    /// Mark the elements also when the window moved or resized while they were read, with a WindowMoved warning that the
+    /// marks are offset (capture_with_elements, whose legend still names each mark's element). False leaves every mark out
+    /// then, with a WindowMoved warning that says so (get_desktop_state's marks, roadmap M3.F32, which are only a picture of
+    /// its element lines). Default: true.
+    /// </summary>
+    public bool MarkMovedWindow { get; init; } = true;
+
     /// <summary>Boxes and labelled tags, disabled elements dimmed.</summary>
     public static ElementOverlayOptions Default { get; } = new();
 }

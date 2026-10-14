@@ -16,8 +16,10 @@ namespace WindowsAppManagerMcp.Services.Interfaces;
 /// <para><b>Through the shared reads.</b> Elements come from the UI Automation walk of get_ui_elements (refs registered in the
 /// element registry, the hung-window precheck, the web-content warm-up), the focused element from get_focused_element's read,
 /// the popups from <see cref="IPopupService"/> (get_active_popups and find_ui_elements' windowAndPopups scope, with the same
-/// default), and the capture from capture_window's path (a captureId the mouse tools take). Nothing here sends input,
-/// activates a window or changes one.</para>
+/// default), and the capture from capture_window's path (a captureId the mouse tools take). A capture that marks the
+/// elements (<see cref="DesktopStateRequest.ScreenshotMarks"/>, roadmap M3.F32) takes capture_with_elements' path instead,
+/// after the walk, with the walk's own elements, and draws no marks on a window that moved during the walk. Nothing here
+/// sends input, activates a window or changes one.</para>
 /// <para><b>What is not read.</b> When no window is named, the window in front is read, unless it is the agent's own host
 /// window (TargetIsAgentHost: the agent's terminal holds the conversation, not the app it means) or one the user's target
 /// policy denies (TargetDeniedByPolicy): a sweep the agent did not aim reads neither, as find_ui_elements' desktop scope.

@@ -142,6 +142,39 @@ public class ScreenshotCaptureIdTests
     }
 
     [Fact]
+    public void CaptureWithElements_ThatMarksNoMovedWindow_LeavesTheMarksOut_AndSaysSo()
+    {
+        // Arrange - get_desktop_state's marks (roadmap M3.F32) are only a picture of its element lines: none is better than offset ones
+        var walked = new CapturedWindow(0x1234, 4242, WindowRect.FromLTRB(0, 200, 816, 839), false);
+        var save = new UIElementInfo("Save", "Button", "btnSave", new BoundsDto(150, 260, 80, 24), true, false, Ref: "w4660e7");
+
+        // Act
+        var metadata = CreateSut().CaptureWindowWithElements(Window, "App", [save], includeFrame: false,
+            new ElementOverlayOptions { MarkMovedWindow = false }, Defaults, walked).Metadata;
+
+        // Assert
+        metadata.Success.Should().BeTrue(metadata.Error);
+        metadata.Elements.Should().BeEmpty();
+        metadata.ElementCount.Should().Be(0);
+        metadata.CaptureId.Should().BeNull();
+        metadata.Warnings.Should().ContainSingle(w => w.StartsWith(CaptureWarnings.WindowMoved + ":"))
+            .Which.Should().Contain("no marks were drawn");
+    }
+
+    [Fact]
+    public void CaptureWithElements_ThatMarksNoMovedWindow_StillMarksAWindowThatStayed()
+    {
+        var save = new UIElementInfo("Save", "Button", "btnSave", new BoundsDto(150, 260, 80, 24), true, false, Ref: "w4660e7");
+
+        var metadata = CreateSut().CaptureWindowWithElements(Window, "App", [save], includeFrame: false,
+            new ElementOverlayOptions { MarkMovedWindow = false }, Defaults,
+            new CapturedWindow(0x1234, 4242, WindowRect.FromLTRB(100, 200, 916, 839), false)).Metadata;
+
+        metadata.Elements.Should().ContainSingle().Which.Ref.Should().Be("w4660e7");
+        metadata.CaptureId.Should().NotBeNull();
+    }
+
+    [Fact]
     public void CaptureWithElements_OfAWindowThatStayedWithinTheTolerance_IsRegistered()
     {
         var walked = new CapturedWindow(0x1234, 4242, WindowRect.FromLTRB(101, 199, 917, 840), false);

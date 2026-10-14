@@ -75,6 +75,9 @@ public class DesktopStateTools
         int screenshotMaxLongEdge = DefaultScreenshotLongEdge,
         [Description("The one deadline of the whole call in milliseconds (default: 5000, min: 1000, max: 30000).")]
         int timeoutMs = DefaultTimeoutMs,
+        [Description("Draw the window's element lines on the screenshot as Set-of-Marks boxes tagged with their refs (not the " +
+                     "popups' lines); the capture then waits for the walk. Needs 'screenshot' and 'elements' in include. Default: false.")]
+        bool screenshotMarks = false,
         CancellationToken cancellationToken = default)
     {
         var sections = include is { Length: > 0 } ? include.ToHashSet() : DesktopStateRequest.DefaultInclude;
@@ -83,13 +86,21 @@ public class DesktopStateTools
             throw new ToolErrorException(ToolErrorReporting.InvalidArgumentsErrorCode, unavailable + " Nothing was read.");
         }
 
+        // The marks (roadmap M3.F32) are drawn from the elements walk on the capture: without either there is nothing to mark
+        if (screenshotMarks && (!sections.Contains(DesktopStateSection.Screenshot) || !sections.Contains(DesktopStateSection.Elements)))
+        {
+            throw new ToolErrorException(ToolErrorReporting.InvalidArgumentsErrorCode,
+                "screenshotMarks marks the elements section's lines on the screenshot: include both 'screenshot' and 'elements'. " +
+                "Nothing was read.");
+        }
+
         // {"foreground": true} alone is whatever window is in front, not a window the agent chose: it is read by the rules of
         // the window in front (never the agent's own host), not by those of a window named
         var target = handle == null && WindowTargeting.IsBareForeground(window)
             ? null
             : WindowTargeting.Optional(_windowService, handle, window);
         var snapshot = await _state.GetStateAsync(Request(target, sections, maxElements, interactableOnly, ScopeOf(scope), maxWindows,
-            screenshotMaxLongEdge, timeoutMs), cancellationToken).ConfigureAwait(false);
+            screenshotMaxLongEdge, timeoutMs) with { ScreenshotMarks = screenshotMarks }, cancellationToken).ConfigureAwait(false);
         cancellationToken.ThrowIfCancellationRequested();
         return ToolImages.Create(snapshot.State, snapshot.Image, isError: !snapshot.State.Success, ToolJson.SerializerOptions);
     }

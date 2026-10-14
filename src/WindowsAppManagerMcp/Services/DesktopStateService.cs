@@ -11,7 +11,8 @@ namespace WindowsAppManagerMcp.Services;
 /// <summary>
 /// get_desktop_state's observation (roadmap M3.12; see <see cref="IDesktopStateService"/>). The cheap parts (the window in
 /// front, the cursor, the keys and the pause) are read first on the calling thread; the windows, the focused element, the
-/// popups, the elements walk and the capture then run side by side, and the call waits for them until one deadline.
+/// popups, the elements walk and the capture then run side by side, and the call waits for them until one deadline. A capture
+/// that marks the elements (roadmap M3.F32) waits for the walk instead.
 /// </summary>
 /// <remarks>
 /// The UI Automation parts get a little less than the deadline (<see cref="PartBudget"/>), so a walk that is asked to stop
@@ -33,6 +34,12 @@ public sealed class DesktopStateService : IDesktopStateService
 
     /// <summary>What the popups' element walks may use of maxElements together, so the window keeps the rest.</summary>
     private const int PopupShareDivisor = 2;
+
+    /// <summary>
+    /// How the screenshot marks the elements (roadmap M3.F32): capture_with_elements' boxes and ref tags, and none at all when
+    /// the window moved during the walk, since the marks are only a picture of the element lines.
+    /// </summary>
+    private static readonly ElementOverlayOptions MarkOverlays = new() { MarkMovedWindow = false };
 
     private readonly IWindowService _windows;
     private readonly IInputSession _session;
@@ -164,6 +171,13 @@ public sealed class DesktopStateService : IDesktopStateService
 
         var handle = target.Handle;
         var hasTarget = handle != nint.Zero;
+
+        // Set-of-Marks (roadmap M3.F32): the capture marks the elements walk's own elements, so the window is read before the
+        // walk starts, and the capture can tell whether it moved meanwhile
+        var marks = request.ScreenshotMarks && hasTarget && include.Contains(DesktopStateSection.Elements) &&
+                    include.Contains(DesktopStateSection.Screenshot);
+        var walkedWindow = marks ? Read(() => _screenshots.ReadCapturedWindow(handle, includeFrame: true)) : null;
+
         var windowsTask = include.Contains(DesktopStateSection.Windows)
             ? Task.Run(() => _windows.GetAllWindows(includeMinimized: true), CancellationToken.None)
             : null;
@@ -186,7 +200,9 @@ public sealed class DesktopStateService : IDesktopStateService
             else
             {
                 var options = new CaptureOptions { MaxDimension = request.ScreenshotMaxLongEdge, Output = "image" };
-                captureTask = Task.Run(() => _screenshots.CaptureWindow(handle, includeFrame: true, options), CancellationToken.None);
+                captureTask = marks && elementsTask is { } walkTask
+                    ? Start(() => CaptureMarkedAsync(handle, walkTask, walkedWindow, options, partBudget + stopGrace))
+                    : Task.Run(() => _screenshots.CaptureWindow(handle, includeFrame: true, options), CancellationToken.None);
             }
         }
 
@@ -480,7 +496,39 @@ public sealed class DesktopStateService : IDesktopStateService
         // The window's warnings explain a thin or empty walk (roadmap M3.F16): a minimized or an elevated window
         return new ElementsWalk(
             Elements(text, count, truncated, truncated ? reason : null, scope, result.AccessibilityWarmup) with { Warnings = result.Warnings },
-            null, excluded);
+            null, excluded, result.Elements);
+    }
+
+    /// <summary>
+    /// The screenshot with Set-of-Marks marks (roadmap M3.F32), made through capture_with_elements' capture once the elements
+    /// walk returned (or the time it has to return after a stop, <paramref name="wait"/>, passed). It marks the window's own
+    /// elements of that walk, so each mark's tag is the ref that starts its element line; the popups' lines get none, as the
+    /// window's capture does not show them. A walk that failed or did not return leaves a capture without marks (the
+    /// elements error says why), and a window that moved during the walk gets none either, with a WindowMoved warning.
+    /// </summary>
+    private async Task<ScreenCapture<ScreenshotResult>> CaptureMarkedAsync(
+        nint window, Task<ElementsWalk> walk, CapturedWindow? walkedWindow, CaptureOptions options, TimeSpan wait)
+    {
+        IReadOnlyList<UIElementInfo> elements = [];
+        try
+        {
+            elements = (await walk.WaitAsync(wait, _time).ConfigureAwait(false)).WindowElements ?? [];
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            // Reported as the elements' error: the window is captured without marks
+        }
+
+        // The title is the observation's own (windowTitle); the capture's is not reported
+        var capture = await Task.Run(() => _screenshots.CaptureWindowWithElements(window, null, elements, includeFrame: true, MarkOverlays,
+            options, walkedWindow), CancellationToken.None).ConfigureAwait(false);
+        var metadata = capture.Metadata;
+        return new ScreenCapture<ScreenshotResult>(new ScreenshotResult(
+            metadata.Success, metadata.ImageFormat, metadata.MimeType, metadata.Width, metadata.Height, metadata.CapturedRegion,
+            metadata.ImageToScreen, metadata.Success ? Read(() => _windows.GetWindowInfo(window))?.MonitorIndex : null,
+            metadata.MonitorScaleFactor, metadata.Error, metadata.ErrorCode, metadata.FilePath, metadata.OriginalWidth,
+            metadata.OriginalHeight, metadata.ByteSize, metadata.CaptureMethod, metadata.CoordinateSpace, metadata.Warnings,
+            metadata.CaptureId), capture.Image);
     }
 
     private static UIElementFilter Filter(DesktopStateRequest request, int maxElements, TimeSpan warmupBudget, TimeSpan stopGrace) => new(
@@ -665,5 +713,8 @@ public sealed class DesktopStateService : IDesktopStateService
     private sealed record Target(nint Handle, string? Title, DesktopStateError? Refusal, bool Invalid = false);
 
     /// <param name="PopupsExcluded">The popups the walk left out: of the agent's host, or of an app the policy denies.</param>
-    private sealed record ElementsWalk(DesktopElements? Elements, DesktopStateError? Error, int PopupsExcluded = 0);
+    /// <param name="WindowElements">The window's own elements, as its lines list them: what the screenshot's marks are drawn
+    /// from (roadmap M3.F32). Null when the window's walk returned none.</param>
+    private sealed record ElementsWalk(
+        DesktopElements? Elements, DesktopStateError? Error, int PopupsExcluded = 0, IReadOnlyList<UIElementInfo>? WindowElements = null);
 }

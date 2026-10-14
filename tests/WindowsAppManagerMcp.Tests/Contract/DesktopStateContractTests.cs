@@ -83,6 +83,31 @@ public class DesktopStateContractTests
     }
 
     [Fact]
+    public async Task ScreenshotMarks_ComeOnTheCapture_WithTheElementLinesTheyMark()
+    {
+        // Arrange - roadmap M3.F32
+        using var services = new ContractServices(ContractMode.Typical);
+        await using var server = await StartAsync(services);
+
+        // Act
+        var result = await server.CallToolAsync("get_desktop_state", new Dictionary<string, object?>
+        {
+            ["handle"] = TypicalDesktop.NotepadHandle,
+            ["include"] = new[] { "elements", "screenshot" },
+            ["screenshotMarks"] = true
+        });
+
+        // Assert - the capture went through capture_with_elements' path, and is registered as every capture is
+        result.IsError.Should().NotBe(true);
+        result.Content[0].Should().BeOfType<ImageContentBlock>();
+        var state = result.Payload<DesktopState>();
+        state.Elements!.Text.Should().StartWith("w4120035e");
+        services.Captures.Find(state.Screenshot!.CaptureId!).Should().NotBeNull();
+        services.UiElements.Verify(u => u.GetUIElementsAsync((nint)TypicalDesktop.NotepadHandle, It.IsAny<int>(), It.IsAny<UIElementFilter?>(),
+            It.IsAny<IProgress<OperationProgress>?>(), It.IsAny<CancellationToken>()), Times.Once, "the marks are the elements walk's own");
+    }
+
+    [Fact]
     public async Task AnUnknownIncludeValue_IsRefused_WithTheAllowedValues()
     {
         using var services = new ContractServices(ContractMode.Typical);

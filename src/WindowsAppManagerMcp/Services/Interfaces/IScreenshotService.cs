@@ -70,7 +70,8 @@ public interface IScreenshotService
     /// <param name="walkedWindow">
     /// The window as <see cref="ReadCapturedWindow"/> read it before <paramref name="elements"/> were read, or null. When the
     /// window has moved or resized since, the elements' screen bounds are no longer where the image shows them: the
-    /// capture then has no captureId (a click at a mark would land beside its element) and a WindowMoved warning.
+    /// capture then has no captureId (a click at a mark would land beside its element) and a WindowMoved warning, and no
+    /// marks unless <see cref="ElementOverlayOptions.MarkMovedWindow"/>.
     /// </param>
     ScreenCapture<AnnotatedScreenshotResult> CaptureWindowWithElements(
         nint windowHandle,
