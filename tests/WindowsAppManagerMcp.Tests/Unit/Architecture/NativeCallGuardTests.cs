@@ -141,7 +141,7 @@ public class NativeCallGuardTests
         ["User32.GetWindowTextLengthW"] = "reads the length of a window title",
         ["User32.GetWindowTextW"] = "reads a window title",
         ["User32.GetClassNameW"] = "reads the class name of a window",
-        ["User32.GetWindowThreadProcessId"] = "reads which process owns a window",
+        ["User32.GetWindowThreadProcessId"] = "reads which process and thread own a window",
         ["User32.GetForegroundWindow"] = "reads which window is in the foreground",
         ["User32.GetShellWindow"] = "reads the handle of the desktop shell's window",
         ["User32.GetWindowLongW"] = "reads a style value of a window (SetWindowLongW, which changes it, is not listed)",

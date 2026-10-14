@@ -31,11 +31,12 @@ public class NativeWindowWrapperReadTests
         _sut.GetExtendedFrameBounds(InvalidHandle).Should().BeNull();
         _sut.IsHungAppWindow(InvalidHandle).Should().BeFalse();
         _sut.GetDpiForWindow(InvalidHandle).Should().Be(0u);
+        _sut.GetWindowThreadId(InvalidHandle).Should().Be(0u);
         _sut.RespondsWithin(InvalidHandle, 100u).Should().BeNull("SendMessageTimeout fails for a handle that is not a window, which says nothing about a thread");
     }
 
     [Fact]
-    public void Reads_OfAVisibleWindow_ReturnItsClassDpiAndFrame()
+    public void Reads_OfAVisibleWindow_ReturnItsClassDpiFrameAndThread()
     {
         // Arrange - any visible top-level window of the desktop
         var handles = new List<nint>();
@@ -50,6 +51,7 @@ public class NativeWindowWrapperReadTests
         var className = _sut.GetClassName(window);
         var dpi = _sut.GetDpiForWindow(window);
         var frame = _sut.GetExtendedFrameBounds(window);
+        var thread = _sut.GetWindowThreadId(window);
 
         // Assert
         className.Should().NotBeEmpty("every window has a class");
@@ -57,5 +59,6 @@ public class NativeWindowWrapperReadTests
         frame.Should().NotBeNull();
         frame!.Value.Right.Should().BeGreaterThanOrEqualTo(frame.Value.Left);
         frame.Value.Bottom.Should().BeGreaterThanOrEqualTo(frame.Value.Top);
+        thread.Should().NotBe(0u, "every window has the thread that created it");
     }
 }

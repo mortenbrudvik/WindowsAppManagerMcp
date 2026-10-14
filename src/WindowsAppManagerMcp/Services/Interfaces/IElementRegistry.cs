@@ -27,7 +27,7 @@ namespace WindowsAppManagerMcp.Services.Interfaces;
 /// (name, control type, automation id, class, index path), the generation of the read that last saw it and when it was
 /// last used. The registry keeps the <see cref="Services.ElementRegistry.DefaultCapacity"/> most recently used entries
 /// (twice the largest read); the others expire. A window's entries are dropped when the window is gone (IsWindow fails,
-/// or its handle now names a window of another process or class).</para>
+/// or its handle now names a window of another process, class or thread).</para>
 /// <para><b>Selector.</b> find_ui_elements' identity criteria, stored only when its search proved that they fit no other
 /// element of the window with this element's fingerprint (<see cref="ElementOrigin.Unique"/>: a complete search of the
 /// whole window, not below withinRef). A tree walk, the focused element and the element at a point store none.</para>

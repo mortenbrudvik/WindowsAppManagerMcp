@@ -34,6 +34,8 @@ public sealed class ReadOnlyNativeWindowWrapper(INativeWindowWrapper inner) : IN
 
     public uint GetWindowThreadProcessId(nint hWnd) => inner.GetWindowThreadProcessId(hWnd);
 
+    public uint GetWindowThreadId(nint hWnd) => inner.GetWindowThreadId(hWnd);
+
     public (int Left, int Top, int Right, int Bottom)? GetWindowRect(nint hWnd) => inner.GetWindowRect(hWnd);
 
     public nint GetForegroundWindow() => inner.GetForegroundWindow();

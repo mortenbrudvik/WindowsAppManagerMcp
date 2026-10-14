@@ -52,6 +52,11 @@ public class NativeWindowWrapper : INativeWindowWrapper
         return processId;
     }
 
+    public uint GetWindowThreadId(nint hWnd)
+    {
+        return hWnd == nint.Zero ? 0 : NativeMethods.User32.GetWindowThreadProcessId(hWnd, out _);
+    }
+
     public (int Left, int Top, int Right, int Bottom)? GetWindowRect(nint hWnd)
     {
         if (!NativeMethods.User32.GetWindowRect(hWnd, out var rect))
