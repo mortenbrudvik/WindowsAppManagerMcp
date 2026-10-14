@@ -87,6 +87,14 @@ public class UiaIdsTests
     }
 
     [Fact]
+    public void ThePatternPropertiesTheWaitsWatch_AreTheManagedClientsIds()
+    {
+        // wait_for_element's wake-ups (roadmap M3.F22) watch a value and a toggle state
+        UiaIds.ValueValueProperty.Should().Be(ValuePattern.ValueProperty.Id);
+        UiaIds.ToggleToggleStateProperty.Should().Be(TogglePattern.ToggleStateProperty.Id);
+    }
+
+    [Fact]
     public void LegacyIAccessiblePattern_IsTheOneTheManagedClientLacks()
     {
         // UIA_LegacyIAccessiblePatternId: the managed client has no pattern object for it

@@ -29,24 +29,29 @@ public sealed partial class WindowWaitService : IWindowWaitService
     private readonly INativeProcessWrapper _processes;
     private readonly TimeProvider _time;
     private readonly Func<TimeSpan, CancellationToken, Task> _delay;
+    private readonly IWindowEventSource? _events;
 
     /// <param name="native">Reads the top-level windows.</param>
     /// <param name="windows">The listing predicate (IsUserFacingAppWindow) and the full read of the found window.</param>
     /// <param name="processes">WaitForInputIdle on the found window's process.</param>
     /// <param name="time">The clock; default the system clock.</param>
     /// <param name="delay">Waits between two polls; default Task.Delay on <paramref name="time"/>. Tests pass one that moves a manual clock.</param>
+    /// <param name="events">The window events that wake a condition wait's sleep between two polls early (roadmap M3.F22);
+    /// without it the waits only poll.</param>
     public WindowWaitService(
         INativeWindowWrapper native,
         IWindowService windows,
         INativeProcessWrapper processes,
         TimeProvider? time = null,
-        Func<TimeSpan, CancellationToken, Task>? delay = null)
+        Func<TimeSpan, CancellationToken, Task>? delay = null,
+        IWindowEventSource? events = null)
     {
         _native = native;
         _windows = windows;
         _processes = processes;
         _time = time ?? TimeProvider.System;
         _delay = delay ?? ((wait, token) => Task.Delay(wait, _time, token));
+        _events = events;
     }
 
     public WindowBaseline TakeBaseline()

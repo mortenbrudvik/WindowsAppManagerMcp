@@ -1126,4 +1126,140 @@ public class Uia3TreeTests
     }
 
     #endregion
+
+    #region Event handlers (roadmap M3.F22)
+
+    [Fact]
+    public void AddStructureChangedHandler_ListensToTheSubtree_AndCallsBackOnEachEvent()
+    {
+        // Arrange
+        var sut = CreateSut();
+        var window = new Mock<IUIAutomationElement>();
+        var node = NodeOf(sut, window);
+        IUIAutomationStructureChangedEventHandler? added = null;
+        _automation.Setup(a => a.AddStructureChangedEventHandler(window.Object, TreeScope.TreeScope_Subtree, null,
+                It.IsAny<IUIAutomationStructureChangedEventHandler>()))
+            .Callback((IUIAutomationElement _, TreeScope _, IUIAutomationCacheRequest _, IUIAutomationStructureChangedEventHandler h) => added = h);
+        var calls = 0;
+
+        // Act
+        using var registration = sut.AddStructureChangedHandler(node, () => calls++);
+        added!.HandleStructureChangedEvent(new Mock<IUIAutomationElement>().Object, StructureChangeType.StructureChangeType_ChildAdded, [42, 1]);
+        added.HandleStructureChangedEvent(null!, StructureChangeType.StructureChangeType_ChildRemoved, [42, 2]);
+
+        // Assert
+        calls.Should().Be(2);
+    }
+
+    [Fact]
+    public void TheHandlers_CanBeHandedToTheComClient()
+    {
+        // Arrange - the client takes each handler through a COM callable wrapper of its interface
+        var sut = CreateSut();
+        var window = new Mock<IUIAutomationElement>();
+        var node = NodeOf(sut, window);
+        object? structure = null;
+        object? property = null;
+        _automation.Setup(a => a.AddStructureChangedEventHandler(window.Object, It.IsAny<TreeScope>(), null,
+                It.IsAny<IUIAutomationStructureChangedEventHandler>()))
+            .Callback((IUIAutomationElement _, TreeScope _, IUIAutomationCacheRequest _, IUIAutomationStructureChangedEventHandler h) => structure = h);
+        _automation.Setup(a => a.AddPropertyChangedEventHandler(window.Object, It.IsAny<TreeScope>(), null,
+                It.IsAny<IUIAutomationPropertyChangedEventHandler>(), It.IsAny<int[]>()))
+            .Callback((IUIAutomationElement _, TreeScope _, IUIAutomationCacheRequest _, IUIAutomationPropertyChangedEventHandler h, int[] _) => property = h);
+        using var a = sut.AddStructureChangedHandler(node, () => { });
+        using var b = sut.AddPropertyChangedHandler(node, [UiaWatchedProperty.Name], () => { });
+
+        // Act
+        var structurePointer = Marshal.GetComInterfaceForObject(structure!, typeof(IUIAutomationStructureChangedEventHandler));
+        var propertyPointer = Marshal.GetComInterfaceForObject(property!, typeof(IUIAutomationPropertyChangedEventHandler));
+
+        // Assert
+        structurePointer.Should().NotBe(nint.Zero);
+        propertyPointer.Should().NotBe(nint.Zero);
+        Marshal.Release(structurePointer);
+        Marshal.Release(propertyPointer);
+    }
+
+    [Fact]
+    public void TheStructureRegistration_RemovesTheSameHandler_Once()
+    {
+        var sut = CreateSut();
+        var window = new Mock<IUIAutomationElement>();
+        var node = NodeOf(sut, window);
+        IUIAutomationStructureChangedEventHandler? added = null;
+        _automation.Setup(a => a.AddStructureChangedEventHandler(window.Object, It.IsAny<TreeScope>(), null,
+                It.IsAny<IUIAutomationStructureChangedEventHandler>()))
+            .Callback((IUIAutomationElement _, TreeScope _, IUIAutomationCacheRequest _, IUIAutomationStructureChangedEventHandler h) => added = h);
+
+        var registration = sut.AddStructureChangedHandler(node, () => { });
+        registration.Dispose();
+        registration.Dispose();
+
+        _automation.Verify(a => a.RemoveStructureChangedEventHandler(window.Object, added!), Times.Once);
+    }
+
+    [Fact]
+    public void AddPropertyChangedHandler_ListensToTheSubtree_ForTheWatchedPropertyIds()
+    {
+        // Arrange
+        var sut = CreateSut();
+        var window = new Mock<IUIAutomationElement>();
+        var node = NodeOf(sut, window);
+        int[]? ids = null;
+        IUIAutomationPropertyChangedEventHandler? added = null;
+        _automation.Setup(a => a.AddPropertyChangedEventHandler(window.Object, TreeScope.TreeScope_Subtree, null,
+                It.IsAny<IUIAutomationPropertyChangedEventHandler>(), It.IsAny<int[]>()))
+            .Callback((IUIAutomationElement _, TreeScope _, IUIAutomationCacheRequest _, IUIAutomationPropertyChangedEventHandler h, int[] p) =>
+            {
+                added = h;
+                ids = p;
+            });
+        var calls = 0;
+
+        // Act
+        var registration = sut.AddPropertyChangedHandler(node,
+            [UiaWatchedProperty.Name, UiaWatchedProperty.IsEnabled, UiaWatchedProperty.IsOffscreen, UiaWatchedProperty.BoundingRectangle,
+             UiaWatchedProperty.HasKeyboardFocus, UiaWatchedProperty.Value, UiaWatchedProperty.ToggleState],
+            () => calls++);
+        added!.HandlePropertyChangedEvent(new Mock<IUIAutomationElement>().Object, UiaIds.IsEnabledProperty, false);
+        registration.Dispose();
+
+        // Assert
+        ids.Should().Equal(UiaIds.NameProperty, UiaIds.IsEnabledProperty, UiaIds.IsOffscreenProperty, UiaIds.BoundingRectangleProperty,
+            UiaIds.HasKeyboardFocusProperty, UiaIds.ValueValueProperty, UiaIds.ToggleToggleStateProperty);
+        calls.Should().Be(1);
+        _automation.Verify(a => a.RemovePropertyChangedEventHandler(window.Object, added), Times.Once);
+    }
+
+    [Fact]
+    public void AddingAHandlerToAnElementThatIsGone_IsTheSeamsUnavailableException()
+    {
+        var sut = CreateSut();
+        var window = new Mock<IUIAutomationElement>();
+        var node = NodeOf(sut, window);
+        _automation.Setup(a => a.AddStructureChangedEventHandler(window.Object, It.IsAny<TreeScope>(), null,
+                It.IsAny<IUIAutomationStructureChangedEventHandler>()))
+            .Throws(NotAvailable());
+
+        sut.Invoking(t => t.AddStructureChangedHandler(node, () => { })).Should().Throw<UiaElementUnavailableException>();
+    }
+
+    [Fact]
+    public void AHandlerThatThrows_DoesNotThrowIntoTheClient()
+    {
+        var sut = CreateSut();
+        var window = new Mock<IUIAutomationElement>();
+        var node = NodeOf(sut, window);
+        IUIAutomationStructureChangedEventHandler? added = null;
+        _automation.Setup(a => a.AddStructureChangedEventHandler(window.Object, It.IsAny<TreeScope>(), null,
+                It.IsAny<IUIAutomationStructureChangedEventHandler>()))
+            .Callback((IUIAutomationElement _, TreeScope _, IUIAutomationCacheRequest _, IUIAutomationStructureChangedEventHandler h) => added = h);
+
+        using var registration = sut.AddStructureChangedHandler(node, () => throw new InvalidOperationException("boom"));
+
+        added!.Invoking(h => h.HandleStructureChangedEvent(null!, StructureChangeType.StructureChangeType_ChildAdded, []))
+            .Should().NotThrow("an exception must not reach UI Automation's event thread");
+    }
+
+    #endregion
 }

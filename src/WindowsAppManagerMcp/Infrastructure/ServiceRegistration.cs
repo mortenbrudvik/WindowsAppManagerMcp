@@ -59,6 +59,10 @@ public static class ServiceRegistration
         services.AddSingleton<IProcessService, ProcessService>();
         // Finds the window a launch opens, whichever process owns it (launch tools and apply_layout's launchMissing)
         services.AddSingleton<IWindowWaitService, WindowWaitService>();
+        // Window events that wake wait_for_window's sleeps between polls (roadmap M3.F22): out-of-context WinEvent hooks on
+        // a thread of their own, which the first wait that sleeps starts and the container stops with the server
+        services.AddSingleton<INativeWinEventWrapper, NativeWinEventWrapper>();
+        services.AddSingleton<IWindowEventSource, WindowEventSource>();
         // Places the launch tools' windows (placement, roadmap M3.13) and apply_layout's launched ones (roadmap M3.F27)
         // through the window and foreground services
         services.AddSingleton<ILaunchPlacementService>(sp => new LaunchPlacementService(
@@ -98,7 +102,10 @@ public static class ServiceRegistration
             sp.GetRequiredService<IUiaWorker>(), sp.GetRequiredService<IElementRegistry>()));
         // read_element_text and read_table (roadmap M3.9): text and tables through the patterns, by ref or find's criteria
         services.AddSingleton<IElementReadService, ElementReadService>();
-        // wait_for_element (roadmap M3.8): waits for the window through IWindowWaitService, then checks with the search above
+        // wait_for_element (roadmap M3.8): waits for the window through IWindowWaitService, then checks with the search above;
+        // UI Automation events wake its sleeps between checks (roadmap M3.F22), added and removed on each watch's own thread
+        services.AddSingleton<IElementEventSource>(sp => new ElementEventSource(
+            sp.GetRequiredService<IUiaTree>(), logger: sp.GetService<ILogger<ElementEventSource>>()));
         services.AddSingleton<IElementWaitService, ElementWaitService>();
         // element_action (roadmap M3.6): pattern calls on threads of their own (a blocked Invoke never stops the reads of the
         // dialog it opened), the application's new windows, and the action itself behind the input guard's target checks

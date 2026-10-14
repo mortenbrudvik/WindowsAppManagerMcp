@@ -30,6 +30,8 @@ public class WrapperCatalogTests
             typeof(INativeThreadInputWrapper),
             typeof(INativeHotkeyWrapper),
             typeof(IDesktopPauseFlag),
+            // The window events of wait_for_window's wake-ups (roadmap M3.F22)
+            typeof(INativeWinEventWrapper),
             typeof(IUiaTree),
             // The pattern objects the engine adapters hand out (roadmap M3.2)
             typeof(IUiaInvokePattern),
@@ -173,6 +175,8 @@ public class WrapperCatalogTests
     [InlineData(typeof(INativeHotkeyWrapper), nameof(INativeHotkeyWrapper.MarkChordHolder), WrapperCallKind.GlobalHotkey)]
     [InlineData(typeof(IDesktopPauseFlag), nameof(IDesktopPauseFlag.Set), WrapperCallKind.GlobalHotkey)]
     [InlineData(typeof(IDesktopPauseFlag), "get_" + nameof(IDesktopPauseFlag.IsSet), WrapperCallKind.Read)]
+    [InlineData(typeof(INativeWinEventWrapper), nameof(INativeWinEventWrapper.SetWinEventHook), WrapperCallKind.Read)]
+    [InlineData(typeof(INativeWinEventWrapper), nameof(INativeWinEventWrapper.WaitForMessage), WrapperCallKind.Read)]
     [InlineData(typeof(IUIAutomationWrapper), nameof(IUIAutomationWrapper.CloseWindow), WrapperCallKind.WindowAction)]
     [InlineData(typeof(IScreenCaptureWrapper), nameof(IScreenCaptureWrapper.CaptureWindow), WrapperCallKind.Read)]
     [InlineData(typeof(INativeMonitorWrapper), nameof(INativeMonitorWrapper.MonitorFromWindow), WrapperCallKind.Read)]
@@ -197,6 +201,8 @@ public class WrapperCatalogTests
     [InlineData(typeof(IUiaTree), nameof(IUiaTree.GetPattern), WrapperCallKind.Read)]
     [InlineData(typeof(IUiaTree), nameof(IUiaTree.ReadVirtualizedItem), WrapperCallKind.Read)]
     [InlineData(typeof(IUiaTree), nameof(IUiaTree.SetFocus), WrapperCallKind.UiaAction)]
+    [InlineData(typeof(IUiaTree), nameof(IUiaTree.AddStructureChangedHandler), WrapperCallKind.Read)]
+    [InlineData(typeof(IUiaTree), nameof(IUiaTree.AddPropertyChangedHandler), WrapperCallKind.Read)]
     [InlineData(typeof(IUiaInvokePattern), nameof(IUiaInvokePattern.Invoke), WrapperCallKind.UiaAction)]
     [InlineData(typeof(IUiaValuePattern), nameof(IUiaValuePattern.SetValue), WrapperCallKind.UiaAction)]
     [InlineData(typeof(IUiaWindowPattern), nameof(IUiaWindowPattern.Close), WrapperCallKind.UiaAction)]

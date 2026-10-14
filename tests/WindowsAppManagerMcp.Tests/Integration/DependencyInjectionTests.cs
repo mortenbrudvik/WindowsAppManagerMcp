@@ -186,6 +186,34 @@ public class DependencyInjectionTests : IDisposable
         wait.Should().BeOfType<ElementWaitService>().And.BeSameAs(_serviceProvider.GetRequiredService<IElementWaitService>());
     }
 
+    [Fact]
+    public void TheElementWait_WakesOnTheServersUiAutomationEvents()
+    {
+        // Roadmap M3.F22: one element event source, over the server's UI Automation tree; resolving it registers nothing
+        var wait = _serviceProvider.GetRequiredService<IElementWaitService>();
+        var events = _serviceProvider.GetRequiredService<IElementEventSource>();
+
+        events.Should().BeOfType<ElementEventSource>();
+        typeof(ElementEventSource).GetField("_tree", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(events)
+            .Should().BeSameAs(_serviceProvider.GetRequiredService<IUiaTree>());
+        typeof(ElementWaitService).GetField("_events", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(wait)
+            .Should().BeSameAs(events);
+    }
+
+    [Fact]
+    public void TheWindowWait_WakesOnTheServersWindowEvents()
+    {
+        // Roadmap M3.F22: one window event source, over the native hooks; resolving it installs no hook (the first wait
+        // that sleeps does)
+        var wait = _serviceProvider.GetRequiredService<IWindowWaitService>();
+        var events = _serviceProvider.GetRequiredService<IWindowEventSource>();
+
+        events.Should().BeOfType<WindowEventSource>();
+        _serviceProvider.GetRequiredService<INativeWinEventWrapper>().Should().BeOfType<NativeWinEventWrapper>();
+        typeof(WindowWaitService).GetField("_events", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(wait)
+            .Should().BeSameAs(events);
+    }
+
     #endregion
 
     #region T7.3.2: INativeWindowWrapper Singleton

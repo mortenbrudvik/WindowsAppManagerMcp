@@ -747,6 +747,72 @@ public sealed class UiaTree : IUiaTree
         return null;
     });
 
+    /// <inheritdoc />
+    /// <remarks>
+    /// Automation.AddStructureChangedEventHandler on the subtree; the client calls the handler on its own event threads. The
+    /// managed client has no timeout of its own: a hung provider blocks the call, and the removal, until it answers.
+    /// </remarks>
+    public IDisposable AddStructureChangedHandler(IUiaNode node, Action changed)
+    {
+        ArgumentNullException.ThrowIfNull(changed);
+        var element = Unwrap(node);
+        StructureChangedEventHandler handler = (_, _) => Signal(changed);
+        Translate(() => Automation.AddStructureChangedEventHandler(element, TreeScope.Subtree, handler));
+        return new HandlerRegistration(() => Translate(() => Automation.RemoveStructureChangedEventHandler(element, handler)));
+    }
+
+    /// <inheritdoc />
+    /// <remarks>Automation.AddAutomationPropertyChangedEventHandler on the subtree, for the properties.</remarks>
+    public IDisposable AddPropertyChangedHandler(IUiaNode node, IReadOnlyCollection<UiaWatchedProperty> properties, Action changed)
+    {
+        ArgumentNullException.ThrowIfNull(properties);
+        ArgumentNullException.ThrowIfNull(changed);
+        var element = Unwrap(node);
+        AutomationPropertyChangedEventHandler handler = (_, _) => Signal(changed);
+        var watched = properties.Select(ToAutomationProperty).ToArray();
+        Translate(() => Automation.AddAutomationPropertyChangedEventHandler(element, TreeScope.Subtree, handler, watched));
+        return new HandlerRegistration(() => Translate(() => Automation.RemoveAutomationPropertyChangedEventHandler(element, handler)));
+    }
+
+    private static AutomationProperty ToAutomationProperty(UiaWatchedProperty property) => property switch
+    {
+        UiaWatchedProperty.Name => AutomationElement.NameProperty,
+        UiaWatchedProperty.IsEnabled => AutomationElement.IsEnabledProperty,
+        UiaWatchedProperty.IsOffscreen => AutomationElement.IsOffscreenProperty,
+        UiaWatchedProperty.BoundingRectangle => AutomationElement.BoundingRectangleProperty,
+        UiaWatchedProperty.HasKeyboardFocus => AutomationElement.HasKeyboardFocusProperty,
+        UiaWatchedProperty.Value => System.Windows.Automation.ValuePattern.ValueProperty,
+        UiaWatchedProperty.ToggleState => System.Windows.Automation.TogglePattern.ToggleStateProperty,
+        _ => throw new ArgumentOutOfRangeException(nameof(property), property, null)
+    };
+
+    /// <summary>Calls a handler's callback, which only signals; nothing may reach UI Automation's event thread.</summary>
+    private static void Signal(Action changed)
+    {
+        try
+        {
+            changed();
+        }
+        catch (Exception)
+        {
+            // The callback only signals a wait; the client must never see its failure
+        }
+    }
+
+    /// <summary>An added handler; disposing it removes the handler, once.</summary>
+    private sealed class HandlerRegistration(Action remove) : IDisposable
+    {
+        private int _removed;
+
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref _removed, 1) == 0)
+            {
+                remove();
+            }
+        }
+    }
+
     private sealed class InvokePatternAdapter(System.Windows.Automation.InvokePattern pattern) : IUiaInvokePattern
     {
         public void Invoke() => Translate(pattern.Invoke);

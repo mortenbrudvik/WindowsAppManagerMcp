@@ -44,10 +44,13 @@ namespace WindowsAppManagerMcp.Services;
 /// <para><b>Passwords.</b> A password field's value is never read, as in get_focused_element and find_ui_elements (and the
 /// IUiaTree.ReadValue contract): value_equals skips password fields, and ends with InvalidArguments when only password
 /// fields match. No value of a password field, and no expected text, appears in a result or a message.</para>
-/// <para><b>Events.</b> No UI Automation event handlers: the seam has none, and adding StructureChanged/PropertyChanged
-/// handlers needs both engines, registration and removal calls that cross into the target process (and can block on a hung
-/// one) and a real-desktop run this change cannot do. Polling with backoff is the whole mechanism; events are a later
-/// optimisation (roadmap M7.2).</para>
+/// <para><b>Events.</b> UI Automation events (roadmap M3.F22, <see cref="IElementEventSource"/>) end the sleep between two
+/// checks early, so the next check comes sooner, but no sooner than <see cref="WaitWakeUp.MinSleepMs"/>: a StructureChanged
+/// handler on the window's subtree, and a PropertyChanged handler for what the condition reads (<see cref="WatchedProperties"/>).
+/// The wait watches from its first sleep to its end; the source adds and removes the handlers on a thread of its own, so a
+/// hung provider never holds up the wait, and a handler only signals. The checks alone decide: stableMs is measured by them,
+/// and the back-off counts only the sleeps that ran their length. A wait without events (no event source, or one that does
+/// not watch that application now) checks exactly as before.</para>
 /// </remarks>
 public sealed class ElementWaitService : IElementWaitService
 {
@@ -84,6 +87,7 @@ public sealed class ElementWaitService : IElementWaitService
     private readonly IUiaWorker _worker;
     private readonly INativeWindowWrapper? _windows;
     private readonly ITargetPolicy? _policy;
+    private readonly IElementEventSource? _events;
     private readonly TimeProvider _time;
     private readonly Func<TimeSpan, CancellationToken, Task> _delay;
 
@@ -99,6 +103,8 @@ public sealed class ElementWaitService : IElementWaitService
     /// a manual clock.</param>
     /// <param name="policy">The user's target policy, which refuses a wait on a window of an app it denies. The server always
     /// passes it; without it (or without <paramref name="windows"/>) no window is refused.</param>
+    /// <param name="events">The UI Automation events that wake a wait's sleep between two checks early (roadmap M3.F22);
+    /// without it the waits only check on their back-off.</param>
     public ElementWaitService(
         IElementSearchService search,
         IElementRegistry registry,
@@ -108,7 +114,8 @@ public sealed class ElementWaitService : IElementWaitService
         INativeWindowWrapper? windows = null,
         TimeProvider? time = null,
         Func<TimeSpan, CancellationToken, Task>? delay = null,
-        ITargetPolicy? policy = null)
+        ITargetPolicy? policy = null,
+        IElementEventSource? events = null)
     {
         _search = search;
         _registry = registry;
@@ -117,6 +124,7 @@ public sealed class ElementWaitService : IElementWaitService
         _worker = worker;
         _windows = windows;
         _policy = policy;
+        _events = events;
         _time = time ?? TimeProvider.System;
         _delay = delay ?? ((wait, token) => Task.Delay(wait, _time, token));
     }
@@ -180,6 +188,21 @@ public sealed class ElementWaitService : IElementWaitService
     };
 
     /// <summary>
+    /// The properties whose changes wake a wait for <paramref name="condition"/> (roadmap M3.F22), beside the structure
+    /// changes every wait watches: the name for exists and gone (an element renamed into or out of the criteria) and
+    /// name_equals, and otherwise the property the condition reads.
+    /// </summary>
+    internal static IReadOnlyCollection<UiaWatchedProperty> WatchedProperties(ElementWaitCondition condition) => condition switch
+    {
+        ElementWaitCondition.Enabled => [UiaWatchedProperty.IsEnabled],
+        ElementWaitCondition.Visible => [UiaWatchedProperty.IsOffscreen, UiaWatchedProperty.BoundingRectangle],
+        ElementWaitCondition.Focused => [UiaWatchedProperty.HasKeyboardFocus],
+        ElementWaitCondition.ValueEquals => [UiaWatchedProperty.Value],
+        ElementWaitCondition.ToggleState => [UiaWatchedProperty.ToggleState],
+        _ => [UiaWatchedProperty.Name]
+    };
+
+    /// <summary>
     /// What one check saw: satisfied (with the element), not yet (with what was seen), or the end of the wait. Final is a
     /// gone that cannot be undone, which needs no stableMs.
     /// </summary>
@@ -222,10 +245,30 @@ public sealed class ElementWaitService : IElementWaitService
         private long? _heldSince;
         private bool _held;
 
+        // Event wake-ups (roadmap M3.F22): the watch, started before the first sleep, and the sleeps that ran their length,
+        // which alone move the back-off on, so a woken sleep makes the checks no sparser than without events
+        private bool _watchStarted;
+        private IDisposable? _watch;
+        private WaitWakeUp? _wakeUp;
+        private int _fullSleeps;
+
         // Set once the ref (or withinRef) was moved to a re-created element: the result says so
         private string? _movedWarning;
 
         public async Task<WaitForElementResult> RunAsync(IProgress<OperationProgress>? progress, CancellationToken cancellationToken)
+        {
+            try
+            {
+                return await CheckUntilDoneAsync(progress, cancellationToken).ConfigureAwait(false);
+            }
+            finally
+            {
+                // Never blocks: the watch removes its handlers on its own thread
+                _watch?.Dispose();
+            }
+        }
+
+        private async Task<WaitForElementResult> CheckUntilDoneAsync(IProgress<OperationProgress>? progress, CancellationToken cancellationToken)
         {
             if (await FindWindowAsync(progress, cancellationToken).ConfigureAwait(false) is { } early)
             {
@@ -244,6 +287,9 @@ public sealed class ElementWaitService : IElementWaitService
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 _polls++;
+
+                // An event from here on may come after the check read: it wakes the sleep after it
+                _wakeUp?.Reset();
                 var checkedAt = elapsed();
                 var check = _ref != null && request.Criteria == null
                     ? await CheckRefAsync(cancellationToken).ConfigureAwait(false)
@@ -287,7 +333,7 @@ public sealed class ElementWaitService : IElementWaitService
                         $"waiting for {ConditionName(_condition)}: {now} of {timeoutMs} ms, {_lastState}"));
                 }
 
-                var interval = (int)Math.Min(MaxPollIntervalMs, MinPollIntervalMs * Math.Pow(1.5, _polls - 1));
+                var interval = (int)Math.Min(MaxPollIntervalMs, MinPollIntervalMs * Math.Pow(1.5, _fullSleeps));
                 var delay = Math.Min(interval, remaining);
                 if (_heldSince is { } since)
                 {
@@ -295,8 +341,49 @@ public sealed class ElementWaitService : IElementWaitService
                     delay = Math.Min(delay, Math.Max(since + _stableMs - now, 0));
                 }
 
-                await service._delay(TimeSpan.FromMilliseconds(delay), cancellationToken).ConfigureAwait(false);
+                if (!_watchStarted)
+                {
+                    // Before the first sleep, so a wait its first check answers watches nothing
+                    _watchStarted = true;
+                    StartWatch();
+                }
+
+                if (_wakeUp == null)
+                {
+                    await service._delay(TimeSpan.FromMilliseconds(delay), cancellationToken).ConfigureAwait(false);
+                    _fullSleeps++;
+                }
+                else if (!await _wakeUp.SleepAsync(TimeSpan.FromMilliseconds(delay), service._delay, cancellationToken).ConfigureAwait(false))
+                {
+                    _fullSleeps++;
+                }
             }
+        }
+
+        /// <summary>
+        /// Watches the window for the events that wake the sleeps (roadmap M3.F22). Without an event source, or when it does
+        /// not watch (it throws, or refuses an application whose handler calls are stuck), the wait checks as without events.
+        /// </summary>
+        private void StartWatch()
+        {
+            if (service._events is not { } events)
+            {
+                return;
+            }
+
+            var wakeUp = new WaitWakeUp();
+            try
+            {
+                _watch = events.Watch(_window, UiaTargets.TargetProcessId(service._windows, _window), WatchedProperties(_condition),
+                    wakeUp.Signal);
+            }
+            catch (Exception)
+            {
+                // The events only make the wait quicker; it checks without them
+                _watch = null;
+            }
+
+            _wakeUp = _watch != null ? wakeUp : null;
         }
 
         /// <summary>

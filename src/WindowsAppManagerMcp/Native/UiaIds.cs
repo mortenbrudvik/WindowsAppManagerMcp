@@ -43,6 +43,8 @@ public static class UiaIds
     public const int IsLegacyIAccessiblePatternAvailableProperty = 30090;
     public const int IsItemContainerPatternAvailableProperty = 30108;
     public const int IsVirtualizedItemPatternAvailableProperty = 30109;
+    public const int ValueValueProperty = 30045;
+    public const int ToggleToggleStateProperty = 30086;
 
     // Patterns
     public const int InvokePattern = 10000;
