@@ -252,6 +252,72 @@ public class WrapperGuardTests
     [Theory]
     [InlineData(FixturePid, true)]
     [InlineData(OtherPid, false)]
+    public void FixtureOnlyGuard_ReadsAnUnrealizedItemsProcess_PropertyByProperty(int elementProcess, bool allowed)
+    {
+        // Arrange - element_action's realize (roadmap M3.10) acts on an item its list has not realized: WPF's placeholder
+        // fails the identity read as a whole, but still names its process when read property by property
+        var node = new Mock<IUiaNode>().Object;
+        var realize = new Mock<IUiaVirtualizedItemPattern>();
+        var tree = new Mock<IUiaTree>(MockBehavior.Strict);
+        tree.Setup(t => t.GetPattern<IUiaVirtualizedItemPattern>(node)).Returns(realize.Object);
+        tree.Setup(t => t.ReadIdentity(node)).Throws(new UiaElementUnavailableException("The element is no longer available."));
+        tree.Setup(t => t.ReadVirtualizedItem(node)).Returns(VirtualizedItem(node, elementProcess));
+        var guarded = WrapperGuard.Create(tree.Object, FixtureOnly(new FakeDesktop()));
+        var pattern = guarded.GetPattern<IUiaVirtualizedItemPattern>(node)!;
+
+        // Act
+        var act = () => pattern.Realize();
+
+        // Assert
+        if (allowed)
+        {
+            act.Should().NotThrow();
+            realize.Verify(r => r.Realize(), Times.Once);
+        }
+        else
+        {
+            act.Should().Throw<E2EGuardException>().WithMessage($"*process {OtherPid} is not the fixture*");
+            realize.Verify(r => r.Realize(), Times.Never);
+        }
+    }
+
+    [Fact]
+    public void FixtureOnlyGuard_RefusesAnAction_WhenNeitherReadNamesTheElementsProcess()
+    {
+        // Arrange - the element is gone: both the identity read and the property-by-property read fail
+        var node = new Mock<IUiaNode>().Object;
+        var realize = new Mock<IUiaVirtualizedItemPattern>();
+        var tree = new Mock<IUiaTree>(MockBehavior.Strict);
+        tree.Setup(t => t.GetPattern<IUiaVirtualizedItemPattern>(node)).Returns(realize.Object);
+        tree.Setup(t => t.ReadIdentity(node)).Throws(new UiaElementUnavailableException("The element is no longer available."));
+        tree.Setup(t => t.ReadVirtualizedItem(node)).Throws(new UiaElementUnavailableException("The element is gone."));
+        var guarded = WrapperGuard.Create(tree.Object, FixtureOnly(new FakeDesktop()));
+        var pattern = guarded.GetPattern<IUiaVirtualizedItemPattern>(node)!;
+
+        // Act
+        var act = () => pattern.Realize();
+
+        // Assert
+        act.Should().Throw<E2EGuardException>().WithMessage("*cannot tell which process*");
+        realize.Verify(r => r.Realize(), Times.Never);
+    }
+
+    private static UiaVirtualizedItem VirtualizedItem(IUiaNode node, int processId) =>
+        new(new UiaElement(
+                node,
+                new UiaNodeProperties("Item 07500", "ListItem", null, UiaRect.Empty, IsEnabled: true, IsOffscreen: true, "WPF"),
+                "ListBoxItem",
+                IsKeyboardFocusable: false,
+                UiaPatterns.None,
+                [7, 42],
+                ControlTypeId: null,
+                Virtualized: true),
+            processId,
+            IsPassword: null);
+
+    [Theory]
+    [InlineData(FixturePid, true)]
+    [InlineData(OtherPid, false)]
     public void FixtureOnlyGuard_AllowsSetFocus_OnlyOnAnElementOfTheFixture(int elementProcess, bool allowed)
     {
         // Arrange

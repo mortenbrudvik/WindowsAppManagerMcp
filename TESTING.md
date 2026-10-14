@@ -2071,7 +2071,10 @@ public async Task GetUIElements_SeesTheEditBox()
 
 Compare the server's answers with the ready event (`e2e.Fixture.Ready`) and the event log
 (`e2e.Fixture.WaitForEvent(...)`), not with fixed coordinates: positions depend on the monitor and
-its DPI. A scenario that needs a kind of window the WPF fixture cannot provide may create its own,
+its DPI. The fixture's main and document windows open centred on the primary monitor, never on the monitor under the
+mouse: a window WPF moves to a monitor with another scale while showing it is activated by WPF's DPI change, even
+with `--no-activate`, and can take the foreground from the terminal. The fixture also refuses to start with another DPI
+awareness than the one asked for (`FixtureAppSession.DpiAwarenessMismatch`). A scenario that needs a kind of window the WPF fixture cannot provide may create its own,
 as `MirroredWindowCaptureTests` does with `MirroredTestWindow`: a borderless popup of the test
 process, shown without activation and destroyed in `Dispose`. `E2ETestGateTests` fails if a test outside `HarnessTests/` has no gate attribute. Tests in
 `HarnessTests/` are ordinary tests of the harness and must never start the fixture.

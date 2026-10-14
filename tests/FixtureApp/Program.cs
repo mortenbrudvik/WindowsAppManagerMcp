@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Runtime.CompilerServices;
 using System.Windows;
 using System.Windows.Threading;
 
@@ -13,6 +14,11 @@ internal static class Program
     /// <summary>Exit code for a command line the fixture cannot read.</summary>
     public const int InvalidArgumentsExitCode = 2;
 
+    /// <remarks>
+    /// Main names no WPF type, directly or through a lambda: compiling a method that does loads WPF, which makes the
+    /// process system DPI aware before the method's first line runs, so ApplyDpiAwareness's call would fail with
+    /// ERROR_ACCESS_DENIED. Everything WPF is in <see cref="Run"/>, compiled only once the awareness is set.
+    /// </remarks>
     [STAThread]
     private static int Main(string[] args)
     {
@@ -34,12 +40,18 @@ internal static class Program
         using var events = FixtureEventLog.Open(options.EventLogPath);
         StartWatchdog(options, events);
 
-        var app = new Application { ShutdownMode = ShutdownMode.OnMainWindowClose };
-        app.DispatcherUnhandledException += (_, e) => OnUnhandledException(events, e);
-
-        var exitCode = app.Run(new MainWindow(options, events, dpiAwareness));
+        var exitCode = Run(options, events, dpiAwareness);
         events.Write(FixtureContract.Events.Exiting, ("reason", "closed"));
         return exitCode;
+    }
+
+    /// <summary>Runs the WPF app. Not inlined into Main: see Main's remarks.</summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static int Run(FixtureOptions options, FixtureEventLog events, string dpiAwareness)
+    {
+        var app = new Application { ShutdownMode = ShutdownMode.OnMainWindowClose };
+        app.DispatcherUnhandledException += (_, e) => OnUnhandledException(events, e);
+        return app.Run(new MainWindow(options, events, dpiAwareness));
     }
 
     private static void OnUnhandledException(FixtureEventLog events, DispatcherUnhandledExceptionEventArgs e)
@@ -51,7 +63,9 @@ internal static class Program
 
     /// <summary>
     /// Sets the process DPI awareness and returns the awareness in effect (unaware, system, perMonitor or
-    /// perMonitorV2). The fixture has no manifest DPI setting, so the call is not overridden by one.
+    /// perMonitorV2). The fixture has no manifest DPI setting, so the call is not overridden by one. When the call fails
+    /// (the awareness was already set) the awareness in effect is still reported, and the harness refuses a fixture
+    /// whose awareness is not the one it asked for.
     /// </summary>
     private static string ApplyDpiAwareness(FixtureDpiAwareness requested)
     {

@@ -116,6 +116,10 @@ public sealed class FixtureAppSession : IDisposable
                 throw new InvalidOperationException(
                     $"The ready event names process {session._ready.ProcessId}, but the harness started {process.Id}.");
             }
+            if (DpiAwarenessMismatch(launch.DpiAwareness, session._ready.DpiAwareness) is { } mismatch)
+            {
+                throw new InvalidOperationException(mismatch);
+            }
 
             output?.WriteLine(
                 $"Fixture {instance} started: {exePath}, pid {process.Id}, main window 0x{session._ready.MainWindowHandle:X}, " +
@@ -159,6 +163,20 @@ public sealed class FixtureAppSession : IDisposable
             OpenModal: launch.OpenModal,
             OpenDocument: launch.OpenDocument,
             DpiAwareness: launch.DpiAwareness);
+    }
+
+    /// <summary>
+    /// Why the fixture's reported awareness is not the one the test asked for, or null when it is. A fixture with another
+    /// awareness reports window and element rectangles that are scaled on a monitor whose scale differs from the
+    /// primary's, so every coordinate a test compares with the server's would be off.
+    /// </summary>
+    public static string? DpiAwarenessMismatch(FixtureDpiAwareness requested, string reported)
+    {
+        var expected = FixtureOptions.FormatDpiAwareness(requested);
+        return string.Equals(expected, reported, StringComparison.OrdinalIgnoreCase)
+            ? null
+            : $"The fixture asked for DPI awareness {expected} but runs {reported}: its coordinates would not be the " +
+              "server's physical pixels. Check that nothing in the fixture sets the awareness before Program.Main does.";
     }
 
     /// <summary>Waits for the first event named <paramref name="name"/> that matches <paramref name="match"/>.</summary>
