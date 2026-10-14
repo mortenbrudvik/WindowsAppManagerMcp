@@ -1138,6 +1138,206 @@ public class ElementReadServiceTableTests
 
     #endregion
 
+    #region WinForms DataGridView
+
+    /// <summary>
+    /// A WinForms DataGridView as UI Automation shows it (roadmap M3.F39): a Table with neither the Grid nor the Table pattern,
+    /// whose first child is a Custom "Top Row" of Header items (the top-left corner cell first when the grid shows row headers,
+    /// then one per column, holding its text as its value), then a Custom "Row n" per row (n from 0) of a Header, its row
+    /// header, when the grid shows them (named "Row n" and without a value: the text it shows is not exposed; with
+    /// <paramref name="rowHeaderValues"/>, holding those as its value), and a DataItem
+    /// per cell, named "&lt;column&gt; Row n" and holding its text as its value.
+    /// </summary>
+    private static FakeUiaNode WinFormsGrid(
+        string[] columns, IEnumerable<string[]> rows, bool rowHeaders = true, string cornerValue = "", string[]? rowHeaderValues = null)
+    {
+        var topRow = new FakeUiaNode("Custom", "Top Row");
+        if (rowHeaders)
+        {
+            topRow.With(new FakeUiaNode("Header", "Top Left Header Cell") { ActionPatterns = ["Invoke", "Value"], Value = cornerValue });
+        }
+
+        topRow.With(columns.Select(c => new FakeUiaNode("Header", c) { ActionPatterns = ["Invoke", "Value"], Value = c }).ToArray());
+        var grid = new FakeUiaNode("Table", "DataGridView") { FrameworkId = "WinForm", ClassName = "WindowsForms10.Window.8.app.0.141b42a_r6_ad1" }
+            .With(topRow);
+        foreach (var (cells, n) in rows.Select((cells, n) => (cells, n)))
+        {
+            var row = new FakeUiaNode("Custom", $"Row {n}");
+            if (rowHeaders)
+            {
+                row.With(rowHeaderValues == null
+                    ? new FakeUiaNode("Header", $"Row {n}") { ActionPatterns = ["Invoke"] }
+                    : new FakeUiaNode("Header", $"Row {n}") { ActionPatterns = ["Invoke", "Value"], Value = rowHeaderValues[n] });
+            }
+
+            row.With(cells.Select((text, c) => new FakeUiaNode("DataItem", $"{columns[c]} Row {n}") { ActionPatterns = ["Invoke", "Value"], Value = text })
+                .ToArray());
+            grid.With(row);
+        }
+
+        return grid;
+    }
+
+    /// <summary>The rows of the grid measured on a real desktop: "Row 1".."Row 8", 10..80, "Item 1".."Item 8".</summary>
+    private static IEnumerable<string[]> WinFormsRows(int count) =>
+        Enumerable.Range(1, count).Select(i => new[] { $"Row {i}", $"{i * 10}", $"Item {i}" });
+
+    [Fact]
+    public async Task ReadTable_OfAWinFormsDataGridView_ReadsItsCustomRows_WithTheHeadersOfItsTopRow_AndTheCellsValues()
+    {
+        // Arrange - columns Name, Amount, Label and eight rows, with row headers (roadmap M3.F39)
+        var elementRef = Add(WinFormsGrid(["Name", "Amount", "Label"], WinFormsRows(8)));
+
+        // Act
+        var result = await Read(elementRef);
+
+        // Assert - the corner cell is no column, a row header is no cell, and a cell's text is its value, not its name
+        result.Success.Should().BeTrue(result.Error);
+        result.Source.Should().Be(ElementTableSource.Rows);
+        result.Headers.Should().Equal("Name", "Amount", "Label");
+        result.Rows.Should().HaveCount(8);
+        result.Rows![0].Should().Equal("Row 1", "10", "Item 1");
+        result.Rows[7].Should().Equal("Row 8", "80", "Item 8");
+        result.RowHeaders.Should().BeNull("a row header's only text is the 'Row n' name the provider made up");
+        result.TotalRows.Should().Be(8);
+        result.TotalColumns.Should().Be(3);
+        result.Truncated.Should().BeFalse();
+        result.NextStartRow.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task ReadTable_OfAWinFormsDataGridView_PagesThroughItsRows()
+    {
+        // Arrange
+        var elementRef = Add(WinFormsGrid(["Name", "Amount", "Label"], WinFormsRows(8)));
+
+        // Act
+        var first = await Read(elementRef, maxRows: 3);
+        var second = await Read(elementRef, startRow: first.NextStartRow!.Value, maxRows: 3);
+        var last = await Read(elementRef, startRow: second.NextStartRow!.Value, maxRows: 3);
+
+        // Assert
+        first.Headers.Should().Equal("Name", "Amount", "Label");
+        first.Rows!.Select(r => r[1]).Should().Equal("10", "20", "30");
+        first.TruncationReason.Should().Be(ElementTableTruncation.MaxRows);
+        first.NextStartRow.Should().Be(3);
+        second.Headers.Should().Equal("Name", "Amount", "Label");
+        second.Rows!.Select(r => r[1]).Should().Equal("40", "50", "60");
+        second.NextStartRow.Should().Be(6);
+        last.Rows.Should().HaveCount(2);
+        last.Rows![1].Should().Equal("Row 8", "80", "Item 8");
+        last.Truncated.Should().BeFalse();
+        last.NextStartRow.Should().BeNull();
+        last.TotalRows.Should().Be(8);
+    }
+
+    [Fact]
+    public async Task ReadTable_OfAWinFormsDataGridViewWithoutRowHeaders_KeepsItsFirstColumnHeader()
+    {
+        // Arrange - RowHeadersVisible false: no corner cell in the top row, no Header in the rows
+        var elementRef = Add(WinFormsGrid(["Name", "Amount", "Label"], WinFormsRows(2), rowHeaders: false));
+
+        // Act
+        var result = await Read(elementRef);
+
+        // Assert
+        result.Headers.Should().Equal("Name", "Amount", "Label");
+        result.Rows![0].Should().Equal("Row 1", "10", "Item 1");
+        result.TotalColumns.Should().Be(3);
+    }
+
+    [Fact]
+    public async Task ReadTable_OfAWinFormsDataGridView_PastItsLastRow_GivesTheHeaders_AndNoRows()
+    {
+        var elementRef = Add(WinFormsGrid(["Name", "Amount", "Label"], WinFormsRows(8)));
+
+        var result = await Read(elementRef, startRow: 20);
+
+        result.Success.Should().BeTrue(result.Error);
+        result.Headers.Should().Equal("Name", "Amount", "Label");
+        result.Rows.Should().BeEmpty();
+        result.TotalRows.Should().Be(8);
+        result.Truncated.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task ReadTable_OfAnEmptyWinFormsDataGridView_LeavesOutTheCornerCell_WhichHoldsNoValue()
+    {
+        // Arrange - no row tells whether the grid shows row headers: the corner cell is the leading header without a value
+        var elementRef = Add(WinFormsGrid(["Name", "Amount", "Label"], []));
+
+        // Act
+        var result = await Read(elementRef);
+
+        // Assert
+        result.Success.Should().BeTrue(result.Error);
+        result.Headers.Should().Equal("Name", "Amount", "Label");
+        result.Rows.Should().BeEmpty();
+        result.TotalRows.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task ReadTable_OfAWinFormsDataGridView_LeavesOutTheCornerCellByWhereItSits_NotByItsText()
+    {
+        // Arrange - a corner cell with a value of its own, in another language than English
+        var elementRef = Add(WinFormsGrid(["Navn", "Beløp"], [["a", "1"]], cornerValue: "Velg alle"));
+
+        // Act
+        var result = await Read(elementRef);
+
+        // Assert
+        result.Headers.Should().Equal("Navn", "Beløp");
+        result.Rows.Should().ContainSingle().Which.Should().Equal("a", "1");
+    }
+
+    [Fact]
+    public async Task ReadTable_OfCustomRowsWhoseRowHeaderHoldsAValue_ReturnsItAsTheRowHeader()
+    {
+        // Arrange - a row header that exposes the text it shows, as its value
+        var elementRef = Add(WinFormsGrid(["Name", "Amount"], [["a", "1"], ["b", "2"]], rowHeaderValues: ["#1", "#2"]));
+
+        // Act
+        var result = await Read(elementRef);
+
+        // Assert
+        result.Rows!.Select(r => r[0]).Should().Equal("a", "b");
+        result.RowHeaders.Should().Equal("#1", "#2");
+    }
+
+    [Fact]
+    public async Task ReadTable_OfAWinFormsDataGridView_StopsAtTheSizeLimit_WithTheRowsReadSoFar()
+    {
+        // Arrange - 50 rows of 3 cells of 400 characters
+        var text = new string('z', 400);
+        var elementRef = Add(WinFormsGrid(["A", "B", "C"], Enumerable.Range(0, 50).Select(_ => new[] { text, text, text })));
+
+        // Act
+        var result = await Read(elementRef);
+
+        // Assert
+        result.TruncationReason.Should().Be(ElementTableTruncation.Size);
+        result.Rows!.Count.Should().BeInRange(1, 49);
+        result.NextStartRow.Should().Be(result.Rows.Count);
+    }
+
+    [Fact]
+    public async Task ReadTable_OfCustomChildrenWithoutCells_FailsWithPatternNotSupported()
+    {
+        // Arrange - a pane of custom controls is no WinForms grid
+        var pane = new FakeUiaNode("Pane", "Toolbar").With(
+            new FakeUiaNode("Custom", "Ribbon").With(new FakeUiaNode("Button", "Save")),
+            new FakeUiaNode("Custom", "Status").With(new FakeUiaNode("Text", "Ready")));
+        var elementRef = Add(pane);
+
+        // Act
+        var result = await Read(elementRef);
+
+        // Assert
+        result.ErrorCode.Should().Be(UIElementErrorCode.PatternNotSupported);
+    }
+
+    #endregion
+
     #region Failures
 
     [Fact]

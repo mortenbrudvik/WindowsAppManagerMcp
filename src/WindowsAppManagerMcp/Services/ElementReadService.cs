@@ -36,10 +36,13 @@ namespace WindowsAppManagerMcp.Services;
 /// end of the list (roadmap M3.F36). Otherwise a walk of the element's children: DataItem, ListItem and TreeItem
 /// children are the rows (read in one cached call when there are at most <see cref="CachedRowsLimit"/> children), a Header
 /// child or a first row of HeaderItems gives the headers, and a row's children but nested tree items are its cells (a row
-/// without cells is one cell, its own text). Both walks take the rows inside Group children as rows in their place, numbered
-/// across the groups (roadmap M3.F15). A grid's row headers come with its rows: through the Table pattern for a grid read
-/// through GetItem, unless they are cells of the grid already, and from a HeaderItem in the row for one read through its
-/// rows. A cell's text is its value when it has the
+/// without cells is one cell, its own text). A WinForms DataGridView, which has neither the Grid nor the Table pattern, is
+/// walked too (roadmap M3.F39): its Custom children holding DataItem cells are rows, and a first Custom child of Header
+/// items gives the headers, without the corner cell above its row headers. Both walks take the rows inside Group children
+/// as rows in their place, numbered across the groups (roadmap M3.F15). A grid's row headers come with its rows: through
+/// the Table pattern for a grid read through GetItem, unless they are cells of the grid already, from a HeaderItem in the
+/// row for one read through its rows, and from the value of a Header that starts a row of the walk (a WinForms row header
+/// has none, only a made-up "Row n" name, so it gives none). A cell's text is its value when it has the
 /// Value pattern (never a password field's: null), else its name, else the names of its children; a cell that disappears is
 /// null. The read stops at the timeout (whole rows only), at <see cref="MaxTableTextBytes"/> bytes of JSON, and between
 /// cells when the token is cancelled; the rows read until the worker abandons a stuck call, or until the table itself

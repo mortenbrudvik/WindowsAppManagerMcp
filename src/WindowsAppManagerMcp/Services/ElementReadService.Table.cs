@@ -88,7 +88,7 @@ public sealed partial class ElementReadService
                 var controlType = resolved.Element.Properties.ControlType;
                 return Failure(
                     $"The element is a {controlType} with neither the Grid pattern nor rows (DataItem, ListItem or TreeItem children, " +
-                    "also inside groups), " +
+                    "also inside groups, or Custom children holding DataItem cells), " +
                     "so it was not read as a table. Read its text with read_element_text, or find the table inside it with " +
                     "find_ui_elements (controlType 'DataGrid,Table,List').",
                     UIElementErrorCode.PatternNotSupported);
@@ -443,11 +443,23 @@ public sealed partial class ElementReadService
     /// <summary>
     /// The page's rows from the element's row children, those of a grouped list inside its groups (<see cref="RowCandidates"/>)
     /// and numbered across them; false when the element has no rows and is no list or table (then nothing is set).
+    /// <para>A WinForms DataGridView has neither the Grid nor the Table pattern, and its rows are Custom children (roadmap
+    /// M3.F39): a Custom "Top Row" of Header items, then a Custom "Row n" per row of a Header (its row header, when the grid
+    /// shows them) and a DataItem per cell. So the element's first <see cref="HeaderSearchChildren"/> Custom children are
+    /// looked into: a first one of nothing but Header items is the header row (<see cref="HeaderRowTexts"/>), and once one
+    /// holds a DataItem, every Custom child is a row. A Header that starts a row is its row header, no column; it gives the
+    /// row's rowHeaders entry only through its value (<see cref="RowHeaderText"/>).</para>
     /// </summary>
     private bool ReadRows(IUiaNode node, string controlType, int maxRows, TableProgress progress, CancellationToken token)
     {
         List<string?>? headers = null;
         var headerCount = 0;
+
+        // A header row of Header items, until a row tells whether its leading one is the corner above the row headers
+        IReadOnlyList<UiaElement>? headerRow = null;
+        bool? rowHeaderColumn = null;
+        var customRows = false;
+        var customProbes = 0;
         var rowIndex = 0;
         var columnsSeen = 0;
         var end = (long)progress.StartRow + maxRows;
@@ -463,7 +475,7 @@ public sealed partial class ElementReadService
 
             // The column headers are the list's own Header, never one inside a group
             var type = child.Properties.ControlType;
-            if (type == "Header" && !grouped && headers == null && rowIndex == 0)
+            if (type == "Header" && !grouped && headers == null && headerRow == null && rowIndex == 0)
             {
                 var items = CellsOf(child, token);
                 headers = items.Take(progress.MaxColumns).Select(item => (string?)(item.Properties.Name ?? string.Empty)).ToList();
@@ -471,13 +483,37 @@ public sealed partial class ElementReadService
                 continue;
             }
 
-            if (!RowTypes.Contains(type))
+            IReadOnlyList<UiaElement>? probed = null;
+            if (type == "Custom" && !customRows)
+            {
+                // Whether the Custom children are a WinForms DataGridView's header row and rows (roadmap M3.F39)
+                if (grouped || rowIndex > 0 || customProbes++ >= HeaderSearchChildren)
+                {
+                    continue;
+                }
+
+                probed = CellsOf(child, token);
+                if (headers == null && headerRow == null && probed.Count > 0 && probed.All(c => c.Properties.ControlType == "Header"))
+                {
+                    headerRow = probed;
+                    continue;
+                }
+
+                if (!probed.Any(c => c.Properties.ControlType == "DataItem"))
+                {
+                    continue;
+                }
+
+                customRows = true;
+                rowHeaderColumn = probed[0].Properties.ControlType == "Header";
+            }
+            else if (!RowTypes.Contains(type) && !(customRows && type == "Custom"))
             {
                 continue;
             }
 
             var inPage = rowIndex >= progress.StartRow && rowIndex < end;
-            var mayBeHeaderRow = headers == null && rowIndex == 0;
+            var mayBeHeaderRow = headers == null && headerRow == null && rowIndex == 0;
             if (!inPage && !mayBeHeaderRow)
             {
                 if (rowIndex >= end && !cached)
@@ -491,7 +527,7 @@ public sealed partial class ElementReadService
                 continue;
             }
 
-            var cells = CellsOf(child, token);
+            var cells = probed ?? CellsOf(child, token);
             if (mayBeHeaderRow && cells.Count > 0 && cells.All(c => c.Properties.ControlType == "HeaderItem"))
             {
                 headers = cells.Take(progress.MaxColumns).Select(c => (string?)(c.Properties.Name ?? string.Empty)).ToList();
@@ -505,8 +541,21 @@ public sealed partial class ElementReadService
                 continue;
             }
 
+            // A Header that starts a row is its row header (a WinForms DataGridView's), no column
+            var rowHeader = cells.Count > 0 && cells[0].Properties.ControlType == "Header" ? cells[0] : null;
+            if (rowHeader != null)
+            {
+                cells = cells.Skip(1).ToList();
+            }
+
+            rowHeaderColumn ??= rowHeader != null;
             if (!begun)
             {
+                if (headerRow != null)
+                {
+                    (headers, headerCount) = HeaderRowTexts(headerRow, rowHeaderColumn, progress.MaxColumns, token);
+                }
+
                 progress.Begin(ElementTableSource.Rows, null, null);
                 progress.SetHeaders(headers, headerCount);
                 begun = true;
@@ -517,7 +566,7 @@ public sealed partial class ElementReadService
                 : cells.Take(progress.MaxColumns).Select(cell => CellText(cell, token)).ToArray();
             columnsSeen = Math.Max(columnsSeen, Math.Max(1, cells.Count));
             progress.SeeColumns(Math.Max(columnsSeen, headerCount));
-            if (!progress.TryAddRow(texts))
+            if (!progress.TryAddRow(texts, rowHeader == null ? null : RowHeaderText(rowHeader)))
             {
                 return true;
             }
@@ -527,6 +576,11 @@ public sealed partial class ElementReadService
 
         if (!begun)
         {
+            if (headerRow != null)
+            {
+                (headers, headerCount) = HeaderRowTexts(headerRow, rowHeaderColumn, progress.MaxColumns, token);
+            }
+
             if (rowIndex == 0 && headers == null && !TableTypes.Contains(controlType))
             {
                 return false;
@@ -545,6 +599,30 @@ public sealed partial class ElementReadService
         progress.Finish(rowsRemain: stoppedEarly || rowIndex > end);
         return true;
     }
+
+    /// <summary>
+    /// The column headers of a header row of Header items (a WinForms DataGridView's top row, roadmap M3.F39), each its value,
+    /// else its name, and how many there are. When the grid shows row headers, its top row starts with the corner cell above
+    /// them, which heads no column: the leading Header is left out when the data rows start with a Header
+    /// (<paramref name="rowHeaderColumn"/>), and, when no row was read to tell (an empty grid), when it holds no value while
+    /// the next one does (a column header holds its text as its value). The corner's name ("Top Left Header Cell") is in the
+    /// user's language and never decides.
+    /// </summary>
+    private (List<string?> Names, int Count) HeaderRowTexts(
+        IReadOnlyList<UiaElement> headerRow, bool? rowHeaderColumn, int maxColumns, CancellationToken token)
+    {
+        var corner = rowHeaderColumn ?? (headerRow.Count > 1 && ValueText(headerRow[0]) is not { Length: > 0 } &&
+                                         ValueText(headerRow[1]) is { Length: > 0 });
+        var columns = corner ? headerRow.Skip(1).ToList() : headerRow;
+        return (columns.Take(maxColumns).Select(header => CellText(header, token)).ToList(), columns.Count);
+    }
+
+    /// <summary>
+    /// The text of a row header that starts a row of a row walk: its value, or null when it has none. Never its name: a
+    /// WinForms DataGridView names each row header "Row n" (n from 0) whatever it shows, and does not expose what it shows,
+    /// so its rows get no rowHeaders (roadmap M3.F39).
+    /// </summary>
+    private string? RowHeaderText(UiaElement header) => ValueText(header);
 
     /// <summary>
     /// The element's children, each read, with the children of its Group children in their place (roadmap M3.F15): Explorer's
@@ -631,24 +709,12 @@ public sealed partial class ElementReadService
 
         if ((cell.Patterns & UiaPatterns.Value) != 0)
         {
-            if (TryRead(() => _tree.ReadIdentity(cell.Node)) is not { IsPassword: false })
+            if (ValueOf(cell) is not { } value)
             {
-                // A password field, or one whose flag cannot be read: its value is never read
                 return null;
             }
 
-            string? value;
-            try
-            {
-                value = TryValue(cell.Node);
-            }
-            catch (UiaElementUnavailableException)
-            {
-                // The cell is gone: null, as a cell the table no longer has (the next GetItem or row read finds a table that is gone)
-                return null;
-            }
-
-            if (value is { Length: > 0 })
+            if (value.Length > 0)
             {
                 return value;
             }
@@ -667,6 +733,31 @@ public sealed partial class ElementReadService
         }
 
         return string.Empty;
+    }
+
+    /// <summary>The value of a cell or header that has the Value pattern (see <see cref="ValueOf"/>), else null.</summary>
+    private string? ValueText(UiaElement cell) => (cell.Patterns & UiaPatterns.Value) != 0 ? ValueOf(cell) : null;
+
+    /// <summary>
+    /// The value of a cell with the Value pattern, empty when it has none or the read fails. Null for a password field, or one
+    /// whose flag cannot be read, whose value is never read, and for a cell that is gone: null, as a cell the table no longer
+    /// has (the next GetItem or row read finds a table that is gone).
+    /// </summary>
+    private string? ValueOf(UiaElement cell)
+    {
+        if (TryRead(() => _tree.ReadIdentity(cell.Node)) is not { IsPassword: false })
+        {
+            return null;
+        }
+
+        try
+        {
+            return TryValue(cell.Node) ?? string.Empty;
+        }
+        catch (UiaElementUnavailableException)
+        {
+            return null;
+        }
     }
 
     /// <summary>
