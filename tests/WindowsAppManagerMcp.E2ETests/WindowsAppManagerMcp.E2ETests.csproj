@@ -42,9 +42,10 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- One contract for both sides: titles, AutomationIds, event names and the command line -->
+    <!-- One contract for both sides: titles, AutomationIds, event names, the command line and the save folder's rule -->
     <Compile Include="..\FixtureApp\FixtureContract.cs" Link="FixtureContract\FixtureContract.cs" />
     <Compile Include="..\FixtureApp\FixtureOptions.cs" Link="FixtureContract\FixtureOptions.cs" />
+    <Compile Include="..\FixtureApp\FixtureSaveFolder.cs" Link="FixtureContract\FixtureSaveFolder.cs" />
   </ItemGroup>
 
   <ItemGroup>

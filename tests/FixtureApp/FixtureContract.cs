@@ -28,6 +28,12 @@ public static class FixtureContract
     /// <summary>Start of the title of the save prompt the document shows when it is closed with unsaved changes.</summary>
     public const string SavePromptTitlePrefix = "WAM Fixture Save Prompt";
 
+    /// <summary>Start of the title of the Save As dialog the main window's Save As button shows.</summary>
+    public const string SaveAsTitlePrefix = "WAM Fixture Save As";
+
+    /// <summary>What the fixture writes into the file its Save As dialog returns.</summary>
+    public const string SavedFileText = "Saved by the WAM fixture's Save As dialog.";
+
     /// <summary>Start of the table window's title.</summary>
     public const string TableTitlePrefix = "WAM Fixture Table";
 
@@ -52,6 +58,9 @@ public static class FixtureContract
 
     /// <summary>Title of the save prompt of fixture instance <paramref name="instance"/>.</summary>
     public static string SavePromptTitle(string instance) => $"{SavePromptTitlePrefix} {instance}";
+
+    /// <summary>Title of the Save As dialog of fixture instance <paramref name="instance"/>.</summary>
+    public static string SaveAsTitle(string instance) => $"{SaveAsTitlePrefix} {instance}";
 
     /// <summary>Title of the table window of fixture instance <paramref name="instance"/>.</summary>
     public static string TableTitle(string instance) => $"{TableTitlePrefix} {instance}";
@@ -129,6 +138,7 @@ public static class FixtureContract
         public const string ComboBox = "comboBox";
         public const string OpenModalButton = "openModalButton";
         public const string OpenDocumentButton = "openDocumentButton";
+        public const string SaveAsButton = "saveAsButton";
         public const string ContextMenuTarget = "contextMenuTarget";
         public const string ContextMenu = "contextMenu";
         public const string ContextMenuCopy = "contextMenuCopy";
@@ -201,6 +211,13 @@ public static class FixtureContract
 
         /// <summary>The document window closed. Fields: <c>result</c> (saved, discarded or clean).</summary>
         public const string DocumentClosed = "documentClosed";
+
+        /// <summary>
+        /// The Save As dialog closed. Fields: <c>result</c> (saved: the file was written; refused: the path was outside the
+        /// fixture's save folder, see <see cref="FixtureSaveFolder"/>, and nothing was written; failed: writing it failed;
+        /// cancel), and <c>path</c> (the path the dialog returned, unless cancelled) and <c>message</c> (when it failed).
+        /// </summary>
+        public const string SaveDialogClosed = "saveDialogClosed";
 
         /// <summary>The table window is shown. Fields: <c>hwnd</c>.</summary>
         public const string TableOpened = "tableOpened";

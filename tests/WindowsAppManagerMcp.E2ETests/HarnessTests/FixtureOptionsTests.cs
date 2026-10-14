@@ -120,7 +120,8 @@ public class FixtureOptionsTests
             FixtureContract.DocumentTitle("abc", dirty: true),
             FixtureContract.SavePromptTitle("abc"),
             FixtureContract.TableTitle("abc"),
-            FixtureContract.MenuTitle("abc")
+            FixtureContract.MenuTitle("abc"),
+            FixtureContract.SaveAsTitle("abc")
         };
 
         // Assert

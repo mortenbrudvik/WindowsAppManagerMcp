@@ -1,10 +1,11 @@
 using System.Runtime.InteropServices;
+using System.Text;
 
 namespace WindowsAppManagerMcp.FixtureApp;
 
 /// <summary>
-/// The few user32 calls the fixture needs: its DPI awareness, its own geometry for the ready event, and the Win32 menu bar
-/// of its menu window.
+/// The few user32 calls the fixture needs: its DPI awareness, its own geometry for the ready event, the Win32 menu bar
+/// of its menu window, and the long form of a path for its save folder.
 /// </summary>
 internal static class NativeMethods
 {
@@ -75,4 +76,15 @@ internal static class NativeMethods
     [DllImport("user32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool SetMenu(nint hwnd, nint menu);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern uint GetLongPathNameW(string shortPath, StringBuilder longPath, uint length);
+
+    /// <summary>The long form of an existing path (8.3 short names expanded), or the path itself when it cannot be read.</summary>
+    public static string LongPath(string path)
+    {
+        var buffer = new StringBuilder(1024);
+        var length = GetLongPathNameW(path, buffer, (uint)buffer.Capacity);
+        return length > 0 && length < buffer.Capacity ? buffer.ToString() : path;
+    }
 }

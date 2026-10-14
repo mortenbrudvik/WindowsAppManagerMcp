@@ -1,3 +1,4 @@
+using System.IO;
 using System.Text.Json.Nodes;
 using System.Windows;
 using System.Windows.Automation;
@@ -12,8 +13,8 @@ namespace WindowsAppManagerMcp.FixtureApp;
 
 /// <summary>
 /// The fixture's main window: an edit box, a password box, a check box, a combo box, a button that opens a modal
-/// dialog, a button that opens a document with unsaved changes, a context menu, solid color swatches and a
-/// virtualized list of <see cref="VirtualListItemCount"/> items. Every element the tests use has a fixed
+/// dialog, a button that opens a document with unsaved changes, a button that shows a Save As dialog, a context menu,
+/// solid color swatches and a virtualized list of <see cref="VirtualListItemCount"/> items. Every element the tests use has a fixed
 /// AutomationId (<see cref="Ids"/>), and every change is written to the event log, except the password box's content.
 /// </summary>
 internal sealed class MainWindow : Window
@@ -96,6 +97,13 @@ internal sealed class MainWindow : Window
 
         left.Children.Add(Report(Ids.OpenModalButton, CreateButton("Open modal dialog...", Ids.OpenModalButton, OpenModal)));
         left.Children.Add(Report(Ids.OpenDocumentButton, CreateButton("Open document...", Ids.OpenDocumentButton, OpenDocument)));
+
+        // The common dialogs (roadmap M3.F4) side by side, so the column keeps its height
+        var dialogButtons = new StackPanel { Orientation = Orientation.Horizontal };
+        var saveAs = CreateButton("Save as...", Ids.SaveAsButton, ShowSaveAs);
+        saveAs.Margin = new Thickness(0, 0, 8, 12);
+        dialogButtons.Children.Add(Report(Ids.SaveAsButton, saveAs));
+        left.Children.Add(dialogButtons);
 
         var contextMenuTarget = new Label
         {
@@ -300,6 +308,55 @@ internal sealed class MainWindow : Window
         _document = new DocumentWindow(_options, _events);
         _document.Closed += (_, _) => _document = null;
         _document.Show();
+    }
+
+    /// <summary>
+    /// Shows the common Save As dialog (IFileSaveDialog, through WPF's SaveFileDialog) modal on this window, then writes
+    /// <see cref="SavedFileText"/> to the path it returns, but only in the fixture's save folder (<see cref="FixtureSaveFolder"/>).
+    /// The dialog creates no test file and adds nothing to the recent files.
+    /// </summary>
+    private void ShowSaveAs()
+    {
+        var folder = FixtureSaveFolder.For(_options);
+        var dialog = new Microsoft.Win32.SaveFileDialog
+        {
+            Title = SaveAsTitle(_options.Instance),
+            FileName = "fixture.txt",
+            DefaultExt = ".txt",
+            Filter = "Text files (*.txt)|*.txt",
+            OverwritePrompt = true,
+            CreateTestFile = false,
+            AddToRecent = false
+        };
+        if (folder != null)
+        {
+            dialog.InitialDirectory = folder;
+        }
+
+        if (dialog.ShowDialog(this) != true)
+        {
+            Log(Events.SaveDialogClosed, ("result", "cancel"));
+            return;
+        }
+
+        var path = dialog.FileName;
+        if (!FixtureSaveFolder.Allows(folder, path, NativeMethods.LongPath))
+        {
+            Log(Events.SaveDialogClosed, ("result", "refused"), ("path", path));
+            return;
+        }
+
+        try
+        {
+            File.WriteAllText(path, SavedFileText);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            Log(Events.SaveDialogClosed, ("result", "failed"), ("path", path), ("message", ex.Message));
+            return;
+        }
+
+        Log(Events.SaveDialogClosed, ("result", "saved"), ("path", path));
     }
 
     private void OpenTable()

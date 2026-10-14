@@ -58,6 +58,12 @@ public sealed class FixtureAppSession : IDisposable
     /// <summary>The fixture's command line.</summary>
     public FixtureOptions Options { get; }
 
+    /// <summary>
+    /// The test's own folder under the temp folder, deleted in <see cref="Dispose"/>: it holds the event log, and it is the
+    /// one folder the fixture's Save As button writes into (<see cref="FixtureSaveFolder"/>).
+    /// </summary>
+    public string WorkDirectory => _workDirectory;
+
     /// <summary>The token in every window title of this fixture.</summary>
     public string Instance => Options.Instance;
 
