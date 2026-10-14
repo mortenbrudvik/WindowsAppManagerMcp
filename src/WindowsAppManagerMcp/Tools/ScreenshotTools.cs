@@ -383,7 +383,8 @@ public class ScreenshotTools
 
         // The title is informational: untitled windows (popups, menus) are still captured, with the walk's title
         var windowInfo = _windowService.GetWindowInfo(windowHandle);
-        var windowTitle = string.IsNullOrEmpty(windowInfo?.Title) ? null : windowInfo.Title;
+        // Reported back only, so cut as the window tools cut it (roadmap M3.F31)
+        var windowTitle = string.IsNullOrEmpty(windowInfo?.Title) ? null : AppText.Cut(windowInfo.Title);
         if (windowInfo == null && !_windowService.IsValidWindow(windowHandle))
         {
             return AnnotatedFailure(reported, null, ScreenshotErrorCode.InvalidHandle.ToString(), "Window not found or handle is invalid");
