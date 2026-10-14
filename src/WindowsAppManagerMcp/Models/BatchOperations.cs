@@ -46,7 +46,10 @@ public record ApplicationLaunchRequest(
     [property: Description("Where to put the item's window once it is found, as launch_application's placement")]
     LaunchPlacement? Placement = null,
     [property: Description("Use an open window of the app instead of starting it, as launch_application's reuseExisting (default false)")]
-    bool ReuseExisting = false
+    bool ReuseExisting = false,
+    [property: Description("Start a Chromium, Electron or CEF .exe with --force-renderer-accessibility, as launch_application's " +
+                           "forceAccessibility (default false)")]
+    bool ForceAccessibility = false
 );
 
 /// <summary>A close_windows_batch item: the window to close.</summary>
@@ -91,8 +94,9 @@ public record BatchLaunchResult(
 
 /// <summary>
 /// A launch_applications_batch result: as launch_application's, for one application. LaunchStatus, Window and
-/// LauncherExited are left out when the launch failed (and LauncherExited also without a window wait), and Placement
-/// without a placement or when the launch failed.
+/// LauncherExited are left out when the launch failed (and LauncherExited also without a window wait), Placement
+/// without a placement or when the launch failed, and ForceAccessibilityApplied when the item did not ask for
+/// forceAccessibility (roadmap M3.F25).
 /// </summary>
 public record LaunchResultItem(
     string Executable,
@@ -105,7 +109,8 @@ public record LaunchResultItem(
     string? LaunchStatus = null,
     WindowsAppManagerMcp.Tools.WindowInfoDto? Window = null,
     bool? LauncherExited = null,
-    WindowsAppManagerMcp.Tools.LaunchPlacementResultDto? Placement = null
+    WindowsAppManagerMcp.Tools.LaunchPlacementResultDto? Placement = null,
+    bool? ForceAccessibilityApplied = null
 );
 
 public record BoundsDto(int X, int Y, int Width, int Height);

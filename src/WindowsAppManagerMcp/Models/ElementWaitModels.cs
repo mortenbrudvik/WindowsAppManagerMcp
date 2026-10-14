@@ -72,6 +72,13 @@ public sealed record ElementWaitRequest
 
     /// <summary>How long to wait in all, clamped to 0-60000 ms; 0 checks once.</summary>
     public int TimeoutMs { get; init; } = 10_000;
+
+    /// <summary>
+    /// How long the condition must hold, at every check, before it counts (roadmap M3.F20), clamped to 0 and
+    /// <see cref="TimeoutMs"/>: a list that is re-created does not satisfy gone in the gap. 0 (the default) is one check
+    /// that sees it. A gone that cannot be undone (the window closed, the ref's or withinRef's element is gone) counts at once.
+    /// </summary>
+    public int StableMs { get; init; }
 }
 
 /// <summary>
