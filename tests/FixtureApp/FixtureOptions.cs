@@ -30,6 +30,8 @@ public enum FixtureDpiAwareness
 /// <param name="OpenMenuWindow">Open the menu window (a Win32 menu bar) right after the main window is ready.</param>
 /// <param name="OpenWebView">Open the WebView2 window right after the main window is ready. Only this option starts
 /// WebView2, which needs the Edge WebView2 runtime.</param>
+/// <param name="OtherScaleMonitor">Open the main window centred on a monitor whose scale differs from the primary's, instead
+/// of on the primary (roadmap M3.F30); on a machine without one, on the primary. See <see cref="FixturePlacement"/>.</param>
 public sealed record FixtureOptions(
     string Instance,
     string? EventLogPath = null,
@@ -41,7 +43,8 @@ public sealed record FixtureOptions(
     FixtureDpiAwareness DpiAwareness = FixtureDpiAwareness.PerMonitorV2,
     bool OpenTable = false,
     bool OpenMenuWindow = false,
-    bool OpenWebView = false)
+    bool OpenWebView = false,
+    bool OtherScaleMonitor = false)
 {
     public const string InstanceOption = "--instance";
     public const string EventLogOption = "--event-log";
@@ -54,6 +57,7 @@ public sealed record FixtureOptions(
     public const string OpenTableOption = "--open-table";
     public const string OpenMenuWindowOption = "--open-menu-window";
     public const string OpenWebViewOption = "--open-web-view";
+    public const string OtherScaleMonitorOption = "--other-scale-monitor";
 
     /// <summary>The instance token when none is given, for starting the fixture by hand.</summary>
     public const string DefaultInstance = "manual";
@@ -128,6 +132,9 @@ public sealed record FixtureOptions(
                 case OpenWebViewOption:
                     options = options with { OpenWebView = true };
                     break;
+                case OtherScaleMonitorOption:
+                    options = options with { OtherScaleMonitor = true };
+                    break;
                 default:
                     throw new ArgumentException($"Unknown option '{name}'.");
             }
@@ -179,6 +186,10 @@ public sealed record FixtureOptions(
         if (OpenWebView)
         {
             args.Add(OpenWebViewOption);
+        }
+        if (OtherScaleMonitor)
+        {
+            args.Add(OtherScaleMonitorOption);
         }
         return args;
     }

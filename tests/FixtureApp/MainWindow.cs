@@ -31,6 +31,7 @@ internal sealed class MainWindow : Window
     private MenuWindow? _menuWindow;
     private WebViewWindow? _webViewWindow;
     private bool _readyReported;
+    private NoActivateWhileShown? _noActivateWhileShown;
 
     public MainWindow(FixtureOptions options, FixtureEventLog events, string dpiAwareness)
     {
@@ -42,6 +43,12 @@ internal sealed class MainWindow : Window
         Width = 760;
         Height = 540;
         FixturePlacement.CenterOnPrimaryMonitor(this);
+
+        // On a monitor at another scale WPF's DPI change inside Show would activate the window (roadmap M3.F30)
+        if (options.OtherScaleMonitor && FixturePlacement.CenterOnMonitorAtAnotherScale(this) && options.NoActivate)
+        {
+            _noActivateWhileShown = new NoActivateWhileShown();
+        }
         ShowActivated = !options.NoActivate;
         UseLayoutRounding = true;
         Background = Brushes.White;
@@ -230,6 +237,10 @@ internal sealed class MainWindow : Window
 
     private void OnContentRendered(object? sender, EventArgs e)
     {
+        // Shown: tests may activate it from now on
+        _noActivateWhileShown?.Release();
+        _noActivateWhileShown = null;
+
         if (_readyReported)
         {
             return;

@@ -95,7 +95,7 @@ public class FixtureAppSessionTests
     public void BuildOptions_PassesTheSurfacesToOpenAtStart()
     {
         // Arrange - the M3.F4 surfaces a no-input test cannot open with a click
-        var launch = new FixtureLaunchOptions { OpenTable = true, OpenMenuWindow = true, OpenWebView = true };
+        var launch = new FixtureLaunchOptions { OpenTable = true, OpenMenuWindow = true, OpenWebView = true, OtherScaleMonitor = true };
 
         // Act
         var options = FixtureAppSession.BuildOptions(DesktopTier.NoInput, launch, "abc", "events.jsonl", 1);
@@ -104,6 +104,7 @@ public class FixtureAppSessionTests
         options.OpenTable.Should().BeTrue();
         options.OpenMenuWindow.Should().BeTrue();
         options.OpenWebView.Should().BeTrue();
+        options.OtherScaleMonitor.Should().BeTrue();
     }
 
     [Fact]
@@ -114,6 +115,7 @@ public class FixtureAppSessionTests
         options.OpenTable.Should().BeFalse();
         options.OpenMenuWindow.Should().BeFalse();
         options.OpenWebView.Should().BeFalse("only a scenario that asks for it starts WebView2");
+        options.OtherScaleMonitor.Should().BeFalse("the fixture opens on the primary unless a scenario asks");
     }
 
     [Theory]
