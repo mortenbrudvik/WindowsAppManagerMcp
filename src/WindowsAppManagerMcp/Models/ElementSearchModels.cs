@@ -75,7 +75,8 @@ public record ScreenPoint(int X, int Y);
 /// One element find_ui_elements found (roadmap M3.4). The fields after <paramref name="Patterns"/> are set only for
 /// detail standard or full, and are left out when they do not apply.
 /// </summary>
-/// <param name="Ref">The element's ref, for later calls; null when the element has no runtime id. Serialized first.</param>
+/// <param name="Ref">The element's ref, for later calls; null when the element has no runtime id, except for an item
+/// searchVirtualized found through its list, whose ref names it by the list's answer (roadmap M3.F37). Serialized first.</param>
 /// <param name="AutomationId">Cut to <see cref="AppText.MaxLength"/> characters by the tools that return it
 /// (<see cref="Bounded"/>, roadmap M3.F14); whole where a service reads it.</param>
 /// <param name="ClickPoint">Where a click hits the element: UI Automation's clickable point, or else the centre of its

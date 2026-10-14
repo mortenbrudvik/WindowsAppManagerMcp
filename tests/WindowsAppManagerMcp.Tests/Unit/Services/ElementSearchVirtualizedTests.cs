@@ -300,6 +300,85 @@ public class ElementSearchVirtualizedTests
     }
 
     [Fact]
+    public async Task AnExplorerPlaceholder_WithoutARuntimeId_GetsARef_ThatResolvesByAskingTheListAgain()
+    {
+        // Arrange - Explorer's placeholder has no runtime id, so it used to be returned without a ref (roadmap M3.F37)
+        _list.WithExplorerPlaceholders();
+        var item = (await Find(name: "Item 05000")).Elements.Should().ContainSingle().Subject;
+        item.Ref.Should().NotBeNull();
+        var probes = _list.Probes.Count;
+
+        // Act
+        var resolved = _registry.Resolve(item.Ref!, CancellationToken.None);
+
+        // Assert - the list was asked for the item by the same property and value, and for a second one
+        resolved.Success.Should().BeTrue(resolved.Error);
+        resolved.Element!.Node.Should().BeSameAs(_list.PlaceholderOf(5000));
+        resolved.Element.Ref.Should().Be(item.Ref);
+        resolved.Element.Via.Should().Be(ElementResolutionPath.ItemContainer);
+        resolved.Element.Moved.Should().BeFalse();
+        _list.Probes.Skip(probes).Should().Equal("Name=Item 05000 after start", "Name=Item 05000 after Item 05000");
+    }
+
+    [Fact]
+    public async Task TheRefOfAnExplorerPlaceholder_OnceTheListRealizesTheItem_NamesTheRealItem_UnderTheSameRef()
+    {
+        // Arrange
+        _list.WithExplorerPlaceholders();
+        var itemRef = (await Find(name: "Item 05000")).Elements!.Single().Ref!;
+        ((FakeVirtualizedItemPattern)_list.PlaceholderOf(5000).PatternObjects[typeof(IUiaVirtualizedItemPattern)]).Realize();
+
+        // Act
+        var resolved = _registry.Resolve(itemRef, CancellationToken.None);
+        var again = _registry.Resolve(itemRef, CancellationToken.None);
+
+        // Assert - the real item, with its runtime id: from now on the ref names it as any ref does
+        resolved.Element!.Node.Should().BeSameAs(_list.Items[5000]);
+        resolved.Element.Ref.Should().Be(itemRef);
+        resolved.Element.Element.Properties.ControlType.Should().Be("ListItem");
+        again.Element!.Via.Should().Be(ElementResolutionPath.Live);
+        (await Find(name: "Item 05000", controlTypes: ["ListItem"])).Elements.Should().ContainSingle().Which.Ref.Should().Be(itemRef);
+    }
+
+    [Fact]
+    public async Task TheRefOfAnExplorerPlaceholder_WhenTheListNoLongerHasTheItem_IsElementStale()
+    {
+        // Arrange - the file was renamed: the list has no item of that name now
+        _list.WithExplorerPlaceholders();
+        var itemRef = (await Find(name: "Item 05000")).Elements!.Single().Ref!;
+        _list.Items[5000].Name = "Renamed";
+
+        // Act
+        var resolved = _registry.Resolve(itemRef, CancellationToken.None);
+
+        // Assert
+        resolved.ErrorCode.Should().Be(UIElementErrorCode.ElementStale);
+        resolved.Error.Should().Contain("Item 05000");
+    }
+
+    [Fact]
+    public async Task TheRefOfAnExplorerPlaceholder_WhenTheListIsGone_IsElementStale()
+    {
+        _list.WithExplorerPlaceholders();
+        var itemRef = (await Find(name: "Item 05000")).Elements!.Single().Ref!;
+        _list.List.Vanish();
+
+        var resolved = _registry.Resolve(itemRef, CancellationToken.None);
+
+        resolved.ErrorCode.Should().Be(UIElementErrorCode.ElementStale);
+    }
+
+    [Fact]
+    public async Task TwoExplorerPlaceholdersWithTheSameName_GetNoRef_SinceTheListCannotTellThemApart()
+    {
+        _list.WithExplorerPlaceholders();
+
+        var result = await Find(name: "Duplicate");
+
+        result.Elements.Should().HaveCount(2).And.OnlyContain(e => e.Ref == null && e.Virtualized == true);
+    }
+
+    [Fact]
     public async Task APlaceholderThatSaysItsControlType_IsStillHeldToControlType()
     {
         // WPF's placeholder says it is a ListItem, so a Button filter drops it as before

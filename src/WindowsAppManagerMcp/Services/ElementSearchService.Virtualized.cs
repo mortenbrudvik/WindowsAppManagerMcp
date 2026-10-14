@@ -114,7 +114,7 @@ public sealed partial class ElementSearchService
         var evaluateUntyped = UiaConditionEvaluator.CanEvaluate(untypedCondition);
         var untypedKept = 0;
         var known = total.Matches.Select(m => m.Element.RuntimeId).OfType<IReadOnlyList<int>>().ToList();
-        var items = new List<UiaElement>();
+        var items = new List<VirtualizedItem>();
         var more = false;
         var matched = false;
 
@@ -252,7 +252,7 @@ public sealed partial class ElementSearchService
                             break;
                         }
 
-                        items.Add(element);
+                        items.Add(new VirtualizedItem(element, new ElementItemLocator(container, property, asked)));
                         if (untyped && !criteria.ControlTypes!.Contains(element.Properties.ControlType, StringComparer.OrdinalIgnoreCase))
                         {
                             untypedKept++;
@@ -388,13 +388,19 @@ public sealed partial class ElementSearchService
         var window = query.WindowHandle;
         var mayRead = true;
         var items = new List<FoundElement>(lookup.Items.Count);
-        foreach (var item in lookup.Items)
+        foreach (var (item, locator) in lookup.Items)
         {
             string? itemRef = null;
             try
             {
-                // Not proven unique: the provider compared one property, and the list may hold look-alikes further on
-                itemRef = _registry.Register(window, item, new ElementOrigin(generation, criteria.Identity, Unique: null));
+                // Not proven unique: the provider compared one property, and the list may hold look-alikes further on. An item
+                // without a runtime id is named by the list's answer (roadmap M3.F37), unless the list gave that answer for
+                // another item too: then the two cannot be told apart, and neither gets a ref
+                var alike = item.RuntimeId is not { Count: > 0 } &&
+                            lookup.Items.Count(other => other.Element.RuntimeId is not { Count: > 0 } && other.Locator == locator) > 1;
+                itemRef = alike
+                    ? null
+                    : _registry.Register(window, item, new ElementOrigin(generation, criteria.Identity, Unique: null, Item: locator));
             }
             catch (Exception)
             {
@@ -463,7 +469,8 @@ public sealed partial class ElementSearchService
     }
 
     /// <summary>What searchVirtualized found.</summary>
-    /// <param name="Items">The matching items the tree search had not found, at most the room maxResults left.</param>
+    /// <param name="Items">The matching items the tree search had not found, at most the room maxResults left, each with the
+    /// list that returned it and what it was asked.</param>
     /// <param name="More">Another such item exists beyond <paramref name="Items"/>.</param>
     /// <param name="Containers">The lists looked at.</param>
     /// <param name="Note">Why not everything could be searched, or null.</param>
@@ -472,8 +479,11 @@ public sealed partial class ElementSearchService
     /// read, lists left out by the limits). Null when it finished, or when it did not run because the tree search's own
     /// truncation already says why.</param>
     private sealed record VirtualizedLookup(
-        IReadOnlyList<UiaElement> Items, bool More, IReadOnlyList<UiaElement> Containers, string? Note, ElementSearchTruncation? Stop = null)
+        IReadOnlyList<VirtualizedItem> Items, bool More, IReadOnlyList<UiaElement> Containers, string? Note, ElementSearchTruncation? Stop = null)
     {
         public static VirtualizedLookup Skipped(string note, ElementSearchTruncation? stop = null) => new([], false, [], note, stop);
     }
+
+    /// <summary>An item a list returned, and where: the list and the property and value it was asked for.</summary>
+    private sealed record VirtualizedItem(UiaElement Element, ElementItemLocator Locator);
 }

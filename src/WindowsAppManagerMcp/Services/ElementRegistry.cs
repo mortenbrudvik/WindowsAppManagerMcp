@@ -160,9 +160,15 @@ public sealed class ElementRegistry : IElementRegistry
     {
         ArgumentNullException.ThrowIfNull(element);
         ArgumentNullException.ThrowIfNull(origin);
-        if (element.RuntimeId is not { Count: > 0 } runtimeId || windowHandle == nint.Zero)
+        if (windowHandle == nint.Zero)
         {
             return null;
+        }
+
+        if (element.RuntimeId is not { Count: > 0 } runtimeId)
+        {
+            // An item a list returned without a runtime id (Explorer's placeholder) is named by the list's answer instead
+            return origin.Item is { Container.RuntimeId.Count: > 0 } item ? RegisterItem(windowHandle, element, origin, item) : null;
         }
 
         var identity = WindowIdentityOf(windowHandle);
@@ -202,24 +208,66 @@ public sealed class ElementRegistry : IElementRegistry
                 Remove(existing);
             }
 
-            var entry = new Entry(
+            return Add(new Entry(
                 ElementRefs.Format(record.Seq, ++record.LastElement), record, key, runtimeId.ToArray(), element.Node, fingerprint)
             {
                 Selector = origin.Unique == true ? origin.Selector : null,
                 Row = origin.Row,
                 Generation = origin.Generation
-            };
-            record.Entries[key] = entry;
-            _byRef[entry.Ref] = entry;
-            entry.LruNode = _lru.AddFirst(entry);
-            entry.LastUsed = _clock.GetUtcNow();
-            while (_byRef.Count > _capacity && _lru.Last is { } oldest)
+            });
+        }
+    }
+
+    /// <summary>
+    /// The ref of an item a list returned without a runtime id (roadmap M3.F37), keyed by its list's runtime id and the
+    /// property and value the list was asked for: the same answer keeps its ref. No selector or row is kept: the list's
+    /// answer is what names it.
+    /// </summary>
+    private string? RegisterItem(nint windowHandle, UiaElement element, ElementOrigin origin, ElementItemLocator item)
+    {
+        var identity = WindowIdentityOf(windowHandle);
+        if (identity == null)
+        {
+            return null;
+        }
+
+        var containerId = item.Container.RuntimeId!.ToArray();
+        var key = string.Create(CultureInfo.InvariantCulture, $"item:{RuntimeKey(containerId)}:{item.Property}:{item.Value}");
+        var fingerprint = Fingerprint(element, origin.IndexPath);
+        lock (_gate)
+        {
+            var record = WindowRecordFor(windowHandle, identity.Value);
+            if (record.Entries.TryGetValue(key, out var existing) && existing.Item != null)
             {
-                Remove(oldest.Value);
+                existing.Node = element.Node;
+                existing.Fingerprint = fingerprint;
+                existing.Item.Container = item.Container.Node;
+                existing.Generation = Math.Max(existing.Generation, origin.Generation);
+                Touch(existing);
+                return existing.Ref;
             }
 
-            return entry.Ref;
+            return Add(new Entry(ElementRefs.Format(record.Seq, ++record.LastElement), record, key, [], element.Node, fingerprint)
+            {
+                Item = new ItemLocator(containerId, item.Container.Node, item.Property, item.Value),
+                Generation = origin.Generation
+            });
         }
+    }
+
+    /// <summary>Adds a new entry, the least recently used ones expiring past the capacity; its ref. Under the lock.</summary>
+    private string Add(Entry entry)
+    {
+        entry.Window.Entries[entry.Key] = entry;
+        _byRef[entry.Ref] = entry;
+        entry.LruNode = _lru.AddFirst(entry);
+        entry.LastUsed = _clock.GetUtcNow();
+        while (_byRef.Count > _capacity && _lru.Last is { } oldest)
+        {
+            Remove(oldest.Value);
+        }
+
+        return entry.Ref;
     }
 
     /// <inheritdoc />
@@ -335,12 +383,19 @@ public sealed class ElementRegistry : IElementRegistry
         ElementFingerprint fingerprint;
         ElementCriteria? selector;
         ElementRow? row;
+        ItemLocator? item;
         lock (_gate)
         {
             node = entry.Node;
             fingerprint = entry.Fingerprint;
             selector = entry.Selector;
             row = entry.Row;
+            item = entry.Item is { } stored ? stored with { } : null;
+        }
+
+        if (item != null)
+        {
+            return ResolveItem(entry, item, cancellationToken);
         }
 
         // 1. The stored element, if it is still there: a live read asks the provider (a runtime id alone is answered from
@@ -372,33 +427,9 @@ public sealed class ElementRegistry : IElementRegistry
             // Otherwise gone: look for it again
         }
 
-        IUiaNode? window;
-        try
+        if (WindowOf(entry, out var window) is { } windowFailure)
         {
-            window = _tree.FromHandle(entry.Window.Handle);
-        }
-        catch (UiaElementUnavailableException)
-        {
-            window = null;
-        }
-
-        if (window == null)
-        {
-            // Stale only when the window is gone; a window UI Automation cannot read now says nothing about the element
-            if (!IsSameWindow(entry.Window))
-            {
-                lock (_gate)
-                {
-                    DropWindow(entry.Window);
-                }
-
-                return ElementResolution.Failed(UIElementErrorCode.ElementStale,
-                    $"Element ref '{entry.Ref}' is stale: its window closed. Find the element again with find_ui_elements.");
-            }
-
-            return ElementResolution.Failed(UIElementErrorCode.WindowNotFound,
-                $"Element ref '{entry.Ref}': UI Automation could not read its window {(long)entry.Window.Handle}, which is still " +
-                "open, so it is not known whether its element is there; the ref was kept. Try again in a moment.");
+            return windowFailure;
         }
 
         // 2. The same runtime id in the window (an engine can hand out a new proxy for the same element), if it is still
@@ -465,6 +496,202 @@ public sealed class ElementRegistry : IElementRegistry
                     $"Element ref '{entry.Ref}' is stale: its element ({Describe(fingerprint)}) is gone" +
                     (found.Complete ? "" : " (the search of the window did not finish)") +
                     ". Find the element again with find_ui_elements.");
+        }
+    }
+
+    /// <summary>
+    /// The window's element of an entry, or why there is none: ElementStale when the window closed (its refs are dropped),
+    /// WindowNotFound when it is still open but UI Automation cannot read it now, which says nothing about the element.
+    /// </summary>
+    private ElementResolution? WindowOf(Entry entry, out IUiaNode window)
+    {
+        IUiaNode? found;
+        try
+        {
+            found = _tree.FromHandle(entry.Window.Handle);
+        }
+        catch (UiaElementUnavailableException)
+        {
+            found = null;
+        }
+
+        window = found!;
+        if (found != null)
+        {
+            return null;
+        }
+
+        // Stale only when the window is gone; a window UI Automation cannot read now says nothing about the element
+        if (!IsSameWindow(entry.Window))
+        {
+            lock (_gate)
+            {
+                DropWindow(entry.Window);
+            }
+
+            return ElementResolution.Failed(UIElementErrorCode.ElementStale,
+                $"Element ref '{entry.Ref}' is stale: its window closed. Find the element again with find_ui_elements.");
+        }
+
+        return ElementResolution.Failed(UIElementErrorCode.WindowNotFound,
+            $"Element ref '{entry.Ref}': UI Automation could not read its window {(long)entry.Window.Handle}, which is still " +
+            "open, so it is not known whether its element is there; the ref was kept. Try again in a moment.");
+    }
+
+    /// <summary>
+    /// An item without a runtime id, found again by asking its list for it as the search did (roadmap M3.F37; see the remarks
+    /// of <see cref="IElementRegistry"/>): the list by its stored element while that reads with its runtime id, else by its
+    /// runtime id in the window; then FindItemByProperty with the stored property and value, and once more after the item it
+    /// returns. The item is accepted whatever its control type: the list's answer names it. One with a runtime id (realized
+    /// meanwhile) is adopted (<see cref="Adopt"/>).
+    /// </summary>
+    private ElementResolution ResolveItem(Entry entry, ItemLocator item, CancellationToken cancellationToken)
+    {
+        var asked = $"{(item.Property == UiaProperty.AutomationId ? "automation id" : "name")} '{item.Value}'";
+        ElementResolution Stale(string why) => ElementResolution.Failed(UIElementErrorCode.ElementStale,
+            $"Element ref '{entry.Ref}' is stale: it names the item of {asked} of a list, and {why}. Find the element again with " +
+            "find_ui_elements (searchVirtualized).");
+
+        IUiaNode? container = null;
+        try
+        {
+            if (_tree.ReadElement(item.Container).RuntimeId is { Count: > 0 } liveId && liveId.SequenceEqual(item.ContainerRuntimeId))
+            {
+                container = item.Container;
+            }
+        }
+        catch (UiaElementUnavailableException)
+        {
+            // Gone, or another proxy of it: looked for by its runtime id
+        }
+
+        if (container == null)
+        {
+            if (WindowOf(entry, out var window) is { } windowFailure)
+            {
+                return windowFailure;
+            }
+
+            var byId = Search(entry.Window.Handle, window, new ElementCriteria(),
+                UiaCondition.PropertyEquals(UiaProperty.RuntimeId, item.ContainerRuntimeId), _ => true, cancellationToken);
+            if (byId.MatchCount != 1)
+            {
+                return byId.Stop == ElementSearchStop.Timeout
+                    ? ElementResolution.Failed(UIElementErrorCode.OperationTimedOut,
+                        $"Element ref '{entry.Ref}': the list of its item ({asked}) did not answer, and the search for it did not " +
+                        "finish in time; the ref was not dropped. Try again with more time.")
+                    : Stale("that list is gone");
+            }
+
+            container = byId.Matches[0].Node;
+            lock (_gate)
+            {
+                if (entry.Item != null)
+                {
+                    entry.Item.Container = container;
+                }
+            }
+        }
+
+        UiaElement element;
+        try
+        {
+            if (_tree.GetPattern<IUiaItemContainerPattern>(container) is not { } pattern)
+            {
+                return Stale("the list no longer answers for its items (no ItemContainer pattern)");
+            }
+
+            if (pattern.FindItemByProperty(null, item.Property, item.Value) is not { } found)
+            {
+                return Stale($"the list has no item of that {(item.Property == UiaProperty.AutomationId ? "automation id" : "name")} now " +
+                             "(it was removed or renamed)");
+            }
+
+            if (pattern.FindItemByProperty(found, item.Property, item.Value) != null)
+            {
+                return ElementResolution.Failed(UIElementErrorCode.AmbiguousElement,
+                    $"Element ref '{entry.Ref}' is ambiguous: it names the item of {asked} of a list, and the list now has several " +
+                    "such items, which it cannot tell apart, so the ref names none of them. Find the one you mean with " +
+                    "find_ui_elements (automationId) and use its ref.", 2);
+            }
+
+            try
+            {
+                element = _tree.ReadElement(found);
+            }
+            catch (UiaElementUnavailableException)
+            {
+                element = _tree.ReadVirtualizedItem(found).Element;
+            }
+        }
+        catch (UiaElementUnavailableException)
+        {
+            return Stale("the list or the item disappeared while it was asked for");
+        }
+
+        if (element.RuntimeId is { Count: > 0 } runtimeId)
+        {
+            return Adopt(entry, element, runtimeId);
+        }
+
+        lock (_gate)
+        {
+            if (!_byRef.ContainsKey(entry.Ref))
+            {
+                return ElementResolution.Failed(UIElementErrorCode.ElementStale, UnknownRefMessage(entry.Ref));
+            }
+
+            entry.Node = element.Node;
+            entry.Fingerprint = Fingerprint(element, null);
+            Touch(entry);
+            return new ElementResolution(new ResolvedElement(
+                entry.Ref, entry.Window.Handle, element.Node, element, ElementResolutionPath.ItemContainer));
+        }
+    }
+
+    /// <summary>
+    /// The item an entry without a runtime id named, now that it has one (its list realized it, roadmap M3.F37): the entry is
+    /// keyed by that runtime id from now on, with the item's fingerprint (its control type changes: the placeholder was
+    /// Custom), and is resolved as any ref. When that element has a ref of its own already, that ref is returned and this one
+    /// dropped, so one element never has two refs; an entry under that runtime id with another identity (a list item reused
+    /// for another row) is dropped instead.
+    /// </summary>
+    private ElementResolution Adopt(Entry entry, UiaElement element, IReadOnlyList<int> runtimeId)
+    {
+        lock (_gate)
+        {
+            if (!_byRef.ContainsKey(entry.Ref))
+            {
+                return ElementResolution.Failed(UIElementErrorCode.ElementStale, UnknownRefMessage(entry.Ref));
+            }
+
+            var key = RuntimeKey(runtimeId);
+            var fingerprint = Fingerprint(element, null);
+            if (entry.Window.Entries.TryGetValue(key, out var owner) && !ReferenceEquals(owner, entry))
+            {
+                if (SameIdentity(owner.Fingerprint, fingerprint))
+                {
+                    Remove(entry);
+                    owner.Node = element.Node;
+                    owner.Fingerprint = Merge(owner.Fingerprint, fingerprint);
+                    Touch(owner);
+                    return new ElementResolution(new ResolvedElement(
+                        owner.Ref, owner.Window.Handle, element.Node, element, ElementResolutionPath.ItemContainer, owner.Moved));
+                }
+
+                Remove(owner);
+            }
+
+            entry.Window.Entries.Remove(entry.Key);
+            entry.Key = key;
+            entry.RuntimeId = runtimeId.ToArray();
+            entry.Window.Entries[key] = entry;
+            entry.Node = element.Node;
+            entry.Fingerprint = fingerprint;
+            entry.Item = null;
+            Touch(entry);
+            return new ElementResolution(new ResolvedElement(
+                entry.Ref, entry.Window.Handle, element.Node, element, ElementResolutionPath.ItemContainer));
         }
     }
 
@@ -896,6 +1123,15 @@ public sealed class ElementRegistry : IElementRegistry
         public Dictionary<string, Entry> Entries { get; } = new(StringComparer.Ordinal);
     }
 
+    /// <summary>
+    /// Where an item without a runtime id was found (roadmap M3.F37): its list's runtime id and element as last read, and the
+    /// property and value the list was asked for. <see cref="Container"/> changes only under the registry's lock.
+    /// </summary>
+    private sealed record ItemLocator(int[] ContainerRuntimeId, IUiaNode Container, UiaProperty Property, string Value)
+    {
+        public IUiaNode Container { get; set; } = Container;
+    }
+
     /// <summary>One ref. Its mutable fields change only under the registry's lock.</summary>
     private sealed class Entry(string elementRef, WindowRecord window, string key, int[] runtimeId, IUiaNode node, ElementFingerprint fingerprint)
     {
@@ -912,6 +1148,9 @@ public sealed class ElementRegistry : IElementRegistry
 
         /// <summary>The ref was moved to a re-created element that no read has returned since.</summary>
         public bool Moved { get; set; }
+
+        /// <summary>For an item without a runtime id: where its list returned it (roadmap M3.F37); null otherwise.</summary>
+        public ItemLocator? Item { get; set; }
 
         public long Generation { get; set; }
         public DateTimeOffset LastUsed { get; set; }

@@ -48,6 +48,15 @@ namespace WindowsAppManagerMcp.Services.Interfaces;
 /// searches are <see cref="Services.ElementSearch"/>es of the window's own tree (not the windows it owns, see
 /// <see cref="Services.OwnedWindows"/>), bounded by the caller's deadline; a search that did not finish is
 /// OperationTimedOut, never a verdict that moves the ref.</para>
+/// <para><b>Items without a runtime id</b> (roadmap M3.F37). File Explorer's list returns, for an item it has not realized, a
+/// placeholder without a runtime id. find_ui_elements' searchVirtualized registers such an item with the list it came from
+/// and the property and value the list was asked for (<see cref="ElementOrigin.Item"/>), under a key of those, so it keeps
+/// its ref across reads too. Its resolution asks the list again: the list's stored element while it reads with the stored
+/// runtime id, else the window searched for that runtime id; then FindItemByProperty with the property and value, and once
+/// more after the item found, so that a second item of that value is AmbiguousElement (the list cannot tell them apart);
+/// none is ElementStale. The answer is the item, whatever its control type (the placeholder is Custom, the realized item a
+/// ListItem). Once it has a runtime id (the item was realized), the ref names it by that from then on, as any ref, and
+/// when that element has a ref of its own already, that ref is returned and this one dropped.</para>
 /// <para><b>Threads.</b> Every member is thread safe. <see cref="Register"/> and <see cref="Lookup"/> make no UI Automation
 /// call. <see cref="Resolve"/> does: call it inside a read on an <see cref="IUiaWorker"/> thread (after the window's
 /// hung check), or use <see cref="ResolveAsync"/>, which does both.</para>
@@ -68,7 +77,8 @@ public interface IElementRegistry
     /// <param name="windowHandle">The window the element was read under (a resolution searches it).</param>
     /// <param name="element">The element as it was read; its runtime id identifies it.</param>
     /// <param name="origin">The read's generation, and the selector or index path when there is one.</param>
-    /// <returns>The ref, or null when the element has no runtime id or the handle is no window.</returns>
+    /// <returns>The ref, or null when the element has no runtime id (and no <see cref="ElementOrigin.Item"/>) or the handle is
+    /// no window.</returns>
     string? Register(nint windowHandle, UiaElement element, ElementOrigin origin);
 
     /// <summary>What the registry knows about a ref, without UI Automation: its window and fingerprint, or why it is unusable.</summary>
@@ -104,12 +114,25 @@ public interface IElementRegistry
 /// false (another element fits it: a kept selector is dropped) or null (not known: nothing changes).</param>
 /// <param name="Row">The list, tree or grid item the element is inside, when the read knows it (a tree walk; find_ui_elements,
 /// get_focused_element, get_element_at_point and get_active_popups read it: <see cref="Services.ElementRows"/>), or null.</param>
+/// <param name="Item">For an item a list's ItemContainer pattern returned without a runtime id: where it was found, so that it
+/// gets a ref all the same (roadmap M3.F37); null otherwise, and ignored for an element with a runtime id.</param>
 public sealed record ElementOrigin(
     long Generation,
     Services.ElementCriteria? Selector = null,
     IReadOnlyList<int>? IndexPath = null,
     bool? Unique = null,
-    ElementRow? Row = null);
+    ElementRow? Row = null,
+    ElementItemLocator? Item = null);
+
+/// <summary>
+/// Where an item a list returned without a runtime id was found (roadmap M3.F37): File Explorer's placeholder for a file it has
+/// not realized has none, so its ref names it by the list's answer to the same question instead.
+/// </summary>
+/// <param name="Container">The list, as the search read it; one without a runtime id cannot be found again, so its items get
+/// no ref.</param>
+/// <param name="Property">The property the list was asked for: AutomationId or Name.</param>
+/// <param name="Value">The value it matched, in the case the list was asked with.</param>
+public sealed record ElementItemLocator(UiaElement Container, UiaProperty Property, string Value);
 
 /// <summary>
 /// The list, tree or grid item an element is inside: its nearest ListItem, TreeItem or DataItem ancestor as a read saw it
@@ -143,7 +166,10 @@ public enum ElementResolutionPath
     RuntimeId,
 
     /// <summary>The element was re-created: its proven-unique selector found exactly one element with its fingerprint.</summary>
-    Selector
+    Selector,
+
+    /// <summary>An item without a runtime id, found again by asking its list for it (roadmap M3.F37).</summary>
+    ItemContainer
 }
 
 /// <summary>A ref's live element.</summary>

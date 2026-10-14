@@ -428,7 +428,8 @@ public sealed partial class ElementActionService
 
     /// <summary>
     /// realize (roadmap M3.10), the one implementation behind element_action realize, whether the item was named by a ref
-    /// (find_ui_elements' searchVirtualized gives the refs of items that are not realized) or by criteria: the VirtualizedItem
+    /// (find_ui_elements' searchVirtualized gives the refs of items that are not realized, also of File Explorer's placeholders,
+    /// which have no runtime id: roadmap M3.F37) or by criteria: the VirtualizedItem
     /// pattern's Realize, then, when the item is still offscreen, its ScrollItem pattern's ScrollIntoView, both on the action
     /// runner like every pattern action. An item that is real already is only scrolled into view when it is offscreen.
     /// </summary>
@@ -737,22 +738,35 @@ public sealed partial class ElementActionService
         return (state, fullValue);
     }
 
-    /// <summary>Phase 3, on the worker: the element read again (or gone), with its scroll container's position.</summary>
-    private ReadOutcome<AfterRead> ReadAfter(ActionCall call, PreparedElement element)
+    /// <summary>
+    /// Phase 3, on the worker: the element read again (or gone), with its scroll container's position. An item named by its
+    /// list's answer, which has no runtime id (File Explorer's placeholder, roadmap M3.F37), is found again through its ref
+    /// instead: the list then returns the realized item, whose state is read, and the result names it by its ref (the same
+    /// ref, now keyed by the item's runtime id, or the item's own).
+    /// </summary>
+    private ReadOutcome<AfterRead> ReadAfter(ActionCall call, PreparedElement element, CancellationToken token)
     {
         try
         {
-            UiaElement fresh;
+            var node = element.Node;
+            UiaElement? fresh = null;
+            if (element.Element.RuntimeId is not { Count: > 0 } && call.Ref != null &&
+                _registry.Resolve(call.Ref, token) is { Element: { } again })
+            {
+                (node, fresh) = (again.Node, again.Element);
+                call.Ref = again.Ref;
+            }
+
             try
             {
-                fresh = _tree.ReadElement(element.Node);
+                fresh ??= _tree.ReadElement(node);
             }
             catch (UiaElementUnavailableException)
             {
                 // An item its list has still not realized (a realize that did nothing) fails the whole read: it is there,
                 // offscreen
                 if (!element.Element.Virtualized ||
-                    TryRead(() => _tree.ReadVirtualizedItem(element.Node)) is not { Element.Virtualized: true } item)
+                    TryRead(() => _tree.ReadVirtualizedItem(node)) is not { Element.Virtualized: true } item)
                 {
                     return ReadOutcome<AfterRead>.Of(new AfterRead(null, null, null, Gone: true, Warning: null));
                 }
@@ -762,12 +776,12 @@ public sealed partial class ElementActionService
 
             // An item that did not say whether it is a password field is asked again once it is real
             var (isPassword, passwordUnknown) = (element.IsPassword, element.PasswordUnknown);
-            if (passwordUnknown && !fresh.Virtualized && TryRead(() => _tree.ReadIdentity(element.Node)) is { } identity)
+            if (passwordUnknown && !fresh.Virtualized && TryRead(() => _tree.ReadIdentity(node)) is { } identity)
             {
                 (isPassword, passwordUnknown) = (identity.IsPassword, false);
             }
 
-            var (state, fullValue) = ReadState(element.Node, fresh, isPassword, passwordUnknown);
+            var (state, fullValue) = ReadState(node, fresh, isPassword, passwordUnknown);
             var scroll = element.ScrollContainer is { } container
                 ? TryRead(() => _tree.GetPattern<IUiaScrollPattern>(container)?.State)
                 : null;

@@ -60,7 +60,9 @@ namespace WindowsAppManagerMcp.Services;
 /// window that finished with room left among maxResults, its lists (List, Tree, DataGrid, Table; withinRef's element itself
 /// when it is one) that support the ItemContainer pattern are asked for the items whose automation id or whole name equals the
 /// criterion, realized or not, one FindItemByProperty call per item, within the same deadline. Items the tree search did not
-/// find (by runtime id) are added with virtualized true and a ref. Only reads: realizing and scrolling are element_action's.</para>
+/// find (by runtime id) are added with virtualized true and a ref; an item without a runtime id (File Explorer's placeholder)
+/// gets one that names it by the list's answer (roadmap M3.F37: <see cref="ElementOrigin.Item"/>), unless the list gave that
+/// answer for another item too. Only reads: realizing and scrolling are element_action's.</para>
 /// </remarks>
 public sealed partial class ElementSearchService : IElementSearchService
 {
