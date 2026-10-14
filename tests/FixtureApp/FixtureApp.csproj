@@ -9,8 +9,9 @@
     tier is opted in (see TESTING.md, "End-to-end tests against the fixture app"). FixtureContract.cs
     and FixtureOptions.cs are also compiled into the E2E project, so both sides share one contract.
 
-    No WebView2 pane: it would add the Microsoft.Web.WebView2 package and a runtime dependency on the
-    Edge WebView2 runtime to every build. Add it when the Chromium accessibility work (M3) needs it.
+    The WebView2 window (roadmap M3.F4) uses the Microsoft.Web.WebView2 package, which every build
+    restores and copies, but it starts WebView2, and so needs the Edge WebView2 runtime, only when the
+    fixture is started with open-web-view. Its scenario is skipped on a machine without the runtime.
   -->
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
@@ -25,5 +26,9 @@
     <!-- Common controls version 6, for the task dialog; no DPI setting (see app.manifest) -->
     <ApplicationManifest>app.manifest</ApplicationManifest>
   </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.2903.40" />
+  </ItemGroup>
 
 </Project>

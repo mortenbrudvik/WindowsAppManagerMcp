@@ -20,7 +20,8 @@ public class FixtureOptionsTests
             OpenDocument: true,
             DpiAwareness: FixtureDpiAwareness.Unaware,
             OpenTable: true,
-            OpenMenuWindow: true);
+            OpenMenuWindow: true,
+            OpenWebView: true);
 
         // Act
         var parsed = FixtureOptions.Parse(options.ToArguments());
@@ -64,11 +65,13 @@ public class FixtureOptionsTests
         options.DpiAwareness.Should().Be(FixtureDpiAwareness.PerMonitorV2);
         options.OpenTable.Should().BeFalse("an ordinary start opens no extra window");
         options.OpenMenuWindow.Should().BeFalse();
+        options.OpenWebView.Should().BeFalse("only --open-web-view starts WebView2");
     }
 
     [Theory]
     [InlineData("--open-table")]
     [InlineData("--open-menu-window")]
+    [InlineData("--open-web-view")]
     public void Parse_ReadsAnOpenOption_AsAFlag_ThatWritesBackAlone(string option)
     {
         // Act
@@ -94,6 +97,7 @@ public class FixtureOptionsTests
     [InlineData("--open-table", "--open-table")]
     [InlineData("--open-table", "yes")]
     [InlineData("--open-menu-window", "--open-menu-window")]
+    [InlineData("--open-web-view", "1")]
     public void Parse_RejectsInvalidCommandLines(params string[] args)
     {
         var act = () => FixtureOptions.Parse(args);
@@ -122,7 +126,8 @@ public class FixtureOptionsTests
             FixtureContract.TableTitle("abc"),
             FixtureContract.MenuTitle("abc"),
             FixtureContract.SaveAsTitle("abc"),
-            FixtureContract.TaskDialogTitle("abc")
+            FixtureContract.TaskDialogTitle("abc"),
+            FixtureContract.WebTitle("abc")
         };
 
         // Assert

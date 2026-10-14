@@ -24,6 +24,12 @@ public sealed record FixtureLaunchOptions
     /// <summary>Open the menu window (a Win32 menu bar, roadmap M3.F4) right after the main window is ready.</summary>
     public bool OpenMenuWindow { get; init; }
 
+    /// <summary>
+    /// Open the WebView2 window (roadmap M3.F4) right after the main window is ready. It needs the Edge WebView2 runtime: a
+    /// scenario that opens it is gated with Requires = typeof(<see cref="WebView2Runtime"/>).
+    /// </summary>
+    public bool OpenWebView { get; init; }
+
     /// <summary>The fixture's process DPI awareness.</summary>
     public FixtureDpiAwareness DpiAwareness { get; init; } = FixtureDpiAwareness.PerMonitorV2;
 
@@ -40,6 +46,9 @@ public sealed record FixtureLaunchOptions
 /// </summary>
 public sealed class FixtureAppSession : IDisposable
 {
+    /// <summary>How long <see cref="Dispose"/> keeps trying to delete the fixture's folder while it is in use.</summary>
+    private static readonly TimeSpan DeleteTimeout = TimeSpan.FromSeconds(5);
+
     private readonly Process _process;
     private readonly string _workDirectory;
     private readonly ITestOutputHelper? _output;
@@ -176,7 +185,8 @@ public sealed class FixtureAppSession : IDisposable
             OpenDocument: launch.OpenDocument,
             DpiAwareness: launch.DpiAwareness,
             OpenTable: launch.OpenTable,
-            OpenMenuWindow: launch.OpenMenuWindow);
+            OpenMenuWindow: launch.OpenMenuWindow,
+            OpenWebView: launch.OpenWebView);
     }
 
     /// <summary>
@@ -256,7 +266,15 @@ public sealed class FixtureAppSession : IDisposable
         }
     }
 
-    private static void TryDeleteDirectory(string path)
+    /// <summary>
+    /// Deletes the fixture's folder, trying again for a moment while it is in use: the WebView2 window's browser processes,
+    /// killed with the fixture, can hold their user data folder in it for a moment after the kill. Left behind if it stays
+    /// in use.
+    /// </summary>
+    private static void TryDeleteDirectory(string path) =>
+        Wait.Until(() => TryDeleteDirectoryOnce(path), DeleteTimeout, TimeSpan.FromMilliseconds(100));
+
+    private static bool TryDeleteDirectoryOnce(string path)
     {
         try
         {
@@ -264,12 +282,16 @@ public sealed class FixtureAppSession : IDisposable
             {
                 Directory.Delete(path, recursive: true);
             }
+
+            return true;
         }
         catch (IOException)
         {
+            return false;
         }
         catch (UnauthorizedAccessException)
         {
+            return false;
         }
     }
 }

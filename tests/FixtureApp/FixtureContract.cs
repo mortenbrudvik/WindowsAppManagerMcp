@@ -46,6 +46,15 @@ public static class FixtureContract
     /// <summary>Start of the menu window's title.</summary>
     public const string MenuTitlePrefix = "WAM Fixture Menu";
 
+    /// <summary>Start of the WebView2 window's title.</summary>
+    public const string WebTitlePrefix = "WAM Fixture Web";
+
+    /// <summary>The heading of the WebView2 pane's page.</summary>
+    public const string WebHeading = "WAM fixture web content";
+
+    /// <summary>The text of the button on the WebView2 pane's page (its HTML id is <see cref="Ids.WebButton"/>).</summary>
+    public const string WebButtonName = "Web button";
+
     /// <summary>Number of items in the virtualized list.</summary>
     public const int VirtualListItemCount = 10_000;
 
@@ -76,6 +85,9 @@ public static class FixtureContract
 
     /// <summary>Title of the menu window of fixture instance <paramref name="instance"/>.</summary>
     public static string MenuTitle(string instance) => $"{MenuTitlePrefix} {instance}";
+
+    /// <summary>Title of the WebView2 window of fixture instance <paramref name="instance"/>.</summary>
+    public static string WebTitle(string instance) => $"{WebTitlePrefix} {instance}";
 
     /// <summary>Text of item <paramref name="index"/> of the virtualized list.</summary>
     public static string VirtualListItem(int index) => $"Item {index:D5}";
@@ -185,6 +197,10 @@ public static class FixtureContract
 
         // Table window
         public const string DataGrid = "dataGrid";
+
+        // WebView2 window: the WPF control, and the HTML id of the page's button (Chromium reports it as the AutomationId)
+        public const string WebView = "webView";
+        public const string WebButton = "webButton";
     }
 
     /// <summary>
@@ -263,6 +279,18 @@ public static class FixtureContract
         /// <see cref="Win32Menu"/>) and <c>path</c> (its menu path, such as File&gt;Export&gt;As Text).
         /// </summary>
         public const string MenuCommand = "menuCommand";
+
+        /// <summary>
+        /// The WebView2 window's page finished loading. Fields: <c>hwnd</c> (the window) and <c>runtimeVersion</c> (the
+        /// WebView2 runtime's version).
+        /// </summary>
+        public const string WebViewReady = "webViewReady";
+
+        /// <summary>
+        /// The WebView2 window could not show its page. Fields: <c>runtimeMissing</c> (true when no WebView2 runtime is
+        /// installed) and <c>message</c>.
+        /// </summary>
+        public const string WebViewFailed = "webViewFailed";
 
         /// <summary>The context menu opened.</summary>
         public const string ContextMenuOpened = "contextMenuOpened";

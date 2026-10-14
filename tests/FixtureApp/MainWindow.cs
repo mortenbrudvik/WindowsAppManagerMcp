@@ -29,6 +29,7 @@ internal sealed class MainWindow : Window
     private DocumentWindow? _document;
     private TableWindow? _table;
     private MenuWindow? _menuWindow;
+    private WebViewWindow? _webViewWindow;
     private bool _readyReported;
 
     public MainWindow(FixtureOptions options, FixtureEventLog events, string dpiAwareness)
@@ -271,6 +272,10 @@ internal sealed class MainWindow : Window
         {
             OpenMenuWindow();
         }
+        if (_options.OpenWebView)
+        {
+            OpenWebView();
+        }
         if (_options.OpenModal)
         {
             // After the ready event: ShowDialog does not return until the dialog closes.
@@ -404,6 +409,19 @@ internal sealed class MainWindow : Window
         _menuWindow = new MenuWindow(_options, _events);
         _menuWindow.Closed += (_, _) => _menuWindow = null;
         _menuWindow.Show();
+    }
+
+    /// <summary>Opens the WebView2 window: the only place the fixture starts WebView2 (see <see cref="WebViewWindow"/>).</summary>
+    private void OpenWebView()
+    {
+        if (_webViewWindow != null)
+        {
+            return;
+        }
+
+        _webViewWindow = new WebViewWindow(_options, _events);
+        _webViewWindow.Closed += (_, _) => _webViewWindow = null;
+        _webViewWindow.Show();
     }
 
     private void Log(string name, params (string Key, JsonNode? Value)[] fields)
