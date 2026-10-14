@@ -50,6 +50,13 @@ public sealed record LaunchPlacementPlan(
     LaunchWindowState? State,
     bool Focus)
 {
+    /// <summary>
+    /// Which frame <see cref="Bounds"/> is: the visible frame (<see cref="BoundsFrame.Visible"/>, as set_window_bounds and the
+    /// launch tools' placement take it), or the window rect with its invisible borders (<see cref="BoundsFrame.Outer"/>), the
+    /// rect layouts save and apply, for the windows apply_layout launches (roadmap M3.F27).
+    /// </summary>
+    public BoundsFrame Frame { get; init; } = BoundsFrame.Visible;
+
     /// <summary>True when the plan moves, sizes or changes the state of the window (anything but focus).</summary>
     public bool ChangesGeometry => Snap != null || Bounds != null || MonitorIndex != null || State != null;
 

@@ -140,6 +140,21 @@ public class AppLauncherToolsPlacementTests
     }
 
     [Fact]
+    public async Task AnAppThatFoughtThePlacement_IsReportedInThePlacementsWarning()
+    {
+        LaunchReturns(new LaunchResult(true, 600, CodeWindow.Handle, Status: LaunchStatus.WindowObserved, Window: CodeWindow));
+        _placer.Setup(p => p.PlaceAsync(It.IsAny<IReadOnlyList<(nint, LaunchPlacementPlan)>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([new LaunchPlacementOutcome(CodeWindow.Handle, CodeWindow, false, true, Warning: "The app moved its window again.")]);
+
+        var result = await CreateSut().LaunchApplication("code", placement: new LaunchPlacement(Snap: "left_half"));
+
+        result.Success.Should().BeTrue();
+        result.Placement!.ErrorCode.Should().BeNull();
+        result.Placement.Reapplied.Should().BeTrue();
+        result.Placement.Warning.Should().Be("The app moved its window again.");
+    }
+
+    [Fact]
     public async Task APlacementThatThrows_KeepsTheLaunchASuccess()
     {
         LaunchReturns(new LaunchResult(true, 600, CodeWindow.Handle, Status: LaunchStatus.WindowObserved, Window: CodeWindow));

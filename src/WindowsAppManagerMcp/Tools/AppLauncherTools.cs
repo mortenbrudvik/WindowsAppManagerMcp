@@ -24,8 +24,8 @@ public class AppLauncherTools
         "frame, as set_window_bounds), monitorIndex, state (normal, maximized or minimized) and focus (as focus_window). Checked " +
         "before anything is launched: unknown values fail with InvalidSnapPosition or InvalidState, contradictions (snap with " +
         "bounds, bounds with monitorIndex, maximized with snap or bounds, focus with minimized, or nothing asked) with " +
-        "InvalidArguments, a monitor that does not exist with InvalidMonitorIndex. The window is checked again about 500 ms after it " +
-        "is placed and placed once more if the app moved it back (reapplied: true)";
+        "InvalidArguments, a monitor that does not exist with InvalidMonitorIndex. The window is then watched for up to 3 s and " +
+        "placed again each time the app moves it back, up to 3 times (reapplied: true)";
 
     private const string ReuseDescription =
         "Use an open window of the app instead of starting another copy (default false): a window on the current desktop, not " +
@@ -239,7 +239,8 @@ public class AppLauncherTools
             Focused: outcome.Focused,
             Reapplied: outcome.Reapplied,
             ErrorCode: outcome.Success ? null : outcome.ErrorCode.ToString(),
-            Error: outcome.Error);
+            Error: outcome.Error,
+            Warning: outcome.Warning);
     }
 
     [McpServerTool(Name = "list_processes", Title = "List Processes", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
@@ -386,7 +387,7 @@ public class AppLauncherTools
                  "Each item can have a placement, reuseExisting and forceAccessibility, as launch_application takes them: an item " +
                  "whose placement is invalid fails alone and is not launched, and at most one item may ask for focus (InvalidArguments, " +
                  "nothing launched). With a placement on any item every window is waited for; the windows are placed after all of them " +
-                 "were found, in order, and checked again together once.")]
+                 "were found, in order, and watched together until they stay put.")]
     public async Task<BatchLaunchResult> LaunchApplicationsBatch(
         [Description("The applications to launch: executable, and optionally arguments, workingDirectory, expectWindow, placement, " +
                      "reuseExisting and forceAccessibility")]
@@ -530,8 +531,9 @@ public record LaunchResultDto(
 /// <summary>
 /// What a launch's placement did (roadmap M3.13): the window as it is afterwards (finalBounds its visible frame, none when
 /// minimized; finalState normal, minimized or maximized; monitorIndex), whether it is in front (focused), and whether it
-/// was placed a second time because the app moved it back (reapplied). errorCode and error say why the placement failed;
+/// was placed again because the app moved it back (reapplied). errorCode and error say why the placement failed;
 /// the launch itself still succeeded, so the window is arranged with the window tools, never by launching again.
+/// warning says that the app kept moving its window back, so it was left where the app put it (roadmap M3.F27).
 /// </summary>
 public record LaunchPlacementResultDto(
     BoundsDto? FinalBounds,
@@ -540,7 +542,8 @@ public record LaunchPlacementResultDto(
     bool Focused,
     bool Reapplied,
     string? ErrorCode = null,
-    string? Error = null
+    string? Error = null,
+    string? Warning = null
 );
 
 public record ProcessInfoDto(

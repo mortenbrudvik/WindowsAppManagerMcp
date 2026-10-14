@@ -75,7 +75,10 @@ public sealed record LayoutWindowRef(long Handle, string Title, string ProcessNa
 /// <summary>The values of <see cref="LayoutPlacementResult.Status"/>.</summary>
 public static class LayoutPlacementStatus
 {
-    /// <summary>The window was arranged. An errorCode means it was not brought to the front, or not minimized.</summary>
+    /// <summary>
+    /// The window was arranged. An errorCode means it was not brought to the front, or not minimized, or (a launched window,
+    /// roadmap M3.F27) its app moved it back and it was not placed again.
+    /// </summary>
     public const string Applied = "applied";
 
     /// <summary>No open window matched, and none was launched.</summary>

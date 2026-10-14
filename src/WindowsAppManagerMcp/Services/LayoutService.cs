@@ -47,6 +47,7 @@ public class LayoutService : ILayoutService
     private readonly IMonitorService _monitorService;
     private readonly IProcessService _processService;
     private readonly IForegroundService _foregroundService;
+    private readonly ILaunchPlacementService _launchPlacement;
     private readonly LayoutStorageOptions _options;
     private readonly ILayoutFolderAccess _folderAccess;
 
@@ -62,18 +63,21 @@ public class LayoutService : ILayoutService
     /// Creates a service that stores presets in <paramref name="layoutsPath"/> without migrating or seeding
     /// anything. When the path is null, the default location from <see cref="LayoutStorageOptions.FromEnvironment"/> is used.
     /// </summary>
+    /// <param name="launchPlacement">Places the windows launchMissing launches; see the other constructor.</param>
     public LayoutService(
         IWindowService windowService,
         IMonitorService monitorService,
         IProcessService processService,
         IForegroundService foregroundService,
-        string? layoutsPath = null)
+        string? layoutsPath = null,
+        ILaunchPlacementService? launchPlacement = null)
         : this(
             windowService,
             monitorService,
             processService,
             foregroundService,
-            layoutsPath == null ? LayoutStorageOptions.FromEnvironment() : LayoutStorageOptions.ForPath(layoutsPath))
+            layoutsPath == null ? LayoutStorageOptions.FromEnvironment() : LayoutStorageOptions.ForPath(layoutsPath),
+            launchPlacement: launchPlacement)
     {
     }
 
@@ -84,18 +88,25 @@ public class LayoutService : ILayoutService
     /// </summary>
     /// <param name="foregroundService">Brings the windows of placements with focus set to the front, verified.</param>
     /// <param name="folderAccess">Checks that the folder can be listed and written; defaults to the real file system.</param>
+    /// <param name="launchPlacement">
+    /// Places the windows launchMissing launches, as the launch tools place theirs (roadmap M3.F27). The server passes its
+    /// own, which respects the user's pause; by default one over <paramref name="windowService"/> and
+    /// <paramref name="foregroundService"/>.
+    /// </param>
     public LayoutService(
         IWindowService windowService,
         IMonitorService monitorService,
         IProcessService processService,
         IForegroundService foregroundService,
         LayoutStorageOptions options,
-        ILayoutFolderAccess? folderAccess = null)
+        ILayoutFolderAccess? folderAccess = null,
+        ILaunchPlacementService? launchPlacement = null)
     {
         _windowService = windowService;
         _monitorService = monitorService;
         _processService = processService;
         _foregroundService = foregroundService;
+        _launchPlacement = launchPlacement ?? new LaunchPlacementService(windowService, foregroundService);
         _options = options ?? throw new ArgumentNullException(nameof(options));
         _folderAccess = folderAccess ?? new LayoutFolderAccess();
     }
@@ -544,6 +555,15 @@ public class LayoutService : ILayoutService
                         $"was already given to placement {assignedTo[window.Handle]}", launched: true),
                         "was launched, but its window belongs to another placement");
                 }
+
+                // The launch tools' placement (roadmap M3.F27): the same checks before the window is touched (the agent's own
+                // host, the user's policy, the pause), the watch for an app that moves its window back, and focus last
+                var placed = (await _launchPlacement.PlaceAsync([(window.Handle, LaunchPlan(placement, plan.Target!))], cancellationToken)
+                    .ConfigureAwait(false)).Single();
+                if (placed.Activation is { } activation)
+                    (focusResults ??= []).Add(FocusResult.From(activation));
+
+                return Launched(window, placed);
             }
 
             // The user's policy: a denied window is neither placed nor focused (restoring or raising it would put it
@@ -622,8 +642,69 @@ public class LayoutService : ILayoutService
             // Small delay between window operations
             await Task.Delay(50, cancellationToken).ConfigureAwait(false);
             return (Result(LayoutPlacementStatus.Applied, window, errorCode, error, launched, focused), outcome);
+
+            // What the placement service did with a launched window, as apply_layout reports an open window's placement: a
+            // window that was not placed fails, one that was placed but not minimized, kept in place or focused is applied
+            // with ArrangeFailed, and so is one the app kept moving back (apply_layout has no warnings)
+            (LayoutPlacementResult Result, string Outcome) Launched(WindowInfo window, LaunchPlacementOutcome placed)
+            {
+                var code = placed.ErrorCode.ToString();
+                bool? focused = placement.Focus ? placed.Activation?.IsForeground == true : null;
+                return placed.FailedStep switch
+                {
+                    LaunchPlacementStep.None when placed.Warning is { } warning => (
+                        Result(LayoutPlacementStatus.Applied, window, nameof(LayoutErrorCode.ArrangeFailed),
+                            $"Arranged window '{window.Title}' for {label}, but its app kept moving it back: {warning}",
+                            launched: true, focused: focused),
+                        "was arranged, but its app kept moving it back"),
+                    LaunchPlacementStep.None => (
+                        Result(LayoutPlacementStatus.Applied, window, launched: true, focused: focused),
+                        focused == true ? "was arranged and brought to the front" : "was arranged"),
+                    LaunchPlacementStep.Check when placed.ErrorCode == WindowErrorCode.TargetDeniedByPolicy => (
+                        Result(LayoutPlacementStatus.Failed, window, code, $"Did not arrange window '{window.Title}' for {label}: {placed.Error}",
+                            launched: true),
+                        "was not arranged: the user's policy denies its window"),
+                    LaunchPlacementStep.Check => (
+                        Result(LayoutPlacementStatus.Failed, window, nameof(LayoutErrorCode.ArrangeFailed),
+                            $"Did not arrange window '{window.Title}' for {label}: {code}: {placed.Error}", launched: true),
+                        "was not arranged"),
+                    LaunchPlacementStep.Place => (
+                        Result(LayoutPlacementStatus.Failed, window, nameof(LayoutErrorCode.ArrangeFailed),
+                            $"Failed to arrange window '{window.Title}' for {label}: {code}: {placed.Error}", launched: true),
+                        "could not be arranged"),
+                    LaunchPlacementStep.Settle when placed.ErrorCode == WindowErrorCode.InvalidHandle => (
+                        Result(LayoutPlacementStatus.Failed, window, nameof(LayoutErrorCode.ArrangeFailed),
+                            $"Failed to arrange window '{window.Title}' for {label}: {code}: {placed.Error}", launched: true),
+                        "was arranged, but its window closed"),
+                    LaunchPlacementStep.Minimize => (
+                        Result(LayoutPlacementStatus.Applied, window, nameof(LayoutErrorCode.ArrangeFailed),
+                            $"Arranged window '{window.Title}' for {label}, but could not minimize it ({code}): {placed.Error}", launched: true),
+                        "was arranged, but could not be minimized"),
+                    LaunchPlacementStep.Focus => (
+                        Result(LayoutPlacementStatus.Applied, window, nameof(LayoutErrorCode.ArrangeFailed),
+                            $"Arranged window '{window.Title}' for {label}, but could not bring it to the foreground ({code}): {placed.Error}",
+                            launched: true, focused: false),
+                        "was arranged, but could not be brought to the front"),
+                    // Settle: the app moved the window back, and it was not placed again (paused, or the placement failed)
+                    _ => (
+                        Result(LayoutPlacementStatus.Applied, window, nameof(LayoutErrorCode.ArrangeFailed),
+                            $"Arranged window '{window.Title}' for {label}, but {code}: {placed.Error}", launched: true),
+                        "was arranged, but its app moved it back")
+                };
+            }
         }
     }
+
+    /// <summary>
+    /// The launch placement plan of a placement whose window was launched (roadmap M3.F27), as <see cref="Arrange"/> places an
+    /// open window: a maximized placement is maximized on its monitor; any other is given the placement's rectangle as the
+    /// window rect (<see cref="BoundsFrame.Outer"/>), the rect layouts save, and minimized afterwards for state minimized.
+    /// </summary>
+    private static LaunchPlacementPlan LaunchPlan(WindowPlacement placement, WindowRect target) =>
+        placement.State == WindowState.Maximized
+            ? new LaunchPlacementPlan(null, placement.MonitorIndex, null, LaunchWindowState.Maximized, placement.Focus)
+            : new LaunchPlacementPlan(null, null, target, placement.State == WindowState.Minimized ? LaunchWindowState.Minimized : null,
+                placement.Focus) { Frame = BoundsFrame.Outer };
 
     /// <summary>
     /// Puts the window where the placement says, through the window service's verified geometry: a maximized placement

@@ -191,6 +191,24 @@ public static class TestDataFactory
     }
 
     /// <summary>
+    /// The real <see cref="LaunchPlacementService"/> over <paramref name="windows"/> and <paramref name="foreground"/>, on a
+    /// manual clock that its waits move, so its watch after a placement (roadmap M3.F27) takes no time.
+    /// <paramref name="duringWait"/> runs in each wait: what the app does meanwhile.
+    /// </summary>
+    public static LaunchPlacementService CreateInstantLaunchPlacement(
+        IWindowService windows, IForegroundService foreground, IInputSession? session = null, Action? duringWait = null)
+    {
+        var clock = new ManualClock();
+        return new LaunchPlacementService(windows, foreground, session, clock, (delay, token) =>
+        {
+            token.ThrowIfCancellationRequested();
+            clock.Advance(delay);
+            duringWait?.Invoke();
+            return Task.CompletedTask;
+        });
+    }
+
+    /// <summary>
     /// An <see cref="IForegroundService"/> that reports every window as brought to the front with
     /// SetForegroundWindow, without touching anything.
     /// </summary>
