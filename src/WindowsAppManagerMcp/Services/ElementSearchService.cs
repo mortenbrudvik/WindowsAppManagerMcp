@@ -94,6 +94,7 @@ public sealed partial class ElementSearchService : IElementSearchService
     private readonly IAccessibilityWarmup? _warmup;
     private readonly IPopupService? _popups;
     private readonly ITargetPolicy? _policy;
+    private readonly ProviderContainsOptions _providerContains;
 
     /// <param name="tree">The UI Automation tree.</param>
     /// <param name="worker">Runs the search under a deadline.</param>
@@ -106,6 +107,8 @@ public sealed partial class ElementSearchService : IElementSearchService
     /// it; without it every search covers the window alone.</param>
     /// <param name="policy">The user's target policy, which refuses a search of a window of an app it denies. The server always
     /// passes it; without it (or without <paramref name="windows"/>) no named window is refused.</param>
+    /// <param name="providerContains">WAM_UIA_PROVIDER_CONTAINS: whether the provider narrows a contains name search (roadmap
+    /// M3.F12); without it, off.</param>
     public ElementSearchService(
         IUiaTree tree,
         IUiaWorker worker,
@@ -113,7 +116,8 @@ public sealed partial class ElementSearchService : IElementSearchService
         INativeWindowWrapper? windows = null,
         IAccessibilityWarmup? warmup = null,
         IPopupService? popups = null,
-        ITargetPolicy? policy = null)
+        ITargetPolicy? policy = null,
+        ProviderContainsOptions? providerContains = null)
     {
         _tree = tree;
         _worker = worker;
@@ -122,6 +126,7 @@ public sealed partial class ElementSearchService : IElementSearchService
         _warmup = warmup;
         _popups = popups;
         _policy = policy;
+        _providerContains = providerContains ?? ProviderContainsOptions.Default;
     }
 
     /// <inheritdoc />
@@ -335,6 +340,7 @@ public sealed partial class ElementSearchService : IElementSearchService
             started.Generation = generation;
             var (windows, excluded, overLimit) = WindowsOf(query, scope);
             var compiled = criteria.Compile();
+            var narrowing = _providerContains.NarrowingFor(criteria);
             var controlTypesOnServer = false;
             for (var index = 0; index < windows.Count; index++)
             {
@@ -388,7 +394,7 @@ public sealed partial class ElementSearchService : IElementSearchService
                 {
                     try
                     {
-                        outcome = Run(compiled, criteria.NameNarrowing, keep, candidatesLeft, target, node, leaveOut, started, token);
+                        outcome = Run(compiled, narrowing, keep, candidatesLeft, target, node, leaveOut, started, token);
                     }
                     catch (UiaConditionNotSupportedException) when (criteria.ControlTypes is { Count: > 0 } && !controlTypesOnServer)
                     {
@@ -396,7 +402,7 @@ public sealed partial class ElementSearchService : IElementSearchService
                         // window and the next ones
                         controlTypesOnServer = true;
                         compiled = criteria.Compile(controlTypesOnServer: true);
-                        outcome = Run(compiled, criteria.NameNarrowing, keep, candidatesLeft, target, node, leaveOut, started, token);
+                        outcome = Run(compiled, narrowing, keep, candidatesLeft, target, node, leaveOut, started, token);
                     }
                 }
                 catch (Exception ex) when (!isNamed && !token.IsCancellationRequested &&
@@ -679,7 +685,7 @@ public sealed partial class ElementSearchService : IElementSearchService
             var fingerprint = ElementRegistry.Fingerprint(match, null);
             var proof = new ElementSearch(
                     _tree, condition, e => (filter == null || filter(e)) && ElementRegistry.SameElement(fingerprint, e), keep: 2,
-                    leaveOut: OwnedWindows.Below(_windows, window.Handle), narrowing: identity.NameNarrowing)
+                    leaveOut: OwnedWindows.Below(_windows, window.Handle), narrowing: _providerContains.NarrowingFor(identity))
                 .Run(window.Node, budget);
             return proof.MatchCount switch
             {

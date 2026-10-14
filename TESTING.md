@@ -2231,6 +2231,29 @@ element, both names and the display language, and says that the difference may b
 the server's engine code. Record it, and compare the fixture's own controls in the output of the find_ui_elements
 theory, which writes every element it finds with each engine, before you change the default.
 
+### Desktop check: provider-side contains (`WAM_UIA_PROVIDER_CONTAINS`)
+
+With `WAM_UIA_PROVIDER_CONTAINS=1`, the UIA3 engine gives the provider a substring condition for find_ui_elements'
+`nameMatch: "contains"` (PropertyConditionFlags_MatchSubstring with IgnoreCase, on the text's longest run of ASCII
+characters other than `i` and `I`), and the server still tests every name it returns (roadmap M3.F12). The unit tests
+check the server's side over the fake tree; what Windows does with the condition has not been checked, so the option is
+off by default. Off, `contains` is the server's test alone. Before it can be turned on by default, the repository owner
+checks on a real desktop (Windows 10 1809 or later, the UIA3 engine), comparing find_ui_elements with the option set and
+unset:
+
+1. **Windows takes the flag and narrows.** A `contains` search with no other criterion on a large window (a browser page)
+   that ends in `SearchLimit` with the option unset finds the same first matches with it set, in the same order, and
+   does not end in `SearchLimit` (or ends there later). The same result and the same `SearchLimit` would mean that
+   Windows refused the flag and the engine fell back to the server's test.
+2. **Nothing is lost.** On the fixture and on a few real apps, every `contains` search returns the same `matchCount`,
+   elements and refs with the option set as unset, also for a text in other letter case than the name's.
+3. **Names with combining marks still match.** A control named with a decomposed accent, such as `Cafe` followed by
+   U+0301 COMBINING ACUTE ACCENT, is found by `contains` `cafe` with the option set, as it is unset (the server's
+   ordinal test accepts it; a provider that compared by locale might not). The fixture has no such control yet: adding
+   one, with a gated no-input scenario that runs both ways, would make this check repeatable.
+
+Any difference in points 2 or 3 keeps the option off; record the search, the window and both results.
+
 ### Tool surface snapshot
 
 `Contract/ToolSurfaceSnapshotTests` tests the server the way an agent sees it. It lists the tools of an

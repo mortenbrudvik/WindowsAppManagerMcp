@@ -84,7 +84,9 @@ public static class ServiceRegistration
         services.AddSingleton<IAccessibilityWarmup>(sp => new AccessibilityWarmup(
             sp.GetRequiredService<IUiaTree>(), sp.GetRequiredService<INativeWindowWrapper>()));
         // Element refs (roadmap M3.4): the read tools register the elements they return, find_ui_elements searches with
-        // the provider evaluating its criteria, and the tools that act on a ref resolve it here
+        // the provider evaluating its criteria, and the tools that act on a ref resolve it here. WAM_UIA_PROVIDER_CONTAINS=1
+        // lets the UIA3 provider narrow a contains name search too (roadmap M3.F12; off until checked on a real desktop)
+        services.AddSingleton(_ => ProviderContainsOptions.FromEnvironment());
         services.AddSingleton<IElementRegistry, ElementRegistry>();
         services.AddSingleton<IElementSearchService, ElementSearchService>();
         // The popups of a window (roadmap M3.5): find_ui_elements' windowAndPopups and desktop scopes, get_active_popups,

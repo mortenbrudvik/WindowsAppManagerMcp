@@ -72,7 +72,9 @@ public sealed record ElementSearchOutcome(
 /// into the client filter. An exception of the client filter (a name pattern that
 /// ran too long) ends the search and goes to the caller.</para>
 /// <para>Narrowing (roadmap M3.F12): a caller whose client filter tests a name that contains a text can pass a substring
-/// condition (<see cref="ElementCriteria.NameNarrowing"/>) that every element the filter accepts also matches. Under the UIA3
+/// condition (<see cref="ElementCriteria.NameNarrowing"/>) that every element the filter accepts also matches (the server's
+/// callers pass it only with WAM_UIA_PROVIDER_CONTAINS=1, <see cref="ProviderContainsOptions"/>, until Windows' substring
+/// search is checked on a real desktop). Under the UIA3
 /// engine it is added to the condition, so the provider returns, and the limits count, only the elements whose names have the
 /// text in them; the filter still runs on every element returned, so a provider that ignores the condition or misapplies it
 /// adds nothing. The managed engine has no substring flag and is never given it. When the engine refuses it

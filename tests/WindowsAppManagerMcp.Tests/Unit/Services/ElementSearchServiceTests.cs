@@ -15,6 +15,9 @@ public class ElementSearchServiceTests
     private readonly Mock<INativeWindowWrapper> _windows = new();
     private readonly ElementRegistry _registry;
 
+    // WAM_UIA_PROVIDER_CONTAINS: off, as by default
+    private ProviderContainsOptions _providerContains = ProviderContainsOptions.Default;
+
     public ElementSearchServiceTests()
     {
         _windows.Setup(w => w.IsWindow(Handle)).Returns(true);
@@ -23,7 +26,7 @@ public class ElementSearchServiceTests
         _registry = new ElementRegistry(_tree, _worker, _windows.Object, ElementRegistry.DefaultCapacity, 1, TimeProvider.System);
     }
 
-    private ElementSearchService CreateSut() => new(_tree, _worker, _registry, _windows.Object);
+    private ElementSearchService CreateSut() => new(_tree, _worker, _registry, _windows.Object, providerContains: _providerContains);
 
     private Task<FindElementsResult> Find(ElementQuery query) => CreateSut().FindAsync(query);
 
@@ -127,9 +130,12 @@ public class ElementSearchServiceTests
     [InlineData(5, true)]
     public async Task Find_ByContains_NarrowedByTheProvider_ReportsWhatTheServerAloneReports(int maxResults, bool enabledOnly)
     {
-        // Arrange - the default engine lets the provider test the text (roadmap M3.F12); the managed one cannot, so it
-        // searches as before, the server testing every name
-        var managed = new FakeUiaTree { Engine = UiaEngine.Uia2 }.WithWindow(Handle, Files());
+        // Arrange - with WAM_UIA_PROVIDER_CONTAINS=1 the UIA3 engine lets the provider test the text (roadmap M3.F12); off
+        // (the default), the same engine searches as before, the server testing every name
+        _providerContains = new ProviderContainsOptions(Enabled: true);
+        var serverTree = new FakeUiaTree().WithWindow(Handle, Files());
+        var serverConditions = new List<UiaCondition>();
+        serverTree.OnFindAll = (_, condition) => serverConditions.Add(condition);
         _tree.WithWindow(Handle, Files());
         var conditions = new List<UiaCondition>();
         _tree.OnFindAll = (_, condition) => conditions.Add(condition);
@@ -137,8 +143,8 @@ public class ElementSearchServiceTests
 
         // Act
         var narrowed = await Find(query);
-        var serverOnly = await new ElementSearchService(managed, _worker,
-                new ElementRegistry(managed, _worker, _windows.Object, ElementRegistry.DefaultCapacity, 1, TimeProvider.System), _windows.Object)
+        var serverOnly = await new ElementSearchService(serverTree, _worker,
+                new ElementRegistry(serverTree, _worker, _windows.Object, ElementRegistry.DefaultCapacity, 1, TimeProvider.System), _windows.Object)
             .FindAsync(query);
 
         // Assert - the same elements under the same refs, the same count and the same truncation
@@ -148,12 +154,31 @@ public class ElementSearchServiceTests
         narrowed.Truncated.Should().Be(serverOnly.Truncated);
         narrowed.TruncationReason.Should().Be(serverOnly.TruncationReason);
         conditions.Should().Contain(c => FakeUiaTree.HasSubstring(c));
+        serverConditions.Should().NotBeEmpty().And.NotContain(c => FakeUiaTree.HasSubstring(c));
+    }
+
+    [Fact]
+    public async Task Find_ByContains_ByDefault_LeavesTheNameToTheServer()
+    {
+        // Arrange - WAM_UIA_PROVIDER_CONTAINS not set: the provider's condition is the one of before roadmap M3.F12, until a
+        // real desktop confirms Windows' substring search
+        _tree.WithWindow(Handle, Files());
+        var conditions = new List<UiaCondition>();
+        _tree.OnFindAll = (_, condition) => conditions.Add(condition);
+
+        // Act
+        var result = await Find(Query(name: "save", nameMatch: ElementNameMatch.Contains));
+
+        // Assert
+        result.MatchCount.Should().Be(15);
+        conditions.Should().NotBeEmpty().And.NotContain(c => FakeUiaTree.HasSubstring(c));
     }
 
     [Fact]
     public async Task Find_ByContains_WhenTheEngineRefusesTheSubstring_FindsTheSame()
     {
         // Arrange - the UIA3 engine where Windows refuses PropertyConditionFlags_MatchSubstring (before Windows 10 1809)
+        _providerContains = new ProviderContainsOptions(Enabled: true);
         _tree.WithWindow(Handle, Files());
         _tree.RefusesSubstrings = true;
 
