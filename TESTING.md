@@ -2399,14 +2399,14 @@ typical result over 300 tokens, and tools/list itself, measured in October 2026:
 | `get_ui_elements` | 120 elements at the default depth, each with its ref | 6,000 | 8,500 |
 | `get_browser_content` | A 15,000-character article | 3,815 | 6,000 |
 | `get_desktop_state` | 15 window rows, the focused element, 2 popups and 80 element lines with refs (roadmap M3.12) | 2,129 | 3,200 |
-| `capture_with_elements` | Metadata with the legend of 120 marks, one line each (the image is budgeted separately; roadmap M3.11) | 1,410 | 2,150 |
+| `capture_with_elements` | Metadata with the legend of 120 marks, one line each, and the tags' `markPrefix` (the image is budgeted separately; roadmap M3.11, M3.F38) | 1,416 | 2,150 |
 | `list_processes` | 40 processes | 1,328 | 2,000 |
 | `find_windows`, `get_all_windows` | 15 windows, each with `visibleBounds` | 1,213 | 1,850 |
 | `read_element_text` | The first page of a 3,000-character e-mail | 802 | 1,200 |
 | `read_table` | Task Manager's first 50 processes, 5 columns with headers | 643 | 1,000 |
 | `get_server_info` | The default deny list, five host processes, two monitors | 634 | 850 |
 | `get_layout` | A preset of 6 placements, each with the captured window identity | 529 | 800 |
-| tools/list | Every tool's name, title, description, schemas and annotations: 64 tools, 208,794 bytes (`ToolList_StaysWithinItsBudget`) | 52,199 | 52,220 |
+| tools/list | Every tool's name, title, description, schemas and annotations: 64 tools, 208,937 bytes (`ToolList_StaysWithinItsBudget`) | 52,235 | 52,271 |
 
 Every other typical result is at most 300 tokens. When a change makes a result larger on purpose, raise its
 budget in the same change (the failure message gives the new size); when a change shrinks one a lot, lower it.

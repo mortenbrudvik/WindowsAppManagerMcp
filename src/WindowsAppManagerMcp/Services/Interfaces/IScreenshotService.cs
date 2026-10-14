@@ -59,7 +59,8 @@ public interface IScreenshotService
     /// <summary>
     /// Captures a window and draws its UI elements on it as marks (roadmap M3.11): a box and a filled tag with the element's
     /// ref, drawn on the returned image after it was scaled. Marks are placed relative to the capture's own screen origin, so
-    /// they line up with or without the frame.
+    /// they line up with or without the frame. The tags leave out the window part the refs share, which the result reports
+    /// as <see cref="AnnotatedScreenshotResult.MarkPrefix"/> (roadmap M3.F38).
     /// </summary>
     /// <param name="windowHandle">Handle to the window</param>
     /// <param name="windowTitle">The window title to report, or null</param>

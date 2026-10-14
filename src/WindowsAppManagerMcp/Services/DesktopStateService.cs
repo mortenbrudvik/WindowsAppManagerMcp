@@ -502,7 +502,8 @@ public sealed class DesktopStateService : IDesktopStateService
     /// <summary>
     /// The screenshot with Set-of-Marks marks (roadmap M3.F32), made through capture_with_elements' capture once the elements
     /// walk returned (or the time it has to return after a stop, <paramref name="wait"/>, passed). It marks the window's own
-    /// elements of that walk, so each mark's tag is the ref that starts its element line; the popups' lines get none, as the
+    /// elements of that walk, so each mark's tag is the ref that starts its element line (less the window part the refs
+    /// share, which the screenshot reports as markPrefix, roadmap M3.F38); the popups' lines get none, as the
     /// window's capture does not show them. A walk that failed or did not return leaves a capture without marks (the
     /// elements error says why), and a window that moved during the walk gets none either, with a WindowMoved warning.
     /// </summary>
@@ -528,7 +529,7 @@ public sealed class DesktopStateService : IDesktopStateService
             metadata.ImageToScreen, metadata.Success ? Read(() => _windows.GetWindowInfo(window))?.MonitorIndex : null,
             metadata.MonitorScaleFactor, metadata.Error, metadata.ErrorCode, metadata.FilePath, metadata.OriginalWidth,
             metadata.OriginalHeight, metadata.ByteSize, metadata.CaptureMethod, metadata.CoordinateSpace, metadata.Warnings,
-            metadata.CaptureId), capture.Image);
+            metadata.CaptureId, MarkPrefix: metadata.MarkPrefix), capture.Image);
     }
 
     private static UIElementFilter Filter(DesktopStateRequest request, int maxElements, TimeSpan warmupBudget, TimeSpan stopGrace) => new(

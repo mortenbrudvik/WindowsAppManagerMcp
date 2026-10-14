@@ -6,8 +6,9 @@ namespace WindowsAppManagerMcp.E2ETests.Scenarios;
 
 /// <summary>
 /// Roadmap M3.11, part 2, against the fixture: capture_with_elements marks the fixture's actionable controls with the
-/// refs find_ui_elements gives them, each legend centre converts back through the captureId to a point inside its control,
-/// and capture_window's ref crop cuts the image to one control plus padding. No-input tier: it only captures and reads.
+/// refs find_ui_elements gives them (the tags without the window part they share, markPrefix, roadmap M3.F38), each legend
+/// centre converts back through the captureId to a point inside its control, and capture_window's ref crop cuts the image
+/// to one control plus padding. No-input tier: it only captures and reads.
 /// </summary>
 public class FixtureSetOfMarksTests
 {
@@ -43,6 +44,11 @@ public class FixtureSetOfMarksTests
         var line = legend.Single(l => l.StartsWith($"[{button.Ref}] ", StringComparison.Ordinal));
         line.Should().Contain($"#{FixtureContract.Ids.OpenModalButton}");
         legend.Should().NotContain(l => l.Contains($"#{FixtureContract.Ids.StatusText}"), "a label has no action pattern");
+
+        // The tags leave out the window part the window's refs share (roadmap M3.F38)
+        var markPrefix = metadata.GetProperty("markPrefix").GetString()!;
+        button.Ref.Should().StartWith(markPrefix + "e");
+        legend.Where(l => !l.StartsWith("[-]", StringComparison.Ordinal)).Should().OnlyContain(l => l.StartsWith($"[{markPrefix}e", StringComparison.Ordinal));
 
         var center = line[(line.IndexOf("center=(", StringComparison.Ordinal) + 8)..line.LastIndexOf(')')].Split(',').Select(int.Parse).ToArray();
         var point = e2e.Server.Get<ICoordinateSpaceResolver>().FromImage(metadata.GetProperty("captureId").GetString()!, center[0], center[1]);

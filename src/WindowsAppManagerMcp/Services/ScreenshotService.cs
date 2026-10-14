@@ -353,11 +353,17 @@ public class ScreenshotService : IScreenshotService
             var finalAnnotations = outputWidth != capture.Width || outputHeight != capture.Height
                 ? ScaleAnnotations(colored.Select(c => c.Element).ToList(), outputWidth, outputHeight, capture.Width, capture.Height)
                 : colored.Select(c => c.Element).ToList();
+
+            // The tags leave out the window part every mark's ref shares, which the result reports (roadmap M3.F38): 79 tags
+            // of w1399829e<n> covered File Explorer's toolbar and each other
+            var markPrefix = overlays.Draw && overlays.Labels
+                ? ElementMarkRenderer.SharedWindowPart(finalAnnotations.Select(annotation => annotation.Ref))
+                : null;
             var marks = finalAnnotations
                 .Select((annotation, i) => new ElementMark(
                     new Rectangle(annotation.ImageBounds.X, annotation.ImageBounds.Y, annotation.ImageBounds.Width, annotation.ImageBounds.Height),
                     colored[i].Color,
-                    annotation.Ref))
+                    annotation.Ref == null ? null : ElementMarkRenderer.TagText(annotation.Ref, markPrefix)))
                 .ToList();
 
             var rendered = Render(capture, request, overlays.Draw
@@ -386,7 +392,8 @@ public class ScreenshotService : IScreenshotService
                 ByteSize: rendered.Image.Data.LongLength,
                 CaptureMethod: capture.Method,
                 CoordinateSpace: CoordinateSpaces.PhysicalVirtualScreen,
-                Warnings: warnings.Count > 0 ? warnings : null);
+                Warnings: warnings.Count > 0 ? warnings : null,
+                MarkPrefix: markPrefix);
             metadata = metadata with
             {
                 CaptureId = Register(metadata.Width, metadata.Height, metadata.ImageToScreen!, metadata.CapturedRegion!, windowCapture: true, window)

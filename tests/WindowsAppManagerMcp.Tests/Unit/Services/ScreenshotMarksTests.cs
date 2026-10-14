@@ -4,7 +4,9 @@ namespace WindowsAppManagerMcp.Tests.Unit.Services;
 
 /// <summary>
 /// Roadmap M3.11, part 2, in the screenshot service: capture_with_elements draws its marks (a box and a filled tag with the
-/// element's ref) on the returned image after it was scaled, or nothing at all with Draw false; and capture_window's ref
+/// element's ref) on the returned image after it was scaled, or nothing at all with Draw false; the tags leave out the window
+/// part the refs share (markPrefix) and go outside their boxes where there is room, and not over an earlier tag (roadmap
+/// M3.F38); and capture_window's ref
 /// crop (<see cref="ScreenshotService.CaptureWindowArea"/>) cuts a window capture to an area, clipped to the window, and
 /// registers the crop's origin under its captureId.
 /// </summary>
@@ -54,6 +56,28 @@ public class ScreenshotMarksTests
 
         return run;
     }
+
+    /// <summary>
+    /// The width of the tag that ends just above (x, bottom): its top row, which holds no text (the tag's padding), counted
+    /// right from x until a pixel is not its green fill.
+    /// </summary>
+    private static int TagWidthAbove(Bitmap image, int x, int bottom)
+    {
+        var top = bottom - GreenRunAbove(image, x, bottom) + 1;
+        var run = 0;
+        for (var i = x; i < image.Width && IsTagGreen(image.GetPixel(i, top)); i++)
+        {
+            run++;
+        }
+
+        return run;
+    }
+
+    /// <summary>A tag of three characters, such as e44.</summary>
+    private static readonly Size Tag = new(27, 15);
+
+    private static IReadOnlyList<Rectangle?> Place(Size image, params (Rectangle Box, Size? Tag)[] marks) =>
+        ElementMarkRenderer.PlaceTags(marks.Select(m => m.Box).ToList(), marks.Select(m => m.Tag).ToList(), image);
 
     #region Marks
 
@@ -143,26 +167,165 @@ public class ScreenshotMarksTests
     }
 
     [Fact]
-    public void TagPlacement_PrefersAboveTheBox_ThenInsideIt_AndStaysInTheImage()
+    public void Marks_ThatShareTheirWindowPart_DrawOnlyTheElementPart_AndReportTheWindowPartAsTheMarkPrefix()
     {
-        var image = new Size(400, 200);
-        var tag = new Size(60, 15);
+        // Arrange - File Explorer's 79 tags all showed w1399829 and covered each other (roadmap M3.F38)
+        BlackWindow(400, 200);
 
-        // Room above
-        ElementMarkRenderer.PlaceTag(tag, new Rectangle(100, 100, 80, 30), image, [])
-            .Should().Be(new Rectangle(100, 85, 60, 15));
+        // Act
+        var capture = CreateSut().CaptureWindowWithElements(Window, null,
+            [Button(100, 100, 80, 30, "w1000001e7"), Button(250, 100, 80, 30, "w1000001e12")], includeFrame: true,
+            ElementOverlayOptions.Default, Png);
 
-        // A box at the top edge: inside its top-left corner
-        ElementMarkRenderer.PlaceTag(tag, new Rectangle(100, 0, 80, 30), image, [])
-            .Should().Be(new Rectangle(100, 0, 60, 15));
+        // Assert - the tag of e7 is about two characters wide; the whole ref w1000001e7 would be about 70 pixels
+        capture.Metadata.MarkPrefix.Should().Be("w1000001");
+        capture.Metadata.Elements!.Select(e => e.Ref).Should().Equal("w1000001e7", "w1000001e12");
+        using var image = Decode(capture);
+        TagWidthAbove(image, 101, 97).Should().BeInRange(10, 30, "the tag shows e7 alone");
+    }
 
-        // Above is taken by another mark's tag: inside
-        ElementMarkRenderer.PlaceTag(tag, new Rectangle(100, 100, 80, 30), image, [new Rectangle(90, 80, 60, 15)])
-            .Should().Be(new Rectangle(100, 100, 60, 15));
+    [Fact]
+    public void Marks_OfRefsOfTwoWindows_DrawTheWholeRefs_WithoutAMarkPrefix()
+    {
+        // Arrange
+        BlackWindow(400, 200);
 
-        // A box at the right edge: the tag is moved left into the image
-        ElementMarkRenderer.PlaceTag(tag, new Rectangle(380, 100, 20, 20), image, [])
-            .Should().Be(new Rectangle(340, 85, 60, 15));
+        // Act
+        var capture = CreateSut().CaptureWindowWithElements(Window, null,
+            [Button(100, 100, 80, 30, "w1000001e7"), Button(250, 100, 80, 30, "w1000002e12")], includeFrame: true,
+            ElementOverlayOptions.Default, Png);
+
+        // Assert
+        capture.Metadata.MarkPrefix.Should().BeNull();
+        using var image = Decode(capture);
+        TagWidthAbove(image, 101, 97).Should().BeGreaterThan(45, "the tag shows the whole ref w1000001e7");
+    }
+
+    [Theory]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    public void Marks_WithoutTags_HaveNoMarkPrefix(bool draw, bool labels)
+    {
+        // Arrange
+        BlackWindow(400, 200);
+
+        // Act
+        var capture = CreateSut().CaptureWindowWithElements(Window, null, [Button(100, 100, 80, 30)], includeFrame: true,
+            new ElementOverlayOptions(Draw: draw, Labels: labels), Png);
+
+        // Assert - no tag leaves anything out
+        capture.Metadata.MarkPrefix.Should().BeNull();
+    }
+
+    [Fact]
+    public void TagText_LeavesOutTheWindowPartTheMarksShare()
+    {
+        ElementMarkRenderer.SharedWindowPart(["w1399829e44", "w1399829e7", null, "W1399829E3"]).Should().Be("w1399829");
+        ElementMarkRenderer.TagText("w1399829e44", "w1399829").Should().Be("e44");
+
+        // Refs of two windows, or none at all: the tags show whole refs
+        ElementMarkRenderer.SharedWindowPart(["w1399829e44", "w1399830e7"]).Should().BeNull();
+        ElementMarkRenderer.SharedWindowPart([null, "not a ref"]).Should().BeNull();
+        ElementMarkRenderer.TagText("w1399829e44", null).Should().Be("w1399829e44");
+        ElementMarkRenderer.TagText("w1399830e7", "w1399829").Should().Be("w1399830e7");
+    }
+
+    [Fact]
+    public void TagPlacement_WithRoomAboveTheBox_PutsTheTagThere_OutsideTheElement()
+    {
+        Place(new Size(400, 200), (new Rectangle(100, 100, 80, 30), Tag))[0].Should().Be(new Rectangle(100, 85, 27, 15));
+    }
+
+    [Fact]
+    public void TagPlacement_WithAnotherElementAbove_PutsTheTagLeftOfTheBox()
+    {
+        // The tag above the lower button would cover the upper one
+        var tags = Place(new Size(400, 200), (new Rectangle(100, 70, 80, 30), Tag), (new Rectangle(100, 100, 80, 30), Tag));
+
+        tags[0].Should().Be(new Rectangle(100, 55, 27, 15));
+        tags[1].Should().Be(new Rectangle(73, 100, 27, 15));
+    }
+
+    [Fact]
+    public void TagPlacement_MayCoverAnElementThatHoldsTheBox()
+    {
+        // A list around its item: the item's tag above it lies inside the list, which is no other element's content
+        var tags = Place(new Size(400, 200), (new Rectangle(50, 50, 300, 140), null), (new Rectangle(100, 100, 80, 30), Tag));
+
+        tags[0].Should().BeNull("a mark without a label gets no tag");
+        tags[1].Should().Be(new Rectangle(100, 85, 27, 15));
+    }
+
+    [Fact]
+    public void TagPlacement_InACrowdedRowOfSmallButtons_DrawsNoTagOverAnother()
+    {
+        // A toolbar of ten touching 24-pixel buttons, each tag wider than its button
+        var buttons = Enumerable.Range(0, 10).Select(i => (new Rectangle(100 + 24 * i, 100, 24, 24), (Size?)Tag)).ToArray();
+
+        var tags = Place(new Size(400, 200), buttons);
+
+        tags.Should().OnlyContain(t => t.HasValue);
+        for (var i = 0; i < tags.Count; i++)
+        {
+            for (var j = i + 1; j < tags.Count; j++)
+            {
+                tags[i]!.Value.IntersectsWith(tags[j]!.Value).Should().BeFalse($"the tags of buttons {i} and {j} would cover each other");
+            }
+        }
+    }
+
+    [Fact]
+    public void TagPlacement_WithoutRoomOutside_FallsBackInsideTheBox_AtTheRightOfAWideOne()
+    {
+        // Full-width list rows filling the image: above, left and below are other rows or off the image. A row's text starts
+        // at its left, so a box three tags wide gets its tag at its right end
+        var tags = Place(new Size(400, 66),
+            (new Rectangle(0, 0, 400, 22), Tag), (new Rectangle(0, 22, 400, 22), Tag), (new Rectangle(0, 44, 400, 22), Tag));
+
+        tags.Should().Equal(new Rectangle(373, 0, 27, 15), new Rectangle(373, 22, 27, 15), new Rectangle(373, 44, 27, 15));
+    }
+
+    [Fact]
+    public void TagPlacement_WithoutRoomOutside_FallsBackInsideTheLeftOfANarrowBox()
+    {
+        var tags = Place(new Size(120, 20), (new Rectangle(0, 0, 60, 20), Tag), (new Rectangle(60, 0, 60, 20), Tag));
+
+        tags.Should().Equal(new Rectangle(0, 0, 27, 15), new Rectangle(60, 0, 27, 15));
+    }
+
+    [Fact]
+    public void TagPlacement_InsideABox_KeepsClearOfAnEarlierTag()
+    {
+        // Two marks of one box (a list item and its name): the second tag goes to another corner inside
+        var tags = Place(new Size(100, 30), (new Rectangle(0, 0, 100, 30), Tag), (new Rectangle(0, 0, 100, 30), Tag));
+
+        tags[0].Should().Be(new Rectangle(73, 0, 27, 15));
+        tags[1]!.Value.IntersectsWith(tags[0]!.Value).Should().BeFalse();
+        new Rectangle(0, 0, 100, 30).Contains(tags[1]!.Value).Should().BeTrue();
+    }
+
+    [Fact]
+    public void TagPlacement_StaysInTheImage()
+    {
+        // A box at the right edge: the tag above is moved left into the image
+        Place(new Size(400, 200), (new Rectangle(380, 100, 20, 20), Tag))[0].Should().Be(new Rectangle(373, 85, 27, 15));
+
+        // A box smaller than its tag in the image's top-left corner: below it
+        Place(new Size(400, 200), (new Rectangle(0, 0, 10, 10), Tag))[0].Should().Be(new Rectangle(0, 10, 27, 15));
+    }
+
+    [Fact]
+    public void TagPlacement_OfTheMostMarksAWalkReturns_IsFast()
+    {
+        // A grid of 5000 small marks
+        var marks = Enumerable.Range(0, 5000)
+            .Select(i => (new Rectangle(i % 100 * 15, i / 100 * 20, 14, 18), (Size?)Tag)).ToArray();
+
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        var tags = Place(new Size(1568, 1000), marks);
+
+        tags.Should().HaveCount(5000);
+        stopwatch.Elapsed.Should().BeLessThan(TimeSpan.FromSeconds(2));
     }
 
     [Theory]
