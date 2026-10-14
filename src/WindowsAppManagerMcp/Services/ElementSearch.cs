@@ -57,6 +57,9 @@ public sealed record ElementSearchOutcome(
 /// caller's worker deadline abandons it, and the stuck thread counts against the application until it returns. Searching
 /// a wide level child by child instead would turn one call into thousands.</para>
 /// <para>Order: the matches of the expanded levels first, nearest the root first, then those of each part in tree order.</para>
+/// <para>Repeats (roadmap M3.F43): an element the search reaches twice (the same runtime id: a provider that lists a subtree
+/// under two parents, as a WinUI 3 window lists its WebView2's page, or two parts that overlap) is one match, counted and kept
+/// where it was first found. An element without a runtime id cannot be told from another, and counts each time.</para>
 /// <para>Owned windows: the root's children that <c>leaveOut</c> names (<see cref="OwnedWindows"/>: the dialogs and popups
 /// the HWND proxy lists under the top-level window that owns them) are left out with everything below them, so a search of
 /// a window covers its own tree only. When the root is split, they are not made parts. A root wider than
@@ -120,6 +123,9 @@ public sealed class ElementSearch
 
     // The matches inside the owned windows of a root searched whole, by runtime id: they are not the root's
     private HashSet<string>? _leftOut;
+
+    // The elements the condition matched so far, by runtime id: one the tree reaches again is not counted twice
+    private readonly HashSet<string> _considered = new(StringComparer.Ordinal);
 
     // The condition with the narrowing, until the engine refuses it; null without one
     private UiaCondition? _narrowed;
@@ -379,13 +385,26 @@ public sealed class ElementSearch
     private static string RuntimeKey(IReadOnlyList<int> runtimeId) =>
         string.Join('.', runtimeId.Select(i => i.ToString(CultureInfo.InvariantCulture)));
 
-    /// <summary>An element the condition matched: counted as a candidate, and kept or counted when it passes the filter.</summary>
+    /// <summary>
+    /// An element the condition matched: counted as a candidate, and kept or counted when it passes the filter. One met
+    /// again (the same runtime id: a provider that lists a subtree under two parents, as a WinUI 3 WebView2 lists its page,
+    /// roadmap M3.F43) was considered already, and is not counted again.
+    /// </summary>
     private void Consider(UiaElement element)
     {
-        if (_leftOut != null && element.RuntimeId is { Count: > 0 } id && _leftOut.Contains(RuntimeKey(id)))
+        if (element.RuntimeId is { Count: > 0 } id)
         {
-            // An element of a window the root's window owns
-            return;
+            var key = RuntimeKey(id);
+            if (_leftOut?.Contains(key) == true)
+            {
+                // An element of a window the root's window owns
+                return;
+            }
+
+            if (!_considered.Add(key))
+            {
+                return;
+            }
         }
 
         var passes = _filter == null || _filter(element);

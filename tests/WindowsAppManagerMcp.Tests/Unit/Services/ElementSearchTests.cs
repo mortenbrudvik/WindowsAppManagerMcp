@@ -257,6 +257,43 @@ public class ElementSearchTests
     }
 
     [Fact]
+    public void Run_OfATreeThatListsASubtreeTwice_CountsAndKeepsEachElementOnce()
+    {
+        // Arrange - as a WinUI 3 window lists its WebView2's page under two parents (roadmap M3.F43): the same elements (same
+        // runtime ids) reached through two paths
+        var buttonId = FakeUiaNode.NewRuntimeId();
+        var documentId = FakeUiaNode.NewRuntimeId();
+        FakeUiaNode Page() => new FakeUiaNode("Document", "WAM page") { RuntimeId = documentId }.With(
+            new FakeUiaNode("Button", "Page button") { RuntimeId = buttonId });
+        var window = new FakeUiaNode("Window", "App").With(
+            new FakeUiaNode("Pane", "Bridge").With(new FakeUiaNode("Pane", "Web").With(Page())),
+            new FakeUiaNode("Pane", "XAML").With(new FakeUiaNode("Button", "Native button"), new FakeUiaNode("Pane", "WebView2").With(Page())));
+
+        // Act
+        var outcome = Search(window, IsButton);
+
+        // Assert
+        outcome.Matches.Select(m => m.Properties.Name).Should().Equal("Native button", "Page button");
+        outcome.MatchCount.Should().Be(2);
+        outcome.Candidates.Should().Be(2);
+    }
+
+    [Fact]
+    public void Run_CountsElementsWithoutARuntimeIdEachTime_TheyCannotBeToldApart()
+    {
+        // Arrange
+        var window = new FakeUiaNode("Window", "App").With(
+            new FakeUiaNode("Button", "One") { RuntimeId = null },
+            new FakeUiaNode("Button", "One") { RuntimeId = null });
+
+        // Act
+        var outcome = Search(window, IsButton);
+
+        // Assert
+        outcome.MatchCount.Should().Be(2);
+    }
+
+    [Fact]
     public void Snapshot_FromAnotherThread_HasWhatWasFoundSoFar()
     {
         // Arrange - the caller reads the snapshot while the search is in its second part (as when the worker abandons it)

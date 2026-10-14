@@ -1007,4 +1007,48 @@ public class ElementSearchServiceTests
     }
 
     #endregion
+
+    #region A page listed twice (roadmap M3.F43)
+
+    /// <summary>
+    /// A WinUI 3 window with a WebView2 hosted as a visual, as UI Automation lists it on a real desktop: the page's elements
+    /// (the same runtime ids) both below the content bridge and below the XAML island's WebView2 pane.
+    /// </summary>
+    private void BuildWinUi3WithWebView2()
+    {
+        var ids = new Dictionary<string, IReadOnlyList<int>>();
+        IReadOnlyList<int> Id(string name) => ids.TryGetValue(name, out var id) ? id : ids[name] = FakeUiaNode.NewRuntimeId();
+        FakeUiaNode Page() => new FakeUiaNode("Pane", "WAM page") { FrameworkId = "Win32", RuntimeId = Id("host") }.With(
+            new FakeUiaNode("Pane", "WAM page - Web content") { FrameworkId = "Chrome", RuntimeId = Id("views") }.With(
+                new FakeUiaNode("Document", "WAM page") { FrameworkId = "Chrome", RuntimeId = Id("document") }.With(
+                    new FakeUiaNode("Button", "Page button")
+                    {
+                        FrameworkId = "Chrome", RuntimeId = Id("button"), ActionPatterns = ["Invoke"], Bounds = new UiaRect(40, 120, 90, 24)
+                    })));
+        _tree.WithWindow(Handle, new FakeUiaNode("Window", "WAM WinUI3 WebView2 check") { FrameworkId = "Win32" }.With(
+            new FakeUiaNode("Pane", "Bridge") { FrameworkId = "Win32" }.With(
+                Page(),
+                new FakeUiaNode("Pane", "XAML") { FrameworkId = "XAML" }.With(
+                    new FakeUiaNode("Button", "Native button") { FrameworkId = "XAML", ActionPatterns = ["Invoke"] },
+                    new FakeUiaNode("Pane", "WebView2") { FrameworkId = "Win32" }.With(Page())))));
+    }
+
+    [Theory]
+    [InlineData("Page button", "Button")]
+    [InlineData("WAM page", "Document")]
+    public async Task Find_OfAPageListedTwice_FindsEachElementOnce_SoCriteriaAreNotAmbiguous(string name, string controlType)
+    {
+        // Arrange - element_action's criteria search keeps two matches, to tell one from several
+        BuildWinUi3WithWebView2();
+
+        // Act
+        var result = await Find(Query(name: name, controlTypes: [controlType], maxResults: 2, visibleOnly: false));
+
+        // Assert
+        result.Success.Should().BeTrue(result.Error);
+        result.MatchCount.Should().Be(1);
+        result.Elements.Should().ContainSingle().Which.Name.Should().Be(name);
+    }
+
+    #endregion
 }
