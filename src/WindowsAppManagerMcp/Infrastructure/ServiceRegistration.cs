@@ -174,7 +174,8 @@ public static class ServiceRegistration
 
         // The input guard (every input call, inside the input gate) and the target policy (input, close,
         // kill and window captures), both configured by the user in the server's environment
-        services.AddSingleton<ITargetPolicy>(_ => new TargetPolicy(TargetPolicySettings.FromEnvironment()));
+        services.AddSingleton<ITargetPolicy>(sp =>
+            new TargetPolicy(TargetPolicySettings.FromEnvironment(), sp.GetRequiredService<INativeWindowWrapper>()));
         services.AddSingleton(_ => InputGuardOptions.FromEnvironment());
         services.AddSingleton<IInputTargetGuard, InputTargetGuard>();
         services.AddSingleton<IInputSafetyInfo, InputSafetyInfo>();

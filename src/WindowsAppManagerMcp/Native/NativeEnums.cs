@@ -49,6 +49,7 @@ internal static class NativeEnums
     // Window styles
     public const int GWL_STYLE = -16;
     public const int GWL_EXSTYLE = -20;
+    public const int GWLP_ID = -12; // a child window's control ID: the ID of a dialog box's control (roadmap M3.F5)
     public const uint WS_VISIBLE = 0x10000000;
     public const uint WS_MINIMIZE = 0x20000000;
     public const uint WS_MAXIMIZE = 0x01000000;

@@ -158,6 +158,38 @@ public class TargetPolicyEnforcementTests
         _native.Verify(n => n.PostMessage(It.IsAny<nint>(), It.IsAny<uint>(), It.IsAny<nint>(), It.IsAny<nint>()), Times.Never);
     }
 
+    /// <summary>
+    /// Windows' "Open File - Security Warning" in explorer.exe, which the deny list cannot name (roadmap M3.F5): the policy
+    /// recognizes it by its controls (<see cref="SecurityPromptWindows"/>).
+    /// </summary>
+    private nint AddSecurityPromptOfExplorer()
+    {
+        var prompt = AddWindow(0x900, "#32770", 5001, "explorer");
+        SecurityPromptWindows.Add(_native, prompt);
+        return prompt;
+    }
+
+    [Fact]
+    public void EvaluateTargetPolicy_TheSecurityPromptOfExplorer_IsDeniedByDefault_AndNotClosed()
+    {
+        // Arrange
+        var prompt = AddSecurityPromptOfExplorer();
+        var explorer = AddWindow(0x500, "CabinetWClass", 5001, "explorer");
+        var sut = CreateWindowService(new TargetPolicy(TargetPolicySettings.Default, _native.Object));
+
+        // Act
+        var verdict = sut.EvaluateTargetPolicy(prompt);
+
+        // Assert - File Explorer's own window is not denied; its prompt is, and closing it would answer it
+        verdict.Allowed.Should().BeFalse();
+        verdict.Reason.Should().Contain("Open File - Security Warning");
+        sut.EvaluateTargetPolicy(explorer).Allowed.Should().BeTrue();
+        var closed = sut.CloseWindow(prompt, force: true);
+        closed.ErrorCode.Should().Be(WindowErrorCode.TargetDeniedByPolicy);
+        closed.Error.Should().Contain("Open File - Security Warning");
+        _native.Verify(n => n.PostMessage(prompt, It.IsAny<uint>(), It.IsAny<nint>(), It.IsAny<nint>()), Times.Never);
+    }
+
     [Fact]
     public void CloseWindow_AllowList_RefusesUnlistedWindows()
     {
@@ -309,6 +341,22 @@ public class TargetPolicyEnforcementTests
 
         // Assert
         changed.Success.Should().BeFalse();
+        changed.ErrorCode.Should().Be(WindowErrorCode.TargetDeniedByPolicy);
+        VerifyWindowUntouched();
+    }
+
+    [Theory]
+    [MemberData(nameof(WindowChanges))]
+    public void WindowChange_TheSecurityPromptOfExplorer_IsRefused_AndTheWindowIsNotTouched(string change)
+    {
+        // Arrange
+        var prompt = AddSecurityPromptOfExplorer();
+        _native.Setup(n => n.GetWindowRect(prompt)).Returns((0, 0, 400, 300));
+
+        // Act
+        var changed = Change(CreateWindowService(new TargetPolicy(TargetPolicySettings.Default, _native.Object)), prompt, change);
+
+        // Assert
         changed.ErrorCode.Should().Be(WindowErrorCode.TargetDeniedByPolicy);
         VerifyWindowUntouched();
     }
@@ -675,6 +723,24 @@ public class TargetPolicyEnforcementTests
         // Assert
         Payload(annotated).GetProperty("errorCode").GetString().Should().Be(nameof(ScreenshotErrorCode.TargetDeniedByPolicy));
         Payload(capture).GetProperty("errorCode").GetString().Should().Be(nameof(ScreenshotErrorCode.TargetDeniedByPolicy));
+        _screenshots.Verify(s => s.CaptureWindow(It.IsAny<nint>(), It.IsAny<bool>(), It.IsAny<CaptureOptions>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task CaptureWindow_AndCaptureWithElements_OfTheSecurityPromptOfExplorer_AreRefused()
+    {
+        // Arrange - the prompt's window information names explorer, which the policy does not deny (roadmap M3.F5)
+        var sut = CreateScreenshotTools(0x900, "explorer", new TargetPolicy(TargetPolicySettings.Default, _native.Object));
+        SecurityPromptWindows.Add(_native, 0x900);
+
+        // Act
+        var capture = await sut.CaptureWindow(0x900);
+        var annotated = await sut.CaptureWithElements(0x900);
+
+        // Assert
+        Payload(capture).GetProperty("errorCode").GetString().Should().Be(nameof(ScreenshotErrorCode.TargetDeniedByPolicy));
+        Payload(capture).GetProperty("error").GetString().Should().Contain("Open File - Security Warning");
+        Payload(annotated).GetProperty("errorCode").GetString().Should().Be(nameof(ScreenshotErrorCode.TargetDeniedByPolicy));
         _screenshots.Verify(s => s.CaptureWindow(It.IsAny<nint>(), It.IsAny<bool>(), It.IsAny<CaptureOptions>()), Times.Never);
     }
 
