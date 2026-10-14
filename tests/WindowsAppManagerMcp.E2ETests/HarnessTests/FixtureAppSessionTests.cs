@@ -90,4 +90,31 @@ public class FixtureAppSessionTests
         options.OpenDocument.Should().BeTrue();
         options.DpiAwareness.Should().Be(FixtureDpiAwareness.System);
     }
+
+    [Theory]
+    [InlineData(FixtureDpiAwareness.PerMonitorV2, "perMonitorV2")]
+    [InlineData(FixtureDpiAwareness.PerMonitor, "perMonitor")]
+    [InlineData(FixtureDpiAwareness.System, "system")]
+    [InlineData(FixtureDpiAwareness.Unaware, "unaware")]
+    public void DpiAwarenessMismatch_IsNull_WhenTheFixtureGotTheAwarenessItAskedFor(FixtureDpiAwareness requested, string reported)
+    {
+        // Act
+        var mismatch = FixtureAppSession.DpiAwarenessMismatch(requested, reported);
+
+        // Assert
+        mismatch.Should().BeNull();
+    }
+
+    [Fact]
+    public void DpiAwarenessMismatch_NamesBothAwarenesses_WhenTheFixtureGotAnother()
+    {
+        // Arrange - what a WPF fixture gets when its Main names WPF types: WPF made it system aware before Main ran, so
+        // its window rectangles are scaled on a monitor whose scale differs from the primary's
+
+        // Act
+        var mismatch = FixtureAppSession.DpiAwarenessMismatch(FixtureDpiAwareness.PerMonitorV2, "system");
+
+        // Assert
+        mismatch.Should().Contain("permonitorv2").And.Contain("system");
+    }
 }
