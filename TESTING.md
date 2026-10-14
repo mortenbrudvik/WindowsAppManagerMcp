@@ -2117,7 +2117,7 @@ Compare the server's answers with the ready event (`e2e.Fixture.Ready`) and the 
 its DPI. The fixture's main and document windows open centred on the primary monitor, never on the monitor under the
 mouse: a window WPF moves to a monitor with another scale while showing it is activated by WPF's DPI change, even
 with `--no-activate`, and can take the foreground from the terminal. The fixture also refuses to start with another DPI
-awareness than the one asked for (`FixtureAppSession.DpiAwarenessMismatch`). A scenario that needs a kind of window the WPF fixture cannot provide may create its own,
+awareness than the one asked for (`FixtureAppSession.DpiAwarenessMismatch`). A scenario that needs a monitor at another scale asks for `OtherScaleMonitor` (`--other-scale-monitor`, roadmap M3.F30): the main window is centred on the first such monitor and, with `--no-activate`, shown with the extended style WS_EX_NOACTIVATE until it has rendered (`NoActivateWhileShown`), because WPF's DPI change inside Show activates it; marking that SetWindowPos or its WM_WINDOWPOSCHANGING non-activating does not stop it, and refusing the activation leaves no window in front. A scenario that needs a kind of window the WPF fixture cannot provide may create its own,
 as `MirroredWindowCaptureTests` does with `MirroredTestWindow`: a borderless popup of the test
 process, shown without activation and destroyed in `Dispose`. `E2ETestGateTests` fails if a test outside `HarnessTests/` has no gate attribute. Tests in
 `HarnessTests/` are ordinary tests of the harness and must never start the fixture. A scenario that needs
@@ -2148,6 +2148,7 @@ on such a machine; the requirement is only checked once the tier is opted in.
 | `FixtureCaptureIdTests`, `FixtureSetOfMarksTests` | No input | captureId points, Set-of-Marks marks and legend centres, capture_window's ref crop (M3.11) |
 | `FixtureDesktopStateTests` | No input | get_desktop_state (M3.12) |
 | `FixtureWebViewTests` | No input | The accessibility warm-up of the WebView2 window's live Chromium content: host WebView2, status Ready, the page read, and no second wait (M3.3, M3.F4); skipped without the WebView2 runtime |
+| `FixtureOtherScaleMonitorTests` | No input | The fixture on a monitor whose scale differs from the primary's (`--other-scale-monitor`): it opens at that monitor's DPI and leaves the agent's host in front, get_ui_elements' bounds and capture_window's client area match what the fixture draws (M3.F30); skipped without such a monitor (`MonitorAtAnotherScale`) |
 | `FixturePlacementTests` | Input | The launch tools' placement of a window (M3.13) |
 
 **Running them.** Locally only with an opt-in, as above. On GitHub, `.github/workflows/e2e.yml`

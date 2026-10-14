@@ -5,7 +5,8 @@ namespace WindowsAppManagerMcp.FixtureApp;
 
 /// <summary>
 /// The few Win32 calls the fixture needs: its DPI awareness, its own geometry for the ready event, the Win32 menu bar
-/// of its menu window, the long form of a path for its save folder, and its task dialog.
+/// of its menu window, the long form of a path for its save folder, its task dialog, the monitors for
+/// <see cref="FixturePlacement.CenterOnMonitorAtAnotherScale"/> and the hook of <see cref="NoActivateWhileShown"/>.
 /// </summary>
 internal static class NativeMethods
 {
@@ -139,4 +140,61 @@ internal static class NativeMethods
         var length = GetLongPathNameW(path, buffer, (uint)buffer.Capacity);
         return length > 0 && length < buffer.Capacity ? buffer.ToString() : path;
     }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct MONITORINFO
+    {
+        public int Size;
+        public RECT Monitor;
+        public RECT WorkArea;
+        public uint Flags;
+    }
+
+    public delegate bool MonitorEnumProc(nint monitor, nint hdc, nint rect, nint data);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool EnumDisplayMonitors(nint hdc, nint clip, MonitorEnumProc callback, nint data);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool GetMonitorInfo(nint monitor, ref MONITORINFO info);
+
+    [DllImport("user32.dll")]
+    public static extern uint GetDpiForSystem();
+
+    /// <summary>MDT_EFFECTIVE_DPI: the scale the user chose for the monitor.</summary>
+    public const int EffectiveDpi = 0;
+
+    [DllImport("shcore.dll")]
+    public static extern int GetDpiForMonitor(nint monitor, int dpiType, out uint dpiX, out uint dpiY);
+
+    public const int WH_CBT = 5;
+    public const int HCBT_CREATEWND = 3;
+    public const int GWL_EXSTYLE = -20;
+    public const long WS_EX_NOACTIVATE = 0x08000000;
+
+    public delegate nint HookProc(int code, nint wParam, nint lParam);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern nint SetWindowsHookEx(int idHook, HookProc callback, nint module, uint threadId);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool UnhookWindowsHookEx(nint hook);
+
+    [DllImport("user32.dll")]
+    public static extern nint CallNextHookEx(nint hook, int code, nint wParam, nint lParam);
+
+    [DllImport("kernel32.dll")]
+    public static extern uint GetCurrentThreadId();
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    public static extern int GetClassName(nint hwnd, StringBuilder name, int maxCount);
+
+    [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")]
+    public static extern nint GetWindowLongPtr(nint hwnd, int index);
+
+    [DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW")]
+    public static extern nint SetWindowLongPtr(nint hwnd, int index, nint value);
 }

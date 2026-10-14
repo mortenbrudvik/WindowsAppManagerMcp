@@ -21,7 +21,8 @@ public class FixtureOptionsTests
             DpiAwareness: FixtureDpiAwareness.Unaware,
             OpenTable: true,
             OpenMenuWindow: true,
-            OpenWebView: true);
+            OpenWebView: true,
+            OtherScaleMonitor: true);
 
         // Act
         var parsed = FixtureOptions.Parse(options.ToArguments());

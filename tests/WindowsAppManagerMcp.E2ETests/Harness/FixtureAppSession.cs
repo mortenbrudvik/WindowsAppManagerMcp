@@ -30,6 +30,12 @@ public sealed record FixtureLaunchOptions
     /// </summary>
     public bool OpenWebView { get; init; }
 
+    /// <summary>
+    /// Open the main window on a monitor whose scale differs from the primary's (roadmap M3.F30). A scenario that needs it is
+    /// gated with Requires = typeof(<see cref="MonitorAtAnotherScale"/>).
+    /// </summary>
+    public bool OtherScaleMonitor { get; init; }
+
     /// <summary>The fixture's process DPI awareness.</summary>
     public FixtureDpiAwareness DpiAwareness { get; init; } = FixtureDpiAwareness.PerMonitorV2;
 
@@ -186,7 +192,8 @@ public sealed class FixtureAppSession : IDisposable
             DpiAwareness: launch.DpiAwareness,
             OpenTable: launch.OpenTable,
             OpenMenuWindow: launch.OpenMenuWindow,
-            OpenWebView: launch.OpenWebView);
+            OpenWebView: launch.OpenWebView,
+            OtherScaleMonitor: launch.OtherScaleMonitor);
     }
 
     /// <summary>
