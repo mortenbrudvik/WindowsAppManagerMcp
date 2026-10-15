@@ -3698,6 +3698,8 @@ An open dialog is not something to clear out of the way. On a confirm, prompt or
 | `CdpTargetAmbiguous` | Several tabs have the window's title; the tool will not guess |
 | `CdpEvaluationFailed` | The page threw, or the browser rejected the script |
 | `CdpProtocolError` | The CDP connection closed early or returned an unreadable response |
+| `CdpTargetClosed` | The tab's DevTools connection ended during the call: the tab closed, crashed or detached, or the browser exited. Call again with the window and without `targetId`; `CdpUnavailable` then means the browser is gone |
+| `CdpResponseTooLarge` | The browser's answer was too large to read (a tab list over 16 MB, or a page over 64 MB). Read less at a time with `maxLength` |
 | `HtmlRequiresCdp` | `textOnly: false` was requested but CDP could not be used |
 | `OperationException` | Unexpected error; see `error` |
 
@@ -6823,7 +6825,9 @@ table, it gives more detail.
 | `CdpEvaluationFailed` | [Browser Reading](#browser-reading) tools | The page threw, or the browser rejected the script |
 | `CdpPortOwnerMismatch` | [Browser Reading](#browser-reading) tools | The CDP port belongs to a different process than the window |
 | `CdpProtocolError` | [Browser Reading](#browser-reading) tools | The CDP connection closed early or returned an unreadable response |
+| `CdpResponseTooLarge` | [Browser Reading](#browser-reading) tools | The browser's answer was too large to read (a tab list over 16 MB, or a page over 64 MB). Read less at a time with `maxLength` |
 | `CdpTargetAmbiguous` | [Browser Reading](#browser-reading) tools | Several tabs have the window's title; the tool will not guess |
+| `CdpTargetClosed` | [Browser Reading](#browser-reading) tools | The tab's DevTools connection ended during the call: the tab closed, crashed or detached, or the browser exited. Call again with the window and without `targetId`; `CdpUnavailable` then means the browser is gone |
 | `CdpTargetNotFound` | [Browser Reading](#browser-reading) tools | No tab's title matches the window title |
 | `CdpTimeout` | [Browser Reading](#browser-reading) tools | The browser or page did not answer within `timeoutMs` (often an open JavaScript dialog) |
 | `CdpUnavailable` | [Browser Reading](#browser-reading) tools | Nothing answered on the CDP port, or `requireCdp` was set without `cdpPort` |

@@ -542,7 +542,19 @@ public enum BrowserErrorCode
     CdpProtocolError = 37,
 
     /// <summary>HTML content (textOnly=false) was requested, but it is only available via CDP.</summary>
-    HtmlRequiresCdp = 38
+    HtmlRequiresCdp = 38,
+
+    /// <summary>
+    /// The tab's DevTools connection ended during the call: the browser closed it, the tab detached or crashed, or the
+    /// connection was reset (roadmap M5.2). The tab does not come back; read the window again without targetId.
+    /// </summary>
+    CdpTargetClosed = 39,
+
+    /// <summary>
+    /// The browser's answer was larger than the server reads: a /json page over 16 MB or a DevTools message over 64 MB
+    /// (roadmap M5.2). Nothing of it was returned.
+    /// </summary>
+    CdpResponseTooLarge = 40
 }
 
 /// <summary>
