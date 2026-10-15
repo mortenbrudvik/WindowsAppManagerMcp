@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Text.Json.Nodes;
@@ -7,6 +8,7 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
+using System.Windows.Shapes;
 using System.Windows.Threading;
 using static WindowsAppManagerMcp.FixtureApp.FixtureContract;
 
@@ -17,6 +19,8 @@ namespace WindowsAppManagerMcp.FixtureApp;
 /// dialog, a button that opens a document with unsaved changes, buttons that show a Save As dialog and a task dialog, a
 /// context menu, solid color swatches and a virtualized list of <see cref="VirtualListItemCount"/> items. Every element the tests use has a fixed
 /// AutomationId (<see cref="Ids"/>), and every change is written to the event log, except the password box's content.
+/// Only when asked (roadmap M6.4) does it also show, right of the swatches, a change panel that changes once after a delay
+/// and a spinner that turns for a while; without those options the window is exactly as before.
 /// </summary>
 internal sealed class MainWindow : Window
 {
@@ -30,6 +34,11 @@ internal sealed class MainWindow : Window
     private TableWindow? _table;
     private MenuWindow? _menuWindow;
     private WebViewWindow? _webViewWindow;
+    private OverlayWindow? _overlay;
+    private CanvasWindow? _canvas;
+    private Label? _changePanel;
+    private FrameworkElement? _spinner;
+    private readonly RotateTransform _spinnerTurn = new(0, TimedPanelSize / 2.0, TimedPanelSize / 2.0);
     private bool _readyReported;
     private NoActivateWhileShown? _noActivateWhileShown;
 
@@ -141,6 +150,26 @@ internal sealed class MainWindow : Window
             };
             swatches.Children.Add(Report(swatch.Id, label, swatch.Id));
         }
+        if (_options.ChangeAfter != null)
+        {
+            _changePanel = new Label
+            {
+                Width = TimedPanelSize,
+                Height = TimedPanelSize,
+                Padding = new Thickness(0),
+                Margin = new Thickness(0, 0, 8, 0),
+                HorizontalContentAlignment = HorizontalAlignment.Center,
+                VerticalContentAlignment = VerticalAlignment.Center,
+                Background = SwatchBrush(ChangePanelBefore),
+                Content = ChangePanelBeforeText
+            };
+            swatches.Children.Add(Report(Ids.ChangePanel, _changePanel, "Change panel"));
+        }
+        if (_options.AnimateFor != null)
+        {
+            _spinner = BuildSpinner();
+            swatches.Children.Add(Report(Ids.Spinner, _spinner));
+        }
         left.Children.Add(swatches);
 
         left.Children.Add(Report(Ids.StatusText, _statusText));
@@ -168,6 +197,34 @@ internal sealed class MainWindow : Window
         grid.Children.Add(left);
         grid.Children.Add(list);
         return grid;
+    }
+
+    private static SolidColorBrush SwatchBrush(Swatch swatch) => new(Color.FromRgb(swatch.R, swatch.G, swatch.B));
+
+    /// <summary>
+    /// The spinner: a dark hand on a light disc that <see cref="StartTimedChanges"/> turns. Shapes and a panel have no
+    /// automation peer, so UI Automation does not see it; its rectangle is in the ready event.
+    /// </summary>
+    private FrameworkElement BuildSpinner()
+    {
+        var spinner = new Canvas { Width = TimedPanelSize, Height = TimedPanelSize };
+        spinner.Children.Add(new Ellipse
+        {
+            Width = TimedPanelSize,
+            Height = TimedPanelSize,
+            Fill = new SolidColorBrush(Color.FromRgb(0xE0, 0xE0, 0xE0))
+        });
+        spinner.Children.Add(new Line
+        {
+            X1 = TimedPanelSize / 2.0,
+            Y1 = TimedPanelSize / 2.0,
+            X2 = TimedPanelSize / 2.0,
+            Y2 = 4,
+            Stroke = new SolidColorBrush(Color.FromRgb(0x20, 0x20, 0x60)),
+            StrokeThickness = 5,
+            RenderTransform = _spinnerTurn
+        });
+        return spinner;
     }
 
     private Button CreateButton(string text, string id, Action onClick)
@@ -268,7 +325,7 @@ internal sealed class MainWindow : Window
             ("modifiers", ModifierNames(Keyboard.Modifiers)));
     }
 
-    private static string ButtonName(MouseButton button) => button.ToString().ToLowerInvariant().Replace("xbutton", "x");
+    internal static string ButtonName(MouseButton button) => button.ToString().ToLowerInvariant().Replace("xbutton", "x");
 
     /// <summary>The AutomationId of <paramref name="element"/>, or of the nearest element above it that has one; empty when none has.</summary>
     private static string AutomationIdAt(DependencyObject? element)
@@ -325,6 +382,8 @@ internal sealed class MainWindow : Window
             ("clientRect", FixtureEventLog.Rect(clientOrigin.X, clientOrigin.Y, client.Right - client.Left, client.Bottom - client.Top)),
             ("elements", elements));
 
+        StartTimedChanges();
+
         if (_options.OpenDocument)
         {
             OpenDocument();
@@ -341,10 +400,67 @@ internal sealed class MainWindow : Window
         {
             OpenWebView();
         }
+
+        // The overlay before the canvas: on a monitor at another scale the canvas hooks the windows created after it until
+        // it has rendered (NoActivateWhileShown), and the overlay's topmost style must not go through that hook
+        if (_options.OpenOverlay)
+        {
+            OpenOverlay();
+        }
+        if (_options.OpenCanvas)
+        {
+            OpenCanvas();
+        }
         if (_options.OpenModal)
         {
             // After the ready event: ShowDialog does not return until the dialog closes.
             Dispatcher.BeginInvoke(DispatcherPriority.Background, new Action(OpenModal));
+        }
+    }
+
+    /// <summary>
+    /// Starts the change panel's one change and the spinner (roadmap M6.4), timed from the ready event. They write to the
+    /// event log only, not through <see cref="Log"/>: the status text must not change too, or a pixel check would see a
+    /// second region change.
+    /// </summary>
+    private void StartTimedChanges()
+    {
+        if (_options.ChangeAfter is { } changeAfter && _changePanel is { } panel)
+        {
+            var change = new DispatcherTimer { Interval = changeAfter };
+            change.Tick += (_, _) =>
+            {
+                change.Stop();
+                panel.Background = SwatchBrush(ChangePanelAfter);
+                panel.Content = ChangePanelAfterText;
+                _events.Write(Events.PanelChanged, ("id", Ids.ChangePanel), ("rect", ScreenRect(panel)));
+            };
+            change.Start();
+        }
+
+        if (_options.AnimateFor is { } animateFor && _spinner is { } spinner)
+        {
+            var running = Stopwatch.StartNew();
+            var turn = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(SpinnerIntervalMs) };
+            turn.Tick += (_, _) =>
+            {
+                if (running.Elapsed < animateFor)
+                {
+                    _spinnerTurn.Angle = (_spinnerTurn.Angle + 30) % 360;
+                    return;
+                }
+
+                // Still from here on, at its starting angle
+                turn.Stop();
+                _spinnerTurn.Angle = 0;
+                _events.Write(Events.AnimationStopped, ("id", Ids.Spinner));
+            };
+            _events.Write(
+                Events.AnimationStarted,
+                ("id", Ids.Spinner),
+                ("rect", ScreenRect(spinner)),
+                ("durationMs", (long)animateFor.TotalMilliseconds));
+            turn.Start();
         }
     }
 
@@ -487,6 +603,32 @@ internal sealed class MainWindow : Window
         _webViewWindow = new WebViewWindow(_options, _events);
         _webViewWindow.Closed += (_, _) => _webViewWindow = null;
         _webViewWindow.Show();
+    }
+
+    /// <summary>Opens the topmost overlay (roadmap M6.7, see <see cref="OverlayWindow"/>).</summary>
+    private void OpenOverlay()
+    {
+        if (_overlay != null)
+        {
+            return;
+        }
+
+        _overlay = new OverlayWindow(_options, _events);
+        _overlay.Closed += (_, _) => _overlay = null;
+        _overlay.Show();
+    }
+
+    /// <summary>Opens the canvas window (roadmap M6.3, see <see cref="CanvasWindow"/>).</summary>
+    private void OpenCanvas()
+    {
+        if (_canvas != null)
+        {
+            return;
+        }
+
+        _canvas = new CanvasWindow(_options, _events);
+        _canvas.Closed += (_, _) => _canvas = null;
+        _canvas.Show();
     }
 
     private void Log(string name, params (string Key, JsonNode? Value)[] fields)

@@ -81,6 +81,19 @@ internal sealed class FixtureEventLog : IDisposable
         ["height"] = height
     };
 
+    /// <summary>
+    /// The rectangle <paramref name="local"/> of <paramref name="visual"/> (its device-independent coordinates) in the
+    /// fixture's screen coordinates, in the event log format.
+    /// </summary>
+    public static JsonObject ScreenRect(System.Windows.Media.Visual visual, System.Windows.Rect local)
+    {
+        var topLeft = visual.PointToScreen(local.TopLeft);
+        var bottomRight = visual.PointToScreen(local.BottomRight);
+        var x = (int)Math.Round(topLeft.X);
+        var y = (int)Math.Round(topLeft.Y);
+        return Rect(x, y, (int)Math.Round(bottomRight.X) - x, (int)Math.Round(bottomRight.Y) - y);
+    }
+
     public void Dispose()
     {
         lock (_lock)

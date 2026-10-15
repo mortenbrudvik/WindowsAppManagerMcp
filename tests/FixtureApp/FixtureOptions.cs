@@ -31,7 +31,21 @@ public enum FixtureDpiAwareness
 /// <param name="OpenWebView">Open the WebView2 window right after the main window is ready. Only this option starts
 /// WebView2, which needs the Edge WebView2 runtime.</param>
 /// <param name="OtherScaleMonitor">Open the main window centred on a monitor whose scale differs from the primary's, instead
-/// of on the primary (roadmap M3.F30); on a machine without one, on the primary. See <see cref="FixturePlacement"/>.</param>
+/// of on the primary (roadmap M3.F30); on a machine without one, on the primary. See <see cref="FixturePlacement"/>. The
+/// canvas window follows it.</param>
+/// <param name="OpenCanvas">Open the canvas window (roadmap M6.3) right after the main window is ready: known text drawn as
+/// pixels only, which UI Automation cannot read. See <see cref="FixtureContract.CanvasLines"/>.</param>
+/// <param name="ChangeAfter">Add the change panel to the main window and recolor and relabel it once, this long after the
+/// ready event (roadmap M6.4); null for no panel.</param>
+/// <param name="AnimateFor">Add the spinner to the main window and turn it for this long after the ready event, then stop it
+/// (roadmap M6.4); null for no spinner.</param>
+/// <param name="OpenOverlay">Open the overlay (roadmap M6.7) right after the main window is ready: a small unowned
+/// WS_EX_TOPMOST tool window of the fixture itself.</param>
+/// <remarks>
+/// Every argument after <see cref="EndOfOptions"/> is ignored, so a test can plant arguments that only a reader of the
+/// fixture's command line sees (roadmap M6.6: a secret-looking switch the server must redact). Before it, an unknown option
+/// is refused, so a misspelt option still fails the start instead of being ignored.
+/// </remarks>
 public sealed record FixtureOptions(
     string Instance,
     string? EventLogPath = null,
@@ -44,7 +58,11 @@ public sealed record FixtureOptions(
     bool OpenTable = false,
     bool OpenMenuWindow = false,
     bool OpenWebView = false,
-    bool OtherScaleMonitor = false)
+    bool OtherScaleMonitor = false,
+    bool OpenCanvas = false,
+    TimeSpan? ChangeAfter = null,
+    TimeSpan? AnimateFor = null,
+    bool OpenOverlay = false)
 {
     public const string InstanceOption = "--instance";
     public const string EventLogOption = "--event-log";
@@ -58,6 +76,13 @@ public sealed record FixtureOptions(
     public const string OpenMenuWindowOption = "--open-menu-window";
     public const string OpenWebViewOption = "--open-web-view";
     public const string OtherScaleMonitorOption = "--other-scale-monitor";
+    public const string OpenCanvasOption = "--open-canvas";
+    public const string ChangeAfterOption = "--change-after-ms";
+    public const string AnimateForOption = "--animate-for-ms";
+    public const string OpenOverlayOption = "--open-overlay";
+
+    /// <summary>Ends the options: every argument after it is ignored (see the remarks on <see cref="FixtureOptions"/>).</summary>
+    public const string EndOfOptions = "--";
 
     /// <summary>The instance token when none is given, for starting the fixture by hand.</summary>
     public const string DefaultInstance = "manual";
@@ -74,7 +99,8 @@ public sealed record FixtureOptions(
     public TimeSpan EffectiveMaxLifetime => MaxLifetime ?? DefaultMaxLifetime;
 
     /// <summary>Reads the command line.</summary>
-    /// <exception cref="ArgumentException">An option is unknown, repeated, missing its value or invalid.</exception>
+    /// <exception cref="ArgumentException">An option before <see cref="EndOfOptions"/> is unknown, repeated, missing its
+    /// value or invalid.</exception>
     public static FixtureOptions Parse(IReadOnlyList<string> args)
     {
         ArgumentNullException.ThrowIfNull(args);
@@ -85,6 +111,10 @@ public sealed record FixtureOptions(
         for (var i = 0; i < args.Count; i++)
         {
             var name = args[i];
+            if (name == EndOfOptions)
+            {
+                break;
+            }
             if (!seen.Add(name))
             {
                 throw new ArgumentException($"Option {name} is given more than once.");
@@ -135,12 +165,43 @@ public sealed record FixtureOptions(
                 case OtherScaleMonitorOption:
                     options = options with { OtherScaleMonitor = true };
                     break;
+                case OpenCanvasOption:
+                    options = options with { OpenCanvas = true };
+                    break;
+                case ChangeAfterOption:
+                    options = options with { ChangeAfter = Milliseconds(name, ValueOf(args, ref i)) };
+                    break;
+                case AnimateForOption:
+                    options = options with { AnimateFor = Milliseconds(name, ValueOf(args, ref i)) };
+                    break;
+                case OpenOverlayOption:
+                    options = options with { OpenOverlay = true };
+                    break;
                 default:
-                    throw new ArgumentException($"Unknown option '{name}'.");
+                    throw new ArgumentException(
+                        $"Unknown option '{name}'. Arguments the fixture should ignore go after '{EndOfOptions}'.");
             }
         }
 
         return options;
+    }
+
+    /// <summary>How many arguments <see cref="Parse"/> ignores: those after <see cref="EndOfOptions"/>.</summary>
+    /// <remarks>
+    /// No option's value can be "--" (a value may not start with it), so the first "--" is always the end of the options.
+    /// </remarks>
+    public static int IgnoredArgumentCount(IReadOnlyList<string> args)
+    {
+        ArgumentNullException.ThrowIfNull(args);
+        for (var i = 0; i < args.Count; i++)
+        {
+            if (args[i] == EndOfOptions)
+            {
+                return args.Count - i - 1;
+            }
+        }
+
+        return 0;
     }
 
     /// <summary>The command line that <see cref="Parse"/> reads back into these options.</summary>
@@ -191,6 +252,22 @@ public sealed record FixtureOptions(
         {
             args.Add(OtherScaleMonitorOption);
         }
+        if (OpenCanvas)
+        {
+            args.Add(OpenCanvasOption);
+        }
+        if (ChangeAfter is { } changeAfter)
+        {
+            args.AddRange([ChangeAfterOption, FormatMilliseconds(changeAfter)]);
+        }
+        if (AnimateFor is { } animateFor)
+        {
+            args.AddRange([AnimateForOption, FormatMilliseconds(animateFor)]);
+        }
+        if (OpenOverlay)
+        {
+            args.Add(OpenOverlayOption);
+        }
         return args;
     }
 
@@ -229,6 +306,20 @@ public sealed record FixtureOptions(
         int.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out var number) && number > 0
             ? number
             : throw new ArgumentException($"{name} must be a positive whole number, got '{value}'.");
+
+    /// <summary>A positive number of milliseconds, at most <see cref="LongestMaxLifetime"/>: no change outlives the fixture.</summary>
+    private static TimeSpan Milliseconds(string name, string value)
+    {
+        var milliseconds = PositiveInt(name, value);
+        var duration = TimeSpan.FromMilliseconds(milliseconds);
+        return duration <= LongestMaxLifetime
+            ? duration
+            : throw new ArgumentException(
+                $"{name} must be at most {LongestMaxLifetime.TotalMilliseconds:0} milliseconds, got {milliseconds}.");
+    }
+
+    private static string FormatMilliseconds(TimeSpan duration) =>
+        ((int)Math.Ceiling(duration.TotalMilliseconds)).ToString(CultureInfo.InvariantCulture);
 
     private static string ValidInstance(string value) =>
         InstancePattern.IsMatch(value)

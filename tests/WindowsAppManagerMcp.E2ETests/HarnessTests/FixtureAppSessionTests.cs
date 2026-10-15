@@ -116,6 +116,74 @@ public class FixtureAppSessionTests
         options.OpenMenuWindow.Should().BeFalse();
         options.OpenWebView.Should().BeFalse("only a scenario that asks for it starts WebView2");
         options.OtherScaleMonitor.Should().BeFalse("the fixture opens on the primary unless a scenario asks");
+        options.OpenCanvas.Should().BeFalse();
+        options.OpenOverlay.Should().BeFalse("no topmost window unless a scenario asks for one");
+        options.ChangeAfter.Should().BeNull();
+        options.AnimateFor.Should().BeNull();
+    }
+
+    [Theory]
+    [InlineData(DesktopTier.NoInput)]
+    [InlineData(DesktopTier.Input)]
+    public void BuildOptions_PassesTheM6Surfaces(DesktopTier tier)
+    {
+        // Arrange - the canvas (M6.3), the timed change and animation (M6.4) and the topmost overlay (M6.7) only show
+        // something, so a no-input test may ask for them
+        var launch = new FixtureLaunchOptions
+        {
+            OpenCanvas = true,
+            ChangeAfter = TimeSpan.FromMilliseconds(800),
+            AnimateFor = TimeSpan.FromMilliseconds(1500),
+            OpenOverlay = true
+        };
+
+        // Act
+        var options = FixtureAppSession.BuildOptions(tier, launch, "abc", "events.jsonl", 1);
+
+        // Assert
+        options.OpenCanvas.Should().BeTrue();
+        options.ChangeAfter.Should().Be(TimeSpan.FromMilliseconds(800));
+        options.AnimateFor.Should().Be(TimeSpan.FromMilliseconds(1500));
+        options.OpenOverlay.Should().BeTrue();
+        options.NoActivate.Should().BeTrue("the overlay and the canvas open without taking the foreground too");
+    }
+
+    [Fact]
+    public void CommandLine_WithoutExtraArguments_IsTheOptionsAlone()
+    {
+        var options = new FixtureOptions("abc", NoActivate: true);
+
+        FixtureAppSession.CommandLine(options, []).Should().Equal(options.ToArguments());
+    }
+
+    [Fact]
+    public void CommandLine_PlantsExtraArgumentsAfterTheEndOfOptions_WhereTheFixtureIgnoresThem()
+    {
+        // Arrange - M6.6's redaction check: arguments that only the server's list_processes should see
+        var options = new FixtureOptions("abc", EventLogPath: @"C:\t\events.jsonl", ParentProcessId: 7, NoActivate: true);
+        string[] planted = ["--wam-test-token=s3cr3t", "http://u:p@host/", "--instance"];
+
+        // Act
+        var commandLine = FixtureAppSession.CommandLine(options, planted);
+
+        // Assert
+        commandLine.Should().Equal([.. options.ToArguments(), FixtureOptions.EndOfOptions, .. planted]);
+        FixtureOptions.Parse(commandLine).Should().Be(options, "the fixture reads the same options and ignores the plant");
+        FixtureOptions.IgnoredArgumentCount(commandLine).Should().Be(planted.Length);
+    }
+
+    [Fact]
+    public void CommandLine_RefusesANullExtraArgument()
+    {
+        var act = () => FixtureAppSession.CommandLine(new FixtureOptions("abc"), [null!]);
+
+        act.Should().Throw<ArgumentException>();
+    }
+
+    [Fact]
+    public void FixtureLaunchOptions_ByDefault_PlantsNothing()
+    {
+        new FixtureLaunchOptions().ExtraArguments.Should().BeEmpty();
     }
 
     [Theory]
