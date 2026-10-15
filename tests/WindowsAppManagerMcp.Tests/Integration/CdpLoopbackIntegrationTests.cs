@@ -48,7 +48,7 @@ public sealed class CdpLoopbackIntegrationTests : IAsyncLifetime
         snapshot.Value!.Content.Should().Be("served over a real socket");
         _server.Handshake.Should().NotBeNull();
         _server.Handshake!.Should().NotContainKey("origin", "Chrome 111+ refuses an Origin it was not told to allow");
-        _server.Handshake["host"].Should().Be($"127.0.0.1:{_server.Port}");
+        _server.Handshake!["host"].Should().Be($"127.0.0.1:{_server.Port}");
         _server.ListRequestHost.Should().Be($"127.0.0.1:{_server.Port}");
     }
 
