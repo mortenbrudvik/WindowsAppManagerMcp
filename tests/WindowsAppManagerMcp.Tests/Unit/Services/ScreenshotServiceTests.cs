@@ -1060,6 +1060,75 @@ public class ScreenshotServiceTests
         geometry.Monitors.Should().ContainSingle();
     }
 
+    public static TheoryData<CaptureTarget> ScreenTargets => new()
+    {
+        new CaptureTarget.Region(10, 20, 300, 200),
+        new CaptureTarget.Monitor(0),
+        new CaptureTarget.Monitor(ScreenshotService.VirtualScreenIndex)
+    };
+
+    [Theory]
+    [MemberData(nameof(ScreenTargets))]
+    public void RegisterRaw_AfterTheMonitorsChangedSinceThePixels_RegistersTheLayoutOfThePixels_SoAClickIsStaleCapture(
+        CaptureTarget target)
+    {
+        // Arrange - the pixels are read with two monitors side by side
+        var monitors = new List<MonitorInfo>
+        {
+            TestDataFactory.CreateMonitorInfo(0, @"\\.\DISPLAY1", true, 0, 0, 1920, 1080),
+            TestDataFactory.CreateMonitorInfo(1, @"\\.\DISPLAY2", false, -1920, 0, 1920, 1080)
+        };
+        var virtualScreen = (X: -1920, Y: 0, Width: 3840, Height: 1080);
+        _mockMonitorService.Setup(m => m.GetAllMonitors()).Returns(() => monitors);
+        _mockCaptureWrapper.Setup(c => c.GetVirtualScreenBounds()).Returns(() => virtualScreen);
+        var sut = CreatePixelSut();
+        var raw = sut.CapturePixels(target);
+        var atCapture = CapturedMonitors.Of(monitors);
+
+        // ... and during the slow work after them (an OCR pass) the left monitor is undocked
+        monitors = [TestDataFactory.CreateMonitorInfo(0, @"\\.\DISPLAY1", true, 0, 0, 1920, 1080)];
+        virtualScreen = (0, 0, 1920, 1080);
+
+        // Act
+        var captureId = sut.RegisterRaw(raw)!;
+
+        // Assert - the capture keeps the layout its pixels were read in, so the click sees the change
+        var geometry = _registry.Find(captureId)!.Geometry;
+        geometry.VirtualScreen.Should().Be(new VirtualScreenBounds(-1920, 0, 3840, 1080));
+        geometry.Monitors.Should().Equal(atCapture);
+        var point = new CoordinateSpaceResolver(_registry, _windows.Object, new Mock<INativeHitTestWrapper>().Object,
+            _mockCaptureWrapper.Object, _mockMonitorService.Object).FromImage(captureId, 5, 5);
+        point.ErrorCode.Should().Be(InputErrorCode.StaleCapture);
+    }
+
+    [Fact]
+    public void RegisterRaw_AfterAMonitorMovedInsideTheSameVirtualScreen_IsStaleCapture()
+    {
+        // Arrange - two monitors swap places after the pixels: the virtual screen stays the same
+        var monitors = new List<MonitorInfo>
+        {
+            TestDataFactory.CreateMonitorInfo(0, @"\\.\DISPLAY1", true, 0, 0, 1920, 1080),
+            TestDataFactory.CreateMonitorInfo(1, @"\\.\DISPLAY2", false, -1920, 0, 1920, 1080)
+        };
+        _mockMonitorService.Setup(m => m.GetAllMonitors()).Returns(() => monitors);
+        _mockCaptureWrapper.Setup(c => c.GetVirtualScreenBounds()).Returns((-1920, 0, 3840, 1080));
+        var sut = CreatePixelSut();
+        var raw = sut.CapturePixels(new CaptureTarget.Region(-1900, 20, 300, 200));
+        monitors =
+        [
+            TestDataFactory.CreateMonitorInfo(0, @"\\.\DISPLAY1", true, -1920, 0, 1920, 1080),
+            TestDataFactory.CreateMonitorInfo(1, @"\\.\DISPLAY2", false, 0, 0, 1920, 1080)
+        ];
+
+        // Act
+        var captureId = sut.RegisterRaw(raw)!;
+
+        // Assert
+        var point = new CoordinateSpaceResolver(_registry, _windows.Object, new Mock<INativeHitTestWrapper>().Object,
+            _mockCaptureWrapper.Object, _mockMonitorService.Object).FromImage(captureId, 5, 5);
+        point.ErrorCode.Should().Be(InputErrorCode.StaleCapture);
+    }
+
     [Fact]
     public void RegisterRaw_WithoutARegistry_OrForAWindowThatCouldNotBeRead_GivesNoCaptureId()
     {

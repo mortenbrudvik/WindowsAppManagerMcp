@@ -185,7 +185,7 @@ public class ScreenshotService : IScreenshotService
         ThrowIfIncomplete(acquired.Capture);
         AddBlankWarning(acquired.Capture, acquired.Warnings);
         return new RawCapture(target, acquired.Capture, acquired.MonitorIndex, acquired.ScaleFactor, acquired.Warnings.ToArray(),
-            acquired.Window);
+            acquired.Window, acquired.Screen);
     }
 
     /// <inheritdoc />
@@ -194,13 +194,13 @@ public class ScreenshotService : IScreenshotService
         ArgumentNullException.ThrowIfNull(capture);
         var pixels = capture.Pixels;
         return Register(pixels.Width, pixels.Height, new ImageToScreenTransform(pixels.ScreenOriginX, pixels.ScreenOriginY, 1, 1),
-            CapturedRegionOf(pixels), windowCapture: capture.Target is CaptureTarget.Window, capture.Window);
+            CapturedRegionOf(pixels), windowCapture: capture.Target is CaptureTarget.Window, capture.Window, capture.Screen);
     }
 
     /// <summary>
     /// The pixels of a capture before they become an image: what a target resolves to, its warnings so far, and for a
-    /// window the window as it was read before its pixels (with its client area). <see cref="Complete"/> renders it;
-    /// <see cref="CapturePixels"/> returns it as it is.
+    /// window the window as it was read before its pixels (with its client area), for a screen capture the screen layout as
+    /// it was read right after them. <see cref="Complete"/> renders it; <see cref="CapturePixels"/> returns it as it is.
     /// </summary>
     private sealed record Acquired(
         CaptureResult Capture,
@@ -208,22 +208,30 @@ public class ScreenshotService : IScreenshotService
         double? ScaleFactor,
         List<string> Warnings,
         bool WindowCapture,
-        CapturedWindow? Window);
+        CapturedWindow? Window,
+        CapturedScreen? Screen = null);
 
     /// <summary>
     /// Resolves <paramref name="target"/> and reads its pixels, with every refusal and warning of the capture tools: an
     /// unknown monitor, a region off the screen or over the budget, a window that cannot be captured right now
     /// (<see cref="CheckWindow"/>), the screen copy of a window that does not answer, the crop to the visible frame and the
-    /// DPI warning. The target policy is not checked here (see <see cref="CapturePixels"/>), and no image is made.
+    /// DPI warning. A screen capture also reads the screen layout right after its pixels (<see cref="ReadScreen"/>), so
+    /// that its registration keeps the layout the pixels were read in, however long after them it is registered. The
+    /// target policy is not checked here (see <see cref="CapturePixels"/>), and no image is made.
     /// </summary>
     /// <exception cref="CaptureException">The target was refused.</exception>
-    private Acquired Acquire(CaptureTarget target) => target switch
+    private Acquired Acquire(CaptureTarget target)
     {
-        CaptureTarget.Monitor monitor => AcquireMonitor(monitor.Index),
-        CaptureTarget.Region region => AcquireRegion(region.X, region.Y, region.Width, region.Height),
-        CaptureTarget.Window window => AcquireWindow(window.Handle, window.IncludeFrame),
-        _ => throw new ArgumentException($"Unknown capture target {target.GetType().Name}", nameof(target))
-    };
+        var acquired = target switch
+        {
+            CaptureTarget.Monitor monitor => AcquireMonitor(monitor.Index),
+            CaptureTarget.Region region => AcquireRegion(region.X, region.Y, region.Width, region.Height),
+            CaptureTarget.Window window => AcquireWindow(window.Handle, window.IncludeFrame),
+            _ => throw new ArgumentException($"Unknown capture target {target.GetType().Name}", nameof(target))
+        };
+
+        return acquired.WindowCapture ? acquired : acquired with { Screen = ReadScreen() };
+    }
 
     /// <summary>What a failure message calls the target, as the capture tools name it.</summary>
     private static string What(CaptureTarget target) => target switch
@@ -486,7 +494,7 @@ public class ScreenshotService : IScreenshotService
                 MarkPrefix: markPrefix);
             metadata = metadata with
             {
-                CaptureId = Register(metadata.Width, metadata.Height, metadata.ImageToScreen!, metadata.CapturedRegion!, windowCapture: true, window)
+                CaptureId = Register(metadata.Width, metadata.Height, metadata.ImageToScreen!, metadata.CapturedRegion!, windowCapture: true, window, screen: null)
             };
 
             return new ScreenCapture<AnnotatedScreenshotResult>(metadata, request.ReturnsImage ? rendered.Image : null);
@@ -823,7 +831,7 @@ public class ScreenshotService : IScreenshotService
     /// </summary>
     private ScreenCapture<ScreenshotResult> Complete(Acquired acquired, CaptureRequest request)
     {
-        var (capture, monitorIndex, scaleFactor, warnings, windowCapture, window) = acquired;
+        var (capture, monitorIndex, scaleFactor, warnings, windowCapture, window, screen) = acquired;
         ThrowIfIncomplete(capture);
         AddBlankWarning(capture, warnings);
         var rendered = Render(capture, request, annotate: null);
@@ -847,7 +855,7 @@ public class ScreenshotService : IScreenshotService
             Warnings: warnings.Count > 0 ? warnings : null);
         metadata = metadata with
         {
-            CaptureId = Register(metadata.Width, metadata.Height, metadata.ImageToScreen!, metadata.CapturedRegion!, windowCapture, window)
+            CaptureId = Register(metadata.Width, metadata.Height, metadata.ImageToScreen!, metadata.CapturedRegion!, windowCapture, window, screen)
         };
 
         return new ScreenCapture<ScreenshotResult>(metadata, request.ReturnsImage ? rendered.Image : null);
@@ -879,28 +887,37 @@ public class ScreenshotService : IScreenshotService
             : window;
 
     /// <summary>
-    /// Registers a successful capture (roadmap M3.11) and returns its captureId: a screen capture with the virtual
-    /// screen and the monitors as they are now, a window capture with <paramref name="window"/>. Null without a registry, and for a window
-    /// capture whose window could not be read.
+    /// Registers a successful capture (roadmap M3.11) and returns its captureId: a screen capture with
+    /// <paramref name="screen"/>, the virtual screen and the monitors as they were read right after its pixels (not as they
+    /// are now, which may be seconds later for <see cref="RegisterRaw"/>), a window capture with <paramref name="window"/>.
+    /// Null without a registry, for a window capture whose window could not be read, and for a screen capture without its
+    /// screen layout: a click could not tell whether the monitors changed since its pixels.
     /// </summary>
     private string? Register(int width, int height, ImageToScreenTransform transform, CapturedRegion region, bool windowCapture,
-        CapturedWindow? window)
+        CapturedWindow? window, CapturedScreen? screen)
     {
-        if (_captureRegistry == null || (windowCapture && window == null))
+        if (_captureRegistry == null || (windowCapture ? window == null : screen == null))
         {
             return null;
         }
 
-        VirtualScreenBounds? virtualScreen = null;
-        IReadOnlyList<CapturedMonitor>? monitors = null;
-        if (!windowCapture)
+        return _captureRegistry.Register(new CaptureGeometry(width, height, transform, region, window,
+            windowCapture ? null : screen!.VirtualScreen, windowCapture ? null : screen!.Monitors)).CaptureId;
+    }
+
+    /// <summary>
+    /// The virtual screen and the monitors now, which a screen capture reads right after its pixels and registers; null
+    /// when captures are not registered.
+    /// </summary>
+    private CapturedScreen? ReadScreen()
+    {
+        if (_captureRegistry == null)
         {
-            var screen = _captureWrapper.GetVirtualScreenBounds();
-            virtualScreen = new VirtualScreenBounds(screen.X, screen.Y, screen.Width, screen.Height);
-            monitors = ReadMonitors();
+            return null;
         }
 
-        return _captureRegistry.Register(new CaptureGeometry(width, height, transform, region, window, virtualScreen, monitors)).CaptureId;
+        var screen = _captureWrapper.GetVirtualScreenBounds();
+        return new CapturedScreen(new VirtualScreenBounds(screen.X, screen.Y, screen.Width, screen.Height), ReadMonitors());
     }
 
     /// <summary>The encoded output image and where it was written.</summary>

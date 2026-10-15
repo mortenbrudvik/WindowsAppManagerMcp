@@ -101,8 +101,10 @@ public interface IScreenshotService
     /// <summary>
     /// Registers a capture of <see cref="CapturePixels"/> under a captureId (roadmap M3.11), with its full-resolution size
     /// and a 1:1 image-to-screen transform from its origin: an image point (x, y) of its pixels is screen point
-    /// (origin x + x, origin y + y), and the mouse tools refuse it with StaleCapture once a captured window moved. Null
-    /// when captures are not registered, or for a window that could not be read.
+    /// (origin x + x, origin y + y), and the mouse tools refuse it with StaleCapture once a captured window moved, or
+    /// once the monitors changed since the pixels were read (<see cref="RawCapture.Screen"/>, read with the pixels, so
+    /// slow work between the capture and this call does not hide a change made during it). Null when captures are not
+    /// registered, for a window that could not be read, or for a screen capture without its <see cref="RawCapture.Screen"/>.
     /// </summary>
     string? RegisterRaw(RawCapture capture);
 

@@ -37,13 +37,20 @@ public abstract record CaptureTarget
 /// frame), which <see cref="IScreenshotService.RegisterRaw"/> registers; null for a screen capture, and when the window could
 /// not be read or captures are not registered.
 /// </param>
+/// <param name="Screen">
+/// For a monitor, virtual-screen or region capture, the virtual screen and the monitors as they were read right after
+/// the pixels, which <see cref="IScreenshotService.RegisterRaw"/> registers: a monitor change during the work between
+/// the capture and its registration (an OCR pass) is then still caught as StaleCapture. Null for a window capture, and
+/// when captures are not registered.
+/// </param>
 public sealed record RawCapture(
     CaptureTarget Target,
     CaptureResult Pixels,
     int? MonitorIndex,
     double? ScaleFactor,
     IReadOnlyList<string> Warnings,
-    CapturedWindow? Window)
+    CapturedWindow? Window,
+    CapturedScreen? Screen = null)
 {
     /// <summary>The screen rectangle the pixels show.</summary>
     public CapturedRegion CapturedRegion => new(Pixels.ScreenOriginX, Pixels.ScreenOriginY, Pixels.Width, Pixels.Height);
