@@ -115,14 +115,14 @@ public static class ToolDocCatalog
             new("browser_type", "Type into a page's focused field or a selector's (toolset browser-actions)", "text", "selector", "replace", "pressEnter", "dialog", "window (or handle)"),
             new("browser_handle_dialog", "Read, accept or dismiss a Chrome or Edge window's JavaScript dialog, through UI Automation (toolset browser-actions)", "accept", "promptText", "window (or handle)"),
             new("browser_screenshot", "Capture a tab's page as an image, without the browser frame (toolset browser-actions)", "window (or handle)", "targetId", "maxDimension"),
-            new("browser_evaluate", "Run a JavaScript expression in a page; its value or what it threw (toolset browser-actions)", "expression", "awaitPromise", "timeoutMs", "window (or handle)"),
+            new("browser_evaluate", "Run a JavaScript expression in a page; its value or what it threw (toolset browser-script)", "expression", "awaitPromise", "timeoutMs", "window (or handle)"),
         ],
         SkillNote: "CDP only, on a debug browser, no real mouse or keyboard: work on a window behind others without taking the " +
                    "foreground (browser_screenshot may bring a tab that is not shown, and its window, to the front). A JavaScript " +
                    "dialog: pass `dialog` (accept or dismiss) to the action that opens it; one already open is read and answered " +
                    "with browser_handle_dialog, through UI Automation (DevTools cannot answer it). Off by default: " +
-                   "`WAM_TOOLSETS=+browser-actions`. For " +
-                   "anything richer, attach Playwright MCP to the same browser: `--cdp-endpoint` set to launch_browser_with_debug's " +
+                   "`WAM_TOOLSETS=+browser-actions`, and `+browser-script` for browser_evaluate (a script runs with the page's " +
+                   "rights, so clicks and typing do not turn it on). For anything richer, attach Playwright MCP to the same browser: `--cdp-endpoint` set to launch_browser_with_debug's " +
                    "`browserWsEndpoint` (or `cdpEndpoint`)."),
         new("Input Simulation",
         [
