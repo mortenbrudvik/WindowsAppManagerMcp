@@ -29,8 +29,9 @@ public static class AuditLogToolFilter
     /// button; file_dialog with its path's length only), closes a
     /// window, stops a process, starts a program, changes the windows or presets of a layout, replaces the clipboard, or
     /// shows or navigates a browser tab (activate_tab, browser_navigate with its URL's scheme and host only), or acts on a
-    /// browser's page through CDP (browser_click, browser_type, browser_handle_dialog, browser_evaluate with what they were
-    /// given as lengths, and browser_screenshot, which may bring a tab to the front);
+    /// browser's page through CDP (browser_click, browser_type, browser_evaluate with what they were given as lengths, and
+    /// browser_screenshot, which may bring a tab to the front) or answers its JavaScript dialog through UI Automation
+    /// (browser_handle_dialog, with its promptText's length only);
     /// and get_clipboard, the one read that can return the user's own clipboard (after their yes, or with
     /// WAM_ALLOW_USER_CLIPBOARD), recorded with its format, origin and length, never its content. Other read-only tools are
     /// never audited. The captures are left out: they are destructive only through overwrite:true of an image file, and

@@ -4,7 +4,7 @@ using WindowsAppManagerMcp.Models;
 namespace WindowsAppManagerMcp.Services.Interfaces;
 
 /// <summary>
-/// The CDP side of the DOM bridge (roadmap M5.8): run a script, answer a JavaScript dialog, find an element's box, click
+/// The CDP side of the DOM bridge (roadmap M5.8): run a script, find an element's box, click
 /// it and type into the page with CDP's own input (Input.dispatchMouseEvent, Input.insertText), and capture the page.
 /// Every call opens its own connection to the tab and closes it before it returns (M5.2: no pool), and is bounded by its
 /// timeout; failures come back as a failed <see cref="CdpPageResult{T}"/>, and only the caller's cancellation throws.
@@ -34,16 +34,6 @@ public interface ICdpPageService
     Task<CdpPageResult<CdpEvaluation>> EvaluateAsync(
         CdpTarget target, string expression, bool awaitPromise, CdpGate gate, TimeSpan timeout, CancellationToken cancellationToken = default);
 
-    /// <summary>
-    /// Accepts or dismisses the JavaScript dialog the tab has open (Page.handleJavaScriptDialog, sent while the dialog
-    /// blocks the page). The browser may not report a dialog that was open before this connection (Edge 155 does not), so
-    /// its text is unknown: such a dialog is dismissed all the same, but never accepted unread (CdpDialogOpen, pointing to
-    /// respond_to_dialog, which reads it). DialogNotFound when the page has none open (it answers); CdpDialogOpen when it
-    /// does not answer and the browser would not hand its dialog over.
-    /// </summary>
-    Task<CdpPageResult<CdpDialogOutcome>> HandleDialogAsync(
-        CdpTarget target, bool accept, string? promptText, CdpGate gate, TimeSpan timeout, CancellationToken cancellationToken = default);
-
     /// <summary>Finds the element <paramref name="locator"/> names and reads its box (DOM.getContentQuads); nothing is changed.</summary>
     Task<CdpPageResult<CdpElementBox>> LocateAsync(
         CdpTarget target, BrowserElementLocator locator, TimeSpan timeout, CancellationToken cancellationToken = default);
@@ -51,19 +41,23 @@ public interface ICdpPageService
     /// <summary>
     /// Clicks the element <paramref name="locator"/> names: checks that it is not disabled (ElementNotEnabled), then inside
     /// the gate scrolls it into view, checks that nothing covers its middle (ElementObscured; an element inside frames frame
-    /// by frame) and sends the mouse events there.
+    /// by frame) and sends the mouse events there. With <paramref name="dialogAnswer"/>, a JavaScript dialog the click opens
+    /// is answered on the same connection (<see cref="CdpInputOutcome.Answer"/>).
     /// </summary>
     Task<CdpPageResult<CdpInputOutcome>> ClickAsync(
         CdpTarget target, BrowserElementLocator locator, MouseButton button, int clickCount, CdpGate gate, TimeSpan timeout,
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken = default, BrowserDialogAnswer? dialogAnswer = null);
 
     /// <summary>
     /// Types <see cref="BrowserTypeOptions.Text"/> into the element its selector names (focused first, and still holding
     /// the focus after the page's focus handlers) or the page's focused element, which must take text (FocusNotOnElement
-    /// otherwise), with Input.insertText; the focus, the selection and the text are sent inside the gate.
+    /// otherwise), with Input.insertText; the focus, the selection and the text are sent inside the gate. With
+    /// <paramref name="dialogAnswer"/>, a JavaScript dialog the typing opens (Enter submitting a form) is answered on the
+    /// same connection.
     /// </summary>
     Task<CdpPageResult<CdpInputOutcome>> TypeAsync(
-        CdpTarget target, BrowserTypeOptions options, CdpGate gate, TimeSpan timeout, CancellationToken cancellationToken = default);
+        CdpTarget target, BrowserTypeOptions options, CdpGate gate, TimeSpan timeout, CancellationToken cancellationToken = default,
+        BrowserDialogAnswer? dialogAnswer = null);
 
     /// <summary>
     /// Captures the tab's viewport as PNG (Page.captureScreenshot). A tab whose page is not shown (another tab is in front,
@@ -101,9 +95,6 @@ public sealed record CdpPageResult<T>(T? Value, string? ErrorCode, string? Error
 /// <param name="ValueType">The value's type as CDP names it: its subtype (null, array, date ...) when it has one, else its type.</param>
 public sealed record CdpEvaluation(JsonElement? Value, string ValueType, BrowserScriptException? Exception = null);
 
-/// <summary>What browser_handle_dialog answered: the dialog, when the browser reported it to this connection.</summary>
-public sealed record CdpDialogOutcome(CdpDialog? Dialog);
-
 /// <summary>
 /// An element's box: what it is, how many elements matched, its rectangle in CSS pixels of the main frame's viewport (all
 /// its boxes together), the page's devicePixelRatio, viewport size in CSS pixels, pinch-zoom scale and visibilityState (read
@@ -125,11 +116,13 @@ public interface ICdpGateHold : IDisposable
 
 /// <summary>
 /// What a click or a typing did: the element, how many matched, the point clicked (CSS pixels), the length typed, the
-/// dialog it opened, and a warning when the page did not confirm the input in time.
+/// dialog it opened, and a warning when the page did not confirm the input in time; with a dialog answer, how the dialog
+/// was answered (<see cref="Answer"/>), or why it could not be (<see cref="AnswerFailure"/>: it is still open).
 /// </summary>
 public sealed record CdpInputOutcome(
     BrowserElementInfo? Element = null, int? MatchCount = null, CssPoint? Point = null, int? TypedLength = null,
-    bool? PressedEnter = null, CdpDialog? Dialog = null, string? Warning = null);
+    bool? PressedEnter = null, CdpDialog? Dialog = null, string? Warning = null, CdpAnsweredDialog? Answer = null,
+    string? AnswerFailure = null);
 
 /// <summary>A capture of the tab's viewport: the PNG, the page's address and title, and whether the tab was brought to the front.</summary>
 public sealed record CdpScreenshot(byte[] Png, string Url, string Title, bool Activated);

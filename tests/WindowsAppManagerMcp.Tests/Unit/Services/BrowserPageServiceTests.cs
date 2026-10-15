@@ -23,6 +23,7 @@ public class BrowserPageServiceTests
     private readonly Mock<ICdpPageService> _pages = new();
     private readonly Mock<IBrowserViewportLocator> _viewports = new();
     private readonly Mock<IDebugPortLocator> _locator = new();
+    private readonly Mock<IBrowserDialogService> _dialogs = new();
     private readonly InputSession _session = new(new FakeInputWrapper());
     private ITargetPolicy _policy = new TargetPolicy(TargetPolicySettings.Default);
     private FakePortOwnerResolver _owners = new(owner: (int)BrowserPid);
@@ -56,7 +57,7 @@ public class BrowserPageServiceTests
 
     private BrowserPageService CreateSut() => new(
         _windows.Object, new BrowserDetectionService(), _reading.Object, _cdp.Object, _pages.Object, _owners, _viewports.Object, _policy,
-        _locator.Object, _session);
+        _locator.Object, _session, _dialogs.Object);
 
     private static BrowserTabTarget ByWindow(string? targetId = null) => new(BrowserWindow, null, targetId);
 
@@ -116,7 +117,7 @@ public class BrowserPageServiceTests
         _cdp.Setup(c => c.FindTargetByIdAsync(Port, (int)BrowserPid, "GONE", It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(CdpResult<CdpTarget>.Fail(BrowserErrorCode.CdpTargetNotFound, "No tab with that id."));
 
-        var result = await CreateSut().HandleDialogAsync(ByWindow("GONE"), true, null);
+        var result = await CreateSut().ClickAsync(ByWindow("GONE"), Save, MouseButton.Primary, 1);
 
         result.ErrorCode.Should().Be(nameof(BrowserErrorCode.CdpTargetNotFound));
         result.CdpPort.Should().Be(Port);
@@ -172,8 +173,8 @@ public class BrowserPageServiceTests
     public async Task TheGateHandedToCdp_RefusesWhileInputIsPaused()
     {
         CdpGate? handed = null;
-        _pages.Setup(p => p.ClickAsync(Shown, Save, MouseButton.Primary, 1, It.IsAny<CdpGate>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
-            .Callback((CdpTarget _, BrowserElementLocator _, MouseButton _, int _, CdpGate gate, TimeSpan _, CancellationToken _) => handed = gate)
+        _pages.Setup(p => p.ClickAsync(Shown, Save, MouseButton.Primary, 1, It.IsAny<CdpGate>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>(), It.IsAny<BrowserDialogAnswer?>()))
+            .Callback((CdpTarget _, BrowserElementLocator _, MouseButton _, int _, CdpGate gate, TimeSpan _, CancellationToken _, BrowserDialogAnswer? _) => handed = gate)
             .ReturnsAsync(CdpPageResult<CdpInputOutcome>.Ok(new CdpInputOutcome()));
         await CreateSut().ClickAsync(ByWindow(), Save, MouseButton.Primary, 1);
         _session.Pause(InputControlSources.Hotkey);
@@ -187,8 +188,8 @@ public class BrowserPageServiceTests
     public async Task TheGateHandedToCdp_TellsAPauseWhileItIsHeld()
     {
         CdpGate? handed = null;
-        _pages.Setup(p => p.ClickAsync(Shown, Save, MouseButton.Primary, 1, It.IsAny<CdpGate>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
-            .Callback((CdpTarget _, BrowserElementLocator _, MouseButton _, int _, CdpGate gate, TimeSpan _, CancellationToken _) => handed = gate)
+        _pages.Setup(p => p.ClickAsync(Shown, Save, MouseButton.Primary, 1, It.IsAny<CdpGate>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>(), It.IsAny<BrowserDialogAnswer?>()))
+            .Callback((CdpTarget _, BrowserElementLocator _, MouseButton _, int _, CdpGate gate, TimeSpan _, CancellationToken _, BrowserDialogAnswer? _) => handed = gate)
             .ReturnsAsync(CdpPageResult<CdpInputOutcome>.Ok(new CdpInputOutcome()));
         await CreateSut().ClickAsync(ByWindow(), Save, MouseButton.Primary, 1);
 
@@ -418,7 +419,7 @@ public class BrowserPageServiceTests
     [Fact]
     public async Task Click_ThatOpenedADialog_SaysToAnswerItWithBrowserHandleDialog()
     {
-        _pages.Setup(p => p.ClickAsync(Shown, Save, MouseButton.Primary, 1, It.IsAny<CdpGate>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+        _pages.Setup(p => p.ClickAsync(Shown, Save, MouseButton.Primary, 1, It.IsAny<CdpGate>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>(), It.IsAny<BrowserDialogAnswer?>()))
             .ReturnsAsync(CdpPageResult<CdpInputOutcome>.Ok(new CdpInputOutcome(new BrowserElementInfo("button", "Delete"), 1, new CssPoint(5, 5),
                 Dialog: new CdpDialog("confirm", new string('m', 500), null, Shown.Url))));
 
@@ -431,27 +432,50 @@ public class BrowserPageServiceTests
     }
 
     [Fact]
-    public async Task HandleDialog_ReturnsWhatWasAnswered_AndTheDialogWhenReported()
+    public async Task Click_ThatOpenedADialog_NotesItsTextForBrowserHandleDialog_ByTheWindow()
     {
-        _pages.Setup(p => p.HandleDialogAsync(Shown, false, null, It.IsAny<CdpGate>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(CdpPageResult<CdpDialogOutcome>.Ok(new CdpDialogOutcome(new CdpDialog("beforeunload", "Leave?", null, Shown.Url))));
+        // The agent was shown the dialog's text in the result: browser_handle_dialog may then accept it
+        _pages.Setup(p => p.ClickAsync(Shown, Save, MouseButton.Primary, 1, It.IsAny<CdpGate>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>(), It.IsAny<BrowserDialogAnswer?>()))
+            .ReturnsAsync(CdpPageResult<CdpInputOutcome>.Ok(new CdpInputOutcome(new BrowserElementInfo("button", "Delete"), 1, new CssPoint(5, 5),
+                Dialog: new CdpDialog("confirm", "Delete the draft?", null, Shown.Url))));
 
-        var result = await CreateSut().HandleDialogAsync(ByWindow(), accept: false, promptText: null);
+        var result = await CreateSut().ClickAsync(ByWindow(), Save, MouseButton.Primary, 1);
 
-        result.Should().Be(new BrowserDialogResult(true, "SHOWN", false, "beforeunload", "Leave?", Port));
+        result.Dialog.Should().Be(new BrowserOpenedDialog("confirm", "Delete the draft?"));
+        result.Warning.Should().Contain($"handle {(long)BrowserWindow}").And.Contain("dialog option").And.NotContain("respond_to_dialog");
+        _dialogs.Verify(d => d.NoteShown(BrowserWindow, "Delete the draft?"));
+    }
+
+    [Theory]
+    [InlineData(true, BrowserOpenedDialog.Accepted)]
+    [InlineData(false, BrowserOpenedDialog.Dismissed)]
+    public async Task Click_WithTheDialogOption_PassesItOn_AndSaysHowTheDialogWasAnswered(bool accept, string answer)
+    {
+        var dialog = new CdpDialog("confirm", "Delete the draft?", null, Shown.Url);
+        var asked = new BrowserDialogAnswer(accept);
+        _pages.Setup(p => p.ClickAsync(Shown, Save, MouseButton.Primary, 1, It.IsAny<CdpGate>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>(), asked))
+            .ReturnsAsync(CdpPageResult<CdpInputOutcome>.Ok(new CdpInputOutcome(new BrowserElementInfo("button", "Delete"), 1, new CssPoint(5, 5),
+                Dialog: dialog, Answer: new CdpAnsweredDialog(dialog, accept))));
+
+        var result = await CreateSut().ClickAsync(ByWindow(), Save, MouseButton.Primary, 1, dialog: asked);
+
+        result.Dialog.Should().Be(new BrowserOpenedDialog("confirm", "Delete the draft?", answer));
+        result.Warning.Should().BeNull();
+        _dialogs.Verify(d => d.NoteShown(It.IsAny<nint>(), It.IsAny<string>()), Times.Never, "an answered dialog is closed");
     }
 
     [Fact]
-    public async Task HandleDialog_ADialogTheBrowserDidNotReport_IsDismissed_WithAWarningThatItsTextIsUnknown()
+    public async Task Click_WhoseDialogCouldNotBeAnswered_SaysItIsStillOpen()
     {
-        _pages.Setup(p => p.HandleDialogAsync(Shown, false, null, It.IsAny<CdpGate>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(CdpPageResult<CdpDialogOutcome>.Ok(new CdpDialogOutcome(null)));
+        var dialog = new CdpDialog("confirm", "Delete the draft?", null, Shown.Url);
+        _pages.Setup(p => p.ClickAsync(Shown, Save, MouseButton.Primary, 1, It.IsAny<CdpGate>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>(), It.IsAny<BrowserDialogAnswer?>()))
+            .ReturnsAsync(CdpPageResult<CdpInputOutcome>.Ok(new CdpInputOutcome(new BrowserElementInfo("button", "Delete"), 1, new CssPoint(5, 5),
+                Dialog: dialog, AnswerFailure: "The browser refused Page.handleJavaScriptDialog: No dialog is showing (-32602)")));
 
-        var result = await CreateSut().HandleDialogAsync(ByWindow(), accept: false, promptText: null);
+        var result = await CreateSut().ClickAsync(ByWindow(), Save, MouseButton.Primary, 1, dialog: new BrowserDialogAnswer(true));
 
-        result.Success.Should().BeTrue();
-        result.DialogMessage.Should().BeNull();
-        result.Warning.Should().Contain("text is unknown");
+        result.Dialog!.Answer.Should().BeNull();
+        result.Warning.Should().Contain("could not be answered").And.Contain("still open").And.Contain("browser_handle_dialog");
     }
 
     #endregion

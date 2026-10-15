@@ -144,7 +144,7 @@ public sealed class BrowserTabService : IBrowserTabService
         try
         {
             navigated = await _tabs.NavigateAsync(tab.Value, options.Url, options.WaitUntil, EnterGateAsync,
-                remaining > TimeSpan.Zero ? remaining : TimeSpan.FromMilliseconds(1), cancellationToken).ConfigureAwait(false);
+                remaining > TimeSpan.Zero ? remaining : TimeSpan.FromMilliseconds(1), cancellationToken, options.Dialog).ConfigureAwait(false);
         }
         catch (ToolErrorException refused) when (options.NewTab)
         {
@@ -185,7 +185,11 @@ public sealed class BrowserTabService : IBrowserTabService
         }
 
         var result = new BrowserNavigateResult(true, targetId, Cut(page.Url, MaxUrlLength), Cut(page.Title, MaxTitleLength),
-            page.HttpStatus, page.LoadState, elapsed, newTab, browser.Port);
+            page.HttpStatus, page.LoadState, elapsed, newTab, browser.Port,
+            Dialog: page.Dialog is { } answered
+                ? new BrowserOpenedDialog(answered.Dialog.Type, Cut(answered.Dialog.Message, CdpDialogText.MaxDialogMessageLength)!,
+                    answered.Accepted ? BrowserOpenedDialog.Accepted : BrowserOpenedDialog.Dismissed)
+                : null);
         return page.TimedOut
             ? result with
             {

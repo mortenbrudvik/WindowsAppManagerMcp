@@ -556,6 +556,13 @@ public enum BrowserErrorCode
     /// </summary>
     BrowserInternalPage = 21,
 
+    /// <summary>
+    /// browser_handle_dialog (roadmap M5.8, dialogs): accept was asked for a confirm or prompt whose text the agent had not
+    /// been shown (no read of it, and no action that opened it reported it). Nothing was pressed; the result carries the
+    /// dialog's text, so the next call may accept it.
+    /// </summary>
+    DialogNotRead = 22,
+
     // CDP (Chrome DevTools Protocol) errors are numbered from 30 so that other
     // browser error codes can be added above without renumbering.
 

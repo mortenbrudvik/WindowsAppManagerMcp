@@ -76,6 +76,9 @@ public static class ServiceRegistration
         services.AddSingleton<ICdpPageService, CdpPageService>();
         services.AddSingleton<IBrowserViewportLocator, BrowserViewportLocator>();
         services.AddSingleton<IBrowserPageService, BrowserPageService>();
+
+        // browser_handle_dialog (roadmap M5.8, dialogs): a Chrome or Edge window's JavaScript dialog, through UI Automation
+        services.AddSingleton<IBrowserDialogService, BrowserDialogService>();
         services.AddSingleton<IProcessService, ProcessService>();
         // The debug browsers' lifecycle (roadmap M5.4): named profiles, reuseIfRunning and close_debug_browser. It reaches a
         // browser only through ICdpService (Browser.close, /json/version), which the E2E harness refuses

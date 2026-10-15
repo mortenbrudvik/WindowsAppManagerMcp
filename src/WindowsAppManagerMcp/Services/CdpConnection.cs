@@ -42,6 +42,10 @@ public sealed class CdpConnection : ICdpConnection
     private int _disposed;
     private CdpResult<bool>? _closed;
     private CdpDialog? _dialog;
+    private DialogAnswer? _answer;
+
+    /// <summary>How long the answer to a dialog (<see cref="AnswerNextDialog"/>) may take.</summary>
+    public static readonly TimeSpan DialogAnswerTimeout = TimeSpan.FromSeconds(5);
 
     /// <param name="socket">An open WebSocket to a DevTools endpoint; the connection owns and disposes it.</param>
     /// <param name="label">Names the connection in messages, for example "tab 8C1F...".</param>
@@ -77,6 +81,23 @@ public sealed class CdpConnection : ICdpConnection
                 return _dialog;
             }
         }
+    }
+
+    /// <inheritdoc />
+    public Task<CdpResult<CdpAnsweredDialog>> AnswerNextDialog(bool accept, string? promptText)
+    {
+        var answer = new DialogAnswer(accept, promptText);
+        lock (_gate)
+        {
+            if (_closed is { } closed)
+                return Task.FromResult(closed.FailAs<CdpAnsweredDialog>());
+
+            _answer?.Result.TrySetResult(CdpResult<CdpAnsweredDialog>.Fail(
+                BrowserErrorCode.CdpProtocolError, "Another answer was set for the next dialog."));
+            _answer = answer;
+        }
+
+        return answer.Result.Task;
     }
 
     /// <inheritdoc />
@@ -335,7 +356,18 @@ public sealed class CdpConnection : ICdpConnection
         switch (method)
         {
             case "Page.javascriptDialogOpening":
-                OpenDialogReported(CdpDialogText.FromEvent(parameters));
+                var opened = CdpDialogText.FromEvent(parameters);
+                DialogAnswer? answer;
+                lock (_gate)
+                {
+                    answer = _answer;
+                    _answer = null;
+                }
+
+                if (answer == null)
+                    OpenDialogReported(opened);
+                else
+                    _ = Task.Run(() => AnswerAsync(opened, answer));
                 break;
 
             case "Page.javascriptDialogClosed":
@@ -369,6 +401,41 @@ public sealed class CdpConnection : ICdpConnection
         return true;
     }
 
+    /// <summary>
+    /// Answers a dialog as <see cref="AnswerNextDialog"/> asked, off the reader (the reply comes through it). A refused or
+    /// unanswered answer leaves the dialog open, which then counts as open as an unanswered one does.
+    /// </summary>
+    private async Task AnswerAsync(CdpDialog dialog, DialogAnswer answer)
+    {
+        var parameters = new Dictionary<string, object> { ["accept"] = answer.Accept };
+        if (answer.Accept && answer.PromptText != null && dialog.Type == "prompt")
+            parameters["promptText"] = answer.PromptText;
+
+        CdpResult<CdpReply> reply;
+        try
+        {
+            reply = await SendAsync("Page.handleJavaScriptDialog", parameters, DialogAnswerTimeout, CancellationToken.None,
+                CdpSendOptions.AllowWhileDialogOpen).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is ObjectDisposedException or OperationCanceledException)
+        {
+            reply = CdpResult<CdpReply>.Fail(BrowserErrorCode.CdpTargetClosed, $"The connection ended before the dialog was answered ({ex.Message}).");
+        }
+
+        if (reply is { Success: true, Value.Error: null })
+        {
+            answer.Result.TrySetResult(CdpResult<CdpAnsweredDialog>.Ok(new CdpAnsweredDialog(dialog, answer.Accept)));
+            return;
+        }
+
+        if (Closed == null)
+            OpenDialogReported(dialog);
+
+        answer.Result.TrySetResult(reply.Success
+            ? CdpReplies.ToFailure<CdpAnsweredDialog>("Page.handleJavaScriptDialog", reply.Value!.Error!)
+            : reply.FailAs<CdpAnsweredDialog>());
+    }
+
     /// <summary>Records the dialog and fails every waiting command that may not run while it is open.</summary>
     private void OpenDialogReported(CdpDialog dialog)
     {
@@ -391,6 +458,7 @@ public sealed class CdpConnection : ICdpConnection
     {
         List<PendingCommand> pending;
         List<EventWaiter> waiters;
+        DialogAnswer? answer;
         lock (_gate)
         {
             if (_closed != null)
@@ -401,7 +469,11 @@ public sealed class CdpConnection : ICdpConnection
             _pending.Clear();
             waiters = _waiters.ToList();
             _waiters.Clear();
+            answer = _answer;
+            _answer = null;
         }
+
+        answer?.Result.TrySetResult(reason.FailAs<CdpAnsweredDialog>());
 
         foreach (var command in pending)
             command.Reply.TrySetResult(reason.FailAs<CdpReply>());
@@ -455,6 +527,16 @@ public sealed class CdpConnection : ICdpConnection
 
     private static string FormatBytes(int bytes) =>
         bytes >= 1024 * 1024 && bytes % (1024 * 1024) == 0 ? $"{bytes / (1024 * 1024)} MB" : $"{bytes} bytes";
+
+    /// <summary>How the next dialog is answered, and the answer's outcome.</summary>
+    private sealed class DialogAnswer(bool accept, string? promptText)
+    {
+        public bool Accept { get; } = accept;
+
+        public string? PromptText { get; } = promptText;
+
+        public TaskCompletionSource<CdpResult<CdpAnsweredDialog>> Result { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    }
 
     private sealed class PendingCommand(CdpSendOptions options)
     {

@@ -83,7 +83,7 @@ public sealed record BrowserTabResult(
 /// <param name="NewTab">Open a new tab for it instead of navigating the tab.</param>
 /// <param name="WaitUntil">What to wait for once the navigation started.</param>
 /// <param name="TimeoutMs">The time limit of the whole call.</param>
-public sealed record BrowserNavigateOptions(string Url, bool NewTab, BrowserWaitUntil WaitUntil, int TimeoutMs);
+public sealed record BrowserNavigateOptions(string Url, bool NewTab, BrowserWaitUntil WaitUntil, int TimeoutMs, BrowserDialogAnswer? Dialog = null);
 
 /// <summary>
 /// browser_navigate's result (roadmap M5.5). LoadState is load or domcontentloaded (reached), sameDocument (a jump within
@@ -91,7 +91,8 @@ public sealed record BrowserNavigateOptions(string Url, bool NewTab, BrowserWait
 /// loading), failed (NavigationFailed: the tab shows the browser's error page) or download (NavigationFailed: the address
 /// answered with a file, and the tab keeps its page). Url and Title are the page's once it loaded (after redirects);
 /// HttpStatus the main document's status when the browser reports it. ErrorText is the browser's own reason when it could
-/// not load the page (NavigationFailed).
+/// not load the page (NavigationFailed). Dialog is the JavaScript dialog the navigation opened (a beforeunload prompt, a
+/// dialog of the new page) when the dialog option answered it.
 /// </summary>
 public sealed record BrowserNavigateResult(
     bool Success,
@@ -104,6 +105,7 @@ public sealed record BrowserNavigateResult(
     bool? NewTab = null,
     int? CdpPort = null,
     string? ErrorText = null,
+    BrowserOpenedDialog? Dialog = null,
     string? Error = null,
     string? ErrorCode = null)
 {

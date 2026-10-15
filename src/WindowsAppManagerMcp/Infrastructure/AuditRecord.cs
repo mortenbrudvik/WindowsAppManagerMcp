@@ -54,7 +54,10 @@ public static class AuditRecord
         "controlChars", "method",
         // activate_tab and browser_navigate (roadmap M5.5): a CDP tab id and a fixed value; browser_navigate's url is kept
         // as its scheme and host (NavigatedUrlTool)
-        "targetId", "waitUntil"
+        "targetId", "waitUntil",
+        // browser_click, browser_type and browser_navigate (roadmap M5.8, dialogs): accept or dismiss; promptText is recorded
+        // as promptTextLength
+        "dialog"
     };
 
     /// <summary>

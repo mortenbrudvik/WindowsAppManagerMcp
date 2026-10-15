@@ -81,6 +81,17 @@ public interface ICdpConnection : IAsyncDisposable
         CdpSendOptions options = CdpSendOptions.None);
 
     /// <summary>
+    /// Answers the first JavaScript dialog the page opens after this call (Page.javascriptDialogOpening) at once on this
+    /// connection, with Page.handleJavaScriptDialog (<paramref name="promptText"/> only for a prompt): the dialog then does not
+    /// count as open, so the commands waiting on the page go on once it is answered (roadmap M5.8, dialogs). A later dialog
+    /// is not answered. The browser answers only a dialog opened while a connection with Page.enable is attached (Chrome
+    /// and Edge 155 refuse one opened before with "No dialog is showing"), so call it before the command that may open one.
+    /// </summary>
+    /// <returns>Completes once the answer came back: the dialog and the answer, or why it failed (the dialog then counts as
+    /// open). Never completes when no dialog opens, until the connection ends.</returns>
+    Task<CdpResult<CdpAnsweredDialog>> AnswerNextDialog(bool accept, string? promptText);
+
+    /// <summary>
     /// Starts listening for the next event <paramref name="method"/> that passes <paramref name="filter"/>. Register it
     /// before sending the command that causes the event, so an event that arrives first is not missed.
     /// </summary>
@@ -114,3 +125,6 @@ public record CdpProtocolFault(int Code, string Message);
 
 /// <summary>A JavaScript dialog the page has open (Page.javascriptDialogOpening). Its text comes from the page.</summary>
 public record CdpDialog(string Type, string Message, string? DefaultPrompt, string Url);
+
+/// <summary>A JavaScript dialog <see cref="ICdpConnection.AnswerNextDialog"/> answered: the dialog and whether it was accepted.</summary>
+public sealed record CdpAnsweredDialog(CdpDialog Dialog, bool Accepted);

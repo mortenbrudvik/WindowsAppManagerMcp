@@ -290,6 +290,126 @@ public class CdpConnectionTests
         afterClose.Success.Should().BeTrue();
     }
 
+    /// <summary>
+    /// A page that opens a dialog while Runtime.evaluate runs, and the evaluate's reply once the dialog is answered, as a
+    /// browser does; Page.handleJavaScriptDialog closes the dialog unless <paramref name="refuse"/>.
+    /// </summary>
+    private static FakeCdpWebSocket DialogPage(string type = "confirm", bool refuse = false, int dialogs = 1)
+    {
+        var pending = new Queue<int>();
+        var opened = 0;
+        return new FakeCdpWebSocket((s, command) =>
+        {
+            switch (Method(command))
+            {
+                case "Runtime.evaluate":
+                    pending.Enqueue(Id(command));
+                    opened++;
+                    s.EnqueueEvent("Page.javascriptDialogOpening",
+                        new { url = "https://shop.example/", message = $"Dialog {opened}?", type, defaultPrompt = "", hasBrowserHandler = true });
+                    break;
+                case "Page.handleJavaScriptDialog" when refuse:
+                    s.ReplyError(command, -32602, "No dialog is showing");
+                    break;
+                case "Page.handleJavaScriptDialog":
+                    s.ReplyEmpty(command);
+                    s.EnqueueEvent("Page.javascriptDialogClosed", new { result = true, userInput = "" });
+                    if (opened < dialogs)
+                    {
+                        opened++;
+                        s.EnqueueEvent("Page.javascriptDialogOpening",
+                            new { url = "https://shop.example/", message = $"Dialog {opened}?", type, defaultPrompt = "", hasBrowserHandler = true });
+                    }
+                    else if (pending.Count > 0)
+                    {
+                        s.Enqueue("{\"id\":" + pending.Dequeue() + ",\"result\":{\"done\":true}}");
+                    }
+
+                    break;
+                default:
+                    s.ReplyEmpty(command);
+                    break;
+            }
+        });
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task AnswerNextDialog_AnswersTheDialogAtOnce_SoTheCommandWaitingOnThePageGoesOn(bool accept)
+    {
+        var socket = DialogPage();
+        await using var connection = Connect(socket);
+
+        var answered = connection.AnswerNextDialog(accept, promptText: "ignored for a confirm");
+        var evaluate = await connection.SendAsync("Runtime.evaluate", null, LongTimeout, CancellationToken.None);
+        var answer = await answered.WaitAsync(HangBound);
+
+        evaluate.Success.Should().BeTrue("the dialog was answered, so it never counted as open");
+        answer.Value.Should().Be(new CdpAnsweredDialog(new CdpDialog("confirm", "Dialog 1?", "", "https://shop.example/"), accept));
+        var sent = socket.SentCommands.Single(c => Method(c) == "Page.handleJavaScriptDialog").GetProperty("params");
+        sent.GetProperty("accept").GetBoolean().Should().Be(accept);
+        sent.TryGetProperty("promptText", out _).Should().BeFalse("only a prompt takes text");
+        connection.OpenDialog.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task AnswerNextDialog_GivesAPromptItsText()
+    {
+        var socket = DialogPage(type: "prompt");
+        await using var connection = Connect(socket);
+
+        var answered = connection.AnswerNextDialog(true, "Kari");
+        await connection.SendAsync("Runtime.evaluate", null, LongTimeout, CancellationToken.None);
+        await answered.WaitAsync(HangBound);
+
+        socket.SentCommands.Single(c => Method(c) == "Page.handleJavaScriptDialog").GetProperty("params").GetProperty("promptText")
+            .GetString().Should().Be("Kari");
+    }
+
+    [Fact]
+    public async Task AnswerNextDialog_AnswersOnlyTheFirstDialog_AndASecondOneStaysOpen()
+    {
+        var socket = DialogPage(dialogs: 2);
+        await using var connection = Connect(socket);
+
+        var answered = connection.AnswerNextDialog(true, null);
+        var evaluate = await connection.SendAsync("Runtime.evaluate", null, LongTimeout, CancellationToken.None);
+        await answered.WaitAsync(HangBound);
+
+        evaluate.ErrorCode.Should().Be(BrowserErrorCode.CdpDialogOpen, "the page opened a second dialog, which nobody asked to answer");
+        connection.OpenDialog!.Message.Should().Be("Dialog 2?");
+        socket.SentCommands.Count(c => Method(c) == "Page.handleJavaScriptDialog").Should().Be(1);
+    }
+
+    [Fact]
+    public async Task AnswerNextDialog_ThatTheBrowserRefuses_LeavesTheDialogOpen_WithTheReason()
+    {
+        var socket = DialogPage(refuse: true);
+        await using var connection = Connect(socket);
+
+        var answered = connection.AnswerNextDialog(true, null);
+        var evaluate = connection.SendAsync("Runtime.evaluate", null, LongTimeout, CancellationToken.None);
+        var answer = await answered.WaitAsync(HangBound);
+
+        answer.Success.Should().BeFalse();
+        answer.Error.Should().Contain("No dialog is showing");
+        (await evaluate.WaitAsync(HangBound)).ErrorCode.Should().Be(BrowserErrorCode.CdpDialogOpen);
+        connection.OpenDialog.Should().NotBeNull();
+    }
+
+    [Fact]
+    public async Task AnswerNextDialog_EndsWithTheConnection_WhenNoDialogOpened()
+    {
+        var socket = Echoing();
+        var connection = Connect(socket);
+        var answered = connection.AnswerNextDialog(true, null);
+
+        await connection.DisposeAsync();
+
+        (await answered.WaitAsync(HangBound)).Success.Should().BeFalse();
+    }
+
     #endregion
 
     #region The connection ends

@@ -1,4 +1,6 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
+using WindowsAppManagerMcp.Infrastructure;
 
 namespace WindowsAppManagerMcp.Models;
 
@@ -91,25 +93,45 @@ public sealed record BrowserEvaluateResult(
 public sealed record BrowserScriptException(string Text, int? LineNumber = null, int? ColumnNumber = null);
 
 /// <summary>
-/// browser_handle_dialog's result (roadmap M5.8). DialogType and DialogMessage are the dialog's when the browser reported it
-/// to this connection (Chrome does after Page.enable; Edge 155 does not for a dialog that was open before), else null, and
-/// Warning says that a dialog was dismissed unread (one is never accepted unread). The message is written by the page:
-/// untrusted.
+/// browser_handle_dialog's result (roadmap M5.8, dialogs): the JavaScript dialog a Chrome or Edge window shows, read through
+/// UI Automation. DialogType is prompt (it has a text field), confirm (two buttons: also a beforeunload dialog) or alert
+/// (one button); DialogMessage its text and PromptValue the prompt's field, both written by the page (untrusted).
+/// Accepted is the answer given (null when it was only read); DialogClosed whether the dialog was gone after the press.
 /// </summary>
 public sealed record BrowserDialogResult(
     bool Success,
-    string? TargetId = null,
-    bool? Accepted = null,
+    long? WindowHandle = null,
     string? DialogType = null,
     string? DialogMessage = null,
-    int? CdpPort = null,
+    string? PromptValue = null,
+    bool? Accepted = null,
+    bool? DialogClosed = null,
     string? Error = null,
     string? ErrorCode = null,
     string? Warning = null)
 {
     /// <summary>A failed result.</summary>
-    public static BrowserDialogResult Failed(string errorCode, string error, int? cdpPort = null, string? targetId = null) =>
-        new(false, targetId, CdpPort: cdpPort, Error: error, ErrorCode: errorCode);
+    public static BrowserDialogResult Failed(string errorCode, string error, long? windowHandle = null) =>
+        new(false, windowHandle, Error: error, ErrorCode: errorCode);
+}
+
+/// <summary>
+/// How browser_click, browser_type and browser_navigate answer a JavaScript dialog the action opens (roadmap M5.8, dialogs):
+/// accepted (with <see cref="PromptText"/> for a prompt) or dismissed, on the action's own DevTools connection.
+/// </summary>
+public sealed record BrowserDialogAnswer(bool Accept, string? PromptText = null);
+
+/// <summary>The dialog option of browser_click, browser_type and browser_navigate (roadmap M5.8, dialogs).</summary>
+[ToolEnum(ToolErrorReporting.InvalidArgumentsErrorCode, "dialog")]
+public enum BrowserDialogChoice
+{
+    /// <summary>Accept it: OK, or Leave on a beforeunload dialog.</summary>
+    [JsonStringEnumMemberName("accept")]
+    Accept,
+
+    /// <summary>Dismiss it: Cancel, or Stay on a beforeunload dialog (an alert closes either way).</summary>
+    [JsonStringEnumMemberName("dismiss")]
+    Dismiss
 }
 
 /// <summary>
@@ -140,8 +162,8 @@ public sealed record BrowserElementRectResult(
 
 /// <summary>
 /// browser_click's and browser_type's result (roadmap M5.8). Dialog is the JavaScript dialog the action opened (its type and
-/// the start of its message, from the page), to answer with browser_handle_dialog. Warning says the page did not confirm the
-/// input in time (busy): it was sent.
+/// the start of its message, from the page) and, with the dialog option, how it was answered; one left open is answered
+/// with browser_handle_dialog. Warning says the page did not confirm the input in time (busy): it was sent.
 /// </summary>
 public sealed record BrowserInputResult(
     bool Success,
@@ -162,8 +184,16 @@ public sealed record BrowserInputResult(
         new(false, targetId, CdpPort: cdpPort, Error: error, ErrorCode: errorCode);
 }
 
-/// <summary>A JavaScript dialog an action opened: its type and the start of its message, written by the page (untrusted).</summary>
-public sealed record BrowserOpenedDialog(string Type, string Message);
+/// <summary>
+/// A JavaScript dialog an action opened: its type and the start of its message, written by the page (untrusted), and Answer:
+/// "accepted" or "dismissed" when the action's dialog option answered it, null when it was left open.
+/// </summary>
+public sealed record BrowserOpenedDialog(string Type, string Message, string? Answer = null)
+{
+    public const string Accepted = "accepted";
+
+    public const string Dismissed = "dismissed";
+}
 
 /// <summary>
 /// browser_screenshot's metadata (roadmap M5.8), next to the image: its size, the page's viewport size in device pixels

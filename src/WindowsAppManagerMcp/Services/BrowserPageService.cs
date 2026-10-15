@@ -30,6 +30,7 @@ public sealed class BrowserPageService : IBrowserPageService
     private readonly ICdpPageService _pages;
     private readonly IBrowserViewportLocator _viewports;
     private readonly IInputSession? _session;
+    private readonly IBrowserDialogService? _dialogs;
     private readonly BrowserCdpTargets _targets;
 
     /// <param name="windows">The window and process reads.</param>
@@ -42,6 +43,8 @@ public sealed class BrowserPageService : IBrowserPageService
     /// <param name="policy">The user's target policy; the server always passes it.</param>
     /// <param name="portLocator">Finds a window's own debug port; the server always passes it. Without it, cdpPort is needed.</param>
     /// <param name="session">The input session the gate checks for a pause; the server always passes it.</param>
+    /// <param name="dialogs">Learns of the dialog an action opened and left open, so browser_handle_dialog may accept it; the
+    /// server always passes it.</param>
     public BrowserPageService(
         INativeWindowWrapper windows,
         IBrowserDetectionService detection,
@@ -52,11 +55,13 @@ public sealed class BrowserPageService : IBrowserPageService
         IBrowserViewportLocator viewports,
         ITargetPolicy? policy = null,
         IDebugPortLocator? portLocator = null,
-        IInputSession? session = null)
+        IInputSession? session = null,
+        IBrowserDialogService? dialogs = null)
     {
         _pages = pages;
         _viewports = viewports;
         _session = session;
+        _dialogs = dialogs;
         _targets = new BrowserCdpTargets(windows, detection, reading, cdp, portOwners, policy, portLocator);
     }
 
@@ -87,28 +92,6 @@ public sealed class BrowserPageService : IBrowserPageService
 
         var (value, length, truncated) = Bounded(outcome.Value);
         return new BrowserEvaluateResult(true, tab.Target!.Id, value, outcome.ValueType, length, truncated, CdpPort: tab.Port);
-    }
-
-    /// <inheritdoc />
-    public async Task<BrowserDialogResult> HandleDialogAsync(
-        BrowserTabTarget target, bool accept, string? promptText, CancellationToken cancellationToken = default)
-    {
-        var tab = await FindTabAsync(target, cancellationToken).ConfigureAwait(false);
-        if (tab.Refusal is { } refusal)
-            return BrowserDialogResult.Failed(refusal.Code, refusal.Error, tab.Port, target.TargetId);
-
-        var answered = await _pages.HandleDialogAsync(tab.Target!, accept, promptText, EnterGateAsync, ActionTimeout, cancellationToken)
-            .ConfigureAwait(false);
-        if (!answered.Success)
-            return BrowserDialogResult.Failed(answered.ErrorCode!, answered.Error!, tab.Port, tab.Target!.Id);
-
-        var dialog = answered.Value!.Dialog;
-        return new BrowserDialogResult(true, tab.Target!.Id, accept, dialog?.Type is { Length: > 0 } type ? type : null,
-            dialog == null ? null : Cut(dialog.Message, CdpDialogText.MaxDialogMessageLength), tab.Port,
-            Warning: dialog == null
-                ? "The browser did not report this dialog to the connection, so its text is unknown; it was dismissed unread. Read " +
-                  "the page to see what that changed."
-                : null);
     }
 
     /// <inheritdoc />
@@ -203,29 +186,31 @@ public sealed class BrowserPageService : IBrowserPageService
 
     /// <inheritdoc />
     public async Task<BrowserInputResult> ClickAsync(
-        BrowserTabTarget target, BrowserElementLocator locator, MouseButton button, int clickCount, CancellationToken cancellationToken = default)
+        BrowserTabTarget target, BrowserElementLocator locator, MouseButton button, int clickCount, CancellationToken cancellationToken = default,
+        BrowserDialogAnswer? dialog = null)
     {
         ArgumentNullException.ThrowIfNull(locator);
         var tab = await FindTabAsync(target, cancellationToken).ConfigureAwait(false);
         if (tab.Refusal is { } refusal)
             return BrowserInputResult.Failed(refusal.Code, refusal.Error, tab.Port, target.TargetId);
 
-        var clicked = await _pages.ClickAsync(tab.Target!, locator, button, clickCount, EnterGateAsync, ActionTimeout, cancellationToken)
-            .ConfigureAwait(false);
+        var clicked = await _pages.ClickAsync(tab.Target!, locator, button, clickCount, EnterGateAsync, ActionTimeout, cancellationToken,
+            dialog).ConfigureAwait(false);
         return clicked.Success
             ? ToResult(clicked.Value!, tab)
             : BrowserInputResult.Failed(clicked.ErrorCode!, clicked.Error!, tab.Port, tab.Target!.Id);
     }
 
     /// <inheritdoc />
-    public async Task<BrowserInputResult> TypeAsync(BrowserTabTarget target, BrowserTypeOptions options, CancellationToken cancellationToken = default)
+    public async Task<BrowserInputResult> TypeAsync(
+        BrowserTabTarget target, BrowserTypeOptions options, CancellationToken cancellationToken = default, BrowserDialogAnswer? dialog = null)
     {
         ArgumentNullException.ThrowIfNull(options);
         var tab = await FindTabAsync(target, cancellationToken).ConfigureAwait(false);
         if (tab.Refusal is { } refusal)
             return BrowserInputResult.Failed(refusal.Code, refusal.Error, tab.Port, target.TargetId);
 
-        var typed = await _pages.TypeAsync(tab.Target!, options, EnterGateAsync, ActionTimeout, cancellationToken).ConfigureAwait(false);
+        var typed = await _pages.TypeAsync(tab.Target!, options, EnterGateAsync, ActionTimeout, cancellationToken, dialog).ConfigureAwait(false);
         return typed.Success
             ? ToResult(typed.Value!, tab)
             : BrowserInputResult.Failed(typed.ErrorCode!, typed.Error!, tab.Port, tab.Target!.Id);
@@ -296,16 +281,44 @@ public sealed class BrowserPageService : IBrowserPageService
         return (JsonSerializer.SerializeToElement(json[..cut]), json.Length, true);
     }
 
-    private static BrowserInputResult ToResult(CdpInputOutcome outcome, FoundTab tab) =>
+    private BrowserInputResult ToResult(CdpInputOutcome outcome, FoundTab tab) =>
         new(true, tab.Target!.Id, outcome.Element, outcome.MatchCount, outcome.Point, outcome.TypedLength, outcome.PressedEnter,
-            outcome.Dialog is { } dialog
-                ? new BrowserOpenedDialog(dialog.Type, Cut(dialog.Message, CdpDialogText.MaxDialogMessageLength))
-                : null,
-            outcome.Dialog != null
-                ? "The action opened a JavaScript dialog (its text is from the page). The page waits for it: answer it deliberately " +
-                  "with browser_handle_dialog, or ask the user."
-                : outcome.Warning,
+            OpenedDialog(outcome.Dialog, outcome.Answer, tab.WindowHandle, _dialogs),
+            DialogWarning(outcome.Dialog, outcome.Answer, outcome.AnswerFailure, tab.WindowHandle) ?? outcome.Warning,
             tab.Port);
+
+    /// <summary>
+    /// The dialog an action opened, as the result names it: answered (accepted or dismissed), or left open, which is noted
+    /// for browser_handle_dialog (<paramref name="dialogs"/>): the agent has now been shown its text.
+    /// </summary>
+    internal static BrowserOpenedDialog? OpenedDialog(CdpDialog? dialog, CdpAnsweredDialog? answer, nint? window, IBrowserDialogService? dialogs)
+    {
+        if (dialog == null)
+            return null;
+
+        var message = Cut(dialog.Message, CdpDialogText.MaxDialogMessageLength);
+        if (answer == null && window is { } shown)
+            dialogs?.NoteShown(shown, message);
+
+        return new BrowserOpenedDialog(dialog.Type, message,
+            answer == null ? null : answer.Accepted ? BrowserOpenedDialog.Accepted : BrowserOpenedDialog.Dismissed);
+    }
+
+    /// <summary>What to do about a dialog the action opened and left open; null when there is none, or it was answered.</summary>
+    internal static string? DialogWarning(CdpDialog? dialog, CdpAnsweredDialog? answer, string? answerFailure, nint? window)
+    {
+        if (dialog == null || answer != null)
+            return null;
+
+        var how = window is { } handle
+            ? $"answer it deliberately with browser_handle_dialog (handle {(long)handle}), or ask the user"
+            : "answer it deliberately with browser_handle_dialog (it needs the browser window's handle), or ask the user";
+        return answerFailure != null
+            ? $"The action opened a JavaScript dialog (its text is from the page), but it could not be answered ({answerFailure}): it is " +
+              $"still open, and the page waits for it. Read it and {how}."
+            : $"The action opened a JavaScript dialog (its text is from the page). The page waits for it: {how}. Next time pass the " +
+              "dialog option to answer it as the action opens it.";
+    }
 
     /// <summary>
     /// The browser and its tab for a call: refused when the browser is not usable (<see cref="BrowserCdpTargets"/>), the tab

@@ -53,8 +53,9 @@ public sealed class CdpTabService : ICdpTabService
     /// <summary>What a page that answers nothing probably has, and what to do, as the reads say it.</summary>
     private const string UnansweredAdvice =
         "It probably has a JavaScript dialog (alert/confirm/prompt/beforeunload) open, is paused in the debugger, or is busy. " +
-        "If a dialog is open, inspect it (capture_window) and decide deliberately how to close it, or ask the user, before " +
-        "you retry; do not press Enter blindly, since Enter accepts a confirm or beforeunload dialog.";
+        "DevTools cannot answer a dialog once it is open: read it with browser_handle_dialog (the browser window's handle, no " +
+        "accept) and decide deliberately how to answer it, or ask the user, before you retry; do not press Enter, since Enter " +
+        "accepts a confirm or beforeunload dialog.";
 
     /// <summary>The longest one check of a wait (one command) may take before the wait goes on to the next.</summary>
     private static readonly TimeSpan MaxCheckTime = TimeSpan.FromSeconds(5);
@@ -214,7 +215,7 @@ public sealed class CdpTabService : ICdpTabService
     /// <inheritdoc />
     public async Task<CdpResult<CdpNavigation>> NavigateAsync(
         CdpTarget target, string url, BrowserWaitUntil waitUntil, CdpGate gate, TimeSpan timeout,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default, BrowserDialogAnswer? dialogAnswer = null)
     {
         ArgumentNullException.ThrowIfNull(target);
         var stopwatch = Stopwatch.StartNew();
@@ -228,6 +229,28 @@ public sealed class CdpTabService : ICdpTabService
         // Its reply is not awaited: a page blocked by a dialog may never send it
         var enable = connection.SendAsync("Page.enable", null, timeout, cancellationToken);
         _ = enable.ContinueWith(static t => _ = t.Exception, TaskScheduler.Default);
+
+        // With a dialog answer, the dialog the navigation opens (a beforeunload prompt, the new page's own) is answered on
+        // this connection, and the navigation goes on
+        using var opening = connection.ExpectEvent("Page.javascriptDialogOpening");
+        var dialogOpened = opening.WaitAsync(timeout, cancellationToken);
+        var answered = dialogAnswer is { } answer ? connection.AnswerNextDialog(answer.Accept, answer.PromptText) : null;
+        var navigated = await NavigateOnAsync(connection, target, url, waitUntil, gate, timeout, stopwatch, cancellationToken).ConfigureAwait(false);
+        if (answered == null || !navigated.Success || dialogOpened is not { IsCompletedSuccessfully: true, Result.Success: true })
+            return navigated;
+
+        // The dialog opened: its answer comes back at once
+        await Task.WhenAny(answered, Task.Delay(CdpConnection.DialogAnswerTimeout, cancellationToken)).ConfigureAwait(false);
+        return answered is { IsCompletedSuccessfully: true, Result: { Success: true } given }
+            ? CdpResult<CdpNavigation>.Ok(navigated.Value! with { Dialog = given.Value })
+            : navigated;
+    }
+
+    /// <summary>The navigation of <see cref="NavigateAsync"/> on its open connection, Page.enable sent.</summary>
+    private async Task<CdpResult<CdpNavigation>> NavigateOnAsync(
+        ICdpConnection connection, CdpTarget target, string url, BrowserWaitUntil waitUntil, CdpGate gate, TimeSpan timeout,
+        Stopwatch stopwatch, CancellationToken cancellationToken)
+    {
 
         if (waitUntil == BrowserWaitUntil.None)
             return await NavigateWithoutWaitingAsync(connection, url, gate, timeout - stopwatch.Elapsed, cancellationToken).ConfigureAwait(false);

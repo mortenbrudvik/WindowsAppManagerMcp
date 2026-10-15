@@ -9,9 +9,9 @@ using static WindowsAppManagerMcp.Tools.BrowserTabTools;
 namespace WindowsAppManagerMcp.Tools;
 
 /// <summary>
-/// The thin DOM bridge (roadmap M5.8): browser_element_rect, browser_click, browser_type, browser_handle_dialog,
-/// browser_screenshot and browser_evaluate (toolset browser-actions, off by default), on a debug browser's tab through CDP
-/// only. Anything richer (snapshots of the page, forms, file uploads,
+/// The thin DOM bridge (roadmap M5.8): browser_element_rect, browser_click, browser_type, browser_screenshot and
+/// browser_evaluate on a debug browser's tab through CDP only, and browser_handle_dialog on a Chrome or Edge window through
+/// UI Automation (toolset browser-actions, off by default). Anything richer (snapshots of the page, forms, file uploads,
 /// network) is Playwright MCP's, attached to the debug browser with --cdp-endpoint (docs/TOOLS.md, SKILL.md).
 /// </summary>
 /// <remarks>
@@ -49,18 +49,29 @@ public class BrowserPageTools
 
     private const string IndexDescription = "Which match, from 0, when several match (else AmbiguousElement).";
 
+    /// <summary>The dialog option's description (browser_click, browser_type, browser_navigate; roadmap M5.8, dialogs).</summary>
+    internal const string DialogDescription =
+        "Answer a JavaScript dialog the action opens: accept or dismiss. Default: report it and leave it open.";
+
+    /// <summary>The prompt text's description.</summary>
+    internal const string PromptTextDescription = "The answer to a prompt dialog it opens (with dialog accept).";
+
     private readonly IBrowserPageService _pages;
     private readonly IWindowService? _windowService;
     private readonly IInputSession? _session;
+    private readonly IBrowserDialogService? _dialogs;
 
     /// <param name="pages">The DOM bridge service.</param>
     /// <param name="windowService">Resolves the window selector; the server always passes it.</param>
     /// <param name="session">Refuses the tools that change the page while input is paused; the server always passes it.</param>
-    public BrowserPageTools(IBrowserPageService pages, IWindowService? windowService = null, IInputSession? session = null)
+    /// <param name="dialogs">Reads and answers a browser window's JavaScript dialog; the server always passes it.</param>
+    public BrowserPageTools(
+        IBrowserPageService pages, IWindowService? windowService = null, IInputSession? session = null, IBrowserDialogService? dialogs = null)
     {
         _pages = pages;
         _windowService = windowService;
         _session = session;
+        _dialogs = dialogs;
     }
 
     [McpServerTool(Name = "browser_evaluate", Title = "Run Script in Browser Page", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = true)]
@@ -88,27 +99,33 @@ public class BrowserPageTools
     }
 
     [McpServerTool(Name = "browser_handle_dialog", Title = "Answer Browser Dialog", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = true)]
-    [Description("Accept or dismiss a debug browser tab's open JavaScript dialog (alert, confirm, prompt, beforeunload), also one " +
-                 "that makes other calls fail (CdpDialogOpen, CdpTimeout)." + CdpOnly)]
+    [Description("Read, or accept or dismiss, the JavaScript dialog (alert, confirm, prompt, beforeunload) a Chrome or Edge window " +
+                 "shows, through UI Automation without keys: also one DevTools cannot answer (CdpDialogOpen, CdpTimeout). A confirm or " +
+                 "prompt is accepted only once its text was read (DialogNotRead).")]
     public async Task<BrowserDialogResult> BrowserHandleDialog(
-        [Description("true accepts (OK, Leave), false dismisses (Cancel, Stay).")] bool accept,
-        [Description("The answer to a prompt dialog (with accept).")] string? promptText = null,
-        [Description(HandleDescription)] long? handle = null,
+        [Description("true accepts (OK, Leave), false dismisses (Cancel, Stay); leave it out to only read the dialog.")] bool? accept = null,
+        [Description("The answer to a prompt dialog (with accept true).")] string? promptText = null,
+        [Description("Browser window handle. Pass handle or window.")] long? handle = null,
         [Description(WindowDescription)] WindowSelector? window = null,
-        [Description(CdpPortDescription)] int? cdpPort = null,
-        [Description(TargetIdDescription + ShownTabDefault)] string? targetId = null,
         CancellationToken cancellationToken = default)
     {
-        InputGateToolFilter.ThrowIfPaused(_session);
-        if (promptText != null && (!accept || promptText.Length > BrowserTypeOptions.MaxTextLength))
+        if (promptText != null && (accept != true || promptText.Length > BrowserTypeOptions.MaxTextLength))
         {
-            throw Invalid(accept
+            throw Invalid(accept == true
                 ? $"promptText may be at most {BrowserTypeOptions.MaxTextLength} characters. {NothingDone}"
                 : $"promptText answers a prompt dialog, so it needs accept true. {NothingDone}");
         }
 
-        var target = TabTarget(handle, window, cdpPort, targetId);
-        return await _pages.HandleDialogAsync(target, accept, promptText, cancellationToken).ConfigureAwait(false);
+        // Reading the dialog is allowed while input is paused, as respond_to_dialog's read is; answering it is not
+        if (accept != null)
+            InputGateToolFilter.ThrowIfPaused(_session);
+
+        var windowHandle = WindowTargeting.Optional(_windowService, handle, window)
+            ?? throw Invalid($"Pass the browser window (handle or window): the dialog is read in it. {NothingDone}");
+        if (_dialogs == null)
+            throw new InvalidOperationException("browser_handle_dialog needs the browser dialog service.");
+
+        return await _dialogs.HandleAsync(windowHandle, accept, promptText, cancellationToken).ConfigureAwait(false);
     }
 
     [McpServerTool(Name = "browser_element_rect", Title = "Locate Browser Element", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = true)]
@@ -145,6 +162,8 @@ public class BrowserPageTools
         [Description(IndexDescription)] int? index = null,
         [Description("The button; primary is the page's left button.")] MouseButton button = MouseButton.Primary,
         [Description("1, 2 (double click) or 3.")] int clickCount = 1,
+        [Description(DialogDescription)] BrowserDialogChoice? dialog = null,
+        [Description(PromptTextDescription)] string? promptText = null,
         [Description(HandleDescription)] long? handle = null,
         [Description(WindowDescription)] WindowSelector? window = null,
         [Description(CdpPortDescription)] int? cdpPort = null,
@@ -156,8 +175,9 @@ public class BrowserPageTools
         if (clickCount is < 1 or > 3)
             throw Invalid($"clickCount must be 1, 2 or 3, but it is {clickCount}. {NothingDone}");
 
+        var answer = DialogAnswer(dialog, promptText);
         var target = TabTarget(handle, window, cdpPort, targetId);
-        return await _pages.ClickAsync(target, locator, button, clickCount, cancellationToken).ConfigureAwait(false);
+        return await _pages.ClickAsync(target, locator, button, clickCount, cancellationToken, answer).ConfigureAwait(false);
     }
 
     [McpServerTool(Name = "browser_type", Title = "Type into Browser Page", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = true)]
@@ -168,6 +188,8 @@ public class BrowserPageTools
         [Description("CSS selector of the field to focus first. Default: the focused element.")] string? selector = null,
         [Description("Select the field's content first, so the text replaces it.")] bool replace = false,
         [Description("Press Enter after the text.")] bool pressEnter = false,
+        [Description(DialogDescription)] BrowserDialogChoice? dialog = null,
+        [Description(PromptTextDescription)] string? promptText = null,
         [Description(HandleDescription)] long? handle = null,
         [Description(WindowDescription)] WindowSelector? window = null,
         [Description(CdpPortDescription)] int? cdpPort = null,
@@ -184,8 +206,9 @@ public class BrowserPageTools
         if (selector != null && new BrowserElementLocator(selector, null, null, null).Refusal() is { } badSelector)
             throw Invalid($"{badSelector} {NothingDone}");
 
+        var answer = DialogAnswer(dialog, promptText);
         var target = TabTarget(handle, window, cdpPort, targetId);
-        return await _pages.TypeAsync(target, new BrowserTypeOptions(text, selector, replace, pressEnter), cancellationToken)
+        return await _pages.TypeAsync(target, new BrowserTypeOptions(text, selector, replace, pressEnter), cancellationToken, answer)
             .ConfigureAwait(false);
     }
 
@@ -220,6 +243,21 @@ public class BrowserPageTools
     }
 
     private static string? Given(string? value) => string.IsNullOrEmpty(value) ? null : value;
+
+    /// <summary>
+    /// How the action answers a dialog it opens (roadmap M5.8, dialogs): null without the dialog option. promptText needs
+    /// dialog accept, and is at most <see cref="BrowserTypeOptions.MaxTextLength"/> characters.
+    /// </summary>
+    internal static BrowserDialogAnswer? DialogAnswer(BrowserDialogChoice? dialog, string? promptText)
+    {
+        if (promptText != null && dialog != BrowserDialogChoice.Accept)
+            throw Invalid($"promptText answers a prompt dialog the action opens, so it needs dialog accept. {NothingDone}");
+
+        if (promptText is { Length: > BrowserTypeOptions.MaxTextLength })
+            throw Invalid($"promptText may be at most {BrowserTypeOptions.MaxTextLength} characters. {NothingDone}");
+
+        return dialog is { } choice ? new BrowserDialogAnswer(choice == BrowserDialogChoice.Accept, promptText) : null;
+    }
 
     private static ToolErrorException Invalid(string message) => new(ToolErrorReporting.InvalidArgumentsErrorCode, message);
 }

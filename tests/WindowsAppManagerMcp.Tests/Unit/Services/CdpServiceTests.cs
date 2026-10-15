@@ -714,7 +714,7 @@ public class CdpServiceTests
         result.Error.Should().Contain("JavaScript confirm dialog")
             .And.Contain("untrusted")
             .And.Contain("Do not press Enter")
-            .And.Contain("capture_window")
+            .And.Contain("browser_handle_dialog")
             .And.Contain("ask the user");
         result.Error.Should().NotContainAny("press Enter or Escape", "Dismiss the dialog (for example");
     }

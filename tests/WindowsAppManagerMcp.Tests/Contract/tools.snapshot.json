@@ -215,6 +215,27 @@
             "type": "integer",
             "default": 1
           },
+          "dialog": {
+            "description": "Answer a JavaScript dialog the action opens: accept or dismiss. Default: report it and leave it open.",
+            "default": null,
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "accept",
+              "dismiss",
+              null
+            ]
+          },
+          "promptText": {
+            "description": "The answer to a prompt dialog it opens (with dialog accept).",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
           "handle": {
             "description": "Browser window handle. Pass handle, window or cdpPort.",
             "type": [
@@ -604,16 +625,20 @@
     {
       "name": "browser_handle_dialog",
       "title": "Answer Browser Dialog",
-      "description": "Accept or dismiss a debug browser tab's open JavaScript dialog (alert, confirm, prompt, beforeunload), also one that makes other calls fail (CdpDialogOpen, CdpTimeout). CDP only: a browser with a debug port (launch_browser_with_debug).",
+      "description": "Read, or accept or dismiss, the JavaScript dialog (alert, confirm, prompt, beforeunload) a Chrome or Edge window shows, through UI Automation without keys: also one DevTools cannot answer (CdpDialogOpen, CdpTimeout). A confirm or prompt is accepted only once its text was read (DialogNotRead).",
       "inputSchema": {
         "type": "object",
         "properties": {
           "accept": {
-            "description": "true accepts (OK, Leave), false dismisses (Cancel, Stay).",
-            "type": "boolean"
+            "description": "true accepts (OK, Leave), false dismisses (Cancel, Stay); leave it out to only read the dialog.",
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "default": null
           },
           "promptText": {
-            "description": "The answer to a prompt dialog (with accept).",
+            "description": "The answer to a prompt dialog (with accept true).",
             "type": [
               "string",
               "null"
@@ -621,7 +646,7 @@
             "default": null
           },
           "handle": {
-            "description": "Browser window handle. Pass handle, window or cdpPort.",
+            "description": "Browser window handle. Pass handle or window.",
             "type": [
               "integer",
               "null"
@@ -698,27 +723,8 @@
             },
             "additionalProperties": false,
             "default": null
-          },
-          "cdpPort": {
-            "description": "DevTools port; found from the window when omitted. Alone, it names the browser listening on it.",
-            "type": [
-              "integer",
-              "null"
-            ],
-            "default": null
-          },
-          "targetId": {
-            "description": "Tab id from list_tabs. Default: the tab the window shows.",
-            "type": [
-              "string",
-              "null"
-            ],
-            "default": null
           }
-        },
-        "required": [
-          "accept"
-        ]
+        }
       },
       "annotations": {
         "title": "Answer Browser Dialog",
@@ -853,6 +859,27 @@
             "description": "Time limit in ms for the navigation and load (1000-60000).",
             "type": "integer",
             "default": 15000
+          },
+          "dialog": {
+            "description": "Answer a JavaScript dialog the action opens: accept or dismiss. Default: report it and leave it open.",
+            "default": null,
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "accept",
+              "dismiss",
+              null
+            ]
+          },
+          "promptText": {
+            "description": "The answer to a prompt dialog it opens (with dialog accept).",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
           }
         },
         "required": [
@@ -1012,6 +1039,27 @@
             "description": "Press Enter after the text.",
             "type": "boolean",
             "default": false
+          },
+          "dialog": {
+            "description": "Answer a JavaScript dialog the action opens: accept or dismiss. Default: report it and leave it open.",
+            "default": null,
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "accept",
+              "dismiss",
+              null
+            ]
+          },
+          "promptText": {
+            "description": "The answer to a prompt dialog it opens (with dialog accept).",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
           },
           "handle": {
             "description": "Browser window handle. Pass handle, window or cdpPort.",

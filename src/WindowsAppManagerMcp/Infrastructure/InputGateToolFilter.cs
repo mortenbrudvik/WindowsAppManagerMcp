@@ -86,9 +86,11 @@ public static class InputGateToolFilter
     /// browser and the tab without it, take it to send the command that shows the tab (the browser may bring its window to
     /// the front) or navigates it, and release it once the browser answers, at most a second later: a page's load wait never
     /// holds it. They refuse at once while input is paused. The DOM bridge's actions (roadmap M5.8: browser_click,
-    /// browser_type, browser_handle_dialog, browser_evaluate) find the tab and the element without it, and take it for the
-    /// commands that change the page: a click's scroll into view, hit test and mouse events, a typing's focus, selection,
-    /// text and Enter, a dialog's answer, a script. Each command is held until the browser answers, at most a second or two;
+    /// browser_type, browser_evaluate) find the tab and the element without it, and take it for the commands that change
+    /// the page: a click's scroll into view, hit test and mouse events, a typing's focus, selection, text and Enter, a
+    /// script (a dialog the action opens is answered while it holds it). browser_handle_dialog (roadmap M5.8, dialogs) reads
+    /// the dialog without it and sets a prompt's text and presses the button through element_action's service, which takes
+    /// it. Each command is held until the browser answers, at most a second or two;
     /// a script's or a page's work after that never holds it. A pause while a click or a typing holds it stops the call
     /// between its commands. browser_screenshot takes it only to bring a tab that is not shown to the front. The actions
     /// refuse at once while input is paused; browser_screenshot only when it would bring a tab to the front.

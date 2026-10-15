@@ -14,8 +14,10 @@ namespace WindowsAppManagerMcp.Services;
 /// <para>
 /// Every call sends Page.enable first without waiting for it (a page blocked by a dialog may never answer it), so the
 /// browser reports a JavaScript dialog the page opens, and a command that would wait on it ends with CdpDialogOpen; a page
-/// that answers nothing is CdpTimeout with the advice to read a dialog with respond_to_dialog first, since Edge does not
-/// report a dialog that was open before the connection. Every call but the dialog's then reads the page in its main frame
+/// that answers nothing is CdpTimeout with the advice to read a dialog with browser_handle_dialog first: Chrome and Edge
+/// (155) neither report nor answer a dialog that was open before the connection, on any DevTools connection (roadmap M5.8,
+/// dialogs). With a dialog answer, a click or a typing answers the dialog it opens on its own connection
+/// (<see cref="ICdpConnection.AnswerNextDialog"/>). Every call but the dialog's then reads the page in its main frame
 /// (<see cref="BrowserPageScripts.ViewportExpression"/>): its viewport, which an element inside a frame shares, and its
 /// address, refused when it is not a web page (the tab may have navigated since it was listed).
 /// </para>
@@ -34,12 +36,6 @@ public sealed class CdpPageService : ICdpPageService
 
     /// <summary>How long a mouse or key event, or the text, may take to be confirmed inside the gate before the next is sent.</summary>
     public static readonly TimeSpan InputAckTime = TimeSpan.FromSeconds(1);
-
-    /// <summary>How long browser_handle_dialog waits for the browser to report a dialog that is open after Page.enable.</summary>
-    public static readonly TimeSpan DialogReportWait = TimeSpan.FromMilliseconds(500);
-
-    /// <summary>How long browser_handle_dialog waits for the page to answer a check when the browser said no dialog is shown.</summary>
-    public static readonly TimeSpan DialogProbeTime = TimeSpan.FromSeconds(1);
 
     /// <summary>
     /// How much longer than its time limit a script's call waits: the browser stops a script at the limit (Runtime.evaluate's
@@ -61,9 +57,9 @@ public sealed class CdpPageService : ICdpPageService
 
     /// <summary>What a page that answers nothing probably has, and what to do.</summary>
     internal const string UnansweredAdvice =
-        "It probably has a JavaScript dialog open: read it first (respond_to_dialog on the browser window shows its text and " +
-        "buttons), then answer it deliberately (respond_to_dialog, or browser_handle_dialog). Or it is paused in the " +
-        "debugger, or busy.";
+        "It probably has a JavaScript dialog open, which DevTools cannot answer once it is open: read it first with " +
+        "browser_handle_dialog (the browser window's handle, no accept), then answer it deliberately (browser_handle_dialog " +
+        "with accept), or ask the user. Or it is paused in the debugger, or busy.";
 
     private readonly ICdpTransport _transport;
 
@@ -148,88 +144,6 @@ public sealed class CdpPageService : ICdpPageService
     }
 
     /// <inheritdoc />
-    public async Task<CdpPageResult<CdpDialogOutcome>> HandleDialogAsync(
-        CdpTarget target, bool accept, string? promptText, CdpGate gate, TimeSpan timeout, CancellationToken cancellationToken = default)
-    {
-        ArgumentNullException.ThrowIfNull(target);
-        var stopwatch = Stopwatch.StartNew();
-        var connected = await ConnectAsync(target, timeout, cancellationToken).ConfigureAwait(false);
-        if (!connected.Success)
-            return CdpPageResult<CdpDialogOutcome>.From(connected);
-
-        await using var connection = connected.Value!;
-
-        // Chrome reports a dialog that is open again after Page.enable; Edge 155 does not, so a dialog it did not report is
-        // dismissed all the same (never accepted unread). Page.enable is sent while the dialog blocks the page, and only
-        // waited for briefly
-        using (var opening = connection.ExpectEvent("Page.javascriptDialogOpening"))
-        {
-            var enable = connection.SendAsync("Page.enable", null, timeout, cancellationToken, CdpSendOptions.AllowWhileDialogOpen);
-            _ = enable.ContinueWith(static t => _ = t.Exception, TaskScheduler.Default);
-            var reported = opening.WaitAsync(Min(DialogReportWait, Left(timeout, stopwatch)), cancellationToken);
-            await Task.WhenAny(enable, reported).ConfigureAwait(false);
-            if (!reported.IsCompleted && enable.IsCompleted)
-            {
-                // The report comes before Page.enable's reply when it comes at all; let the reader hand it over
-                await Task.WhenAny(reported, Task.Delay(TimeSpan.FromMilliseconds(50), cancellationToken)).ConfigureAwait(false);
-            }
-        }
-
-        // Read before it is answered: Page.javascriptDialogClosed, which follows the answer at once, clears it
-        var dialog = connection.OpenDialog;
-        if (dialog == null && accept)
-        {
-            // A dialog whose text the browser did not hand over is never accepted unread (it may confirm a deletion): a page
-            // that answers has none; one that does not has one to read through UI Automation first
-            return await ProbeForDialogAsync(connection, target, accept, "the browser did not report one to this connection", timeout,
-                stopwatch, cancellationToken).ConfigureAwait(false);
-        }
-
-        var parameters = new Dictionary<string, object> { ["accept"] = accept };
-        if (promptText != null)
-            parameters["promptText"] = promptText;
-
-        var reply = await CdpGatedSend.SendAsync(connection, gate, "Page.handleJavaScriptDialog", parameters,
-            Bounded(Left(timeout, stopwatch)), cancellationToken, CdpSendOptions.AllowWhileDialogOpen).ConfigureAwait(false);
-        if (!reply.Success)
-            return CdpPageResult<CdpDialogOutcome>.From(reply);
-
-        if (reply.Value!.Error is not { } fault)
-            return CdpPageResult<CdpDialogOutcome>.Ok(new CdpDialogOutcome(dialog));
-
-        if (dialog != null)
-            return CdpPageResult<CdpDialogOutcome>.From(CdpReplies.ToFailure<bool>("Page.handleJavaScriptDialog", fault));
-
-        // "No dialog is showing": a page that answers has none; one that does not may have a dialog the browser does not
-        // hand to a new connection
-        return await ProbeForDialogAsync(connection, target, accept, $"the browser: {fault.Message}", timeout, stopwatch, cancellationToken)
-            .ConfigureAwait(false);
-    }
-
-    /// <summary>
-    /// When no dialog the browser reported was answered: DialogNotFound when the page answers a check (it has none open),
-    /// else CdpDialogOpen pointing to respond_to_dialog, which reads the dialog the browser keeps from this connection.
-    /// </summary>
-    private static async Task<CdpPageResult<CdpDialogOutcome>> ProbeForDialogAsync(
-        ICdpConnection connection, CdpTarget target, bool accept, string why, TimeSpan timeout, Stopwatch stopwatch,
-        CancellationToken cancellationToken)
-    {
-        var probe = await connection.SendAsync("Runtime.evaluate", new { expression = "1", returnByValue = true },
-            Min(DialogProbeTime, Left(timeout, stopwatch)), cancellationToken).ConfigureAwait(false);
-        if (probe.Success)
-        {
-            return CdpPageResult<CdpDialogOutcome>.Fail(nameof(UIElementErrorCode.DialogNotFound),
-                $"Tab {target.Id} has no JavaScript dialog open ({why}), and its page answers. Nothing was done.");
-        }
-
-        return CdpPageResult<CdpDialogOutcome>.Fail(BrowserErrorCode.CdpDialogOpen,
-            $"Tab {target.Id} does not answer, so a JavaScript dialog is probably open, but the browser did not hand it to this " +
-            $"DevTools connection ({why}){(accept ? ", so its text is unknown and it is not accepted unread" : string.Empty)}. " +
-            "Nothing was done. Read it through UI Automation: respond_to_dialog on the browser window shows its text and names " +
-            "its buttons; decide deliberately which to press, or ask the user.");
-    }
-
-    /// <inheritdoc />
     public async Task<CdpPageResult<CdpElementBox>> LocateAsync(
         CdpTarget target, BrowserElementLocator locator, TimeSpan timeout, CancellationToken cancellationToken = default)
     {
@@ -262,7 +176,7 @@ public sealed class CdpPageService : ICdpPageService
     /// <inheritdoc />
     public async Task<CdpPageResult<CdpInputOutcome>> ClickAsync(
         CdpTarget target, BrowserElementLocator locator, MouseButton button, int clickCount, CdpGate gate, TimeSpan timeout,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default, BrowserDialogAnswer? dialogAnswer = null)
     {
         ArgumentNullException.ThrowIfNull(target);
         ArgumentNullException.ThrowIfNull(locator);
@@ -297,6 +211,7 @@ public sealed class CdpPageService : ICdpPageService
         var (name, buttons) = ButtonOf(button);
         using var opening = connection.ExpectEvent("Page.javascriptDialogOpening");
         var dialogOpened = opening.WaitAsync(Left(timeout, stopwatch), cancellationToken);
+        Task<CdpResult<CdpAnsweredDialog>>? answered = null;
         var unconfirmed = false;
         CssPoint point;
 
@@ -347,6 +262,10 @@ public sealed class CdpPageService : ICdpPageService
             await SendQuietlyAsync(connection, "Emulation.setFocusEmulationEnabled", new { enabled = true },
                 Min(InputAckTime, Left(timeout, stopwatch)), cancellationToken).ConfigureAwait(false);
 
+            // A dialog the click opens is answered on this connection, as the agent asked before it knew the dialog
+            if (dialogAnswer is { } reply)
+                answered = connection.AnswerNextDialog(reply.Accept, reply.PromptText);
+
             var events = new List<Dictionary<string, object>> { MouseEvent("mouseMoved", point, "none", 0, 0) };
             for (var click = 1; click <= clickCount; click++)
             {
@@ -392,16 +311,20 @@ public sealed class CdpPageService : ICdpPageService
         }
 
         var dialog = DialogOf(dialogOpened);
+        var (answerGiven, answerFailure) = await AnswerOfAsync(dialog, answered, timeout, stopwatch, cancellationToken).ConfigureAwait(false);
         return CdpPageResult<CdpInputOutcome>.Ok(new CdpInputOutcome(info, found.MatchCount, point,
             Dialog: dialog,
             Warning: unconfirmed && dialog == null
                 ? "The page did not confirm the click within a second (it may be busy); it was sent. Check the page before you click again."
-                : null));
+                : null,
+            Answer: answerGiven,
+            AnswerFailure: answerFailure));
     }
 
     /// <inheritdoc />
     public async Task<CdpPageResult<CdpInputOutcome>> TypeAsync(
-        CdpTarget target, BrowserTypeOptions options, CdpGate gate, TimeSpan timeout, CancellationToken cancellationToken = default)
+        CdpTarget target, BrowserTypeOptions options, CdpGate gate, TimeSpan timeout, CancellationToken cancellationToken = default,
+        BrowserDialogAnswer? dialogAnswer = null)
     {
         ArgumentNullException.ThrowIfNull(target);
         ArgumentNullException.ThrowIfNull(options);
@@ -438,6 +361,7 @@ public sealed class CdpPageService : ICdpPageService
 
         using var opening = connection.ExpectEvent("Page.javascriptDialogOpening");
         var dialogOpened = opening.WaitAsync(Left(timeout, stopwatch), cancellationToken);
+        Task<CdpResult<CdpAnsweredDialog>>? answered = null;
         var unconfirmed = false;
         FocusedField field;
 
@@ -516,6 +440,9 @@ public sealed class CdpPageService : ICdpPageService
             await SendQuietlyAsync(connection, "Emulation.setFocusEmulationEnabled", new { enabled = true },
                 Min(InputAckTime, Left(timeout, stopwatch)), cancellationToken).ConfigureAwait(false);
 
+            if (dialogAnswer is { } reply)
+                answered = connection.AnswerNextDialog(reply.Accept, reply.PromptText);
+
             foreach (var (method, parameters, pausedBefore) in commands)
             {
                 if (pausedBefore != null && Paused(hold))
@@ -553,8 +480,10 @@ public sealed class CdpPageService : ICdpPageService
             }
         }
 
+        var (answerGiven, answerFailure) = await AnswerOfAsync(dialog, answered, timeout, stopwatch, cancellationToken).ConfigureAwait(false);
         return CdpPageResult<CdpInputOutcome>.Ok(new CdpInputOutcome(info ?? (field.Tag is { } t ? new BrowserElementInfo(t) : null),
-            matches, TypedLength: options.Text.Length, PressedEnter: options.PressEnter ? true : null, Dialog: dialog, Warning: warning));
+            matches, TypedLength: options.Text.Length, PressedEnter: options.PressEnter ? true : null, Dialog: dialog, Warning: warning,
+            Answer: answerGiven, AnswerFailure: answerFailure));
     }
 
     /// <inheritdoc />
@@ -942,6 +871,28 @@ public sealed class CdpPageService : ICdpPageService
 
         _ = sent.ContinueWith(static t => _ = t.Exception, TaskScheduler.Default);
         return null;
+    }
+
+    /// <summary>
+    /// How the dialog an action opened was answered (<see cref="ICdpConnection.AnswerNextDialog"/>): the answer, or why it
+    /// failed (the dialog is then still open); both null when no dialog opened or none was to be answered.
+    /// </summary>
+    private static async Task<(CdpAnsweredDialog? Answer, string? Failure)> AnswerOfAsync(
+        CdpDialog? dialog, Task<CdpResult<CdpAnsweredDialog>>? answered, TimeSpan timeout, Stopwatch stopwatch,
+        CancellationToken cancellationToken)
+    {
+        if (dialog == null || answered == null)
+            return (null, null);
+
+        var wait = Bounded(Left(timeout, stopwatch)) + CdpConnection.DialogAnswerTimeout;
+        if (await Task.WhenAny(answered, Task.Delay(wait, cancellationToken)).ConfigureAwait(false) != answered)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return (null, $"the browser did not confirm the answer within {FormatMs(wait)}");
+        }
+
+        var result = await answered.ConfigureAwait(false);
+        return result.Success ? (result.Value, null) : (null, result.Error);
     }
 
     /// <summary>A task that completes only when a dialog was reported (a timeout or a closed connection never completes it).</summary>

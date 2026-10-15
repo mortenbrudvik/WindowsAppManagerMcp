@@ -439,6 +439,36 @@ public class CdpTabServiceTests
     }
 
     [Fact]
+    public async Task NavigateAsync_WithTheDialogOption_AnswersTheBeforeUnloadPrompt_AndLoadsThePage()
+    {
+        // The page being left asks whether to leave (beforeunload): the browser answers Page.navigate only once it is answered
+        var tab = new FakeTab { BeforeUnloadOnNavigate = true, CommitAfterFrameTrees = 0 };
+        tab.ReadyStates.Enqueue("complete");
+        var sut = CreateSut(tab);
+
+        var result = await sut.NavigateAsync(Tab, "https://example.com/docs/", BrowserWaitUntil.Load, new RecordingGate().EnterAsync, LongTimeout,
+            dialogAnswer: new BrowserDialogAnswer(true));
+
+        result.Success.Should().BeTrue(result.Error);
+        result.Value!.LoadState.Should().Be("load");
+        result.Value.Dialog.Should().Be(new CdpAnsweredDialog(new CdpDialog("beforeunload", "Leave site?", "", tab.Url), true));
+        tab.Methods.Should().ContainInOrder("Page.navigate", "Page.handleJavaScriptDialog");
+    }
+
+    [Fact]
+    public async Task NavigateAsync_WithoutTheDialogOption_ABeforeUnloadPrompt_IsCdpDialogOpen_PointingToBrowserHandleDialog()
+    {
+        var tab = new FakeTab { BeforeUnloadOnNavigate = true };
+        var sut = CreateSut(tab);
+
+        var result = await sut.NavigateAsync(Tab, "https://example.com/docs/", BrowserWaitUntil.Load, new RecordingGate().EnterAsync, LongTimeout);
+
+        result.ErrorCode.Should().Be(BrowserErrorCode.CdpDialogOpen);
+        result.Error.Should().Contain("browser_handle_dialog").And.NotContain("capture_window");
+        tab.Methods.Should().NotContain("Page.handleJavaScriptDialog");
+    }
+
+    [Fact]
     public async Task NavigateAsync_ATabThatAnswersNothing_IsCdpTimeout_WithTheDialogGuidance()
     {
         // Edge does not report a dialog that was already open to a new DevTools connection: nothing answers at all
@@ -729,6 +759,14 @@ public class CdpTabServiceTests
         /// <summary>The page answers no Runtime.evaluate, as a page blocked by a dialog nobody reported.</summary>
         public bool Unresponsive { get; init; }
 
+        /// <summary>
+        /// Page.navigate opens the page's beforeunload prompt, and is answered once the prompt is accepted (the navigation then
+        /// goes on), as Chromium does.
+        /// </summary>
+        public bool BeforeUnloadOnNavigate { get; init; }
+
+        private int? _blockedNavigate;
+
         /// <summary>The main frame's loaderId for each Page.getFrameTree in turn (the last repeats), instead of OLD then NEW.</summary>
         public Queue<string> FrameLoaders { get; } = new();
 
@@ -782,6 +820,14 @@ public class CdpTabServiceTests
 
                         if (NavigateNeverAnswers)
                             break;
+
+                        if (BeforeUnloadOnNavigate)
+                        {
+                            _blockedNavigate = id;
+                            socket.EnqueueEvent("Page.javascriptDialogOpening",
+                                new { url = Url, message = "Leave site?", type = "beforeunload", defaultPrompt = "", hasBrowserHandler = true });
+                            break;
+                        }
 
                         if (NavigateError != null)
                         {
@@ -842,6 +888,18 @@ public class CdpTabServiceTests
                             socket.ReplyWithValue(command, value);
                         }
 
+                        break;
+
+                    case "Page.handleJavaScriptDialog" when _blockedNavigate is { } navigate:
+                        _blockedNavigate = null;
+                        socket.ReplyEmpty(command);
+                        socket.EnqueueEvent("Page.javascriptDialogClosed", new { result = true, userInput = "" });
+                        if (command.GetProperty("params").GetProperty("accept").GetBoolean())
+                            socket.Enqueue(JsonSerializer.Serialize(new { id = navigate, result = NavigateReply }));
+                        break;
+
+                    case "Page.handleJavaScriptDialog":
+                        socket.ReplyError(command, -32602, "No dialog is showing");
                         break;
 
                     default:

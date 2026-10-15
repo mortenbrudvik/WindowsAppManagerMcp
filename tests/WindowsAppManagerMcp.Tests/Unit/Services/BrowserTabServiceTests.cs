@@ -295,9 +295,25 @@ public class BrowserTabServiceTests
     }
 
     [Fact]
+    public async Task Navigate_WithTheDialogOption_PassesItOn_AndSaysHowTheDialogWasAnswered()
+    {
+        var answer = new BrowserDialogAnswer(false);
+        var dialog = new CdpDialog("beforeunload", "Leave site?", "", "https://example.com/form");
+        _tabs.Setup(t => t.NavigateAsync(Shown, "https://example.com/docs/", BrowserWaitUntil.Load, It.IsAny<CdpGate>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>(), answer))
+            .ReturnsAsync(CdpResult<CdpNavigation>.Ok(new CdpNavigation("https://example.com/form", "Form", 200, "load", false,
+                Dialog: new CdpAnsweredDialog(dialog, false))));
+
+        var result = await CreateSut().NavigateAsync(ByWindow(),
+            new BrowserNavigateOptions("https://example.com/docs/", false, BrowserWaitUntil.Load, 15_000, answer));
+
+        result.Success.Should().BeTrue(result.Error);
+        result.Dialog.Should().Be(new BrowserOpenedDialog("beforeunload", "Leave site?", BrowserOpenedDialog.Dismissed));
+    }
+
+    [Fact]
     public async Task Navigate_WithoutTargetId_NavigatesTheTabTheWindowShows()
     {
-        _tabs.Setup(t => t.NavigateAsync(Shown, "https://example.com/docs/", BrowserWaitUntil.Load, It.IsAny<CdpGate>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+        _tabs.Setup(t => t.NavigateAsync(Shown, "https://example.com/docs/", BrowserWaitUntil.Load, It.IsAny<CdpGate>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>(), It.IsAny<BrowserDialogAnswer?>()))
             .ReturnsAsync(CdpResult<CdpNavigation>.Ok(new CdpNavigation("https://example.com/docs/", "Docs - Example", 200, "load", false)));
 
         var result = await CreateSut().NavigateAsync(ByWindow(), new BrowserNavigateOptions("https://example.com/docs/", false, BrowserWaitUntil.Load, 15_000));
@@ -313,7 +329,7 @@ public class BrowserTabServiceTests
     [Fact]
     public async Task Navigate_ErrorText_IsNavigationFailed_WithTheBrowsersReason()
     {
-        _tabs.Setup(t => t.NavigateAsync(It.IsAny<CdpTarget>(), It.IsAny<string>(), It.IsAny<BrowserWaitUntil>(), It.IsAny<CdpGate>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+        _tabs.Setup(t => t.NavigateAsync(It.IsAny<CdpTarget>(), It.IsAny<string>(), It.IsAny<BrowserWaitUntil>(), It.IsAny<CdpGate>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>(), It.IsAny<BrowserDialogAnswer?>()))
             .ReturnsAsync(CdpResult<CdpNavigation>.Ok(new CdpNavigation(null, null, null, "failed", false, "net::ERR_NAME_NOT_RESOLVED")));
 
         var result = await CreateSut().NavigateAsync(ByWindow(), new BrowserNavigateOptions("https://nowhere.invalid/", false, BrowserWaitUntil.Load, 15_000));
@@ -327,7 +343,7 @@ public class BrowserTabServiceTests
     [Fact]
     public async Task Navigate_ALoadThatRunsOutOfTime_IsWaitTimedOut_StillLoading()
     {
-        _tabs.Setup(t => t.NavigateAsync(It.IsAny<CdpTarget>(), It.IsAny<string>(), It.IsAny<BrowserWaitUntil>(), It.IsAny<CdpGate>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+        _tabs.Setup(t => t.NavigateAsync(It.IsAny<CdpTarget>(), It.IsAny<string>(), It.IsAny<BrowserWaitUntil>(), It.IsAny<CdpGate>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>(), It.IsAny<BrowserDialogAnswer?>()))
             .ReturnsAsync(CdpResult<CdpNavigation>.Ok(new CdpNavigation("https://example.com/slow", "Slow", null, "loading", true)));
 
         var result = await CreateSut().NavigateAsync(ByWindow(), new BrowserNavigateOptions("https://example.com/slow", false, BrowserWaitUntil.Load, 2_000));
@@ -345,7 +361,7 @@ public class BrowserTabServiceTests
         var opened = Other with { Id = "NEW1" };
         _tabs.Setup(t => t.OpenTabAsync(Port, (int)BrowserPid, It.IsAny<CdpGate>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(CdpResult<CdpTarget>.Ok(opened));
-        _tabs.Setup(t => t.NavigateAsync(opened, "https://example.com/", BrowserWaitUntil.DomContentLoaded, It.IsAny<CdpGate>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+        _tabs.Setup(t => t.NavigateAsync(opened, "https://example.com/", BrowserWaitUntil.DomContentLoaded, It.IsAny<CdpGate>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>(), It.IsAny<BrowserDialogAnswer?>()))
             .ReturnsAsync(CdpResult<CdpNavigation>.Ok(new CdpNavigation("https://example.com/", "Example", 200, "domcontentloaded", false)));
 
         var result = await CreateSut().NavigateAsync(ByWindow(), new BrowserNavigateOptions("https://example.com/", true, BrowserWaitUntil.DomContentLoaded, 15_000));
@@ -360,8 +376,8 @@ public class BrowserTabServiceTests
     public async Task Navigate_TheGateItHandsOn_RefusesWhileInputIsPaused()
     {
         _session.Pause(InputControlSources.Hotkey);
-        _tabs.Setup(t => t.NavigateAsync(It.IsAny<CdpTarget>(), It.IsAny<string>(), It.IsAny<BrowserWaitUntil>(), It.IsAny<CdpGate>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
-            .Returns(async (CdpTarget _, string _, BrowserWaitUntil _, CdpGate gate, TimeSpan _, CancellationToken token) =>
+        _tabs.Setup(t => t.NavigateAsync(It.IsAny<CdpTarget>(), It.IsAny<string>(), It.IsAny<BrowserWaitUntil>(), It.IsAny<CdpGate>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>(), It.IsAny<BrowserDialogAnswer?>()))
+            .Returns(async (CdpTarget _, string _, BrowserWaitUntil _, CdpGate gate, TimeSpan _, CancellationToken token, BrowserDialogAnswer? _) =>
             {
                 using (await gate(token))
                 {
@@ -389,8 +405,8 @@ public class BrowserTabServiceTests
                 _session.Pause(InputControlSources.Hotkey);
                 return CdpResult<CdpTarget>.Ok(opened);
             });
-        _tabs.Setup(t => t.NavigateAsync(opened, It.IsAny<string>(), It.IsAny<BrowserWaitUntil>(), It.IsAny<CdpGate>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
-            .Returns(async (CdpTarget _, string _, BrowserWaitUntil _, CdpGate gate, TimeSpan _, CancellationToken token) =>
+        _tabs.Setup(t => t.NavigateAsync(opened, It.IsAny<string>(), It.IsAny<BrowserWaitUntil>(), It.IsAny<CdpGate>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>(), It.IsAny<BrowserDialogAnswer?>()))
+            .Returns(async (CdpTarget _, string _, BrowserWaitUntil _, CdpGate gate, TimeSpan _, CancellationToken token, BrowserDialogAnswer? _) =>
             {
                 using (await gate(token))
                 {
@@ -410,7 +426,7 @@ public class BrowserTabServiceTests
     [Fact]
     public async Task Navigate_ADownload_IsNavigationFailed_SayingTheTabKeptItsPage()
     {
-        _tabs.Setup(t => t.NavigateAsync(It.IsAny<CdpTarget>(), It.IsAny<string>(), It.IsAny<BrowserWaitUntil>(), It.IsAny<CdpGate>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+        _tabs.Setup(t => t.NavigateAsync(It.IsAny<CdpTarget>(), It.IsAny<string>(), It.IsAny<BrowserWaitUntil>(), It.IsAny<CdpGate>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>(), It.IsAny<BrowserDialogAnswer?>()))
             .ReturnsAsync(CdpResult<CdpNavigation>.Ok(new CdpNavigation(null, null, null, "download", false, "net::ERR_ABORTED")));
 
         var result = await CreateSut().NavigateAsync(ByWindow(), new BrowserNavigateOptions("https://example.com/report.pdf", false, BrowserWaitUntil.Load, 15_000));
@@ -442,7 +458,7 @@ public class BrowserTabServiceTests
     {
         _owners = new FakePortOwnerResolver(owner: 777);
         _windows.Setup(w => w.GetProcessName(777u)).Returns("dotnet");
-        _tabs.Setup(t => t.NavigateAsync(Shown, "http://127.0.0.1:8080/a", BrowserWaitUntil.Load, It.IsAny<CdpGate>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+        _tabs.Setup(t => t.NavigateAsync(Shown, "http://127.0.0.1:8080/a", BrowserWaitUntil.Load, It.IsAny<CdpGate>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>(), It.IsAny<BrowserDialogAnswer?>()))
             .ReturnsAsync(CdpResult<CdpNavigation>.Ok(new CdpNavigation("http://127.0.0.1:8080/a", "A", 200, "load", false)));
 
         var result = await CreateSut().NavigateAsync(ByWindow(), new BrowserNavigateOptions("http://127.0.0.1:8080/a", false, BrowserWaitUntil.Load, 15_000));

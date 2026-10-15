@@ -44,7 +44,17 @@ public class BrowserTabToolsTests
 
         result.Success.Should().BeTrue();
         _tabs.Verify(t => t.NavigateAsync(new BrowserTabTarget((nint)Handle, null, null),
-            new BrowserNavigateOptions(url, false, BrowserWaitUntil.Load, BrowserTabTools.DefaultNavigateTimeoutMs), It.IsAny<CancellationToken>()));
+            new BrowserNavigateOptions(url, false, BrowserWaitUntil.Load, BrowserTabTools.DefaultNavigateTimeoutMs, null), It.IsAny<CancellationToken>()));
+    }
+
+    [Fact]
+    public async Task BrowserNavigate_PassesTheDialogOptionOn()
+    {
+        await CreateSut().BrowserNavigate("https://example.com/", handle: Handle, dialog: BrowserDialogChoice.Accept, promptText: "Kari");
+
+        _tabs.Verify(t => t.NavigateAsync(It.IsAny<BrowserTabTarget>(),
+            new BrowserNavigateOptions("https://example.com/", false, BrowserWaitUntil.Load, BrowserTabTools.DefaultNavigateTimeoutMs,
+                new BrowserDialogAnswer(true, "Kari")), It.IsAny<CancellationToken>()));
     }
 
     [Theory]

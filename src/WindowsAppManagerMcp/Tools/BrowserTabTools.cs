@@ -93,9 +93,12 @@ public class BrowserTabTools
         [Description("Open it in a new tab (in the browser's last active window).")] bool newTab = false,
         [Description("load, domcontentloaded or none.")] BrowserWaitUntil waitUntil = BrowserWaitUntil.Load,
         [Description("Time limit in ms for the navigation and load (1000-60000).")] int timeoutMs = DefaultNavigateTimeoutMs,
+        [Description(BrowserPageTools.DialogDescription)] BrowserDialogChoice? dialog = null,
+        [Description(BrowserPageTools.PromptTextDescription)] string? promptText = null,
         CancellationToken cancellationToken = default)
     {
         InputGateToolFilter.ThrowIfPaused(_session);
+        var answer = BrowserPageTools.DialogAnswer(dialog, promptText);
         if (BrowserNavigationUrls.Refusal(url) is { } badUrl)
             throw new ToolErrorException(ToolErrorReporting.InvalidArgumentsErrorCode, badUrl);
 
@@ -113,7 +116,7 @@ public class BrowserTabTools
 
         var target = Target(handle, window, cdpPort, targetId == null ? null : RequireTargetId(targetId), "Nothing was done.",
             needsTab: !newTab);
-        return await _tabs.NavigateAsync(target, new BrowserNavigateOptions(url, newTab, waitUntil, timeoutMs), cancellationToken)
+        return await _tabs.NavigateAsync(target, new BrowserNavigateOptions(url, newTab, waitUntil, timeoutMs, answer), cancellationToken)
             .ConfigureAwait(false);
     }
 

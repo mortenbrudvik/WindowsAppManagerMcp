@@ -58,6 +58,7 @@ public sealed class ContractServices : IDisposable
 
     /// <summary>The DOM bridge (roadmap M5.8): the same debug Chrome, its shown tab's Save button and search field.</summary>
     public Mock<IBrowserPageService> BrowserPages { get; } = new();
+    public Mock<IBrowserDialogService> BrowserDialogs { get; } = new();
 
     /// <summary>browser_screenshot's typical image: a page of 2880 x 1620 device pixels scaled to 1568 x 882, as JPEG.</summary>
     private static readonly Lazy<EncodedImage> TypicalPageCapture = new(() =>
@@ -172,6 +173,7 @@ public sealed class ContractServices : IDisposable
         services.AddSingleton(Browser.Object);
         services.AddSingleton(BrowserTabs.Object);
         services.AddSingleton(BrowserPages.Object);
+        services.AddSingleton(BrowserDialogs.Object);
         services.AddSingleton(Layouts.Object);
         services.AddSingleton(UiElements.Object);
         services.AddSingleton(Inspection.Object);
@@ -407,15 +409,16 @@ public sealed class ContractServices : IDisposable
             .ReturnsAsync(new BrowserEvaluateResult(true, url.TargetId,
                 System.Text.Json.JsonSerializer.SerializeToElement(new { title = "Docs - Example", links = 42, signedIn = true }), "object", 52,
                 CdpPort: 9222));
-        BrowserPages.Setup(b => b.HandleDialogAsync(It.IsAny<BrowserTabTarget>(), It.IsAny<bool>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new BrowserDialogResult(true, url.TargetId, false, "beforeunload", "Leave this page? Changes you made may not be saved.", 9222));
+        BrowserDialogs.Setup(b => b.HandleAsync(It.IsAny<nint>(), It.IsAny<bool?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new BrowserDialogResult(true, 197_890, "confirm", "Leave this page? Changes you made may not be saved.", Accepted: false,
+                DialogClosed: true));
         BrowserPages.Setup(b => b.GetElementRectAsync(It.IsAny<BrowserTabTarget>(), It.IsAny<BrowserElementLocator>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new BrowserElementRectResult(true, url.TargetId, save, 1, new BoundsDto(1482, 391, 132, 48), new ScreenPoint(1548, 415),
                 new CssRect(920, 180, 88, 32), 1.5, BrowserViewport.DocumentSource, 9222));
         BrowserPages.Setup(b => b.ClickAsync(It.IsAny<BrowserTabTarget>(), It.IsAny<BrowserElementLocator>(), It.IsAny<MouseButton>(), It.IsAny<int>(),
-                It.IsAny<CancellationToken>()))
+                It.IsAny<CancellationToken>(), It.IsAny<BrowserDialogAnswer?>()))
             .ReturnsAsync(new BrowserInputResult(true, url.TargetId, save, 1, new CssPoint(964, 196), CdpPort: 9222));
-        BrowserPages.Setup(b => b.TypeAsync(It.IsAny<BrowserTabTarget>(), It.IsAny<BrowserTypeOptions>(), It.IsAny<CancellationToken>()))
+        BrowserPages.Setup(b => b.TypeAsync(It.IsAny<BrowserTabTarget>(), It.IsAny<BrowserTypeOptions>(), It.IsAny<CancellationToken>(), It.IsAny<BrowserDialogAnswer?>()))
             .ReturnsAsync(new BrowserInputResult(true, url.TargetId, new BrowserElementInfo("input"), 1, TypedLength: 21, CdpPort: 9222));
         BrowserPages.Setup(b => b.CaptureAsync(It.IsAny<BrowserTabTarget>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new BrowserScreenshot(
@@ -652,14 +655,14 @@ public sealed class ContractServices : IDisposable
             {
                 Exception = new BrowserScriptException("ReferenceError: sessionData is not defined", 0, 0)
             });
-        BrowserPages.Setup(b => b.HandleDialogAsync(It.IsAny<BrowserTabTarget>(), It.IsAny<bool>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(BrowserDialogResult.Failed(nameof(UIElementErrorCode.DialogNotFound), "The tab has no JavaScript dialog open.", 9222, failedTab));
+        BrowserDialogs.Setup(b => b.HandleAsync(It.IsAny<nint>(), It.IsAny<bool?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(BrowserDialogResult.Failed(nameof(UIElementErrorCode.DialogNotFound), "The window shows no JavaScript dialog.", 197_890));
         BrowserPages.Setup(b => b.GetElementRectAsync(It.IsAny<BrowserTabTarget>(), It.IsAny<BrowserElementLocator>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(BrowserElementRectResult.Failed(nameof(UIElementErrorCode.ElementNotFound), "No element of the page matches.", 9222, failedTab));
         BrowserPages.Setup(b => b.ClickAsync(It.IsAny<BrowserTabTarget>(), It.IsAny<BrowserElementLocator>(), It.IsAny<MouseButton>(), It.IsAny<int>(),
-                It.IsAny<CancellationToken>()))
+                It.IsAny<CancellationToken>(), It.IsAny<BrowserDialogAnswer?>()))
             .ReturnsAsync(BrowserInputResult.Failed(nameof(BrowserErrorCode.ElementObscured), "Another element covers the element.", 9222, failedTab));
-        BrowserPages.Setup(b => b.TypeAsync(It.IsAny<BrowserTabTarget>(), It.IsAny<BrowserTypeOptions>(), It.IsAny<CancellationToken>()))
+        BrowserPages.Setup(b => b.TypeAsync(It.IsAny<BrowserTabTarget>(), It.IsAny<BrowserTypeOptions>(), It.IsAny<CancellationToken>(), It.IsAny<BrowserDialogAnswer?>()))
             .ReturnsAsync(BrowserInputResult.Failed(nameof(UIElementErrorCode.FocusNotOnElement), "No element of the page has the focus.", 9222, failedTab));
         BrowserPages.Setup(b => b.CaptureAsync(It.IsAny<BrowserTabTarget>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new BrowserScreenshot(

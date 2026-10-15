@@ -103,7 +103,7 @@ public static class ToolDocCatalog
         [
             new("list_tabs", "A debug browser's tabs (ids, titles, URLs), the window's tabs and the one it shows", "window (or handle)", "cdpPort"),
             new("activate_tab", "Show a tab in its window (toolset browser-actions)", "targetId", "window (or handle)", "cdpPort"),
-            new("browser_navigate", "Open an http(s) URL in a tab or a new tab and wait for its load (toolset browser-actions)", "url", "window (or handle)", "targetId", "newTab", "waitUntil", "timeoutMs"),
+            new("browser_navigate", "Open an http(s) URL in a tab or a new tab and wait for its load (toolset browser-actions)", "url", "window (or handle)", "targetId", "newTab", "waitUntil", "timeoutMs", "dialog"),
             new("wait_for_browser", "Wait until a page's URL, title or text contains a string, or a CSS selector matches", "window (or handle)", "targetId", "urlContains", "textContains", "selector", "timeoutMs"),
         ],
         SkillNote: "CDP only: a browser started with launch_browser_with_debug (or with its own debug port). activate_tab and " +
@@ -111,14 +111,16 @@ public static class ToolDocCatalog
         new("Browser Page (DOM Bridge)",
         [
             new("browser_element_rect", "Find a page element; its rect and click point in screen pixels (toolset browser-actions)", "selector", "text", "role", "name", "index", "window (or handle)"),
-            new("browser_click", "Click a page element with CDP mouse events, no real cursor (toolset browser-actions)", "selector", "text", "role", "name", "index", "window (or handle)", "targetId"),
-            new("browser_type", "Type into a page's focused field or a selector's (toolset browser-actions)", "text", "selector", "replace", "pressEnter", "window (or handle)"),
-            new("browser_handle_dialog", "Accept or dismiss a page's JavaScript dialog (toolset browser-actions)", "accept", "promptText", "window (or handle)", "targetId"),
+            new("browser_click", "Click a page element with CDP mouse events, no real cursor (toolset browser-actions)", "selector", "text", "role", "name", "index", "dialog", "window (or handle)", "targetId"),
+            new("browser_type", "Type into a page's focused field or a selector's (toolset browser-actions)", "text", "selector", "replace", "pressEnter", "dialog", "window (or handle)"),
+            new("browser_handle_dialog", "Read, accept or dismiss a Chrome or Edge window's JavaScript dialog, through UI Automation (toolset browser-actions)", "accept", "promptText", "window (or handle)"),
             new("browser_screenshot", "Capture a tab's page as an image, without the browser frame (toolset browser-actions)", "window (or handle)", "targetId", "maxDimension"),
             new("browser_evaluate", "Run a JavaScript expression in a page; its value or what it threw (toolset browser-actions)", "expression", "awaitPromise", "timeoutMs", "window (or handle)"),
         ],
         SkillNote: "CDP only, on a debug browser, no real mouse or keyboard: work on a window behind others without taking the " +
-                   "foreground (browser_screenshot may bring a tab that is not shown, and its window, to the front). Off by default: " +
+                   "foreground (browser_screenshot may bring a tab that is not shown, and its window, to the front). A JavaScript " +
+                   "dialog: pass `dialog` (accept or dismiss) to the action that opens it; one already open is read and answered " +
+                   "with browser_handle_dialog, through UI Automation (DevTools cannot answer it). Off by default: " +
                    "`WAM_TOOLSETS=+browser-actions`. For " +
                    "anything richer, attach Playwright MCP to the same browser: `--cdp-endpoint` set to launch_browser_with_debug's " +
                    "`browserWsEndpoint` (or `cdpEndpoint`)."),

@@ -42,12 +42,13 @@ public interface ICdpTabService
     /// <summary>
     /// Navigates <paramref name="target"/> to <paramref name="url"/> (Page.navigate) and waits for
     /// <paramref name="waitUntil"/>. NavigationFailed with the browser's errorText when it could not load the page;
-    /// CdpDialogOpen when a dialog (such as beforeunload) blocks it. A load that does not finish in time is a success
-    /// with <see cref="CdpNavigation.TimedOut"/>: the page goes on loading.
+    /// CdpDialogOpen when a dialog (such as beforeunload) blocks it, unless <paramref name="dialogAnswer"/> answers the first
+    /// dialog it opens (<see cref="CdpNavigation.Dialog"/>; roadmap M5.8, dialogs). A load that does not finish in time is a
+    /// success with <see cref="CdpNavigation.TimedOut"/>: the page goes on loading.
     /// </summary>
     Task<CdpResult<CdpNavigation>> NavigateAsync(
         CdpTarget target, string url, BrowserWaitUntil waitUntil, CdpGate gate, TimeSpan timeout,
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken = default, BrowserDialogAnswer? dialogAnswer = null);
 
     /// <summary>
     /// Checks <paramref name="condition"/> on <paramref name="target"/>'s page until it holds or
@@ -85,7 +86,8 @@ public sealed record CdpTabListing(IReadOnlyList<CdpTab> Tabs, bool WindowBound,
 /// when known, and how far it loaded (<see cref="BrowserNavigateResult.LoadState"/>); with <paramref name="ErrorText"/>,
 /// the browser's reason why it could not load the page (net::ERR_NAME_NOT_RESOLVED and the like).
 /// </summary>
-public sealed record CdpNavigation(string? Url, string? Title, int? HttpStatus, string LoadState, bool TimedOut, string? ErrorText = null);
+public sealed record CdpNavigation(
+    string? Url, string? Title, int? HttpStatus, string LoadState, bool TimedOut, string? ErrorText = null, CdpAnsweredDialog? Dialog = null);
 
 /// <summary>What <see cref="ICdpTabService.WaitAsync"/> saw last: whether the condition held, and the page's URL and title.</summary>
 public sealed record CdpWaitOutcome(bool Satisfied, string? Url, string? Title, string? Detail);

@@ -15,26 +15,27 @@ public class BrowserPageToolsTests
     private const string TargetId = "2B7E4F1A9C3D5E6F7A8B9C0D1E2F3A4B";
 
     private readonly Mock<IBrowserPageService> _pages = new();
+    private readonly Mock<IBrowserDialogService> _dialogs = new();
     private readonly InputSession _session = new(new FakeInputWrapper());
 
     public BrowserPageToolsTests()
     {
         _pages.Setup(p => p.EvaluateAsync(It.IsAny<BrowserTabTarget>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new BrowserEvaluateResult(true));
-        _pages.Setup(p => p.HandleDialogAsync(It.IsAny<BrowserTabTarget>(), It.IsAny<bool>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+        _dialogs.Setup(d => d.HandleAsync(It.IsAny<nint>(), It.IsAny<bool?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new BrowserDialogResult(true));
         _pages.Setup(p => p.GetElementRectAsync(It.IsAny<BrowserTabTarget>(), It.IsAny<BrowserElementLocator>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new BrowserElementRectResult(true));
         _pages.Setup(p => p.ClickAsync(It.IsAny<BrowserTabTarget>(), It.IsAny<BrowserElementLocator>(), It.IsAny<MouseButton>(), It.IsAny<int>(),
-                It.IsAny<CancellationToken>()))
+                It.IsAny<CancellationToken>(), It.IsAny<BrowserDialogAnswer?>()))
             .ReturnsAsync(new BrowserInputResult(true));
-        _pages.Setup(p => p.TypeAsync(It.IsAny<BrowserTabTarget>(), It.IsAny<BrowserTypeOptions>(), It.IsAny<CancellationToken>()))
+        _pages.Setup(p => p.TypeAsync(It.IsAny<BrowserTabTarget>(), It.IsAny<BrowserTypeOptions>(), It.IsAny<CancellationToken>(), It.IsAny<BrowserDialogAnswer?>()))
             .ReturnsAsync(new BrowserInputResult(true));
         _pages.Setup(p => p.CaptureAsync(It.IsAny<BrowserTabTarget>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new BrowserScreenshot(new BrowserScreenshotResult(true, Width: 10, Height: 10), new EncodedImage([1, 2, 3], "image/png")));
     }
 
-    private BrowserPageTools CreateSut() => new(_pages.Object, windowService: null, _session);
+    private BrowserPageTools CreateSut() => new(_pages.Object, windowService: null, _session, _dialogs.Object);
 
     private static async Task<ToolErrorException> RefusedAsync(Func<Task> act) =>
         (await act.Should().ThrowAsync<ToolErrorException>()).Which;
@@ -48,7 +49,7 @@ public class BrowserPageToolsTests
 
         result.Success.Should().BeTrue();
         _pages.Verify(p => p.ClickAsync(new BrowserTabTarget((nint)Handle, null, null), new BrowserElementLocator(null, null, "button", "Save draft", 1),
-            MouseButton.Primary, 1, It.IsAny<CancellationToken>()));
+            MouseButton.Primary, 1, It.IsAny<CancellationToken>(), It.IsAny<BrowserDialogAnswer?>()));
     }
 
     [Fact]
@@ -57,7 +58,7 @@ public class BrowserPageToolsTests
         await CreateSut().BrowserClick(name: "Save draft", handle: Handle);
 
         _pages.Verify(p => p.ClickAsync(It.IsAny<BrowserTabTarget>(), new BrowserElementLocator(null, null, null, "Save draft", null),
-            It.IsAny<MouseButton>(), It.IsAny<int>(), It.IsAny<CancellationToken>()));
+            It.IsAny<MouseButton>(), It.IsAny<int>(), It.IsAny<CancellationToken>(), It.IsAny<BrowserDialogAnswer?>()));
     }
 
     [Fact]
@@ -140,7 +141,7 @@ public class BrowserPageToolsTests
     [InlineData("")]
     public async Task AMalformedTargetId_IsInvalidArguments(string targetId)
     {
-        var refused = await RefusedAsync(() => CreateSut().BrowserHandleDialog(true, handle: Handle, targetId: targetId));
+        var refused = await RefusedAsync(() => CreateSut().BrowserClick("#save", handle: Handle, targetId: targetId));
 
         refused.ErrorCode.Should().Be(ToolErrorReporting.InvalidArgumentsErrorCode);
         _pages.VerifyNoOtherCalls();
@@ -178,12 +179,62 @@ public class BrowserPageToolsTests
         _pages.Verify(p => p.EvaluateAsync(new BrowserTabTarget((nint)Handle, null, null), "document.title", false, 2500, It.IsAny<CancellationToken>()));
     }
 
-    [Fact]
-    public async Task BrowserHandleDialog_APromptTextWhenDismissing_IsInvalidArguments()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(null)]
+    public async Task BrowserHandleDialog_APromptTextWithoutAccept_IsInvalidArguments(bool? accept)
     {
-        var refused = await RefusedAsync(() => CreateSut().BrowserHandleDialog(accept: false, promptText: "x", handle: Handle));
+        var refused = await RefusedAsync(() => CreateSut().BrowserHandleDialog(accept: accept, promptText: "x", handle: Handle));
 
         refused.Message.Should().Contain("accept true");
+        _dialogs.VerifyNoOtherCalls();
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task BrowserHandleDialog_ReadsOrAnswersTheDialogOfTheWindowItIsGiven(bool? accept)
+    {
+        var result = await CreateSut().BrowserHandleDialog(accept, handle: Handle);
+
+        result.Success.Should().BeTrue();
+        _dialogs.Verify(d => d.HandleAsync((nint)Handle, accept, null, It.IsAny<CancellationToken>()));
+        _pages.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task BrowserHandleDialog_NeedsTheWindow()
+    {
+        var refused = await RefusedAsync(() => CreateSut().BrowserHandleDialog(true));
+
+        refused.ErrorCode.Should().Be(ToolErrorReporting.InvalidArgumentsErrorCode);
+        refused.Message.Should().Contain("handle or window");
+        _dialogs.VerifyNoOtherCalls();
+    }
+
+    [Theory]
+    [InlineData(BrowserDialogChoice.Accept, "Kari", true)]
+    [InlineData(BrowserDialogChoice.Dismiss, null, false)]
+    public async Task BrowserClickAndType_PassTheDialogOptionOn(BrowserDialogChoice choice, string? promptText, bool accept)
+    {
+        await CreateSut().BrowserClick("#delete", dialog: choice, promptText: promptText, handle: Handle);
+        await CreateSut().BrowserType("x", pressEnter: true, dialog: choice, promptText: promptText, handle: Handle);
+
+        var answer = new BrowserDialogAnswer(accept, promptText);
+        _pages.Verify(p => p.ClickAsync(It.IsAny<BrowserTabTarget>(), It.IsAny<BrowserElementLocator>(), MouseButton.Primary, 1,
+            It.IsAny<CancellationToken>(), answer));
+        _pages.Verify(p => p.TypeAsync(It.IsAny<BrowserTabTarget>(), It.IsAny<BrowserTypeOptions>(), It.IsAny<CancellationToken>(), answer));
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData(BrowserDialogChoice.Dismiss)]
+    public async Task BrowserClick_APromptTextWithoutDialogAccept_IsInvalidArguments(BrowserDialogChoice? choice)
+    {
+        var refused = await RefusedAsync(() => CreateSut().BrowserClick("#delete", dialog: choice, promptText: "x", handle: Handle));
+
+        refused.Message.Should().Contain("dialog accept");
         _pages.VerifyNoOtherCalls();
     }
 
@@ -245,8 +296,10 @@ public class BrowserPageToolsTests
         (await RefusedAsync(() => sut.BrowserClick("#save", handle: Handle))).ErrorCode.Should().Be(nameof(WindowErrorCode.PausedByUser));
         (await RefusedAsync(() => sut.BrowserType("x", handle: Handle))).ErrorCode.Should().Be(nameof(WindowErrorCode.PausedByUser));
         (await RefusedAsync(() => sut.BrowserHandleDialog(true, handle: Handle))).ErrorCode.Should().Be(nameof(WindowErrorCode.PausedByUser));
+        (await RefusedAsync(() => sut.BrowserHandleDialog(false, handle: Handle))).ErrorCode.Should().Be(nameof(WindowErrorCode.PausedByUser));
         (await RefusedAsync(() => sut.BrowserEvaluate("1", handle: Handle))).ErrorCode.Should().Be(nameof(WindowErrorCode.PausedByUser));
         _pages.VerifyNoOtherCalls();
+        _dialogs.VerifyNoOtherCalls();
     }
 
     [Fact]
@@ -255,6 +308,7 @@ public class BrowserPageToolsTests
         _session.Pause(InputControlSources.Hotkey);
 
         (await CreateSut().BrowserElementRect("#save", handle: Handle)).Success.Should().BeTrue();
+        (await CreateSut().BrowserHandleDialog(handle: Handle)).Success.Should().BeTrue("reading a dialog answers nothing");
         (await CreateSut().BrowserScreenshot(handle: Handle)).IsError.Should().BeFalse(
             "a capture of a shown tab changes nothing; one that must bring a tab to the front is refused by the gate");
     }

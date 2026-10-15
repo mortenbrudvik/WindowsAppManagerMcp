@@ -2654,7 +2654,7 @@ typical result over 300 tokens, and tools/list itself, measured in October 2026:
 | `read_table` | Task Manager's first 50 processes, 5 columns with headers | 643 | 1,000 |
 | `get_server_info` | The default deny list, five host processes, two monitors | 634 | 850 |
 | `get_layout` | A preset of 6 placements, each with the captured window identity | 529 | 800 |
-| tools/list | Every tool's name, title, description, schemas and annotations: 78 tools, 253,893 bytes (`ToolList_StaysWithinItsBudget`; M5.8's six DOM bridge tools added 2,970, 936 of them their window selectors) | 63,474 | 63,510 |
+| tools/list | Every tool's name, title, description, schemas and annotations: 78 tools, 254,692 bytes (`ToolList_StaysWithinItsBudget`; M5.8's six DOM bridge tools added 2,970, 936 of them their window selectors; M5.8's dialog option and the UI Automation browser_handle_dialog 199 more) | 63,673 | 63,709 |
 
 Every other typical result is at most 300 tokens. When a change makes a result larger on purpose, raise its
 budget in the same change (the failure message gives the new size); when a change shrinks one a lot, lower it.

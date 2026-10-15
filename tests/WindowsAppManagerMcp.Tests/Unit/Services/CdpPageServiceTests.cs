@@ -144,7 +144,7 @@ public class CdpPageServiceTests
         var result = await evaluate;
 
         result.ErrorCode.Should().Be(nameof(BrowserErrorCode.CdpTimeout));
-        result.Error.Should().Contain("promise").And.Contain("browser_handle_dialog").And.Contain("respond_to_dialog");
+        result.Error.Should().Contain("promise").And.Contain("browser_handle_dialog").And.NotContain("respond_to_dialog");
         heldWhileWaiting.Should().BeFalse("the gate is let go after at most a second, not held for a script's work");
         stopwatch.Elapsed.Should().BeLessThan(HangBound);
     }
@@ -174,76 +174,96 @@ public class CdpPageServiceTests
 
     #endregion
 
-    #region browser_handle_dialog
+    #region Dialogs (roadmap M5.8, dialogs)
 
-    [Fact]
-    public async Task HandleDialogAsync_ADialogTheBrowserReports_IsAnsweredInsideTheGate_AndDescribed()
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task ClickAsync_WithTheDialogOption_AnswersTheDialogTheClickOpens_OnItsOwnConnection(bool accept)
     {
-        var gate = new RecordingGate();
-        var page = new FakePage { DialogOnEnable = true, GateHeld = () => gate.Held };
+        // As on Chrome and Edge 155: a dialog opened while this connection has Page.enable is answered on it
+        var page = new FakePage { DialogOnRelease = true };
 
-        var result = await CreateSut(page).HandleDialogAsync(Tab, accept: true, promptText: "answer", gate.EnterAsync, LongTimeout);
+        var result = await CreateSut(page).ClickAsync(Tab, BySelector("#delete"), MouseButton.Primary, 1, new RecordingGate().EnterAsync,
+            LongTimeout, dialogAnswer: new BrowserDialogAnswer(accept));
 
         result.Success.Should().BeTrue(result.Error);
-        result.Value!.Dialog!.Type.Should().Be("prompt");
-        result.Value.Dialog.Message.Should().Be("Your name?");
+        result.Value!.Dialog!.Type.Should().Be("confirm");
+        result.Value.Answer.Should().Be(new CdpAnsweredDialog(result.Value.Dialog, accept));
+        result.Value.AnswerFailure.Should().BeNull();
         var sent = page.Command("Page.handleJavaScriptDialog").GetProperty("params");
-        sent.GetProperty("accept").GetBoolean().Should().BeTrue();
-        sent.GetProperty("promptText").GetString().Should().Be("answer");
-        page.GateAt["Page.handleJavaScriptDialog"].Should().BeTrue();
-        gate.Held.Should().BeFalse();
+        sent.GetProperty("accept").GetBoolean().Should().Be(accept);
+        sent.TryGetProperty("promptText", out _).Should().BeFalse("only a prompt takes text");
+        page.DialogOpen.Should().BeFalse();
     }
 
     [Fact]
-    public async Task HandleDialogAsync_ADialogOpenBeforeTheConnection_ThatTheBrowserDoesNotReport_IsNeverAcceptedUnread()
+    public async Task ClickAsync_WithThePromptText_AnswersAPromptWithIt()
     {
-        // Edge 155 does not report a dialog that was open before the connection: its text is unknown, and it may confirm a
-        // deletion, so it is read through UI Automation (respond_to_dialog) first
-        var page = new FakePage { SilentDialog = true };
+        var page = new FakePage { DialogOnRelease = true, DialogType = "prompt" };
 
-        var result = await CreateSut(page).HandleDialogAsync(Tab, accept: true, promptText: null, new RecordingGate().EnterAsync, LongTimeout);
+        var result = await CreateSut(page).ClickAsync(Tab, BySelector("#rename"), MouseButton.Primary, 1, new RecordingGate().EnterAsync,
+            LongTimeout, dialogAnswer: new BrowserDialogAnswer(true, "Kari Nordmann"));
 
-        result.ErrorCode.Should().Be(nameof(BrowserErrorCode.CdpDialogOpen));
-        result.Error.Should().Contain("respond_to_dialog").And.Contain("not accepted unread");
+        result.Value!.Answer!.Accepted.Should().BeTrue();
+        page.Command("Page.handleJavaScriptDialog").GetProperty("params").GetProperty("promptText").GetString().Should().Be("Kari Nordmann");
+    }
+
+    [Fact]
+    public async Task ClickAsync_WithoutTheDialogOption_LeavesTheDialogOpen()
+    {
+        var page = new FakePage { DialogOnRelease = true };
+
+        var result = await CreateSut(page).ClickAsync(Tab, BySelector("#delete"), MouseButton.Primary, 1, new RecordingGate().EnterAsync, LongTimeout);
+
+        result.Value!.Dialog.Should().NotBeNull();
+        result.Value.Answer.Should().BeNull();
         page.Methods.Should().NotContain("Page.handleJavaScriptDialog");
+        page.DialogOpen.Should().BeTrue();
     }
 
     [Fact]
-    public async Task HandleDialogAsync_ADialogOpenBeforeTheConnection_ThatTheBrowserDoesNotReport_IsDismissedAllTheSame()
+    public async Task ClickAsync_ADialogTheBrowserWillNotAnswer_IsLeftOpen_WithTheReason()
     {
-        // Edge 155 does not report a dialog that was open before the connection, not even after Page.enable
-        var page = new FakePage { SilentDialog = true };
+        var page = new FakePage { DialogOnRelease = true, RefusesAnswers = true };
 
-        var result = await CreateSut(page).HandleDialogAsync(Tab, accept: false, promptText: null, new RecordingGate().EnterAsync, LongTimeout);
+        var result = await CreateSut(page).ClickAsync(Tab, BySelector("#delete"), MouseButton.Primary, 1, new RecordingGate().EnterAsync,
+            LongTimeout, dialogAnswer: new BrowserDialogAnswer(true));
 
         result.Success.Should().BeTrue(result.Error);
-        result.Value!.Dialog.Should().BeNull();
-        var sent = page.Command("Page.handleJavaScriptDialog").GetProperty("params");
-        sent.GetProperty("accept").GetBoolean().Should().BeFalse();
-        sent.TryGetProperty("promptText", out _).Should().BeFalse();
+        result.Value!.Dialog.Should().NotBeNull();
+        result.Value.Answer.Should().BeNull();
+        result.Value.AnswerFailure.Should().Contain("No dialog is showing");
     }
 
     [Fact]
-    public async Task HandleDialogAsync_NoDialog_AndAPageThatAnswers_IsDialogNotFound()
+    public async Task TypeAsync_WithTheDialogOption_AnswersTheDialogEnterOpens()
     {
-        var page = new FakePage();
+        var page = new FakePage { DialogOnEnter = true };
 
-        var result = await CreateSut(page).HandleDialogAsync(Tab, true, null, new RecordingGate().EnterAsync, LongTimeout);
+        var result = await CreateSut(page).TypeAsync(Tab, new BrowserTypeOptions("query", null, false, PressEnter: true), new RecordingGate().EnterAsync,
+            LongTimeout, dialogAnswer: new BrowserDialogAnswer(false));
 
-        result.ErrorCode.Should().Be(nameof(UIElementErrorCode.DialogNotFound));
+        result.Success.Should().BeTrue(result.Error);
+        result.Value!.Dialog!.Type.Should().Be("confirm");
+        result.Value.Answer!.Accepted.Should().BeFalse();
+        page.Command("Page.handleJavaScriptDialog").GetProperty("params").GetProperty("accept").GetBoolean().Should().BeFalse();
     }
 
     [Fact]
-    public async Task HandleDialogAsync_ADialogTheBrowserWillNotHandOver_IsCdpDialogOpen_PointingToRespondToDialog()
+    public async Task ADialogOpenBeforeTheConnection_IsNeverReported_AndTheBrowserWillNotAnswerIt()
     {
-        // The browser says no dialog is shown, and the page answers nothing: a dialog it keeps from a new connection
-        var page = new FakePage { Unresponsive = true };
+        // Chrome and Edge 155 on a real desktop: neither Page.enable nor any session of the browser hands a dialog that was open
+        // before the connection over, and Page.handleJavaScriptDialog answers "No dialog is showing": the call can only say a
+        // dialog is probably open, and point to browser_handle_dialog, which answers it through UI Automation
+        var page = new FakePage { SilentDialog = true };
         var stopwatch = Stopwatch.StartNew();
 
-        var result = await CreateSut(page).HandleDialogAsync(Tab, true, null, new RecordingGate().EnterAsync, LongTimeout);
+        var result = await CreateSut(page).LocateAsync(Tab, BySelector("#save"), TimeSpan.FromSeconds(1));
 
-        result.ErrorCode.Should().Be(nameof(BrowserErrorCode.CdpDialogOpen));
-        result.Error.Should().Contain("respond_to_dialog");
+        result.ErrorCode.Should().Be(nameof(BrowserErrorCode.CdpTimeout));
+        result.Error.Should().Contain("browser_handle_dialog").And.NotContain("respond_to_dialog");
+        page.Methods.Should().NotContain("Page.handleJavaScriptDialog");
         stopwatch.Elapsed.Should().BeLessThan(HangBound);
     }
 
@@ -851,11 +871,32 @@ public class CdpPageServiceTests
 
         public string? EvaluateError { get; init; }
 
-        /// <summary>Page.enable reports an open prompt dialog (Chrome does for a dialog that was open before).</summary>
-        public bool DialogOnEnable { get; init; }
-
-        /// <summary>A dialog is open that the browser never reports (Edge): the page answers nothing, the dialog is handled.</summary>
+        /// <summary>
+        /// A dialog that was open before the connection, as Chrome and Edge 155 keep it: never reported (not after Page.enable
+        /// either), the page answers nothing, and Page.handleJavaScriptDialog answers "No dialog is showing".
+        /// </summary>
         public bool SilentDialog { get; init; }
+
+        /// <summary>The type of the dialog the page opens (DialogOnRelease, DialogOnPress, DialogOnEnter).</summary>
+        public string DialogType { get; init; } = "confirm";
+
+        /// <summary>Page.handleJavaScriptDialog is refused even for a dialog opened on this connection.</summary>
+        public bool RefusesAnswers { get; init; }
+
+        /// <summary>Enter's keyDown opens the dialog (a form's submit handler).</summary>
+        public bool DialogOnEnter { get; init; }
+
+        /// <summary>Whether a dialog the page opened on this connection is still open.</summary>
+        public bool DialogOpen
+        {
+            get
+            {
+                lock (_lock)
+                {
+                    return _dialogOpen;
+                }
+            }
+        }
 
         /// <summary>The page answers no Runtime command, and the browser shows no dialog to handle.</summary>
         public bool Unresponsive { get; init; }
@@ -924,19 +965,12 @@ public class CdpPageServiceTests
                 switch (method)
                 {
                     case "Page.enable":
-                        if (DialogOnEnable)
-                        {
-                            _dialogOpen = true;
-                            socket.EnqueueEvent("Page.javascriptDialogOpening",
-                                new { url = Tab.Url, message = "Your name?", type = "prompt", defaultPrompt = "", hasBrowserHandler = true });
-                        }
-
                         if (!SilentDialog && !Unresponsive)
                             socket.ReplyEmpty(command);
                         break;
 
                     case "Page.handleJavaScriptDialog":
-                        if (_dialogOpen || SilentDialog)
+                        if (_dialogOpen && !RefusesAnswers)
                         {
                             _dialogOpen = false;
                             socket.ReplyEmpty(command);
@@ -1017,15 +1051,15 @@ public class CdpPageServiceTests
                         break;
 
                     case "Input.dispatchMouseEvent" when DialogOnPress && p.GetProperty("type").GetString() == "mousePressed":
-                        _dialogOpen = true;
-                        socket.EnqueueEvent("Page.javascriptDialogOpening",
-                            new { url = Tab.Url, message = "Delete it?", type = "confirm", hasBrowserHandler = true });
+                        OpenDialogOnPage(socket);
                         break;
 
                     case "Input.dispatchMouseEvent" when DialogOnRelease && p.GetProperty("type").GetString() == "mouseReleased":
-                        _dialogOpen = true;
-                        socket.EnqueueEvent("Page.javascriptDialogOpening",
-                            new { url = Tab.Url, message = "Delete it?", type = "confirm", hasBrowserHandler = true });
+                        OpenDialogOnPage(socket);
+                        break;
+
+                    case "Input.dispatchKeyEvent" when DialogOnEnter && p.GetProperty("type").GetString() == "keyDown":
+                        OpenDialogOnPage(socket);
                         break;
 
                     case "Page.captureScreenshot" when CaptureNeverAnswers:
@@ -1087,6 +1121,14 @@ public class CdpPageServiceTests
                     Reply(socket, command, answer ?? new { result = new { type = "undefined" } });
                 }
             }
+        }
+
+        /// <summary>The page opens its dialog (<see cref="DialogType"/>): the browser reports it to this connection.</summary>
+        private void OpenDialogOnPage(FakeCdpWebSocket socket)
+        {
+            _dialogOpen = true;
+            socket.EnqueueEvent("Page.javascriptDialogOpening",
+                new { url = Tab.Url, message = DialogType == "prompt" ? "Your name?" : "Delete it?", type = DialogType, defaultPrompt = "", hasBrowserHandler = true });
         }
 
         private static void Reply(FakeCdpWebSocket socket, JsonElement command, object result) =>
