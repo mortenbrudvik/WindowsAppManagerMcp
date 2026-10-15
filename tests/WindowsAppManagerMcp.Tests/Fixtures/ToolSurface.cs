@@ -4,7 +4,6 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using ModelContextProtocol.Protocol;
 using WindowsAppManagerMcp.Infrastructure;
-using WindowsAppManagerMcp.Tests.Contract;
 
 namespace WindowsAppManagerMcp.Tests.Fixtures;
 
@@ -65,9 +64,14 @@ public static class ToolSurface
     public static int WireBytes(JsonNode node) =>
         Encoding.UTF8.GetByteCount(node.ToJsonString(ModelContextProtocol.McpJsonUtilities.DefaultOptions));
 
-    /// <summary>The estimated tokens of <paramref name="bytes"/> of JSON text, rounded up (<see cref="ToolPayloadBudgetTests.BytesPerToken"/>).</summary>
-    public static int EstimatedTokens(int bytes) =>
-        (bytes + ToolPayloadBudgetTests.BytesPerToken - 1) / ToolPayloadBudgetTests.BytesPerToken;
+    /// <summary>
+    /// UTF-8 bytes of JSON text per token, a rough figure for JSON: the one estimate the budgets (ToolPayloadBudgetTests) and
+    /// the docs' Tokens column use.
+    /// </summary>
+    public const int BytesPerToken = 4;
+
+    /// <summary>The estimated tokens of <paramref name="bytes"/> of JSON text, rounded up (<see cref="BytesPerToken"/>).</summary>
+    public static int EstimatedTokens(int bytes) => (bytes + BytesPerToken - 1) / BytesPerToken;
 
     /// <summary>
     /// The estimated tokens <paramref name="toolset"/> adds to tools/list: the sum of its tool objects as the SDK writes them,

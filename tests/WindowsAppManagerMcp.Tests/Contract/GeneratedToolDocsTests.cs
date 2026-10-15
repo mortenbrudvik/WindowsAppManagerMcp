@@ -135,6 +135,24 @@ public class GeneratedToolDocsTests
     }
 
     [Fact]
+    public async Task ToolsetsRegion_StatesTheDefaultAndWholeSurface_AsTheBudgetsMeasureThem()
+    {
+        // The totals beside the Tokens column are generated, so a branch that changes the surface cannot leave them stale
+        // Arrange - what DefaultToolList_StaysWithinItsBudget and ToolList_StaysWithinItsBudget measure
+        var tools = await ToolSurface.ListToolsAsync();
+        var defaultTokens = ToolSurface.EstimatedTokens(ToolSurface.WireBytes(await ToolSurface.ListDefaultToolsAsync()));
+        var allTokens = ToolSurface.EstimatedTokens(ToolSurface.WireBytes(tools));
+
+        // Act
+        var region = ToolDocGenerator.Generate(ToolDocGenerator.ToolsReference, "toolsets", string.Empty, tools);
+
+        // Assert
+        region.Should().Contain(
+            $"The default surface (the toolsets that are on) is {ToolDocGenerator.RoundedTokens(defaultTokens)} tokens, " +
+            $"and every tool together {ToolDocGenerator.RoundedTokens(allTokens)}.");
+    }
+
+    [Fact]
     public void ToolsDoc_HasOneSectionPerTool_UnderItsCategory_InCatalogOrder()
     {
         // The '### tool' sections hold the examples and the params:tool region; a tool documented twice drifts apart

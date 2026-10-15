@@ -292,6 +292,8 @@ public sealed class ContractServices : IDisposable
             .Returns((nint handle, int _, int _, bool _) => WindowChangeResult.Done(handle));
         Windows.Setup(w => w.ResizeWindow(It.IsAny<nint>(), It.IsAny<int>(), It.IsAny<int>()))
             .Returns((nint handle, int _, int _) => WindowChangeResult.Done(handle));
+        Windows.Setup(w => w.ResizeWindow(It.IsAny<nint>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>()))
+            .Returns((nint handle, int _, int _, bool _) => WindowChangeResult.Done(handle));
         Windows.Setup(w => w.SetWindowBounds(It.IsAny<nint>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>()))
             .Returns((nint handle, int _, int _, int _, int _, bool _) => WindowChangeResult.Done(handle));
         Windows.Setup(w => w.SetWindowFrame(It.IsAny<nint>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>()))

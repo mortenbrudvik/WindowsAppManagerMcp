@@ -11,7 +11,7 @@ namespace WindowsAppManagerMcp.Tests.Contract;
 /// data in the metadata) is noticed before it costs every agent context on every call.
 /// </summary>
 /// <remarks>
-/// Text is estimated at <see cref="BytesPerToken"/> UTF-8 bytes per token, a rough figure for JSON. Images are
+/// Text is estimated at <see cref="ToolSurface.BytesPerToken"/> UTF-8 bytes per token, a rough figure for JSON. Images are
 /// estimated the way Anthropic documents it for Claude: width x height / <see cref="PixelsPerImageToken"/>, from
 /// the capture's metadata. The budgets are generous on purpose: about one and a half times the measured size,
 /// rounded up, so only a real change in size fails. When a change makes a result legitimately larger, measure
@@ -20,9 +20,6 @@ namespace WindowsAppManagerMcp.Tests.Contract;
 /// </remarks>
 public class ToolPayloadBudgetTests
 {
-    /// <summary>UTF-8 bytes of JSON text per token, for the estimate.</summary>
-    public const int BytesPerToken = 4;
-
     /// <summary>Pixels per image token: Claude's documented estimate is width x height / 750.</summary>
     public const int PixelsPerImageToken = 750;
 
@@ -305,7 +302,7 @@ public class ToolPayloadBudgetTests
         // Act
         var result = await EveryToolContractTests.TypicalCallAsync(tool);
         var text = result.Content.OfType<TextContentBlock>().Select(t => t.Text).ToList();
-        var textTokens = (text.Sum(t => Encoding.UTF8.GetByteCount(t)) + BytesPerToken - 1) / BytesPerToken;
+        var textTokens = ToolSurface.EstimatedTokens(text.Sum(t => Encoding.UTF8.GetByteCount(t)));
 
         // Assert
         textTokens.Should().BeLessThanOrEqualTo(budget,

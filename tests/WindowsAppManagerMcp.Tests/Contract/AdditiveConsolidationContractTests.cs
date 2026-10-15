@@ -57,6 +57,23 @@ public class AdditiveConsolidationContractTests
     }
 
     [Fact]
+    public async Task SetWindowBounds_SizeOnly_WithBringToFront_IsARaisingResize()
+    {
+        // Act - the typical fake answers this overload too, so a step runner or argument fuzzing can take this path
+        var (result, services) = await CallAsync("set_window_bounds", new Dictionary<string, object?>
+        {
+            ["handle"] = TypicalDesktop.NotepadHandle, ["width"] = 1200, ["height"] = 800, ["bringToFront"] = true
+        });
+        using var _ = services;
+
+        // Assert
+        result.IsError.Should().NotBe(true);
+        Payload(result).GetProperty("success").GetBoolean().Should().BeTrue();
+        services.Windows.Verify(w => w.ResizeWindow((nint)TypicalDesktop.NotepadHandle, 1200, 800, true), Times.Once);
+        services.Windows.Verify(w => w.ResizeWindow(It.IsAny<nint>(), It.IsAny<int>(), It.IsAny<int>()), Times.Never);
+    }
+
+    [Fact]
     public async Task SetWindowBounds_PositionOnly_IsAMove_ThatRaisesTheWindow()
     {
         // Act

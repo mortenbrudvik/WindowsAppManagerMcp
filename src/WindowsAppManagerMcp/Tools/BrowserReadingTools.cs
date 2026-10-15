@@ -104,7 +104,7 @@ public partial class BrowserReadingTools
         RefuseBadTargetId(targetId);
         RefuseCdpWithoutCdp(useCdp, cdpPort, targetId, requireCdp);
         var cdp = new CdpOptions(cdpPort, requireCdp, timeoutMs, targetId, useCdp);
-        if (handle == null && IsBareForeground(window))
+        if (handle == null && WindowTargeting.IsBareForeground(window))
         {
             // Roadmap M6.1: the selector that only says "the window in front" is get_active_browser_url, with its
             // NoBrowserInForeground when that window is not a browser (or there is none)
@@ -115,10 +115,6 @@ public partial class BrowserReadingTools
         var result = await _browserReadingService.GetBrowserUrlAsync(windowHandle, cdp, cancellationToken);
         return ToDto(result);
     }
-
-    /// <summary>True for a window selector that names only the foreground window: no handle, filter or index.</summary>
-    private static bool IsBareForeground(WindowSelector? window) =>
-        window is { Foreground: true, Handle: null, Index: null, HasFilters: false };
 
     [McpServerTool(Name = "get_browser_content", Title = "Read Browser Page Content", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = true)]
     [Description("Extract content from a browser window's page. Uses Windows UI Automation to read visible text, or CDP (Chrome DevTools Protocol) for JavaScript-rendered text or full HTML. HTML (textOnly=false) is only available via CDP and returns the HtmlRequiresCdp error otherwise." + CdpBehaviorDescription + " Supports Chrome, Edge, Firefox, Brave, Opera, Vivaldi, and other Chromium/Firefox-based browsers." +

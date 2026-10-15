@@ -2538,8 +2538,9 @@ desktop; before the release that carries it, the owner checks:
    the agent's host stays in front); `x` and `y` alone onto the monitor with the other scale go through the second
    placement, as move_window does (skip with one monitor); half a pair is `InvalidArguments` and the window does not
    move. The harness closes only the fixture windows it opened.
-2. **get_monitors' `virtualScreen`** (no input, no window): equal to list_screens' `virtualScreen`, and to
-   take_screenshot's `capturedRegion` with `monitorIndex: -1`.
+2. **get_monitors' `virtualScreen`** (no input, no window, no pixels): equal to list_screens' `virtualScreen`, and to
+   take_screenshot's `capturedRegion` with `monitorIndex: -1` and `output: "metadata"`. Always pass `output: "metadata"`:
+   the default output returns a picture of every monitor, with whatever the owner has open, to read four integers.
 3. **get_browser_url with `window: {"foreground": true}`** (optional, as in "Desktop check: M5 browser bridge"): with the
    agent's terminal in front the result is `NoBrowserInForeground`. With a throwaway debug browser from
    launch_browser_with_debug, focused by its handle, it returns that browser's URL; close it with close_debug_browser by
@@ -2690,7 +2691,8 @@ nearly every user pays for: a tool added to a toolset that is off by default lea
 `DefaultToolList_IsTheToolsOfTheToolsetsOnByDefault` checks that it measures exactly those toolsets.
 `EveryToolset_StaysWithinItsBudget` holds each toolset's share of tools/list (the sum of its tool objects as the SDK
 writes them) to a ratchet just above its measured size, and docs/TOOLS.md publishes the sizes, to the nearest 100, in
-the generated Tokens column of its toolsets table (`GeneratedToolDocsTests`); `EveryToolset_HasATokenBudget` makes a
+the generated Tokens column of its toolsets table, with the default surface's and the whole list's totals under it,
+measured as the two list budgets measure them (`GeneratedToolDocsTests`); `EveryToolset_HasATokenBudget` makes a
 new toolset come with a budget. `EveryTool_SchemaWithinCap` caps every single tool object at 2,400 tokens: a cap, not a
 ratchet, so a tool that needs more is split or trimmed rather than the cap raised. Measured in October 2026 after
 M6.1a (the largest tools were capture_with_elements at 2,396 and element_action at 2,386, so they have no room to grow):

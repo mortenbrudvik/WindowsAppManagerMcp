@@ -147,8 +147,20 @@ public static partial class ToolDocGenerator
             $"| `{t.Name}` | {(t.Name == catalog.AlwaysOn ? "always on" : t.OnByDefault ? "on" : "off")} | " +
             $"{RoundedTokens(ToolSurface.ToolsetTokens(tools, t))} | {Cell(t.Description)} | " +
             $"{string.Join(", ", t.Tools.Select(tool => $"[{tool}](#{tool})"))} |"));
+        lines.Add("");
+        lines.Add(
+            $"The default surface (the toolsets that are on) is {RoundedTokens(SurfaceTokens(tools, catalog.Toolsets.Where(t => t.OnByDefault)))} " +
+            $"tokens, and every tool together {RoundedTokens(SurfaceTokens(tools, catalog.Toolsets))}.");
         return string.Join('\n', lines);
     }
+
+    /// <summary>
+    /// The estimated tokens of a tools/list that serves the tools of <paramref name="toolsets"/>, measured as the budgets
+    /// measure a whole list (one JSON array, as the SDK writes it), so the totals beside the Tokens column are generated too.
+    /// </summary>
+    private static int SurfaceTokens(JsonArray tools, IEnumerable<Toolset> toolsets) =>
+        ToolSurface.EstimatedTokens(ToolSurface.WireBytes(new JsonArray(
+            toolsets.SelectMany(t => t.Tools).Select(name => ToolSurface.Tool(tools, name).DeepClone()).ToArray())));
 
     /// <summary>A token estimate for the docs, to the nearest 100: "about 13,700", and at least "about 100".</summary>
     public static string RoundedTokens(int tokens) =>
