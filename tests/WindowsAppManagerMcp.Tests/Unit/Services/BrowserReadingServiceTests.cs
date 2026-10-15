@@ -1865,6 +1865,156 @@ public class BrowserReadingServiceTests
 
     #endregion
 
+    #region Paging and selectors through the found port (roadmap M5.3, M5.6)
+
+    [Fact]
+    public async Task GetBrowserContent_ContinuesACdpPage_ThroughTheFoundPort_WithoutCdpPort()
+    {
+        // Arrange - a debug browser read through its own port: both pages are CDP's
+        var handle = new nint(12345);
+        SetupValidBrowserWindow(handle, "chrome", "chrome");
+        PortLookup(DebugPortLookupStatus.Found, FoundPort);
+        SetupCdpMatch(CdpResult<CdpTarget>.Ok(CdpTab with { Port = FoundPort }));
+        SetupCdpSnapshot(CdpResult<CdpPageSnapshot>.Ok(new CdpPageSnapshot("t", "u", "abcd", Offset: 0, TotalLength: 10)));
+        var sut = CreateSutWithLocator();
+
+        // Act
+        var first = await sut.GetBrowserContentAsync(handle, new BrowserContentOptions(MaxLength: 4), new CdpOptions());
+        SetupCdpSnapshot(CdpResult<CdpPageSnapshot>.Ok(new CdpPageSnapshot("t", "u", "efgh", Offset: 4, TotalLength: 10)));
+        var next = await sut.GetBrowserContentAsync(
+            handle, new BrowserContentOptions(MaxLength: 4, Offset: first.NextOffset!.Value), new CdpOptions());
+
+        // Assert
+        first.Should().BeEquivalentTo(new { Source = "cdp", CdpPort = FoundPort, NextOffset = 4 });
+        next.Should().BeEquivalentTo(new { Success = true, Content = "efgh", Source = "cdp", CdpPort = FoundPort, Offset = 4, NextOffset = 8 });
+        _mockCdpService.Verify(c => c.FindTargetForWindowAsync(
+            FoundPort, It.Is<CdpWindow>(w => w.ProcessId == 1000 && w.Title == "Test Page - chrome"), It.IsAny<TimeSpan>(),
+            It.IsAny<CancellationToken>()), Times.Exactly(2));
+        _mockCdpService.Verify(c => c.GetPageSnapshotAsync(
+            It.IsAny<CdpTarget>(), new CdpPageRequest(true, 4, 4, null), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()), Times.Once);
+        _worker.Calls.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task GetBrowserContent_ALaterPageCdpCannotRead_NeverFallsBackToUia_AndSaysHowAUiaPageContinues()
+    {
+        var handle = new nint(12345);
+        SetupValidBrowserWindow(handle, "chrome", "chrome");
+        ShowPage(handle, "https://example.com/", "UI Automation's text");
+        PortLookup(DebugPortLookupStatus.Found, FoundPort);
+        SetupCdpMatch(CdpResult<CdpTarget>.Ok(CdpTab with { Port = FoundPort }));
+        SetupCdpSnapshot(CdpResult<CdpPageSnapshot>.Fail(BrowserErrorCode.CdpTimeout, "did not answer"));
+        var sut = CreateSutWithLocator();
+
+        var result = await sut.GetBrowserContentAsync(handle, new BrowserContentOptions(Offset: 4), new CdpOptions());
+
+        result.ErrorCode.Should().Be(BrowserErrorCode.CdpTimeout);
+        result.Source.Should().Be(BrowserReadSource.Cdp);
+        result.CdpPort.Should().Be(FoundPort);
+        result.Error.Should().Contain("useCdp=false");
+        _worker.Calls.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task GetBrowserContent_ContinuesAUiaPage_WithUseCdpFalse_AfterTheFoundPortFailed()
+    {
+        // Arrange - the found port fails for the first page, which UI Automation reads
+        var handle = new nint(12345);
+        SetupValidBrowserWindow(handle, "chrome", "chrome");
+        ShowPage(handle, "https://example.com/", "abcdefghij");
+        PortLookup(DebugPortLookupStatus.Found, FoundPort);
+        SetupCdpMatch(CdpResult<CdpTarget>.Ok(CdpTab with { Port = FoundPort }));
+        SetupCdpSnapshot(CdpResult<CdpPageSnapshot>.Fail(BrowserErrorCode.CdpTimeout, "did not answer"));
+        var sut = CreateSutWithLocator();
+
+        // Act - CDP then recovers, but useCdp=false keeps the next page UI Automation's
+        var first = await sut.GetBrowserContentAsync(handle, new BrowserContentOptions(MaxLength: 4), new CdpOptions());
+        SetupCdpSnapshot(CdpResult<CdpPageSnapshot>.Ok(new CdpPageSnapshot("t", "u", "CDP's", Offset: 4, TotalLength: 30)));
+        var next = await sut.GetBrowserContentAsync(
+            handle, new BrowserContentOptions(MaxLength: 4, Offset: first.NextOffset!.Value), new CdpOptions(UseCdp: false));
+
+        // Assert
+        first.Should().BeEquivalentTo(new { Success = true, Content = "abcd", Source = "uia", NextOffset = 4 });
+        first.CdpError.Should().StartWith("CdpTimeout").And.Contain("page on with useCdp=false");
+        next.Should().BeEquivalentTo(new { Success = true, Content = "efgh", Source = "uia", Offset = 4, NextOffset = 8 });
+        next.CdpError.Should().BeNull();
+        next.CdpPort.Should().BeNull();
+        _locator.Verify(l => l.Find(1000), Times.Once);
+        _mockCdpService.Verify(c => c.GetPageSnapshotAsync(
+            It.IsAny<CdpTarget>(), It.IsAny<CdpPageRequest>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task GetBrowserContent_ABrowserWithoutADebugPort_PagesOnWithUseCdpFalse_AndNotWithoutIt()
+    {
+        // Arrange - the user's own browser: the first page is UI Automation's, without a cdpError (roadmap M5.3)
+        var handle = new nint(12345);
+        SetupValidBrowserWindow(handle, "chrome", "chrome");
+        ShowPage(handle, "https://example.com/", "abcdefghij");
+        PortLookup(DebugPortLookupStatus.NoDebugPort);
+        var sut = CreateSutWithLocator();
+
+        // Act
+        var first = await sut.GetBrowserContentAsync(handle, new BrowserContentOptions(MaxLength: 4), new CdpOptions());
+        var withCdp = await sut.GetBrowserContentAsync(handle, new BrowserContentOptions(MaxLength: 4, Offset: 4), new CdpOptions());
+        var next = await sut.GetBrowserContentAsync(
+            handle, new BrowserContentOptions(MaxLength: 4, Offset: 4), new CdpOptions(UseCdp: false));
+
+        // Assert - an offset above 0 continues a CDP page unless useCdp=false says it is UI Automation's
+        first.Should().BeEquivalentTo(new { Success = true, Content = "abcd", Source = "uia", NextOffset = 4 });
+        first.CdpError.Should().BeNull();
+        withCdp.ErrorCode.Should().Be(BrowserErrorCode.CdpUnavailable);
+        withCdp.Error.Should().Contain("offset above 0").And.Contain("useCdp=false");
+        next.Should().BeEquivalentTo(new { Success = true, Content = "efgh", Source = "uia", Offset = 4 });
+        _worker.Calls.Should().Be(2);
+        _mockCdpService.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task GetBrowserContent_ReadsASelector_ThroughTheFoundPortsWindowBinding()
+    {
+        var handle = new nint(12345);
+        SetupValidBrowserWindow(handle, "chrome", "chrome");
+        _mockNativeWrapper.Setup(n => n.GetWindowRect(handle)).Returns((0, 0, 1280, 800));
+        PortLookup(DebugPortLookupStatus.Found, FoundPort);
+        SetupCdpMatch(CdpResult<CdpTarget>.Ok(CdpTab with { Port = FoundPort }));
+        SetupCdpSnapshot(CdpResult<CdpPageSnapshot>.Ok(new CdpPageSnapshot("t", "u", "Heading", Offset: 0, TotalLength: 7)));
+        var sut = CreateSutWithLocator();
+
+        var result = await sut.GetBrowserContentAsync(handle, new BrowserContentOptions(Selector: "h1"), new CdpOptions());
+
+        result.Should().BeEquivalentTo(new { Success = true, Content = "Heading", Source = "cdp", CdpPort = FoundPort });
+        _mockCdpService.Verify(c => c.FindTargetForWindowAsync(
+            FoundPort, It.Is<CdpWindow>(w => w.ProcessId == 1000 && w.Geometry != null), It.IsAny<TimeSpan>(),
+            It.IsAny<CancellationToken>()), Times.Once);
+        _mockCdpService.Verify(c => c.GetPageSnapshotAsync(
+            It.IsAny<CdpTarget>(), new CdpPageRequest(true, 0, BrowserContentOptions.DefaultMaxLength, "h1"), It.IsAny<TimeSpan>(),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task GetBrowserContent_ASelectorOrALaterPage_OfAWindowThePolicyDenies_IsRefused_WithoutLookingForItsPort()
+    {
+        var handle = new nint(12345);
+        SetupValidBrowserWindow(handle, "chrome", "chrome");
+        ShowPage(handle, "https://example.com/", "Page text");
+        _policy = new TargetPolicy(TargetPolicySettings.Default with { DeniedProcesses = ["chrome"] });
+        var sut = CreateSutWithLocator();
+
+        var selector = await sut.GetBrowserContentAsync(handle, new BrowserContentOptions(Selector: "main"), new CdpOptions());
+        var later = await sut.GetBrowserContentAsync(handle, new BrowserContentOptions(Offset: 4), new CdpOptions());
+        var laterUia = await sut.GetBrowserContentAsync(handle, new BrowserContentOptions(Offset: 4), new CdpOptions(UseCdp: false));
+
+        selector.ErrorCode.Should().Be(BrowserErrorCode.TargetDeniedByPolicy);
+        later.ErrorCode.Should().Be(BrowserErrorCode.TargetDeniedByPolicy);
+        laterUia.ErrorCode.Should().Be(BrowserErrorCode.TargetDeniedByPolicy);
+        _locator.VerifyNoOtherCalls();
+        _mockCdpService.VerifyNoOtherCalls();
+        _worker.Calls.Should().Be(0);
+    }
+
+    #endregion
+
     #region UI Automation path on the seam (roadmap M3.F24)
 
     private static readonly AccessibilityWarmupInfo Warmed =
