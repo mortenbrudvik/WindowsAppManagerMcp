@@ -116,6 +116,50 @@ public class BrowserReadingToolsDebugLifecycleTests
         result.Placement.Should().Be(new LaunchPlacementResultDto(new BoundsDto(0, 0, 960, 1040), "normal", 0, Focused: false, Reapplied: false));
     }
 
+    [Fact]
+    public async Task Launch_CancelledDuringThePlacement_EndsTheBrowserItStarted()
+    {
+        // Arrange - the cancelled call sends no result, so nobody learns the browser's PID or its unauthenticated port
+        using var cancel = new CancellationTokenSource();
+        _placer.Setup(p => p.PlaceAsync(It.IsAny<IReadOnlyList<(nint, LaunchPlacementPlan)>>(), It.IsAny<CancellationToken>()))
+            .Returns<IReadOnlyList<(nint Handle, LaunchPlacementPlan Plan)>, CancellationToken>((_, token) =>
+            {
+                cancel.Cancel();
+                return Task.FromCanceled<IReadOnlyList<LaunchPlacementOutcome>>(token);
+            });
+
+        // Act
+        var act = () => CreateSut().LaunchBrowserWithDebug(placement: new LaunchPlacement(Snap: "left_half"), cancellationToken: cancel.Token);
+
+        // Assert
+        await act.Should().ThrowAsync<OperationCanceledException>();
+        _lifecycle.Verify(l => l.AbandonAsync(It.Is<DebugBrowserLaunchResult>(r => r.ProcessId == 4321)), Times.Once);
+    }
+
+    [Fact]
+    public async Task Launch_OfABrowserAlreadyRunning_CancelledDuringThePlacement_EndsNothing()
+    {
+        // Arrange
+        using var cancel = new CancellationTokenSource();
+        _lifecycle.Setup(l => l.LaunchAsync(It.IsAny<DebugBrowserLaunchRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DebugBrowserLaunchResult(true, 4321, BrowserWindow.Handle, 50123, @"C:\Profiles\work", null, null,
+                LaunchStatus: LaunchStatus.AlreadyRunning, CdpReady: true));
+        _placer.Setup(p => p.PlaceAsync(It.IsAny<IReadOnlyList<(nint, LaunchPlacementPlan)>>(), It.IsAny<CancellationToken>()))
+            .Returns<IReadOnlyList<(nint Handle, LaunchPlacementPlan Plan)>, CancellationToken>((_, token) =>
+            {
+                cancel.Cancel();
+                return Task.FromCanceled<IReadOnlyList<LaunchPlacementOutcome>>(token);
+            });
+
+        // Act
+        var act = () => CreateSut().LaunchBrowserWithDebug(
+            profile: "work", reuseIfRunning: true, placement: new LaunchPlacement(Snap: "left_half"), cancellationToken: cancel.Token);
+
+        // Assert
+        await act.Should().ThrowAsync<OperationCanceledException>();
+        _lifecycle.Verify(l => l.AbandonAsync(It.IsAny<DebugBrowserLaunchResult>()), Times.Never);
+    }
+
     [Theory]
     [InlineData("middle", null, "InvalidSnapPosition")]
     [InlineData(null, 5, "InvalidMonitorIndex")]

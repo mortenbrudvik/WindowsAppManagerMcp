@@ -103,7 +103,9 @@ public interface ICdpService
     /// Asks a debug browser to close (roadmap M5.4): Browser.close over the browser-level DevTools connection from its own
     /// /json/version, which closes every window without beforeunload prompts. The port's listener must be
     /// <paramref name="browserProcessId"/> (CdpPortOwnerMismatch otherwise, also when it cannot be read: nothing is sent).
-    /// Success once the browser answers or ends the connection as it closes; whether it exited is the caller's to check.
+    /// Success with true once the browser answers or ends the connection as it closes; success with false when Browser.close
+    /// was sent but not answered within <paramref name="timeout"/> (a busy browser may still be closing); a failure when it
+    /// was not sent. Whether it exited is the caller's to check.
     /// </summary>
     /// <param name="port">The browser's DevTools port.</param>
     /// <param name="browserProcessId">The browser's main process, which must listen on the port.</param>

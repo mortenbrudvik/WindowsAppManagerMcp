@@ -20,6 +20,14 @@ public interface IDebugBrowserLifecycle
     Task<DebugBrowserLaunchResult> LaunchAsync(DebugBrowserLaunchRequest request, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Ends the browser a successful <see cref="LaunchAsync"/> started when the launch_browser_with_debug call is cancelled
+    /// after it (during the placement): the cancelled call sends no result, so nobody learns its PID or its unauthenticated
+    /// port. Only a browser this launch started (never one it reused) whose PID still has the start time read at its start;
+    /// its temporary profile is then deleted. Best effort; never throws.
+    /// </summary>
+    Task AbandonAsync(DebugBrowserLaunchResult launch);
+
+    /// <summary>
     /// Finds the debug browser <paramref name="processId"/> or the listener of <paramref name="cdpPort"/> names (one or
     /// both; both must agree) and checks that close_debug_browser may close it: the main process of chrome, msedge or
     /// brave, whose command line has a DevTools port and a --user-data-dir that is either the one it was started with by

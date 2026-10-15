@@ -306,6 +306,7 @@ public sealed class DebugBrowserLifecycleTests : IDisposable
         var sut = CreateSut();
         LaunchReturns(Started(DebugPid, inUse));
         await sut.LaunchAsync(new DebugBrowserLaunchRequest("chrome", UserDataDir: inUse));
+        Running(DebugPid, CommandLine(inUse));
         LaunchReturns(Started(DebugPid + 10, _profiles.NewTemporaryPath()));
 
         // Act
@@ -314,6 +315,150 @@ public sealed class DebugBrowserLifecycleTests : IDisposable
         // Assert
         Directory.Exists(left).Should().BeFalse();
         Directory.Exists(inUse).Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task ALaunchWithANewTemporaryProfile_SweepsTheProfileOfABrowserItStartedThatHasExited()
+    {
+        // Arrange - a browser this server started, closed by hand (or crashed, or ended with kill_process) without
+        // close_debug_browser: its record must not keep its folder for the rest of the server's run
+        var exited = TemporaryProfile();
+        Directory.SetCreationTimeUtc(exited, DateTime.UtcNow - TimeSpan.FromHours(2));
+        var sut = CreateSut();
+        LaunchReturns(Started(DebugPid, exited));
+        await sut.LaunchAsync(new DebugBrowserLaunchRequest("chrome", UserDataDir: exited));
+        LaunchReturns(Started(DebugPid + 10, _profiles.NewTemporaryPath()));
+
+        // Act
+        await sut.LaunchAsync(new DebugBrowserLaunchRequest("chrome"));
+
+        // Assert
+        Directory.Exists(exited).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task ReuseIfRunning_ABrowserThePolicyDenies_IsRefused_WithoutItsProcessIdOrPort()
+    {
+        // Arrange - a port the server finds by itself is the target policy's to refuse (roadmap M5.3)
+        var profile = Path.Combine(_profiles.NamedRoot, "work");
+        using var held = HoldLock(profile);
+        Running(DebugPid, CommandLine(profile));
+        _policy.Setup(p => p.Evaluate(It.IsAny<IReadOnlyCollection<string?>>())).Returns(TargetPolicyVerdict.Deny("chrome", "chrome is on the deny list"));
+
+        // Act
+        var result = await CreateSut().LaunchAsync(new DebugBrowserLaunchRequest("chrome") { ProfileName = "work", ReuseIfRunning = true });
+
+        // Assert
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(nameof(ProcessErrorCode.TargetDeniedByPolicy));
+        result.Error.Should().Contain("chrome is on the deny list").And.Contain("Nothing was launched");
+        result.ProcessId.Should().BeNull();
+        result.CdpPort.Should().BeNull();
+        result.BrowserWsEndpoint.Should().BeNull();
+        _ports.Verify(p => p.Find(It.IsAny<int>()), Times.Never);
+        _processes.VerifyNoOtherCalls();
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ReuseIfRunning_AnUnusableDebugBrowserThisServerDidNotStart_OnAUserDataDir_IsNotNamedForClosing(bool portFound)
+    {
+        // Arrange - the user's own debug browser on a folder of theirs: close_debug_browser would refuse it
+        var profile = Path.Combine(_root, "MyProfile");
+        using var held = HoldLock(profile);
+        Running(UsersPid, CommandLine(profile));
+        if (portFound)
+        {
+            _cdp.Setup(c => c.GetBrowserVersionAsync(It.IsAny<int>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(CdpResult<CdpBrowserVersion>.Fail(BrowserErrorCode.CdpTimeout, "no answer"));
+        }
+        else
+        {
+            _ports.Setup(p => p.Find(UsersPid)).Returns(new DebugPortLookup(DebugPortLookupStatus.HeldByOtherProcess, null, "process 99 listens on it."));
+        }
+
+        // Act
+        var result = await CreateSut().LaunchAsync(new DebugBrowserLaunchRequest("chrome", UserDataDir: profile) { ReuseIfRunning = true });
+
+        // Assert
+        result.ErrorCode.Should().Be(nameof(BrowserErrorCode.DebugLaunchFailed));
+        result.Error.Should().NotContain("Close it with close_debug_browser").And.Contain("ask the user to close it");
+        result.ProcessId.Should().BeNull("it may be the user's browser: no PID that invites closing it");
+    }
+
+    [Fact]
+    public async Task ReuseIfRunning_AnUnusableDebugBrowserThisServerStarted_OnAUserDataDir_IsNamedForClosing()
+    {
+        // Arrange
+        var profile = Path.Combine(_root, "MyProfile");
+        var sut = CreateSut();
+        LaunchReturns(Started(DebugPid, profile));
+        await sut.LaunchAsync(new DebugBrowserLaunchRequest("chrome", UserDataDir: profile));
+        using var held = HoldLock(profile);
+        Running(DebugPid, CommandLine(profile));
+        _ports.Setup(p => p.Find(DebugPid)).Returns(new DebugPortLookup(DebugPortLookupStatus.HeldByOtherProcess, null, "process 99 listens on it."));
+
+        // Act
+        var result = await sut.LaunchAsync(new DebugBrowserLaunchRequest("chrome", UserDataDir: profile) { ReuseIfRunning = true });
+
+        // Assert
+        result.Error.Should().Contain("Close it with close_debug_browser");
+        result.ProcessId.Should().Be(DebugPid);
+    }
+
+    [Fact]
+    public async Task ReuseIfRunning_ADebugBrowserThisServerDidNotStart_OnAUserDataDir_IsReturned_WithAWarningThatItMayBeTheUsers()
+    {
+        var profile = Path.Combine(_root, "MyProfile");
+        using var held = HoldLock(profile);
+        Running(UsersPid, CommandLine(profile));
+
+        var result = await CreateSut().LaunchAsync(new DebugBrowserLaunchRequest("chrome", UserDataDir: profile) { ReuseIfRunning = true });
+
+        result.LaunchStatus.Should().Be(LaunchStatus.AlreadyRunning);
+        result.Warning.Should().Contain("not started by this server").And.Contain("close_debug_browser does not close it");
+    }
+
+    [Fact]
+    public async Task Abandon_EndsTheBrowserTheServerStarted_AndDeletesItsTemporaryProfile()
+    {
+        // Arrange - a launch whose call was cancelled after it returned (during the placement): no result names it
+        var profile = TemporaryProfile();
+        var sut = CreateSut();
+        LaunchReturns(Started(DebugPid, profile));
+        var launched = await sut.LaunchAsync(new DebugBrowserLaunchRequest("chrome", UserDataDir: profile));
+        var browser = Running(DebugPid, CommandLine(profile));
+
+        // Act
+        await sut.AbandonAsync(launched);
+
+        // Assert
+        browser.Verify(h => h.Kill(true), Times.Once);
+        Directory.Exists(profile).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task Abandon_APidThatNowBelongsToAnotherProcess_EndsNothing()
+    {
+        var profile = TemporaryProfile();
+        var other = Running(DebugPid, CommandLine(profile), start: DebugStart.AddMinutes(1));
+
+        await CreateSut().AbandonAsync(Started(DebugPid, profile));
+
+        other.Verify(h => h.Kill(It.IsAny<bool>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task Abandon_AReusedBrowser_EndsNothing_AndKeepsItsProfile()
+    {
+        var profile = TemporaryProfile();
+        var browser = Running(DebugPid, CommandLine(profile));
+
+        await CreateSut().AbandonAsync(Started(DebugPid, profile) with { LaunchStatus = LaunchStatus.AlreadyRunning });
+
+        browser.Verify(h => h.Kill(It.IsAny<bool>()), Times.Never);
+        Directory.Exists(profile).Should().BeTrue();
     }
 
     #endregion
@@ -342,6 +487,28 @@ public sealed class DebugBrowserLifecycleTests : IDisposable
         target.ProfileKind.Should().Be(DebugProfileKind.Temporary);
         target.DeletesProfile.Should().BeTrue("a temporary profile is always deleted");
         target.Helpers.Should().Equal([(DebugPid + 1, (DateTime?)DebugStart.AddSeconds(1))], "only the browser's own processes, never a program it opened");
+    }
+
+    [Fact]
+    public void CheckClose_TheUsersOwnBrowser_ThatTheDebugBrowserStarted_IsNotAHelper()
+    {
+        // Arrange - a link or a download in the debug browser started the default browser (the same chrome.exe) while the
+        // user's was not running: it is the user's main browser on their default profile, a child of the debug browser
+        var profile = TemporaryProfile();
+        Running(DebugPid, CommandLine(profile));
+        Running(DebugPid + 1, CommandLine(profile, type: "renderer"), start: DebugStart.AddSeconds(1));
+        Running(UsersPid, CommandLine(null, debugPort: false), start: DebugStart.AddMinutes(1));
+        Running(UsersPid + 1, CommandLine(null, debugPort: false, type: "renderer"), start: DebugStart.AddMinutes(1));
+        Running(UsersPid + 2, CommandLine(@"D:\Profiles\Other", type: "renderer"), start: DebugStart.AddMinutes(1));
+        Running(UsersPid + 3, null, start: DebugStart.AddMinutes(1));
+        _descendants.AddRange([(DebugPid + 1, "chrome.exe"), (UsersPid, "chrome.exe"), (UsersPid + 1, "chrome.exe"),
+            (UsersPid + 2, "chrome.exe"), (UsersPid + 3, "chrome.exe")]);
+
+        // Act
+        var check = CreateSut().CheckClose(DebugPid, null, deleteProfile: false);
+
+        // Assert - only a child process (--type) with the browser's own --user-data-dir
+        check.Target!.Helpers.Should().Equal([(DebugPid + 1, (DateTime?)DebugStart.AddSeconds(1))]);
     }
 
     [Fact]
@@ -570,6 +737,95 @@ public sealed class DebugBrowserLifecycleTests : IDisposable
         result.Warning.Should().Contain("did not exit within 1000 ms");
         browser.Verify(h => h.Kill(false), Times.Once, "the browser alone; its own helpers are ended one by one");
         _gateEntries.Should().Be(2);
+        Directory.Exists(profile).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task Close_WhenBrowserCloseIsSentButNotAnswered_StillWaitsForTheExit_BeforeEndingIt()
+    {
+        // Arrange - a busy browser got Browser.close but did not answer in time; it exits during the wait
+        var profile = TemporaryProfile();
+        var browser = Running(DebugPid, CommandLine(profile), exitsWhenClosed: false);
+        _cdp.Setup(c => c.CloseBrowserAsync(It.IsAny<int>(), DebugPid, It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(CdpResult<bool>.Ok(false));
+        var waited = new List<int>();
+        browser.Setup(h => h.WaitForExitAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((int ms, CancellationToken _) =>
+            {
+                waited.Add(ms);
+                browser.SetupGet(h => h.HasExited).Returns(true);
+                _processList.Remove(DebugPid);
+                _startTimes[DebugPid] = null;
+                return true;
+            });
+        var sut = CreateSut();
+        var target = sut.CheckClose(DebugPid, null, false).Target!;
+
+        // Act
+        var result = await sut.CloseAsync(target, TimeSpan.FromSeconds(7), EnterGate);
+
+        // Assert
+        result.Success.Should().BeTrue(result.Error);
+        result.Forced.Should().BeFalse();
+        result.ClosedGracefully.Should().BeTrue("it exited after Browser.close");
+        waited.Should().Equal([7000]);
+        browser.Verify(h => h.Kill(It.IsAny<bool>()), Times.Never);
+        _gateEntries.Should().Be(1);
+        Directory.Exists(profile).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task Close_WhenTheGateIsRefusedBeforeTheEnd_SaysBrowserCloseWasSent_AndKeepsTheProfile()
+    {
+        // Arrange - Browser.close was accepted, the browser is still closing, and the user pauses input during the wait
+        var profile = TemporaryProfile();
+        var browser = Running(DebugPid, CommandLine(profile), exitsWhenClosed: false);
+        var sut = CreateSut();
+        var target = sut.CheckClose(DebugPid, null, false).Target!;
+        var entries = 0;
+        Task<IDisposable> PausedTheSecondTime(CancellationToken _) => ++entries == 1
+            ? Task.FromResult<IDisposable>(new NoopDisposable())
+            : Task.FromException<IDisposable>(new ToolErrorException(nameof(WindowErrorCode.PausedByUser), "Nothing was done: input is paused."));
+
+        // Act
+        var result = await sut.CloseAsync(target, TimeSpan.FromSeconds(1), PausedTheSecondTime);
+
+        // Assert
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(nameof(WindowErrorCode.PausedByUser));
+        result.Error.Should().Contain("Browser.close was sent").And.NotContain("Nothing was done");
+        result.ClosedGracefully.Should().BeTrue();
+        result.Forced.Should().BeFalse();
+        result.Exited.Should().BeFalse();
+        browser.Verify(h => h.Kill(It.IsAny<bool>()), Times.Never);
+        Directory.Exists(profile).Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task Close_WhenTheGateIsRefusedBeforeTheEnd_ButTheBrowserHasExitedMeanwhile_Succeeds()
+    {
+        // Arrange
+        var profile = TemporaryProfile();
+        var browser = Running(DebugPid, CommandLine(profile), exitsWhenClosed: false);
+        var sut = CreateSut();
+        var target = sut.CheckClose(DebugPid, null, false).Target!;
+        var entries = 0;
+        Task<IDisposable> BusyTheSecondTime(CancellationToken _)
+        {
+            if (++entries == 1)
+                return Task.FromResult<IDisposable>(new NoopDisposable());
+
+            browser.SetupGet(h => h.HasExited).Returns(true);
+            return Task.FromException<IDisposable>(new ToolErrorException(nameof(InputErrorCode.InputBusy), "Nothing was done: busy."));
+        }
+
+        // Act
+        var result = await sut.CloseAsync(target, TimeSpan.FromSeconds(1), BusyTheSecondTime);
+
+        // Assert
+        result.Success.Should().BeTrue(result.Error);
+        result.Exited.Should().BeTrue();
+        result.Forced.Should().BeFalse();
         Directory.Exists(profile).Should().BeFalse();
     }
 

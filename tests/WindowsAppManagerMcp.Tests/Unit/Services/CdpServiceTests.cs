@@ -193,13 +193,16 @@ public class CdpServiceTests
     }
 
     [Fact]
-    public async Task CloseBrowserAsync_ABrowserThatNeverAnswers_IsCdpTimeout()
+    public async Task CloseBrowserAsync_ABrowserThatNeverAnswers_WasSent_ButNotAnswered()
     {
+        // Browser.close is on the socket: the browser may be closing, so the caller still waits for its exit
         var browser = new FakeCdpBrowser { CloseAnswer = FakeBrowserClose.Never };
 
         var result = await CreateSut(browser).CloseBrowserAsync(Port, BrowserPid, ShortTimeout);
 
-        result.ErrorCode.Should().Be(BrowserErrorCode.CdpTimeout);
+        result.Success.Should().BeTrue(result.Error);
+        result.Value.Should().BeFalse("no answer came");
+        browser.CloseCommands.Should().Be(1);
     }
 
     [Theory]

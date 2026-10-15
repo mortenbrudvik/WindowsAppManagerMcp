@@ -590,8 +590,14 @@ public class CdpService : ICdpService
                 : CdpResult<bool>.Ok(true);
         }
 
-        // A browser that closes may end the connection before it answers
-        return reply.ErrorCode == BrowserErrorCode.CdpTargetClosed ? CdpResult<bool>.Ok(true) : reply.FailAs<bool>();
+        // A browser that closes may end the connection before it answers; a busy one may not answer in time although it
+        // got Browser.close (or a stalled send may have delivered it), so the caller still waits for it to exit
+        return reply.ErrorCode switch
+        {
+            BrowserErrorCode.CdpTargetClosed => CdpResult<bool>.Ok(true),
+            BrowserErrorCode.CdpTimeout => CdpResult<bool>.Ok(false),
+            _ => reply.FailAs<bool>()
+        };
     }
 
     private static CdpResult<T> PortOwnerMismatch<T>(int port, int portOwner, int windowProcessId) => CdpResult<T>.Fail(

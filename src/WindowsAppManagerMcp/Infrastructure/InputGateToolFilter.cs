@@ -42,7 +42,10 @@ namespace WindowsAppManagerMcp.Infrastructure;
 /// HTTP, but unlike the close tools' waits they cannot be moved outside the gate: a browser whose window wait timed out
 /// is still starting, and its first window can take the foreground at any moment, in the middle of an input call. So a
 /// slow launch can hold the gate about 30 seconds, and an input or window call queued at its start can get InputBusy
-/// (and sends nothing). A browser that exits ends the readiness wait at once.
+/// (and sends nothing). A browser that exits ends the readiness wait at once. A launch that fails, or is cancelled, after
+/// the start also ends the browser it started and deletes its temporary profile inside the gate (ProcessService.AbandonTimeout
+/// and DebugBrowserLifecycle.AbandonTimeout: up to about 5 seconds for the exit and 5 for the delete), and a launch with a
+/// new temporary profile first deletes the ones earlier browsers left; so the longest hold is about 40 seconds.
 /// </para>
 /// </remarks>
 public static class InputGateToolFilter

@@ -349,6 +349,8 @@ public sealed class DebugBrowserLaunchTests : IDisposable
         result.ErrorCode.Should().Be(nameof(BrowserErrorCode.DebugLaunchFailed));
         result.Error.Should().Contain("already running with this userDataDir").And.Contain("Nothing was launched")
             .And.Contain("never close a browser you did not start").And.Contain("leave userDataDir out");
+        result.Error.Should().Contain("ask the user to close it")
+            .And.NotContain("or close it with close_debug_browser", "close_debug_browser refuses a userDataDir browser this server run did not start");
         result.ProcessId.Should().BeNull();
         result.UserDataDir.Should().Be(_profile);
         VerifyNothingStarted();
@@ -860,6 +862,58 @@ public sealed class DebugBrowserLaunchTests : IDisposable
         // Assert
         await act.Should().ThrowAsync<OperationCanceledException>();
         _browser.Verify(p => p.Kill(It.IsAny<bool>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ANamedProfileABrowserIsRunningWith_IsRefused_WithCloseDebugBrowserAsAdvice()
+    {
+        // Arrange - a named profile is the server's own folder, so close_debug_browser accepts its debug browser
+        var named = _profiles.NamedPath("work");
+        Directory.CreateDirectory(named);
+        using var running = new FileStream(Path.Combine(named, ChromiumProfileLock.FileName), FileMode.Create, FileAccess.Write,
+            FileShare.Read, 1, FileOptions.DeleteOnClose);
+
+        // Act
+        var result = await CreateSut().LaunchBrowserWithDebugAsync(new DebugBrowserLaunchRequest("chrome", UserDataDir: named));
+
+        // Assert
+        result.ErrorCode.Should().Be(nameof(BrowserErrorCode.DebugLaunchFailed));
+        result.Error.Should().Contain("or close it with close_debug_browser").And.NotContain("ask the user to close it");
+        VerifyNothingStarted();
+    }
+
+    [Fact]
+    public async Task ACallCancelledWhileTheStartIsStillRunning_EndsTheBrowserWhenTheStartReturns_ThenDeletesItsProfile()
+    {
+        // Arrange - the start (CreateProcess while Defender scans a freshly updated browser) still runs when the caller
+        // cancels: the browser it brings would run with an unauthenticated port that no result names
+        using var cancel = new CancellationTokenSource();
+        using var release = new ManualResetEventSlim();
+        var killed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _whenStarted = () =>
+        {
+            cancel.Cancel();
+            release.Wait(TimeSpan.FromSeconds(10));
+        };
+        _browser.Setup(p => p.Kill(true)).Callback(() => killed.TrySetResult());
+
+        // Act
+        var act = () => CreateSut().LaunchBrowserWithDebugAsync(new DebugBrowserLaunchRequest("chrome"), cancel.Token);
+
+        // Assert - nothing is deleted while the start may still use the profile
+        await act.Should().ThrowAsync<OperationCanceledException>();
+        TemporaryProfilesLeft().Should().ContainSingle("the browser may still start with it");
+        _browser.Verify(p => p.Kill(It.IsAny<bool>()), Times.Never);
+
+        // Then the start returns: its browser is ended, and only then is its profile deleted
+        release.Set();
+        await killed.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+        while (TemporaryProfilesLeft().Count > 0 && DateTime.UtcNow < deadline)
+            await Task.Delay(20);
+
+        TemporaryProfilesLeft().Should().BeEmpty();
+        _browser.Verify(p => p.Dispose(), Times.AtLeastOnce);
     }
 
     [Fact]

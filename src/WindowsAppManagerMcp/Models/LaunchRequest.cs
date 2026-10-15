@@ -46,6 +46,14 @@ public sealed record LaunchRequest(
     /// port has no authentication, and nobody else learns its process ID. No tool parameter sets it.
     /// </summary>
     public Action<int>? OnStarted { get; init; }
+
+    /// <summary>
+    /// Called when the call is cancelled while the start itself still runs (CreateProcess or ShellExecute has not
+    /// returned), with that start: the receiver owns the process handle it brings. launch_browser_with_debug sets it
+    /// (roadmap M5.4), so that the browser a late start brings is ended too, and its profile deleted only after that.
+    /// Without it, the handle is released when it comes. No tool parameter sets it.
+    /// </summary>
+    public Action<Task<Services.Interfaces.IProcessHandle?>>? OnStartAbandoned { get; init; }
 }
 
 /// <summary>

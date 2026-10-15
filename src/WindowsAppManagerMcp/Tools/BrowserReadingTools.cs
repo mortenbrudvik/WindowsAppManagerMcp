@@ -247,10 +247,23 @@ public partial class BrowserReadingTools
             ? await _debugBrowsers.LaunchAsync(request, cancellationToken).ConfigureAwait(false)
             : await _processService.LaunchBrowserWithDebugAsync(request, cancellationToken).ConfigureAwait(false);
 
-        var placed = plan == null
-            ? null
-            : (await LaunchPlacing.PlaceAsync(_placementService,
-                [new LaunchToPlace(result.Success, result.WindowHandle, result.LaunchStatus, plan)], cancellationToken).ConfigureAwait(false))[0];
+        LaunchPlacementResultDto? placed = null;
+        try
+        {
+            if (plan != null)
+            {
+                placed = (await LaunchPlacing.PlaceAsync(_placementService,
+                    [new LaunchToPlace(result.Success, result.WindowHandle, result.LaunchStatus, plan)], cancellationToken).ConfigureAwait(false))[0];
+            }
+        }
+        catch (OperationCanceledException) when (_debugBrowsers != null && result.Success && result.LaunchStatus != LaunchStatus.AlreadyRunning)
+        {
+            // Cancelled during the placement: the call sends no result, so nobody learns the PID or the unauthenticated port
+            // of the browser it started (roadmap M5.4). A browser it reused is left alone
+            await _debugBrowsers.AbandonAsync(result).ConfigureAwait(false);
+            throw;
+        }
+
         return ToDto(result) with { Placement = placed };
     }
 

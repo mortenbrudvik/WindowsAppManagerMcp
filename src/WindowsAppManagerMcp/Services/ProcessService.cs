@@ -134,7 +134,7 @@ public class ProcessService : IProcessService
         }
 
         plan = plan with { RunningInstance = RunningInstanceOf(plan) };
-        var launch = await StartAsync(plan, waitForWindow, cancellationToken).ConfigureAwait(false);
+        var launch = await StartAsync(plan, waitForWindow, cancellationToken, request.OnStartAbandoned).ConfigureAwait(false);
         if (launch.Outcome is { } ended)
         {
             return WithForceAccessibility(ended, plan);
@@ -427,9 +427,11 @@ public class ProcessService : IProcessService
     /// ShellExecute blocks while Windows asks the user to approve an elevated program, so a longer start is reported as
     /// <see cref="LaunchStatus.AwaitingUserConsent"/> (the program starts later if the user approves; its handle is then
     /// released). A declined prompt is <see cref="LaunchErrorCode.ElevationCancelled"/>, any other failure
-    /// <see cref="LaunchErrorCode.LaunchException"/>.
+    /// <see cref="LaunchErrorCode.LaunchException"/>. A call cancelled while the start still runs hands the start to
+    /// <paramref name="onAbandonedStart"/> when there is one (which then owns the process handle it brings), and throws.
     /// </summary>
-    private async Task<StartedLaunch> StartAsync(LaunchPlan plan, bool takeBaseline, CancellationToken cancellationToken)
+    private async Task<StartedLaunch> StartAsync(
+        LaunchPlan plan, bool takeBaseline, CancellationToken cancellationToken, Action<Task<IProcessHandle?>>? onAbandonedStart = null)
     {
         var baseline = takeBaseline ? _windowWait.TakeBaseline() : null;
         var launchedAt = DateTime.UtcNow;
@@ -448,6 +450,12 @@ public class ProcessService : IProcessService
 
         if (finished != start)
         {
+            if (cancellationToken.IsCancellationRequested && onAbandonedStart != null)
+            {
+                onAbandonedStart(start);
+                cancellationToken.ThrowIfCancellationRequested();
+            }
+
             ReleaseWhenStarted(start);
             cancellationToken.ThrowIfCancellationRequested();
             return new StartedLaunch(plan, null, null, launchedAt, new LaunchResult(
@@ -1873,7 +1881,7 @@ public class ProcessService : IProcessService
             return DebugLaunchFailure(
                 $"A browser is already running with this userDataDir: it holds the profile's {ChromiumProfileLock.FileName} ({held}). " +
                 "Nothing was launched and nothing in the profile was changed; a start would only hand the url to that browser, " +
-                $"which ignores the debug switches. {CloseOnlyYourOwnAdvice} Otherwise leave userDataDir out to use a new temporary profile.",
+                $"which ignores the debug switches. {CloseOnlyYourOwnAdvice(userDataDir)} Otherwise leave userDataDir out to use a new temporary profile.",
                 BrowserErrorCode.DebugLaunchFailed) with { UserDataDir = userDataDir };
         }
 
@@ -1908,6 +1916,9 @@ public class ProcessService : IProcessService
         int? startedProcessId = null;
         DateTime? startedAt = null;
 
+        // A start still running when the call was cancelled: its browser is ended when it comes
+        Task<IProcessHandle?>? abandonedStart = null;
+
         try
         {
             var launch = await LaunchApplicationAsync(
@@ -1920,7 +1931,8 @@ public class ProcessService : IProcessService
                         // that got its PID after it exited
                         startedAt = _processWrapper.GetProcessStartTime(pid);
                         startedProcessId = pid;
-                    }
+                    },
+                    OnStartAbandoned = start => abandonedStart = start
                 },
                 waitForWindow: true,
                 request.WaitTimeoutMs,
@@ -1936,7 +1948,7 @@ public class ProcessService : IProcessService
                     userDataDir, temporaryProfile).ConfigureAwait(false);
             }
 
-            if (NotStartedReason(browser, launch, temporaryProfile) is { } notStarted)
+            if (NotStartedReason(browser, launch, temporaryProfile, CloseOnlyYourOwnAdvice(userDataDir)) is { } notStarted)
             {
                 // Only the launch's own warning: launch_application's note for a launch without a window advises its
                 // expectWindow, which this tool does not have. A consent prompt may still start the browser with the
@@ -2006,7 +2018,17 @@ public class ProcessService : IProcessService
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             // Nobody learns this browser's PID or port, and its debug port has no authentication: close it (roadmap M5.4)
-            await AbandonCancelledLaunchAsync(startedProcessId, startedAt, userDataDir, temporaryProfile).ConfigureAwait(false);
+            if (abandonedStart != null)
+            {
+                // The start still runs: its browser may still start with the profile, so neither is touched before it returns.
+                // Not awaited: the call (and the input gate it holds) does not wait for a start that may take minutes
+                _ = EndAbandonedStartAsync(abandonedStart, userDataDir, temporaryProfile);
+            }
+            else
+            {
+                await AbandonCancelledLaunchAsync(startedProcessId, startedAt, userDataDir, temporaryProfile).ConfigureAwait(false);
+            }
+
             throw;
         }
         catch (Exception ex)
@@ -2051,6 +2073,49 @@ public class ProcessService : IProcessService
     }
 
     /// <summary>
+    /// A launch_browser_with_debug call cancelled while its start still ran (roadmap M5.4): once the start returns, the
+    /// browser it brought is ended with its process tree (the handle is the started process's own, so it cannot be another
+    /// process that got the PID), and only then is the temporary profile deleted. Best effort; never throws.
+    /// </summary>
+    private async Task EndAbandonedStartAsync(Task<IProcessHandle?> start, string userDataDir, bool temporaryProfile)
+    {
+        try
+        {
+            IProcessHandle? process;
+            try
+            {
+                process = await start.ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is not OutOfMemoryException)
+            {
+                process = null; // Nothing was started
+            }
+
+            if (process != null)
+            {
+                using (process)
+                {
+                    if (!HasExitedSafe(process))
+                    {
+                        process.Kill(entireProcessTree: true);
+                        await process.WaitForExitAsync((int)AbandonTimeout.TotalMilliseconds, CancellationToken.None).ConfigureAwait(false);
+                    }
+                }
+            }
+
+            if (temporaryProfile)
+            {
+                await _debugBrowserProfiles.DeleteAsync(userDataDir, AbandonTimeout).ConfigureAwait(false);
+            }
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or Win32Exception or NotSupportedException or AggregateException
+                                       or IOException or UnauthorizedAccessException)
+        {
+            // It exited meanwhile, or cannot be ended; a temporary profile left is swept by a later launch
+        }
+    }
+
+    /// <summary>
     /// Whether PID <paramref name="processId"/> is still the browser this launch started: the start time read at its start,
     /// or when that was not read, a command line that names <paramref name="userDataDir"/>.
     /// </summary>
@@ -2091,11 +2156,15 @@ public class ProcessService : IProcessService
 
     /// <summary>
     /// What a failure says about closing a browser. A result that names no process gives no safe way to find "that
-    /// browser": one found by name or title may be the user's own.
+    /// browser": one found by name or title may be the user's own. close_debug_browser closes a browser on a userDataDir
+    /// the agent passed only while this server run started it (a named profile is the server's own folder, so it always can).
     /// </summary>
-    private const string CloseOnlyYourOwnAdvice =
-        "If it is a debug browser started with this userDataDir, launch again with reuseIfRunning=true to use it, or close it " +
-        "with close_debug_browser; never close a browser you did not start.";
+    private string CloseOnlyYourOwnAdvice(string userDataDir) => _debugBrowserProfiles.KindOf(userDataDir) == DebugProfileKind.Custom
+        ? "If it is a debug browser started with this userDataDir, launch again with reuseIfRunning=true to use it. " +
+          "close_debug_browser closes it only if this server started it; otherwise ask the user to close it, and never close a " +
+          "browser you did not start."
+        : "If it is a debug browser started with this profile, launch again with reuseIfRunning=true to use it, or close it " +
+          "with close_debug_browser; never close a browser you did not start.";
 
     /// <summary>
     /// Why a launch that Windows accepted did not start a debug browser of its own, or null when it did: the started
@@ -2105,7 +2174,7 @@ public class ProcessService : IProcessService
     /// that could not start with the profile. The profile lock is checked before the start, so the first is a browser
     /// that took the profile meanwhile; with a new temporary profile it cannot be.
     /// </summary>
-    private static string? NotStartedReason(string browser, LaunchResult launch, bool temporaryProfile) => launch.Status switch
+    private static string? NotStartedReason(string browser, LaunchResult launch, bool temporaryProfile, string closeAdvice) => launch.Status switch
     {
         LaunchStatus.ExitedWithoutWindow or LaunchStatus.PossibleHandoff when temporaryProfile =>
             $"The {browser} process that was started exited without a window of its own, so no debug port was opened. No " +
@@ -2115,7 +2184,7 @@ public class ProcessService : IProcessService
             $"The {browser} process that was started exited without a window of its own, so no debug port was opened. Either " +
             $"a {browser} already running with this userDataDir took the request over (it ignores the debug switches, and has " +
             "most likely opened the url in a new window of its own), or the browser could not start with this profile (for " +
-            $"example a folder it cannot write, a policy, or a crash). {CloseOnlyYourOwnAdvice} Otherwise leave userDataDir " +
+            $"example a folder it cannot write, a policy, or a crash). {closeAdvice} Otherwise leave userDataDir " +
             "out to use a new temporary profile.",
         LaunchStatus.AwaitingUserConsent =>
             "Windows is showing a consent or security prompt for the browser's start (see warning), so it is not known " +
