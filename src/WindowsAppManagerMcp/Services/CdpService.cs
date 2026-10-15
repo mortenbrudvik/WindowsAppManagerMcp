@@ -85,13 +85,22 @@ public class CdpService : ICdpService
                 "an object). Is this a browser debug port?");
         }
 
-        // Chromium always lists the browser's URL; a program that answers without one is not its DevTools endpoint
+        // Chromium always lists the browser's absolute URL; a program that answers without one is not its DevTools
+        // endpoint. Checked here, not by ValidateWebSocketUrl, whose CdpUnavailable ("nothing listens") would be asked again
         var listed = CdpReplies.GetString(root, "webSocketDebuggerUrl");
         if (listed.Length == 0)
         {
             return CdpResult<CdpBrowserVersion>.Fail(
                 BrowserErrorCode.CdpProtocolError,
                 $"{Host}:{port} answered GET /json/version without a webSocketDebuggerUrl for the browser. Is this a browser debug port?");
+        }
+
+        if (!Uri.TryCreate(listed, UriKind.Absolute, out _))
+        {
+            return CdpResult<CdpBrowserVersion>.Fail(
+                BrowserErrorCode.CdpProtocolError,
+                $"{Host}:{port} answered GET /json/version with a webSocketDebuggerUrl for the browser that is not an absolute " +
+                "URL. Is this a browser debug port?");
         }
 
         var webSocketUrl = CdpEndpointValidator.ValidateWebSocketUrl(listed, port, "the browser");

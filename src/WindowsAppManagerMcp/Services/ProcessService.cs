@@ -1926,7 +1926,7 @@ public class ProcessService : IProcessService
                 try
                 {
                     readiness = await _debugBrowserReadiness.WaitUntilReadyAsync(
-                        new DebugBrowserEndpoint(browser, processId, started.CdpPort!.Value, userDataDir),
+                        new DebugBrowserEndpoint(browser, processId, started.CdpPort!.Value, userDataDir, startTime),
                         DebugReadinessTimeout,
                         cancellationToken).ConfigureAwait(false);
                 }
@@ -1939,7 +1939,12 @@ public class ProcessService : IProcessService
 
                 if (!readiness.Ready)
                 {
-                    return FailedAfterStart(started, startTime, readiness.Error ?? "The DevTools endpoint did not answer.");
+                    // A port another process holds, or one whose answer nothing ties to this browser, is not offered as
+                    // its cdpPort: a CDP client pointed at it would control whatever listens there
+                    var notTheBrowsers = readiness.Reason is DebugBrowserNotReadyReason.PortHeldByOtherProcess
+                        or DebugBrowserNotReadyReason.PortOwnerUnknown;
+                    return FailedAfterStart(notTheBrowsers ? started with { CdpPort = null } : started, startTime,
+                        readiness.Error ?? "The DevTools endpoint did not answer.");
                 }
 
                 started = started with
@@ -2023,9 +2028,10 @@ public class ProcessService : IProcessService
     }
 
     /// <summary>
-    /// A failure after the browser started: it keeps the process, window and port while that process still runs (its
-    /// start time is the one read after the start), so that it can be closed; once it exited, its PID may be another
-    /// process's, so the result names none. Either way the endpoint is not ready (cdpReady false).
+    /// A failure after the browser started: it keeps the process, window and port (when <paramref name="started"/> has
+    /// one) while that process still runs (its start time is the one read after the start), so that it can be closed;
+    /// once it exited, its PID may be another process's, so the result names none. Either way the endpoint is not ready
+    /// (cdpReady false).
     /// </summary>
     private DebugBrowserLaunchResult FailedAfterStart(DebugBrowserLaunchResult started, DateTime? startTime, string error)
     {

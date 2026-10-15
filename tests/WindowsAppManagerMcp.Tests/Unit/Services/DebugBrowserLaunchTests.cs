@@ -513,7 +513,7 @@ public sealed class DebugBrowserLaunchTests : IDisposable
         var result = await CreateSut(readiness: readiness.Object).LaunchBrowserWithDebugAsync(Request());
 
         // Assert
-        readiness.Verify(r => r.WaitUntilReadyAsync(new DebugBrowserEndpoint("chrome", BrowserProcessId, 50123, _profile),
+        readiness.Verify(r => r.WaitUntilReadyAsync(new DebugBrowserEndpoint("chrome", BrowserProcessId, 50123, _profile, BrowserStart),
             It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()), Times.Once);
         result.Success.Should().BeFalse();
         result.ErrorCode.Should().Be(nameof(BrowserErrorCode.DebugLaunchFailed));
@@ -571,17 +571,70 @@ public sealed class DebugBrowserLaunchTests : IDisposable
         var port = FreeLoopbackPort();
         var readiness = new Mock<IDebugBrowserReadiness>();
         readiness.Setup(r => r.WaitUntilReadyAsync(It.IsAny<DebugBrowserEndpoint>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new DebugBrowserReadiness(Ready: false, Error: "Port belongs to process 999."));
+            .ReturnsAsync(new DebugBrowserReadiness(Ready: false, Error: "Port belongs to process 999.",
+                Reason: DebugBrowserNotReadyReason.PortHeldByOtherProcess));
+
+        // Act
+        var result = await CreateSut(readiness: readiness.Object).LaunchBrowserWithDebugAsync(Request(port));
+
+        // Assert - the port is the other process's, so the result does not offer it as the browser's: only what closes it
+        readiness.Verify(r => r.WaitUntilReadyAsync(new DebugBrowserEndpoint("chrome", BrowserProcessId, port, _profile, BrowserStart),
+            It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()), Times.Once);
+        result.Success.Should().BeFalse();
+        result.CdpReady.Should().BeFalse();
+        result.Error.Should().Contain("process 999").And.Contain($"processId {BrowserProcessId}) is still running");
+        result.CdpPort.Should().BeNull();
+        result.ProcessId.Should().Be(BrowserProcessId);
+        result.WindowHandle.Should().Be(BrowserWindow.Handle);
+        result.UserDataDir.Should().Be(_profile);
+    }
+
+    [Fact]
+    public async Task APortNotShownToBeTheBrowsers_IsNotReturned()
+    {
+        // Arrange - the port's owner could not be read, and the profile did not name the URL that answered
+        var port = FreeLoopbackPort();
+        var readiness = new Mock<IDebugBrowserReadiness>();
+        readiness.Setup(r => r.WaitUntilReadyAsync(It.IsAny<DebugBrowserEndpoint>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DebugBrowserReadiness(Ready: false, Error: "The owner of the port could not be read.",
+                Reason: DebugBrowserNotReadyReason.PortOwnerUnknown));
 
         // Act
         var result = await CreateSut(readiness: readiness.Object).LaunchBrowserWithDebugAsync(Request(port));
 
         // Assert
-        readiness.Verify(r => r.WaitUntilReadyAsync(new DebugBrowserEndpoint("chrome", BrowserProcessId, port, _profile),
-            It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()), Times.Once);
         result.Success.Should().BeFalse();
         result.CdpReady.Should().BeFalse();
-        result.Error.Should().Contain("process 999").And.Contain($"processId {BrowserProcessId}) is still running");
+        result.CdpPort.Should().BeNull();
+        result.ProcessId.Should().Be(BrowserProcessId);
+    }
+
+    [Fact]
+    public async Task ABrowserThatExitsDuringTheReadinessWait_FailsAtOnce_AsNoLongerRunning()
+    {
+        // Arrange - the real probe: the port refuses every request once the browser is gone, and it is not asked again
+        BrowserReportsPort("50123\n");
+        _browserStartTimes.Enqueue(BrowserStart);   // read after the start
+        _browserStartTimes.Enqueue(null);           // the probe's check after the refusal
+        _browserStartTimes.Enqueue(null);           // the failure's own check
+        var cdp = new Mock<ICdpService>(MockBehavior.Strict);
+        cdp.Setup(c => c.GetBrowserVersionAsync(50123, It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(CdpResult<CdpBrowserVersion>.Fail(BrowserErrorCode.CdpUnavailable, "Could not connect to CDP on 127.0.0.1:50123."));
+        var probe = new DebugBrowserReadinessProbe(cdp.Object, new FakePortOwnerResolver(null), _processes.Object);
+        var stopwatch = Stopwatch.StartNew();
+
+        // Act - the readiness wait is 10 seconds
+        var result = await CreateSut(readiness: probe).LaunchBrowserWithDebugAsync(Request());
+
+        // Assert
+        stopwatch.Elapsed.Should().BeLessThan(TimeSpan.FromSeconds(5));
+        cdp.Verify(c => c.GetBrowserVersionAsync(It.IsAny<int>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()), Times.Once);
+        result.Success.Should().BeFalse();
+        result.CdpReady.Should().BeFalse();
+        result.Error.Should().Contain("exited before its DevTools endpoint").And.Contain("no longer running")
+            .And.NotContain("launch_browser_with_debug");
+        result.ProcessId.Should().BeNull();
+        result.CdpPort.Should().BeNull();
     }
 
     public static TheoryData<Exception> HookFailures() => new()

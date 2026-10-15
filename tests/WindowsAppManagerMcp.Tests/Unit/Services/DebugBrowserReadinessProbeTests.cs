@@ -5,22 +5,58 @@ namespace WindowsAppManagerMcp.Tests.Unit.Services;
 /// <summary>
 /// DebugBrowserReadinessProbe (roadmap M5.1): launch_browser_with_debug's wait for the started browser's DevTools
 /// endpoint to answer /json/version. The CDP service is a scripted fake, except where the real CdpService and transport
-/// run over the in-memory HTTP fake to show which address is asked; nothing reaches the network.
+/// run over the in-memory HTTP fake to show which address is asked; nothing reaches the network. The process seam is a
+/// fake too; a profile whose DevToolsActivePort is read is a real folder under %TEMP%.
 /// </summary>
-public class DebugBrowserReadinessProbeTests
+public sealed class DebugBrowserReadinessProbeTests : IDisposable
 {
     private const int Port = 13538;
     private const int BrowserPid = 4321;
-    private const string BrowserWs = "ws://127.0.0.1:13538/devtools/browser/6f1c2d3e-4a5b-6c7d-8e9f-0a1b2c3d4e5f";
+    private const string BrowserPath = "/devtools/browser/6f1c2d3e-4a5b-6c7d-8e9f-0a1b2c3d4e5f";
+    private const string BrowserWs = "ws://127.0.0.1:13538" + BrowserPath;
 
-    private static readonly DebugBrowserEndpoint Endpoint = new("edge", BrowserPid, Port, @"C:\Temp\browser-debug-1");
+    private static readonly DateTime BrowserStart = new(2026, 10, 15, 9, 0, 0, DateTimeKind.Utc);
+    private static readonly DebugBrowserEndpoint Endpoint = new("edge", BrowserPid, Port, @"C:\Temp\browser-debug-1", BrowserStart);
     private static readonly TimeSpan LongTimeout = TimeSpan.FromSeconds(30);
 
     // Generous bound so slow CI machines do not flake; a wait that ignored its timeout would never finish
     private static readonly TimeSpan HangBound = TimeSpan.FromSeconds(10);
 
     private readonly Mock<ICdpService> _cdp = new(MockBehavior.Strict);
+    private readonly Mock<INativeProcessWrapper> _processes = new();
     private readonly List<(int Port, TimeSpan Timeout)> _asked = [];
+    private readonly string _profile = Path.Combine(Path.GetTempPath(), $"wam-m51-probe-{Guid.NewGuid():N}");
+
+    /// <summary>The started browser's start time, as each read of it finds it (then <see cref="BrowserStart"/>).</summary>
+    private readonly Queue<DateTime?> _browserStartTimes = new();
+
+    public DebugBrowserReadinessProbeTests()
+    {
+        _processes.Setup(p => p.GetProcessStartTime(BrowserPid))
+            .Returns(() => _browserStartTimes.Count > 0 ? _browserStartTimes.Dequeue() : BrowserStart);
+    }
+
+    public void Dispose()
+    {
+        try
+        {
+            if (Directory.Exists(_profile))
+                Directory.Delete(_profile, recursive: true);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+        }
+    }
+
+    /// <summary>The endpoint with a real profile folder, holding a DevToolsActivePort of <paramref name="portFile"/> unless null.</summary>
+    private DebugBrowserEndpoint EndpointWithProfile(string? portFile)
+    {
+        Directory.CreateDirectory(_profile);
+        if (portFile != null)
+            File.WriteAllText(DevToolsActivePortFile.PathIn(_profile), portFile);
+
+        return Endpoint with { UserDataDir = _profile };
+    }
 
     private static CdpResult<CdpBrowserVersion> Version() =>
         CdpResult<CdpBrowserVersion>.Ok(new CdpBrowserVersion("Edg/141.0.3537.57", "1.3", new Uri(BrowserWs), Port));
@@ -41,7 +77,7 @@ public class DebugBrowserReadinessProbeTests
     }
 
     private DebugBrowserReadinessProbe CreateSut(int? portOwner = BrowserPid) =>
-        new(_cdp.Object, new FakePortOwnerResolver(portOwner))
+        new(_cdp.Object, new FakePortOwnerResolver(portOwner), _processes.Object)
         {
             PollInterval = TimeSpan.FromMilliseconds(10),
             AttemptTimeout = TimeSpan.FromMilliseconds(500)
@@ -109,6 +145,7 @@ public class DebugBrowserReadinessProbeTests
         readiness.Ready.Should().BeFalse();
         readiness.Error.Should().Contain("127.0.0.1:13538").And.Contain("/json/version").And.Contain("0.3 seconds")
             .And.Contain("CdpUnavailable");
+        readiness.Reason.Should().Be(DebugBrowserNotReadyReason.NotAnswered);
         _asked.Should().NotBeEmpty().And.OnlyContain(a => a.Port == Port && a.Timeout <= timeout);
     }
 
@@ -139,7 +176,76 @@ public class DebugBrowserReadinessProbeTests
         // Assert
         readiness.Ready.Should().BeFalse();
         readiness.Error.Should().Contain(code.ToString()).And.Contain("Refusing to connect");
+        readiness.Reason.Should().Be(DebugBrowserNotReadyReason.NotABrowsersAnswer);
         _asked.Should().ContainSingle();
+    }
+
+    [Theory]
+    [InlineData("/devtools/browser/B1")]
+    [InlineData(" ")]
+    [InlineData("not a url")]
+    public async Task AnAnswerWhoseBrowserUrlIsNotAUrl_IsNotReady_AfterOneRequest(string listed)
+    {
+        // Arrange - the real CdpService over the in-memory HTTP fake: the endpoint answered, so it is not "not listening yet"
+        var http = FakeCdpHttpHandler.Json(System.Text.Json.JsonSerializer.Serialize(
+            new Dictionary<string, string> { ["Browser"] = "Chrome/141.0.7390.55", ["webSocketDebuggerUrl"] = listed }));
+        var cdp = new CdpService(new CdpTransport(http, FakeCdpWebSocketFactory.NeverConnects()), new FakePortOwnerResolver(BrowserPid));
+        var sut = new DebugBrowserReadinessProbe(cdp, new FakePortOwnerResolver(BrowserPid), _processes.Object)
+        {
+            PollInterval = TimeSpan.FromMilliseconds(10)
+        };
+        var stopwatch = Stopwatch.StartNew();
+
+        // Act
+        var readiness = await sut.WaitUntilReadyAsync(Endpoint, LongTimeout, CancellationToken.None);
+
+        // Assert
+        stopwatch.Elapsed.Should().BeLessThan(HangBound);
+        readiness.Ready.Should().BeFalse();
+        readiness.Reason.Should().Be(DebugBrowserNotReadyReason.NotABrowsersAnswer);
+        readiness.Error.Should().Contain("not as a browser does").And.Contain("CdpProtocolError").And.Contain("webSocketDebuggerUrl");
+        http.Requests.Should().ContainSingle();
+    }
+
+    public static TheoryData<DateTime?> GoneStartTimes() => new()
+    {
+        null,                            // the process exited
+        BrowserStart.AddMinutes(5)       // its PID now belongs to a process started later
+    };
+
+    [Theory]
+    [MemberData(nameof(GoneStartTimes))]
+    public async Task ABrowserThatExits_WhileItsEndpointIsAwaited_IsNotReady_AtOnce(DateTime? startTimeNow)
+    {
+        // Arrange - once the browser has exited, its port refuses every request: asking again only uses up the wait
+        EndpointAnswers(Refused());
+        _browserStartTimes.Enqueue(startTimeNow);
+        var stopwatch = Stopwatch.StartNew();
+
+        // Act
+        var readiness = await CreateSut(portOwner: null).WaitUntilReadyAsync(Endpoint, LongTimeout, CancellationToken.None);
+
+        // Assert
+        stopwatch.Elapsed.Should().BeLessThan(HangBound);
+        readiness.Ready.Should().BeFalse();
+        readiness.Reason.Should().Be(DebugBrowserNotReadyReason.BrowserExited);
+        readiness.Error.Should().Contain($"processId {BrowserPid}").And.Contain("exited before its DevTools endpoint")
+            .And.NotContain("launch_browser_with_debug");
+        _asked.Should().ContainSingle();
+    }
+
+    [Fact]
+    public async Task ABrowserThatIsStillRunning_IsAskedAgain()
+    {
+        // Arrange - the same start time each time it is read
+        EndpointAnswers(Refused(), Refused(), Version());
+
+        // Act
+        var readiness = await CreateSut().WaitUntilReadyAsync(Endpoint, LongTimeout, CancellationToken.None);
+
+        // Assert
+        readiness.Ready.Should().BeTrue();
+        _processes.Verify(p => p.GetProcessStartTime(BrowserPid), Times.AtLeast(2));
     }
 
     [Fact]
@@ -153,21 +259,65 @@ public class DebugBrowserReadinessProbeTests
 
         // Assert
         readiness.Ready.Should().BeFalse();
-        readiness.Error.Should().Contain("process 999").And.Contain($"processId {BrowserPid}").And.Contain("port 0");
+        readiness.Error.Should().Contain("process 999").And.Contain($"processId {BrowserPid}").And.Contain("port 0")
+            .And.Contain("not reachable on 127.0.0.1");
+        readiness.Reason.Should().Be(DebugBrowserNotReadyReason.PortHeldByOtherProcess);
         _asked.Should().BeEmpty();
     }
 
     [Fact]
-    public async Task APortWhoseOwnerCannotBeRead_IsStillChecked()
+    public async Task APortTakenByAnotherProcess_WhileItWasAsked_IsNotReady()
     {
-        // Arrange - the TCP table could not be read; the endpoint's answer still decides
+        // Arrange - the answer came from whatever listens now
         EndpointAnswers(Version());
+        var owners = new Mock<ITcpPortOwnerResolver>();
+        owners.SetupSequence(o => o.GetListeningProcessId(Port)).Returns(BrowserPid).Returns(999);
+        var sut = new DebugBrowserReadinessProbe(_cdp.Object, owners.Object, _processes.Object);
 
         // Act
-        var readiness = await CreateSut(portOwner: null).WaitUntilReadyAsync(Endpoint, LongTimeout, CancellationToken.None);
+        var readiness = await sut.WaitUntilReadyAsync(Endpoint, LongTimeout, CancellationToken.None);
 
         // Assert
-        readiness.Ready.Should().BeTrue();
+        readiness.Ready.Should().BeFalse();
+        readiness.Reason.Should().Be(DebugBrowserNotReadyReason.PortHeldByOtherProcess);
+        readiness.BrowserWebSocketUrl.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task APortWhoseOwnerCannotBeRead_IsReady_WhenTheBrowsersProfileNamesTheUrlThatAnswered()
+    {
+        // Arrange - the TCP table could not be read; the browser wrote its port and WebSocket path into its own profile
+        EndpointAnswers(Version());
+        var endpoint = EndpointWithProfile($"{Port}\n{BrowserPath}\n");
+
+        // Act
+        var readiness = await CreateSut(portOwner: null).WaitUntilReadyAsync(endpoint, LongTimeout, CancellationToken.None);
+
+        // Assert
+        readiness.Ready.Should().BeTrue(readiness.Error);
+        readiness.BrowserWebSocketUrl.Should().Be(BrowserWs);
+    }
+
+    [Theory]
+    [InlineData(null)]                                                                  // no DevToolsActivePort
+    [InlineData("13538\n/devtools/browser/0000-another-browser\n")]                     // another browser's URL
+    [InlineData("13539\n/devtools/browser/6f1c2d3e-4a5b-6c7d-8e9f-0a1b2c3d4e5f\n")]     // another port
+    [InlineData("13538\n")]                                                            // no WebSocket path
+    public async Task APortWhoseOwnerCannotBeRead_IsNotReady_WithoutTheBrowsersOwnWordForIt(string? portFile)
+    {
+        // Arrange - nothing else ties the answer to the started browser, so its browser-level URL is not reported as ours
+        EndpointAnswers(Version());
+        var endpoint = EndpointWithProfile(portFile);
+
+        // Act
+        var readiness = await CreateSut(portOwner: null).WaitUntilReadyAsync(endpoint, LongTimeout, CancellationToken.None);
+
+        // Assert
+        readiness.Ready.Should().BeFalse();
+        readiness.Reason.Should().Be(DebugBrowserNotReadyReason.PortOwnerUnknown);
+        readiness.BrowserWebSocketUrl.Should().BeNull();
+        readiness.CdpEndpoint.Should().BeNull();
+        readiness.Error.Should().Contain("owner").And.Contain("DevToolsActivePort").And.Contain($"processId {BrowserPid}");
     }
 
     [Fact]
@@ -195,7 +345,7 @@ public class DebugBrowserReadinessProbeTests
         // Arrange - the real CdpService and transport over the in-memory HTTP fake
         var http = FakeCdpHttpHandler.Json($$"""{ "Browser": "Chrome/141.0.7390.55", "webSocketDebuggerUrl": "{{BrowserWs}}" }""");
         var cdp = new CdpService(new CdpTransport(http, FakeCdpWebSocketFactory.NeverConnects()), new FakePortOwnerResolver(BrowserPid));
-        var sut = new DebugBrowserReadinessProbe(cdp, new FakePortOwnerResolver(BrowserPid));
+        var sut = new DebugBrowserReadinessProbe(cdp, new FakePortOwnerResolver(BrowserPid), _processes.Object);
 
         // Act
         var readiness = await sut.WaitUntilReadyAsync(Endpoint, LongTimeout, CancellationToken.None);

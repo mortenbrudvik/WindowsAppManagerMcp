@@ -755,9 +755,13 @@ public class CdpServiceTests
     [Theory]
     [InlineData(null)]
     [InlineData("")]
+    [InlineData("/devtools/browser/B1")]
+    [InlineData(" ")]
+    [InlineData("not a url")]
     public async Task GetBrowserVersionAsync_IsAProtocolError_WithoutABrowserUrl(string? listed)
     {
-        // Chromium always lists it; a program that answers /json/version without it is not a browser's DevTools endpoint
+        // Chromium always lists an absolute ws:// URL; a program that answers /json/version without one is not a
+        // browser's DevTools endpoint, and asking it again will not change that (CdpUnavailable would be asked again)
         var sut = CreateSut(VersionAnswering(listed));
 
         var result = await sut.GetBrowserVersionAsync(Port, LongTimeout);

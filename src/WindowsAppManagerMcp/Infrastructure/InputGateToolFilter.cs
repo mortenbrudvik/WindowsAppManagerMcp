@@ -35,6 +35,15 @@ namespace WindowsAppManagerMcp.Infrastructure;
 /// application. The agent chooses that length; a tool that waits for the gate meanwhile gets InputBusy after
 /// <see cref="GateWaitTimeout"/>.
 /// </para>
+/// <para>
+/// launch_browser_with_debug (roadmap M5.1) also keeps the gate after its window wait (10 seconds), while it waits for
+/// the browser's DevToolsActivePort file (up to ProcessService.DevToolsPortTimeout, 10 seconds, for port 0) and for its
+/// DevTools endpoint to answer (up to ProcessService.DebugReadinessTimeout, 10 seconds). Those waits only poll a file and
+/// HTTP, but unlike the close tools' waits they cannot be moved outside the gate: a browser whose window wait timed out
+/// is still starting, and its first window can take the foreground at any moment, in the middle of an input call. So a
+/// slow launch can hold the gate about 30 seconds, and an input or window call queued at its start can get InputBusy
+/// (and sends nothing). A browser that exits ends the readiness wait at once.
+/// </para>
 /// </remarks>
 public static class InputGateToolFilter
 {
