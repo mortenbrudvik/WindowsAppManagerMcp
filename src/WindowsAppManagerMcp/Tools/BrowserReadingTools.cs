@@ -130,6 +130,7 @@ public class BrowserReadingTools
     [Description("Launch a browser with CDP (Chrome DevTools Protocol) debug port enabled. This enables richer content extraction via get_browser_content with the cdpPort parameter. Uses a separate user data directory by default to avoid conflicts with existing browser sessions." +
                  " The debug port has no authentication: any program on this computer can control that browser until it exits. Launch it only when CDP is needed, and close every window of that browser when done" +
                  " (find_windows with its processId and includeCloaked=true, so windows on other virtual desktops are found too), then confirm with list_processes and includeWindowless=true that it has exited." +
+                 " It returns once the DevTools endpoint answers (cdpReady, cdpEndpoint, browserVersion); if it does not within 10 seconds, DebugLaunchFailed, and the browser keeps running (processId)." +
                  " DebugLaunchFailed when a browser is already running with that userDataDir (nothing is launched)." +
                  " InvalidArguments: a url that starts with '-' or '/' (the browser would read it as a command-line switch), a userDataDir that is not a full path or is inside a browser's own 'User Data' folder (the user's real profile), or an executablePath that is not the browser's own .exe.")]
     public async Task<DebugBrowserLaunchResultDto> LaunchBrowserWithDebug(
@@ -334,7 +335,11 @@ public class BrowserReadingTools
         Error: result.Error,
         ErrorCode: result.ErrorCode,
         LaunchStatus: result.LaunchStatus?.ToWireName(),
-        Warning: result.Warning
+        Warning: result.Warning,
+        CdpReady: result.CdpReady,
+        BrowserVersion: result.BrowserVersion,
+        CdpEndpoint: result.CdpEndpoint,
+        BrowserWsEndpoint: result.BrowserWsEndpoint
     );
 }
 
@@ -381,7 +386,9 @@ public record BrowserContentResultDto(
 
 /// <summary>
 /// DTO for debug browser launch result returned by MCP tools. LaunchStatus is launch_application's launchStatus
-/// (roadmap M5.1), and Warning what the window wait found when it was not a window.
+/// (roadmap M5.1), and Warning what the window wait found when it was not a window. CdpReady is true once the DevTools
+/// endpoint answered /json/version, with BrowserVersion, CdpEndpoint (http://127.0.0.1:port) and BrowserWsEndpoint (the
+/// browser-level WebSocket URL); false when a started browser failed before it did.
 /// </summary>
 public record DebugBrowserLaunchResultDto(
     bool Success,
@@ -392,5 +399,9 @@ public record DebugBrowserLaunchResultDto(
     string? Error,
     string? ErrorCode,
     string? LaunchStatus = null,
-    string? Warning = null
+    string? Warning = null,
+    bool? CdpReady = null,
+    string? BrowserVersion = null,
+    string? CdpEndpoint = null,
+    string? BrowserWsEndpoint = null
 );

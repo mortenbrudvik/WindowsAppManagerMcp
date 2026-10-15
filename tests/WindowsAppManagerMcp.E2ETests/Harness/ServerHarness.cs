@@ -127,7 +127,8 @@ public sealed class ServerHarness : IDisposable
     /// browser's debug port over the network, outside the native wrappers, and could reach the user's own
     /// browser; the fixture's WebView2 window (roadmap M3.F4) opens no debug port. Both the CDP service and the
     /// transport under it (roadmap M5.2) are refused, so a service that takes the transport directly cannot reach it
-    /// either; every registered ICdp* service must be listed here.
+    /// either; every registered ICdp* service must be listed here. launch_browser_with_debug's readiness check
+    /// (IDebugBrowserReadiness, roadmap M5.1) reaches the browser only through ICdpService, so it is refused with it.
     /// </summary>
     public static IReadOnlyList<Type> RefusedServices { get; } = [typeof(ICdpService), typeof(ICdpTransport)];
 

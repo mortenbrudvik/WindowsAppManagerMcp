@@ -140,9 +140,16 @@ public sealed record DebugBrowserLaunchRequest(
 /// </summary>
 /// <param name="ProcessId">The browser process that was started. A failure after the start still names it (and the
 /// window and profile) when it is running, so that it can be closed.</param>
-/// <param name="CdpPort">The DevTools port the browser listens on: the one it reported for port 0, else the one asked for.</param>
+/// <param name="CdpPort">The DevTools port the browser listens on: the one it reported for port 0, else the one asked for.
+/// Null when the port is not known to be the browser's: it reported none, it exited, or the readiness check found the
+/// port held by another process or could not tell whose it is.</param>
 /// <param name="Warning">What the launch's window wait found, when it was not a window (see LaunchResult.Warning).</param>
 /// <param name="LaunchStatus">What the launch led to (LaunchResult.Status), when the browser was started.</param>
+/// <param name="CdpReady">True once the DevTools endpoint answered /json/version, false when a launch that started the
+/// browser failed before it did; null when it was not checked (nothing was started, or the server has no readiness check).</param>
+/// <param name="BrowserVersion">The browser and version the endpoint reported, when it is ready.</param>
+/// <param name="CdpEndpoint">The DevTools HTTP endpoint, http://127.0.0.1:port, when it is ready.</param>
+/// <param name="BrowserWsEndpoint">The browser-level DevTools WebSocket URL from /json/version, when it is ready.</param>
 public record DebugBrowserLaunchResult(
     bool Success,
     int? ProcessId,
@@ -152,13 +159,49 @@ public record DebugBrowserLaunchResult(
     string? Error,
     string? ErrorCode,
     string? Warning = null,
-    LaunchStatus? LaunchStatus = null
+    LaunchStatus? LaunchStatus = null,
+    bool? CdpReady = null,
+    string? BrowserVersion = null,
+    string? CdpEndpoint = null,
+    string? BrowserWsEndpoint = null
 );
 
 /// <summary>
 /// A debug browser that has started and reported its DevTools port, for <see cref="Services.Interfaces.IDebugBrowserReadiness"/>.
 /// </summary>
-public sealed record DebugBrowserEndpoint(string Browser, int ProcessId, int Port, string UserDataDir);
+/// <param name="StartTime">The started process's start time, read right after the start, so that a check can tell the
+/// browser from a process that got its PID after it exited; null when it could not be read.</param>
+public sealed record DebugBrowserEndpoint(string Browser, int ProcessId, int Port, string UserDataDir, DateTime? StartTime = null);
+
+/// <summary>Why a debug browser's DevTools endpoint is not ready.</summary>
+public enum DebugBrowserNotReadyReason
+{
+    /// <summary>It did not answer within the wait (nothing listened, or each request timed out).</summary>
+    NotAnswered,
+
+    /// <summary>It answered, but not as a browser's DevTools endpoint does; asking again would not change that.</summary>
+    NotABrowsersAnswer,
+
+    /// <summary>Another process than the started browser listens on the port, so the port is not the browser's.</summary>
+    PortHeldByOtherProcess,
+
+    /// <summary>The port's owner could not be read and nothing else shows the answer is the started browser's.</summary>
+    PortOwnerUnknown,
+
+    /// <summary>The started browser exited before its endpoint answered.</summary>
+    BrowserExited
+}
 
 /// <summary>Whether a debug browser's DevTools endpoint answers, and if not, why (a sentence for the result's error).</summary>
-public sealed record DebugBrowserReadiness(bool Ready, string? Error = null);
+/// <param name="BrowserVersion">The browser and version its /json/version reported, for example "Chrome/141.0.7390.55".</param>
+/// <param name="CdpEndpoint">The DevTools HTTP endpoint that answered, http://127.0.0.1:port.</param>
+/// <param name="BrowserWebSocketUrl">The browser-level DevTools WebSocket URL from /json/version, checked to be ws:// on
+/// 127.0.0.1 and on the port.</param>
+/// <param name="Reason">Why it is not ready; null when it is ready, or when the check does not say.</param>
+public sealed record DebugBrowserReadiness(
+    bool Ready,
+    string? Error = null,
+    string? BrowserVersion = null,
+    string? CdpEndpoint = null,
+    string? BrowserWebSocketUrl = null,
+    DebugBrowserNotReadyReason? Reason = null);

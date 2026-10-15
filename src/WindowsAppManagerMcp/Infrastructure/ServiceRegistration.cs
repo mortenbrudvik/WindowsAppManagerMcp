@@ -50,6 +50,9 @@ public static class ServiceRegistration
         services.AddSingleton<ITcpPortOwnerResolver, TcpPortOwnerResolver>();
         services.AddSingleton<ICdpTransport>(_ => new CdpTransport(new ClientWebSocketFactory()));
         services.AddSingleton<ICdpService, CdpService>();
+        // launch_browser_with_debug's wait for the DevTools endpoint (roadmap M5.1): /json/version through ICdpService, so
+        // the E2E harness's refusal of ICdpService covers it too
+        services.AddSingleton<IDebugBrowserReadiness, DebugBrowserReadinessProbe>();
         services.AddSingleton<IMonitorService, MonitorService>();
         // SetWindowPos and ShowWindow wait for the window's thread; this gives up on a hung window at a deadline,
         // so a window tool cannot hold the input gate until the application recovers

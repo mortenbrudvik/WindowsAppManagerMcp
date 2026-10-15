@@ -2302,7 +2302,7 @@ own debug browsers, separate instances with throwaway profiles, and never reads,
 Every run keeps these rules, for every debug instance it starts:
 
 1. Before starting, record every top-level window handle and every `msedge`, `chrome` and `brave` process ID.
-2. Start the browser only with launch_browser_with_debug (`edge`), with no `userDataDir` or a new
+2. Start the browser only with launch_browser_with_debug (`edge` or `chrome`), with no `userDataDir` or a new
    `%TEMP%\WamM5Check-<guid>` folder, on an explicit free port or port 0. Its `processId` must be new and its command line must
    carry that `--user-data-dir`; if the process or the window was already there, the launch was handed to the user's
    browser: stop and close nothing.
@@ -2332,6 +2332,22 @@ Roadmap M5.2 (after its merge, on a real Edge):
   get_browser_content, so that even a mistaken call reads no page text. A result with `source: "uia"` means the call fell
   back to UI Automation: the check failed; stop and record it.
 - **No Origin header.** The reads above work without `--remote-allow-origins`.
+
+Roadmap M5.1 readiness (on a real Edge, then on a real Chrome with `browser: "chrome"`, which rule 2 allows for this
+block; every other rule is unchanged, including the throwaway profile, the new process ID and cleanup by process ID;
+only the check's own debug instances):
+
+- **Port 0** (an exception to rule 2's explicit port, and to the explicit free port of the owner-approved exception above). launch_browser_with_debug without `port` returns `success: true` and `cdpReady: true`; `cdpPort` is the
+  first line of the profile's `DevToolsActivePort`; `browserVersion` starts with `Edg/` (Chrome: `Chrome/`);
+  `cdpEndpoint` is `http://127.0.0.1:<cdpPort>`; `browserWsEndpoint` is `ws://127.0.0.1:<cdpPort>/devtools/browser/...`
+  and matches the profile file's second line. Record how much longer the launch took than before (expected well under
+  a second).
+- **Explicit free port.** The same with `port` set to a free port from 1024-65535: `cdpPort` is that port.
+- **Read after ready.** get_browser_content with the returned `cdpPort` and `requireCdp: true` on the launch's own
+  `windowHandle`, on a `data:` page, returns `source: "cdp"` at once, without a retry.
+- **Endpoint not ready** (the 10-second wait, a non-DevTools answer, a port another process holds or whose owner cannot
+  be read, a browser that exits during the wait) is covered by the fakes (`DebugBrowserReadinessProbeTests`,
+  `DebugBrowserLaunchTests`); it is not provoked on a real browser.
 
 ### Tool surface snapshot
 
@@ -2465,7 +2481,7 @@ typical result over 300 tokens, and tools/list itself, measured in October 2026:
 | `read_table` | Task Manager's first 50 processes, 5 columns with headers | 643 | 1,000 |
 | `get_server_info` | The default deny list, five host processes, two monitors | 634 | 850 |
 | `get_layout` | A preset of 6 placements, each with the captured window identity | 529 | 800 |
-| tools/list | Every tool's name, title, description, schemas and annotations: 67 tools, 230,576 bytes (`ToolList_StaysWithinItsBudget`) | 57,644 | 57,680 |
+| tools/list | Every tool's name, title, description, schemas and annotations: 67 tools, 230,759 bytes (`ToolList_StaysWithinItsBudget`) | 57,690 | 57,726 |
 
 Every other typical result is at most 300 tokens. When a change makes a result larger on purpose, raise its
 budget in the same change (the failure message gives the new size); when a change shrinks one a lot, lower it.
