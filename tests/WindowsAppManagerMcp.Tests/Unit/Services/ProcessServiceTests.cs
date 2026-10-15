@@ -11,7 +11,8 @@ namespace WindowsAppManagerMcp.Tests.Unit.Services;
 /// Desktop safety: every ProcessService in this class is built by <see cref="CreateSut"/> with a
 /// mocked <see cref="INativeProcessWrapper"/>, the only code that starts, closes or kills
 /// processes (NativeCallGuardTests enforces that). No test here can launch or terminate a real
-/// process. The process listing and lookup tests below only read the real process table.
+/// process. The process listing reads a fake process table through the same seam; only the GetProcessName tests
+/// read the real one, for this test process.
 /// </summary>
 public class ProcessServiceTests
 {
@@ -863,142 +864,312 @@ public class ProcessServiceTests
 
     #region T4.2: GetRunningProcesses Tests
 
+    // A fake process table, read through the INativeProcessWrapper seam (roadmap M6.6): nothing here reads the real one
+    private static readonly DateTime T0 = new(2026, 1, 1, 8, 0, 0, DateTimeKind.Utc);
+
+    private const int Explorer = 100;
+    private const int Notepad = 200;
+    private const int Service = 300;
+    private const int FrameHost = 400;
+
+    private static readonly RunningProcess[] FakeProcesses =
+    [
+        new(Explorer, "explorer", 100L * 1024 * 1024, 1),
+        new(Notepad, "Notepad", 25L * 1024 * 1024, 1),
+        new(Service, "svchost", null, 0),
+        new(FrameHost, "ApplicationFrameHost", 30L * 1024 * 1024, 1),
+    ];
+
+    /// <summary>Lists <paramref name="processes"/> with these windows, details and parents, and records each details read.</summary>
+    private List<int> UseProcessTable(
+        IReadOnlyList<RunningProcess>? processes = null,
+        IReadOnlyList<WindowInfo>? windows = null,
+        IReadOnlyDictionary<int, ProcessDetails?>? details = null,
+        IReadOnlyDictionary<int, int>? parents = null)
+    {
+        _mockProcessWrapper.Setup(w => w.ListRunningProcesses()).Returns(processes ?? FakeProcesses);
+        _mockWindowService.Setup(w => w.FindWindows(It.IsAny<WindowQuery>())).Returns(windows ?? []);
+
+        var detailsRead = new List<int>();
+        details ??= new Dictionary<int, ProcessDetails?>
+        {
+            [Explorer] = new(@"C:\Windows\explorer.exe", T0),
+            [Notepad] = new(@"C:\Windows\System32\notepad.exe", T0.AddMinutes(5)),
+            [FrameHost] = new(@"C:\Windows\System32\ApplicationFrameHost.exe", T0.AddMinutes(1)),
+            // svchost runs as SYSTEM here: it cannot be opened
+        };
+        _mockProcessWrapper.Setup(w => w.ReadProcessDetails(It.IsAny<int>()))
+            .Callback<int>(detailsRead.Add)
+            .Returns<int>(id => details.GetValueOrDefault(id));
+
+        parents ??= new Dictionary<int, int> { [Explorer] = 50, [Notepad] = Explorer, [Service] = 4, [FrameHost] = 4 };
+        _mockProcessWrapper.Setup(w => w.GetProcessList())
+            .Returns(parents.ToDictionary(p => p.Key, p => (p.Value, "image.exe")));
+
+        return detailsRead;
+    }
+
+    private static WindowInfo Window(int handle, string title, int processId) =>
+        TestDataFactory.CreateWindowInfo(handle, title, "app", processId);
+
     [Fact]
-    public void GetRunningProcesses_ReturnsNonEmptyList()
+    public void GetRunningProcesses_WithIncludeWindowless_ListsEveryProcessInTheOrderTheSystemListsThem()
     {
         // Arrange
-        var sut = CreateSut();
+        UseProcessTable();
 
         // Act
-        var result = sut.GetRunningProcesses(includeWindowless: true);
+        var result = CreateSut().GetRunningProcesses(includeWindowless: true);
 
         // Assert
-        result.Should().NotBeEmpty();
+        result.Select(p => p.ProcessId).Should().Equal(Explorer, Notepad, Service, FrameHost);
     }
 
     [Fact]
-    public void GetRunningProcesses_WithNameFilter_FiltersCorrectly()
+    public void GetRunningProcesses_ReportsTheNamePathMemoryParentAndStartTimeOfEachProcess()
     {
         // Arrange
-        var sut = CreateSut();
-        var currentProcessName = Process.GetCurrentProcess().ProcessName;
+        UseProcessTable(windows: [Window(1, "Untitled - Notepad", Notepad)]);
 
         // Act
-        var result = sut.GetRunningProcesses(nameFilter: currentProcessName, includeWindowless: true);
+        var result = CreateSut().GetRunningProcesses();
 
         // Assert
-        result.Should().NotBeEmpty();
-        result.Should().OnlyContain(p =>
-            p.Name.Contains(currentProcessName, StringComparison.OrdinalIgnoreCase));
+        result.Should().ContainSingle().Which.Should().Be(new ProcessInfo(
+            ProcessId: Notepad,
+            Name: "Notepad",
+            ExecutablePath: @"C:\Windows\System32\notepad.exe",
+            WindowCount: 1,
+            MemoryUsageMB: 25,
+            ParentProcessId: Explorer,
+            StartTime: T0.AddMinutes(5)));
     }
 
     [Fact]
-    public void GetRunningProcesses_WithNonMatchingFilter_ReturnsEmptyOrFiltered()
+    public void GetRunningProcesses_OfAProcessThatCannotBeOpened_ListsItWithoutPathOrStartTime()
     {
         // Arrange
-        var sut = CreateSut();
+        UseProcessTable();
 
-        // Act - Use a filter that's unlikely to match any real process
-        var result = sut.GetRunningProcesses(
-            nameFilter: "xyznonexistentprocess123",
-            includeWindowless: true);
+        // Act
+        var result = CreateSut().GetRunningProcesses(nameFilter: "svchost", includeWindowless: true);
+
+        // Assert
+        var service = result.Should().ContainSingle().Subject;
+        service.Name.Should().Be("svchost");
+        service.ExecutablePath.Should().BeNull();
+        service.StartTime.Should().BeNull();
+        service.MemoryUsageMB.Should().BeNull("its working set could not be read either");
+    }
+
+    [Theory]
+    [InlineData("notepad")]
+    [InlineData("NOTE")]
+    [InlineData("pad")]
+    public void GetRunningProcesses_WithNameFilter_KeepsTheProcessesWhoseNameContainsItIgnoringCase(string nameFilter)
+    {
+        // Arrange
+        UseProcessTable();
+
+        // Act
+        var result = CreateSut().GetRunningProcesses(nameFilter, includeWindowless: true);
+
+        // Assert
+        result.Should().ContainSingle().Which.ProcessId.Should().Be(Notepad);
+    }
+
+    [Fact]
+    public void GetRunningProcesses_WithNonMatchingFilter_ReturnsEmptyAndOpensNoProcess()
+    {
+        // Arrange
+        var detailsRead = UseProcessTable();
+
+        // Act
+        var result = CreateSut().GetRunningProcesses(nameFilter: "xyznonexistentprocess123", includeWindowless: true);
+
+        // Assert
+        result.Should().BeEmpty();
+        detailsRead.Should().BeEmpty();
+        _mockProcessWrapper.Verify(w => w.GetProcessList(), Times.Never);
+    }
+
+    [Fact]
+    public void GetRunningProcesses_OpensOnlyTheListedProcessesAndTheirParents_EachOnce()
+    {
+        // Arrange - only Notepad has windows; its parent is explorer
+        var detailsRead = UseProcessTable(windows: [Window(1, "Untitled - Notepad", Notepad), Window(2, "Find", Notepad)]);
+
+        // Act
+        CreateSut().GetRunningProcesses();
+
+        // Assert
+        detailsRead.Should().BeEquivalentTo([Notepad, Explorer]);
+    }
+
+    [Fact]
+    public void GetRunningProcesses_WhenTheProcessListCannotBeRead_ReturnsEmpty()
+    {
+        // Arrange
+        UseProcessTable();
+        _mockProcessWrapper.Setup(w => w.ListRunningProcesses()).Returns((IReadOnlyList<RunningProcess>?)null);
+
+        // Act
+        var result = CreateSut().GetRunningProcesses(includeWindowless: true);
 
         // Assert
         result.Should().BeEmpty();
     }
 
     [Fact]
-    public void GetRunningProcesses_ReturnsCorrectProcessInfoFields()
+    public void GetRunningProcesses_WithIncludeWindowless_StillCountsEachProcesssWindows()
     {
-        // Arrange
-        var sut = CreateSut();
+        // Arrange - D-PAL-20: includeWindowless used to skip the window map and report windowCount 0 for every process
+        UseProcessTable(windows:
+        [
+            Window(1, "Untitled - Notepad", Notepad),
+            Window(2, "notes.txt - Notepad", Notepad),
+            Window(3, "Taskbar", Explorer),
+        ]);
 
         // Act
-        var result = sut.GetRunningProcesses(includeWindowless: true);
-
-        // Assert - Find a process with valid info (some system processes may have limited access)
-        var validProcess = result.FirstOrDefault(p => p.ProcessId > 0);
-        validProcess.Should().NotBeNull("At least one process should have a valid ProcessId");
-        validProcess!.ProcessId.Should().BeGreaterThan(0);
-        validProcess.Name.Should().NotBeNullOrEmpty();
-        // ExecutablePath and MemoryUsageMB may be null for some processes
-    }
-
-    [Fact]
-    public void GetRunningProcesses_IncludesCurrentProcess()
-    {
-        // Arrange
-        var sut = CreateSut();
-        var currentPid = Process.GetCurrentProcess().Id;
-
-        // Act
-        var result = sut.GetRunningProcesses(includeWindowless: true);
+        var result = CreateSut().GetRunningProcesses(includeWindowless: true);
 
         // Assert
-        result.Should().Contain(p => p.ProcessId == currentPid);
+        result.ToDictionary(p => p.ProcessId, p => p.WindowCount).Should().Equal(new Dictionary<int, int>
+        {
+            [Explorer] = 1, [Notepad] = 2, [Service] = 0, [FrameHost] = 0
+        });
     }
 
     [Fact]
     public void GetRunningProcesses_CountsWindowsOnOtherDesktopsToolAndShellWindowsButNotUntitledOnes()
     {
-        // Arrange - the test host stands in for a debug browser whose window the user moved to
-        // another virtual desktop: the user-facing listings leave that cloaked window out
-        using var self = Process.GetCurrentProcess();
+        // Arrange - Notepad stands in for a debug browser whose window the user moved to another virtual desktop: the
+        // user-facing listings leave that cloaked window out
         WindowQuery? query = null;
+        UseProcessTable();
         _mockWindowService.Setup(w => w.FindWindows(It.IsAny<WindowQuery>()))
             .Callback<WindowQuery>(q => query = q)
             .Returns(
             [
-                TestDataFactory.CreateWindowInfo(1, "Debug browser", self.ProcessName, self.Id) with { IsCloaked = true },
-                TestDataFactory.CreateWindowInfo(2, "Find", self.ProcessName, self.Id),
-                TestDataFactory.CreateWindowInfo(3, "", self.ProcessName, self.Id),
+                Window(1, "Debug browser", Notepad) with { IsCloaked = true },
+                Window(2, "Find", Notepad),
+                Window(3, "", Notepad),
             ]);
 
         // Act
-        var result = CreateSut().GetRunningProcesses(nameFilter: self.ProcessName);
+        var result = CreateSut().GetRunningProcesses(nameFilter: "notepad");
 
         // Assert
         query.Should().NotBeNull();
         query!.IncludeShell.Should().BeTrue("cloaked, tool and shell windows mean the process still has a window");
-        result.Should().ContainSingle(p => p.ProcessId == self.Id).Which.WindowCount.Should().Be(2);
+        result.Should().ContainSingle(p => p.ProcessId == Notepad).Which.WindowCount.Should().Be(2);
         _mockWindowService.Verify(w => w.GetAllWindows(It.IsAny<bool>()), Times.Never);
     }
 
     [Fact]
     public void GetRunningProcesses_CountsAUwpWindowForTheAppAndForItsFrameHost()
     {
-        // Arrange - the test host plays the ApplicationFrameHost of a UWP app's window
-        using var self = Process.GetCurrentProcess();
-        _mockWindowService.Setup(w => w.FindWindows(It.IsAny<WindowQuery>()))
-            .Returns(
+        // Arrange - a Calculator window, which ApplicationFrameHost owns for the app's process
+        const int calculator = 500;
+        UseProcessTable(
+            processes: [.. FakeProcesses, new RunningProcess(calculator, "CalculatorApp", 40L * 1024 * 1024, 1)],
+            windows:
             [
-                TestDataFactory.CreateWindowInfo(1, "Calculator", "CalculatorApp", processId: int.MaxValue) with
+                TestDataFactory.CreateWindowInfo(1, "Calculator", "CalculatorApp", calculator) with
                 {
-                    HostProcessName = self.ProcessName,
-                    HostProcessId = self.Id
+                    HostProcessName = "ApplicationFrameHost",
+                    HostProcessId = FrameHost
                 },
             ]);
 
         // Act
-        var result = CreateSut().GetRunningProcesses(nameFilter: self.ProcessName);
+        var result = CreateSut().GetRunningProcesses();
 
-        // Assert - the frame window belongs to ApplicationFrameHost, so the host still counts it
-        result.Should().ContainSingle(p => p.ProcessId == self.Id).Which.WindowCount.Should().Be(1);
+        // Assert - the frame window belongs to ApplicationFrameHost, so the host counts it as well
+        result.ToDictionary(p => p.ProcessId, p => p.WindowCount).Should().Equal(new Dictionary<int, int>
+        {
+            [FrameHost] = 1, [calculator] = 1
+        });
     }
 
     [Fact]
     public void GetRunningProcesses_ByDefault_LeavesOutProcessesWithoutATitledWindow()
     {
         // Arrange
-        using var self = Process.GetCurrentProcess();
-        _mockWindowService.Setup(w => w.FindWindows(It.IsAny<WindowQuery>()))
-            .Returns([TestDataFactory.CreateWindowInfo(1, "", self.ProcessName, self.Id)]);
+        UseProcessTable(windows: [Window(1, "", Notepad)]);
 
         // Act
-        var result = CreateSut().GetRunningProcesses(nameFilter: self.ProcessName);
+        var result = CreateSut().GetRunningProcesses(nameFilter: "notepad");
 
         // Assert
-        result.Should().NotContain(p => p.ProcessId == self.Id);
+        result.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void GetRunningProcesses_NamesTheParent_OnlyWhenItIsStillRunning()
+    {
+        // Arrange
+        UseProcessTable();
+
+        // Act
+        var result = CreateSut().GetRunningProcesses(includeWindowless: true);
+
+        // Assert - the parents of explorer (50) and of svchost and the frame host (4) are not in the snapshot
+        result.ToDictionary(p => p.ProcessId, p => p.ParentProcessId).Should().Equal(new Dictionary<int, int?>
+        {
+            [Explorer] = null, [Notepad] = Explorer, [Service] = null, [FrameHost] = null
+        });
+    }
+
+    [Fact]
+    public void GetRunningProcesses_DoesNotNameAParentThatStartedAfterTheChild_BecauseItsPidWasReused()
+    {
+        // Arrange - Notepad's parent exited, and a later process took its PID
+        UseProcessTable(details: new Dictionary<int, ProcessDetails?>
+        {
+            [Explorer] = new(@"C:\Windows\explorer.exe", T0.AddMinutes(10)),
+            [Notepad] = new(@"C:\Windows\System32\notepad.exe", T0.AddMinutes(5)),
+        });
+
+        // Act
+        var result = CreateSut().GetRunningProcesses(nameFilter: "notepad", includeWindowless: true);
+
+        // Assert
+        result.Should().ContainSingle().Which.ParentProcessId.Should().BeNull();
+    }
+
+    [Fact]
+    public void GetRunningProcesses_NamesTheParent_WhenItsStartTimeCannotBeRead_AsTheAncestorWalkDoes()
+    {
+        // Arrange - the parent cannot be opened, so its start time is unknown
+        UseProcessTable(details: new Dictionary<int, ProcessDetails?>
+        {
+            [Notepad] = new(@"C:\Windows\System32\notepad.exe", T0.AddMinutes(5)),
+        });
+
+        // Act
+        var result = CreateSut().GetRunningProcesses(nameFilter: "notepad", includeWindowless: true);
+
+        // Assert
+        result.Should().ContainSingle().Which.ParentProcessId.Should().Be(Explorer);
+    }
+
+    [Fact]
+    public void GetRunningProcesses_WhenTheProcessSnapshotCannotBeRead_NamesNoParentButReportsTheRest()
+    {
+        // Arrange
+        UseProcessTable();
+        _mockProcessWrapper.Setup(w => w.GetProcessList())
+            .Returns((IReadOnlyDictionary<int, (int ParentProcessId, string ImageName)>?)null);
+
+        // Act
+        var result = CreateSut().GetRunningProcesses(includeWindowless: true);
+
+        // Assert
+        result.Should().HaveCount(FakeProcesses.Length);
+        result.Should().OnlyContain(p => p.ParentProcessId == null);
+        result.Single(p => p.ProcessId == Notepad).ExecutablePath.Should().NotBeNull();
     }
 
     #endregion
@@ -1038,24 +1209,24 @@ public class ProcessServiceTests
     #region T4.4: GetProcessPath Tests
 
     [Fact]
-    public void GetProcessPath_WithValidPid_ReturnsPath()
+    public void GetProcessPath_ReadsTheImagePathThroughTheProcessSeam()
     {
         // Arrange
+        _mockProcessWrapper.Setup(w => w.GetProcessImagePath(Notepad)).Returns(@"C:\Windows\System32\notepad.exe");
         var sut = CreateSut();
-        var currentPid = Process.GetCurrentProcess().Id;
 
         // Act
-        var result = sut.GetProcessPath(currentPid);
+        var result = sut.GetProcessPath(Notepad);
 
         // Assert
-        result.Should().NotBeNull();
-        result.Should().EndWith(".exe");
+        result.Should().Be(@"C:\Windows\System32\notepad.exe");
     }
 
     [Fact]
-    public void GetProcessPath_WithInvalidPid_ReturnsNull()
+    public void GetProcessPath_WhenThePathCannotBeRead_ReturnsNull()
     {
         // Arrange
+        _mockProcessWrapper.Setup(w => w.GetProcessImagePath(It.IsAny<int>())).Returns((string?)null);
         var sut = CreateSut();
 
         // Act

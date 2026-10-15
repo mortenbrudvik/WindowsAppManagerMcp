@@ -48,7 +48,11 @@ public interface IProcessService
         CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Lists running processes, optionally filtered by name.
+    /// Lists running processes, optionally filtered by name, in the order the system lists them. The list comes from
+    /// <see cref="INativeProcessWrapper.ListRunningProcesses"/>; each listed process is opened once, for its path and start
+    /// time (<see cref="INativeProcessWrapper.ReadProcessDetails"/>), and its parent is taken from one process snapshot
+    /// with the PID-reuse rule of <see cref="Native.NativeProcessWrapper.FindParent"/>. Empty when the process list cannot
+    /// be read. Never throws for a process that exits or cannot be opened: its unreadable fields are null.
     /// </summary>
     /// <param name="nameFilter">Part of the process name, case-insensitive.</param>
     /// <param name="includeWindowless">
@@ -56,7 +60,8 @@ public interface IProcessService
     /// windows on other virtual desktops, tool windows and the desktop shell's windows count, so a
     /// process is never hidden only because its window is not on the current desktop. WindowCount
     /// counts those windows; a UWP app's window counts for the app's process and for its
-    /// ApplicationFrameHost. True: every process, with WindowCount 0 (see M6.6).
+    /// ApplicationFrameHost. True: every process, with WindowCount counted the same way (0 for a
+    /// process without such a window).
     /// </param>
     IReadOnlyList<ProcessInfo> GetRunningProcesses(string? nameFilter = null, bool includeWindowless = false);
 
@@ -137,10 +142,24 @@ public interface IProcessService
         CancellationToken cancellationToken = default);
 }
 
+/// <summary>One running process, as <see cref="IProcessService.GetRunningProcesses"/> lists it.</summary>
+/// <param name="ProcessId">The process ID.</param>
+/// <param name="Name">The process name without the .exe extension.</param>
+/// <param name="ExecutablePath">The full path of the executable; null when the process cannot be opened.</param>
+/// <param name="WindowCount">The process's visible, titled top-level windows (see GetRunningProcesses).</param>
+/// <param name="MemoryUsageMB">The working set in MB; null when it cannot be read.</param>
+/// <param name="ParentProcessId">
+/// The process that started it, when that process is still running and did not start after it (a later process that
+/// reused the parent's PID is not named); null otherwise, or when the process snapshot cannot be read. Not reported by
+/// list_processes yet (roadmap M6.6).
+/// </param>
+/// <param name="StartTime">When the process started (UTC); null when it cannot be read. Not reported by list_processes yet.</param>
 public record ProcessInfo(
     int ProcessId,
     string Name,
     string? ExecutablePath,
     int WindowCount,
-    double? MemoryUsageMB
+    double? MemoryUsageMB,
+    int? ParentProcessId = null,
+    DateTime? StartTime = null
 );

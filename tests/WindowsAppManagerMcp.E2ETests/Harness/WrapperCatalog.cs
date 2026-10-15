@@ -257,7 +257,11 @@ public static class WrapperCatalog
                 [nameof(INativeProcessWrapper.GetProcessImagePath)] = WrapperMember.Read,
                 // The reading tools read a browser's debug port from its command line (roadmap M5.3)
                 [nameof(INativeProcessWrapper.GetProcessCommandLine)] = WrapperMember.Read,
-                [nameof(INativeProcessWrapper.WaitForInputIdle)] = WrapperMember.Read
+                [nameof(INativeProcessWrapper.WaitForInputIdle)] = WrapperMember.Read,
+                // list_processes (roadmap M6.6): the system's process list, and one query handle per listed process for
+                // its image path and start time; neither changes a process
+                [nameof(INativeProcessWrapper.ListRunningProcesses)] = WrapperMember.Read,
+                [nameof(INativeProcessWrapper.ReadProcessDetails)] = WrapperMember.Read
             },
             [typeof(INativeThreadInputWrapper)] = new Dictionary<string, WrapperMember>
             {
