@@ -2296,9 +2296,9 @@ Any difference in points 2 or 3 keeps the option off; record the search, the win
 
 The CDP code is tested over in-memory fakes and one loopback endpoint the test serves itself
 (`Integration/CdpLoopbackIntegrationTests`); what a real Chromium does (dialogs, detaches, crashes, its limits) is
-checked by hand. This is the one exception to "never an app of the developer's" above, and it needs the repository
-owner's approval before each run: the check starts its own debug browser, a separate instance with a throwaway profile,
-and never touches the user's browser. Every run keeps these rules:
+checked by hand. This is the owner-approved exception to "never an app of the developer's" above: the check starts its
+own debug browsers, separate instances with throwaway profiles, and never reads, acts on or closes the user's browser.
+Every run keeps these rules, for every debug instance it starts:
 
 1. Before starting, record every top-level window handle and every `msedge`, `chrome` and `brave` process ID.
 2. Start the browser only with launch_browser_with_debug (`edge`), with no `userDataDir` or a new
@@ -2306,7 +2306,7 @@ and never touches the user's browser. Every run keeps these rules:
    carry that `--user-data-dir`; if the process or the window was already there, the launch was handed to the user's
    browser: stop and close nothing.
 3. Open only `data:` URLs, `file:///` pages the check wrote under `%TEMP%`, or a 127.0.0.1 HttpListener. No network.
-4. Act only on windows and targets of that process.
+4. Act only on windows and targets of those processes. No window of the user's browser is passed to any call.
 5. Clean up by process ID only, never by window title: check that the process tree has exited and that the user's
    browser process IDs are unchanged, then delete the profile folder.
 
@@ -2325,8 +2325,11 @@ Roadmap M5.2 (after its merge, on a real Edge):
 - **Browser gone.** After the debug process is killed, a read returns `CdpUnavailable`, not `CdpTargetClosed`.
 - **Oversize page.** A local page of about 70 MB of text read with `textOnly: false` returns `CdpResponseTooLarge`, not
   `HtmlRequiresCdp`.
-- **Port owner.** A window of the user's own browser passed with the debug `cdpPort` returns `CdpPortOwnerMismatch`
-  and none of the debug instance's data, with and without `targetId`.
+- **Port owner.** Start a second debug instance, B, by the same rules, on its own port and profile folder. get_browser_url
+  on a window of the first instance, A, with B's `cdpPort` and `requireCdp: true` returns `CdpPortOwnerMismatch` and none
+  of B's data; so does the same call with one of B's tab ids as `targetId`. Use get_browser_url, not
+  get_browser_content, so that even a mistaken call reads no page text. A result with `source: "uia"` means the call fell
+  back to UI Automation: the check failed; stop and record it.
 - **No Origin header.** The reads above work without `--remote-allow-origins`.
 
 ### Tool surface snapshot
