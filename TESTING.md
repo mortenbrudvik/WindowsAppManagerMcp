@@ -2091,9 +2091,11 @@ fails until a new kind is named in this list).
   M1.5, `InputTargetGuard`), so a bug in that guard cannot send input to a window outside the fixture;
   `FixtureInputGuardTests` checks the server's guard itself against the fixture.
 - In both tiers, starting a process (including `where.exe`), registering a global hotkey and reading
-  or writing the clipboard's content are refused. CDP (`ICdpService`) refuses every call, because it
-  talks to a browser's debug port over the network, outside the native wrappers, and the fixture's WebView2
-  window opens no debug port.
+  or writing the clipboard's content are refused. CDP (`ICdpService`, and `ICdpTransport` under it, the only
+  type that opens the network connections, roadmap M5.2) refuses every call, because it talks to a browser's
+  debug port over the network, outside the native wrappers, and the fixture's WebView2 window opens no debug
+  port. `ServerHarnessTests.EveryRegisteredCdpService_IsRefused` fails when a registered `ICdp*` service is not
+  in `ServerHarness.RefusedServices`. The CDP port-owner check (`ITcpPortOwnerResolver`) is a guarded read.
 
 UI Automation elements come back from the wrapper as objects that services only read: NativeCallGuardTests
 forbids acting pattern calls outside the Native wrappers and the two UI Automation engine adapters, and the

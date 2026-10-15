@@ -7,7 +7,7 @@ namespace WindowsAppManagerMcp.Tests.Unit.Services;
 public class CdpTargetMatcherTests
 {
     private static CdpTarget Page(string id, string title, string url) =>
-        new(Id: id, Type: "page", Title: title, Url: url, WebSocketDebuggerUrl: $"ws://127.0.0.1:9222/devtools/page/{id}");
+        new(Id: id, Type: "page", Title: title, Url: url, WebSocketDebuggerUrl: $"ws://127.0.0.1:9222/devtools/page/{id}", Port: 9222);
 
     [Fact]
     public void Match_ReturnsTabWhoseTitleIsShownByWindow()

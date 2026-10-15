@@ -4,8 +4,8 @@ using System.Net;
 namespace WindowsAppManagerMcp.Tests.Unit.Services;
 
 /// <summary>
-/// Unit tests for CdpService using an in-process fake browser (fake HTTP handler and WebSocket).
-/// No real browser or network is involved.
+/// Unit tests for CdpService using an in-process fake browser (fake HTTP handler and WebSocket) behind the real
+/// CdpTransport (roadmap M5.2). No real browser or network is involved.
 /// </summary>
 public class CdpServiceTests
 {
@@ -23,15 +23,16 @@ public class CdpServiceTests
         Type: "page",
         Title: "Inbox",
         Url: "https://mail.example/",
-        WebSocketDebuggerUrl: "ws://127.0.0.1:9222/devtools/page/TAB1");
+        WebSocketDebuggerUrl: "ws://127.0.0.1:9222/devtools/page/TAB1",
+        Port: Port);
 
     private static CdpService CreateSut(
         FakeCdpHttpHandler? http = null,
         ICdpWebSocketFactory? sockets = null,
-        int? portOwner = BrowserPid) =>
+        int? portOwner = BrowserPid,
+        CdpTransportLimits? limits = null) =>
         new(
-            http ?? FakeCdpHttpHandler.Targets(),
-            sockets ?? FakeCdpWebSocketFactory.NeverConnects(),
+            new CdpTransport(http ?? FakeCdpHttpHandler.Targets(), sockets ?? FakeCdpWebSocketFactory.NeverConnects(), limits),
             new FakePortOwnerResolver(portOwner));
 
     /// <summary>A fake page that answers Runtime.evaluate with the given snapshot.</summary>
@@ -431,8 +432,9 @@ public class CdpServiceTests
     }
 
     [Fact]
-    public async Task GetPageSnapshotAsync_ReturnsProtocolError_WhenBrowserClosesConnection()
+    public async Task GetPageSnapshotAsync_ReturnsTargetClosed_WhenBrowserClosesConnection()
     {
+        // Was CdpProtocolError before roadmap M5.2: a closed tab is not a protocol fault, and it does not come back
         var socket = new FakeCdpWebSocket((s, command) =>
         {
             if (command.GetProperty("method").GetString() == "Runtime.evaluate")
@@ -442,7 +444,106 @@ public class CdpServiceTests
 
         var result = await sut.GetPageSnapshotAsync(Tab, textOnly: true, maxLength: null, LongTimeout);
 
+        result.ErrorCode.Should().Be(BrowserErrorCode.CdpTargetClosed);
+    }
+
+    [Fact]
+    public async Task GetPageSnapshotAsync_ReturnsTargetClosed_WithTheReason_WhenTheTabDetaches()
+    {
+        var socket = new FakeCdpWebSocket((s, command) =>
+        {
+            if (command.GetProperty("method").GetString() == "Runtime.evaluate")
+                s.EnqueueEvent("Inspector.detached", new { reason = "target_closed" });
+        });
+        var sut = CreateSut(sockets: new FakeCdpWebSocketFactory(socket));
+
+        var result = await sut.GetPageSnapshotAsync(Tab, textOnly: true, maxLength: null, LongTimeout);
+
+        result.ErrorCode.Should().Be(BrowserErrorCode.CdpTargetClosed);
+        result.Error.Should().Contain("target_closed").And.Contain("without targetId");
+        socket.WasDisposed.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task GetPageSnapshotAsync_ReturnsResponseTooLarge_WhenTheAnswerIsOverTheLimit()
+    {
+        var socket = PageAnswering(new { title = "t", url = "u", content = new string('a', 4096) });
+        var sut = CreateSut(sockets: new FakeCdpWebSocketFactory(socket), limits: new CdpTransportLimits(MaxMessageBytes: 1024));
+
+        var result = await sut.GetPageSnapshotAsync(Tab, textOnly: false, maxLength: null, LongTimeout);
+
+        result.ErrorCode.Should().Be(BrowserErrorCode.CdpResponseTooLarge);
+        result.Error.Should().Contain("maxLength");
+    }
+
+    [Fact]
+    public async Task GetPageSnapshotAsync_Succeeds_WhenPageEnableIsNeverAnswered()
+    {
+        // A page may never answer Page.enable; the read does not wait for it
+        var socket = PageAnswering(new { title = "t", url = "u", content = "read anyway" });
+        var sut = CreateSut(sockets: new FakeCdpWebSocketFactory(socket));
+
+        var result = await sut.GetPageSnapshotAsync(Tab, textOnly: true, maxLength: null, ShortTimeout);
+
+        result.Success.Should().BeTrue();
+        result.Value!.Content.Should().Be("read anyway");
+    }
+
+    [Fact]
+    public async Task GetPageSnapshotAsync_Succeeds_WhenPageEnableIsRefused_ButTheReadWorks()
+    {
+        var socket = new FakeCdpWebSocket((s, command) =>
+        {
+            if (command.GetProperty("method").GetString() == "Page.enable")
+                s.ReplyError(command, -32000, "Page domain is not available");
+            else
+                s.ReplyWithValue(command, new { title = "t", url = "u", content = "c" });
+        });
+        var sut = CreateSut(sockets: new FakeCdpWebSocketFactory(socket));
+
+        var result = await sut.GetPageSnapshotAsync(Tab, textOnly: true, maxLength: null, LongTimeout);
+
+        result.Success.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task GetPageSnapshotAsync_SaysPageEnableWasRefused_WhenTheReadThenTimesOut()
+    {
+        var socket = new FakeCdpWebSocket((s, command) =>
+        {
+            if (command.GetProperty("method").GetString() == "Page.enable")
+                s.ReplyError(command, -32000, "Page domain is not available");
+        });
+        var sut = CreateSut(sockets: new FakeCdpWebSocketFactory(socket));
+
+        var result = await sut.GetPageSnapshotAsync(Tab, textOnly: true, maxLength: null, ShortTimeout);
+
+        result.ErrorCode.Should().Be(BrowserErrorCode.CdpTimeout);
+        result.Error.Should().Contain("Page.enable was refused: Page domain is not available (-32000)");
+    }
+
+    [Fact]
+    public async Task GetPageSnapshotAsync_RefusesAWebSocketUrlOnAnotherPortThanTheTabsOwn()
+    {
+        var factory = new FakeCdpWebSocketFactory(PageAnswering(new { title = "t", url = "u", content = "c" }));
+        var sut = CreateSut(sockets: factory);
+
+        var result = await sut.GetPageSnapshotAsync(
+            Tab with { WebSocketDebuggerUrl = "ws://127.0.0.1:9333/devtools/page/TAB1" }, true, null, LongTimeout);
+
         result.ErrorCode.Should().Be(BrowserErrorCode.CdpProtocolError);
+        result.Error.Should().StartWith("Refusing");
+        factory.ConnectedUris.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task GetPageTargetsAsync_GivesEachTabThePortThatListedIt()
+    {
+        var sut = CreateSut(FakeCdpHttpHandler.Targets(9333, ("A", "Inbox", "https://mail.example/")));
+
+        var result = await sut.GetPageTargetsAsync(9333, LongTimeout);
+
+        result.Value.Should().ContainSingle().Which.Port.Should().Be(9333);
     }
 
     [Fact]
@@ -474,6 +575,74 @@ public class CdpServiceTests
 
         result.Success.Should().BeFalse();
         factory.ConnectedUris.Should().BeEmpty();
+    }
+
+    #endregion
+
+    #region FindTargetByIdAsync
+
+    [Fact]
+    public async Task FindTargetByIdAsync_ReturnsTheTabWithThatId_EvenWhenTitlesAreTheSame()
+    {
+        var http = FakeCdpHttpHandler.Targets(
+            ("A", "Inbox", "https://mail.example/a"),
+            ("B", "Inbox", "https://mail.example/b"));
+        var sut = CreateSut(http);
+
+        var result = await sut.FindTargetByIdAsync(Port, BrowserPid, "B", LongTimeout);
+
+        result.Success.Should().BeTrue();
+        result.Value!.Url.Should().Be("https://mail.example/b");
+        result.Value.Port.Should().Be(Port);
+    }
+
+    [Fact]
+    public async Task FindTargetByIdAsync_ReturnsTargetNotFound_ForATabThatIsGone()
+    {
+        var sut = CreateSut(FakeCdpHttpHandler.Targets(("A", "Inbox", "https://mail.example/")));
+
+        var result = await sut.FindTargetByIdAsync(Port, BrowserPid, "GONE", LongTimeout);
+
+        result.ErrorCode.Should().Be(BrowserErrorCode.CdpTargetNotFound);
+        result.Error.Should().Contain("GONE").And.Contain("may have closed").And.Contain("without targetId");
+    }
+
+    [Fact]
+    public async Task FindTargetByIdAsync_ReturnsPortOwnerMismatch_WithoutListingTabs_WhenThePortIsAnotherProcesss()
+    {
+        var http = FakeCdpHttpHandler.Targets(("A", "Inbox", "https://mail.example/"));
+        var sut = CreateSut(http, portOwner: 999);
+
+        var result = await sut.FindTargetByIdAsync(Port, BrowserPid, "A", LongTimeout);
+
+        result.ErrorCode.Should().Be(BrowserErrorCode.CdpPortOwnerMismatch);
+        http.Requests.Should().BeEmpty("a port owned by another process must not be queried");
+    }
+
+    [Fact]
+    public async Task FindTargetByIdAsync_FailsClosed_WhenThePortsOwnerCannotBeRead()
+    {
+        // The title path skips an unknown owner and still needs the title to match; an id carries no such evidence
+        var http = FakeCdpHttpHandler.Targets(("A", "Inbox", "https://mail.example/"));
+        var sut = CreateSut(http, portOwner: null);
+
+        var result = await sut.FindTargetByIdAsync(Port, BrowserPid, "A", LongTimeout);
+
+        result.ErrorCode.Should().Be(BrowserErrorCode.CdpPortOwnerMismatch);
+        result.Error.Should().Contain("Could not read which process owns CDP port 9222");
+        http.Requests.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task FindTargetByIdAsync_DoesNotLookUpAMalformedId()
+    {
+        var http = FakeCdpHttpHandler.Targets(("A", "Inbox", "https://mail.example/"));
+        var sut = CreateSut(http);
+
+        var result = await sut.FindTargetByIdAsync(Port, BrowserPid, "../browser", LongTimeout);
+
+        result.ErrorCode.Should().Be(BrowserErrorCode.CdpTargetNotFound);
+        http.Requests.Should().BeEmpty();
     }
 
     #endregion

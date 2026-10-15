@@ -545,7 +545,8 @@ public class BrowserReadingServiceTests
         Type: "page",
         Title: "Test Page",
         Url: "https://example.com/cdp",
-        WebSocketDebuggerUrl: "ws://127.0.0.1:9222/devtools/page/TAB1");
+        WebSocketDebuggerUrl: "ws://127.0.0.1:9222/devtools/page/TAB1",
+        Port: CdpPort);
 
     private void SetupCdpMatch(CdpResult<CdpTarget> result) =>
         _mockCdpService
