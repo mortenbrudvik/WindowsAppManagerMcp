@@ -2,6 +2,7 @@ using System.ComponentModel;
 using ModelContextProtocol.Server;
 using WindowsAppManagerMcp.Infrastructure;
 using WindowsAppManagerMcp.Models;
+using WindowsAppManagerMcp.Services;
 using WindowsAppManagerMcp.Services.Interfaces;
 
 namespace WindowsAppManagerMcp.Tools;
@@ -33,7 +34,17 @@ public class BrowserReadingTools
         "The result's source field says which method produced the data ('cdp' or 'uia'); targetId identifies the CDP tab.";
 
     private const string RequireCdpDescription =
+        "If true, return the CDP error (for example CdpTimeout, CdpDialogOpen, CdpTargetNotFound) instead of falling back to UI Automation. Requires cdpPort; implied by targetId. Default: false.";
+
+    // get_active_browser_url takes no targetId, so its description does not mention one
+    private const string ActiveRequireCdpDescription =
         "If true, return the CDP error (for example CdpTimeout, CdpDialogOpen, CdpTargetNotFound) instead of falling back to UI Automation. Requires cdpPort. Default: false.";
+
+    private const string CdpPortDescription =
+        "Optional DevTools port of the browser that owns the window (launch_browser_with_debug returns it); enables CDP reads.";
+
+    private const string TargetIdDescription =
+        "CDP tab id from an earlier result's targetId or a CdpTargetAmbiguous error; reads that tab instead of the one the window shows. Needs cdpPort, must be a tab of the window's browser, never falls back to UI Automation.";
 
     private const string TimeoutDescription =
         "Time limit in ms for the CDP requests, and again for the UI Automation read (default: 10000, range: 1000-30000). A page with an open JavaScript dialog (alert/confirm/prompt/beforeunload) never answers CDP, so the call returns CdpTimeout or CdpDialogOpen instead of hanging.";
@@ -45,17 +56,20 @@ public class BrowserReadingTools
         long? handle = null,
         [Description(BrowserWindowDescription)]
         WindowSelector? window = null,
-        [Description("Optional CDP port of the browser that owns the window. If the browser was started with --remote-debugging-port=9222 (for example by launch_browser_with_debug), specify 9222 here.")]
+        [Description(CdpPortDescription)]
         int? cdpPort = null,
+        [Description(TargetIdDescription)]
+        string? targetId = null,
         [Description(RequireCdpDescription)]
         bool requireCdp = false,
         [Description(TimeoutDescription)]
         int timeoutMs = CdpOptions.DefaultTimeoutMs,
         CancellationToken cancellationToken = default)
     {
+        RefuseBadTargetId(targetId, cdpPort);
         var windowHandle = WindowTargeting.Require(_windowService, handle, window);
         var result = await _browserReadingService.GetBrowserUrlAsync(
-            windowHandle, new CdpOptions(cdpPort, requireCdp, timeoutMs), cancellationToken);
+            windowHandle, new CdpOptions(cdpPort, requireCdp, timeoutMs, targetId), cancellationToken);
         return ToDto(result);
     }
 
@@ -71,8 +85,10 @@ public class BrowserReadingTools
         int? maxLength = null,
         [Description("If true (default), returns only text content. If false, returns full HTML; this requires CDP (cdpPort).")]
         bool textOnly = true,
-        [Description("Optional CDP port of the browser that owns the window. If the browser was started with --remote-debugging-port=9222 (for example by launch_browser_with_debug), specify 9222 here for JavaScript-rendered content.")]
+        [Description(CdpPortDescription)]
         int? cdpPort = null,
+        [Description(TargetIdDescription)]
+        string? targetId = null,
         [Description(RequireCdpDescription)]
         bool requireCdp = false,
         [Description(TimeoutDescription)]
@@ -86,19 +102,20 @@ public class BrowserReadingTools
                 $"maxLength must be at least 1, but it is {maxLength}. Leave it out to get all of the content. Nothing was read.");
         }
 
+        RefuseBadTargetId(targetId, cdpPort);
         var windowHandle = WindowTargeting.Require(_windowService, handle, window);
         var options = new BrowserContentOptions(MaxLength: maxLength, TextOnly: textOnly);
         var result = await _browserReadingService.GetBrowserContentAsync(
-            windowHandle, options, new CdpOptions(cdpPort, requireCdp, timeoutMs), cancellationToken);
+            windowHandle, options, new CdpOptions(cdpPort, requireCdp, timeoutMs, targetId), cancellationToken);
         return ToDto(result);
     }
 
     [McpServerTool(Name = "get_active_browser_url", Title = "Get Active Browser URL", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
     [Description("Get the URL from the currently active (foreground) browser window. Convenience method that combines get_foreground_window and get_browser_url, with the same CDP behavior and result fields. Returns an error if the foreground window is not a browser.")]
     public async Task<BrowserUrlResultDto> GetActiveBrowserUrl(
-        [Description("Optional CDP port of the browser that owns the window. If the browser was started with --remote-debugging-port=9222 (for example by launch_browser_with_debug), specify 9222 here.")]
+        [Description(CdpPortDescription)]
         int? cdpPort = null,
-        [Description(RequireCdpDescription)]
+        [Description(ActiveRequireCdpDescription)]
         bool requireCdp = false,
         [Description(TimeoutDescription)]
         int timeoutMs = CdpOptions.DefaultTimeoutMs,
@@ -145,6 +162,31 @@ public class BrowserReadingTools
         var result = await _processService.LaunchBrowserWithDebugAsync(
             ToolEnum<DebugBrowser>.Name(browser), url, port, userDataDir, cancellationToken: cancellationToken).ConfigureAwait(false);
         return ToDto(result);
+    }
+
+    /// <summary>
+    /// Refuses a targetId without cdpPort, or one that is not a CDP tab id (roadmap M5.2), before anything is read. The id
+    /// is looked up among the tabs the port lists, never put in a URL, but a malformed one is a mistake to report.
+    /// </summary>
+    private static void RefuseBadTargetId(string? targetId, int? cdpPort)
+    {
+        if (targetId == null)
+        {
+            return;
+        }
+
+        if (cdpPort == null)
+        {
+            throw new ToolErrorException(ToolErrorReporting.InvalidArgumentsErrorCode,
+                "targetId needs cdpPort: the debug port of the browser the tab belongs to. Nothing was read.");
+        }
+
+        if (!CdpEndpointValidator.IsValidTargetId(targetId))
+        {
+            throw new ToolErrorException(ToolErrorReporting.InvalidArgumentsErrorCode,
+                "targetId must be a CDP tab id from an earlier result's targetId or a CdpTargetAmbiguous error (1 to 128 " +
+                "letters, digits, '.', '_' or '-'). Nothing was read.");
+        }
     }
 
     /// <summary>

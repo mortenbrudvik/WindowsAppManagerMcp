@@ -1913,7 +1913,8 @@ Rules for new tests:
   wrote itself, or a `127.0.0.1` listener (no network), act only on that process's windows and targets,
   and close it by its process tree, never by window title. Then check that the developer's own browser
   processes are unchanged and delete the profile. The developer's browser windows, tabs and profile are
-  never read, acted on or closed.
+  never read, acted on or closed. The steps are in
+  [Desktop check: M5 browser bridge](#desktop-check-m5-browser-bridge).
 - `NativeCallGuardTests` scans the server assembly and fails if anything other than
   `NativeInputWrapper` calls the `SendInput`/`SetCursorPos` APIs, anything other than
   `NativeWindowWrapper` calls the window-changing user32 APIs, or anything other than
@@ -2091,9 +2092,11 @@ fails until a new kind is named in this list).
   M1.5, `InputTargetGuard`), so a bug in that guard cannot send input to a window outside the fixture;
   `FixtureInputGuardTests` checks the server's guard itself against the fixture.
 - In both tiers, starting a process (including `where.exe`), registering a global hotkey and reading
-  or writing the clipboard's content are refused. CDP (`ICdpService`) refuses every call, because it
-  talks to a browser's debug port over the network, outside the native wrappers, and the fixture's WebView2
-  window opens no debug port.
+  or writing the clipboard's content are refused. CDP (`ICdpService`, and `ICdpTransport` under it, the only
+  type that opens the network connections, roadmap M5.2) refuses every call, because it talks to a browser's
+  debug port over the network, outside the native wrappers, and the fixture's WebView2 window opens no debug
+  port. `ServerHarnessTests.EveryRegisteredCdpService_IsRefused` fails when a registered `ICdp*` service is not
+  in `ServerHarness.RefusedServices`. The CDP port-owner check (`ITcpPortOwnerResolver`) is a guarded read.
 
 UI Automation elements come back from the wrapper as objects that services only read: NativeCallGuardTests
 forbids acting pattern calls outside the Native wrappers and the two UI Automation engine adapters, and the
@@ -2289,6 +2292,46 @@ unset:
 
 Any difference in points 2 or 3 keeps the option off; record the search, the window and both results.
 
+### Desktop check: M5 browser bridge
+
+The CDP code is tested over in-memory fakes and one loopback endpoint the test serves itself
+(`Integration/CdpLoopbackIntegrationTests`); what a real Chromium does (dialogs, detaches, crashes, its limits) is
+checked by hand. This is the owner-approved exception to "never an app of the developer's" above: the check starts its
+own debug browsers, separate instances with throwaway profiles, and never reads, acts on or closes the user's browser.
+Every run keeps these rules, for every debug instance it starts:
+
+1. Before starting, record every top-level window handle and every `msedge`, `chrome` and `brave` process ID.
+2. Start the browser only with launch_browser_with_debug (`edge`), with no `userDataDir` or a new
+   `%TEMP%\WamM5Check-<guid>` folder, on an explicit free port. Its `processId` must be new and its command line must
+   carry that `--user-data-dir`; if the process or the window was already there, the launch was handed to the user's
+   browser: stop and close nothing.
+3. Open only `data:` URLs, `file:///` pages the check wrote under `%TEMP%`, or a 127.0.0.1 HttpListener. No network.
+4. Act only on windows and targets of those processes. No window of the user's browser is passed to any call.
+5. Clean up by process ID only, never by window title: check that the process tree has exited and that the user's
+   browser process IDs are unchanged, then delete the profile folder.
+
+Roadmap M5.2 (after its merge, on a real Edge):
+
+- **Plain read.** get_browser_content with `cdpPort` on a `data:` page returns `source: "cdp"`. Ten reads in a row
+  leave no DevTools client attached (`edge://inspect` lists none).
+- **Dialog before the read.** A page that calls `alert('x')` on load returns `CdpDialogOpen` within `timeoutMs`, not
+  `CdpTimeout`: Chromium reports an open dialog again after Page.enable on a new connection (M5.8's dialog tool relies on
+  it). Record the result either way.
+- **Dialog during the read.** A page that opens `confirm()` after 500 ms while a slow read runs returns `CdpDialogOpen`.
+- **Tab closed during the read.** Closing the tab (by its own process's CDP, or close_window on a window the check
+  opened) during a 3-second busy loop returns `CdpTargetClosed`, with the detach reason in the message.
+- **Same titles.** Two tabs with the same title return `CdpTargetAmbiguous` with both ids; passing one as `targetId`
+  reads that tab; after closing it, the same `targetId` returns `CdpTargetNotFound`.
+- **Browser gone.** After the debug process is killed, a read returns `CdpUnavailable`, not `CdpTargetClosed`.
+- **Oversize page.** A local page of about 70 MB of text read with `textOnly: false` returns `CdpResponseTooLarge`, not
+  `HtmlRequiresCdp`.
+- **Port owner.** Start a second debug instance, B, by the same rules, on its own port and profile folder. get_browser_url
+  on a window of the first instance, A, with B's `cdpPort` and `requireCdp: true` returns `CdpPortOwnerMismatch` and none
+  of B's data; so does the same call with one of B's tab ids as `targetId`. Use get_browser_url, not
+  get_browser_content, so that even a mistaken call reads no page text. A result with `source: "uia"` means the call fell
+  back to UI Automation: the check failed; stop and record it.
+- **No Origin header.** The reads above work without `--remote-allow-origins`.
+
 ### Tool surface snapshot
 
 `Contract/ToolSurfaceSnapshotTests` tests the server the way an agent sees it. It lists the tools of an
@@ -2421,7 +2464,7 @@ typical result over 300 tokens, and tools/list itself, measured in October 2026:
 | `read_table` | Task Manager's first 50 processes, 5 columns with headers | 643 | 1,000 |
 | `get_server_info` | The default deny list, five host processes, two monitors | 634 | 850 |
 | `get_layout` | A preset of 6 placements, each with the captured window identity | 529 | 800 |
-| tools/list | Every tool's name, title, description, schemas and annotations: 67 tools, 229,730 bytes (`ToolList_StaysWithinItsBudget`) | 57,433 | 57,469 |
+| tools/list | Every tool's name, title, description, schemas and annotations: 67 tools, 230,149 bytes (`ToolList_StaysWithinItsBudget`) | 57,538 | 57,574 |
 
 Every other typical result is at most 300 tokens. When a change makes a result larger on purpose, raise its
 budget in the same change (the failure message gives the new size); when a change shrinks one a lot, lower it.

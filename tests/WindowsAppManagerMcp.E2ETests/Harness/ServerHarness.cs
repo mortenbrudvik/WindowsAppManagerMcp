@@ -125,9 +125,11 @@ public sealed class ServerHarness : IDisposable
     /// <summary>
     /// Services the E2E tests must not reach at all; they refuse every call in every tier. CDP talks to a
     /// browser's debug port over the network, outside the native wrappers, and could reach the user's own
-    /// browser; the fixture's WebView2 window (roadmap M3.F4) opens no debug port.
+    /// browser; the fixture's WebView2 window (roadmap M3.F4) opens no debug port. Both the CDP service and the
+    /// transport under it (roadmap M5.2) are refused, so a service that takes the transport directly cannot reach it
+    /// either; every registered ICdp* service must be listed here.
     /// </summary>
-    public static IReadOnlyList<Type> RefusedServices { get; } = [typeof(ICdpService)];
+    public static IReadOnlyList<Type> RefusedServices { get; } = [typeof(ICdpService), typeof(ICdpTransport)];
 
     /// <summary>
     /// The server's registrations for <paramref name="tier"/>. Building the collection resolves nothing and

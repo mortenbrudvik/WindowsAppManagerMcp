@@ -224,6 +224,39 @@ public class ServerHarnessTests : IDisposable
     [Theory]
     [InlineData(DesktopTier.NoInput)]
     [InlineData(DesktopTier.Input)]
+    public void Server_CannotReachTheCdpTransport(DesktopTier tier)
+    {
+        // Arrange
+        using var provider = CreateServicesWithMockedWrappers(tier).BuildServiceProvider();
+        var transport = provider.GetRequiredService<ICdpTransport>();
+
+        // Act
+        Action list = () => _ = transport.GetJsonAsync(9222, "/json/list", TimeSpan.FromSeconds(1), CancellationToken.None);
+
+        // Assert
+        transport.Should().BeAssignableTo<GuardProxy>();
+        list.Should().Throw<E2EGuardException>().WithMessage("*ICdpTransport*");
+    }
+
+    [Theory]
+    [InlineData(DesktopTier.NoInput)]
+    [InlineData(DesktopTier.Input)]
+    public void EveryRegisteredCdpService_IsRefused(DesktopTier tier)
+    {
+        // A CDP service added later (a browser-level session, a debug-browser lifecycle) must be refused too
+        var cdpServices = CreateServicesWithMockedWrappers(tier)
+            .Select(d => d.ServiceType)
+            .Where(t => t.Name.StartsWith("ICdp", StringComparison.Ordinal))
+            .Distinct()
+            .ToList();
+
+        cdpServices.Should().NotBeEmpty();
+        cdpServices.Should().BeSubsetOf(ServerHarness.RefusedServices);
+    }
+
+    [Theory]
+    [InlineData(DesktopTier.NoInput)]
+    [InlineData(DesktopTier.Input)]
     public void TheAuditLog_WritesInsideTheHarnesssTemporaryFolder_NeverTheUsersOwn(DesktopTier tier)
     {
         // Arrange
