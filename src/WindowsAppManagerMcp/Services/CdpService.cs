@@ -533,6 +533,67 @@ public class CdpService : ICdpService
                "})()";
     }
 
+    /// <inheritdoc />
+    public async Task<CdpResult<bool>> CloseBrowserAsync(
+        int port,
+        int browserProcessId,
+        TimeSpan timeout,
+        CancellationToken cancellationToken = default)
+    {
+        var checkedPort = CdpEndpointValidator.ValidatePort(port);
+        if (!checkedPort.Success)
+            return checkedPort.FailAs<bool>();
+
+        // A browser-level connection controls the whole browser: only the browser's own port is closed
+        if (!_portOwnerResolver.TryGetListeningProcessId(port, out var portOwner))
+        {
+            return CdpResult<bool>.Fail(
+                BrowserErrorCode.CdpPortOwnerMismatch,
+                $"Could not read which process owns CDP port {port}, so nothing was sent to it.");
+        }
+
+        if (portOwner is not int owner)
+            return NothingListens<bool>(port, "check that the browser still runs");
+
+        if (owner != browserProcessId)
+        {
+            return CdpResult<bool>.Fail(
+                BrowserErrorCode.CdpPortOwnerMismatch,
+                $"CDP port {port} belongs to process {DescribeProcess(owner)}, not to the browser (process " +
+                $"{DescribeProcess(browserProcessId)}), so nothing was sent to it.");
+        }
+
+        var stopwatch = Stopwatch.StartNew();
+        var version = await GetBrowserVersionAsync(port, timeout, cancellationToken).ConfigureAwait(false);
+        if (!version.Success)
+            return version.FailAs<bool>();
+
+        var left = timeout - stopwatch.Elapsed;
+        if (left <= TimeSpan.Zero)
+            return CdpResult<bool>.Fail(BrowserErrorCode.CdpTimeout, $"The browser on port {port} did not answer within {FormatMs(timeout)}.");
+
+        var connected = await _transport
+            .ConnectAsync(version.Value!.WebSocketDebuggerUrl, port, "the browser", left, cancellationToken)
+            .ConfigureAwait(false);
+        if (!connected.Success)
+            return connected.FailAs<bool>();
+
+        await using var connection = connected.Value!;
+        left = timeout - stopwatch.Elapsed;
+        var reply = await connection
+            .SendAsync("Browser.close", null, left > TimeSpan.Zero ? left : TimeSpan.FromMilliseconds(1), cancellationToken)
+            .ConfigureAwait(false);
+        if (reply.Success)
+        {
+            return reply.Value!.Error is { } fault
+                ? CdpResult<bool>.Fail(BrowserErrorCode.CdpProtocolError, $"The browser refused Browser.close: {fault.Message} ({fault.Code}).")
+                : CdpResult<bool>.Ok(true);
+        }
+
+        // A browser that closes may end the connection before it answers
+        return reply.ErrorCode == BrowserErrorCode.CdpTargetClosed ? CdpResult<bool>.Ok(true) : reply.FailAs<bool>();
+    }
+
     private static CdpResult<T> PortOwnerMismatch<T>(int port, int portOwner, int windowProcessId) => CdpResult<T>.Fail(
         BrowserErrorCode.CdpPortOwnerMismatch,
         $"CDP port {port} belongs to process {DescribeProcess(portOwner)}, but the window belongs to " +

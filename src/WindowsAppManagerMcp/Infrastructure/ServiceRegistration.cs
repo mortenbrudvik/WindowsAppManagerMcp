@@ -69,6 +69,10 @@ public static class ServiceRegistration
         services.AddSingleton<IDebugPortLocator, DebugPortLocator>();
         services.AddSingleton<IBrowserReadingService, BrowserReadingService>();
         services.AddSingleton<IProcessService, ProcessService>();
+        // The debug browsers' lifecycle (roadmap M5.4): named profiles, reuseIfRunning and close_debug_browser. It reaches a
+        // browser only through ICdpService (Browser.close, /json/version), which the E2E harness refuses
+        services.AddSingleton(_ => DebugBrowserProfiles.FromEnvironment());
+        services.AddSingleton<IDebugBrowserLifecycle, DebugBrowserLifecycle>();
         // Finds the window a launch opens, whichever process owns it (launch tools and apply_layout's launchMissing)
         services.AddSingleton<IWindowWaitService, WindowWaitService>();
         // Window events that wake wait_for_window's sleeps between polls (roadmap M3.F22): out-of-context WinEvent hooks on

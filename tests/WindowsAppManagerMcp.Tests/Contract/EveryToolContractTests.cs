@@ -71,6 +71,7 @@ public class EveryToolContractTests
             ["get_active_browser_url"] = Args("{}"),
             ["get_browser_content"] = Args("""{ "handle": 2821181 }"""),
             ["launch_browser_with_debug"] = Args("""{ "url": "https://example.com/" }"""),
+            ["close_debug_browser"] = Args("""{ "processId": 31337, "confirm": true }"""),
             ["click"] = Args("""{ "x": 560, "y": 110, "windowHandle": 1706796 }"""),
             ["right_click"] = Args("""{ "x": 560, "y": 110, "windowHandle": 1706796 }"""),
             ["double_click"] = Args("""{ "x": 560, "y": 110, "windowHandle": 1706796 }"""),

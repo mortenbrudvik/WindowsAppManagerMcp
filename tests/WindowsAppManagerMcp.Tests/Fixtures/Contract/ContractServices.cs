@@ -27,6 +27,8 @@ public sealed class ContractServices : IDisposable
     public ContractServices(ContractMode mode)
     {
         Mode = mode;
+        DebugBrowsers.Setup(d => d.LaunchAsync(It.IsAny<DebugBrowserLaunchRequest>(), It.IsAny<CancellationToken>()))
+            .Returns((DebugBrowserLaunchRequest request, CancellationToken token) => Processes.Object.LaunchBrowserWithDebugAsync(request, token));
         ElementRegistry.Setup(r => r.Lookup(It.IsAny<string>()))
             .Returns((string elementRef) => new ElementLookup(elementRef, (nint)TypicalDesktop.NotepadHandle, null, 1));
         Session = new InputSession(InputWrapper);
@@ -84,6 +86,18 @@ public sealed class ContractServices : IDisposable
     public Mock<IWindowWaitService> WindowWait { get; } = new();
     public Mock<IElementWaitService> ElementWait { get; } = new();
     public Mock<ILaunchPlacementService> Placement { get; } = new();
+
+    /// <summary>
+    /// The debug browsers' lifecycle (roadmap M5.4): its launch goes to <see cref="Processes"/>, so the launch's result is
+    /// set up there; close_debug_browser closes the typical debug browser (Typical) or refuses it (Failing).
+    /// </summary>
+    public Mock<IDebugBrowserLifecycle> DebugBrowsers { get; } = new();
+
+    /// <summary>The debug browser close_debug_browser's typical call closes: the one the typical launch started.</summary>
+    public static readonly DebugBrowserCloseTarget TypicalDebugBrowser = new(
+        31_337, "chrome", new DateTime(2026, 10, 15, 9, 0, 0, DateTimeKind.Utc),
+        @"C:\Users\user\AppData\Local\Temp\WindowsAppManagerMcp\browser-debug\6f1c2d3e4a5b6c7d8e9f0a1b2c3d4e5f",
+        DebugProfileKind.Temporary, StartedByServer: true, DeletesProfile: true, Helpers: []);
     public InputSession Session { get; }
 
     /// <summary>The fake input layer under <see cref="Session"/>: the cursor, the keys that are down and Caps Lock (get_desktop_state).</summary>
@@ -130,6 +144,7 @@ public sealed class ContractServices : IDisposable
         services.AddSingleton(WindowWait.Object);
         services.AddSingleton(ElementWait.Object);
         services.AddSingleton(Placement.Object);
+        services.AddSingleton(DebugBrowsers.Object);
         services.AddSingleton(Foreground.Object);
         services.AddSingleton(Monitors.Object);
         services.AddSingleton(Processes.Object);
@@ -222,6 +237,13 @@ public sealed class ContractServices : IDisposable
 
     private void SetUpTypical()
     {
+        DebugBrowsers.Setup(d => d.CheckClose(It.IsAny<int?>(), It.IsAny<int?>(), It.IsAny<bool>()))
+            .Returns(new DebugBrowserCloseCheck(TypicalDebugBrowser, null));
+        DebugBrowsers.Setup(d => d.CloseAsync(It.IsAny<DebugBrowserCloseTarget>(), It.IsAny<TimeSpan>(),
+                It.IsAny<Func<CancellationToken, Task<IDisposable>>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DebugBrowserCloseResult(true, TypicalDebugBrowser.ProcessId, UserDataDir: TypicalDebugBrowser.UserDataDir,
+                ProfileKind: "temporary", ClosedGracefully: true, Forced: false, Exited: true, ProfileDeleted: true));
+
         var windows = TypicalDesktop.Windows;
         var notepad = TypicalDesktop.Notepad;
 
@@ -486,6 +508,11 @@ public sealed class ContractServices : IDisposable
 
     private void SetUpFailing()
     {
+        DebugBrowsers.Setup(d => d.CheckClose(It.IsAny<int?>(), It.IsAny<int?>(), It.IsAny<bool>()))
+            .Returns(DebugBrowserCloseCheck.Refused(new DebugBrowserCloseResult(false, 31_337,
+                "chrome (processId 31337) was not started with a DevTools port and a profile folder, so it is not a debug browser of this server. Nothing was closed.",
+                nameof(BrowserErrorCode.NotADebugBrowser))));
+
         const string invalid = "Invalid window handle";
 
         Windows.Setup(w => w.FindWindows(It.IsAny<WindowQuery>())).Returns([]);

@@ -529,6 +529,14 @@ public enum BrowserErrorCode
     /// </summary>
     NewTabPage = 17,
 
+    /// <summary>
+    /// close_debug_browser (roadmap M5.4): the process is not a debug browser the server may close. It was not started by
+    /// this server, and its command line does not show a DevTools port with a profile in the server's own folders; or it
+    /// is a helper process, or its command line cannot be read or no longer names the profile it was started with.
+    /// Nothing was closed: it may be the user's own browser.
+    /// </summary>
+    NotADebugBrowser = 18,
+
     // CDP (Chrome DevTools Protocol) errors are numbered from 30 so that other
     // browser error codes can be added above without renumbering.
 

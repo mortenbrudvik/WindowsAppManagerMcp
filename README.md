@@ -103,7 +103,7 @@ so `serverInfo.version` shows a different commit SHA (`X.Y.Z+<tag commit>` for t
 `X.Y.Z+<commit before the release commit>` for the plugin exe).
 
 <!-- tools:begin tool-table (generated from tools/list: run the tests with UPDATE_SNAPSHOTS=1, see TESTING.md) -->
-## Available Tools (67)
+## Available Tools (68)
 
 | Category | Tools |
 |----------|-------|
@@ -113,7 +113,7 @@ so `serverInfo.version` shows a different commit SHA (`X.Y.Z+<tag commit>` for t
 | Monitor Info | `get_monitors`, `get_primary_monitor` |
 | Screenshot | `list_screens`, `take_screenshot`, `capture_region`, `capture_window`, `capture_with_elements` |
 | UI Automation | `get_desktop_state`, `get_ui_elements`, `find_ui_elements`, `element_action`, `respond_to_dialog`, `file_dialog`, `get_focused_element`, `get_element_at_point`, `get_active_popups`, `read_element_text`, `read_table`, `wait_for_element` |
-| Browser Reading | `get_browser_url`, `get_active_browser_url`, `get_browser_content`, `launch_browser_with_debug` |
+| Browser Reading | `get_browser_url`, `get_active_browser_url`, `get_browser_content`, `launch_browser_with_debug`, `close_debug_browser` |
 | Input Simulation | `click`, `right_click`, `double_click`, `mouse_click`, `drag`, `mouse_move`, `scroll`, `type_text`, `send_keys`, `press_keys` |
 | Input Control | `get_control_status`, `resume_input`, `release_all_input` |
 | App Launch | `launch_application`, `list_processes`, `kill_process`, `close_application` |
@@ -380,7 +380,7 @@ WindowsAppManagerMcp/
 - **Audit Log** - Every input, element action, dialog answer, file dialog, close, kill, launch, layout-write (apply, save, delete) and clipboard-write call, and every clipboard read, is appended to `%LOCALAPPDATA%\WindowsAppManagerMcp\audit\<date>.jsonl` (`WAM_AUDIT_PATH`) with its target window, the window the input went to, its outcome and error code. Typed text, keys, element values, the element names element_action searches by, file dialog paths, clipboard text, command-line arguments and the paths, queries and credentials of URLs are never logged, only their lengths (respond_to_dialog's `button` is kept as given); a launched URL keeps only its scheme and host. Files are kept 7 days, and the log cannot be turned off (see [Audit log](docs/TOOLS.md#audit-log))
 - **Hung Applications** - The window tools give up on an application that does not answer within 5 seconds (`NotResponding`), the UI Automation tools do not read a window that does not respond (`NotResponding`) and run every read under a timeout, so a hung app cannot block the other tools
 - **Read-Only Mode** - `WAM_READ_ONLY=1` serves only the tools annotated read-only, and `WAM_TOOLSETS`/`WAM_EXCLUDE_TOOLS` leave out whole groups or single tools; a tool that is not served cannot be called (see [Toolsets](docs/TOOLS.md#toolsets))
-- **Browser Debug Port** - `launch_browser_with_debug` opens a Chrome DevTools port on localhost with no authentication. Any local program can control that browser until it is closed. The browser uses a new, empty temporary profile unless `userDataDir` is given; never point it at your real profile (a folder inside a browser's `User Data` folder is refused, and so is a `url` that would be read as a command-line switch).
+- **Browser Debug Port** - `launch_browser_with_debug` opens a Chrome DevTools port on localhost with no authentication. Any local program can control that browser until it is closed. The browser uses a new, empty temporary profile unless `userDataDir` or a named `profile` (kept in the server's own folder) is given; never point it at your real profile (a folder inside a browser's `User Data` folder is refused, and so is a `url` that would be read as a command-line switch). `close_debug_browser` closes it and deletes its temporary profile; it closes only a debug browser the server started or one with a profile in the server's own folders, never your own browser, and asks you first when the client can.
 
 ## Requirements
 

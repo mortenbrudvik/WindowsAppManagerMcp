@@ -132,8 +132,8 @@ public static class Toolsets
                 "Save, apply and manage window layout presets.",
                 ["list_layouts", "get_layout", "save_layout", "apply_layout", "delete_layout"]),
             new("browser", OnByDefault: true,
-                "Read the URL and text of browser pages; start a browser with a DevTools port.",
-                ["get_browser_url", "get_active_browser_url", "get_browser_content", "launch_browser_with_debug"]),
+                "Read the URL and text of browser pages; start and close a browser with a DevTools port.",
+                ["get_browser_url", "get_active_browser_url", "get_browser_content", "launch_browser_with_debug", "close_debug_browser"]),
         ],
         // It reports the toolsets in force and why a tool is missing, and the server instructions send the agent to it
         alwaysServedTool: "get_server_info");

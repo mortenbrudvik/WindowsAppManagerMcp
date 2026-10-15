@@ -170,12 +170,20 @@ public class ToolDescriptionTests
     }
 
     [Fact]
-    public void LaunchBrowserWithDebugDescription_CleanupFindsWindowsOnOtherDesktopsAndChecksEveryProcess()
+    public void LaunchBrowserWithDebugDescription_SendsTheCleanupToCloseDebugBrowser()
     {
-        // A window on another virtual desktop is cloaked: find_windows leaves it out unless asked, and
-        // list_processes without includeWindowless lists only processes with a window
+        // Roadmap M5.4: close_debug_browser closes the whole browser by its own process and port, on every virtual
+        // desktop, and deletes its temporary profile; closing its windows one by one (the old advice) left the profile
         ServerToolCatalog.Description("launch_browser_with_debug").Should()
-            .Contain("includeCloaked=true").And.Contain("includeWindowless=true");
+            .Contain("close it with close_debug_browser").And.NotContain("includeWindowless");
+    }
+
+    [Fact]
+    public void CloseDebugBrowserDescription_SaysItNeverClosesTheUsersBrowser_AndHowItIsConfirmed()
+    {
+        ServerToolCatalog.Description("close_debug_browser").Should()
+            .Contain("NotADebugBrowser").And.Contain("never closed")
+            .And.Contain("ConfirmationDeclined").And.Contain("ConfirmationRequired");
     }
 
     [Theory]

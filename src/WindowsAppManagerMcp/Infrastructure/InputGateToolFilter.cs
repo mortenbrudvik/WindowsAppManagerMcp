@@ -77,11 +77,13 @@ public static class InputGateToolFilter
     /// element before it takes the gate, acts on it inside the gate, and releases the gate before its mouse or keyboard path,
     /// which takes it again through the input service, and before it waits for the state after the action. respond_to_dialog
     /// and file_dialog (roadmap M3.5, M3.14) read the dialog without the gate and act only through element_action's service,
-    /// which takes it for each action; they wait for the dialog to close without it.
+    /// which takes it for each action; they wait for the dialog to close without it. close_debug_browser (roadmap M5.4) asks
+    /// the user first like kill_process, then takes the gate for its Browser.close and again for the end of a browser that
+    /// did not exit, and waits for the browser to exit without it.
     /// </summary>
     public static IReadOnlySet<string> SelfGatedTools { get; } = new HashSet<string>(StringComparer.Ordinal)
     {
-        "kill_process", "close_window", "close_windows_batch", "close_application",
+        "kill_process", "close_window", "close_windows_batch", "close_application", "close_debug_browser",
         "move_window", "resize_window", "set_window_bounds", "set_window_state", "focus_window",
         "snap_window", "move_window_to_monitor", "set_windows_bounds_batch", "snap_windows_batch", "set_windows_state_batch",
         "element_action", "respond_to_dialog", "file_dialog"

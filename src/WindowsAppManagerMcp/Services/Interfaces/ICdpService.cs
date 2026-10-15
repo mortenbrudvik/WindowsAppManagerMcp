@@ -98,6 +98,22 @@ public interface ICdpService
         CdpPageRequest request,
         TimeSpan timeout,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Asks a debug browser to close (roadmap M5.4): Browser.close over the browser-level DevTools connection from its own
+    /// /json/version, which closes every window without beforeunload prompts. The port's listener must be
+    /// <paramref name="browserProcessId"/> (CdpPortOwnerMismatch otherwise, also when it cannot be read: nothing is sent).
+    /// Success once the browser answers or ends the connection as it closes; whether it exited is the caller's to check.
+    /// </summary>
+    /// <param name="port">The browser's DevTools port.</param>
+    /// <param name="browserProcessId">The browser's main process, which must listen on the port.</param>
+    /// <param name="timeout">Maximum time to wait for the browser.</param>
+    /// <param name="cancellationToken">Cancels the request.</param>
+    Task<CdpResult<bool>> CloseBrowserAsync(
+        int port,
+        int browserProcessId,
+        TimeSpan timeout,
+        CancellationToken cancellationToken = default);
 }
 
 /// <summary>
