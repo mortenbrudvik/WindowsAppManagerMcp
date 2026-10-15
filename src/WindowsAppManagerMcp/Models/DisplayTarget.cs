@@ -17,7 +17,15 @@ public sealed record DisplayTarget(
     string GdiDeviceName,
     string? FriendlyName,
     string? DevicePath,
-    DisplayOutputTechnology OutputTechnology);
+    DisplayOutputTechnology OutputTechnology)
+{
+    /// <summary>
+    /// Whether the target's name and device path were read (DisplayConfigGetDeviceInfo GET_TARGET_NAME succeeded). False
+    /// when that read failed and only the source and connector are known: the monitor's identity is then unknown rather
+    /// than absent, so a read with such a target is used but not cached.
+    /// </summary>
+    public bool TargetRead { get; init; } = true;
+}
 
 /// <summary>
 /// DISPLAYCONFIG_VIDEO_OUTPUT_TECHNOLOGY. Only the values the server interprets are named; any other value the display

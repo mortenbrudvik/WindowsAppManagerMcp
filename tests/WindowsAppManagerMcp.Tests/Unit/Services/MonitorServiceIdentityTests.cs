@@ -244,6 +244,29 @@ public class MonitorServiceIdentityTests
     }
 
     [Fact]
+    public void ARead_WhoseTargetNameFailed_IsNotCached()
+    {
+        // Arrange - GET_TARGET_NAME failed for DISPLAY2 (a mode set or a monitor waking up), while its source name was read,
+        // so the read names every monitor but has no device path for the LG. The handles, names and bounds stay the same
+        var unreadLg = new DisplayTarget(@"\\.\DISPLAY2", null, null, DisplayOutputTechnology.Hdmi) { TargetRead = false };
+        var partial = new List<DisplayTarget> { DeskTargets[0], unreadLg };
+        var wrapper = new FakeMonitorWrapper { Topology = _ => Desk, Targets = call => call == 1 ? partial : DeskTargets };
+        var clock = new ManualTimeProvider();
+        var sut = new MonitorService(wrapper, clock);
+
+        // Act
+        var first = sut.GetAllMonitors();
+        clock.Advance(MonitorService.SnapshotLifetime);
+        var second = sut.GetAllMonitors();
+
+        // Assert - what was read is used, but read again at the next snapshot, which then has the LG's id
+        first.Select(m => m.Id).Should().Equal(MonitorIdentity.IdOf(DellPath), null);
+        second.Select(m => m.Id).Should().Equal(MonitorIdentity.IdOf(DellPath), MonitorIdentity.IdOf(LgPath));
+        second[1].FriendlyName.Should().Be("LG ULTRAFINE");
+        wrapper.TargetsCount.Should().Be(2);
+    }
+
+    [Fact]
     public void AnEnumerationWithNoMonitors_DoesNotReadTheDisplayConfiguration()
     {
         var wrapper = new FakeMonitorWrapper { Topology = _ => [], Targets = _ => DeskTargets };

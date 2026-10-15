@@ -145,12 +145,19 @@ public class NativeMonitorWrapper : INativeMonitorWrapper
             (DisplayOutputTechnology)outputTechnology);
     }
 
+    /// <summary>
+    /// A target for a path whose target name could not be read: the source and the path's connector, no name, no device
+    /// path, and marked as not read so the read is not cached. Null without a source name.
+    /// </summary>
+    public static DisplayTarget? ToUnreadTarget(string? gdiDeviceName, uint outputTechnology) =>
+        ToDisplayTarget(gdiDeviceName, null, null, outputTechnology) is { } target ? target with { TargetRead = false } : null;
+
     private static string? NullIfEmpty(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
     /// <summary>
     /// One QueryDisplayConfig of the active paths, and the source and target names of each. A path whose source name cannot
     /// be read is skipped (it cannot be joined with a monitor); one whose target name cannot be read keeps the connector
-    /// from the path, with no name and no device path.
+    /// from the path, with no name and no device path, and is marked as not read (<see cref="DisplayTarget.TargetRead"/>).
     /// </summary>
     private static (int Status, IReadOnlyList<DisplayTarget> Targets) QueryActiveTargets()
     {
@@ -199,7 +206,7 @@ public class NativeMonitorWrapper : INativeMonitorWrapper
             };
             var parsed = NativeMethods.DisplayConfig.DisplayConfigGetDeviceInfo(ref target) == NativeMethods.DisplayConfig.ERROR_SUCCESS
                 ? ToDisplayTarget(source.viewGdiDeviceName, target.monitorFriendlyDeviceName, target.monitorDevicePath, target.outputTechnology)
-                : ToDisplayTarget(source.viewGdiDeviceName, null, null, path.targetInfo.outputTechnology);
+                : ToUnreadTarget(source.viewGdiDeviceName, path.targetInfo.outputTechnology);
             if (parsed is not null)
             {
                 targets.Add(parsed);

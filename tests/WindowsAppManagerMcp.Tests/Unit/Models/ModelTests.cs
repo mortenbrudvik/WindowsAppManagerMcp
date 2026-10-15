@@ -414,6 +414,26 @@ public class ModelTests
     }
 
     [Fact]
+    public void MonitorInfo_WithAnotherScale_DerivesItsDpiFromTheNewScale()
+    {
+        // A with expression copies the record's fields; a Dpi computed once at construction would stay 96 here
+        var info = TestDataFactory.CreateMonitorInfo(scaleFactor: 1.0);
+
+        (info with { ScaleFactor = 1.5 }).Dpi.Should().Be(144);
+        (info with { ScaleFactor = 1.25 }).Dpi.Should().Be(120);
+    }
+
+    [Fact]
+    public void MonitorInfo_ADpiSetExplicitly_IsKeptWhenTheScaleChanges()
+    {
+        // The native wrapper sets the DPI Windows reports; that value wins over the one derived from the scale
+        var info = TestDataFactory.CreateMonitorInfo(scaleFactor: 1.0) with { Dpi = 120 };
+
+        info.Dpi.Should().Be(120);
+        (info with { ScaleFactor = 1.5 }).Dpi.Should().Be(120);
+    }
+
+    [Fact]
     public void MonitorInfo_Identity_TakesPartInEquality()
     {
         // A monitor is a value: the same geometry with another id is another monitor

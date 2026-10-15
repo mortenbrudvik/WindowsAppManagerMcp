@@ -114,7 +114,9 @@ public class MonitorService : IMonitorService
         }
 
         var targets = _nativeMonitors.GetDisplayTargets();
-        if (targets is not null && MonitorIdentity.Covers(monitors.Select(m => m.Info), targets))
+        // A failed read, one that misses a monitor, or one whose target name failed for a monitor is used for this
+        // snapshot but not kept, so the next snapshot reads again
+        if (targets is not null && MonitorIdentity.IsComplete(monitors.Select(m => m.Info), targets))
         {
             Volatile.Write(ref _identity, new DisplayIdentity(key, targets.ToImmutableArray()));
         }

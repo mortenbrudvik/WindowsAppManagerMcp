@@ -35,13 +35,18 @@ public class MonitorIdentityTests
     [Fact]
     public void IdOf_IsThePinnedHashOfTheUpperCasedPath()
     {
-        // Pins the derivation: SHA-256 of the upper-cased path as UTF-8, first 4 bytes. Changing it would give every
-        // monitor a new id and break saved references to it
-        var expected = "m-" + Convert.ToHexString(
-            System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(DellPath.ToUpperInvariant())),
-            0, 4).ToLowerInvariant();
+        // Pins the derivation with a literal: SHA-256 of the upper-cased path as UTF-8, first 4 bytes as lowercase hex.
+        // Saved layouts (M6.8) keep these ids, so changing any step would give every monitor a new id and break them
+        MonitorIdentity.IdOf(DellPath).Should().Be("m-c70b38ef");
+        MonitorIdentity.IdOf(LaptopPath).Should().Be("m-aa8be114");
+    }
 
-        MonitorIdentity.IdOf(DellPath).Should().Be(expected);
+    [Fact]
+    public void IdOf_SeveralPaths_IsThePinnedHashOfTheSortedPathsJoinedWithLineFeeds()
+    {
+        // Pins the clone-mode derivation with a literal: the upper-cased paths sorted ordinally and joined with "\n".
+        // Another separator, sort or trim would change the id of every cloned monitor
+        MonitorIdentity.IdOf([ProjectorPath, LaptopPath]).Should().Be("m-ba81ed65");
     }
 
     [Fact]
@@ -235,6 +240,34 @@ public class MonitorIdentityTests
         MonitorIdentity.Covers(monitors, [Target(@"\\.\DISPLAY1"), Target(@"\\.\DISPLAY2", devicePath: LaptopPath)]).Should().BeTrue();
         MonitorIdentity.Covers(monitors, [Target(@"\\.\DISPLAY1")]).Should().BeFalse();
         MonitorIdentity.Covers(monitors, []).Should().BeFalse();
+    }
+
+    [Fact]
+    public void IsComplete_IsTrueOnlyWhenEveryMonitorHasATarget_AndEveryOneOfThemWasRead()
+    {
+        var monitors = new[]
+        {
+            TestDataFactory.CreateMonitorInfo(index: 0, deviceName: @"\\.\DISPLAY1"),
+            TestDataFactory.CreateMonitorInfo(index: 1, deviceName: @"\\.\DISPLAY2", isPrimary: false)
+        };
+        var unread = new DisplayTarget(@"\\.\DISPLAY2", null, null, DisplayOutputTechnology.Hdmi) { TargetRead = false };
+
+        MonitorIdentity.IsComplete(monitors, [Target(@"\\.\DISPLAY1"), Target(@"\\.\DISPLAY2", devicePath: LaptopPath)]).Should().BeTrue();
+        MonitorIdentity.IsComplete(monitors, [Target(@"\\.\DISPLAY1")]).Should().BeFalse();
+        // DISPLAY2's GET_TARGET_NAME failed: it is covered, but its identity is unknown, not absent
+        MonitorIdentity.IsComplete(monitors, [Target(@"\\.\DISPLAY1"), unread]).Should().BeFalse();
+        // In clone mode one unread target of a monitor is enough to make its id partial
+        MonitorIdentity.IsComplete(monitors,
+            [Target(@"\\.\DISPLAY1"), Target(@"\\.\DISPLAY2", devicePath: LaptopPath), unread]).Should().BeFalse();
+    }
+
+    [Fact]
+    public void IsComplete_IgnoresAnUnreadTargetOfASourceNoMonitorHas()
+    {
+        var monitors = new[] { TestDataFactory.CreateMonitorInfo(index: 0, deviceName: @"\\.\DISPLAY1") };
+        var other = new DisplayTarget(@"\\.\DISPLAY9", null, null, DisplayOutputTechnology.Hdmi) { TargetRead = false };
+
+        MonitorIdentity.IsComplete(monitors, [Target(@"\\.\DISPLAY1"), other]).Should().BeTrue();
     }
 
     #endregion

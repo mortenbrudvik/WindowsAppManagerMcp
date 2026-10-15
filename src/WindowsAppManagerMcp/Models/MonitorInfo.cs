@@ -14,11 +14,19 @@ public record MonitorInfo(
     double ScaleFactor
 )
 {
+    // Null until set: the DPI is then derived from the current ScaleFactor, so a with expression that changes the scale
+    // also changes the DPI (an initializer would run once and the copy would keep the old value)
+    private readonly int? _dpi;
+
     /// <summary>
-    /// The monitor's effective DPI (GetDpiForMonitor, MDT_EFFECTIVE_DPI). The native wrapper sets what Windows reports;
-    /// a monitor built without it gets <see cref="ScaleFactor"/> times 96.
+    /// The monitor's effective DPI (GetDpiForMonitor, MDT_EFFECTIVE_DPI). The native wrapper sets what Windows reports,
+    /// which is kept as set; a monitor built without it gets its current <see cref="ScaleFactor"/> times 96.
     /// </summary>
-    public int Dpi { get; init; } = (int)Math.Round(ScaleFactor * 96);
+    public int Dpi
+    {
+        get => _dpi ?? (int)Math.Round(ScaleFactor * 96);
+        init => _dpi = value;
+    }
 
     /// <summary>
     /// A short stable id, "m-" plus 8 hex digits, hashed from the monitor's device path

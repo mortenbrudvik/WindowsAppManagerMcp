@@ -86,6 +86,19 @@ public static class MonitorIdentity
     public static bool Covers(IEnumerable<MonitorInfo> monitors, IReadOnlyList<DisplayTarget> targets) =>
         monitors.All(monitor => targets.Any(t => IsSource(t, monitor)));
 
+    /// <summary>
+    /// Whether the targets fully identify every monitor: they <see cref="Covers"/> every monitor, and every target of a
+    /// monitor had its name and device path read (<see cref="DisplayTarget.TargetRead"/>). Only a complete read is kept for
+    /// the topology; a target whose read failed would otherwise leave its monitor without an id (or, in clone mode, with an
+    /// id hashed from only some of its paths) until the topology changes.
+    /// </summary>
+    public static bool IsComplete(IEnumerable<MonitorInfo> monitors, IReadOnlyList<DisplayTarget> targets) =>
+        monitors.All(monitor =>
+        {
+            var own = targets.Where(t => IsSource(t, monitor)).ToList();
+            return own.Count > 0 && own.All(t => t.TargetRead);
+        });
+
     private static bool IsSource(DisplayTarget target, MonitorInfo monitor) =>
         string.Equals(target.GdiDeviceName, monitor.DeviceName, StringComparison.OrdinalIgnoreCase);
 }

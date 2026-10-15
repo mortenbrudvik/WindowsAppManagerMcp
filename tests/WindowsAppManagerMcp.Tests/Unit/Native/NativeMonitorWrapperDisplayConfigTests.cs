@@ -101,6 +101,29 @@ public class NativeMonitorWrapperDisplayConfigTests
         NativeMonitorWrapper.ToDisplayTarget(gdiDeviceName, "DELL", @"\\?\DISPLAY#DEL", 10).Should().BeNull();
     }
 
+    [Fact]
+    public void ToDisplayTarget_IsMarkedAsRead()
+    {
+        NativeMonitorWrapper.ToDisplayTarget(@"\\.\DISPLAY1", "DELL", @"\\?\DISPLAY#DEL", 10)!.TargetRead.Should().BeTrue();
+    }
+
+    [Fact]
+    public void ToUnreadTarget_KeepsTheSourceAndConnector_AndIsMarkedAsNotRead()
+    {
+        // GET_TARGET_NAME failed: the path still joins its monitor, but its identity is unknown, so it must not be cached
+        var result = NativeMonitorWrapper.ToUnreadTarget(@" \\.\DISPLAY2 ", 5);
+
+        result.Should().Be(new DisplayTarget(@"\\.\DISPLAY2", null, null, DisplayOutputTechnology.Hdmi) { TargetRead = false });
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("  ")]
+    public void ToUnreadTarget_WithoutASourceName_IsNull(string? gdiDeviceName)
+    {
+        NativeMonitorWrapper.ToUnreadTarget(gdiDeviceName, 5).Should().BeNull();
+    }
+
     #endregion
 
     #region Native Layouts
