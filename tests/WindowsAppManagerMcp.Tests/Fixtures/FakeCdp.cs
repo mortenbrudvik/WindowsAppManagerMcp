@@ -412,16 +412,25 @@ public sealed class FakeCdpWebSocketFactory : ICdpWebSocketFactory
 }
 
 /// <summary>
-/// Port owner lookup with a fixed answer.
+/// Port owner lookup with a fixed answer: <c>owner</c> listens on every port (null: nothing listens), or with
+/// <c>tableReadable</c> false the listener table cannot be read.
 /// </summary>
 public sealed class FakePortOwnerResolver : ITcpPortOwnerResolver
 {
     private readonly int? _owner;
+    private readonly bool _tableReadable;
 
-    public FakePortOwnerResolver(int? owner)
+    public FakePortOwnerResolver(int? owner, bool tableReadable = true)
     {
         _owner = owner;
+        _tableReadable = tableReadable;
     }
 
-    public int? GetListeningProcessId(int port) => _owner;
+    public int? GetListeningProcessId(int port) => _tableReadable ? _owner : null;
+
+    public bool TryGetListeningProcessId(int port, out int? processId)
+    {
+        processId = _tableReadable ? _owner : null;
+        return _tableReadable;
+    }
 }

@@ -218,7 +218,6 @@ public sealed class ToolArgumentContractTests : IDisposable
     [Theory]
     [InlineData("get_browser_content", """{ "handle": 2821181, "maxLength": 0 }""", "maxLength must be at least 1")]
     [InlineData("get_browser_content", """{ "handle": 2821181, "offset": -1 }""", "offset must be 0 or more")]
-    [InlineData("get_browser_content", """{ "handle": 2821181, "selector": "main" }""", "selector is read through CDP only, so it needs cdpPort")]
     [InlineData("launch_browser_with_debug", """{ "port": 80 }""", "port must be 0 (the browser picks a free port) or a TCP port from 1024 to 65535")]
     [InlineData("launch_browser_with_debug", """{ "port": 70000 }""", "port must be 0 (the browser picks a free port) or a TCP port from 1024 to 65535")]
     public async Task OutOfRangeValues_AreInvalidArguments(string tool, string arguments, string message)
@@ -232,13 +231,16 @@ public sealed class ToolArgumentContractTests : IDisposable
     }
 
     [Theory]
-    [InlineData("get_browser_url", """{ "handle": 2821181, "targetId": "8C1F0A6E2B7D4F3A" }""", "targetId needs cdpPort")]
-    [InlineData("get_browser_content", """{ "handle": 2821181, "targetId": "8C1F0A6E2B7D4F3A" }""", "targetId needs cdpPort")]
     [InlineData("get_browser_url", """{ "handle": 2821181, "cdpPort": 9222, "targetId": "../browser/1" }""", "CDP tab id")]
     [InlineData("get_browser_content", """{ "handle": 2821181, "cdpPort": 9222, "targetId": "TAB1%2F" }""", "CDP tab id")]
-    public async Task TargetId_WithoutCdpPortOrMalformed_IsInvalidArguments_AndNothingIsRead(string tool, string arguments, string message)
+    [InlineData("get_browser_content", """{ "handle": 2821181, "targetId": "TAB1?x" }""", "CDP tab id")]
+    [InlineData("get_browser_url", """{ "handle": 2821181, "cdpPort": 9222, "useCdp": false }""", "useCdp=false")]
+    [InlineData("get_browser_content", """{ "handle": 2821181, "targetId": "8C1F0A6E2B7D4F3A", "useCdp": false }""", "useCdp=false")]
+    [InlineData("get_active_browser_url", """{ "requireCdp": true, "useCdp": false }""", "useCdp=false")]
+    [InlineData("get_browser_content", """{ "handle": 2821181, "selector": "main", "useCdp": false }""", "so selector cannot be used with it")]
+    public async Task TargetId_Malformed_OrUseCdpFalseWithCdp_IsInvalidArguments_AndNothingIsRead(string tool, string arguments, string message)
     {
-        // Roadmap M5.2: targetId names a tab of the browser on cdpPort, and is never sent anywhere unchecked
+        // Roadmap M5.2: a targetId is never sent anywhere unchecked; M5.3: useCdp=false cannot be combined with CDP
         var result = await CallAsync(tool, arguments);
 
         result.IsError.Should().BeTrue();
@@ -248,14 +250,18 @@ public sealed class ToolArgumentContractTests : IDisposable
         _services.Browser.Verify(b => b.GetBrowserUrlAsync(It.IsAny<nint>(), It.IsAny<CdpOptions?>(), It.IsAny<CancellationToken>()), Times.Never);
         _services.Browser.Verify(b => b.GetBrowserContentAsync(It.IsAny<nint>(), It.IsAny<BrowserContentOptions?>(), It.IsAny<CdpOptions?>(),
             It.IsAny<CancellationToken>()), Times.Never);
+        _services.Browser.Verify(b => b.GetActiveBrowserUrlAsync(It.IsAny<CdpOptions?>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Theory]
-    [InlineData("get_browser_url")]
-    [InlineData("get_browser_content")]
-    public async Task TargetId_WithCdpPort_IsPassedToTheRead(string tool)
+    [InlineData("get_browser_url", """{ "handle": 2821181, "cdpPort": 9222, "targetId": "8C1F0A6E2B7D4F3A" }""")]
+    [InlineData("get_browser_content", """{ "handle": 2821181, "cdpPort": 9222, "targetId": "8C1F0A6E2B7D4F3A" }""")]
+    [InlineData("get_browser_url", """{ "handle": 2821181, "targetId": "8C1F0A6E2B7D4F3A" }""")]
+    [InlineData("get_browser_content", """{ "handle": 2821181, "targetId": "8C1F0A6E2B7D4F3A" }""")]
+    public async Task TargetId_WithOrWithoutCdpPort_IsPassedToTheRead(string tool, string arguments)
     {
-        var result = await CallAsync(tool, """{ "handle": 2821181, "cdpPort": 9222, "targetId": "8C1F0A6E2B7D4F3A" }""");
+        // Roadmap M5.3: without cdpPort the port of the window's own browser is found
+        var result = await CallAsync(tool, arguments);
 
         result.IsError.Should().NotBe(true, Payload(result).ToString());
         _services.Browser.Invocations.SelectMany(i => i.Arguments).OfType<CdpOptions>()

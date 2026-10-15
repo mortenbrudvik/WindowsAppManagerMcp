@@ -40,10 +40,11 @@ public class CdpServiceTests
         FakeCdpHttpHandler? http = null,
         ICdpWebSocketFactory? sockets = null,
         int? portOwner = BrowserPid,
-        CdpTransportLimits? limits = null) =>
+        CdpTransportLimits? limits = null,
+        bool listenerTableReadable = true) =>
         new(
             new CdpTransport(http ?? FakeCdpHttpHandler.Targets(), sockets ?? FakeCdpWebSocketFactory.NeverConnects(), limits),
-            new FakePortOwnerResolver(portOwner));
+            new FakePortOwnerResolver(portOwner, listenerTableReadable));
 
     /// <summary>A fake page that answers Runtime.evaluate with the given snapshot.</summary>
     private static FakeCdpWebSocket PageAnswering(object snapshot, int? frameSize = null) =>
@@ -163,6 +164,16 @@ public class CdpServiceTests
 
     #region FindTargetForWindowAsync
 
+    private static CdpWindow TitleOnly(string title) => new(BrowserPid, title);
+
+    /// <summary>A normal window at the pixels of <see cref="FakeCdpBrowser"/>'s DIP bounds at 100 %.</summary>
+    private static CdpWindow At(string title, int left, int top, int width, int height,
+        CdpWindowState state = CdpWindowState.Normal, double scale = 1.0) =>
+        new(BrowserPid, title, new CdpWindowGeometry(left, top, left + width, top + height, state, scale));
+
+    private static CdpService CreateSut(FakeCdpBrowser browser, int? portOwner = BrowserPid) =>
+        CreateSut(browser.Http, browser.Sockets, portOwner);
+
     [Fact]
     public async Task FindTargetForWindowAsync_ReturnsTabShownByWindow()
     {
@@ -171,7 +182,7 @@ public class CdpServiceTests
             ("B", "GitHub", "https://github.com/"));
         var sut = CreateSut(http);
 
-        var result = await sut.FindTargetForWindowAsync(Port, BrowserPid, "GitHub - Google Chrome", LongTimeout);
+        var result = await sut.FindTargetForWindowAsync(Port, TitleOnly("GitHub - Google Chrome"), LongTimeout);
 
         result.Success.Should().BeTrue();
         result.Value!.Id.Should().Be("B");
@@ -187,7 +198,7 @@ public class CdpServiceTests
             ("B", "", "about:blank"));
         var sut = CreateSut(http);
 
-        var result = await sut.FindTargetForWindowAsync(Port, BrowserPid, "GitHub - Google Chrome", LongTimeout);
+        var result = await sut.FindTargetForWindowAsync(Port, TitleOnly("GitHub - Google Chrome"), LongTimeout);
 
         result.Success.Should().BeFalse();
         result.ErrorCode.Should().Be(BrowserErrorCode.CdpTargetNotFound);
@@ -199,25 +210,44 @@ public class CdpServiceTests
         var http = FakeCdpHttpHandler.Targets(("A", "Inbox", "https://mail.example/"));
         var sut = CreateSut(http, portOwner: 999);
 
-        var result = await sut.FindTargetForWindowAsync(Port, BrowserPid, "Inbox - Google Chrome", LongTimeout);
+        var result = await sut.FindTargetForWindowAsync(Port, TitleOnly("Inbox - Google Chrome"), LongTimeout);
 
         result.Success.Should().BeFalse();
         result.ErrorCode.Should().Be(BrowserErrorCode.CdpPortOwnerMismatch);
         result.Error.Should().Contain("999").And.Contain(BrowserPid.ToString())
-            .And.Contain("the cdpPort that launch_browser_with_debug returned").And.NotContain("port given to");
+            .And.Contain("the cdpPort that launch_browser_with_debug returned").And.Contain("leave cdpPort out")
+            .And.NotContain("port given to");
         http.Requests.Should().BeEmpty("a port owned by another process must not be queried");
     }
 
     [Fact]
-    public async Task FindTargetForWindowAsync_MatchesByTitle_WhenPortOwnerIsUnknown()
+    public async Task FindTargetForWindowAsync_FailsClosed_WhenPortOwnerIsUnknown()
     {
+        // Roadmap M5.3: a title is no proof that what answers on the port is the window's browser, so the title path no
+        // longer skips the check when the owner cannot be read (the targetId path never did)
         var http = FakeCdpHttpHandler.Targets(("A", "Inbox", "https://mail.example/"));
-        var sut = CreateSut(http, portOwner: null);
+        var sut = CreateSut(http, portOwner: null, listenerTableReadable: false);
 
-        var result = await sut.FindTargetForWindowAsync(Port, BrowserPid, "Inbox - Google Chrome", LongTimeout);
+        var result = await sut.FindTargetForWindowAsync(Port, TitleOnly("Inbox - Google Chrome"), LongTimeout);
 
-        result.Success.Should().BeTrue();
-        result.Value!.Id.Should().Be("A");
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(BrowserErrorCode.CdpPortOwnerMismatch);
+        result.Error.Should().Contain("Could not read which process owns CDP port 9222").And.Contain("Nothing was read");
+        http.Requests.Should().BeEmpty("nothing is asked of a port no process is shown to own");
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(70000)]
+    public async Task FindTargetForWindowAsync_RefusesAPortOutsideTheRange_BeforeReadingItsOwner(int port)
+    {
+        var owners = new Mock<ITcpPortOwnerResolver>(MockBehavior.Strict);
+        var sut = new CdpService(new CdpTransport(FakeCdpHttpHandler.Targets(), FakeCdpWebSocketFactory.NeverConnects()), owners.Object);
+
+        var result = await sut.FindTargetForWindowAsync(port, TitleOnly("Inbox"), LongTimeout);
+
+        result.ErrorCode.Should().Be(BrowserErrorCode.CdpUnavailable);
+        owners.VerifyNoOtherCalls();
     }
 
     [Fact]
@@ -225,9 +255,219 @@ public class CdpServiceTests
     {
         var sut = CreateSut(FakeCdpHttpHandler.NeverAnswers());
 
-        var result = await sut.FindTargetForWindowAsync(Port, BrowserPid, "Inbox - Google Chrome", ShortTimeout);
+        var result = await sut.FindTargetForWindowAsync(Port, TitleOnly("Inbox - Google Chrome"), ShortTimeout);
 
         result.ErrorCode.Should().Be(BrowserErrorCode.CdpTimeout);
+    }
+
+    [Fact]
+    public async Task FindTargetForWindowAsync_BindsTheWindowToItsBrowserWindow_WhenOtherWindowsShowTheSameTitle()
+    {
+        // Two windows show a tab titled Inbox: the title alone is ambiguous, the window's bounds are not
+        var browser = new FakeCdpBrowser()
+            .Window(1, 0, 0, 1000, 700)
+            .Window(2, 400, 300, 1200, 800)
+            .Tab("A", "Inbox", 1)
+            .Tab("B", "Inbox", 2)
+            .Tab("C", "News", 2);
+        var sut = CreateSut(browser);
+
+        var result = await sut.FindTargetForWindowAsync(Port, At("Inbox - Google Chrome", 400, 300, 1200, 800), LongTimeout);
+
+        result.Success.Should().BeTrue(result.Error);
+        result.Value!.Id.Should().Be("B");
+        browser.Sockets.ConnectedUris.Should().ContainSingle().Which.ToString().Should().Be(browser.BrowserUrl);
+        browser.WindowQueries.Should().Be(3);
+        browser.Socket.WasDisposed.Should().BeTrue("the browser's connection does not outlive the call");
+    }
+
+    [Fact]
+    public async Task FindTargetForWindowAsync_ScalesTheBrowsersDipsByTheWindowsDpi()
+    {
+        var browser = new FakeCdpBrowser()
+            .Window(1, 0, 0, 1000, 700)
+            .Window(2, 400, 300, 1200, 800)
+            .Tab("A", "Inbox", 1)
+            .Tab("B", "Inbox", 2);
+        var sut = CreateSut(browser);
+
+        var result = await sut.FindTargetForWindowAsync(
+            Port, At("Inbox - Google Chrome", 600, 450, 1800, 1200, scale: 1.5), LongTimeout);
+
+        result.Value!.Id.Should().Be("B");
+    }
+
+    [Fact]
+    public async Task FindTargetForWindowAsync_ReturnsAmbiguous_WhenTheWindowsOwnTabsShareTheTitle()
+    {
+        var browser = new FakeCdpBrowser()
+            .Window(1, 0, 0, 1000, 700)
+            .Window(2, 400, 300, 1200, 800)
+            .Tab("A", "Inbox", 1)
+            .Tab("B", "Inbox", 2)
+            .Tab("C", "Inbox", 2);
+        var sut = CreateSut(browser);
+
+        var result = await sut.FindTargetForWindowAsync(Port, At("Inbox - Google Chrome", 400, 300, 1200, 800), LongTimeout);
+
+        result.ErrorCode.Should().Be(BrowserErrorCode.CdpTargetAmbiguous);
+        result.Error.Should().Contain("targetId B").And.Contain("targetId C").And.NotContain("targetId A");
+    }
+
+    [Fact]
+    public async Task FindTargetForWindowAsync_MatchesAMaximizedWindow_AmongTheMaximizedOnes()
+    {
+        // A maximized window reports its restored bounds, so only its state can be compared
+        var browser = new FakeCdpBrowser()
+            .Window(1, 100, 100, 800, 600, "maximized")
+            .Window(2, 100, 100, 800, 600, "normal")
+            .Tab("A", "Inbox", 1)
+            .Tab("B", "Inbox", 2);
+        var sut = CreateSut(browser);
+
+        var result = await sut.FindTargetForWindowAsync(
+            Port, At("Inbox - Google Chrome", -8, -8, 1936, 1056, CdpWindowState.Maximized), LongTimeout);
+
+        result.Value!.Id.Should().Be("A");
+    }
+
+    [Fact]
+    public async Task FindTargetForWindowAsync_FallsBackToTheTitleAmongAllTabs_WhenNoBrowserWindowMatches()
+    {
+        // For example a window on a monitor whose scale differs from the primary one's: as before M5.3
+        var browser = new FakeCdpBrowser()
+            .Window(1, 0, 0, 1000, 700)
+            .Window(2, 400, 300, 1200, 800)
+            .Tab("A", "Inbox", 1)
+            .Tab("B", "News", 2);
+        var sut = CreateSut(browser);
+
+        var result = await sut.FindTargetForWindowAsync(Port, At("News - Google Chrome", 3000, 200, 900, 600), LongTimeout);
+
+        result.Value!.Id.Should().Be("B");
+    }
+
+    [Fact]
+    public async Task FindTargetForWindowAsync_FallsBackToTheTitleAmongAllTabs_WhenTheBoundWindowHasNoTabWithTheTitle()
+    {
+        var browser = new FakeCdpBrowser()
+            .Window(1, 0, 0, 1000, 700)
+            .Window(2, 400, 300, 1200, 800)
+            .Tab("A", "Inbox", 1)
+            .Tab("B", "News", 2);
+        var sut = CreateSut(browser);
+
+        var result = await sut.FindTargetForWindowAsync(Port, At("Inbox - Google Chrome", 400, 300, 1200, 800), LongTimeout);
+
+        result.Value!.Id.Should().Be("A");
+    }
+
+    [Fact]
+    public async Task FindTargetForWindowAsync_FallsBackToTheTitle_WhenTheBrowsersEndpointCannotBeUsed()
+    {
+        var browser = new FakeCdpBrowser { NotABrowsersVersion = true }
+            .Window(1, 0, 0, 1000, 700)
+            .Tab("A", "Inbox", 1)
+            .Tab("B", "News", 1);
+        var sut = CreateSut(browser);
+
+        var result = await sut.FindTargetForWindowAsync(Port, At("Inbox - Google Chrome", 0, 0, 1000, 700), LongTimeout);
+
+        result.Value!.Id.Should().Be("A");
+        browser.Sockets.ConnectedUris.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task FindTargetForWindowAsync_LeavesOutPagesThatAreInNoBrowserWindow()
+    {
+        // Browser.getWindowForTarget refuses a page that is not a tab of a tab strip
+        var browser = new FakeCdpBrowser()
+            .Window(1, 0, 0, 1000, 700)
+            .Tab("A", "Inbox", 1)
+            .Tab("P", "Inbox", windowId: null);
+        var sut = CreateSut(browser);
+
+        var result = await sut.FindTargetForWindowAsync(Port, At("Inbox - Google Chrome", 0, 0, 1000, 700), LongTimeout);
+
+        result.Value!.Id.Should().Be("A");
+    }
+
+    [Fact]
+    public async Task FindTargetForWindowAsync_ReturnsAmbiguous_WhenATabOfTheBoundWindowIsNotAnswered()
+    {
+        // A reply lost to the time budget is no proof that the tab is in no window: a partial binding would return A,
+        // which the window may not show. The binding is unreadable, so the title decides among all tabs, as before M5.3
+        var browser = new FakeCdpBrowser { Unanswered = ["B"] }
+            .Window(1, 0, 0, 1000, 700)
+            .Window(2, 400, 300, 1200, 800)
+            .Tab("A", "Inbox", 1)
+            .Tab("B", "Inbox", 1)
+            .Tab("C", "News", 2);
+        var sut = CreateSut(browser);
+
+        var result = await sut.FindTargetForWindowAsync(
+            Port, At("Inbox - Google Chrome", 0, 0, 1000, 700), TimeSpan.FromMilliseconds(600));
+
+        result.ErrorCode.Should().Be(BrowserErrorCode.CdpTargetAmbiguous, result.Error);
+        result.Error.Should().Contain("targetId A").And.Contain("targetId B");
+    }
+
+    [Fact]
+    public async Task FindTargetForWindowAsync_LeavesMostOfTheBudget_WhenTheBrowsersConnectionStalls()
+    {
+        // The binding is best effort: a browser connection that never answers gets a share of the budget, so the title
+        // still finds the tab with time left to read its page
+        var browser = new FakeCdpBrowser { Unanswered = null }
+            .Window(1, 0, 0, 1000, 700)
+            .Tab("A", "Inbox", 1)
+            .Tab("B", "News", 1);
+        var sut = CreateSut(browser);
+        var budget = TimeSpan.FromMilliseconds(1500);
+        var stopwatch = Stopwatch.StartNew();
+
+        var result = await sut.FindTargetForWindowAsync(Port, At("Inbox - Google Chrome", 0, 0, 1000, 700), budget);
+
+        stopwatch.Stop();
+        result.Value!.Id.Should().Be("A");
+        browser.WindowQueries.Should().Be(2);
+        stopwatch.Elapsed.Should().BeLessThan(budget * 0.8, "the binding may use only a share of the budget");
+    }
+
+    [Theory]
+    [InlineData(9000, 2000)]
+    [InlineData(3000, 1000)]
+    [InlineData(300, 100)]
+    [InlineData(0, 0)]
+    public void BindingBudget_IsAThirdOfWhatIsLeft_AndAtMostTwoSeconds(int remainingMs, int expectedMs)
+    {
+        CdpService.BindingBudget(TimeSpan.FromMilliseconds(remainingMs)).Should().Be(TimeSpan.FromMilliseconds(expectedMs));
+    }
+
+    [Fact]
+    public async Task FindTargetForWindowAsync_ReturnsCdpUnavailable_WhenNothingListensOnThePort()
+    {
+        // A wrong or stale cdpPort: nothing to tie to the window, but no other process holds it either
+        var http = FakeCdpHttpHandler.Targets(("A", "Inbox", "https://mail.example/"));
+        var sut = CreateSut(http, portOwner: null);
+
+        var result = await sut.FindTargetForWindowAsync(Port, TitleOnly("Inbox - Google Chrome"), LongTimeout);
+
+        result.ErrorCode.Should().Be(BrowserErrorCode.CdpUnavailable);
+        result.Error.Should().Contain("Nothing listens on 127.0.0.1:9222").And.Contain("Nothing was read");
+        http.Requests.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task FindTargetForWindowAsync_DoesNotConnectToTheBrowser_ForOneTabOrWithoutTheWindowsBounds()
+    {
+        var oneTab = new FakeCdpBrowser().Window(1, 0, 0, 1000, 700).Tab("A", "Inbox", 1);
+        var twoTabs = new FakeCdpBrowser().Window(1, 0, 0, 1000, 700).Tab("A", "Inbox", 1).Tab("B", "News", 1);
+
+        (await CreateSut(oneTab).FindTargetForWindowAsync(Port, At("Inbox", 0, 0, 1000, 700), LongTimeout)).Value!.Id.Should().Be("A");
+        (await CreateSut(twoTabs).FindTargetForWindowAsync(Port, TitleOnly("Inbox"), LongTimeout)).Value!.Id.Should().Be("A");
+
+        oneTab.Sockets.ConnectedUris.Should().BeEmpty();
+        twoTabs.Sockets.ConnectedUris.Should().BeEmpty();
     }
 
     #endregion
@@ -879,14 +1119,27 @@ public class CdpServiceTests
     [Fact]
     public async Task FindTargetByIdAsync_FailsClosed_WhenThePortsOwnerCannotBeRead()
     {
-        // The title path skips an unknown owner and still needs the title to match; an id carries no such evidence
+        // An id carries no evidence that what answers on the port is the window's browser
         var http = FakeCdpHttpHandler.Targets(("A", "Inbox", "https://mail.example/"));
-        var sut = CreateSut(http, portOwner: null);
+        var sut = CreateSut(http, portOwner: null, listenerTableReadable: false);
 
         var result = await sut.FindTargetByIdAsync(Port, BrowserPid, "A", LongTimeout);
 
         result.ErrorCode.Should().Be(BrowserErrorCode.CdpPortOwnerMismatch);
         result.Error.Should().Contain("Could not read which process owns CDP port 9222");
+        http.Requests.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task FindTargetByIdAsync_ReturnsCdpUnavailable_WhenNothingListensOnThePort()
+    {
+        var http = FakeCdpHttpHandler.Targets(("A", "Inbox", "https://mail.example/"));
+        var sut = CreateSut(http, portOwner: null);
+
+        var result = await sut.FindTargetByIdAsync(Port, BrowserPid, "A", LongTimeout);
+
+        result.ErrorCode.Should().Be(BrowserErrorCode.CdpUnavailable);
+        result.Error.Should().Contain("Nothing listens on 127.0.0.1:9222");
         http.Requests.Should().BeEmpty();
     }
 

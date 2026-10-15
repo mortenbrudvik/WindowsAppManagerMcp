@@ -6,9 +6,11 @@ namespace WindowsAppManagerMcp.Services.Interfaces;
 /// Service for reading URLs and content from browser windows using UI Automation or CDP.
 /// </summary>
 /// <remarks>
-/// When <see cref="CdpOptions.Port"/> is set, CDP is tried first. If CDP fails, the result comes from
-/// UI Automation with <c>Source = "uia"</c> and the reason in <c>CdpError</c>, unless
-/// <see cref="CdpOptions.Required"/> is set, in which case the CDP error is returned.
+/// CDP is tried first on <see cref="CdpOptions.Port"/>, or without it on the debug port the window's own browser process
+/// listens on (roadmap M5.3, <see cref="IDebugPortLocator"/>), unless <see cref="CdpOptions.UseCdp"/> is false. If CDP
+/// fails, the result comes from UI Automation with <c>Source = "uia"</c> and the reason in <c>CdpError</c>, unless
+/// <see cref="CdpOptions.Required"/> is set, in which case the CDP error is returned. A browser started without a debug
+/// port is read through UI Automation without a <c>CdpError</c>.
 /// </remarks>
 public interface IBrowserReadingService
 {

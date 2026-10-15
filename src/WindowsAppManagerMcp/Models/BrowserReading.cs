@@ -24,12 +24,14 @@ public static class BrowserUrlSource
 /// </summary>
 /// <param name="Source">"cdp" or "uia": the method that produced (or failed to produce) the result.</param>
 /// <param name="TargetId">The CDP target (tab) ID when the result came from CDP.</param>
-/// <param name="CdpError">Why CDP was not used ("Code: message") when a cdpPort was given but the result came from UI Automation.</param>
+/// <param name="CdpError">Why CDP was not used ("Code: message") when a cdpPort was given or a debug browser's port was looked for,
+/// but the result came from UI Automation.</param>
 /// <param name="DisplayUrl">UI Automation: the address bar's text, when it is URL-like (roadmap M5.7); it can lack the
 /// scheme.</param>
 /// <param name="UrlSource">UI Automation: where <paramref name="Url"/> came from, <see cref="BrowserUrlSource"/>.</param>
 /// <param name="IsEditing">UI Automation: whether the address bar has the keyboard focus, so its text may be typed rather
 /// than the page's address; null when no address bar was read.</param>
+/// <param name="CdpPort">CDP: the DevTools port that was read, given as cdpPort or found for the window (roadmap M5.3).</param>
 public record BrowserUrlResult(
     bool Success,
     string? Url,
@@ -42,7 +44,8 @@ public record BrowserUrlResult(
     string? CdpError = null,
     string? DisplayUrl = null,
     string? UrlSource = null,
-    bool? IsEditing = null
+    bool? IsEditing = null,
+    int? CdpPort = null
 );
 
 /// <summary>
@@ -50,9 +53,11 @@ public record BrowserUrlResult(
 /// </summary>
 /// <param name="Source">"cdp" or "uia": the method that produced (or failed to produce) the result.</param>
 /// <param name="TargetId">The CDP target (tab) ID when the result came from CDP.</param>
-/// <param name="CdpError">Why CDP was not used ("Code: message") when a cdpPort was given but the result came from UI Automation.</param>
+/// <param name="CdpError">Why CDP was not used ("Code: message") when a cdpPort was given or a debug browser's port was looked for,
+/// but the result came from UI Automation.</param>
 /// <param name="AccessibilityWarmup">Set when the page is web content (Chromium) and the UI Automation read waited for its
 /// accessibility tree first (roadmap M3.3, M3.F24); also on a failed read.</param>
+/// <param name="CdpPort">CDP: the DevTools port that was read, given as cdpPort or found for the window (roadmap M5.3).</param>
 /// <param name="ContentLength">How many characters <paramref name="Content"/> holds.</param>
 /// <param name="Offset">Where the page starts in the text of <paramref name="Source"/> (roadmap M5.6): the offset asked for,
 /// or the end of a shorter text. CDP counts UTF-16 characters of the page's innerText or HTML (of the selector's matches);
@@ -77,6 +82,7 @@ public record BrowserContentResult(
     string? TargetId = null,
     string? CdpError = null,
     AccessibilityWarmupInfo? AccessibilityWarmup = null,
+    int? CdpPort = null,
     int? Offset = null,
     int? TotalLength = null,
     bool? Truncated = null,
@@ -115,17 +121,21 @@ public record BrowserContentOptions(
 /// <summary>
 /// Options for reading a browser window via CDP (Chrome DevTools Protocol).
 /// </summary>
-/// <param name="Port">The browser's debug port, or null to use UI Automation only.</param>
+/// <param name="Port">The browser's debug port, or null to use the port the window's own process listens on, when it was
+/// started with one (roadmap M5.3).</param>
 /// <param name="Required">If true, a CDP failure is returned as an error instead of falling back to UI Automation.</param>
 /// <param name="TimeoutMs">Time budget for all CDP requests of one call, and another for its UI Automation read (roadmap
 /// M3.F24). Clamped to [MinTimeoutMs, MaxTimeoutMs].</param>
 /// <param name="TargetId">The CDP tab to read instead of the one the window shows (roadmap M5.2), or null. It must be a tab
 /// of the browser on <paramref name="Port"/>, and implies <paramref name="Required"/>.</param>
+/// <param name="UseCdp">False reads through UI Automation only: no port is looked for and nothing is connected (roadmap
+/// M5.3).</param>
 public record CdpOptions(
     int? Port = null,
     bool Required = false,
     int TimeoutMs = CdpOptions.DefaultTimeoutMs,
-    string? TargetId = null)
+    string? TargetId = null,
+    bool UseCdp = true)
 {
     public const int DefaultTimeoutMs = 10000;
     public const int MinTimeoutMs = 1000;

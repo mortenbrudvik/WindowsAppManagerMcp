@@ -80,6 +80,13 @@ public interface INativeProcessWrapper
     string? GetProcessImagePath(int processId);
 
     /// <summary>
+    /// The command line a process was started with (NtQueryInformationProcess, ProcessCommandLineInformation, with
+    /// PROCESS_QUERY_LIMITED_INFORMATION), or null when it is not running or cannot be read (for example an elevated
+    /// process). Roadmap M5.3 reads a browser's debug port from it. Only reads.
+    /// </summary>
+    string? GetProcessCommandLine(int processId);
+
+    /// <summary>
     /// Waits up to <paramref name="milliseconds"/> for the process to finish starting and wait for user input
     /// (WaitForInputIdle). True when it did, false on timeout, null when it has no message loop (a console program),
     /// is not running or cannot be opened. Blocks the calling thread for at most the given time.

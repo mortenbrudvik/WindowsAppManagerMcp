@@ -20,6 +20,14 @@ public class CdpService : ICdpService
 {
     private const string Host = CdpEndpointValidator.Host;
 
+    /// <summary>
+    /// The most tabs a window is bound among (one Browser.getWindowForTarget each); with more, the title alone decides.
+    /// </summary>
+    private const int MaxBoundTabs = 200;
+
+    /// <summary>The longest the window binding may take (<see cref="BindingBudget"/>).</summary>
+    private static readonly TimeSpan MaxBindingTime = TimeSpan.FromSeconds(2);
+
     private readonly ICdpTransport _transport;
     private readonly ITcpPortOwnerResolver _portOwnerResolver;
 
@@ -125,22 +133,149 @@ public class CdpService : ICdpService
     /// <inheritdoc />
     public async Task<CdpResult<CdpTarget>> FindTargetForWindowAsync(
         int port,
-        int windowProcessId,
-        string windowTitle,
+        CdpWindow window,
         TimeSpan timeout,
         CancellationToken cancellationToken = default)
     {
-        // An unknown owner is skipped here, and the title match below must still tie the tab to the window (M5.3
-        // revisits this); the targetId path fails closed instead
-        var portOwner = _portOwnerResolver.GetListeningProcessId(port);
-        if (portOwner.HasValue && portOwner.Value != windowProcessId)
-            return PortOwnerMismatch<CdpTarget>(port, portOwner.Value, windowProcessId);
+        ArgumentNullException.ThrowIfNull(window);
+        var checkedPort = CdpEndpointValidator.ValidatePort(port);
+        if (!checkedPort.Success)
+            return checkedPort.FailAs<CdpTarget>();
 
+        // Fails closed since M5.3, as the targetId path does: CDP is now used without cdpPort, and a title is no proof that
+        // whatever answers on the port is the window's browser (a program on the port could list tabs with that title)
+        if (!_portOwnerResolver.TryGetListeningProcessId(port, out var portOwner))
+        {
+            return CdpResult<CdpTarget>.Fail(
+                BrowserErrorCode.CdpPortOwnerMismatch,
+                $"Could not read which process owns CDP port {port}, so it cannot be tied to the window of process " +
+                $"{DescribeProcess(window.ProcessId)}. Nothing was read. Check that the browser is still running on that " +
+                "port, or leave cdpPort out to use the window's own debug port.");
+        }
+
+        if (portOwner is not int owner)
+            return NothingListens<CdpTarget>(port, "leave cdpPort out to use the window's own debug port");
+
+        if (owner != window.ProcessId)
+            return PortOwnerMismatch<CdpTarget>(port, owner, window.ProcessId);
+
+        var stopwatch = Stopwatch.StartNew();
         var targets = await GetPageTargetsAsync(port, timeout, cancellationToken).ConfigureAwait(false);
         if (!targets.Success)
             return targets.FailAs<CdpTarget>();
 
-        return CdpTargetMatcher.Match(windowTitle, targets.Value!);
+        var all = targets.Value!;
+        if (window.Geometry is { } geometry && all.Count is > 1 and <= MaxBoundTabs)
+        {
+            // Best effort, so only a share of the budget: a stalled browser connection leaves the page read its time
+            var windows = await GetBrowserWindowsAsync(port, all, BindingBudget(timeout - stopwatch.Elapsed), cancellationToken)
+                .ConfigureAwait(false);
+            if (windows is { Count: > 0 })
+            {
+                var ids = CdpWindowBinder.MatchingWindows(geometry, windows.Values);
+                var inWindow = all.Where(t => windows.TryGetValue(t.Id, out var w) && ids.Contains(w.WindowId)).ToList();
+                if (inWindow.Count > 0)
+                {
+                    var bound = CdpTargetMatcher.Match(window.Title, inWindow);
+                    if (bound.Success || bound.ErrorCode == BrowserErrorCode.CdpTargetAmbiguous)
+                        return bound;
+                }
+            }
+        }
+
+        // Last resort, as before M5.3: the title among all tabs
+        return CdpTargetMatcher.Match(window.Title, all);
+    }
+
+    /// <summary>
+    /// The time the window binding may take of what is left of the budget: a third, at most two seconds, so the title
+    /// fallback and the page read keep most of it when the browser's connection stalls.
+    /// </summary>
+    public static TimeSpan BindingBudget(TimeSpan remaining)
+    {
+        if (remaining <= TimeSpan.Zero)
+            return TimeSpan.Zero;
+
+        var third = remaining / 3;
+        return third < MaxBindingTime ? third : MaxBindingTime;
+    }
+
+    /// <summary>
+    /// The browser window of each tab (Browser.getWindowForTarget, one command per tab over one connection to the
+    /// browser's DevTools URL from /json/version, closed before it returns); a tab the browser says is in no browser
+    /// window (an error reply: not a tab of the tab strip) is left out. Null when the browser's connection cannot be used
+    /// or any reply did not come (timed out, connection closed), so the caller falls back to the title among all tabs: a
+    /// partial binding could narrow the tabs to the wrong ones.
+    /// </summary>
+    private async Task<IReadOnlyDictionary<string, CdpBrowserWindow>?> GetBrowserWindowsAsync(
+        int port,
+        IReadOnlyList<CdpTarget> targets,
+        TimeSpan timeout,
+        CancellationToken cancellationToken)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        if (timeout <= TimeSpan.Zero)
+            return null;
+
+        var version = await GetBrowserVersionAsync(port, timeout, cancellationToken).ConfigureAwait(false);
+        var left = timeout - stopwatch.Elapsed;
+        if (!version.Success || left <= TimeSpan.Zero)
+            return null;
+
+        var connected = await _transport
+            .ConnectAsync(version.Value!.WebSocketDebuggerUrl, port, "the browser", left, cancellationToken)
+            .ConfigureAwait(false);
+        if (!connected.Success)
+            return null;
+
+        await using var connection = connected.Value!;
+        var remaining = timeout - stopwatch.Elapsed;
+        if (remaining <= TimeSpan.Zero)
+            return null;
+
+        var sends = targets
+            .Select(t => (t.Id, Reply: connection.SendAsync("Browser.getWindowForTarget", new { targetId = t.Id }, remaining, cancellationToken)))
+            .ToList();
+        await Task.WhenAll(sends.Select(s => s.Reply)).ConfigureAwait(false);
+
+        var windows = new Dictionary<string, CdpBrowserWindow>(StringComparer.Ordinal);
+        foreach (var (id, reply) in sends)
+        {
+            var answered = reply.Result;
+            if (!answered.Success)
+                return null;
+
+            if (answered.Value!.Error == null && ParseBrowserWindow(answered.Value.Result) is { } browserWindow)
+                windows[id] = browserWindow;
+        }
+
+        return windows;
+    }
+
+    /// <summary>Browser.getWindowForTarget's {windowId, bounds: {left, top, width, height, windowState}}, or null.</summary>
+    private static CdpBrowserWindow? ParseBrowserWindow(JsonElement result)
+    {
+        if (result.ValueKind != JsonValueKind.Object ||
+            !TryGetInt(result, "windowId", out var windowId) ||
+            !result.TryGetProperty("bounds", out var bounds) || bounds.ValueKind != JsonValueKind.Object)
+        {
+            return null;
+        }
+
+        var state = CdpReplies.GetString(bounds, "windowState");
+        TryGetInt(bounds, "left", out var left);
+        TryGetInt(bounds, "top", out var top);
+        TryGetInt(bounds, "width", out var width);
+        TryGetInt(bounds, "height", out var height);
+        return new CdpBrowserWindow(windowId, left, top, width, height, state.Length > 0 ? state : "normal");
+    }
+
+    private static bool TryGetInt(JsonElement element, string name, out int value)
+    {
+        value = 0;
+        return element.TryGetProperty(name, out var property) &&
+               property.ValueKind == JsonValueKind.Number &&
+               property.TryGetInt32(out value);
     }
 
     /// <inheritdoc />
@@ -156,8 +291,7 @@ public class CdpService : ICdpService
         if (!checkedPort.Success)
             return checkedPort.FailAs<CdpTarget>();
 
-        var portOwner = _portOwnerResolver.GetListeningProcessId(port);
-        if (portOwner is not int owner)
+        if (!_portOwnerResolver.TryGetListeningProcessId(port, out var portOwner))
         {
             return CdpResult<CdpTarget>.Fail(
                 BrowserErrorCode.CdpPortOwnerMismatch,
@@ -165,6 +299,9 @@ public class CdpService : ICdpService
                 $"process {DescribeProcess(windowProcessId)}. Nothing was read. Check that the browser is still running " +
                 "on that port, or pass the window without targetId.");
         }
+
+        if (portOwner is not int owner)
+            return NothingListens<CdpTarget>(port, "pass the window without targetId");
 
         if (owner != windowProcessId)
             return PortOwnerMismatch<CdpTarget>(port, owner, windowProcessId);
@@ -246,7 +383,7 @@ public class CdpService : ICdpService
                 "JavaScript dialog (alert/confirm/prompt/beforeunload) open, is paused in the debugger, or is busy. " +
                 "If a dialog is open, inspect it (capture_window) and decide deliberately how to close it, " +
                 "or ask the user, before you retry; do not press Enter blindly, since Enter accepts a confirm " +
-                "or beforeunload dialog. Or read the window with UI Automation (omit cdpPort).")
+                "or beforeunload dialog. Or read the window with UI Automation (useCdp=false).")
             : evaluated.FailAs<CdpPageSnapshot>();
 
         // A refused Page.enable never fails a read that worked; it explains one that did not
@@ -315,7 +452,7 @@ public class CdpService : ICdpService
                 BrowserErrorCode.CdpProtocolError,
                 $"The page returned another slice than the one asked for (offset {offset} and {content.Length} characters of " +
                 $"{totalLength}, for offset {request.Offset} and at most {request.MaxLength}), so it was not used. The page may " +
-                "have replaced the functions the read uses; read it with UI Automation (omit cdpPort).");
+                "have replaced the functions the read uses; read it with UI Automation (useCdp: false).");
         }
 
         if (request.Selector != null && ReadCount(value, "matches") == 0)
@@ -400,7 +537,13 @@ public class CdpService : ICdpService
         BrowserErrorCode.CdpPortOwnerMismatch,
         $"CDP port {port} belongs to process {DescribeProcess(portOwner)}, but the window belongs to " +
         $"process {DescribeProcess(windowProcessId)}. Pass the debug port of the browser instance that owns " +
-        "this window (for example the cdpPort that launch_browser_with_debug returned).");
+        "this window (for example the cdpPort that launch_browser_with_debug returned), or leave cdpPort out to use the " +
+        "window's own debug port.");
+
+    private static CdpResult<T> NothingListens<T>(int port, string retry) => CdpResult<T>.Fail(
+        BrowserErrorCode.CdpUnavailable,
+        $"Nothing listens on {Host}:{port}. Nothing was read: the browser may have exited, or the port is wrong. " +
+        $"Check the port, or {retry}.");
 
     private static CdpResult<CdpTarget> TargetIdNotFound(int port, string targetId) => CdpResult<CdpTarget>.Fail(
         BrowserErrorCode.CdpTargetNotFound,

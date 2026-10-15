@@ -29,28 +29,31 @@ public class BrowserReadingTools
         "window, e.g. {\"processName\": \"msedge\", \"titleContains\": \"Inbox\"}.";
 
     private const string CdpBehaviorDescription =
-        " With cdpPort, the window is matched to the tab whose exact title it shows, and the port must belong to the same browser process as the window; if no single tab matches, CDP is not used rather than guessing. " +
+        " CDP is used when the window's browser process has a debug port (found from its command line, or cdpPort); the window is matched to the tab of its browser window whose exact title it shows; if no single tab matches, CDP is not used rather than guessing. " +
         "If CDP cannot be used, the tool falls back to UI Automation and explains why in cdpError, unless requireCdp is true. " +
         "The result's source field says which method produced the data ('cdp' or 'uia'); targetId identifies the CDP tab.";
 
     private const string RequireCdpDescription =
-        "If true, return the CDP error (for example CdpTimeout, CdpDialogOpen, CdpTargetNotFound) instead of falling back to UI Automation. Requires cdpPort; implied by targetId. Default: false.";
+        "If true, return the CDP error (for example CdpTimeout, CdpDialogOpen, CdpTargetNotFound) instead of falling back to UI Automation. Needs a debug port; implied by targetId. Default: false.";
 
     // get_active_browser_url takes no targetId, so its description does not mention one
     private const string ActiveRequireCdpDescription =
-        "If true, return the CDP error (for example CdpTimeout, CdpDialogOpen, CdpTargetNotFound) instead of falling back to UI Automation. Requires cdpPort. Default: false.";
+        "If true, return the CDP error (for example CdpTimeout, CdpDialogOpen, CdpTargetNotFound) instead of falling back to UI Automation. Needs a debug port. Default: false.";
 
     private const string CdpPortDescription =
-        "Optional DevTools port of the browser that owns the window (launch_browser_with_debug returns it); enables CDP reads.";
+        "DevTools port of the window's browser (launch_browser_with_debug returns it); found from its command line when omitted.";
+
+    private const string UseCdpDescription =
+        "False reads through UI Automation only, without CDP. Default: true.";
 
     private const string TargetIdDescription =
-        "CDP tab id from an earlier result's targetId or a CdpTargetAmbiguous error; reads that tab instead of the one the window shows. Needs cdpPort, must be a tab of the window's browser, never falls back to UI Automation.";
+        "CDP tab id from an earlier result's targetId or a CdpTargetAmbiguous error; reads that tab instead of the one the window shows. Must be a tab of the window's browser, never falls back to UI Automation.";
 
     private const string TimeoutDescription =
         "Time limit in ms for the CDP requests, and again for the UI Automation read (default: 10000, range: 1000-30000). A page with an open JavaScript dialog (alert/confirm/prompt/beforeunload) never answers CDP, so the call returns CdpTimeout or CdpDialogOpen instead of hanging.";
 
     [McpServerTool(Name = "get_browser_url", Title = "Get Browser URL", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
-    [Description("Get the current URL from a browser window. Uses Windows UI Automation to read the address of the shown tab's page, else the address bar (urlSource says which), or CDP (Chrome DevTools Protocol) if a port is specified." + CdpBehaviorDescription + " Supports Chrome, Edge, Firefox, Brave, Opera, Vivaldi, and other Chromium/Firefox-based browsers.")]
+    [Description("Get the current URL from a browser window. Uses Windows UI Automation to read the address of the shown tab's page, else the address bar (urlSource says which), or CDP (Chrome DevTools Protocol) for a debug browser." + CdpBehaviorDescription + " Supports Chrome, Edge, Firefox, Brave, Opera, Vivaldi, and other Chromium/Firefox-based browsers.")]
     public async Task<BrowserUrlResultDto> GetBrowserUrl(
         [Description("Window handle of the browser (as integer). Get this from find_windows or get_foreground_window. Pass handle or window, not both.")]
         long? handle = null,
@@ -64,12 +67,15 @@ public class BrowserReadingTools
         bool requireCdp = false,
         [Description(TimeoutDescription)]
         int timeoutMs = CdpOptions.DefaultTimeoutMs,
+        [Description(UseCdpDescription)]
+        bool useCdp = true,
         CancellationToken cancellationToken = default)
     {
-        RefuseBadTargetId(targetId, cdpPort);
+        RefuseBadTargetId(targetId);
+        RefuseCdpWithoutCdp(useCdp, cdpPort, targetId, requireCdp);
         var windowHandle = WindowTargeting.Require(_windowService, handle, window);
         var result = await _browserReadingService.GetBrowserUrlAsync(
-            windowHandle, new CdpOptions(cdpPort, requireCdp, timeoutMs, targetId), cancellationToken);
+            windowHandle, new CdpOptions(cdpPort, requireCdp, timeoutMs, targetId, useCdp), cancellationToken);
         return ToDto(result);
     }
 
@@ -84,11 +90,11 @@ public class BrowserReadingTools
         WindowSelector? window = null,
         [Description("Most characters to return (default 20000, max 50000; below 1 is InvalidArguments). A page holds at most 60,000 bytes of JSON.")]
         int maxLength = BrowserContentOptions.DefaultMaxLength,
-        [Description("true (default): the text. false: the HTML, which needs CDP (cdpPort).")]
+        [Description("true (default): the text. false: the HTML, which needs CDP.")]
         bool textOnly = true,
-        [Description("Where the page starts (default 0): the last page's nextOffset, which counts in that result's source: a 'uia' page continues without cdpPort (with cdpPort, offset above 0 never falls back to UI Automation).")]
+        [Description("Where the page starts (default 0): the last page's nextOffset. A 'uia' page continues with useCdp=false; otherwise an offset above 0 is read through CDP only.")]
         int offset = 0,
-        [Description("CDP only (needs cdpPort, no fallback): a CSS selector such as 'main' or 'h1,h2'; each match's text or HTML, one per line. None matching: ContentExtractionFailed.")]
+        [Description("CDP only (no fallback): a CSS selector such as 'main' or 'h1,h2'; each match's text or HTML, one per line. None matching: ContentExtractionFailed.")]
         string? selector = null,
         [Description(CdpPortDescription)]
         int? cdpPort = null,
@@ -98,6 +104,8 @@ public class BrowserReadingTools
         bool requireCdp = false,
         [Description(TimeoutDescription)]
         int timeoutMs = CdpOptions.DefaultTimeoutMs,
+        [Description(UseCdpDescription)]
+        bool useCdp = true,
         CancellationToken cancellationToken = default)
     {
         if (maxLength < 1)
@@ -113,20 +121,19 @@ public class BrowserReadingTools
                 $"offset must be 0 or more (got {offset}). Nothing was read.");
         }
 
-        if (selector != null && (string.IsNullOrWhiteSpace(selector) || cdpPort == null))
+        if (selector != null && string.IsNullOrWhiteSpace(selector))
         {
             throw new ToolErrorException(ToolErrorReporting.InvalidArgumentsErrorCode,
-                string.IsNullOrWhiteSpace(selector)
-                    ? "selector must be a CSS selector such as 'main', but it is empty. Leave it out to read the whole page. Nothing was read."
-                    : "selector is read through CDP only, so it needs cdpPort: the debug port of the browser that owns the window. Nothing was read.");
+                "selector must be a CSS selector such as 'main', but it is empty. Leave it out to read the whole page. Nothing was read.");
         }
 
-        RefuseBadTargetId(targetId, cdpPort);
+        RefuseBadTargetId(targetId);
+        RefuseCdpWithoutCdp(useCdp, cdpPort, targetId, requireCdp, selector);
         var windowHandle = WindowTargeting.Require(_windowService, handle, window);
         var options = new BrowserContentOptions(
             MaxLength: Math.Min(maxLength, BrowserContentOptions.MaxMaxLength), TextOnly: textOnly, Offset: offset, Selector: selector);
         var result = await _browserReadingService.GetBrowserContentAsync(
-            windowHandle, options, new CdpOptions(cdpPort, requireCdp, timeoutMs, targetId), cancellationToken);
+            windowHandle, options, new CdpOptions(cdpPort, requireCdp, timeoutMs, targetId, useCdp), cancellationToken);
         return ToDto(result);
     }
 
@@ -139,15 +146,18 @@ public class BrowserReadingTools
         bool requireCdp = false,
         [Description(TimeoutDescription)]
         int timeoutMs = CdpOptions.DefaultTimeoutMs,
+        [Description(UseCdpDescription)]
+        bool useCdp = true,
         CancellationToken cancellationToken = default)
     {
+        RefuseCdpWithoutCdp(useCdp, cdpPort, targetId: null, requireCdp);
         var result = await _browserReadingService.GetActiveBrowserUrlAsync(
-            new CdpOptions(cdpPort, requireCdp, timeoutMs), cancellationToken);
+            new CdpOptions(cdpPort, requireCdp, timeoutMs, UseCdp: useCdp), cancellationToken);
         return ToDto(result);
     }
 
     [McpServerTool(Name = "launch_browser_with_debug", Title = "Launch Browser with Debug Port", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = true)]
-    [Description("Launch a browser with CDP (Chrome DevTools Protocol) debug port enabled. This enables richer content extraction via get_browser_content with the cdpPort parameter. Uses a separate user data directory by default to avoid conflicts with existing browser sessions." +
+    [Description("Launch a browser with CDP (Chrome DevTools Protocol) debug port enabled. The reading tools then read its windows through CDP, without cdpPort. Uses a separate user data directory by default to avoid conflicts with existing browser sessions." +
                  " The debug port has no authentication: any program on this computer can control that browser until it exits. Launch it only when CDP is needed, and close every window of that browser when done" +
                  " (find_windows with its processId and includeCloaked=true, so windows on other virtual desktops are found too), then confirm with list_processes and includeWindowless=true that it has exited." +
                  " It returns once the DevTools endpoint answers (cdpReady, cdpEndpoint, browserVersion); if it does not within 10 seconds, DebugLaunchFailed, and the browser keeps running (processId)." +
@@ -158,7 +168,7 @@ public class BrowserReadingTools
         DebugBrowser browser = DebugBrowser.Chrome,
         [Description("URL to open (optional). It must not start with '-' or '/', which the browser reads as a command-line switch.")]
         string? url = null,
-        [Description("CDP debug port: 0 (default) lets the browser pick a free port, or 1024-65535. Pass the result's cdpPort as the reading tools' cdpPort.")]
+        [Description("CDP debug port: 0 (default) lets the browser pick a free port, or 1024-65535. The result's cdpPort is the port it listens on.")]
         int port = DebugBrowserLaunchRequest.EphemeralPort,
         [Description("Separate user data directory (a full path) to avoid conflicts with existing sessions. If not specified, a new temporary directory is created automatically. Never pass the user's real browser profile: the open debug port would expose its signed-in sessions. A path inside a 'User Data' folder (where Chrome, Edge and Brave keep the user's profiles) is refused.")]
         string? userDataDir = null,
@@ -224,20 +234,15 @@ public class BrowserReadingTools
     }
 
     /// <summary>
-    /// Refuses a targetId without cdpPort, or one that is not a CDP tab id (roadmap M5.2), before anything is read. The id
-    /// is looked up among the tabs the port lists, never put in a URL, but a malformed one is a mistake to report.
+    /// Refuses a targetId that is not a CDP tab id (roadmap M5.2) before anything is read. The id is looked up among the
+    /// tabs the port lists, never put in a URL, but a malformed one is a mistake to report. Since M5.3 it needs no
+    /// cdpPort: the port of the window's own browser is found.
     /// </summary>
-    private static void RefuseBadTargetId(string? targetId, int? cdpPort)
+    private static void RefuseBadTargetId(string? targetId)
     {
         if (targetId == null)
         {
             return;
-        }
-
-        if (cdpPort == null)
-        {
-            throw new ToolErrorException(ToolErrorReporting.InvalidArgumentsErrorCode,
-                "targetId needs cdpPort: the debug port of the browser the tab belongs to. Nothing was read.");
         }
 
         if (!CdpEndpointValidator.IsValidTargetId(targetId))
@@ -245,6 +250,28 @@ public class BrowserReadingTools
             throw new ToolErrorException(ToolErrorReporting.InvalidArgumentsErrorCode,
                 "targetId must be a CDP tab id from an earlier result's targetId or a CdpTargetAmbiguous error (1 to 128 " +
                 "letters, digits, '.', '_' or '-'). Nothing was read.");
+        }
+    }
+
+    /// <summary>
+    /// Refuses useCdp=false together with an argument that asks for CDP (roadmap M5.3), get_browser_content's selector
+    /// among them (roadmap M5.6): it would be ignored, or the call could not succeed.
+    /// </summary>
+    private static void RefuseCdpWithoutCdp(bool useCdp, int? cdpPort, string? targetId, bool requireCdp, string? selector = null)
+    {
+        if (useCdp)
+        {
+            return;
+        }
+
+        var asked = cdpPort != null ? "cdpPort"
+            : targetId != null ? "targetId"
+            : requireCdp ? "requireCdp"
+            : selector != null ? "selector" : null;
+        if (asked != null)
+        {
+            throw new ToolErrorException(ToolErrorReporting.InvalidArgumentsErrorCode,
+                $"useCdp=false reads through UI Automation only, so {asked} cannot be used with it. Nothing was read.");
         }
     }
 
@@ -328,7 +355,8 @@ public class BrowserReadingTools
         CdpError: result.CdpError,
         DisplayUrl: result.DisplayUrl,
         UrlSource: result.UrlSource,
-        IsEditing: result.IsEditing
+        IsEditing: result.IsEditing,
+        CdpPort: result.CdpPort
     );
 
     private static BrowserContentResultDto ToDto(BrowserContentResult result) => new(
@@ -344,6 +372,7 @@ public class BrowserReadingTools
         TargetId: result.TargetId,
         CdpError: result.CdpError,
         AccessibilityWarmup: result.AccessibilityWarmup,
+        CdpPort: result.CdpPort,
         Offset: result.Offset,
         TotalLength: result.TotalLength,
         Truncated: result.Truncated,
@@ -372,7 +401,8 @@ public class BrowserReadingTools
 /// DTO for browser URL result returned by MCP tools.
 /// Source is "cdp" or "uia"; CdpError explains a fallback from CDP to UI Automation. With UI Automation (roadmap M5.7),
 /// UrlSource says whether Url came from the page's Document ("document") or the address bar ("addressBar"), DisplayUrl is
-/// the address bar's text and IsEditing whether the address bar has the keyboard focus.
+/// the address bar's text and IsEditing whether the address bar has the keyboard focus. CdpPort is the DevTools port a
+/// CDP result came from: cdpPort, or the one found for the window (roadmap M5.3).
 /// </summary>
 public record BrowserUrlResultDto(
     bool Success,
@@ -386,13 +416,15 @@ public record BrowserUrlResultDto(
     string? CdpError = null,
     string? DisplayUrl = null,
     string? UrlSource = null,
-    bool? IsEditing = null
+    bool? IsEditing = null,
+    int? CdpPort = null
 );
 
 /// <summary>
 /// DTO for browser content result returned by MCP tools.
 /// Source is "cdp" or "uia"; CdpError explains a fallback from CDP to UI Automation. AccessibilityWarmup is set when the
-/// UI Automation read waited for the page's accessibility tree first (roadmap M3.F24). A read is one page (roadmap M5.6):
+/// UI Automation read waited for the page's accessibility tree first (roadmap M3.F24). CdpPort is the DevTools port a CDP
+/// result came from: cdpPort, or the one found for the window (roadmap M5.3). A read is one page (roadmap M5.6):
 /// ContentLength is the page's characters, Offset where it starts, TotalLength the whole text's length when known,
 /// Truncated whether more follows and NextOffset where the next page starts, all in the text of Source. TextSkipped is
 /// read_element_text's: true when a UI Automation page was cut inside one of the provider's characters.
@@ -410,6 +442,7 @@ public record BrowserContentResultDto(
     string? TargetId = null,
     string? CdpError = null,
     AccessibilityWarmupInfo? AccessibilityWarmup = null,
+    int? CdpPort = null,
     int? Offset = null,
     int? TotalLength = null,
     bool? Truncated = null,

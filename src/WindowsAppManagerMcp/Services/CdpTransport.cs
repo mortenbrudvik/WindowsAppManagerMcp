@@ -229,7 +229,7 @@ public sealed class CdpTransport : ICdpTransport, IDisposable
     private CdpResult<JsonDocument> TooLarge(int port, string path) => CdpResult<JsonDocument>.Fail(
         BrowserErrorCode.CdpResponseTooLarge,
         $"GET {path} on {Host}:{port} returned more than {FormatBytes(_limits.MaxHttpBodyBytes)}, so it was not read. " +
-        "A browser with that many tabs cannot be read through CDP; close some tabs, or omit cdpPort to use UI Automation.");
+        "A browser with that many tabs cannot be read through CDP; close some tabs, or pass useCdp=false to use UI Automation.");
 
     /// <summary>
     /// True when nothing answered on the port: the connection was refused or reset before HTTP started. Anything else

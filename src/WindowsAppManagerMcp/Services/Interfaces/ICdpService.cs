@@ -41,19 +41,23 @@ public interface ICdpService
         CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Finds the tab that a browser window is showing.
-    /// Fails with CdpPortOwnerMismatch when the port belongs to another process than the window,
-    /// and with CdpTargetNotFound or CdpTargetAmbiguous when no single tab matches the window title.
+    /// Finds the tab that a browser window is showing (roadmap M5.3). The port's listener must be the window's process:
+    /// CdpPortOwnerMismatch when it is another process, and also when it cannot be read (fails closed, as the targetId
+    /// path does). With <see cref="CdpWindow.Geometry"/> and more than one tab, the window is first bound to its browser
+    /// window (Browser.getWindowForTarget over the browser's DevTools connection, <see cref="Services.CdpWindowBinder"/>),
+    /// and the tab is the one there whose exact title the window shows; CDP reports no active tab, so the title picks it.
+    /// When no browser window matches, the binding cannot be read (also when a reply did not come), or the bound window has
+    /// no tab with the title, the title is matched among all tabs. The binding takes at most a third of what is left of
+    /// <paramref name="timeout"/> (at most 2 s). Nothing listening on the port is CdpUnavailable. Fails with
+    /// CdpTargetNotFound or CdpTargetAmbiguous when no single tab matches.
     /// </summary>
     /// <param name="port">The CDP debug port.</param>
-    /// <param name="windowProcessId">The ID of the process that owns the window.</param>
-    /// <param name="windowTitle">The window title.</param>
+    /// <param name="window">The window: its process, its title and, when known, where it is.</param>
     /// <param name="timeout">Maximum time to wait for the browser.</param>
     /// <param name="cancellationToken">Cancels the request.</param>
     Task<CdpResult<CdpTarget>> FindTargetForWindowAsync(
         int port,
-        int windowProcessId,
-        string windowTitle,
+        CdpWindow window,
         TimeSpan timeout,
         CancellationToken cancellationToken = default);
 
@@ -119,6 +123,33 @@ public record CdpTarget(
     string? WebSocketDebuggerUrl,
     int Port
 );
+
+/// <summary>
+/// The desktop window a tab is looked up for (roadmap M5.3).
+/// </summary>
+/// <param name="ProcessId">The process that owns the window; the debug port must be its own.</param>
+/// <param name="Title">The window's title, which shows the active tab's title.</param>
+/// <param name="Geometry">Where the window is and its state, or null when it could not be read (the title alone decides).</param>
+public record CdpWindow(int ProcessId, string Title, CdpWindowGeometry? Geometry = null);
+
+/// <summary>A desktop window's state, as Browser.getWindowForTarget's windowState names it.</summary>
+public enum CdpWindowState
+{
+    Normal,
+    Minimized,
+    Maximized
+}
+
+/// <summary>
+/// A desktop window's rectangle in physical pixels (GetWindowRect), its state and its DPI scale (GetDpiForWindow / 96).
+/// </summary>
+public record CdpWindowGeometry(int Left, int Top, int Right, int Bottom, CdpWindowState State, double Scale);
+
+/// <summary>
+/// The browser window a tab is in, as Browser.getWindowForTarget reports it: its id and bounds in DIPs (the restored
+/// bounds when it is not normal) and its state ("normal", "minimized", "maximized" or "fullscreen").
+/// </summary>
+public record CdpBrowserWindow(int WindowId, int Left, int Top, int Width, int Height, string State);
 
 /// <summary>
 /// What a DevTools endpoint's /json/version reports about its browser (roadmap M5.1).

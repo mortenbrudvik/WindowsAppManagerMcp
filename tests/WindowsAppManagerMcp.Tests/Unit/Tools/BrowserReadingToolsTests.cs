@@ -289,17 +289,48 @@ public class BrowserReadingToolsTests
     }
 
     [Theory]
-    [InlineData(-1, null, null, "offset must be 0 or more")]
-    [InlineData(0, "main", null, "selector is read through CDP only, so it needs cdpPort")]
-    [InlineData(0, "  ", 9222, "selector must be a CSS selector")]
-    public async Task GetBrowserContent_RefusesABadOffsetOrSelector_BeforeAnythingIsRead(int offset, string? selector, int? cdpPort, string message)
+    [InlineData(-1, null, null, true, "offset must be 0 or more")]
+    [InlineData(0, "  ", 9222, true, "selector must be a CSS selector")]
+    [InlineData(0, "main", null, false, "useCdp=false reads through UI Automation only, so selector cannot be used")]
+    public async Task GetBrowserContent_RefusesABadOffsetOrSelector_BeforeAnythingIsRead(
+        int offset, string? selector, int? cdpPort, bool useCdp, string message)
     {
         var sut = CreateSut();
 
-        var act = () => sut.GetBrowserContent(12345, offset: offset, selector: selector, cdpPort: cdpPort);
+        var act = () => sut.GetBrowserContent(12345, offset: offset, selector: selector, cdpPort: cdpPort, useCdp: useCdp);
 
         (await act.Should().ThrowAsync<ToolErrorException>()).Which.Message.Should().Contain(message).And.Contain("Nothing was read");
         _mockBrowserReadingService.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task GetBrowserContent_TakesASelectorWithoutCdpPort_AndAUiaPagesOffsetWithUseCdpFalse()
+    {
+        // Roadmap M5.3: the selector is read through the window's own debug port; a 'uia' page continues with useCdp=false
+        _mockBrowserReadingService
+            .Setup(s => s.GetBrowserContentAsync(It.IsAny<nint>(), It.IsAny<BrowserContentOptions?>(), It.IsAny<CdpOptions?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(AnyContentResult);
+        var sut = CreateSut();
+
+        await sut.GetBrowserContent(12345, selector: "main");
+        await sut.GetBrowserContent(12345, offset: 20_000, useCdp: false);
+
+        _mockBrowserReadingService.Verify(s => s.GetBrowserContentAsync(
+            new nint(12345), new BrowserContentOptions(20_000, true, 0, "main"), new CdpOptions(null, false, 10000, null, true),
+            It.IsAny<CancellationToken>()), Times.Once);
+        _mockBrowserReadingService.Verify(s => s.GetBrowserContentAsync(
+            new nint(12345), new BrowserContentOptions(20_000, true, 20_000, null), new CdpOptions(null, false, 10000, null, false),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public void GetBrowserContent_DescribesHowEachSourcesPageContinues()
+    {
+        var parameters = typeof(BrowserReadingTools).GetMethod(nameof(BrowserReadingTools.GetBrowserContent))!.GetParameters();
+        string Describe(string name) => parameters.Single(p => p.Name == name).GetCustomAttribute<DescriptionAttribute>()!.Description;
+
+        Describe("offset").Should().Contain("'uia' page continues with useCdp=false").And.NotContain("without cdpPort");
+        Describe("selector").Should().NotContain("cdpPort");
     }
 
     #endregion
@@ -436,7 +467,7 @@ public class BrowserReadingToolsTests
         await sut.GetBrowserUrl(12345, cdpPort: 9333, requireCdp: true, timeoutMs: 4000, cancellationToken: cts.Token);
 
         _mockBrowserReadingService.Verify(s => s.GetBrowserUrlAsync(
-            new nint(12345), new CdpOptions(9333, true, 4000, null), cts.Token), Times.Once);
+            new nint(12345), new CdpOptions(9333, true, 4000, null, true), cts.Token), Times.Once);
     }
 
     [Fact]
@@ -450,7 +481,7 @@ public class BrowserReadingToolsTests
         await sut.GetBrowserUrl(12345);
 
         _mockBrowserReadingService.Verify(s => s.GetBrowserUrlAsync(
-            new nint(12345), new CdpOptions(null, false, 10000, null), It.IsAny<CancellationToken>()), Times.Once);
+            new nint(12345), new CdpOptions(null, false, 10000, null, true), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -467,7 +498,7 @@ public class BrowserReadingToolsTests
         await sut.GetBrowserContent(12345, maxLength: 10, textOnly: false, cdpPort: 9222, requireCdp: true, timeoutMs: 2500, cancellationToken: cts.Token);
 
         _mockBrowserReadingService.Verify(s => s.GetBrowserContentAsync(
-            new nint(12345), new BrowserContentOptions(10, false, 0, null), new CdpOptions(9222, true, 2500, null), cts.Token), Times.Once);
+            new nint(12345), new BrowserContentOptions(10, false, 0, null), new CdpOptions(9222, true, 2500, null, true), cts.Token), Times.Once);
     }
 
     [Fact]
@@ -482,7 +513,7 @@ public class BrowserReadingToolsTests
         await sut.GetActiveBrowserUrl(cdpPort: 9222, requireCdp: false, timeoutMs: 1500, cancellationToken: cts.Token);
 
         _mockBrowserReadingService.Verify(s => s.GetActiveBrowserUrlAsync(
-            new CdpOptions(9222, false, 1500, null), cts.Token), Times.Once);
+            new CdpOptions(9222, false, 1500, null, true), cts.Token), Times.Once);
     }
 
     [Fact]
@@ -496,7 +527,7 @@ public class BrowserReadingToolsTests
         await sut.GetBrowserUrl(12345, cdpPort: 9222, targetId: "8C1F0A6E2B7D4F3A");
 
         _mockBrowserReadingService.Verify(s => s.GetBrowserUrlAsync(
-            new nint(12345), new CdpOptions(9222, false, 10000, "8C1F0A6E2B7D4F3A"), It.IsAny<CancellationToken>()), Times.Once);
+            new nint(12345), new CdpOptions(9222, false, 10000, "8C1F0A6E2B7D4F3A", true), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -511,13 +542,13 @@ public class BrowserReadingToolsTests
         await sut.GetBrowserContent(12345, cdpPort: 9222, targetId: "8C1F0A6E2B7D4F3A");
 
         _mockBrowserReadingService.Verify(s => s.GetBrowserContentAsync(
-            new nint(12345), It.IsAny<BrowserContentOptions?>(), new CdpOptions(9222, false, 10000, "8C1F0A6E2B7D4F3A"),
+            new nint(12345), It.IsAny<BrowserContentOptions?>(), new CdpOptions(9222, false, 10000, "8C1F0A6E2B7D4F3A", true),
             It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Theory]
-    [InlineData(null, "8C1F0A6E2B7D4F3A", "needs cdpPort")]
     [InlineData(9222, "", "CDP tab id")]
+    [InlineData(null, "../browser/1", "CDP tab id")]
     [InlineData(9222, "../browser/1", "CDP tab id")]
     [InlineData(9222, "TAB1?x", "CDP tab id")]
     public async Task GetBrowserUrlAndContent_RefuseABadTargetId_BeforeReading(int? cdpPort, string targetId, string message)
@@ -529,6 +560,67 @@ public class BrowserReadingToolsTests
 
         (await url.Should().ThrowAsync<ToolErrorException>()).Which.ErrorCode.Should().Be(ToolErrorReporting.InvalidArgumentsErrorCode);
         (await content.Should().ThrowAsync<ToolErrorException>()).Which.Message.Should().Contain(message).And.Contain("Nothing was read");
+        _mockBrowserReadingService.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task GetBrowserUrlAndContent_TakeATargetIdWithoutCdpPort()
+    {
+        // Roadmap M5.3: the port of the window's own browser is found
+        _mockBrowserReadingService
+            .Setup(s => s.GetBrowserUrlAsync(It.IsAny<nint>(), It.IsAny<CdpOptions?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(AnyUrlResult);
+        var sut = CreateSut();
+
+        await sut.GetBrowserUrl(12345, targetId: "8C1F0A6E2B7D4F3A");
+
+        _mockBrowserReadingService.Verify(s => s.GetBrowserUrlAsync(
+            new nint(12345), new CdpOptions(null, false, 10000, "8C1F0A6E2B7D4F3A", true), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task GetBrowserUrlAndContentAndActive_PassUseCdpFalseThrough()
+    {
+        _mockBrowserReadingService
+            .Setup(s => s.GetBrowserUrlAsync(It.IsAny<nint>(), It.IsAny<CdpOptions?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(AnyUrlResult);
+        _mockBrowserReadingService
+            .Setup(s => s.GetBrowserContentAsync(
+                It.IsAny<nint>(), It.IsAny<BrowserContentOptions?>(), It.IsAny<CdpOptions?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(AnyContentResult);
+        _mockBrowserReadingService
+            .Setup(s => s.GetActiveBrowserUrlAsync(It.IsAny<CdpOptions?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(AnyUrlResult);
+        var sut = CreateSut();
+
+        await sut.GetBrowserUrl(12345, useCdp: false);
+        await sut.GetBrowserContent(12345, useCdp: false);
+        await sut.GetActiveBrowserUrl(useCdp: false);
+
+        _mockBrowserReadingService.Invocations.SelectMany(i => i.Arguments).OfType<CdpOptions>()
+            .Should().HaveCount(3).And.OnlyContain(o => !o.UseCdp && o.Port == null);
+    }
+
+    [Theory]
+    [InlineData(9222, null, false, "cdpPort")]
+    [InlineData(null, "8C1F0A6E2B7D4F3A", false, "targetId")]
+    [InlineData(null, null, true, "requireCdp")]
+    public async Task GetBrowserUrlAndContent_RefuseUseCdpFalse_WithAnArgumentThatAsksForCdp(
+        int? cdpPort, string? targetId, bool requireCdp, string named)
+    {
+        var sut = CreateSut();
+
+        var url = () => sut.GetBrowserUrl(12345, cdpPort: cdpPort, targetId: targetId, requireCdp: requireCdp, useCdp: false);
+        var content = () => sut.GetBrowserContent(12345, cdpPort: cdpPort, targetId: targetId, requireCdp: requireCdp, useCdp: false);
+
+        (await url.Should().ThrowAsync<ToolErrorException>()).Which.ErrorCode.Should().Be(ToolErrorReporting.InvalidArgumentsErrorCode);
+        (await content.Should().ThrowAsync<ToolErrorException>()).Which.Message.Should().Contain(named).And.Contain("Nothing was read");
+        if (targetId == null)
+        {
+            var active = () => sut.GetActiveBrowserUrl(cdpPort: cdpPort, requireCdp: requireCdp, useCdp: false);
+            (await active.Should().ThrowAsync<ToolErrorException>()).Which.Message.Should().Contain(named);
+        }
+
         _mockBrowserReadingService.VerifyNoOtherCalls();
     }
 
