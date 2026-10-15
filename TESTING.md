@@ -1913,7 +1913,8 @@ Rules for new tests:
   wrote itself, or a `127.0.0.1` listener (no network), act only on that process's windows and targets,
   and close it by its process tree, never by window title. Then check that the developer's own browser
   processes are unchanged and delete the profile. The developer's browser windows, tabs and profile are
-  never read, acted on or closed.
+  never read, acted on or closed. The steps are in
+  [Desktop check: M5 browser bridge](#desktop-check-m5-browser-bridge).
 - `NativeCallGuardTests` scans the server assembly and fails if anything other than
   `NativeInputWrapper` calls the `SendInput`/`SetCursorPos` APIs, anything other than
   `NativeWindowWrapper` calls the window-changing user32 APIs, or anything other than
@@ -2290,6 +2291,43 @@ unset:
    one, with a gated no-input scenario that runs both ways, would make this check repeatable.
 
 Any difference in points 2 or 3 keeps the option off; record the search, the window and both results.
+
+### Desktop check: M5 browser bridge
+
+The CDP code is tested over in-memory fakes and one loopback endpoint the test serves itself
+(`Integration/CdpLoopbackIntegrationTests`); what a real Chromium does (dialogs, detaches, crashes, its limits) is
+checked by hand. This is the one exception to "never an app of the developer's" above, and it needs the repository
+owner's approval before each run: the check starts its own debug browser, a separate instance with a throwaway profile,
+and never touches the user's browser. Every run keeps these rules:
+
+1. Before starting, record every top-level window handle and every `msedge`, `chrome` and `brave` process ID.
+2. Start the browser only with launch_browser_with_debug (`edge`), with no `userDataDir` or a new
+   `%TEMP%\WamM5Check-<guid>` folder, on an explicit free port. Its `processId` must be new and its command line must
+   carry that `--user-data-dir`; if the process or the window was already there, the launch was handed to the user's
+   browser: stop and close nothing.
+3. Open only `data:` URLs, `file:///` pages the check wrote under `%TEMP%`, or a 127.0.0.1 HttpListener. No network.
+4. Act only on windows and targets of that process.
+5. Clean up by process ID only, never by window title: check that the process tree has exited and that the user's
+   browser process IDs are unchanged, then delete the profile folder.
+
+Roadmap M5.2 (after its merge, on a real Edge):
+
+- **Plain read.** get_browser_content with `cdpPort` on a `data:` page returns `source: "cdp"`. Ten reads in a row
+  leave no DevTools client attached (`edge://inspect` lists none).
+- **Dialog before the read.** A page that calls `alert('x')` on load returns `CdpDialogOpen` within `timeoutMs`, not
+  `CdpTimeout`: Chromium reports an open dialog again after Page.enable on a new connection (M5.8's dialog tool relies on
+  it). Record the result either way.
+- **Dialog during the read.** A page that opens `confirm()` after 500 ms while a slow read runs returns `CdpDialogOpen`.
+- **Tab closed during the read.** Closing the tab (by its own process's CDP, or close_window on a window the check
+  opened) during a 3-second busy loop returns `CdpTargetClosed`, with the detach reason in the message.
+- **Same titles.** Two tabs with the same title return `CdpTargetAmbiguous` with both ids; passing one as `targetId`
+  reads that tab; after closing it, the same `targetId` returns `CdpTargetNotFound`.
+- **Browser gone.** After the debug process is killed, a read returns `CdpUnavailable`, not `CdpTargetClosed`.
+- **Oversize page.** A local page of about 70 MB of text read with `textOnly: false` returns `CdpResponseTooLarge`, not
+  `HtmlRequiresCdp`.
+- **Port owner.** A window of the user's own browser passed with the debug `cdpPort` returns `CdpPortOwnerMismatch`
+  and none of the debug instance's data, with and without `targetId`.
+- **No Origin header.** The reads above work without `--remote-allow-origins`.
 
 ### Tool surface snapshot
 
