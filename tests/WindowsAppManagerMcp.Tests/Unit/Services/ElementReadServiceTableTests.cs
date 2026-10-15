@@ -24,8 +24,8 @@ public class ElementReadServiceTableTests
         _tree.WithWindow(Handle, _window);
     }
 
-    private ElementReadService CreateSut() =>
-        new(_tree, _worker, _registry, new ElementSearchService(_tree, _worker, _registry, _windows.Object), _windows.Object);
+    private ElementReadService CreateSut(IUiaWorker? worker = null) =>
+        new(_tree, worker ?? _worker, _registry, new ElementSearchService(_tree, worker ?? _worker, _registry, _windows.Object), _windows.Object);
 
     private string Add(FakeUiaNode element)
     {
@@ -33,8 +33,9 @@ public class ElementReadServiceTableTests
         return _registry.Register(Handle, _tree.ReadElement(element), new ElementOrigin(_registry.NextGeneration()))!;
     }
 
-    private Task<ElementTableResult> Read(string elementRef, int startRow = 0, int maxRows = 50, int maxColumns = 20, TimeSpan? timeout = null) =>
-        CreateSut().ReadTableAsync(new ElementTableRequest(elementRef, startRow, maxRows, maxColumns, timeout ?? Timeout));
+    private Task<ElementTableResult> Read(
+        string elementRef, int startRow = 0, int maxRows = 50, int maxColumns = 20, TimeSpan? timeout = null, IUiaWorker? worker = null) =>
+        CreateSut(worker).ReadTableAsync(new ElementTableRequest(elementRef, startRow, maxRows, maxColumns, timeout ?? Timeout));
 
     private static FakeUiaNode Cell(string? name) => new("DataItem", name);
 
@@ -400,40 +401,60 @@ public class ElementReadServiceTableTests
     [Fact]
     public async Task ReadTable_WhenTheTimeoutPasses_ReturnsTheRowsReadSoFar()
     {
-        // Arrange - the third row's first cell takes longer than the whole timeout
+        // Arrange - the third row's first cell does not answer until the call has returned, as a hung application's provider:
+        // the real worker abandons it at the deadline, whatever the machine's load (a 400 ms sleep on the inline worker
+        // raced the 200 ms timer and won on a busy CI machine)
         var cells = Cells(5, 2);
-        ((FakeUiaNode)cells[2][0]!).OnRead = () => Thread.Sleep(400);
+        var stuck = new ManualResetEventSlim();
+        ((FakeUiaNode)cells[2][0]!).OnRead = () => stuck.Wait(TimeSpan.FromSeconds(30));
         var elementRef = Add(Grid(cells, "A", "B"));
 
-        // Act
-        var result = await Read(elementRef, timeout: TimeSpan.FromMilliseconds(200));
+        try
+        {
+            // Act
+            var result = await Read(elementRef, timeout: TimeSpan.FromMilliseconds(200), worker: new UiaWorker());
 
-        // Assert - only whole rows are returned
-        result.Success.Should().BeTrue();
-        result.Truncated.Should().BeTrue();
-        result.TruncationReason.Should().Be(ElementTableTruncation.Timeout);
-        result.Rows!.Count.Should().BeLessThan(5);
-        result.NextStartRow.Should().Be(result.Rows.Count);
+            // Assert - only whole rows are returned
+            result.Success.Should().BeTrue();
+            result.Truncated.Should().BeTrue();
+            result.TruncationReason.Should().Be(ElementTableTruncation.Timeout);
+            result.Rows!.Count.Should().BeLessThan(5);
+            result.NextStartRow.Should().Be(result.Rows.Count);
+        }
+        finally
+        {
+            stuck.Set();
+        }
     }
 
     [Fact]
     public async Task ReadTable_WhenTheTimeoutPassesBeforeTheFirstRow_GivesNoNextStartRow_AndSaysToReadThePageAgain()
     {
-        // Arrange - the page's first cell takes longer than the whole timeout (roadmap M3.F15)
+        // Arrange - the page's first cell does not answer until the call has returned (roadmap M3.F15), as a hung application's
+        // provider: the real worker abandons it at the deadline, whatever the machine's load (a 400 ms sleep on the inline
+        // worker raced the 200 ms timer and won on a busy CI machine)
         var cells = Cells(5, 2);
-        ((FakeUiaNode)cells[3][0]!).OnRead = () => Thread.Sleep(400);
+        var stuck = new ManualResetEventSlim();
+        ((FakeUiaNode)cells[3][0]!).OnRead = () => stuck.Wait(TimeSpan.FromSeconds(30));
         var elementRef = Add(Grid(cells, "A", "B"));
 
-        // Act
-        var result = await Read(elementRef, startRow: 3, timeout: TimeSpan.FromMilliseconds(200));
+        try
+        {
+            // Act
+            var result = await Read(elementRef, startRow: 3, timeout: TimeSpan.FromMilliseconds(200), worker: new UiaWorker());
 
-        // Assert - a nextStartRow equal to startRow would send a paging agent round the same page for ever
-        result.Success.Should().BeTrue();
-        result.Rows.Should().BeEmpty();
-        result.Truncated.Should().BeTrue();
-        result.TruncationReason.Should().Be(ElementTableTruncation.Timeout);
-        result.NextStartRow.Should().BeNull();
-        result.Warning.Should().Contain("startRow 3").And.Contain("timeoutMs");
+            // Assert - a nextStartRow equal to startRow would send a paging agent round the same page for ever
+            result.Success.Should().BeTrue();
+            result.Rows.Should().BeEmpty();
+            result.Truncated.Should().BeTrue();
+            result.TruncationReason.Should().Be(ElementTableTruncation.Timeout);
+            result.NextStartRow.Should().BeNull();
+            result.Warning.Should().Contain("startRow 3").And.Contain("timeoutMs");
+        }
+        finally
+        {
+            stuck.Set();
+        }
     }
 
     #endregion
