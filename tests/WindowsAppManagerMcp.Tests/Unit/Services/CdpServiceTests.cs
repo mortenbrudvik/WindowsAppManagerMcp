@@ -357,6 +357,62 @@ public class CdpServiceTests
     }
 
     [Fact]
+    public async Task FindTargetForWindowAsync_TakesTheOnlyTab_WhenItsWindowIsTheWindow_ThoughItsTitleJustChanged()
+    {
+        // Found on a real Edge: a page that sets document.title is listed with the new title before Windows shows it in
+        // the window's caption, so the title alone found no tab for a moment
+        var browser = new FakeCdpBrowser()
+            .Window(1, 400, 300, 1200, 800)
+            .Tab("A", "c=true", 1);
+        var sut = CreateSut(browser);
+
+        var result = await sut.FindTargetForWindowAsync(Port, At("WAM dlg - Google Chrome", 400, 300, 1200, 800), LongTimeout);
+
+        result.Success.Should().BeTrue(result.Error);
+        result.Value!.Id.Should().Be("A");
+    }
+
+    [Fact]
+    public async Task FindTargetForWindowAsync_DoesNotTakeTheOnlyTab_WhenItIsInAnotherWindow()
+    {
+        // The window is another of the browser's windows (DevTools, an app window): its only page tab is elsewhere
+        var browser = new FakeCdpBrowser()
+            .Window(1, 0, 0, 1000, 700)
+            .Tab("A", "Inbox", 1);
+        var sut = CreateSut(browser);
+
+        var result = await sut.FindTargetForWindowAsync(Port, At("DevTools - Google Chrome", 400, 300, 1200, 800), LongTimeout);
+
+        result.ErrorCode.Should().Be(BrowserErrorCode.CdpTargetNotFound);
+    }
+
+    [Fact]
+    public async Task FindTargetForWindowAsync_DoesNotTakeTheOnlyTab_ByTitleAlone_WithoutTheWindowsBounds()
+    {
+        var sut = CreateSut(FakeCdpHttpHandler.Targets(("A", "c=true", "https://example.test/")));
+
+        var result = await sut.FindTargetForWindowAsync(Port, TitleOnly("WAM dlg - Google Chrome"), LongTimeout);
+
+        result.ErrorCode.Should().Be(BrowserErrorCode.CdpTargetNotFound);
+    }
+
+    [Fact]
+    public async Task FindTargetForWindowAsync_TakesTheBoundWindowsOnlyTab_ThoughItsTitleJustChanged()
+    {
+        var browser = new FakeCdpBrowser()
+            .Window(1, 0, 0, 1000, 700)
+            .Window(2, 400, 300, 1200, 800)
+            .Tab("A", "Inbox", 1)
+            .Tab("B", "c=true", 2);
+        var sut = CreateSut(browser);
+
+        var result = await sut.FindTargetForWindowAsync(Port, At("WAM dlg - Google Chrome", 400, 300, 1200, 800), LongTimeout);
+
+        result.Success.Should().BeTrue(result.Error);
+        result.Value!.Id.Should().Be("B");
+    }
+
+    [Fact]
     public async Task FindTargetForWindowAsync_ScalesTheBrowsersDipsByTheWindowsDpi()
     {
         var browser = new FakeCdpBrowser()

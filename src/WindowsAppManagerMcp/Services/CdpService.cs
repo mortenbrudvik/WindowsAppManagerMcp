@@ -166,7 +166,14 @@ public class CdpService : ICdpService
             return targets.FailAs<CdpTarget>();
 
         var all = targets.Value!;
-        if (window.Geometry is { } geometry && all.Count is > 1 and <= MaxBoundTabs)
+
+        // One tab: the title decides, and the binding is asked only when the title does not match (below)
+        var byTitle = all.Count == 1 ? CdpTargetMatcher.Match(window.Title, all) : null;
+        if (byTitle is { Success: true })
+            return byTitle;
+
+        CdpTarget? soleInWindow = null;
+        if (window.Geometry is { } geometry && all.Count is >= 1 and <= MaxBoundTabs)
         {
             // Best effort, so only a share of the budget: a stalled browser connection leaves the page read its time
             var windows = await GetBrowserWindowsAsync(port, all, BindingBudget(timeout - stopwatch.Elapsed), cancellationToken)
@@ -180,12 +187,21 @@ public class CdpService : ICdpService
                     var bound = CdpTargetMatcher.Match(window.Title, inWindow);
                     if (bound.Success || bound.ErrorCode == BrowserErrorCode.CdpTargetAmbiguous)
                         return bound;
+
+                    if (inWindow.Count == 1)
+                        soleInWindow = inWindow[0];
                 }
             }
         }
 
-        // Last resort, as before M5.3: the title among all tabs
-        return CdpTargetMatcher.Match(window.Title, all);
+        // As before M5.3: the title among all tabs (the binding may have missed, for example on a monitor at another scale)
+        var anywhere = byTitle ?? CdpTargetMatcher.Match(window.Title, all);
+
+        // The window's only tab is the tab it shows when no tab has the window's caption at all: a page that sets
+        // document.title is listed with the new title before Windows shows it in the caption (seen on a real Edge)
+        return anywhere.ErrorCode == BrowserErrorCode.CdpTargetNotFound && soleInWindow != null
+            ? CdpResult<CdpTarget>.Ok(soleInWindow)
+            : anywhere;
     }
 
     /// <summary>
