@@ -683,4 +683,147 @@ public class CdpServiceTests
     }
 
     #endregion
+
+    #region GetBrowserVersionAsync
+
+    private const string BrowserWs = "ws://127.0.0.1:9222/devtools/browser/6f1c2d3e-4a5b-6c7d-8e9f-0a1b2c3d4e5f";
+
+    private static FakeCdpHttpHandler VersionAnswering(string? webSocketDebuggerUrl = BrowserWs) =>
+        FakeCdpHttpHandler.Json(System.Text.Json.JsonSerializer.Serialize(new Dictionary<string, string?>
+        {
+            ["Browser"] = "Chrome/141.0.7390.55",
+            ["Protocol-Version"] = "1.3",
+            ["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/141.0.0.0 Safari/537.36",
+            ["webSocketDebuggerUrl"] = webSocketDebuggerUrl
+        }));
+
+    [Fact]
+    public async Task GetBrowserVersionAsync_ReturnsTheBrowserAndItsDevToolsEndpoints()
+    {
+        var sut = CreateSut(VersionAnswering());
+
+        var result = await sut.GetBrowserVersionAsync(Port, LongTimeout);
+
+        result.Success.Should().BeTrue();
+        result.Value!.Browser.Should().Be("Chrome/141.0.7390.55");
+        result.Value.ProtocolVersion.Should().Be("1.3");
+        result.Value.WebSocketDebuggerUrl.Should().Be(new Uri(BrowserWs));
+        result.Value.HttpEndpoint.Should().Be("http://127.0.0.1:9222");
+        result.Value.Port.Should().Be(Port);
+    }
+
+    [Fact]
+    public async Task GetBrowserVersionAsync_AsksOnlyTheLoopbackAddressOnThePort()
+    {
+        var http = VersionAnswering();
+        var sut = CreateSut(http);
+
+        await sut.GetBrowserVersionAsync(Port, LongTimeout);
+
+        http.Requests.Should().ContainSingle()
+            .Which.Should().Be(new Uri("http://127.0.0.1:9222/json/version"));
+    }
+
+    [Theory]
+    [InlineData("ws://127.0.0.1:9333/devtools/browser/B1", "port 9333")]
+    [InlineData("ws://localhost:9222/devtools/browser/B1", "only ws:// on 127.0.0.1")]
+    [InlineData("ws://[::1]:9222/devtools/browser/B1", "only ws:// on 127.0.0.1")]
+    [InlineData("ws://10.0.0.5:9222/devtools/browser/B1", "only ws:// on 127.0.0.1")]
+    [InlineData("wss://127.0.0.1:9222/devtools/browser/B1", "only ws:// on 127.0.0.1")]
+    public async Task GetBrowserVersionAsync_RefusesABrowserUrlOffTheLoopbackPort(string listed, string reason)
+    {
+        // Whatever listens on the port writes /json/version: a URL elsewhere could be another program's endpoint
+        var sut = CreateSut(VersionAnswering(listed));
+
+        var result = await sut.GetBrowserVersionAsync(Port, LongTimeout);
+
+        result.ErrorCode.Should().Be(BrowserErrorCode.CdpProtocolError);
+        result.Error.Should().Contain("Refusing").And.Contain(reason);
+    }
+
+    [Fact]
+    public async Task GetBrowserVersionAsync_RefusesAPageUrlListedAsTheBrowsers()
+    {
+        var sut = CreateSut(VersionAnswering("ws://127.0.0.1:9222/devtools/page/TAB1"));
+
+        var result = await sut.GetBrowserVersionAsync(Port, LongTimeout);
+
+        result.ErrorCode.Should().Be(BrowserErrorCode.CdpProtocolError);
+        result.Error.Should().Contain("/devtools/browser/");
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    public async Task GetBrowserVersionAsync_IsAProtocolError_WithoutABrowserUrl(string? listed)
+    {
+        // Chromium always lists it; a program that answers /json/version without it is not a browser's DevTools endpoint
+        var sut = CreateSut(VersionAnswering(listed));
+
+        var result = await sut.GetBrowserVersionAsync(Port, LongTimeout);
+
+        result.ErrorCode.Should().Be(BrowserErrorCode.CdpProtocolError);
+        result.Error.Should().Contain("webSocketDebuggerUrl").And.Contain("127.0.0.1:9222");
+    }
+
+    [Theory]
+    [InlineData("[]")]
+    [InlineData("\"Chrome\"")]
+    public async Task GetBrowserVersionAsync_IsAProtocolError_WhenTheAnswerIsNotAnObject(string json)
+    {
+        var sut = CreateSut(FakeCdpHttpHandler.Json(json));
+
+        var result = await sut.GetBrowserVersionAsync(Port, LongTimeout);
+
+        result.ErrorCode.Should().Be(BrowserErrorCode.CdpProtocolError);
+        result.Error.Should().Contain("/json/version");
+    }
+
+    [Fact]
+    public async Task GetBrowserVersionAsync_IsCdpUnavailable_WhenNothingListens()
+    {
+        var sut = CreateSut(FakeCdpHttpHandler.ConnectionRefused());
+
+        var result = await sut.GetBrowserVersionAsync(Port, LongTimeout);
+
+        result.ErrorCode.Should().Be(BrowserErrorCode.CdpUnavailable);
+    }
+
+    [Fact]
+    public async Task GetBrowserVersionAsync_IsCdpTimeout_WithinItsTimeout()
+    {
+        var sut = CreateSut(FakeCdpHttpHandler.NeverAnswers());
+        var stopwatch = Stopwatch.StartNew();
+
+        var result = await sut.GetBrowserVersionAsync(Port, ShortTimeout);
+
+        stopwatch.Elapsed.Should().BeLessThan(HangBound);
+        result.ErrorCode.Should().Be(BrowserErrorCode.CdpTimeout);
+    }
+
+    [Fact]
+    public async Task GetBrowserVersionAsync_IsCdpResponseTooLarge_OverTheBodyLimit()
+    {
+        var sut = CreateSut(VersionAnswering(), limits: new CdpTransportLimits(MaxHttpBodyBytes: 64));
+
+        var result = await sut.GetBrowserVersionAsync(Port, LongTimeout);
+
+        result.ErrorCode.Should().Be(BrowserErrorCode.CdpResponseTooLarge);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(70000)]
+    public async Task GetBrowserVersionAsync_RequestsNothing_ForAnInvalidPort(int port)
+    {
+        var http = VersionAnswering();
+        var sut = CreateSut(http);
+
+        var result = await sut.GetBrowserVersionAsync(port, LongTimeout);
+
+        result.ErrorCode.Should().Be(BrowserErrorCode.CdpUnavailable);
+        http.Requests.Should().BeEmpty();
+    }
+
+    #endregion
 }

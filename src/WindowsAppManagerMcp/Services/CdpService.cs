@@ -66,6 +66,54 @@ public class CdpService : ICdpService
     }
 
     /// <inheritdoc />
+    public async Task<CdpResult<CdpBrowserVersion>> GetBrowserVersionAsync(
+        int port,
+        TimeSpan timeout,
+        CancellationToken cancellationToken = default)
+    {
+        var answered = await _transport.GetJsonAsync(port, "/json/version", timeout, cancellationToken).ConfigureAwait(false);
+        if (!answered.Success)
+            return answered.FailAs<CdpBrowserVersion>();
+
+        using var document = answered.Value!;
+        var root = document.RootElement;
+        if (root.ValueKind != JsonValueKind.Object)
+        {
+            return CdpResult<CdpBrowserVersion>.Fail(
+                BrowserErrorCode.CdpProtocolError,
+                $"{Host}:{port} did not return a DevTools version for GET /json/version (a JSON {root.ValueKind} instead of " +
+                "an object). Is this a browser debug port?");
+        }
+
+        // Chromium always lists the browser's URL; a program that answers without one is not its DevTools endpoint
+        var listed = CdpReplies.GetString(root, "webSocketDebuggerUrl");
+        if (listed.Length == 0)
+        {
+            return CdpResult<CdpBrowserVersion>.Fail(
+                BrowserErrorCode.CdpProtocolError,
+                $"{Host}:{port} answered GET /json/version without a webSocketDebuggerUrl for the browser. Is this a browser debug port?");
+        }
+
+        var webSocketUrl = CdpEndpointValidator.ValidateWebSocketUrl(listed, port, "the browser");
+        if (!webSocketUrl.Success)
+            return webSocketUrl.FailAs<CdpBrowserVersion>();
+
+        if (!webSocketUrl.Value!.AbsolutePath.StartsWith("/devtools/browser/", StringComparison.Ordinal))
+        {
+            return CdpResult<CdpBrowserVersion>.Fail(
+                BrowserErrorCode.CdpProtocolError,
+                $"Refusing the browser WebSocket URL '{webSocketUrl.Value}' that {Host}:{port} listed: a browser's is under " +
+                "/devtools/browser/. Is this a browser debug port?");
+        }
+
+        return CdpResult<CdpBrowserVersion>.Ok(new CdpBrowserVersion(
+            Browser: CdpReplies.GetString(root, "Browser"),
+            ProtocolVersion: CdpReplies.GetString(root, "Protocol-Version"),
+            WebSocketDebuggerUrl: webSocketUrl.Value,
+            Port: port));
+    }
+
+    /// <inheritdoc />
     public async Task<CdpResult<CdpTarget>> FindTargetForWindowAsync(
         int port,
         int windowProcessId,
