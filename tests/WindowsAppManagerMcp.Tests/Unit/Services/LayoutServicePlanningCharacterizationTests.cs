@@ -135,21 +135,48 @@ public class LayoutServicePlanningCharacterizationTests : IDisposable
         _processes.Verify(p => p.GetProcessPath(43), Times.Never);
     }
 
+    // Scores for the left-half placement below: distance 8 * closeness (8 for the near window at the target, 6.70 for
+    // the far one, 960 px off on a 5920 px scale), exe path +/-10 when it can be read, ordinal +4. Each test is set up
+    // so the winner changes if an unreadable path counts as a mismatch (-10) or a match (+10) instead of 0.
+
     [Fact]
-    public async Task ExePath_ThatCannotBeRead_NeitherHelpsNorHurts_AndDoesNotFailTheApply()
+    public async Task ExePath_ThatCannotBeRead_DoesNotHurt_AWindowAgainstOneWhosePathIsKnownToDiffer()
     {
-        // Arrange - the window nearer the placement's rectangle wins on distance alone
+        // Arrange - near: 8 - 10 = -2 (wrong exe); far: 6.70 + 0 = 6.70 (unreadable). Were unreadable a mismatch,
+        // far would score -3.30 and near would win
         var near = Window(0x51, "Near", "app", 51, 0, 0, 960, 1040);
         var far = Window(0x52, "Far", "app", 52, 960, 0, 960, 1040);
-        OpenWindows(far, near);
-        _processes.Setup(p => p.GetProcessPath(51)).Throws(new Win32Exception(5, "Access is denied"));
-        _processes.Setup(p => p.GetProcessPath(52)).Throws(new InvalidOperationException("Process has exited"));
+        OpenWindows(near, far);
+        _processes.Setup(p => p.GetProcessPath(51)).Returns(@"C:\other\app.exe");
+        _processes.Setup(p => p.GetProcessPath(52)).Throws(new Win32Exception(5, "Access is denied"));
         var sut = await SavedAsync(Placement(new WindowMatcher(null, "app") { ExePath = @"C:\app.exe" }, 0, 0, 0, 0.5, 1));
 
         // Act
         var result = await sut.ApplyPresetAsync("planned");
 
         // Assert
+        result.Success.Should().BeTrue();
+        result.Placements!.Single().Window!.Handle.Should().Be(far.Handle.ToInt64());
+    }
+
+    [Fact]
+    public async Task ExePath_ThatCannotBeRead_DoesNotHelp_AWindowAgainstOneWhosePathMatches()
+    {
+        // Arrange - near: 8 + 10 = 18 (right exe); far: 6.70 + 0 + 4 = 10.70 (unreadable, recorded ordinal 1). Were
+        // unreadable a match, far would score 20.70 and win
+        var near = Window(0x51, "Near", "app", 51, 0, 0, 960, 1040);
+        var far = Window(0x52, "Far", "app", 52, 960, 0, 960, 1040);
+        OpenWindows(near, far);
+        _processes.Setup(p => p.GetProcessPath(51)).Returns(@"C:\app.exe");
+        _processes.Setup(p => p.GetProcessPath(52)).Throws(new InvalidOperationException("Process has exited"));
+        var sut = await SavedAsync(
+            Placement(new WindowMatcher(null, "app") { ExePath = @"C:\app.exe", Ordinal = 1 }, 0, 0, 0, 0.5, 1));
+
+        // Act
+        var result = await sut.ApplyPresetAsync("planned");
+
+        // Assert
+        result.Success.Should().BeTrue();
         result.Placements!.Single().Window!.Handle.Should().Be(near.Handle.ToInt64());
     }
 
