@@ -2378,8 +2378,9 @@ never with keystrokes; windows are moved only with move_window on the check's ow
 Roadmap M5.5 (on a real Edge, then on a real Chrome with `browser: "chrome"` as in the M5.1 block; every other rule is
 unchanged). browser_navigate refuses `data:` and `file:` URLs, so the pages come from a 127.0.0.1 HttpListener the check
 runs (rule 3), each under 1 MB: `/a` (title `A`), `/b` (title `B`, whose script adds an element `#late` after one
-second), `/redirect` (302 to `/a`), `/missing` (404 with a small page), `/slow` (answers after 5 seconds) and `/unload`
-(title `U`, sets `onbeforeunload`). The server runs with `WAM_TOOLSETS=+browser-actions` and an audit folder of the
+second), `/redirect` (302 to `/a`), `/missing` (404 with a small page), `/slow` (answers after 5 seconds), `/jsredirect`
+(an inline `<script>location.replace('/a')</script>`), `/empty500` (status 500 with no body) and `/unload` (title `U`,
+sets `onbeforeunload`). The server runs with `WAM_TOOLSETS=+browser-actions` and an audit folder of the
 check's own (`WAM_AUDIT_PATH`); launch the browser with `url` set to `/a`. Windows are only those of the check's debug
 instance, named by the launch's `windowHandle`:
 
@@ -2396,10 +2397,15 @@ instance, named by the launch's `windowHandle`:
   returns success with `httpStatus: 404`; a 127.0.0.1 port nothing listens on returns `NavigationFailed` with
   `errorText` `net::ERR_CONNECTION_REFUSED`; `/slow` with `timeoutMs: 2000` returns `WaitTimedOut` with `loadState:
   "loading"` within about 2 seconds, and wait_for_browser with `urlContains: "slow"` then returns satisfied once it
-  loads; `/a#part` returns `loadState: "sameDocument"`; `waitUntil: "none"` returns `loadState: "notWaited"` at once.
+  loads; `/a#part` returns `loadState: "sameDocument"`; `waitUntil: "none"` returns `loadState: "notWaited"` at once, also
+  to `/slow`; `/jsredirect` returns `loadState: "load"` with `url` ending in `/a` well within the time limit; `/empty500`
+  returns success with `httpStatus: 500` (record the `url` and `title`).
   During the slow load, move_window on the debug window returns at once (the load does not hold the input gate).
 - **Refused URLs.** `file:///C:/Windows/win.ini`, `data:text/html,x`, `javascript:alert(1)`, `chrome://settings` and
-  `edge://settings` each return `InvalidArguments`, and get_browser_url shows the tab did not change.
+  `edge://settings` each return `InvalidArguments`, and so do `http://127.0.0.1:<cdpPort>/json/list` and
+  `http://localhost:<cdpPort>/` (the debug browser's own DevTools endpoint); get_browser_url shows the tab did not change.
+  A download, a server that never answers while the tab does not either, and a gate refused after `newTab` opened its
+  tab are covered by the fakes (`CdpTabServiceTests`, `BrowserTabServiceTests`); the check downloads nothing.
 - **Wait.** browser_navigate to `/b` with `waitUntil: "none"`, then wait_for_browser with `selector: "#late"` is
   satisfied after about a second; `textContains` of text the page does not have with `timeoutMs: 1500` returns
   `WaitTimedOut` with the page's `url` and `title`; `selector: "##"` returns `CdpEvaluationFailed` at once.
@@ -2603,7 +2609,8 @@ cancellation tests check the wire with `server.AssertNoResponseSentAsync(id)` (n
 `Contract/ToolsetContractTests` checks the toolset mechanism (roadmap M2.14) over MCP with fixture tools and a
 fixture catalog that has an opt-in toolset: `WAM_TOOLSETS`, `WAM_EXCLUDE_TOOLS` and `WAM_READ_ONLY` decide what
 tools/list lists, and a call to a tool that is not served is an unknown tool. Against the production catalog it
-checks that every served tool is in exactly one toolset, that the default serves every toolset today, that read-only
+checks that every served tool is in exactly one toolset, that the default serves every toolset except the opt-in
+`browser-actions`, that read-only
 mode serves exactly the tools annotated `readOnlyHint: true`, and that each of those is a read-only tool of the input
 gate. `Unit/Infrastructure/ToolsetSelectionTests` covers the parsing. `Contract/ServerInfoToolContractTests` calls
 `get_server_info` over MCP (a real `ServerInfoService` over the contract services' mocked sources),
