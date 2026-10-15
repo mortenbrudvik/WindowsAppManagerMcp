@@ -52,6 +52,12 @@ public sealed class FakeTextPattern(string document) : IUiaTextPattern
     /// <summary>How many UTF-16 characters each of the provider's characters holds (1: one each).</summary>
     public int CharacterLength { get; init; } = 1;
 
+    /// <summary>
+    /// Read pages as the engines do, through <see cref="UiaTextPageReader"/> over a range of Chromium's
+    /// (<see cref="FakeTextRange.RereadsLineBreakBeforeStart"/>): a range that starts just after a line break reads it again.
+    /// </summary>
+    public bool ChromiumRanges { get; init; }
+
     /// <summary>The maxLength of every page asked for, in order.</summary>
     public List<int> PageLengths { get; } = [];
 
@@ -100,6 +106,11 @@ public sealed class FakeTextPattern(string document) : IUiaTextPattern
         OnGetTextPage?.Invoke();
         PageLengths.Add(maxLength);
         var units = Units();
+        if (ChromiumRanges)
+        {
+            return new FakeTextRange(units) { RereadsLineBreakBeforeStart = true }.Read(offset, maxLength);
+        }
+
         var start = Math.Min(offset, units.Count);
         var length = Math.Min(maxLength, units.Count - start);
         return new UiaTextPage(string.Concat(units.Skip(start).Take(length)), start, length, start + length < units.Count);

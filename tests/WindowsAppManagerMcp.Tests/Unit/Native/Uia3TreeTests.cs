@@ -988,11 +988,14 @@ public class Uia3TreeTests
         var node = NodeOf(sut, document);
         var range = new Mock<IUIAutomationTextRange>(MockBehavior.Strict);
         var probe = new Mock<IUIAutomationTextRange>(MockBehavior.Strict);
-        range.Setup(r => r.MoveEndpointByUnit(TextPatternRangeEndpoint.TextPatternRangeEndpoint_Start, TextUnit.TextUnit_Character, 6)).Returns(6);
+        // From the character before the page, whose text (the lead-in) is then left out
+        range.Setup(r => r.MoveEndpointByUnit(TextPatternRangeEndpoint.TextPatternRangeEndpoint_Start, TextUnit.TextUnit_Character, 5)).Returns(5);
         range.Setup(r => r.MoveEndpointByRange(
             TextPatternRangeEndpoint.TextPatternRangeEndpoint_End, range.Object, TextPatternRangeEndpoint.TextPatternRangeEndpoint_Start));
+        range.Setup(r => r.MoveEndpointByUnit(TextPatternRangeEndpoint.TextPatternRangeEndpoint_End, TextUnit.TextUnit_Character, 1)).Returns(1);
+        range.Setup(r => r.GetText(UiaTextPageReader.MaxLeadInLength + 1)).Returns(" ");
         range.Setup(r => r.MoveEndpointByUnit(TextPatternRangeEndpoint.TextPatternRangeEndpoint_End, TextUnit.TextUnit_Character, 3)).Returns(3);
-        range.Setup(r => r.GetText(6)).Returns("wor");
+        range.Setup(r => r.GetText(7)).Returns(" wor");
         range.Setup(r => r.Clone()).Returns(probe.Object);
         probe.Setup(r => r.MoveEndpointByUnit(TextPatternRangeEndpoint.TextPatternRangeEndpoint_End, TextUnit.TextUnit_Character, 1)).Returns(1);
         var text = new Mock<IUIAutomationTextPattern>();

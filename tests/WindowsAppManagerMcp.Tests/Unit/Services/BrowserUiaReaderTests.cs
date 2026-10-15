@@ -665,6 +665,30 @@ public class BrowserUiaReaderTests
     }
 
     [Fact]
+    public void ReadContent_PagesChromiumsText_AsCdpPagesIt_WithNoLineBreakReadTwice()
+    {
+        // Arrange - the M5.6 desktop check's page as Edge 155 reads it: a <pre> of 1000 lines of 99 characters, joined by
+        // "\n", and the next block's text; Chromium's range that starts just after a line break reads it again
+        var document = string.Join("\n", Enumerable.Range(0, 1000).Select(i =>
+            $"{i:00000} " + string.Concat(Enumerable.Repeat("abcdefghij", 9)) + "abc")) + "\nscoped part";
+        var window = Window(new FakeUiaNode("Document").WithPattern<IUiaTextPattern>(new FakeTextPattern(document) { ChromiumRanges = true }));
+
+        // Act - page on from each nextOffset
+        var pages = new List<BrowserUiaContent>();
+        do
+        {
+            pages.Add(CreateSut().ReadContent(window, null, null, pages.Count == 0 ? 0 : pages[^1].NextOffset!.Value, 20_000, Bytes,
+                CancellationToken.None));
+        }
+        while (pages[^1].NextOffset != null);
+
+        // Assert - before the fix the second page started with line 199's "\n" again and nextOffset was 39999
+        string.Concat(pages.Select(p => p.Text)).Should().Be(document);
+        pages.Select(p => p.Offset).Should().Equal(0, 20_000, 40_000, 60_000, 80_000, 100_000);
+        pages[^1].TotalLength.Should().Be(document.Length);
+    }
+
+    [Fact]
     public void ReadContent_PagesTheTextPattern_ReadingOnlyThePage()
     {
         // Arrange
