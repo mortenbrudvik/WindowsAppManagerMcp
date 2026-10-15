@@ -3685,7 +3685,7 @@ An open dialog is not something to clear out of the way. On a confirm, prompt or
 | `NotABrowser` | The window's process is not a recognized browser |
 | `NoBrowserInForeground` | The foreground window is not a browser (get_active_browser_url) |
 | `UrlBarNotFound` | UI Automation could not find or read the address bar |
-| `ContentAreaNotFound` / `ContentExtractionFailed` | UI Automation could not find or read the page content |
+| `ContentExtractionFailed` | UI Automation could not find or read the page content |
 | `AutomationUnavailable` | UI Automation is not available |
 | `NotResponding` | The browser window did not answer a message within 500 ms, or Windows reports it hung; nothing was read through UI Automation |
 | `OperationTimedOut` | The UI Automation read did not finish within `timeoutMs`, or earlier reads of this browser are still stuck. Try a larger `timeoutMs`, a smaller `maxLength` or CDP |

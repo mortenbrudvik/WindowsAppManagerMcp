@@ -24,8 +24,6 @@ public class BrowserReadingService : IBrowserReadingService
     private const string CdpPortRequiredMessage =
         "requireCdp=true needs cdpPort: the debug port of the browser instance that owns the window.";
 
-    private static readonly TimeSpan DefaultCdpTimeout = TimeSpan.FromMilliseconds(CdpOptions.DefaultTimeoutMs);
-
     private readonly INativeWindowWrapper _nativeWrapper;
     private readonly IBrowserDetectionService _browserDetection;
     private readonly ICdpService _cdpService;
@@ -488,119 +486,6 @@ public class BrowserReadingService : IBrowserReadingService
                 ErrorCode: BrowserErrorCode.OperationException);
         }
     }
-
-    /// <inheritdoc />
-    public async Task<bool> IsCdpAvailableAsync(int port = 9222, CancellationToken cancellationToken = default)
-    {
-        var targets = await _cdpService.GetPageTargetsAsync(port, DefaultCdpTimeout, cancellationToken);
-        return targets.Success;
-    }
-
-    /// <inheritdoc />
-    public async Task<BrowserContentResult> GetContentViaCdpAsync(
-        int port = 9222,
-        int targetIndex = 0,
-        CancellationToken cancellationToken = default)
-    {
-        try
-        {
-            var stopwatch = Stopwatch.StartNew();
-            var targets = await _cdpService.GetPageTargetsAsync(port, DefaultCdpTimeout, cancellationToken);
-            if (!targets.Success)
-            {
-                return new BrowserContentResult(
-                    Success: false,
-                    Content: null,
-                    Url: null,
-                    BrowserType: "cdp",
-                    PageTitle: null,
-                    ContentLength: null,
-                    Error: targets.Error,
-                    ErrorCode: targets.ErrorCode,
-                    Source: BrowserReadSource.Cdp,
-                    CdpError: targets.DescribeError());
-            }
-
-            var pages = targets.Value!;
-            if (pages.Count == 0)
-            {
-                return new BrowserContentResult(
-                    Success: false,
-                    Content: null,
-                    Url: null,
-                    BrowserType: "cdp",
-                    PageTitle: null,
-                    ContentLength: null,
-                    Error: "No browser targets found",
-                    ErrorCode: BrowserErrorCode.ContentAreaNotFound,
-                    Source: BrowserReadSource.Cdp);
-            }
-
-            if (targetIndex < 0 || targetIndex >= pages.Count)
-            {
-                return new BrowserContentResult(
-                    Success: false,
-                    Content: null,
-                    Url: null,
-                    BrowserType: "cdp",
-                    PageTitle: null,
-                    ContentLength: null,
-                    Error: $"Target index {targetIndex} out of range (found {pages.Count} targets)",
-                    ErrorCode: BrowserErrorCode.InvalidHandle,
-                    Source: BrowserReadSource.Cdp);
-            }
-
-            var target = pages[targetIndex];
-            var snapshot = await ReadSnapshotWithinBudgetAsync(
-                target, textOnly: true, maxLength: null, DefaultCdpTimeout, stopwatch, cancellationToken);
-
-            if (!snapshot.Success || string.IsNullOrEmpty(snapshot.Value!.Content))
-            {
-                return new BrowserContentResult(
-                    Success: false,
-                    Content: null,
-                    Url: target.Url,
-                    BrowserType: "cdp",
-                    PageTitle: target.Title,
-                    ContentLength: null,
-                    Error: snapshot.Success ? "Could not extract content via CDP" : snapshot.Error,
-                    ErrorCode: snapshot.Success ? BrowserErrorCode.ContentExtractionFailed : snapshot.ErrorCode,
-                    Source: BrowserReadSource.Cdp,
-                    TargetId: target.Id,
-                    CdpError: snapshot.DescribeError());
-            }
-
-            var page = snapshot.Value;
-            return new BrowserContentResult(
-                Success: true,
-                Content: page.Content,
-                Url: page.Url,
-                BrowserType: "cdp",
-                PageTitle: page.Title,
-                ContentLength: page.Content.Length,
-                Error: null,
-                ErrorCode: BrowserErrorCode.None,
-                Source: BrowserReadSource.Cdp,
-                TargetId: target.Id);
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            throw;
-        }
-        catch (Exception ex)
-        {
-            return new BrowserContentResult(
-                Success: false,
-                Content: null,
-                Url: null,
-                BrowserType: "cdp",
-                PageTitle: null,
-                ContentLength: null,
-                Error: $"Exception: {ex.Message}",
-                ErrorCode: BrowserErrorCode.OperationException);
-        }
-    }
-
 
     /// <inheritdoc />
     public string? GetBrowserType(nint browserHandle, string processName)

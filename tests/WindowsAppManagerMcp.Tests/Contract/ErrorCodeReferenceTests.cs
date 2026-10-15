@@ -27,7 +27,6 @@ public class ErrorCodeReferenceTests
     /// </summary>
     private static readonly Dictionary<string, string> CodesNoToolReturns = new(StringComparer.Ordinal)
     {
-        ["ContentAreaNotFound"] = "GetContentViaCdpAsync",
     };
 
     [Fact]
@@ -72,7 +71,7 @@ public class ErrorCodeReferenceTests
                 "MoveFailed", // WindowErrorCode.MoveFailed passed to the window service's placement
             ]);
         codes.Should().NotContain(
-            ["UrlExtractionFailed", "InvalidCoordinates"],
+            ["UrlExtractionFailed", "InvalidCoordinates", "ContentAreaNotFound"],
             "these enum members are declared but nothing in src/ returns them");
     }
 
