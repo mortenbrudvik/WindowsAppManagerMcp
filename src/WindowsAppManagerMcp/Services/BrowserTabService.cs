@@ -20,7 +20,7 @@ namespace WindowsAppManagerMcp.Services;
 public sealed class BrowserTabService : IBrowserTabService
 {
     /// <summary>How long finding the browser's tab may take, apart from the call's own time limit.</summary>
-    public static readonly TimeSpan LookupTimeout = TimeSpan.FromMilliseconds(CdpOptions.DefaultTimeoutMs);
+    public static readonly TimeSpan LookupTimeout = BrowserCdpTargets.LookupTimeout;
 
     /// <summary>The least time a wait gets to connect and check the page once, also with timeoutMs 0.</summary>
     public static readonly TimeSpan MinimumCheckTime = TimeSpan.FromSeconds(3);
@@ -33,13 +33,10 @@ public sealed class BrowserTabService : IBrowserTabService
 
     private readonly INativeWindowWrapper _windows;
     private readonly IBrowserDetectionService _detection;
-    private readonly IBrowserReadingService _reading;
-    private readonly ICdpService _cdp;
     private readonly ICdpTabService _tabs;
     private readonly ITcpPortOwnerResolver _portOwners;
-    private readonly ITargetPolicy? _policy;
-    private readonly IDebugPortLocator? _portLocator;
     private readonly IInputSession? _session;
+    private readonly BrowserCdpTargets _targets;
 
     /// <param name="windows">The window and process reads.</param>
     /// <param name="detection">Tells browsers from other programs.</param>
@@ -63,13 +60,10 @@ public sealed class BrowserTabService : IBrowserTabService
     {
         _windows = windows;
         _detection = detection;
-        _reading = reading;
-        _cdp = cdp;
         _tabs = tabs;
         _portOwners = portOwners;
-        _policy = policy;
-        _portLocator = portLocator;
         _session = session;
+        _targets = new BrowserCdpTargets(windows, detection, reading, cdp, portOwners, policy, portLocator);
     }
 
     /// <inheritdoc />
@@ -274,115 +268,12 @@ public sealed class BrowserTabService : IBrowserTabService
 
     /// <summary>The tab with <paramref name="targetId"/>, or the one the window shows.</summary>
     private Task<CdpResult<CdpTarget>> FindTabAsync(ResolvedBrowser browser, string? targetId, CancellationToken cancellationToken) =>
-        targetId != null
-            ? _cdp.FindTargetByIdAsync(browser.Port, browser.ProcessId, targetId, LookupTimeout, cancellationToken)
-            : _cdp.FindTargetForWindowAsync(browser.Port, browser.Window!, LookupTimeout, cancellationToken);
+        _targets.FindTabAsync(browser, targetId, cancellationToken);
 
     private Task<IDisposable> EnterGateAsync(CancellationToken cancellationToken) =>
         InputGateToolFilter.EnterAsync(_session, cancellationToken);
 
-    /// <summary>
-    /// The browser to work on, or why not: a window's process and its own debug port (or cdpPort), or the process that
-    /// listens on cdpPort; a recognized Chromium browser the target policy allows.
-    /// </summary>
-    private ResolvedBrowser Resolve(BrowserTabTarget target)
-    {
-        if (target.WindowHandle is not { } handle)
-        {
-            return target.CdpPort is int port
-                ? ResolvePort(port)
-                : ResolvedBrowser.Refused(ToolErrorReporting.InvalidArgumentsErrorCode, "Pass the browser window (handle or window) or cdpPort. Nothing was done.");
-        }
-
-        if (handle == nint.Zero || !_windows.IsWindow(handle))
-            return ResolvedBrowser.Refused(nameof(BrowserErrorCode.InvalidHandle), "Invalid window handle. Nothing was done.");
-
-        var root = _windows.GetAncestor(handle, WindowAncestor.Root);
-        handle = root != nint.Zero ? root : handle;
-        var processId = _windows.GetWindowThreadProcessId(handle);
-        var processName = _windows.GetProcessName(processId) ?? "Unknown";
-        if (!_detection.IsBrowser(processName))
-        {
-            return ResolvedBrowser.Refused(nameof(BrowserErrorCode.NotABrowser),
-                $"Window process '{processName}' is not a recognized browser. Nothing was done.");
-        }
-
-        if (UiaTargets.ReadVerdict(_windows, _policy, handle) is { Allowed: false } verdict)
-            return ResolvedBrowser.Refused(nameof(BrowserErrorCode.TargetDeniedByPolicy), PolicyRefusal($"Window {(long)handle}", verdict));
-
-        if (_reading.GetBrowserType(handle, processName) == "firefox")
-            return NoCdp();
-
-        int found;
-        if (target.CdpPort is int given)
-        {
-            found = given;
-        }
-        else
-        {
-            var lookup = _portLocator?.Find((int)processId)
-                         ?? new DebugPortLookup(DebugPortLookupStatus.NoDebugPort, null, "No debug port is looked for.");
-            if (lookup.Port is not int located)
-            {
-                return ResolvedBrowser.Refused(
-                    lookup.Status == DebugPortLookupStatus.HeldByOtherProcess
-                        ? nameof(BrowserErrorCode.CdpPortOwnerMismatch)
-                        : nameof(BrowserErrorCode.CdpUnavailable),
-                    "The tab tools work through CDP only and need the DevTools port of the browser that owns the window, and none " +
-                    $"was found. {lookup.Detail} Start the browser with launch_browser_with_debug, or pass cdpPort. Nothing was done.");
-            }
-
-            found = located;
-        }
-
-        var window = CdpWindowBinder.Describe(_windows, handle, processId, _windows.GetWindowText(handle));
-        return new ResolvedBrowser(found, (int)processId, window, null);
-    }
-
-    /// <summary>
-    /// The browser that listens on <paramref name="port"/>, named by no window: its process must be readable, a browser
-    /// and allowed by the target policy (the port's owner is the target).
-    /// </summary>
-    private ResolvedBrowser ResolvePort(int port)
-    {
-        if (!_portOwners.TryGetListeningProcessId(port, out var owner))
-        {
-            return ResolvedBrowser.Refused(nameof(BrowserErrorCode.CdpPortOwnerMismatch),
-                $"Could not read which process owns CDP port {port}, so it cannot be checked against the target policy. Nothing " +
-                "was done. Pass the browser window instead.");
-        }
-
-        if (owner is not int processId)
-        {
-            return ResolvedBrowser.Refused(nameof(BrowserErrorCode.CdpUnavailable),
-                $"Nothing listens on {CdpEndpointValidator.Host}:{port}: the browser may have exited, or the port is wrong. Nothing was done.");
-        }
-
-        var processName = _windows.GetProcessName((uint)processId);
-        if (processName == null || !_detection.IsBrowser(processName))
-        {
-            return ResolvedBrowser.Refused(nameof(BrowserErrorCode.NotABrowser),
-                $"CDP port {port} belongs to process {processId} ('{processName ?? "unknown"}'), which is not a recognized browser. " +
-                "Nothing was done.");
-        }
-
-        if (_policy != null && _policy.EvaluateFailClosed([processName]) is { Allowed: false } verdict)
-            return ResolvedBrowser.Refused(nameof(BrowserErrorCode.TargetDeniedByPolicy), PolicyRefusal($"The browser on port {port}", verdict));
-
-        if (_reading.GetBrowserType(nint.Zero, processName) == "firefox")
-            return NoCdp();
-
-        return new ResolvedBrowser(port, processId, null, null);
-    }
-
-    private static ResolvedBrowser NoCdp() => ResolvedBrowser.Refused(nameof(BrowserErrorCode.CdpUnavailable),
-        "Firefox has no CDP (its debug port speaks WebDriver BiDi); the tab tools need a Chromium browser started with a debug " +
-        "port (launch_browser_with_debug). Nothing was done.");
-
-    private static string PolicyRefusal(string what, TargetPolicyVerdict verdict) =>
-        $"{what} is refused by the server's target policy: {verdict.Reason}. Nothing was done: the policy covers acting on a " +
-        "browser through CDP as it covers input. It is set by the user in the server's environment and no tool argument changes " +
-        "it; ask the user to do this step.";
+    private ResolvedBrowser Resolve(BrowserTabTarget target) => _targets.Resolve(target);
 
     private static string? NoteFor(CdpTabListing listing) =>
         (listing.WindowBound, listing.ShownError) switch
@@ -402,10 +293,4 @@ public sealed class BrowserTabService : IBrowserTabService
 
     [return: System.Diagnostics.CodeAnalysis.NotNullIfNotNull(nameof(text))]
     private static string? Cut(string? text, int max) => text != null && text.Length > max ? text[..(max - 3)] + "..." : text;
-
-    /// <summary>The browser a call works on: its port, its process and the window named, or why it was refused.</summary>
-    private sealed record ResolvedBrowser(int Port, int ProcessId, CdpWindow? Window, (string Code, string Error)? Refusal)
-    {
-        public static ResolvedBrowser Refused(string code, string error) => new(0, 0, null, (code, error));
-    }
 }

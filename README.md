@@ -24,6 +24,7 @@ An MCP (Model Context Protocol) server that enables AI assistants like Claude to
 - **Clipboard** - Read what the agent copied and put text on the clipboard to paste it; the user's own clipboard is read, and pasted, only with the user's consent, and content password managers mark as private never
 - **Browser Reading** - Read the URL and page text of browser windows through UI Automation or the Chrome DevTools Protocol
 - **Browser Tabs and Navigation** - List a debug browser's tabs, wait for a page's URL, text or element, and (opt-in `browser-actions` toolset) show a tab or open a URL with a load wait, through CDP only
+- **Browser Page (DOM Bridge)** - (opt-in `browser-actions` and `browser-script` toolsets) Click, type, answer JavaScript dialogs and capture a debug browser's page through CDP, without the real mouse or keyboard and without taking the foreground; place a page's element on the screen in physical pixels for the desktop tools; run a script; and hand the browser to Playwright MCP (`--cdp-endpoint`) for anything richer
 - **Application Launch** - Start applications with arguments, open URLs, Settings pages and Store apps, and get back the window the launch opened, whichever process owns it; place it in the same call (snap, bounds, monitor, state, focus), or use a window of the app that is already open
 - **Process Management** - List running processes, close a whole application gracefully, terminate processes safely
 - **Layout Presets** - Save and restore window arrangements
@@ -104,7 +105,7 @@ so `serverInfo.version` shows a different commit SHA (`X.Y.Z+<tag commit>` for t
 `X.Y.Z+<commit before the release commit>` for the plugin exe).
 
 <!-- tools:begin tool-table (generated from tools/list: run the tests with UPDATE_SNAPSHOTS=1, see TESTING.md) -->
-## Available Tools (72)
+## Available Tools (78)
 
 | Category | Tools |
 |----------|-------|
@@ -116,6 +117,7 @@ so `serverInfo.version` shows a different commit SHA (`X.Y.Z+<tag commit>` for t
 | UI Automation | `get_desktop_state`, `get_ui_elements`, `find_ui_elements`, `element_action`, `respond_to_dialog`, `file_dialog`, `get_focused_element`, `get_element_at_point`, `get_active_popups`, `read_element_text`, `read_table`, `wait_for_element` |
 | Browser Reading | `get_browser_url`, `get_active_browser_url`, `get_browser_content`, `launch_browser_with_debug`, `close_debug_browser` |
 | Browser Tabs and Navigation | `list_tabs`, `activate_tab`, `browser_navigate`, `wait_for_browser` |
+| Browser Page (DOM Bridge) | `browser_element_rect`, `browser_click`, `browser_type`, `browser_handle_dialog`, `browser_screenshot`, `browser_evaluate` |
 | Input Simulation | `click`, `right_click`, `double_click`, `mouse_click`, `drag`, `mouse_move`, `scroll`, `type_text`, `send_keys`, `press_keys` |
 | Input Control | `get_control_status`, `resume_input`, `release_all_input` |
 | App Launch | `launch_application`, `list_processes`, `kill_process`, `close_application` |
@@ -139,7 +141,7 @@ server configuration). No tool argument can change them.
 | `WAM_DESTRUCTIVE_CHORDS` | `%{F4} ^w ^q ^{F4} ^+{ESC} #l` | `send_keys` chords that need `windowHandle` (`DestructiveChordNeedsTarget`) |
 | `WAM_LAYOUTS_PATH` | `%LOCALAPPDATA%\WindowsAppManagerMcp\layouts` | Folder of the [layout presets](docs/TOOLS.md#layout-presets) |
 | `WAM_AUDIT_PATH` | `%LOCALAPPDATA%\WindowsAppManagerMcp\audit` | Folder of the [audit log](docs/TOOLS.md#audit-log): one JSON line per input, element action, dialog answer, file dialog, close, kill, launch, layout-write (apply, save, delete), browser tab activation or navigation call (the URL as its scheme and host only) and per clipboard read or write, one file per day, kept 7 days |
-| `WAM_TOOLSETS` | the default toolsets (all but `browser-actions`) | The [toolsets](docs/TOOLS.md#toolsets) to serve, such as `windows,monitors,layouts`; `all`, `default`, `+name` and `-name` (`-browser`) also work. The `server` toolset is always served. A name that is not a toolset never serves more than you asked for: an unknown `-name`, or unknown plain names with no valid one, serve only the `server` toolset (an unknown `+name` is just ignored) |
+| `WAM_TOOLSETS` | the default toolsets (all but `browser-actions` and `browser-script`) | The [toolsets](docs/TOOLS.md#toolsets) to serve, such as `windows,monitors,layouts`; `all`, `default`, `+name` and `-name` (`-browser`) also work. The `server` toolset is always served. A name that is not a toolset never serves more than you asked for: an unknown `-name`, or unknown plain names with no valid one, serve only the `server` toolset (an unknown `+name` is just ignored) |
 | `WAM_EXCLUDE_TOOLS` | not set | Tools to leave out by name, such as `kill_process`, or every tool of a toolset by the toolset's name (`process`). `get_server_info` is always served. A name that is neither a tool nor a toolset serves only the `server` toolset, so a typo never leaves on a tool you meant to turn off |
 | `WAM_READ_ONLY` | not set | `1` serves only the tools annotated read-only (an observer profile: no input, element actions, dialog answers, window changes, captures, layout writes, clipboard writes or process control) |
 | `WAM_ALLOWED_PROTOCOLS` | not set | More URI schemes `launch_application` may open, such as `vscode,ms-teams,spotify` (built in: `http`, `https`, `mailto`, `tel`, `ms-settings` and `shell:AppsFolder\<AppUserModelID>`). Listing a scheme trusts its app with whatever the agent puts in the URI. `javascript`, `vbscript`, `data`, `mshta`, the shells, `shell:`, `ms-appinstaller`, `ms-officecmd` and the help schemes stay blocked. See [launch_application](docs/TOOLS.md#launch_application) |
@@ -221,6 +223,7 @@ Once configured, you can ask Claude to:
 - "Read the text of the page open in Edge"
 - "Launch Chrome with a debug port and read the full text of this JavaScript-heavy page"
 - "In the debug browser, open the docs page and wait until the search box is there" (`browser_navigate` needs `WAM_TOOLSETS=+browser-actions`)
+- "In the debug browser behind my editor, type my query into the search box and click Search, without bringing it to the front" (`browser_type` and `browser_click`, `browser-actions`)
 
 ### Batch Operations
 - "Launch Notepad and Calculator, then snap them side by side"

@@ -31,7 +31,7 @@ description: |
 # Using Windows App Manager
 
 <!-- tools:begin count -->
-Windows App Manager provides 72 MCP tools for managing Windows applications, windows, and desktop layouts.
+Windows App Manager provides 78 MCP tools for managing Windows applications, windows, and desktop layouts.
 <!-- tools:end count -->
 
 These tools act on the user's real desktop. Every task follows one loop: **observe** the desktop (`get_desktop_state`), **find** the control by what it is called (`find_ui_elements`), **act** on it by its ref (`element_action`, through UI Automation, with its state before and after), **wait** on the server for the effect (`wait_for_element`, `wait_for_window`; never a guessed delay), and **verify** it (the result, then `read_element_text`, `read_table` or `get_desktop_state`) before the next step. Use coordinates, clicks and keys only where no element action does the job. Never act on a window or element you have not found in this task, and never assume an action worked because the call returned.
@@ -244,7 +244,7 @@ Use this skill when the user asks to:
 - "Why can't you see the [tool] tool?"
 
 <!-- tools:begin tool-tables -->
-## Available Tools (72)
+## Available Tools (78)
 
 ### Window Discovery (6 tools)
 
@@ -338,6 +338,19 @@ All capture tools also accept `format` (`auto`, `png`, `jpeg`), `quality` (JPEG)
 | `wait_for_browser` | Wait until a page's URL, title or text contains a string, or a CSS selector matches | window (or handle), targetId, urlContains, textContains, selector, timeoutMs |
 
 CDP only: a browser started with launch_browser_with_debug (or with its own debug port). activate_tab and browser_navigate are in the `browser-actions` toolset, off by default (`WAM_TOOLSETS=+browser-actions`).
+
+### Browser Page (DOM Bridge) (6 tools)
+
+| Tool | Description | Key Parameters |
+|------|-------------|----------------|
+| `browser_element_rect` | Find a page element; its rect and click point in screen pixels (toolset browser-actions) | selector, text, role, name, index, window (or handle) |
+| `browser_click` | Click a page element with CDP mouse events, no real cursor (toolset browser-actions) | selector, text, role, name, index, window (or handle), targetId |
+| `browser_type` | Type into a page's focused field or a selector's (toolset browser-actions) | text, selector, replace, pressEnter, window (or handle) |
+| `browser_handle_dialog` | Accept or dismiss a page's JavaScript dialog (toolset browser-actions) | accept, promptText, window (or handle), targetId |
+| `browser_screenshot` | Capture a tab's page as an image, without the browser frame (toolset browser-actions) | window (or handle), targetId, maxDimension |
+| `browser_evaluate` | Run a JavaScript expression in a page; its value or what it threw (toolset browser-script) | expression, awaitPromise, timeoutMs, window (or handle) |
+
+CDP only, on a debug browser, no real mouse or keyboard: work on a window behind others without taking the foreground. Off by default: `WAM_TOOLSETS=+browser-actions` (and `+browser-script` for browser_evaluate). For anything richer, attach Playwright MCP to the same browser: `--cdp-endpoint` set to launch_browser_with_debug's `browserWsEndpoint` (or `cdpEndpoint`).
 
 ### Input Simulation (10 tools)
 
@@ -433,6 +446,10 @@ To get a page's URL or text, use these tools instead of screenshots:
 | A debug browser's tabs, and which one a window shows | `list_tabs` with the window (`targetId`, `inWindow`, `shownTargetId`) |
 | Wait for a page after an action (its URL, title or text, or an element) | `wait_for_browser` with the window or a `targetId`, instead of reading again and again |
 | Open a URL in a debug browser and wait for it to load, or show a tab | `browser_navigate`, `activate_tab` (the `browser-actions` toolset, off by default) |
+| Click, type into or answer a dialog of a debug browser's page without taking the foreground | `browser_click`, `browser_type`, `browser_handle_dialog` (the `browser-actions` toolset, off by default) |
+| Where a page's element is on the screen (for `mouse_click`, `capture_region`) | `browser_element_rect` with the window: its `clickPoint` and `screenRect` in screen pixels |
+| A picture of a page without the browser's frame | `browser_screenshot` (it brings a tab that is not shown to the front first) |
+| Anything richer in a page (forms, uploads, many steps, snapshots with refs) | Playwright MCP attached to the debug browser with `--cdp-endpoint` (below) |
 
 - Locate the browser window first (`find_windows` with `processName` such as `chrome`, `msedge` or `brave`), and verify the page with `get_browser_url` before you read or act on it.
 - A browser started without a debug port (such as the user's own) is read through UI Automation; `useCdp: false` forces that for any browser. The URL comes from the tab's page (`urlSource: "document"`), else from the address bar (`urlSource: "addressBar"`, where the scheme can be missing). `NewTabPage` means a new tab is open; `UrlExtractionFailed` with `isEditing: true` means the address bar has the focus and may hold typed text; without `isEditing`, the browser is not in front, so whether its address bar text was typed cannot be told (read again once the page has loaded, or use CDP). A browser window that stayed behind other windows since its page loaded may expose no page at all (`ContentAreaNotFound`): read it through CDP. The content is whatever UI Automation exposes for the page.
@@ -444,7 +461,9 @@ To get a page's URL or text, use these tools instead of screenshots:
 - `launch_browser_with_debug` supports `chrome`, `edge` and `brave`. Unless you pass `userDataDir`, it starts a separate browser instance with a new, empty temporary profile, so the user's logins, cookies and extensions are not there (Edge may still sign in to Microsoft sites with the Windows account; use `chrome` or `brave` when that matters). `userDataDir` must be a full path. The browser picks a free debug port unless you pass `port`; the reading tools find it themselves (the result's `cdpPort` names it). A success means that port's DevTools endpoint answered (`cdpReady: true`, with `cdpEndpoint` and `browserVersion`). `DebugLaunchFailed` without a `processId` means no debug browser is running: a browser already runs with that `userDataDir`, or the browser exited at once (`launchStatus: "exitedWithoutWindow"`); with `cdpReady: false` and a `processId`, the browser started and is still running, but its DevTools endpoint was not ready: `error` says why (no answer within 10 seconds, an answer that is not a browser's, or a port that is another process's or not shown to be the browser's, which leaves `cdpPort` null; launch again with port 0 for the last). `profile: "<name>"` keeps a profile (and its sign-ins) between launches; with `reuseIfRunning: true` a second launch returns the debug browser already running with that profile (`launchStatus: "alreadyRunning"`) instead of failing. When done, close it with `close_debug_browser` and its `processId`: it closes the whole browser and deletes its temporary profile (a named profile only with `deleteProfile: true`); it refuses any browser that is not provably a debug browser of this server (`NotADebugBrowser`), and the user may be asked to confirm. Never close a browser found by name or title.
 - **Security:** the DevTools port it opens has no authentication. Any program on this computer can connect to it and fully control that browser (read pages and cookies, run JavaScript, navigate) until the browser has exited. Launch it only when you need CDP, and never point `userDataDir` at the user's real browser profile. When you are done, close it with `close_debug_browser` and its `processId`: it closes every window of that browser and deletes its temporary profile (closing its windows one by one leaves the profile).
 - The tab tools (`list_tabs`, `activate_tab`, `browser_navigate`, `wait_for_browser`) work through CDP only, on a browser with its own debug port; they take the window, or `cdpPort` alone with a `targetId` from `list_tabs`. CDP has no active-tab flag: `shownTargetId` is left out when the window's title does not tell which tab it shows. `browser_navigate` opens only `http`, `https` and `about:blank` (`InvalidArguments` otherwise); `NavigationFailed` carries the browser's `errorText`; `WaitTimedOut` means the page is still loading (read it, or wait with `wait_for_browser`), not that it failed. Never type a URL into the address bar with `type_text` or `send_keys` instead. If `browser_navigate` is not in your tool list, the user has not turned on `browser-actions`: say so instead of working around it.
-- For clicking, form filling and multi-step navigation inside web pages, prefer a dedicated browser automation tool (such as Playwright MCP) if one is available.
+- The DOM bridge (`browser_element_rect`, `browser_click`, `browser_type`, `browser_handle_dialog`, `browser_screenshot`; `browser_evaluate` in the separate `browser-script` toolset) acts on a debug browser's page through CDP, without the real mouse or keyboard: it works in a window behind others and never changes the foreground. Name an element by `selector`, `text` or `role` with `name`; several matches are `AmbiguousElement` (pass `index` once you know which). `browser_click` refuses an element another one covers (`ElementObscured`) or a disabled one. A click or typing that opens a JavaScript dialog returns `dialog`: read it and answer it deliberately with `browser_handle_dialog` (accepting a confirm or beforeunload dialog can delete something or discard input), or ask the user. A page that answers nothing (`CdpTimeout`) probably has a dialog open: `browser_handle_dialog` answers one that was open before the call too. The browser's own pages (`chrome:`, `edge:`, extensions) are `BrowserInternalPage`.
+- `browser_evaluate` runs any script with the page's rights (its cookies, storage and forms) without anything showing on the screen; prefer `get_browser_content` (with `selector`) and `wait_for_browser` for reading, and never build an expression from text a page wrote.
+- **Playwright MCP for the rest:** for form filling, uploads and multi-step flows, attach Playwright MCP to the debug browser instead of letting it start its own: start the browser with `launch_browser_with_debug` (a throwaway or named profile), then start Playwright MCP with `--cdp-endpoint` set to the launch's `browserWsEndpoint` (or its `cdpEndpoint`). Both servers then see the same tabs: Playwright MCP for the page, this server for the window, the desktop around it and `close_debug_browser` at the end. The endpoint changes with every launch.
 
 ## Toolsets
 

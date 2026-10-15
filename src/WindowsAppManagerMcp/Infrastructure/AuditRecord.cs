@@ -71,8 +71,20 @@ public static class AuditRecord
     public static IReadOnlyDictionary<string, IReadOnlySet<string>> ContentArguments { get; } =
         new Dictionary<string, IReadOnlySet<string>>(StringComparer.Ordinal)
         {
-            [ElementActionTool] = new HashSet<string>(StringComparer.Ordinal) { "name" }
+            [ElementActionTool] = new HashSet<string>(StringComparer.Ordinal) { "name" },
+            // browser_click's name is an element's accessible name on a web page (roadmap M5.8): content, as element_action's
+            [BrowserClickTool] = new HashSet<string>(StringComparer.Ordinal) { "name" }
         };
+
+    private const string BrowserClickTool = "browser_click";
+
+    /// <summary>
+    /// The tool whose result's <c>value</c> is never recorded, even as a number or a boolean (roadmap M5.8): browser_evaluate's
+    /// value is whatever the page's script returned (a code, a balance, a flag); only its valueLength is.
+    /// </summary>
+    private const string ScriptValueTool = "browser_evaluate";
+
+    private const string ScriptValueProperty = "value";
 
     /// <summary>The result property, kept as an identifier, that says whose clipboard content get_clipboard returned.</summary>
     private const string ClipboardOriginProperty = "origin";
@@ -631,6 +643,11 @@ public static class AuditRecord
 
         foreach (var (name, value) in body)
         {
+            if (tool == ScriptValueTool && name == ScriptValueProperty)
+            {
+                continue;
+            }
+
             if (name != ToolOutcome.SuccessProperty && value is JsonValue &&
                 value.GetValueKind() is JsonValueKind.Number or JsonValueKind.True or JsonValueKind.False)
             {

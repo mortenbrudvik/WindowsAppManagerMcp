@@ -108,6 +108,19 @@ public static class ToolDocCatalog
         ],
         SkillNote: "CDP only: a browser started with launch_browser_with_debug (or with its own debug port). activate_tab and " +
                    "browser_navigate are in the `browser-actions` toolset, off by default (`WAM_TOOLSETS=+browser-actions`)."),
+        new("Browser Page (DOM Bridge)",
+        [
+            new("browser_element_rect", "Find a page element; its rect and click point in screen pixels (toolset browser-actions)", "selector", "text", "role", "name", "index", "window (or handle)"),
+            new("browser_click", "Click a page element with CDP mouse events, no real cursor (toolset browser-actions)", "selector", "text", "role", "name", "index", "window (or handle)", "targetId"),
+            new("browser_type", "Type into a page's focused field or a selector's (toolset browser-actions)", "text", "selector", "replace", "pressEnter", "window (or handle)"),
+            new("browser_handle_dialog", "Accept or dismiss a page's JavaScript dialog (toolset browser-actions)", "accept", "promptText", "window (or handle)", "targetId"),
+            new("browser_screenshot", "Capture a tab's page as an image, without the browser frame (toolset browser-actions)", "window (or handle)", "targetId", "maxDimension"),
+            new("browser_evaluate", "Run a JavaScript expression in a page; its value or what it threw (toolset browser-script)", "expression", "awaitPromise", "timeoutMs", "window (or handle)"),
+        ],
+        SkillNote: "CDP only, on a debug browser, no real mouse or keyboard: work on a window behind others without taking the " +
+                   "foreground. Off by default: `WAM_TOOLSETS=+browser-actions` (and `+browser-script` for browser_evaluate). For " +
+                   "anything richer, attach Playwright MCP to the same browser: `--cdp-endpoint` set to launch_browser_with_debug's " +
+                   "`browserWsEndpoint` (or `cdpEndpoint`)."),
         new("Input Simulation",
         [
             new("click", "Left click at coordinates, on the named window", "x", "y", "windowHandle", "captureId (x, y on its image)"),

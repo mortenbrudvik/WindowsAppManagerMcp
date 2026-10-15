@@ -120,8 +120,8 @@ public class ToolsetContractTests
         Toolsets.Server.ToolNames.Should().BeSubsetOf(served, "a toolset must not name a tool the server does not serve");
     }
 
-    /// <summary>The toolsets that are off by default: browser-actions since roadmap M5.5.</summary>
-    private static readonly string[] OptInToolsets = ["browser-actions"];
+    /// <summary>The toolsets that are off by default: browser-actions since roadmap M5.5, browser-script since M5.8.</summary>
+    private static readonly string[] OptInToolsets = ["browser-actions", "browser-script"];
 
     [Fact]
     public void TheDefault_ServesEveryToolset_ButTheOptInOnes()
@@ -137,7 +137,14 @@ public class ToolsetContractTests
         ServerToolCatalog.ServedToolNames
             .Where(tool => !OptInToolsets.Contains(Toolsets.Server.ToolsetOf(tool)!.Name))
             .Should().OnlyContain(tool => selection.Serves(tool, false));
-        Toolsets.Server.Find("browser-actions")!.Tools.Should().BeEquivalentTo(["activate_tab", "browser_navigate"])
+        Toolsets.Server.Find("browser-actions")!.Tools.Should().BeEquivalentTo(
+                ["activate_tab", "browser_navigate", "browser_element_rect", "browser_click", "browser_type", "browser_handle_dialog",
+                    "browser_screenshot"])
+            .And.OnlyContain(tool => !selection.Serves(tool, false));
+
+        // A script runs with the page's rights and leaves no trace on the screen: turning clicks and typing on does not turn
+        // it on (roadmap M5.8)
+        Toolsets.Server.Find("browser-script")!.Tools.Should().BeEquivalentTo(["browser_evaluate"])
             .And.OnlyContain(tool => !selection.Serves(tool, false));
     }
 
@@ -150,26 +157,37 @@ public class ToolsetContractTests
 
         var tools = (await server.Client.ListToolsAsync()).Select(t => t.Name).ToList();
 
-        tools.Should().Contain(["activate_tab", "browser_navigate", "list_tabs", "wait_for_browser"])
+        tools.Should().Contain(["activate_tab", "browser_navigate", "list_tabs", "wait_for_browser", "browser_click", "browser_evaluate"])
             .And.HaveCount(ServerToolCatalog.ServedToolNames.Count);
     }
 
-    [Fact]
-    public async Task ReadOnlyMode_ServesExactlyTheToolsAnnotatedReadOnly()
+    [Theory]
+    [InlineData(null)]
+    [InlineData("all")]
+    public async Task ReadOnlyMode_ServesExactlyTheToolsAnnotatedReadOnly_OfTheToolsetsInForce(string? toolsets)
     {
-        // Keyed on the [McpServerTool] ReadOnly property, as clients see it (annotations.readOnlyHint)
+        // Keyed on the [McpServerTool] ReadOnly property, as clients see it (annotations.readOnlyHint). An opt-in toolset's
+        // read-only tool (browser_element_rect in browser-actions, roadmap M5.8) is served only once its toolset is on
+        var inForce = ToolsetSelection.FromEnvironment(name => name == ToolsetSelection.ToolsetsVariable ? toolsets : null, Toolsets.Server);
         var annotatedReadOnly = (await ToolSurface.ListToolsAsync()).OfType<JsonObject>()
             .Where(tool => (bool?)tool["annotations"]?["readOnlyHint"] == true)
             .Select(tool => (string)tool["name"]!)
+            .Where(tool => inForce.Serves(tool, readOnlyHint: true))
             .Order(StringComparer.Ordinal)
             .ToList();
         var readOnly = ToolsetSelection.FromEnvironment(
-            name => name == ToolsetSelection.ReadOnlyVariable ? "1" : null, Toolsets.Server);
+            name => name switch
+            {
+                ToolsetSelection.ReadOnlyVariable => "1",
+                ToolsetSelection.ToolsetsVariable => toolsets,
+                _ => null
+            }, Toolsets.Server);
         await using var server = await InProcessMcpServer.StartAsync([], builder => builder.AddWindowsAppManagerTools(readOnly));
 
         var tools = await server.Client.ListToolsAsync();
 
         tools.Select(t => t.Name).Order(StringComparer.Ordinal).Should().Equal(annotatedReadOnly);
+        tools.Select(t => t.Name).Contains("browser_element_rect").Should().Be(toolsets == "all");
     }
 
     /// <summary>

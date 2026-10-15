@@ -92,7 +92,9 @@ public class ToolAnnotationContractTests
             "take_screenshot", "capture_region", "capture_window", "capture_with_elements",
             "set_clipboard",
             // browser_navigate replaces the tab's page, and what was typed into it (roadmap M5.5)
-            "browser_navigate"
+            "browser_navigate",
+            // The DOM bridge's actions click, type, answer a dialog (Leave discards input) and run any script in a page (roadmap M5.8)
+            "browser_click", "browser_type", "browser_handle_dialog", "browser_evaluate"
         ];
 
         var tools = await ToolSurface.ListToolsAsync();
@@ -118,8 +120,13 @@ public class ToolAnnotationContractTests
             "get_owned_windows", "get_clipboard", "get_window_info", "wait_for_window", "find_ui_elements", "get_active_popups",
             "read_element_text", "read_table", "wait_for_element", "get_desktop_state",
             // A debug browser's tabs and a wait on its page (roadmap M5.5)
-            "list_tabs", "wait_for_browser"
+            "list_tabs", "wait_for_browser",
+            // An element's place on the screen: a DOM query and the window's UI Automation tree (roadmap M5.8)
+            "browser_element_rect"
         ]);
+
+        // browser_screenshot brings a tab that is not shown to the front first (roadmap M5.8)
+        readOnly.Should().NotContain("browser_screenshot");
 
         // The captures can write image files (output 'file' or 'both'), so they are not read-only
         foreach (var capture in new[] { "take_screenshot", "capture_region", "capture_window", "capture_with_elements" })
@@ -135,11 +142,13 @@ public class ToolAnnotationContractTests
 
         // They start any program or open any URI (apply_layout with launchMissing runs a preset's launch commands);
         // get_browser_content returns what a website wrote; browser_navigate loads any web page and wait_for_browser
-        // reads a page's text (roadmap M5.5)
+        // reads a page's text (roadmap M5.5); the DOM bridge reads a page's elements and acts in it, which can send anything
+        // the page sends anywhere (roadmap M5.8)
         tools.Where(t => t!["annotations"]!["openWorldHint"]!.GetValue<bool>()).Select(t => t!["name"]!.GetValue<string>())
             .Should().BeEquivalentTo(
                 ["launch_application", "launch_applications_batch", "launch_browser_with_debug", "apply_layout", "get_browser_content",
-                    "browser_navigate", "wait_for_browser"]);
+                    "browser_navigate", "wait_for_browser", "browser_element_rect", "browser_click", "browser_type", "browser_handle_dialog",
+                    "browser_evaluate"]);
     }
 
     [Theory]

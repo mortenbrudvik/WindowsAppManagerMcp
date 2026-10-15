@@ -134,4 +134,33 @@ public class BrowserUrlsTests
     {
         BrowserUrls.AddressOf(display).Should().Be(expected);
     }
+
+    [Theory]
+    [InlineData("chrome://settings/passwords", true)]
+    [InlineData("CHROME://flags", true)]
+    [InlineData("edge://settings", true)]
+    [InlineData("brave://wallet", true)]
+    [InlineData("chrome-extension://abcdefghijklmnop/popup.html", true)]
+    [InlineData("extension://abcdefghijklmnop/popup.html", true)]
+    [InlineData("chrome-untrusted://print/", true)]
+    [InlineData("chrome-search://local-ntp/local-ntp.html", true)]
+    [InlineData("devtools://devtools/bundled/inspector.html", true)]
+    [InlineData("view-source:https://example.com/", true)]
+    [InlineData("about:version", true)]
+    [InlineData("about:settings", true)]
+    [InlineData("chrome://side-panel.top-chrome/", true)]
+    [InlineData("", true)]
+    [InlineData(null, true)]
+    [InlineData("not a url", true)]
+    [InlineData("about:blank", false)]
+    [InlineData("about:blank#top", false)]
+    [InlineData("about:srcdoc", false)]
+    [InlineData("https://example.com/", false)]
+    [InlineData("http://127.0.0.1:8080/form", false)]
+    [InlineData("file:///C:/Users/me/AppData/Local/Temp/page.html", false)]
+    [InlineData("data:text/html,<p>x</p>", false)]
+    public void IsBrowserOwnPage_KnowsTheBrowsersOwnPages_FromTheWeb(string? url, bool expected)
+    {
+        BrowserUrls.IsBrowserOwnPage(url).Should().Be(expected);
+    }
 }

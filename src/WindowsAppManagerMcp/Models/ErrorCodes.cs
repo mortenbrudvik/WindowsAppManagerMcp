@@ -544,6 +544,18 @@ public enum BrowserErrorCode
     /// </summary>
     NavigationFailed = 19,
 
+    /// <summary>
+    /// browser_click (roadmap M5.8): another element covers the element at the point the click would land on (an overlay,
+    /// a cookie banner, a modal), so the click was not sent: it would reach that element instead.
+    /// </summary>
+    ElementObscured = 20,
+
+    /// <summary>
+    /// A DOM bridge tool (roadmap M5.8) was aimed at one of the browser's own pages (chrome:, edge:, devtools:, an
+    /// extension's chrome-extension: page and the like: settings, passwords, flags), which these tools never act on or read.
+    /// </summary>
+    BrowserInternalPage = 21,
+
     // CDP (Chrome DevTools Protocol) errors are numbered from 30 so that other
     // browser error codes can be added above without renumbering.
 

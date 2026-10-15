@@ -55,6 +55,24 @@ public sealed class ContractServices : IDisposable
 
     /// <summary>The tab tools (roadmap M5.5): three tabs of a debug Chrome on port 9222, the first shown by the browser window.</summary>
     public Mock<IBrowserTabService> BrowserTabs { get; } = new();
+
+    /// <summary>The DOM bridge (roadmap M5.8): the same debug Chrome, its shown tab's Save button and search field.</summary>
+    public Mock<IBrowserPageService> BrowserPages { get; } = new();
+
+    /// <summary>browser_screenshot's typical image: a page of 2880 x 1620 device pixels scaled to 1568 x 882, as JPEG.</summary>
+    private static readonly Lazy<EncodedImage> TypicalPageCapture = new(() =>
+    {
+        using var bitmap = new System.Drawing.Bitmap(1568, 882);
+        using (var graphics = System.Drawing.Graphics.FromImage(bitmap))
+        {
+            graphics.Clear(System.Drawing.Color.White);
+            graphics.FillRectangle(System.Drawing.Brushes.SteelBlue, 0, 0, 1568, 64);
+        }
+
+        using var stream = new MemoryStream();
+        bitmap.Save(stream, System.Drawing.Imaging.ImageFormat.Jpeg);
+        return new EncodedImage(stream.ToArray(), "image/jpeg");
+    });
     public Mock<ILayoutService> Layouts { get; } = new();
     public Mock<IUIElementService> UiElements { get; } = new();
     public Mock<IElementInspectionService> Inspection { get; } = new();
@@ -153,6 +171,7 @@ public sealed class ContractServices : IDisposable
         services.AddSingleton(Processes.Object);
         services.AddSingleton(Browser.Object);
         services.AddSingleton(BrowserTabs.Object);
+        services.AddSingleton(BrowserPages.Object);
         services.AddSingleton(Layouts.Object);
         services.AddSingleton(UiElements.Object);
         services.AddSingleton(Inspection.Object);
@@ -383,6 +402,27 @@ public sealed class ContractServices : IDisposable
         BrowserTabs.Setup(b => b.WaitAsync(It.IsAny<BrowserTabTarget>(), It.IsAny<BrowserWaitCondition>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new BrowserWaitResult(true, true, false, 630, url.TargetId, "https://example.com/docs/", "Docs - Example", 9222));
 
+        var save = new BrowserElementInfo("button", "Save draft");
+        BrowserPages.Setup(b => b.EvaluateAsync(It.IsAny<BrowserTabTarget>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new BrowserEvaluateResult(true, url.TargetId,
+                System.Text.Json.JsonSerializer.SerializeToElement(new { title = "Docs - Example", links = 42, signedIn = true }), "object", 52,
+                CdpPort: 9222));
+        BrowserPages.Setup(b => b.HandleDialogAsync(It.IsAny<BrowserTabTarget>(), It.IsAny<bool>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new BrowserDialogResult(true, url.TargetId, false, "beforeunload", "Leave this page? Changes you made may not be saved.", 9222));
+        BrowserPages.Setup(b => b.GetElementRectAsync(It.IsAny<BrowserTabTarget>(), It.IsAny<BrowserElementLocator>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new BrowserElementRectResult(true, url.TargetId, save, 1, new BoundsDto(1482, 391, 132, 48), new ScreenPoint(1548, 415),
+                new CssRect(920, 180, 88, 32), 1.5, BrowserViewport.DocumentSource, 9222));
+        BrowserPages.Setup(b => b.ClickAsync(It.IsAny<BrowserTabTarget>(), It.IsAny<BrowserElementLocator>(), It.IsAny<MouseButton>(), It.IsAny<int>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new BrowserInputResult(true, url.TargetId, save, 1, new CssPoint(964, 196), CdpPort: 9222));
+        BrowserPages.Setup(b => b.TypeAsync(It.IsAny<BrowserTabTarget>(), It.IsAny<BrowserTypeOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new BrowserInputResult(true, url.TargetId, new BrowserElementInfo("input"), 1, TypedLength: 21, CdpPort: 9222));
+        BrowserPages.Setup(b => b.CaptureAsync(It.IsAny<BrowserTabTarget>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new BrowserScreenshot(
+                new BrowserScreenshotResult(true, url.TargetId, 1568, 882, 2880, 1620, "jpeg", Url: "https://example.com/docs/",
+                    Title: "Docs - Example", CdpPort: 9222),
+                TypicalPageCapture.Value));
+
         var preset = TypicalDesktop.Layouts[0];
         Layouts.Setup(l => l.GetStorageError()).Returns((string?)null);
         Layouts.Setup(l => l.GetAllPresets()).Returns(TypicalDesktop.Layouts);
@@ -605,6 +645,25 @@ public sealed class ContractServices : IDisposable
         BrowserTabs.Setup(b => b.WaitAsync(It.IsAny<BrowserTabTarget>(), It.IsAny<BrowserWaitCondition>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new BrowserWaitResult(false, false, true, 10_000, "8F4C1D2E9A7B6C5D4E3F2A1B0C9D8E7F", "https://example.com/", "Example Domain", 9222,
                 "The page did not meet the condition within 10000 ms: no element matches '#results'.", "WaitTimedOut"));
+
+        const string failedTab = "8F4C1D2E9A7B6C5D4E3F2A1B0C9D8E7F";
+        BrowserPages.Setup(b => b.EvaluateAsync(It.IsAny<BrowserTabTarget>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(BrowserEvaluateResult.Failed(nameof(BrowserErrorCode.CdpEvaluationFailed), "The script threw.", 9222, failedTab) with
+            {
+                Exception = new BrowserScriptException("ReferenceError: sessionData is not defined", 0, 0)
+            });
+        BrowserPages.Setup(b => b.HandleDialogAsync(It.IsAny<BrowserTabTarget>(), It.IsAny<bool>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(BrowserDialogResult.Failed(nameof(UIElementErrorCode.DialogNotFound), "The tab has no JavaScript dialog open.", 9222, failedTab));
+        BrowserPages.Setup(b => b.GetElementRectAsync(It.IsAny<BrowserTabTarget>(), It.IsAny<BrowserElementLocator>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(BrowserElementRectResult.Failed(nameof(UIElementErrorCode.ElementNotFound), "No element of the page matches.", 9222, failedTab));
+        BrowserPages.Setup(b => b.ClickAsync(It.IsAny<BrowserTabTarget>(), It.IsAny<BrowserElementLocator>(), It.IsAny<MouseButton>(), It.IsAny<int>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(BrowserInputResult.Failed(nameof(BrowserErrorCode.ElementObscured), "Another element covers the element.", 9222, failedTab));
+        BrowserPages.Setup(b => b.TypeAsync(It.IsAny<BrowserTabTarget>(), It.IsAny<BrowserTypeOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(BrowserInputResult.Failed(nameof(UIElementErrorCode.FocusNotOnElement), "No element of the page has the focus.", 9222, failedTab));
+        BrowserPages.Setup(b => b.CaptureAsync(It.IsAny<BrowserTabTarget>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new BrowserScreenshot(
+                BrowserScreenshotResult.Failed(nameof(BrowserErrorCode.CdpTimeout), "The tab produced no frame to capture.", 9222, failedTab), null));
 
         Layouts.Setup(l => l.GetStorageError()).Returns("The layouts folder cannot be written");
         Layouts.Setup(l => l.CaptureCurrentLayoutAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string[]?>(), It.IsAny<string[]?>(), It.IsAny<CancellationToken>()))

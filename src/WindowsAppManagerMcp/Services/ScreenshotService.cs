@@ -915,7 +915,7 @@ public class ScreenshotService : IScreenshotService
         }
     }
 
-    private static Bitmap ResizeImage(Bitmap original, int width, int height)
+    internal static Bitmap ResizeImage(Bitmap original, int width, int height)
     {
         var resized = new Bitmap(width, height, PixelFormat.Format32bppRgb);
         try
@@ -944,7 +944,7 @@ public class ScreenshotService : IScreenshotService
         }
     }
 
-    private static byte[] Encode(Bitmap bitmap, ImageEncoding encoding, int quality)
+    internal static byte[] Encode(Bitmap bitmap, ImageEncoding encoding, int quality)
     {
         using var stream = new MemoryStream();
 

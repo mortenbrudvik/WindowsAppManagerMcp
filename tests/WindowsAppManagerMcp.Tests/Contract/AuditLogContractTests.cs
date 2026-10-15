@@ -56,7 +56,8 @@ public class AuditLogContractTests
             "click", "right_click", "double_click", "mouse_click", "drag", "mouse_move", "type_text", "send_keys", "press_keys", "scroll",
             "release_all_input", "element_action", "respond_to_dialog", "file_dialog", "close_window", "close_windows_batch", "close_application", "kill_process", "close_debug_browser",
             "launch_application", "launch_applications_batch", "launch_browser_with_debug",
-            "apply_layout", "save_layout", "delete_layout", "set_clipboard", "get_clipboard", "activate_tab", "browser_navigate");
+            "apply_layout", "save_layout", "delete_layout", "set_clipboard", "get_clipboard", "activate_tab", "browser_navigate",
+            "browser_click", "browser_type", "browser_handle_dialog", "browser_evaluate", "browser_screenshot");
     }
 
     [Fact]

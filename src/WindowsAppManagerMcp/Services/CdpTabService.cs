@@ -39,7 +39,7 @@ public sealed class CdpTabService : ICdpTabService
     /// How long the input gate is held for a command that changes the browser: until the browser answers it, at most this
     /// long. The command is on its way by then; the gate orders it with the input calls, it does not wait for the page.
     /// </summary>
-    public static readonly TimeSpan GateHold = TimeSpan.FromSeconds(1);
+    public static readonly TimeSpan GateHold = CdpGatedSend.GateHold;
 
     /// <summary>The loadState of a navigation that became a download: the tab keeps its page (NavigationFailed).</summary>
     public const string DownloadState = "download";
@@ -631,43 +631,15 @@ public sealed class CdpTabService : ICdpTabService
     private static TimeSpan Bounded(TimeSpan remaining) =>
         remaining <= TimeSpan.Zero ? TimeSpan.FromMilliseconds(1) : remaining < MaxCheckTime ? remaining : MaxCheckTime;
 
-    /// <summary>
-    /// Sends a command that changes the browser inside the input gate (<paramref name="gate"/>), held until the browser
-    /// answers or <see cref="GateHold"/> has passed, so the command is ordered with the input calls but a slow page does
-    /// not hold them up.
-    /// </summary>
-    private static async Task<CdpResult<CdpReply>> SendGatedAsync(
-        ICdpConnection connection, CdpGate gate, string method, object parameters, TimeSpan timeout, CancellationToken cancellationToken)
-    {
-        if (timeout <= TimeSpan.Zero)
-        {
-            return CdpResult<CdpReply>.Fail(
-                BrowserErrorCode.CdpTimeout, $"The time limit was used up before {method} could be sent. Nothing was changed.");
-        }
+    /// <summary>Sends a command that changes the browser inside the input gate (<see cref="CdpGatedSend"/>).</summary>
+    private static Task<CdpResult<CdpReply>> SendGatedAsync(
+        ICdpConnection connection, CdpGate gate, string method, object parameters, TimeSpan timeout, CancellationToken cancellationToken) =>
+        CdpGatedSend.SendAsync(connection, gate, method, parameters, timeout, cancellationToken);
 
-        var sent = await StartGatedAsync(connection, gate, method, parameters, timeout, cancellationToken).ConfigureAwait(false);
-        return await sent.ConfigureAwait(false);
-    }
-
-    /// <summary>
-    /// Sends a command inside the gate as <see cref="SendGatedAsync"/> does, and returns once the gate is let go, with the
-    /// reply still to come when the browser has not answered within <see cref="GateHold"/>.
-    /// </summary>
-    private static async Task<Task<CdpResult<CdpReply>>> StartGatedAsync(
-        ICdpConnection connection, CdpGate gate, string method, object parameters, TimeSpan timeout, CancellationToken cancellationToken)
-    {
-        Task<CdpResult<CdpReply>> sent;
-        using (await gate(cancellationToken).ConfigureAwait(false))
-        {
-            sent = connection.SendAsync(method, parameters, timeout, cancellationToken);
-            using var hold = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            var held = Task.Delay(GateHold, hold.Token);
-            await Task.WhenAny(sent, held).ConfigureAwait(false);
-            hold.Cancel();
-        }
-
-        return sent;
-    }
+    /// <summary>Sends a command inside the gate and returns once the gate is let go (<see cref="CdpGatedSend.StartAsync"/>).</summary>
+    private static Task<Task<CdpResult<CdpReply>>> StartGatedAsync(
+        ICdpConnection connection, CdpGate gate, string method, object parameters, TimeSpan timeout, CancellationToken cancellationToken) =>
+        CdpGatedSend.StartAsync(connection, gate, method, parameters, timeout, cancellationToken);
 
     /// <summary>The browser-level DevTools connection (/json/version's webSocketDebuggerUrl).</summary>
     private async Task<CdpResult<ICdpConnection>> ConnectToBrowserAsync(int port, TimeSpan timeout, CancellationToken cancellationToken)

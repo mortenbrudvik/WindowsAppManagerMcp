@@ -42,17 +42,17 @@ public class BrowserTabTools
         _session = session;
     }
 
-    private const string HandleDescription = "Browser window handle. Pass handle, window or cdpPort.";
+    internal const string HandleDescription = "Browser window handle. Pass handle, window or cdpPort.";
 
-    private const string WindowDescription = "Alternative to handle: a window selector as in find_windows.";
+    internal const string WindowDescription = "Alternative to handle: a window selector as in find_windows.";
 
-    private const string CdpPortDescription = "DevTools port; found from the window when omitted. Alone, it names the browser listening on it.";
+    internal const string CdpPortDescription = "DevTools port; found from the window when omitted. Alone, it names the browser listening on it.";
 
-    private const string TargetIdDescription = "Tab id from list_tabs.";
+    internal const string TargetIdDescription = "Tab id from list_tabs.";
 
-    private const string ShownTabDefault = " Default: the tab the window shows.";
+    internal const string ShownTabDefault = " Default: the tab the window shows.";
 
-    private const string CdpOnly = " CDP only: a browser with a debug port (launch_browser_with_debug).";
+    internal const string CdpOnly = " CDP only: a browser with a debug port (launch_browser_with_debug).";
 
     [McpServerTool(Name = "list_tabs", Title = "List Browser Tabs", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
     [Description("List a debug browser's tabs (targetId, title, url, windowId). With a window, its tabs come first (inWindow) and " +
@@ -154,7 +154,15 @@ public class BrowserTabTools
     /// The browser and tab a call names: a window (handle or selector) with an optional cdpPort, or cdpPort alone, which then
     /// needs a targetId when the call works on one tab (<paramref name="needsTab"/>: no window shows a tab to default to).
     /// </summary>
-    private BrowserTabTarget Target(long? handle, WindowSelector? window, int? cdpPort, string? targetId, string nothingDone, bool needsTab = false)
+    private BrowserTabTarget Target(long? handle, WindowSelector? window, int? cdpPort, string? targetId, string nothingDone, bool needsTab = false) =>
+        Target(_windowService, handle, window, cdpPort, targetId, nothingDone, needsTab);
+
+    /// <summary>
+    /// The browser and tab a CDP tool names (shared with the DOM bridge tools, roadmap M5.8): a window (handle or selector)
+    /// with an optional cdpPort, or cdpPort alone, which then needs a targetId when the call works on one tab.
+    /// </summary>
+    internal static BrowserTabTarget Target(
+        IWindowService? windowService, long? handle, WindowSelector? window, int? cdpPort, string? targetId, string nothingDone, bool needsTab)
     {
         if (cdpPort is < 1 or > 65535)
         {
@@ -162,7 +170,7 @@ public class BrowserTabTools
                 $"cdpPort must be a TCP port from 1 to 65535, but it is {cdpPort}. {nothingDone}");
         }
 
-        var windowHandle = WindowTargeting.Optional(_windowService, handle, window);
+        var windowHandle = WindowTargeting.Optional(windowService, handle, window);
         if (windowHandle == null && cdpPort == null)
         {
             throw new ToolErrorException(ToolErrorReporting.InvalidArgumentsErrorCode,
@@ -178,7 +186,7 @@ public class BrowserTabTools
         return new BrowserTabTarget(windowHandle, cdpPort, targetId);
     }
 
-    private static string RequireTargetId(string? targetId) =>
+    internal static string RequireTargetId(string? targetId) =>
         targetId != null && CdpEndpointValidator.IsValidTargetId(targetId)
             ? targetId
             : throw new ToolErrorException(ToolErrorReporting.InvalidArgumentsErrorCode,

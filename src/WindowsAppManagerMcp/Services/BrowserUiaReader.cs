@@ -242,6 +242,37 @@ public sealed class BrowserUiaReader
     }
 
     /// <summary>
+    /// Where the window shows the page whose address is <paramref name="pageUrl"/> (roadmap M5.8): the bounding rectangle of
+    /// the shown tab's Document (found as <see cref="ReadContent"/> finds the page, preferring the Document that holds the
+    /// address), in physical screen pixels, when that Document holds the address (or one it starts, or that starts it).
+    /// Null when no such Document is shown, or the search did not finish in time.
+    /// </summary>
+    /// <param name="window">The browser window's element.</param>
+    /// <param name="windowTitle">The window's title; null when unknown.</param>
+    /// <param name="pages">The roots of the window's shown pages, or none to search the window for its Documents.</param>
+    /// <param name="pageUrl">The tab's address, as CDP lists it.</param>
+    /// <param name="cancellationToken">The read's deadline.</param>
+    public UiaRect? FindPageBounds(
+        IUiaNode window, string? windowTitle, IReadOnlyList<IUiaNode>? pages, string pageUrl, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        Page? page;
+        try
+        {
+            page = FindPage(window, windowTitle, pages, pageUrl, cancellationToken);
+        }
+        catch (TimeoutException)
+        {
+            return null;
+        }
+
+        return page is { IsDocument: true, Url: { } url, Root.Properties: { } properties } &&
+               (BrowserUrls.Shows(pageUrl, url) || BrowserUrls.Shows(url, pageUrl))
+            ? properties.Bounds
+            : null;
+    }
+
+    /// <summary>
     /// Why a browser window may show no page through UI Automation, and what to do: read on a real desktop on 2026-10-15,
     /// an Edge window that stayed behind another window since its page loaded had no render widget and no Document.
     /// </summary>

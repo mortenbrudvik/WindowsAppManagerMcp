@@ -66,6 +66,8 @@ public static class SampleValueFactory
         else if (type == typeof(Guid)) value = Guid.Parse("11111111-2222-3333-4444-555555555555");
         else if (type == typeof(Uri)) value = new Uri("https://example.com/");
         else if (type == typeof(object)) value = "sample";
+        // A JSON value a result passes through as it is (browser_evaluate's value, roadmap M5.8); default(JsonElement) cannot be written
+        else if (type == typeof(System.Text.Json.JsonElement)) value = System.Text.Json.JsonSerializer.SerializeToElement(new { sample = 7 });
         else if (type.IsEnum)
         {
             var values = Enum.GetValues(type);

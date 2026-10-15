@@ -129,9 +129,11 @@ public sealed class ServerHarness : IDisposable
     /// transport under it (roadmap M5.2) are refused, so a service that takes the transport directly cannot reach it
     /// either; every registered ICdp* service must be listed here. launch_browser_with_debug's readiness check
     /// (IDebugBrowserReadiness, roadmap M5.1) reaches the browser only through ICdpService, so it is refused with it. The
-    /// tab tools' CDP side (ICdpTabService, roadmap M5.5) navigates and activates tabs, so it is refused too.
+    /// tab tools' CDP side (ICdpTabService, roadmap M5.5) navigates and activates tabs, and the DOM bridge's (ICdpPageService,
+    /// roadmap M5.8) clicks, types and runs scripts in pages, so both are refused too.
     /// </summary>
-    public static IReadOnlyList<Type> RefusedServices { get; } = [typeof(ICdpService), typeof(ICdpTransport), typeof(ICdpTabService)];
+    public static IReadOnlyList<Type> RefusedServices { get; } =
+        [typeof(ICdpService), typeof(ICdpTransport), typeof(ICdpTabService), typeof(ICdpPageService)];
 
     /// <summary>
     /// The server's registrations for <paramref name="tier"/>. Building the collection resolves nothing and

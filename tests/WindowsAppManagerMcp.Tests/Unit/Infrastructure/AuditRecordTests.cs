@@ -195,6 +195,48 @@ public class AuditRecordTests
         entry.Args["urlLength"]!.GetValue<int>().Should().Be(url.Length);
     }
 
+    [Theory]
+    [InlineData(271828)]
+    [InlineData(true)]
+    public void BrowserEvaluatesValue_IsNeverRecorded_NotEvenAsANumber_OnlyItsLength(object value)
+    {
+        // The script's value is whatever the page returned: a one-time code, a balance, a flag (roadmap M5.8)
+        var call = Call("browser_evaluate", new { expression = "document.querySelector('#otp').value", timeoutMs = 5000, handle = 100 });
+        var result = Result(new { success = true, targetId = "T1", value, valueType = "number", valueLength = 6, cdpPort = 9222 });
+
+        var entry = Build(call, result);
+
+        var line = AuditRecord.ToJsonLine(entry);
+        line.Should().NotContain("271828").And.NotContain("#otp");
+        entry.Result!.ContainsKey("value").Should().BeFalse();
+        entry.Result["valueLength"]!.GetValue<int>().Should().Be(6);
+        entry.Args!["expressionLength"]!.GetValue<int>().Should().Be("document.querySelector('#otp').value".Length);
+        entry.Args["timeoutMs"]!.GetValue<int>().Should().Be(5000);
+    }
+
+    [Fact]
+    public void BrowserClicksName_IsAnElementsName_RecordedAsItsLength_WhileItsButtonIsKept()
+    {
+        // An accessible name on a web page is content, as element_action's name criterion is (roadmap M5.8)
+        var entry = Build(Call("browser_click", new { role = "button", name = "Pay 1,250 USD to J. Smith", button = "primary", handle = 100 }), null);
+
+        AuditRecord.ToJsonLine(entry).Should().NotContain("Smith");
+        entry.Args!["nameLength"]!.GetValue<int>().Should().Be("Pay 1,250 USD to J. Smith".Length);
+        entry.Args["roleLength"]!.GetValue<int>().Should().Be(6);
+        entry.Args["button"]!.GetValue<string>().Should().Be("primary");
+    }
+
+    [Fact]
+    public void BrowserTypesTextAndSelector_AreRecordedAsTheirLengths()
+    {
+        var entry = Build(Call("browser_type", new { text = "hunter2", selector = "#password", pressEnter = true, handle = 100 }), null);
+
+        AuditRecord.ToJsonLine(entry).Should().NotContain("hunter2").And.NotContain("#password");
+        entry.Args!["textLength"]!.GetValue<int>().Should().Be(7);
+        entry.Args["selectorLength"]!.GetValue<int>().Should().Be(9);
+        entry.Args["pressEnter"]!.GetValue<bool>().Should().BeTrue();
+    }
+
     [Fact]
     public void ANumberOrBooleanForAStringParameter_IsRecordedAsItsLength()
     {

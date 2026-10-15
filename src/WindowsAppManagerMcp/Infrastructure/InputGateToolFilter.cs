@@ -85,7 +85,11 @@ public static class InputGateToolFilter
     /// did not exit, and waits for the browser to exit without it. activate_tab and browser_navigate (roadmap M5.5) find the
     /// browser and the tab without it, take it to send the command that shows the tab (the browser may bring its window to
     /// the front) or navigates it, and release it once the browser answers, at most a second later: a page's load wait never
-    /// holds it. They refuse at once while input is paused.
+    /// holds it. They refuse at once while input is paused. The DOM bridge's actions (roadmap M5.8: browser_click,
+    /// browser_type, browser_handle_dialog, browser_evaluate) find the tab and the element without it, and take it only to
+    /// send the commands that change the page (each held until the browser answers, at most about a second); a script's or
+    /// a page's work after that never holds it. browser_screenshot takes it only to bring a tab that is not shown to the front.
+    /// The actions refuse at once while input is paused; browser_screenshot only when it would bring a tab to the front.
     /// </summary>
     public static IReadOnlySet<string> SelfGatedTools { get; } = new HashSet<string>(StringComparer.Ordinal)
     {
@@ -95,7 +99,10 @@ public static class InputGateToolFilter
         "element_action", "respond_to_dialog", "file_dialog",
         // Find the tab without the gate and take it only to send the command that changes the browser, until the browser
         // answers (at most a second): not for the page's load (roadmap M5.5)
-        "activate_tab", "browser_navigate"
+        "activate_tab", "browser_navigate",
+        // Find the tab and the element without the gate; take it only for the commands that change the page, or that bring a
+        // tab to the front for a capture (roadmap M5.8)
+        "browser_click", "browser_type", "browser_handle_dialog", "browser_evaluate", "browser_screenshot"
     };
 
     /// <summary>
@@ -119,7 +126,9 @@ public static class InputGateToolFilter
         // One observation of the desktop: windows, focus, popups, elements and an optional capture (roadmap M3.12)
         "get_desktop_state",
         // A debug browser's tabs, and a wait on a page of up to a minute (roadmap M5.5)
-        "list_tabs", "wait_for_browser"
+        "list_tabs", "wait_for_browser",
+        // An element's place on the screen: a DOM query and the window's UI Automation tree, read only (roadmap M5.8)
+        "browser_element_rect"
     };
 
     /// <summary>

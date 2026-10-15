@@ -71,6 +71,11 @@ public static class ServiceRegistration
         // The tab tools (roadmap M5.5): CDP only, over the same transport, port lookup and target policy as the reads
         services.AddSingleton<ICdpTabService, CdpTabService>();
         services.AddSingleton<IBrowserTabService, BrowserTabService>();
+        // The DOM bridge (roadmap M5.8): CDP only, as the tab tools; its page anchor reads the window through UI Automation
+        // and the window's render widgets (read-only)
+        services.AddSingleton<ICdpPageService, CdpPageService>();
+        services.AddSingleton<IBrowserViewportLocator, BrowserViewportLocator>();
+        services.AddSingleton<IBrowserPageService, BrowserPageService>();
         services.AddSingleton<IProcessService, ProcessService>();
         // The debug browsers' lifecycle (roadmap M5.4): named profiles, reuseIfRunning and close_debug_browser. It reaches a
         // browser only through ICdpService (Browser.close, /json/version), which the E2E harness refuses
@@ -236,6 +241,7 @@ public static class ServiceRegistration
         services.AddSingleton<LayoutPresetTools>();
         services.AddSingleton<BrowserReadingTools>();
         services.AddSingleton<BrowserTabTools>();
+        services.AddSingleton<BrowserPageTools>();
         services.AddSingleton<ScreenshotTools>();
         services.AddSingleton<UIElementTools>();
         services.AddSingleton<PopupTools>();
@@ -315,6 +321,7 @@ public static class ServiceRegistration
             .WithServerTools<LayoutPresetTools>()
             .WithServerTools<BrowserReadingTools>()
             .WithServerTools<BrowserTabTools>()
+            .WithServerTools<BrowserPageTools>()
             .WithServerTools<ScreenshotTools>()
             .WithServerTools<UIElementTools>()
             .WithServerTools<PopupTools>()

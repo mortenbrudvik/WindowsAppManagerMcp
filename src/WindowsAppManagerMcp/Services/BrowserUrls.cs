@@ -88,6 +88,40 @@ public static partial class BrowserUrls
             (url.Length == page.Length || url[page.Length] is '/' or '?' or '#'));
 
     /// <summary>
+    /// The schemes of the browsers' own pages (roadmap M5.8): settings, flags, passwords, history, DevTools, extensions'
+    /// pages and the browsers' new tab pages. Their pages run with the browser's privileges (chrome.send, extension APIs), so
+    /// the DOM bridge never reads or acts on them. view-source: shows another page's source in the browser's own viewer.
+    /// </summary>
+    private static readonly HashSet<string> BrowserOwnSchemes = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "chrome", "chrome-extension", "chrome-untrusted", "chrome-search", "devtools", "edge", "extension", "brave", "opera",
+        "vivaldi", "view-source"
+    };
+
+    /// <summary>
+    /// True when a tab at <paramref name="url"/> shows one of the browser's own pages (chrome:, edge:, devtools:, an
+    /// extension's chrome-extension: page, view-source:, an about: page other than about:blank and about:srcdoc), or a URL
+    /// that is no URL at all; false for web pages, file: pages, data: pages and about:blank (roadmap M5.8).
+    /// </summary>
+    public static bool IsBrowserOwnPage(string? url)
+    {
+        if (string.IsNullOrWhiteSpace(url) || SchemeOf(url.Trim()) is not { } scheme)
+        {
+            return true;
+        }
+
+        if (scheme.Equals("about", StringComparison.OrdinalIgnoreCase))
+        {
+            var page = url.Trim()[(scheme.Length + 1)..];
+            var end = page.IndexOfAny(['?', '#']);
+            page = end >= 0 ? page[..end] : page;
+            return !page.Equals("blank", StringComparison.OrdinalIgnoreCase) && !page.Equals("srcdoc", StringComparison.OrdinalIgnoreCase);
+        }
+
+        return BrowserOwnSchemes.Contains(scheme) || IsBrowserUi(url);
+    }
+
+    /// <summary>
     /// True when <paramref name="url"/> is a page of the browser's own UI rather than a tab's: docked DevTools, and
     /// Chrome's side panels and bubbles (WebUI on a host that ends in ".top-chrome").
     /// </summary>
