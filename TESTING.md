@@ -2349,6 +2349,32 @@ only the check's own debug instances):
   be read, a browser that exits during the wait) is covered by the fakes (`DebugBrowserReadinessProbeTests`,
   `DebugBrowserLaunchTests`); it is not provoked on a real browser.
 
+Roadmap M5.3 (on a real Edge, then on a real Chrome with `browser: "chrome"` as in the M5.1 block; every other rule is
+unchanged). A second window of a debug instance is opened through that instance's own DevTools endpoint
+(`Target.createTarget` with `newWindow: true`, from a script the check runs against the launch's `browserWsEndpoint`),
+never with keystrokes; windows are moved only with move_window on the check's own windows:
+
+- **No cdpPort.** On instance A, launched with port 0, get_browser_url and get_browser_content on the launch's
+  `windowHandle` without `cdpPort` return `source: "cdp"` and `cdpPort` equal to the launch's `cdpPort`;
+  get_browser_content with `textOnly: false` returns the HTML. The same on an instance launched on an explicit free port.
+- **Window binding.** Two normal, non-overlapping windows of A, each showing
+  `data:text/html,<title>Same</title>`: get_browser_url on each window returns a different `targetId`, the one whose
+  `Browser.getWindowForTarget` window is that window (check from the script). Repeat with the second window's tab in
+  the background behind a tab titled `Other`: the first window still returns its own tab. With one window maximized,
+  the maximized one returns its own tab; with both maximized, record the result (`CdpTargetAmbiguous` is expected).
+  Record the DPI scale of the monitor; if a monitor with another scale is attached, record whether a window there
+  binds (a fallback to the title is expected).
+- **Covered window.** A window of A covered by another of the check's windows since its page loaded: get_browser_content
+  without `cdpPort` returns `source: "cdp"` and the text (the M5.7 limit stays for browsers without a debug port).
+- **Forcing UI Automation.** `useCdp: false` on A's window returns `source: "uia"`, with `urlSource` and no
+  `cdpPort`; with `cdpPort` as well it is `InvalidArguments` and nothing is read. This also checks the M5.7 UI
+  Automation path on a debug instance.
+- **No client left.** After these reads, `edge://inspect` (Chrome: `chrome://inspect`) lists no DevTools client, and
+  no infobar appeared in A's windows.
+- **Port that is not the window's** (another process listening on the switch's port, an unreadable owner, port 0
+  without a port file) and **a browser without the switch** are covered by the fakes (`DebugPortLocatorTests`,
+  `BrowserReadingServiceTests`); the user's own browser is not passed to any call (rule 4).
+
 ### Tool surface snapshot
 
 `Contract/ToolSurfaceSnapshotTests` tests the server the way an agent sees it. It lists the tools of an
