@@ -350,7 +350,7 @@ public class BrowserReadingService : IBrowserReadingService
             {
                 var reason = cdpError != null
                     ? $"CDP could not be used ({cdpError})."
-                    : "No cdpPort was given; pass the debug port of a browser started with --remote-debugging-port (see launch_browser_with_debug).";
+                    : "No cdpPort was given; pass the cdpPort that launch_browser_with_debug returned (for a browser started otherwise, its --remote-debugging-port).";
                 return new BrowserContentResult(
                     Success: false,
                     Content: null,

@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
+using WindowsAppManagerMcp.Infrastructure;
 
 namespace WindowsAppManagerMcp.Tests.Unit.Services;
 
@@ -28,6 +29,10 @@ public sealed class DebugBrowserLaunchTests : IDisposable
     private readonly string _profile = Path.Combine(Path.GetTempPath(), $"wam-m51-test-{Guid.NewGuid():N}");
     private Action? _whenStarted;
 
+    /// <summary>The started browser's start time, as each read of it finds it (then <see cref="BrowserStart"/>).</summary>
+    private readonly Queue<DateTime?> _browserStartTimes = new();
+    private static readonly DateTime BrowserStart = new(2026, 10, 15, 9, 0, 0, DateTimeKind.Utc);
+
     private static readonly WindowInfo BrowserWindow =
         TestDataFactory.CreateWindowInfo(handleValue: 0x5678, title: "New Tab - Google Chrome", processName: "chrome", processId: BrowserProcessId);
 
@@ -53,6 +58,8 @@ public sealed class DebugBrowserLaunchTests : IDisposable
             [UsersChromeProcessId] = (1, "chrome.exe")
         });
         _processes.Setup(p => p.GetProcessImagePath(It.IsAny<int>())).Returns(Chrome);
+        _processes.Setup(p => p.GetProcessStartTime(BrowserProcessId))
+            .Returns(() => _browserStartTimes.Count > 0 ? _browserStartTimes.Dequeue() : BrowserStart);
         _windowWait.Setup(w => w.TakeBaseline()).Returns(new WindowBaseline(new Dictionary<nint, string>(), nint.Zero));
         WaitFinds(WindowWaitOutcome.NewWindow, BrowserWindow);
         Directory.CreateDirectory(_profile);
@@ -62,12 +69,22 @@ public sealed class DebugBrowserLaunchTests : IDisposable
     {
         try
         {
+            foreach (var file in Directory.EnumerateFiles(_profile))
+                File.SetAttributes(file, FileAttributes.Normal);
+
             Directory.Delete(_profile, recursive: true);
         }
-        catch (IOException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
         }
     }
+
+    /// <summary>
+    /// Holds the profile's lockfile open as a running Chromium does on Windows (its process singleton): for writing,
+    /// shared for reading only, deleted when closed.
+    /// </summary>
+    private FileStream HoldProfileLock() => new(
+        Path.Combine(_profile, ChromiumProfileLock.FileName), FileMode.Create, FileAccess.Write, FileShare.Read, 1, FileOptions.DeleteOnClose);
 
     private void WaitFinds(WindowWaitOutcome outcome, WindowInfo? window) =>
         _windowWait.Setup(w => w.WaitForNewWindowAsync(It.IsAny<WindowBaseline>(), It.IsAny<Func<WindowCandidate, bool>>(),
@@ -240,22 +257,183 @@ public sealed class DebugBrowserLaunchTests : IDisposable
     [Fact]
     public async Task ALaunchThatHandedOffToARunningBrowser_FailsWithDebugLaunchFailed()
     {
-        // Arrange - Chrome passed the request to the instance that already uses the profile and exited; no window of its own
+        // Arrange - Chrome passed the request to the instance that already uses the profile and exited; no window of its
+        // own. Its lockfile was not seen before the start (the browser started meanwhile): the backstop after the start
         WaitFinds(WindowWaitOutcome.TimedOut, null);
         _browser.SetupGet(p => p.HasExited).Returns(true);
 
         // Act
-        var result = await CreateSut().LaunchBrowserWithDebugAsync(Request(port: 9555));
+        var result = await CreateSut().LaunchBrowserWithDebugAsync(Request());
 
         // Assert
         result.Success.Should().BeFalse();
         result.ErrorCode.Should().Be(nameof(BrowserErrorCode.DebugLaunchFailed));
         result.LaunchStatus.Should().Be(LaunchStatus.ExitedWithoutWindow);
-        result.Error.Should().Contain("already running with this userDataDir").And.Contain("ignores the debug switches");
+        result.Error.Should().Contain("already running with this userDataDir").And.Contain("ignores the debug switches")
+            .And.Contain("opened the url").And.Contain("could not start");
         result.ProcessId.Should().BeNull("the started process exited");
         result.CdpPort.Should().BeNull();
         result.UserDataDir.Should().Be(_profile);
-        result.Warning.Should().NotBeNullOrEmpty("the window wait's note is carried through");
+    }
+
+    [Fact]
+    public async Task AHandoff_NamesNoBrowserToClose_AndKeepsOnlyTheLaunchsOwnWarning()
+    {
+        // Arrange - launch_application's note for a launch without a window says to pass expectWindow, which this tool
+        // does not have, and not to launch again, which the error's advice contradicts
+        _validation.Setup(v => v.ValidateExecutable(It.IsAny<string>()))
+            .Returns<string>(exe => new ExecutableValidationResult(true, SanitizedExecutable: exe, Warning: "careful"));
+        WaitFinds(WindowWaitOutcome.TimedOut, null);
+        _browser.SetupGet(p => p.HasExited).Returns(true);
+
+        // Act
+        var result = await CreateSut().LaunchBrowserWithDebugAsync(Request());
+
+        // Assert - the result has no PID of "that browser": close only a debug browser by the processId its own launch
+        // returned, never one found by name or title (it may be the user's own browser)
+        result.Warning.Should().Be("careful");
+        result.Error.Should().NotContain("Close that browser")
+            .And.Contain("processId its own launch returned").And.Contain("never close a browser you did not start");
+    }
+
+    [Fact]
+    public async Task ABrowserThatExitsAtOnceWithANewTemporaryProfile_IsNotBlamedOnAnotherBrowser()
+    {
+        // Arrange - no other browser can use a folder this launch just named
+        WaitFinds(WindowWaitOutcome.TimedOut, null);
+        _browser.SetupGet(p => p.HasExited).Returns(true);
+
+        // Act
+        var result = await CreateSut().LaunchBrowserWithDebugAsync(new DebugBrowserLaunchRequest("chrome"));
+
+        // Assert
+        result.ErrorCode.Should().Be(nameof(BrowserErrorCode.DebugLaunchFailed));
+        result.Error.Should().Contain("exited without a window of its own").And.Contain("could not start")
+            .And.NotContain("already running with this userDataDir").And.NotContain("leave userDataDir out");
+        result.Warning.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task AProfileABrowserIsRunningWith_IsRefusedBeforeAnythingIsDeletedOrStarted()
+    {
+        // Arrange - a debug browser an earlier call started on this profile: its port file, and its lockfile held open
+        File.WriteAllText(DevToolsActivePortFile.PathIn(_profile), "50123\n/devtools/browser/running\n");
+        using var running = HoldProfileLock();
+
+        // Act
+        var result = await CreateSut().LaunchBrowserWithDebugAsync(Request(url: "https://example.com/"));
+
+        // Assert - the url is not handed to that browser, and its port stays readable from the profile
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(nameof(BrowserErrorCode.DebugLaunchFailed));
+        result.Error.Should().Contain("already running with this userDataDir").And.Contain("Nothing was launched")
+            .And.Contain("never close a browser you did not start").And.Contain("leave userDataDir out");
+        result.ProcessId.Should().BeNull();
+        result.UserDataDir.Should().Be(_profile);
+        VerifyNothingStarted();
+        _windowWait.Verify(w => w.WaitForNewWindowAsync(It.IsAny<WindowBaseline>(), It.IsAny<Func<WindowCandidate, bool>>(),
+            It.IsAny<WindowWaitOptions>(), It.IsAny<CancellationToken>()), Times.Never);
+        File.ReadAllText(DevToolsActivePortFile.PathIn(_profile)).Should().StartWith("50123");
+    }
+
+    [Fact]
+    public async Task ALockfileNoBrowserHolds_DoesNotStopTheLaunch()
+    {
+        // Arrange - left behind (a copied profile); a running Chromium deletes its lockfile when it closes it
+        File.WriteAllText(Path.Combine(_profile, ChromiumProfileLock.FileName), string.Empty);
+        BrowserReportsPort("50123\n");
+
+        // Act
+        var result = await CreateSut().LaunchBrowserWithDebugAsync(Request());
+
+        // Assert
+        result.Success.Should().BeTrue(result.Error);
+        result.CdpPort.Should().Be(50123);
+    }
+
+    [Fact]
+    public void ChromiumProfileLock_IsHeldOnlyWhileTheLockfileIsOpen()
+    {
+        ChromiumProfileLock.HeldReason(_profile).Should().BeNull("there is no lockfile");
+
+        using (HoldProfileLock())
+        {
+            ChromiumProfileLock.HeldReason(_profile).Should().NotBeNull();
+        }
+
+        ChromiumProfileLock.HeldReason(_profile).Should().BeNull("Chromium's lockfile is deleted when it is closed");
+    }
+
+    [Fact]
+    public async Task AStalePortFileThatCannotBeDeleted_StartsNothing_AndDoesNotBlameABrowser()
+    {
+        // Arrange - Chromium writes DevToolsActivePort and closes it, so a running browser does not stop the delete;
+        // a read-only file (or the folder's permissions) does
+        var portFile = DevToolsActivePortFile.PathIn(_profile);
+        File.WriteAllText(portFile, "9999\n");
+        File.SetAttributes(portFile, FileAttributes.ReadOnly);
+
+        // Act
+        var result = await CreateSut().LaunchBrowserWithDebugAsync(Request());
+
+        // Assert
+        result.ErrorCode.Should().Be(nameof(BrowserErrorCode.DebugLaunchFailed));
+        result.Error.Should().Contain("could not be deleted").And.Contain("Nothing was launched").And.Contain("permissions")
+            .And.NotContain("Close that browser");
+        VerifyNothingStarted();
+    }
+
+    [Theory]
+    [InlineData("wam-profile")]
+    [InlineData(@"profiles\debug")]
+    [InlineData(@"\profiles\debug")]
+    [InlineData(@"C:profile")]
+    public async Task ARelativeUserDataDir_IsRefused_AndNothingIsStarted(string userDataDir)
+    {
+        // Arrange - the server would resolve it against its own current directory, the browser against its install folder
+        var sut = CreateSut();
+
+        // Act
+        var result = await sut.LaunchBrowserWithDebugAsync(new DebugBrowserLaunchRequest("chrome", UserDataDir: userDataDir));
+
+        // Assert
+        result.ErrorCode.Should().Be(ToolErrorReporting.InvalidArgumentsErrorCode);
+        result.Error.Should().Contain("full path").And.Contain("Nothing was launched");
+        VerifyNothingStarted();
+    }
+
+    [Fact]
+    public async Task ABrowserThatExitsWhileItsPortIsAwaited_IsNotNamed_SoNoOtherProcessIsClosedByItsPid()
+    {
+        // Arrange - the browser started and showed its window, then exited before writing DevToolsActivePort
+        _browserStartTimes.Enqueue(BrowserStart);
+        _browserStartTimes.Enqueue(null);
+
+        // Act
+        var result = await CreateSut().LaunchBrowserWithDebugAsync(Request());
+
+        // Assert
+        result.ErrorCode.Should().Be(nameof(BrowserErrorCode.DebugLaunchFailed));
+        result.Error.Should().Contain("did not write its DevTools port").And.Contain("no longer running").And.NotContain("still running");
+        result.ProcessId.Should().BeNull();
+        result.WindowHandle.Should().BeNull();
+        result.UserDataDir.Should().Be(_profile);
+    }
+
+    [Fact]
+    public async Task ABrowserWhosePidWasReusedWhileItsPortIsAwaited_IsNotNamed()
+    {
+        // Arrange - another process now has the PID: it started at another time
+        _browserStartTimes.Enqueue(BrowserStart);
+        _browserStartTimes.Enqueue(BrowserStart.AddSeconds(5));
+
+        // Act
+        var result = await CreateSut().LaunchBrowserWithDebugAsync(Request());
+
+        // Assert
+        result.Error.Should().Contain("no longer running");
+        result.ProcessId.Should().BeNull();
+        result.WindowHandle.Should().BeNull();
     }
 
     [Fact]
@@ -340,6 +518,77 @@ public sealed class DebugBrowserLaunchTests : IDisposable
         result.Error.Should().StartWith("/json/version did not answer").And.Contain("still running");
         result.ProcessId.Should().Be(BrowserProcessId);
         result.CdpPort.Should().Be(50123);
+    }
+
+    public static TheoryData<Exception> HookFailures() => new()
+    {
+        new HttpRequestException("No connection could be made because the target machine actively refused it."),
+        new TaskCanceledException("The request was canceled due to the configured HttpClient.Timeout of 10 seconds elapsing.")
+    };
+
+    [Theory]
+    [MemberData(nameof(HookFailures))]
+    public async Task AReadinessHookThatThrows_IsANotReadyAnswer_ThatStillNamesTheRunningBrowser(Exception failure)
+    {
+        // Arrange - the hook's contract is to report, not throw; its own timeout is not the caller's cancellation
+        BrowserReportsPort("50123\n");
+        var readiness = new Mock<IDebugBrowserReadiness>();
+        readiness.Setup(r => r.WaitUntilReadyAsync(It.IsAny<DebugBrowserEndpoint>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(failure);
+
+        // Act
+        var result = await CreateSut(readiness: readiness.Object).LaunchBrowserWithDebugAsync(Request());
+
+        // Assert
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(nameof(BrowserErrorCode.DebugLaunchFailed));
+        result.Error.Should().Contain(failure.Message).And.Contain("still running");
+        result.ProcessId.Should().Be(BrowserProcessId);
+        result.WindowHandle.Should().Be(BrowserWindow.Handle);
+        result.CdpPort.Should().Be(50123);
+        result.UserDataDir.Should().Be(_profile);
+    }
+
+    [Fact]
+    public async Task TheCallersCancellation_DuringTheReadinessCheck_IsThrown()
+    {
+        // Arrange
+        BrowserReportsPort("50123\n");
+        using var cancel = new CancellationTokenSource();
+        var readiness = new Mock<IDebugBrowserReadiness>();
+        readiness.Setup(r => r.WaitUntilReadyAsync(It.IsAny<DebugBrowserEndpoint>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .Returns<DebugBrowserEndpoint, TimeSpan, CancellationToken>((_, _, token) =>
+            {
+                cancel.Cancel();
+                return Task.FromCanceled<DebugBrowserReadiness>(token);
+            });
+
+        // Act
+        var act = () => CreateSut(readiness: readiness.Object).LaunchBrowserWithDebugAsync(Request(), cancel.Token);
+
+        // Assert
+        await act.Should().ThrowAsync<OperationCanceledException>();
+    }
+
+    [Fact]
+    public async Task ABrowserThatExitedBeforeItsEndpointAnswered_IsNotNamed()
+    {
+        // Arrange
+        BrowserReportsPort("50123\n");
+        _browserStartTimes.Enqueue(BrowserStart);
+        _browserStartTimes.Enqueue(null);
+        var readiness = new Mock<IDebugBrowserReadiness>();
+        readiness.Setup(r => r.WaitUntilReadyAsync(It.IsAny<DebugBrowserEndpoint>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DebugBrowserReadiness(Ready: false, Error: "/json/version did not answer within 10 seconds."));
+
+        // Act
+        var result = await CreateSut(readiness: readiness.Object).LaunchBrowserWithDebugAsync(Request());
+
+        // Assert
+        result.Error.Should().StartWith("/json/version did not answer").And.Contain("no longer running");
+        result.ProcessId.Should().BeNull();
+        result.WindowHandle.Should().BeNull();
+        result.CdpPort.Should().BeNull();
     }
 
     [Fact]

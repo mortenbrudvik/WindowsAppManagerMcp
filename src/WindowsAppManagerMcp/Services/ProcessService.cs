@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Diagnostics;
+using WindowsAppManagerMcp.Infrastructure;
 using WindowsAppManagerMcp.Models;
 using WindowsAppManagerMcp.Models.Results;
 using WindowsAppManagerMcp.Native;
@@ -1809,12 +1810,13 @@ public class ProcessService : IProcessService
 
     /// <remarks>
     /// The steps (roadmap M5.1): find the .exe (<see cref="DebugBrowserLocator"/>); check an explicit port is free (port 0
-    /// needs no check: the browser picks a free port); delete a DevToolsActivePort file an earlier run of the profile left;
+    /// needs no check: the browser picks a free port); refuse a relative profile path, and a profile that a running browser
+    /// holds (<see cref="ChromiumProfileLock"/>); delete a DevToolsActivePort file an earlier run of the profile left;
     /// start the browser with <see cref="BuildDebugBrowserArguments"/> and wait for a window of the started process only
     /// (<see cref="LaunchRequest.OnlyStartedProcess"/>); refuse a launch that handed off or did not start; for port 0, read
     /// the port from DevToolsActivePort; then let <see cref="IDebugBrowserReadiness"/>, when the server has one, confirm
-    /// that the endpoint answers. A failure after the start keeps the process, window and profile in the result, so that
-    /// the browser can be closed.
+    /// that the endpoint answers. A failure after the start keeps the process, window and profile in the result while the
+    /// browser still runs, so that it can be closed.
     /// </remarks>
     public async Task<DebugBrowserLaunchResult> LaunchBrowserWithDebugAsync(
         DebugBrowserLaunchRequest request,
@@ -1841,12 +1843,35 @@ public class ProcessService : IProcessService
                 BrowserErrorCode.PortInUse);
         }
 
+        if (request.UserDataDir is { } given && !Path.IsPathFullyQualified(given))
+        {
+            // The server would read DevToolsActivePort relative to its own current directory, the browser would take the
+            // folder relative to its install folder
+            return DebugLaunchFailure(
+                $"userDataDir must be a full path, but '{given}' is not. Nothing was launched.", ToolErrorReporting.InvalidArgumentsErrorCode);
+        }
+
+        var temporaryProfile = request.UserDataDir == null;
         var userDataDir = request.UserDataDir ?? Path.Combine(Path.GetTempPath(), $"browser-debug-{Guid.NewGuid()}");
-        if (DevToolsActivePortFile.DeleteStale(userDataDir) is { } notDeleted)
+
+        // Before anything is deleted or started: a start would hand the url to the browser holding the profile, and the
+        // port file deleted below would be that browser's
+        if (ChromiumProfileLock.HeldReason(userDataDir) is { } held)
         {
             return DebugLaunchFailure(
-                $"The {DevToolsActivePortFile.FileName} file an earlier run left in '{userDataDir}' could not be deleted ({notDeleted}): a " +
-                "browser may still be using this profile. Nothing was launched. Close that browser, or leave userDataDir out to use a new temporary profile.",
+                $"A browser is already running with this userDataDir: it holds the profile's {ChromiumProfileLock.FileName} ({held}). " +
+                "Nothing was launched and nothing in the profile was changed; a start would only hand the url to that browser, " +
+                $"which ignores the debug switches. {CloseOnlyYourOwnAdvice} Otherwise leave userDataDir out to use a new temporary profile.",
+                BrowserErrorCode.DebugLaunchFailed) with { UserDataDir = userDataDir };
+        }
+
+        if (DevToolsActivePortFile.DeleteStale(userDataDir) is { } notDeleted)
+        {
+            // Chromium writes the file and closes it, so a running browser does not stop the delete
+            return DebugLaunchFailure(
+                $"The {DevToolsActivePortFile.FileName} file an earlier run left in '{userDataDir}' could not be deleted ({notDeleted}), " +
+                "so the port read from it could be that run's. Nothing was launched. Check the file's attributes and the folder's " +
+                "permissions, or leave userDataDir out to use a new temporary profile.",
                 BrowserErrorCode.DebugLaunchFailed);
         }
 
@@ -1868,27 +1893,27 @@ public class ProcessService : IProcessService
                 };
             }
 
-            if (NotStartedReason(browser, launch) is { } notStarted)
+            if (NotStartedReason(browser, launch, temporaryProfile) is { } notStarted)
             {
+                // Only the launch's own warning: launch_application's note for a launch without a window advises its
+                // expectWindow, which this tool does not have
                 return new DebugBrowserLaunchResult(false, null, null, null, userDataDir, notStarted,
-                    nameof(BrowserErrorCode.DebugLaunchFailed), launch.Warning, launch.Status);
+                    nameof(BrowserErrorCode.DebugLaunchFailed), WithoutNoWindowNote(launch, request.WaitTimeoutMs), launch.Status);
             }
 
-            var started = new DebugBrowserLaunchResult(true, launch.ProcessId, launch.WindowHandle, port, userDataDir, null, null,
+            // Read now, so that a failure below can tell the browser from a process that got its PID after it exited
+            var processId = launch.ProcessId!.Value;
+            var startTime = _processWrapper.GetProcessStartTime(processId);
+            var started = new DebugBrowserLaunchResult(true, processId, launch.WindowHandle, port, userDataDir, null, null,
                 launch.Warning, launch.Status);
             if (port == DebugBrowserLaunchRequest.EphemeralPort)
             {
                 if (await WaitForDevToolsPortAsync(userDataDir, cancellationToken).ConfigureAwait(false) is not { } reportedPort)
                 {
-                    return started with
-                    {
-                        Success = false,
-                        CdpPort = null,
-                        Error = $"The browser started (processId {launch.ProcessId}) but did not write its DevTools port to " +
-                                $"'{DevToolsActivePortFile.PathIn(userDataDir)}' within {DevToolsPortTimeout.TotalSeconds:0.#} seconds, so " +
-                                "the port is not known. It is still running: close it as this tool's description says, then try again.",
-                        ErrorCode = nameof(BrowserErrorCode.DebugLaunchFailed)
-                    };
+                    return FailedAfterStart(started with { CdpPort = null }, startTime,
+                        $"The browser started (processId {processId}) but did not write its DevTools port to " +
+                        $"'{DevToolsActivePortFile.PathIn(userDataDir)}' within {DevToolsPortTimeout.TotalSeconds:0.#} seconds, so " +
+                        "the port is not known.");
                 }
 
                 started = started with { CdpPort = reportedPort };
@@ -1896,19 +1921,24 @@ public class ProcessService : IProcessService
 
             if (_debugBrowserReadiness != null)
             {
-                var readiness = await _debugBrowserReadiness.WaitUntilReadyAsync(
-                    new DebugBrowserEndpoint(browser, launch.ProcessId!.Value, started.CdpPort!.Value, userDataDir),
-                    DebugReadinessTimeout,
-                    cancellationToken).ConfigureAwait(false);
+                DebugBrowserReadiness readiness;
+                try
+                {
+                    readiness = await _debugBrowserReadiness.WaitUntilReadyAsync(
+                        new DebugBrowserEndpoint(browser, processId, started.CdpPort!.Value, userDataDir),
+                        DebugReadinessTimeout,
+                        cancellationToken).ConfigureAwait(false);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+                {
+                    // The hook reports, it does not throw; one that does (its own timeout, a refused connection) still
+                    // leaves a running browser that the result must name
+                    readiness = new DebugBrowserReadiness(Ready: false, Error: $"The DevTools endpoint check failed: {ex.Message}");
+                }
+
                 if (!readiness.Ready)
                 {
-                    return started with
-                    {
-                        Success = false,
-                        Error = $"{readiness.Error ?? "The DevTools endpoint did not answer."} The browser (processId {launch.ProcessId}) " +
-                                "is still running: close it as this tool's description says.",
-                        ErrorCode = nameof(BrowserErrorCode.DebugLaunchFailed)
-                    };
+                    return FailedAfterStart(started, startTime, readiness.Error ?? "The DevTools endpoint did not answer.");
                 }
             }
 
@@ -1937,23 +1967,78 @@ public class ProcessService : IProcessService
             : $"executablePath '{executablePath.Trim()}' does not exist. Nothing was launched.";
 
     /// <summary>
+    /// What a failure says about closing a browser. A result that names no process gives no safe way to find "that
+    /// browser": one found by name or title may be the user's own.
+    /// </summary>
+    private const string CloseOnlyYourOwnAdvice =
+        "If it is a debug browser you started earlier with this userDataDir, use the cdpPort its launch returned, or close it " +
+        "by the processId its own launch returned; never close a browser you did not start.";
+
+    /// <summary>
     /// Why a launch that Windows accepted did not start a debug browser of its own, or null when it did: the started
     /// process is running (with its window, or still without one when the wait ended). The window wait counted only the
     /// started process's windows, so a launch whose request went to a browser already running with the same profile ends
-    /// with the launcher gone and no window; that browser ignores the debug switches of the request.
+    /// with the launcher gone and no window (that browser ignores the debug switches of the request); so does a browser
+    /// that could not start with the profile. The profile lock is checked before the start, so the first is a browser
+    /// that took the profile meanwhile; with a new temporary profile it cannot be.
     /// </summary>
-    private static string? NotStartedReason(string browser, LaunchResult launch) => launch.Status switch
+    private static string? NotStartedReason(string browser, LaunchResult launch, bool temporaryProfile) => launch.Status switch
     {
+        LaunchStatus.ExitedWithoutWindow or LaunchStatus.PossibleHandoff when temporaryProfile =>
+            $"The {browser} process that was started exited without a window of its own, so no debug port was opened. No " +
+            "other browser can use its new temporary profile, so the browser could not start (for example a policy, or a " +
+            "crash). Ask the user before trying again.",
         LaunchStatus.ExitedWithoutWindow or LaunchStatus.PossibleHandoff =>
-            $"The {browser} process that was started exited without a window of its own: most likely a {browser} already " +
-            "running with this userDataDir took the request over. That browser ignores the debug switches, so no debug port " +
-            "was opened by this launch. Close that browser first, or leave userDataDir out to use a new temporary profile.",
+            $"The {browser} process that was started exited without a window of its own, so no debug port was opened. Either " +
+            $"a {browser} already running with this userDataDir took the request over (it ignores the debug switches, and has " +
+            "most likely opened the url in a new window of its own), or the browser could not start with this profile (for " +
+            $"example a folder it cannot write, a policy, or a crash). {CloseOnlyYourOwnAdvice} Otherwise leave userDataDir " +
+            "out to use a new temporary profile.",
         LaunchStatus.AwaitingUserConsent =>
             "Windows is showing a consent or security prompt for the browser's start (see warning), so it is not known " +
             "whether it starts or which port it gets. Ask the user to answer the prompt; do not launch it again meanwhile.",
         _ when launch.ProcessId == null => "Windows started no browser process, so no debug port was opened.",
         _ => null
     };
+
+    /// <summary><paramref name="launch"/>'s warning without the note <see cref="NoWindowNote"/> added to it.</summary>
+    private static string? WithoutNoWindowNote(LaunchResult launch, int waitTimeoutMs)
+    {
+        if (launch.Status is not { } status || NoWindowNote(status, waitTimeoutMs) is not { } note || launch.Warning is not { } warning)
+            return launch.Warning;
+
+        if (warning == note)
+            return null;
+
+        return warning.EndsWith("; " + note, StringComparison.Ordinal) ? warning[..^(note.Length + 2)] : warning;
+    }
+
+    /// <summary>
+    /// A failure after the browser started: it keeps the process, window and port while that process still runs (its
+    /// start time is the one read after the start), so that it can be closed; once it exited, its PID may be another
+    /// process's, so the result names none.
+    /// </summary>
+    private DebugBrowserLaunchResult FailedAfterStart(DebugBrowserLaunchResult started, DateTime? startTime, string error)
+    {
+        var processId = started.ProcessId!.Value;
+        var stillRunning = _processWrapper.GetProcessStartTime(processId) is { } now && (startTime == null || now == startTime);
+        return stillRunning
+            ? started with
+            {
+                Success = false,
+                Error = $"{error} The browser (processId {processId}) is still running: close it as this tool's description says.",
+                ErrorCode = nameof(BrowserErrorCode.DebugLaunchFailed)
+            }
+            : started with
+            {
+                Success = false,
+                ProcessId = null,
+                WindowHandle = null,
+                CdpPort = null,
+                Error = $"{error} The browser (processId {processId}) is no longer running, so there is nothing to close.",
+                ErrorCode = nameof(BrowserErrorCode.DebugLaunchFailed)
+            };
+    }
 
     /// <summary>
     /// The port a browser started with port 0 wrote to its profile's DevToolsActivePort, polled for at most
@@ -1995,7 +2080,8 @@ public class ProcessService : IProcessService
         // No search engine choice dialog (Chrome 120 and later, in some regions) over the first window of a new profile
         "--disable-search-engine-choice-screen",
         // No sync: a browser sign-in (by the user, or Edge's own with the Windows account) would otherwise copy the account's
-        // passwords, history and other data into a profile that the unauthenticated debug port exposes
+        // passwords, history and other data into a profile that the unauthenticated debug port exposes. It does not stop
+        // the sign-in itself: Edge may still sign in to Microsoft sites with the Windows account (not checked on a desktop yet)
         "--disable-sync"
     ];
 

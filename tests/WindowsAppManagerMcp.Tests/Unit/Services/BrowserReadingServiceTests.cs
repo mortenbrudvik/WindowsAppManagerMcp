@@ -833,7 +833,7 @@ public class BrowserReadingServiceTests
 
         result.Success.Should().BeFalse();
         result.ErrorCode.Should().Be(BrowserErrorCode.HtmlRequiresCdp);
-        result.Error.Should().Contain("textOnly=true");
+        result.Error.Should().Contain("textOnly=true").And.Contain("the cdpPort that launch_browser_with_debug returned");
         _worker.Calls.Should().Be(0);
     }
 

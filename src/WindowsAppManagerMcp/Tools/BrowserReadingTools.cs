@@ -33,6 +33,9 @@ public class BrowserReadingTools
         "If CDP cannot be used, the tool falls back to UI Automation and explains why in cdpError, unless requireCdp is true. " +
         "The result's source field says which method produced the data ('cdp' or 'uia'); targetId identifies the CDP tab.";
 
+    private const string CdpPortDescription =
+        "Optional CDP port of the browser that owns the window: the cdpPort that launch_browser_with_debug returned (for a browser started otherwise, its --remote-debugging-port).";
+
     private const string RequireCdpDescription =
         "If true, return the CDP error (for example CdpTimeout, CdpDialogOpen, CdpTargetNotFound) instead of falling back to UI Automation. Requires cdpPort. Default: false.";
 
@@ -46,7 +49,7 @@ public class BrowserReadingTools
         long? handle = null,
         [Description(BrowserWindowDescription)]
         WindowSelector? window = null,
-        [Description("Optional CDP port of the browser that owns the window. If the browser was started with --remote-debugging-port=9222 (for example by launch_browser_with_debug), specify 9222 here.")]
+        [Description(CdpPortDescription)]
         int? cdpPort = null,
         [Description(RequireCdpDescription)]
         bool requireCdp = false,
@@ -72,7 +75,7 @@ public class BrowserReadingTools
         int? maxLength = null,
         [Description("If true (default), returns only text content. If false, returns full HTML; this requires CDP (cdpPort).")]
         bool textOnly = true,
-        [Description("Optional CDP port of the browser that owns the window. If the browser was started with --remote-debugging-port=9222 (for example by launch_browser_with_debug), specify 9222 here for JavaScript-rendered content.")]
+        [Description(CdpPortDescription + " Needed for JavaScript-rendered content.")]
         int? cdpPort = null,
         [Description(RequireCdpDescription)]
         bool requireCdp = false,
@@ -97,7 +100,7 @@ public class BrowserReadingTools
     [McpServerTool(Name = "get_active_browser_url", Title = "Get Active Browser URL", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
     [Description("Get the URL from the currently active (foreground) browser window. Convenience method that combines get_foreground_window and get_browser_url, with the same CDP behavior and result fields. Returns an error if the foreground window is not a browser.")]
     public async Task<BrowserUrlResultDto> GetActiveBrowserUrl(
-        [Description("Optional CDP port of the browser that owns the window. If the browser was started with --remote-debugging-port=9222 (for example by launch_browser_with_debug), specify 9222 here.")]
+        [Description(CdpPortDescription)]
         int? cdpPort = null,
         [Description(RequireCdpDescription)]
         bool requireCdp = false,
@@ -114,8 +117,8 @@ public class BrowserReadingTools
     [Description("Launch a browser with CDP (Chrome DevTools Protocol) debug port enabled. This enables richer content extraction via get_browser_content with the cdpPort parameter. Uses a separate user data directory by default to avoid conflicts with existing browser sessions." +
                  " The debug port has no authentication: any program on this computer can control that browser until it exits. Launch it only when CDP is needed, and close every window of that browser when done" +
                  " (find_windows with its processId and includeCloaked=true, so windows on other virtual desktops are found too), then confirm with list_processes and includeWindowless=true that it has exited." +
-                 " DebugLaunchFailed when a browser already running with that userDataDir takes the request over (it ignores the debug port)." +
-                 " InvalidArguments: a url that starts with '-' or '/' (the browser would read it as a command-line switch), or a userDataDir inside a browser's own 'User Data' folder (the user's real profile).")]
+                 " DebugLaunchFailed when a browser is already running with that userDataDir (nothing is launched)." +
+                 " InvalidArguments: a url that starts with '-' or '/' (the browser would read it as a command-line switch), a userDataDir that is not a full path or is inside a browser's own 'User Data' folder (the user's real profile), or an executablePath that is not the browser's own .exe.")]
     public async Task<DebugBrowserLaunchResultDto> LaunchBrowserWithDebug(
         [Description("Browser to launch: chrome (default), edge or brave. Any other value fails with UnsupportedBrowser.")]
         DebugBrowser browser = DebugBrowser.Chrome,
@@ -123,7 +126,7 @@ public class BrowserReadingTools
         string? url = null,
         [Description("CDP debug port: 0 (default) lets the browser pick a free port, or 1024-65535. Pass the result's cdpPort as the reading tools' cdpPort.")]
         int port = DebugBrowserLaunchRequest.EphemeralPort,
-        [Description("Separate user data directory to avoid conflicts with existing sessions. If not specified, a new temporary directory is created automatically. Never pass the user's real browser profile: the open debug port would expose its signed-in sessions. A path inside a 'User Data' folder (where Chrome, Edge and Brave keep the user's profiles) is refused.")]
+        [Description("Separate user data directory (a full path) to avoid conflicts with existing sessions. If not specified, a new temporary directory is created automatically. Never pass the user's real browser profile: the open debug port would expose its signed-in sessions. A path inside a 'User Data' folder (where Chrome, Edge and Brave keep the user's profiles) is refused.")]
         string? userDataDir = null,
         [Description("Full path of the browser's chrome.exe, msedge.exe or brave.exe (matching browser), when the server does not find it.")]
         string? executablePath = null,
@@ -146,6 +149,9 @@ public class BrowserReadingTools
         {
             throw new ToolErrorException(ToolErrorReporting.InvalidArgumentsErrorCode, badProfile);
         }
+
+        // One full path for the browser, the port file and the result: the path the check above looked at
+        userDataDir = string.IsNullOrWhiteSpace(userDataDir) ? null : Path.GetFullPath(userDataDir.Trim());
 
         var browserName = ToolEnum<DebugBrowser>.Name(browser);
         if (DebugExecutableRefusal(browserName, executablePath) is { } badExecutable)
@@ -210,7 +216,8 @@ public class BrowserReadingTools
     /// Why launch_browser_with_debug refuses <paramref name="userDataDir"/>, or null: a path inside a folder named
     /// 'User Data' (also as its 8.3 short name), where Chrome, Edge, Brave and other Chromium browsers keep the user's
     /// real profiles. The open debug port would hand that profile's signed-in sessions to any program on the computer.
-    /// A profile the user keeps elsewhere cannot be told apart.
+    /// A profile the user keeps elsewhere cannot be told apart. A relative path is refused too: the server would resolve it
+    /// against its own current directory, the browser against its install folder.
     /// </summary>
     public static string? DebugProfileRefusal(string? userDataDir)
     {
@@ -219,10 +226,17 @@ public class BrowserReadingTools
             return null;
         }
 
+        var path = userDataDir.Trim();
+        if (path.Any(char.IsControl) || !Path.IsPathFullyQualified(path))
+        {
+            return $"userDataDir must be a full path (with its drive or server), but '{path}' is not. Nothing was launched. " +
+                   "Leave it out to use a new temporary profile.";
+        }
+
         string fullPath;
         try
         {
-            fullPath = Path.GetFullPath(userDataDir.Trim());
+            fullPath = Path.GetFullPath(path);
         }
         catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
         {

@@ -70,7 +70,7 @@ public class CdpService : ICdpService
         {
             return CdpResult<IReadOnlyList<CdpTarget>>.Fail(
                 BrowserErrorCode.CdpUnavailable,
-                $"Invalid CDP port {port}. Use the port the browser was started with (--remote-debugging-port).");
+                $"Invalid CDP port {port}. Pass the cdpPort that launch_browser_with_debug returned (for a browser started otherwise, its --remote-debugging-port).");
         }
 
         using var timeoutSource = CreateTimeoutSource(timeout, cancellationToken);
@@ -124,7 +124,7 @@ public class CdpService : ICdpService
                 BrowserErrorCode.CdpPortOwnerMismatch,
                 $"CDP port {port} belongs to process {DescribeProcess(portOwner.Value)}, but the window belongs to " +
                 $"process {DescribeProcess(windowProcessId)}. Pass the debug port of the browser instance that owns " +
-                "this window (for example the port given to launch_browser_with_debug).");
+                "this window (for example the cdpPort that launch_browser_with_debug returned).");
         }
 
         var targets = await GetPageTargetsAsync(port, timeout, cancellationToken);

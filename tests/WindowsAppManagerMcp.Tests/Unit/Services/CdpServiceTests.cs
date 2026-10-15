@@ -132,6 +132,7 @@ public class CdpServiceTests
         var result = await sut.GetPageTargetsAsync(port, LongTimeout);
 
         result.ErrorCode.Should().Be(BrowserErrorCode.CdpUnavailable);
+        result.Error.Should().Contain("the cdpPort that launch_browser_with_debug returned", "its browser was started with port 0 (roadmap M5.1)");
         http.Requests.Should().BeEmpty();
     }
 
@@ -190,7 +191,8 @@ public class CdpServiceTests
 
         result.Success.Should().BeFalse();
         result.ErrorCode.Should().Be(BrowserErrorCode.CdpPortOwnerMismatch);
-        result.Error.Should().Contain("999").And.Contain(BrowserPid.ToString());
+        result.Error.Should().Contain("999").And.Contain(BrowserPid.ToString())
+            .And.Contain("the cdpPort that launch_browser_with_debug returned").And.NotContain("port given to");
         http.Requests.Should().BeEmpty("a port owned by another process must not be queried");
     }
 

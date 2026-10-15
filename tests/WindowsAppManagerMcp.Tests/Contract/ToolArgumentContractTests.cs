@@ -237,6 +237,7 @@ public sealed class ToolArgumentContractTests : IDisposable
     [InlineData("""{ "userDataDir": "C:/Users/someone/AppData/Local/Google/Chrome/User Data" }""", "User Data")]
     [InlineData("""{ "userDataDir": "C:/Users/someone/AppData/Local/Microsoft/Edge/User Data/Default" }""", "User Data")]
     [InlineData("""{ "userDataDir": "C:/Users/someone/AppData/Local/BraveSoftware/Brave-Browser/user data/" }""", "User Data")]
+    [InlineData("""{ "userDataDir": "wam-profile" }""", "userDataDir must be a full path")]
     [InlineData("""{ "executablePath": "chrome.exe" }""", "executablePath must be the full path of chrome.exe")]
     [InlineData("""{ "browser": "edge", "executablePath": "C:/Windows/System32/cmd.exe" }""", "executablePath must name msedge.exe")]
     public async Task LaunchBrowserWithDebug_RefusesASwitchAsUrl_ARealProfile_AndAnotherProgram_AndLaunchesNothing(string arguments, string message)

@@ -1,3 +1,5 @@
+using System.ComponentModel;
+using System.Reflection;
 using WindowsAppManagerMcp.Infrastructure;
 using WindowsAppManagerMcp.Tools;
 
@@ -637,6 +639,55 @@ public class BrowserReadingToolsTests
         (await act.Should().ThrowAsync<ToolErrorException>()).Which.Message.Should()
             .Contain("port must be 0 (the browser picks a free port) or a TCP port from 1024 to 65535").And.Contain("Nothing was launched");
         _mockProcessService.VerifyNoOtherCalls();
+    }
+
+    [Theory]
+    [InlineData("wam-profile")]
+    [InlineData(@"profiles\debug")]
+    [InlineData(@"\profiles\debug")]
+    [InlineData(@"C:profile")]
+    public async Task LaunchBrowserWithDebug_RefusesARelativeUserDataDir_AndLaunchesNothing(string userDataDir)
+    {
+        // Arrange - the server would resolve it against its own current directory, the browser against its install folder
+        var sut = CreateSut();
+
+        // Act
+        var act = () => sut.LaunchBrowserWithDebug(userDataDir: userDataDir);
+
+        // Assert
+        (await act.Should().ThrowAsync<ToolErrorException>()).Which.Message.Should()
+            .Contain("userDataDir must be a full path").And.Contain("Nothing was launched");
+        _mockProcessService.VerifyNoOtherCalls();
+    }
+
+    [Theory]
+    [InlineData("  C:/Temp/debug-profile  ", @"C:\Temp\debug-profile")]
+    [InlineData(@"C:\Temp\a\..\debug-profile", @"C:\Temp\debug-profile")]
+    [InlineData("   ", null)]
+    public async Task LaunchBrowserWithDebug_PassesUserDataDirAsOneFullPath(string userDataDir, string? passed)
+    {
+        // Arrange - the browser, the port file and the result all use the path the 'User Data' check looked at
+        var requests = LaunchReturns(Launched);
+        var sut = CreateSut();
+
+        // Act
+        await sut.LaunchBrowserWithDebug(userDataDir: userDataDir);
+
+        // Assert
+        requests.Should().ContainSingle().Which.UserDataDir.Should().Be(passed);
+    }
+
+    [Theory]
+    [InlineData(nameof(BrowserReadingTools.GetBrowserUrl))]
+    [InlineData(nameof(BrowserReadingTools.GetBrowserContent))]
+    [InlineData(nameof(BrowserReadingTools.GetActiveBrowserUrl))]
+    public void TheReadingToolsCdpPort_IsTheOneLaunchBrowserWithDebugReturned(string tool)
+    {
+        // launch_browser_with_debug no longer listens on 9222 by default (roadmap M5.1)
+        var cdpPort = typeof(BrowserReadingTools).GetMethod(tool)!.GetParameters().Single(p => p.Name == "cdpPort");
+        var description = cdpPort.GetCustomAttribute<DescriptionAttribute>()!.Description;
+
+        description.Should().Contain("the cdpPort that launch_browser_with_debug returned").And.NotContain("9222");
     }
 
     [Theory]
