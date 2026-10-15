@@ -2457,7 +2457,7 @@ instance, named by the launch's `windowHandle`:
 Roadmap M5.8 (on a real Edge, then on a real Chrome with `browser: "chrome"` as in the M5.1 block; every other rule is
 unchanged: a throwaway-profile debug instance started by launch_browser_with_debug, cleanup by process ID with
 close_debug_browser, and no window of the user's browser passed to any call). The server runs with
-`WAM_TOOLSETS=+browser-actions` and an audit folder of the check's own. The pages come from a 127.0.0.1
+`WAM_TOOLSETS=+browser-actions,+browser-script` and an audit folder of the check's own. The pages come from a 127.0.0.1
 HttpListener the check runs, each under 1 MB: `/form` (title `Form`: a labelled text input `#q`, a button `Save draft`
 that writes `saved` into `#out`, a disabled button `Archive`, two buttons `Delete` that write `d0` and `d1`, a button
 `Hidden` under a `div#cover` overlay, a `contenteditable` div `#note`, an input `#short` with `maxlength="3"`, and a form
@@ -2466,7 +2466,8 @@ around `#q` whose submit goes to `/done`), `/dialogs` (buttons that open `alert(
 (a button `Bottom` 3000 CSS pixels down) and `/frame` (`/form` in a same-origin iframe). Launch with `url` set to `/form`:
 
 - **Default surface.** Without `WAM_TOOLSETS`, tools/list has none of the six tools; with `+browser-actions` it has
-  all six; get_server_info reports no `browser-script` toolset.
+  five and not browser_evaluate, and get_server_info reports `browser-script` off; with
+  `+browser-actions,+browser-script` it has all six.
 - **Rect on the 150 % monitor.** With the debug window on the primary monitor (150 %): browser_element_rect with
   `role: "button"`, `name: "Save draft"` returns `anchor: "document"` and `devicePixelRatio: 1.5`; get_element_at_point
   at its `clickPoint` returns that button (UI Automation), and capture_region of its `screenRect` shows the button.
@@ -2714,8 +2715,10 @@ cancellation tests check the wire with `server.AssertNoResponseSentAsync(id)` (n
 fixture catalog that has an opt-in toolset: `WAM_TOOLSETS`, `WAM_EXCLUDE_TOOLS` and `WAM_READ_ONLY` decide what
 tools/list lists, and a call to a tool that is not served is an unknown tool. Against the production catalog it
 checks that every served tool is in exactly one toolset, that the default serves every toolset except the opt-in
-`browser-actions`, that read-only
-mode serves exactly the tools annotated `readOnlyHint: true`, and that each of those is a read-only tool of the input
+`browser-actions` and `browser-script`, that browser_evaluate is served only with `browser-script` (turning on
+`browser-actions` does not serve it, and `browser-script` alone serves none of the other DOM bridge tools), that read-only
+mode serves exactly the tools annotated `readOnlyHint: true` (browser_element_rect only once `browser-actions` is on,
+browser_evaluate never), and that each of those is a read-only tool of the input
 gate. `Unit/Infrastructure/ToolsetSelectionTests` covers the parsing. `Contract/ServerInfoToolContractTests` calls
 `get_server_info` over MCP (a real `ServerInfoService` over the contract services' mocked sources),
 `Unit/Services/ServerInfoServiceTests` checks the report and its warnings, and `Contract/ServerInstructionsTests`

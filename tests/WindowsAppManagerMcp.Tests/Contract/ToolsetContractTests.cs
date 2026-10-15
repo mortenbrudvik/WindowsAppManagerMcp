@@ -120,8 +120,15 @@ public class ToolsetContractTests
         Toolsets.Server.ToolNames.Should().BeSubsetOf(served, "a toolset must not name a tool the server does not serve");
     }
 
-    /// <summary>The toolsets that are off by default: browser-actions since roadmap M5.5 (and the DOM bridge of M5.8).</summary>
-    private static readonly string[] OptInToolsets = ["browser-actions"];
+    /// <summary>
+    /// The toolsets that are off by default: browser-actions since roadmap M5.5 (and the DOM bridge of M5.8), browser-script
+    /// since M5.8.
+    /// </summary>
+    private static readonly string[] OptInToolsets = ["browser-actions", "browser-script"];
+
+    /// <summary>The DOM bridge's tools (roadmap M5.8) that browser-actions serves: all but browser_evaluate.</summary>
+    private static readonly string[] DomBridgeActionTools =
+        ["browser_element_rect", "browser_click", "browser_type", "browser_handle_dialog", "browser_screenshot"];
 
     [Fact]
     public void TheDefault_ServesEveryToolset_ButTheOptInOnes()
@@ -137,12 +144,33 @@ public class ToolsetContractTests
         ServerToolCatalog.ServedToolNames
             .Where(tool => !OptInToolsets.Contains(Toolsets.Server.ToolsetOf(tool)!.Name))
             .Should().OnlyContain(tool => selection.Serves(tool, false));
-        // The DOM bridge, browser_evaluate included, is in the one opt-in toolset the roadmap names (M5.8)
         Toolsets.Server.Find("browser-actions")!.Tools.Should().BeEquivalentTo(
-                ["activate_tab", "browser_navigate", "browser_element_rect", "browser_click", "browser_type", "browser_handle_dialog",
-                    "browser_screenshot", "browser_evaluate"])
+                ["activate_tab", "browser_navigate", .. DomBridgeActionTools])
             .And.OnlyContain(tool => !selection.Serves(tool, false));
-        Toolsets.Server.Find("browser-script").Should().BeNull();
+
+        // A script runs with the page's rights and leaves no trace on the screen: turning clicks and typing on does not turn
+        // it on (roadmap M5.8)
+        Toolsets.Server.Find("browser-script")!.Tools.Should().BeEquivalentTo(["browser_evaluate"])
+            .And.OnlyContain(tool => !selection.Serves(tool, false));
+    }
+
+    [Theory]
+    [InlineData("+browser-actions", false)]
+    [InlineData("+browser-script", true)]
+    [InlineData("+browser-actions,+browser-script", true)]
+    public async Task BrowserEvaluate_IsServed_OnlyWithBrowserScript(string toolsets, bool servesEvaluate)
+    {
+        // Turning on clicks and typing (browser-actions) does not turn on scripts, and turning on scripts does not turn on
+        // clicks and typing (roadmap M5.8)
+        var selection = ToolsetSelection.FromEnvironment(
+            name => name == ToolsetSelection.ToolsetsVariable ? toolsets : null, Toolsets.Server);
+        await using var server = await InProcessMcpServer.StartAsync([], builder => builder.AddWindowsAppManagerTools(selection));
+
+        var tools = (await server.Client.ListToolsAsync()).Select(t => t.Name).ToList();
+
+        tools.Contains("browser_evaluate").Should().Be(servesEvaluate);
+        var servesActions = toolsets.Contains("+browser-actions", StringComparison.Ordinal);
+        DomBridgeActionTools.Should().OnlyContain(tool => tools.Contains(tool) == servesActions);
     }
 
     [Fact]
@@ -160,11 +188,14 @@ public class ToolsetContractTests
 
     [Theory]
     [InlineData(null)]
+    [InlineData("+browser-actions")]
+    [InlineData("+browser-script")]
     [InlineData("all")]
     public async Task ReadOnlyMode_ServesExactlyTheToolsAnnotatedReadOnly_OfTheToolsetsInForce(string? toolsets)
     {
         // Keyed on the [McpServerTool] ReadOnly property, as clients see it (annotations.readOnlyHint). An opt-in toolset's
-        // read-only tool (browser_element_rect in browser-actions, roadmap M5.8) is served only once its toolset is on
+        // read-only tool (browser_element_rect in browser-actions, roadmap M5.8) is served only once its toolset is on;
+        // browser_evaluate (browser-script) is destructive, so read-only mode never serves it
         var inForce = ToolsetSelection.FromEnvironment(name => name == ToolsetSelection.ToolsetsVariable ? toolsets : null, Toolsets.Server);
         var annotatedReadOnly = (await ToolSurface.ListToolsAsync()).OfType<JsonObject>()
             .Where(tool => (bool?)tool["annotations"]?["readOnlyHint"] == true)
@@ -184,7 +215,8 @@ public class ToolsetContractTests
         var tools = await server.Client.ListToolsAsync();
 
         tools.Select(t => t.Name).Order(StringComparer.Ordinal).Should().Equal(annotatedReadOnly);
-        tools.Select(t => t.Name).Contains("browser_element_rect").Should().Be(toolsets == "all");
+        tools.Select(t => t.Name).Contains("browser_element_rect").Should().Be(toolsets is "all" or "+browser-actions");
+        tools.Select(t => t.Name).Should().NotContain("browser_evaluate");
     }
 
     /// <summary>
@@ -317,7 +349,7 @@ public class ToolsetContractTests
 
         var tools = await server.Client.ListToolsAsync();
 
-        // The default without kill_process: every tool but the opt-in toolsets' (browser-actions, roadmap M5.5) and the one excluded
+        // The default without kill_process: every tool but the opt-in toolsets' (browser-actions, browser-script) and the one excluded
         var optIn = Toolsets.Server.Toolsets.Where(t => !t.OnByDefault).Sum(t => t.Tools.Count);
         tools.Select(t => t.Name).Should().NotContain("kill_process")
             .And.HaveCount(ServerToolCatalog.ServedToolNames.Count - optIn - 1);

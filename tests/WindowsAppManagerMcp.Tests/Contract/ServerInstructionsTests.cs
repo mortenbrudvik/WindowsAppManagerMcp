@@ -61,7 +61,7 @@ public partial class ServerInstructionsTests
     {
         var named = SnakeCaseName().Matches(ServerIdentity.Instructions).Select(m => m.Value).Distinct().ToList();
 
-        // Served by default: an opt-in toolset's tool (browser-actions, roadmap M5.5) is missing from an unconfigured server
+        // Served by default: an opt-in toolset's tool (browser-actions, browser-script; roadmap M5.5, M5.8) is missing from an unconfigured server
         var servedByDefault = ToolsetSelection.FromEnvironment(_ => null, Toolsets.Server);
         named.Should().NotBeEmpty();
         named.Should().BeSubsetOf(ServerToolCatalog.ServedToolNames.Where(tool => servedByDefault.Serves(tool, false)),
