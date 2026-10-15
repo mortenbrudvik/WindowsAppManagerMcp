@@ -2141,6 +2141,21 @@ something the machine may lack names it with its gate attribute's `Requires` (an
 `IDesktopTestRequirement`, such as `WebView2Runtime`), and is then skipped with the requirement's reason
 on such a machine; the requirement is only checked once the tier is opted in.
 
+**Fixture surfaces for M6.** Four more launch options, none of which changes the fixture unless a scenario asks for it.
+`OpenCanvas` (`--open-canvas`, M6.3) opens the window `WAM Fixture Canvas <instance>`, which draws
+`FixtureContract.CanvasLines` (dark and light text, down to 9 pt) in OnRender. UI Automation finds only its
+`canvasSurface` pane there, with no name, text or children. Its `canvasOpened` event gives each line's and word's screen
+rectangle, which `FixtureCanvas.From` reads, and `canvasMouseDown` logs the word under a press. The canvas follows
+`--other-scale-monitor`. `ChangeAfter` (`--change-after-ms N`, M6.4) adds the 40x40 `changePanel` right of the swatches
+and recolors and relabels it once, N ms after the ready event (`panelChanged`). `AnimateFor` (`--animate-for-ms N`)
+adds the `spinner` there and turns it every 50 ms for N ms, then leaves it still (`animationStarted`,
+`animationStopped`). Neither touches the status text, so the panel or spinner is the only region that changes.
+`OpenOverlay` (`--open-overlay`, M6.7) opens `WAM Fixture Overlay <instance>`, an unowned WS_EX_TOPMOST tool window
+centred over the main window. Its `overlayOpened` event reports `topmost`, `toolWindow` and `ownerHwnd`.
+`ExtraArguments` (M6.6) plants arguments after `--`, where the fixture ignores them and logs only how many
+(`argumentsIgnored`). Before `--` an unknown option is still refused, so a misspelt option fails the start instead of
+being ignored.
+
 **The scenarios.** Each class in `Scenarios/` covers one area; a class can hold tests of both tiers.
 
 | Scenario class | Tier | What it checks against the fixture |
