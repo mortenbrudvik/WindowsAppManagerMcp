@@ -206,10 +206,21 @@ public sealed class BrowserUiaReader
         {
             if (_tree.GetPattern<IUiaTextPattern>(page.Root.Node) is { } text)
             {
-                var read = TextPages.Fit(text.GetTextPage(offset, maxLength), maxLength, maxBytes, fewer => text.GetTextPage(offset, fewer));
+                // A shorter read that fails cuts the page already read instead of failing the read, as read_element_text's does
+                var read = TextPages.Fit(text.GetTextPage(offset, maxLength), maxLength, maxBytes, fewer =>
+                {
+                    try
+                    {
+                        return text.GetTextPage(offset, fewer);
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        return null;
+                    }
+                });
                 var end = read.Start + read.Length;
                 return new BrowserUiaContent(true, read.Text, page.Url, read.Start,
-                    TotalLength: read.HasMore ? null : end, NextOffset: read.HasMore ? end : null);
+                    TotalLength: read.HasMore ? null : end, NextOffset: read.HasMore ? end : null, TextSkipped: read.Cut ? true : null);
             }
 
             // One character past the page tells whether more follows
@@ -771,5 +782,7 @@ public sealed record BrowserUiaUrl(
 /// <param name="Offset">Where <paramref name="Text"/> starts: the offset asked for, or the end of a shorter text.</param>
 /// <param name="TotalLength">The whole text's length, when known (the last page was read).</param>
 /// <param name="NextOffset">Where the next page starts, when more text follows.</param>
+/// <param name="TextSkipped">True when the Text pattern page was cut (<see cref="UiaTextPage.Cut"/>): the rest of the
+/// provider's character it ends in is skipped. Null otherwise.</param>
 public sealed record BrowserUiaContent(
-    bool Found, string? Text, string? Url, int Offset = 0, int? TotalLength = null, int? NextOffset = null);
+    bool Found, string? Text, string? Url, int Offset = 0, int? TotalLength = null, int? NextOffset = null, bool? TextSkipped = null);

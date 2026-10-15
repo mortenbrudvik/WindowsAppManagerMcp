@@ -86,7 +86,7 @@ public class BrowserReadingTools
         int maxLength = BrowserContentOptions.DefaultMaxLength,
         [Description("true (default): the text. false: the HTML, which needs CDP (cdpPort).")]
         bool textOnly = true,
-        [Description("Where the page starts (default 0): the last page's nextOffset, which counts in that result's source (with cdpPort, offset above 0 never falls back to UI Automation).")]
+        [Description("Where the page starts (default 0): the last page's nextOffset, which counts in that result's source: a 'uia' page continues without cdpPort (with cdpPort, offset above 0 never falls back to UI Automation).")]
         int offset = 0,
         [Description("CDP only (needs cdpPort, no fallback): a CSS selector such as 'main' or 'h1,h2'; each match's text or HTML, one per line. None matching: ContentExtractionFailed.")]
         string? selector = null,
@@ -347,7 +347,8 @@ public class BrowserReadingTools
         Offset: result.Offset,
         TotalLength: result.TotalLength,
         Truncated: result.Truncated,
-        NextOffset: result.NextOffset
+        NextOffset: result.NextOffset,
+        TextSkipped: result.TextSkipped
     );
 
     private static DebugBrowserLaunchResultDto ToDto(DebugBrowserLaunchResult result) => new(
@@ -393,7 +394,8 @@ public record BrowserUrlResultDto(
 /// Source is "cdp" or "uia"; CdpError explains a fallback from CDP to UI Automation. AccessibilityWarmup is set when the
 /// UI Automation read waited for the page's accessibility tree first (roadmap M3.F24). A read is one page (roadmap M5.6):
 /// ContentLength is the page's characters, Offset where it starts, TotalLength the whole text's length when known,
-/// Truncated whether more follows and NextOffset where the next page starts, all in the text of Source.
+/// Truncated whether more follows and NextOffset where the next page starts, all in the text of Source. TextSkipped is
+/// read_element_text's: true when a UI Automation page was cut inside one of the provider's characters.
 /// </summary>
 public record BrowserContentResultDto(
     bool Success,
@@ -411,7 +413,8 @@ public record BrowserContentResultDto(
     int? Offset = null,
     int? TotalLength = null,
     bool? Truncated = null,
-    int? NextOffset = null
+    int? NextOffset = null,
+    bool? TextSkipped = null
 );
 
 /// <summary>

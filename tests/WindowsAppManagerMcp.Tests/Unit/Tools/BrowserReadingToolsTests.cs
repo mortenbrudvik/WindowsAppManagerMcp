@@ -274,6 +274,20 @@ public class BrowserReadingToolsTests
         result.Should().BeEquivalentTo(new { Offset = 40_000, TotalLength = 90_000, Truncated = true, NextOffset = 40_004, ContentLength = 4 });
     }
 
+    [Fact]
+    public async Task GetBrowserContent_ReturnsTextSkipped_ForACutPage()
+    {
+        _mockBrowserReadingService
+            .Setup(s => s.GetBrowserContentAsync(It.IsAny<nint>(), It.IsAny<BrowserContentOptions?>(), It.IsAny<CdpOptions?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new BrowserContentResult(true, "\r", "u", "chrome", "t", 1, null, BrowserErrorCode.None, BrowserReadSource.Uia,
+                Offset: 0, Truncated: true, NextOffset: 1, TextSkipped: true));
+        var sut = CreateSut();
+
+        var result = await sut.GetBrowserContent(12345, maxLength: 1);
+
+        result.TextSkipped.Should().BeTrue();
+    }
+
     [Theory]
     [InlineData(-1, null, null, "offset must be 0 or more")]
     [InlineData(0, "main", null, "selector is read through CDP only, so it needs cdpPort")]

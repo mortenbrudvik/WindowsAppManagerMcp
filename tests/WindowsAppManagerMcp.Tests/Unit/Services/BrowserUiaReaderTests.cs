@@ -693,6 +693,51 @@ public class BrowserUiaReaderTests
     }
 
     [Fact]
+    public void ReadContent_SaysSo_WhenATextPatternPageIsCut()
+    {
+        // Arrange - a provider that counts "\r\n" as one character, longer than a page of one character
+        var text = new FakeTextPattern("\r\nab") { LineBreakIsOneCharacter = true };
+        var window = Window(new FakeUiaNode("Document").WithPattern<IUiaTextPattern>(text));
+
+        // Act
+        var content = CreateSut().ReadContent(window, null, null, 0, 1, Bytes, CancellationToken.None);
+
+        // Assert - the rest of the line break is skipped, as read_element_text's textSkipped says
+        content.Should().Be(new BrowserUiaContent(true, "\r", null, 0, TotalLength: null, NextOffset: 1, TextSkipped: true));
+    }
+
+    [Fact]
+    public void ReadContent_LeavesTextSkippedOut_WhenNothingIsCut()
+    {
+        var window = Window(new FakeUiaNode("Document").WithPattern<IUiaTextPattern>(new FakeTextPattern("abcdefghij")));
+
+        var content = CreateSut().ReadContent(window, null, null, 0, 4, Bytes, CancellationToken.None);
+
+        content.TextSkipped.Should().BeNull();
+    }
+
+    [Fact]
+    public void ReadContent_KeepsTheFirstPage_CutAndSaidSo_WhenTheShorterReReadFails()
+    {
+        // Arrange - six Cyrillic letters take 12 bytes: a page of 6 bytes is read again over fewer, and that read fails
+        var text = new FakeTextPattern("жжжжжж");
+        text.OnGetTextPage = () =>
+        {
+            if (text.PageLengths.Count > 0)
+            {
+                throw new System.Runtime.InteropServices.COMException("The document changed", unchecked((int)0x80004005));
+            }
+        };
+        var window = Window(new FakeUiaNode("Document").WithPattern<IUiaTextPattern>(text));
+
+        // Act
+        var content = CreateSut().ReadContent(window, null, null, 0, 6, maxBytes: 6, CancellationToken.None);
+
+        // Assert
+        content.Should().Be(new BrowserUiaContent(true, "жжж", null, 0, TotalLength: 6, NextOffset: null, TextSkipped: true));
+    }
+
+    [Fact]
     public void ReadContent_ReturnsAnEmptyPage_PastTheEndOfTheText()
     {
         var window = Window(new FakeUiaNode("Document").WithPattern<IUiaTextPattern>(new FakeTextPattern("abc")));

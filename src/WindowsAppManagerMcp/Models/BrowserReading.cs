@@ -61,6 +61,9 @@ public record BrowserUrlResult(
 /// cut), through UI Automation once the last page was read.</param>
 /// <param name="Truncated">True when more text follows the page.</param>
 /// <param name="NextOffset">The offset of the next page, when more text follows.</param>
+/// <param name="TextSkipped">True when a UI Automation page was cut inside one of the provider's characters that was
+/// longer than the page (read_element_text's textSkipped): the rest of that character is not returned, and
+/// <paramref name="NextOffset"/> is after it. Null otherwise.</param>
 public record BrowserContentResult(
     bool Success,
     string? Content,
@@ -77,7 +80,8 @@ public record BrowserContentResult(
     int? Offset = null,
     int? TotalLength = null,
     bool? Truncated = null,
-    int? NextOffset = null
+    int? NextOffset = null,
+    bool? TextSkipped = null
 );
 
 /// <summary>

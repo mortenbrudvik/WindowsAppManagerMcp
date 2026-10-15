@@ -2526,7 +2526,7 @@
             "default": true
           },
           "offset": {
-            "description": "Where the page starts (default 0): the last page's nextOffset, which counts in that result's source (with cdpPort, offset above 0 never falls back to UI Automation).",
+            "description": "Where the page starts (default 0): the last page's nextOffset, which counts in that result's source: a 'uia' page continues without cdpPort (with cdpPort, offset above 0 never falls back to UI Automation).",
             "type": "integer",
             "default": 0
           },

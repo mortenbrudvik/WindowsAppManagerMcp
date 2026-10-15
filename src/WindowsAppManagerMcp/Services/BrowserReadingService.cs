@@ -28,6 +28,13 @@ public class BrowserReadingService : IBrowserReadingService
     private const string CdpPortRequiredMessage =
         "requireCdp=true (or targetId) needs cdpPort: the debug port of the browser instance that owns the window.";
 
+    /// <summary>
+    /// Added to the CDP error of a first page read through UI Automation that has more pages (roadmap M5.6): its nextOffset
+    /// counts UI Automation's text, and with cdpPort a later page is read through CDP, whose text differs.
+    /// </summary>
+    internal const string PageOnWithoutCdpPortHint =
+        "; page on without cdpPort: nextOffset counts UI Automation's text, and with cdpPort it would be read as CDP's";
+
     private const string SelectorNeedsCdpPortMessage =
         "selector is read through CDP only, so it needs cdpPort: the debug port of the browser instance that owns the window.";
 
@@ -447,12 +454,13 @@ public class BrowserReadingService : IBrowserReadingService
                 Error: null,
                 ErrorCode: BrowserErrorCode.None,
                 Source: BrowserReadSource.Uia,
-                CdpError: cdpError,
+                CdpError: cdpError != null && shown.NextOffset != null ? cdpError + PageOnWithoutCdpPortHint : cdpError,
                 AccessibilityWarmup: read.Warmup,
                 Offset: shown.Offset,
                 TotalLength: shown.TotalLength,
                 Truncated: shown.NextOffset != null,
-                NextOffset: shown.NextOffset);
+                NextOffset: shown.NextOffset,
+                TextSkipped: shown.TextSkipped);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {

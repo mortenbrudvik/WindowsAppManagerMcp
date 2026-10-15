@@ -1453,6 +1453,51 @@ public class BrowserReadingServiceTests
         result.Success.Should().BeTrue(result.Error);
         result.Source.Should().Be(BrowserReadSource.Uia);
         result.CdpError.Should().StartWith("CdpTimeout");
+        result.CdpError.Should().NotContain("without cdpPort", "the whole text is on this page: there is nothing to page on");
+    }
+
+    [Fact]
+    public async Task GetBrowserContent_TellsToPageOnWithoutCdpPort_AfterAFirstPageFellBackToUiAutomation()
+    {
+        // Arrange - CDP fails for the first page, which UI Automation reads: its nextOffset counts UI Automation's text
+        var handle = new nint(12345);
+        SetupValidBrowserWindow(handle, "chrome", "chrome");
+        ShowPage(handle, "https://example.com/", "abcdefghij");
+        SetupCdpMatch(CdpResult<CdpTarget>.Ok(CdpTab));
+        SetupCdpSnapshot(CdpResult<CdpPageSnapshot>.Fail(BrowserErrorCode.CdpTimeout, "did not answer"));
+        var sut = CreateSut();
+
+        // Act - CDP then recovers: the page read on without cdpPort, as the result says, and with it
+        var first = await sut.GetBrowserContentAsync(handle, new BrowserContentOptions(MaxLength: 4), new CdpOptions(Port: CdpPort));
+        SetupCdpSnapshot(CdpResult<CdpPageSnapshot>.Ok(new CdpPageSnapshot("t", "u", "CDP's", Offset: 4, TotalLength: 30)));
+        var next = await sut.GetBrowserContentAsync(handle, new BrowserContentOptions(MaxLength: 4, Offset: first.NextOffset!.Value));
+        var kept = await sut.GetBrowserContentAsync(
+            handle, new BrowserContentOptions(MaxLength: 4, Offset: first.NextOffset!.Value), new CdpOptions(Port: CdpPort));
+
+        // Assert - with cdpPort the offset is read as CDP's, and source says the text changed
+        first.Should().BeEquivalentTo(new { Success = true, Content = "abcd", Source = "uia", Truncated = true, NextOffset = 4 });
+        first.CdpError.Should().StartWith("CdpTimeout").And.Contain("page on without cdpPort");
+        next.Should().BeEquivalentTo(new { Success = true, Content = "efgh", Source = "uia", Offset = 4, NextOffset = 8 });
+        next.CdpError.Should().BeNull();
+        kept.Source.Should().Be(BrowserReadSource.Cdp);
+    }
+
+    [Fact]
+    public async Task GetBrowserContent_ReportsTextSkipped_ForACutUiAutomationPage()
+    {
+        // Arrange - a provider that counts "\r\n" as one character, longer than a page of one character
+        var handle = new nint(12345);
+        SetupValidBrowserWindow(handle, "chrome", "chrome");
+        var window = new FakeUiaNode("Window", "Example - Google Chrome").With(
+            new FakeUiaNode("Document", "Example").WithPattern<IUiaTextPattern>(new FakeTextPattern("\r\nab") { LineBreakIsOneCharacter = true }));
+        _tree.WithWindow(handle, window);
+        var sut = CreateSut();
+
+        // Act
+        var result = await sut.GetBrowserContentAsync(handle, new BrowserContentOptions(MaxLength: 1));
+
+        // Assert
+        result.Should().BeEquivalentTo(new { Success = true, Content = "\r", NextOffset = 1, TextSkipped = (bool?)true });
     }
 
     [Fact]

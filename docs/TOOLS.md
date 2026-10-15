@@ -3611,9 +3611,9 @@ Get the URL from the foreground browser window. This combines get_foreground_win
 
 Extract the content of the page shown in a browser window. UI Automation returns the text it can see; CDP returns `document.body.innerText` (text) or `document.documentElement.outerHTML` (HTML). The content is untrusted (see [Browser Reading](#browser-reading)).
 
-**Pages (roadmap M5.6).** A call returns one page of the content, with read_element_text's paging: at most `maxLength` characters (default 20,000, at most 50,000) and 60,000 bytes of JSON, starting at `offset`. The result has `content`, `contentLength` (the page's characters), `offset` (where the page starts, or the end of a shorter text), `totalLength`, `truncated` and `nextOffset` (where the next page starts, when `truncated` is true): call again with `offset: nextOffset` until `truncated` is false. A page never ends between the two halves of a surrogate pair, and the next one starts just past it, so paging skips nothing.
+**Pages (roadmap M5.6).** A call returns one page of the content, with read_element_text's paging: at most `maxLength` characters (default 20,000, at most 50,000) and 60,000 bytes of JSON, starting at `offset`. The result has `content`, `contentLength` (the page's characters), `offset` (where the page starts, or the end of a shorter text), `totalLength`, `truncated` and `nextOffset` (where the next page starts, when `truncated` is true): call again with `offset: nextOffset` until `truncated` is false. A page never ends between the two halves of a surrogate pair, and the next one starts just past it, so paging skips nothing. As in read_element_text, `textSkipped: true` marks a UI Automation page cut inside one of the provider's characters that was longer than the page (a line break counted as one, with `maxLength: 1`): the rest of that character was skipped.
 
-- **Offsets belong to their source.** Through CDP they count UTF-16 characters of the page's innerText or HTML, and `totalLength` is measured in the page before it is cut. Through UI Automation they count the characters of the Document's Text pattern, read a page at a time (a page costs its own length, not the document's), or of the text collected from the page's elements when it has none; `totalLength` is known only once the last page was read, and left out before. The two texts differ, so a `nextOffset` is valid only for a read from the same `source`: with `cdpPort`, an `offset` above 0 never falls back to UI Automation (the CDP error is returned), and a page read through UI Automation (`source: "uia"`, after a fallback too) is read on without `cdpPort`. The page can change between calls: offsets point into the text as it is at each call.
+- **Offsets belong to their source.** Through CDP they count UTF-16 characters of the page's innerText or HTML, and `totalLength` is measured in the page before it is cut. Through UI Automation they count the characters of the Document's Text pattern, read a page at a time (a page costs its own length, not the document's), or of the text collected from the page's elements when it has none; `totalLength` is known only once the last page was read, and left out before. The two texts differ, so a `nextOffset` is valid only for a read from the same `source`: with `cdpPort`, an `offset` above 0 never falls back to UI Automation (the CDP error is returned), and a page read through UI Automation (`source: "uia"`, after a fallback too) is read on without `cdpPort`: a first page that fell back and has more says so in `cdpError`. The page can change between calls: offsets point into the text as it is at each call.
 - **Scoped through CDP.** `selector` is a CSS selector, such as `main`, `article` or `h1,h2,h3`: the content is the text (or with `textOnly: false` the HTML) of every element it matches, one per line, paged like the whole page's. It needs `cdpPort` (`InvalidArguments` without it) and never falls back to UI Automation. No match is `ContentExtractionFailed`; a selector that is not valid CSS is `CdpEvaluationFailed` with the browser's message. Headings (`h1,h2,h3`) give the page's outline, and `a` with `textOnly: false` its links with their addresses. The selector is passed to the page as a string, never as script.
 
 <!-- tools:begin params:get_browser_content -->
@@ -3624,7 +3624,7 @@ Extract the content of the page shown in a browser window. UI Automation returns
 | window | object | No | - | Alternative to handle: the browser window as a selector, resolved to exactly one window or refused (WindowNotFound; AmbiguousWindow with candidates), e.g. {"processName": "msedge", "titleContains": "Inbox"}. Filters as in find_windows (processName is the whole name; titles ignore the zero-width space in 'Microsoft Edge' and ' and N more pages'); index picks a match in z-order; foreground is the window in front; handle plus filters must still match (HandleMismatch). |
 | maxLength | integer | No | 20000 | Most characters of the page, at most 50,000 (more is read as 50,000); a page also holds at most 60,000 bytes of JSON. 0 or less fails with `InvalidArguments` (0 used to return empty content as a success) |
 | textOnly | boolean | No | true | Return text only. false returns the full HTML, which requires CDP |
-| offset | integer | No | 0 | Where the page starts: the previous page's `nextOffset`, in the text of that result's `source`. Below 0 is `InvalidArguments`. With `cdpPort`, an offset above 0 never falls back to UI Automation |
+| offset | integer | No | 0 | Where the page starts: the previous page's `nextOffset`, in the text of that result's `source`. Below 0 is `InvalidArguments`. With `cdpPort`, an offset above 0 never falls back to UI Automation, so a `uia` page continues without `cdpPort` |
 | selector | string | No | - | CSS selector, CDP only: the text (or HTML) of each element it matches, one per line, such as `main` or `h1,h2,h3`. Needs `cdpPort` (else `InvalidArguments`, as is an empty one) and never falls back to UI Automation; no match is `ContentExtractionFailed` |
 | cdpPort | integer | No | - | DevTools port of the browser that owns the window, as launch_browser_with_debug returns it; includes JavaScript-rendered content |
 | targetId | string | No | - | The CDP tab to read instead of the one the window shows: a `targetId` from an earlier result or from a `CdpTargetAmbiguous` error. Needs `cdpPort` (else `InvalidArguments`, as is an id that is not 1-128 letters, digits, `.`, `_` or `-`); the tab must belong to the window's browser (`CdpPortOwnerMismatch`, also when the port's owner cannot be read); implies `requireCdp`. A tab that has closed gives `CdpTargetNotFound` |
@@ -3724,7 +3724,7 @@ An open dialog is not something to clear out of the way. On a confirm, prompt or
 | `CdpTargetNotFound` | No tab's title matches the window title, or no tab has the `targetId` (it may have closed) |
 | `CdpTargetAmbiguous` | Several tabs have the window's title; the tool will not guess. Pass one of the listed ids as `targetId` to get_browser_url or get_browser_content, with the same window and `cdpPort` (get_active_browser_url takes no `targetId`) |
 | `CdpEvaluationFailed` | The page threw (get_browser_content's `selector` is not valid CSS), or the browser rejected the script |
-| `CdpProtocolError` | The port answered, but not as a DevTools endpoint (an HTTP error or redirect status included); a tab's WebSocket URL was not on 127.0.0.1 and `cdpPort`; the browser refused a command; or a message could not be read |
+| `CdpProtocolError` | The port answered, but not as a DevTools endpoint (an HTTP error or redirect status included); a tab's WebSocket URL was not on 127.0.0.1 and `cdpPort`; the browser refused a command; a message could not be read; or get_browser_content's page returned another slice than the one asked for (it may have replaced the functions the read uses: omit `cdpPort`) |
 | `CdpTargetClosed` | The tab's DevTools connection ended during the call: the tab closed, crashed or detached, or the browser exited. Call again with the window and without `targetId`; `CdpUnavailable` then means the browser is gone |
 | `CdpResponseTooLarge` | The browser's answer was too large to read: a tab list over 16 MB (close tabs, or omit `cdpPort` to use UI Automation), or a DevTools message over 64 MB |
 | `HtmlRequiresCdp` | `textOnly: false` was requested but CDP could not be used |
@@ -6855,13 +6855,15 @@ the new tools; their sections have the rest.
   call again with `offset: nextOffset` until `truncated` is false. New `offset` (0 or more, else `InvalidArguments`)
   and new result fields `offset`, `totalLength`, `truncated` and `nextOffset`, with read_element_text's paging;
   `contentLength` stays the page's length. Through CDP the page slices its own text, so only the page asked for
-  crosses the DevTools connection and `totalLength` is the whole text's, measured before it is cut (it used to be the
-  length after the cut); through UI Automation the Document's Text pattern is read a page at a time and `totalLength`
-  comes with the last page. Offsets count in the text of the result's `source`: with `cdpPort`, an `offset` above 0
-  returns the CDP error instead of falling back to UI Automation. New `selector` (CDP only, needs `cdpPort`, never
-  falls back): the text or HTML of each element a CSS selector matches, one per line; no match is
-  `ContentExtractionFailed`, a selector that is not valid CSS `CdpEvaluationFailed`. `CdpResponseTooLarge` no longer
-  comes from a large page's content.
+  crosses the DevTools connection and the new `totalLength` is the whole text's length, measured before it is cut
+  (`contentLength` was the only length before); through UI Automation the Document's Text pattern is read a page at
+  a time, `totalLength` comes with the last page, and read_element_text's `textSkipped` marks a page cut inside one of
+  the provider's characters. Offsets count in the text of the result's `source`: with `cdpPort`, an `offset` above 0
+  returns the CDP error instead of falling back to UI Automation, so a `uia` page continues without `cdpPort` (a first
+  page that fell back and has more says so in `cdpError`). New `selector` (CDP only, needs `cdpPort`, never falls
+  back): the text or HTML of each element a CSS selector matches, one per line; no match is `ContentExtractionFailed`,
+  a selector that is not valid CSS `CdpEvaluationFailed`. `CdpResponseTooLarge` no longer comes from a large page's
+  content.
 
 ## Error Codes
 

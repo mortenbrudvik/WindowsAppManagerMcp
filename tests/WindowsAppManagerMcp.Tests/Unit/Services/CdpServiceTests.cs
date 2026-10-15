@@ -704,6 +704,56 @@ public class CdpServiceTests
             .And.NotContain("document.body.innerText");
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task GetPageSnapshotAsync_JoinsTheSelectorsMatches_WithoutArrayFrom_WhichAPageCanReplace(bool textOnly)
+    {
+        // Arrange - Prototype.js and MooTools replace Array.from with one that ignores its map function, and the script
+        // runs in the page's own world
+        var socket = PageAnswering(new { title = "t", url = "u", content = "Title", offset = 0, totalLength = 5, matches = 1 });
+        var sut = CreateSut(sockets: new FakeCdpWebSocketFactory(socket));
+
+        // Act
+        await sut.GetPageSnapshotAsync(Tab, TextPage with { TextOnly = textOnly, Selector = "h1" }, LongTimeout);
+
+        // Assert
+        var expression = socket.EvaluateCommand!.Value.GetProperty("params").GetProperty("expression").GetString();
+        expression.Should().NotContain("Array.from").And.Contain("for (let i = 0; i < found.length; i++)");
+    }
+
+    [Theory]
+    [InlineData(0, 10, "abc")]   // asked for offset 5: a page that reports another start
+    [InlineData(5, 3, "")]       // a start past the whole length
+    [InlineData(5, 100, "abcdefghijk")] // more than maxLength (10)
+    [InlineData(5, 7, "abc")]    // more than the whole length leaves after the start
+    [InlineData(int.MaxValue, int.MaxValue, "a")] // a start whose next page would overflow
+    public async Task GetPageSnapshotAsync_ReturnsProtocolError_WhenThePagesSliceDoesNotFitWhatWasAskedFor(
+        int offset, int totalLength, string content)
+    {
+        // Arrange - the script runs in the page's world, where a page can replace Math.min or String.prototype.slice
+        var socket = PageAnswering(new { title = "t", url = "u", content, offset, totalLength, matches = (int?)null });
+        var sut = CreateSut(sockets: new FakeCdpWebSocketFactory(socket));
+
+        // Act
+        var result = await sut.GetPageSnapshotAsync(Tab, TextPage with { Offset = 5, MaxLength = 10 }, LongTimeout);
+
+        // Assert
+        result.ErrorCode.Should().Be(BrowserErrorCode.CdpProtocolError);
+        result.Error.Should().Contain("slice");
+    }
+
+    [Fact]
+    public async Task GetPageSnapshotAsync_TakesAStartAtTheEnd_OfAShorterText()
+    {
+        var socket = PageAnswering(new { title = "t", url = "u", content = "", offset = 3, totalLength = 3, matches = (int?)null });
+        var sut = CreateSut(sockets: new FakeCdpWebSocketFactory(socket));
+
+        var result = await sut.GetPageSnapshotAsync(Tab, TextPage with { Offset = 50, MaxLength = 10 }, LongTimeout);
+
+        result.Value.Should().Be(new CdpPageSnapshot("t", "u", "", Offset: 3, TotalLength: 3));
+    }
+
     [Fact]
     public async Task GetPageSnapshotAsync_ReadsTheSelectorsMatchesHtml_WhenNotTextOnly()
     {
@@ -713,7 +763,7 @@ public class CdpServiceTests
         await sut.GetPageSnapshotAsync(Tab, HtmlPage with { Selector = "main" }, LongTimeout);
 
         var expression = socket.EvaluateCommand!.Value.GetProperty("params").GetProperty("expression").GetString();
-        expression.Should().Contain("e => e.outerHTML").And.NotContain("innerText");
+        expression.Should().Contain("parts.push(e.outerHTML)").And.NotContain("innerText");
     }
 
     [Fact]

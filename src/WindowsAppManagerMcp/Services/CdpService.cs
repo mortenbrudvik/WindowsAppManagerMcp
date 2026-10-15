@@ -305,6 +305,19 @@ public class CdpService : ICdpService
                 "The Runtime.evaluate response does not say where the page's slice starts or how long its content is.");
         }
 
+        // The script runs in the page's world, where the page can replace what it calls (Math.min, String.prototype.slice):
+        // a slice that is not the one asked for would make paging repeat or skip text, or never end
+        var content = CdpReplies.GetString(value, "content");
+        if (offset != Math.Min(Math.Max(0, request.Offset), totalLength) ||
+            content.Length > Math.Max(1, request.MaxLength) || content.Length > totalLength - offset)
+        {
+            return CdpResult<CdpPageSnapshot>.Fail(
+                BrowserErrorCode.CdpProtocolError,
+                $"The page returned another slice than the one asked for (offset {offset} and {content.Length} characters of " +
+                $"{totalLength}, for offset {request.Offset} and at most {request.MaxLength}), so it was not used. The page may " +
+                "have replaced the functions the read uses; read it with UI Automation (omit cdpPort).");
+        }
+
         if (request.Selector != null && ReadCount(value, "matches") == 0)
         {
             return CdpResult<CdpPageSnapshot>.Fail(
@@ -316,7 +329,7 @@ public class CdpService : ICdpService
         return CdpResult<CdpPageSnapshot>.Ok(new CdpPageSnapshot(
             Title: CdpReplies.GetString(value, "title"),
             Url: CdpReplies.GetString(value, "url"),
-            Content: CdpReplies.GetString(value, "content"),
+            Content: content,
             Offset: offset,
             TotalLength: totalLength));
     }
@@ -362,12 +375,14 @@ public class CdpService : ICdpService
         }
         else
         {
+            // A plain loop, not Array.from: Prototype.js and MooTools replace Array.from with one that ignores its map function
             var each = request.TextOnly
-                ? "e => typeof e.innerText === 'string' ? e.innerText : (e.textContent || '')"
-                : "e => e.outerHTML";
+                ? "typeof e.innerText === 'string' ? e.innerText : (e.textContent || '')"
+                : "e.outerHTML";
             content = $"const found = document.querySelectorAll({JsonSerializer.Serialize(request.Selector)}); " +
-                      "const matches = found.length; " +
-                      $"const content = Array.from(found, {each}).join('\\n'); ";
+                      "const matches = found.length; const parts = []; " +
+                      $"for (let i = 0; i < found.length; i++) {{ const e = found[i]; parts.push({each}); }} " +
+                      "const content = parts.join('\\n'); ";
         }
 
         return "(() => { " +
