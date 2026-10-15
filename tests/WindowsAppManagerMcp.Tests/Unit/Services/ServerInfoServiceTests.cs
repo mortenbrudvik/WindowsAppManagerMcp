@@ -231,7 +231,8 @@ public sealed class ServerInfoServiceTests : IDisposable
         var info = CreateSut(selection).Read(Connection, servedTools: 43);
 
         info.Toolsets.Enabled.Should().NotContain("browser").And.Contain(Toolsets.ServerToolset);
-        info.Toolsets.Disabled.Should().Equal("browser");
+        // browser-actions is off by default (roadmap M5.5), so "-browser" leaves both browser toolsets off
+        info.Toolsets.Disabled.Should().Equal("browser", "browser-actions");
         info.Toolsets.Source.Should().Be(ToolsetSelection.ToolsetsVariable);
         info.Toolsets.ExcludedTools.Should().Equal("kill_process");
         info.Toolsets.ReadOnly.Should().BeFalse();

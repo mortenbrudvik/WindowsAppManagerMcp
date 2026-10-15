@@ -79,8 +79,8 @@ public sealed class ToolsetCatalog
 
 /// <summary>
 /// The server's toolsets (roadmap M2.14). Each tool the server serves is in exactly one of them (ToolsetCatalogTests),
-/// and docs/TOOLS.md lists them in a generated region. Today every toolset is on by default; the tools that M3-M6 add
-/// for OCR, visual diffs, browser actions, layouts v2 and workspaces come in toolsets that are off by default.
+/// and docs/TOOLS.md lists them in a generated region. Every toolset is on by default except browser-actions (roadmap
+/// M5.5); the tools that M3-M6 add for OCR, visual diffs, layouts v2 and workspaces come in toolsets that are off by default too.
 /// </summary>
 public static class Toolsets
 {
@@ -132,8 +132,12 @@ public static class Toolsets
                 "Save, apply and manage window layout presets.",
                 ["list_layouts", "get_layout", "save_layout", "apply_layout", "delete_layout"]),
             new("browser", OnByDefault: true,
-                "Read the URL and text of browser pages; start a browser with a DevTools port.",
-                ["get_browser_url", "get_active_browser_url", "get_browser_content", "launch_browser_with_debug"]),
+                "Read the URL and text of browser pages, list a debug browser's tabs and wait for a page; start a browser with a DevTools port.",
+                ["get_browser_url", "get_active_browser_url", "get_browser_content", "launch_browser_with_debug", "list_tabs", "wait_for_browser"]),
+            // Off by default (roadmap M2.14, M5.5): they change what a browser shows, through its DevTools port
+            new("browser-actions", OnByDefault: false,
+                "Show a debug browser's tab and navigate a tab to a URL with a load wait, through CDP.",
+                ["activate_tab", "browser_navigate"]),
         ],
         // It reports the toolsets in force and why a tool is missing, and the server instructions send the agent to it
         alwaysServedTool: "get_server_info");

@@ -882,20 +882,8 @@ public class BrowserReadingService : IBrowserReadingService
     }
 
     /// <summary>The window a tab is looked up for: its process, its title and where it is (roadmap M5.3).</summary>
-    private CdpWindow Describe(nint browserHandle, uint processId, string title)
-    {
-        CdpWindowGeometry? geometry = null;
-        if (_nativeWrapper.GetWindowRect(browserHandle) is { } rect)
-        {
-            var state = _nativeWrapper.IsIconic(browserHandle)
-                ? CdpWindowState.Minimized
-                : _nativeWrapper.IsZoomed(browserHandle) ? CdpWindowState.Maximized : CdpWindowState.Normal;
-            var dpi = _nativeWrapper.GetDpiForWindow(browserHandle);
-            geometry = new CdpWindowGeometry(rect.Left, rect.Top, rect.Right, rect.Bottom, state, dpi > 0 ? dpi / 96.0 : 1.0);
-        }
-
-        return new CdpWindow((int)processId, title, geometry);
-    }
+    private CdpWindow Describe(nint browserHandle, uint processId, string title) =>
+        CdpWindowBinder.Describe(_nativeWrapper, browserHandle, processId, title);
 
     /// <summary>
     /// The port to read through, or null; without one, why a fallback did not use CDP (null when there is nothing to say),

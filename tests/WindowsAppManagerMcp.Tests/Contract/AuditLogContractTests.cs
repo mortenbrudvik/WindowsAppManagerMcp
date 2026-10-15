@@ -56,7 +56,27 @@ public class AuditLogContractTests
             "click", "right_click", "double_click", "mouse_click", "drag", "mouse_move", "type_text", "send_keys", "press_keys", "scroll",
             "release_all_input", "element_action", "respond_to_dialog", "file_dialog", "close_window", "close_windows_batch", "close_application", "kill_process",
             "launch_application", "launch_applications_batch", "launch_browser_with_debug",
-            "apply_layout", "save_layout", "delete_layout", "set_clipboard", "get_clipboard");
+            "apply_layout", "save_layout", "delete_layout", "set_clipboard", "get_clipboard", "activate_tab", "browser_navigate");
+    }
+
+    [Fact]
+    public async Task BrowserNavigate_RecordsTheUrlsSchemeAndHostOnly_AndTheTab()
+    {
+        // A page's path and query can hold a secret (a reset or share link), as a launched URL's can (roadmap M5.5)
+        var (_, lines) = await CallAsync("browser_navigate", new Dictionary<string, object?>
+        {
+            ["handle"] = TypicalDesktop.BrowserHandle,
+            ["url"] = "https://accounts.example.com/reset?token=s3cr3t-t0ken",
+            ["waitUntil"] = "domcontentloaded"
+        });
+
+        var line = lines.Single();
+        var args = line.GetProperty("args");
+        args.GetProperty("url").GetString().Should().Be("https://accounts.example.com");
+        args.GetProperty("urlLength").GetInt32().Should().Be("https://accounts.example.com/reset?token=s3cr3t-t0ken".Length);
+        args.GetProperty("waitUntil").GetString().Should().Be("domcontentloaded");
+        line.GetRawText().Should().NotContain("s3cr3t");
+        line.GetProperty("target").GetProperty("handle").GetInt64().Should().Be(TypicalDesktop.BrowserHandle);
     }
 
     [Fact]

@@ -6,8 +6,8 @@ namespace WindowsAppManagerMcp.Tests.Fixtures;
 
 /// <summary>
 /// An in-memory debug browser for the window binding (roadmap M5.3): /json/version and /json/list over a fake HTTP
-/// handler, and a browser-level WebSocket that answers Browser.getWindowForTarget from the windows its tabs are in. No
-/// network is used.
+/// handler, and a browser-level WebSocket that answers Browser.getWindowForTarget from the windows its tabs are in, and
+/// Target.activateTarget and Target.createTarget for the tab tools (roadmap M5.5). No network is used.
 /// </summary>
 public sealed class FakeCdpBrowser
 {
@@ -43,6 +43,18 @@ public sealed class FakeCdpBrowser
 
     /// <summary>The browser WebSocket URL /json/version lists.</summary>
     public string BrowserUrl => $"ws://127.0.0.1:{_port}/devtools/browser/B1";
+
+    /// <summary>The tabs Target.activateTarget was sent for, in order.</summary>
+    public List<string> Activated { get; } = new();
+
+    /// <summary>The window Target.createTarget puts a new tab in: the browser's most recently active one.</summary>
+    public int? LastActiveWindow { get; set; }
+
+    /// <summary>When true, a tab Target.createTarget opens is not listed by /json/list (it closed at once).</summary>
+    public bool HideCreatedTabs { get; set; }
+
+    /// <summary>The URLs Target.createTarget was sent with, in order.</summary>
+    public List<string> Created { get; } = new();
 
     /// <summary>The Browser.getWindowForTarget commands sent so far.</summary>
     public int WindowQueries => Socket.SentCommands.Count(c => c.GetProperty("method").GetString() == "Browser.getWindowForTarget");
@@ -92,9 +104,38 @@ public sealed class FakeCdpBrowser
 
     private void Respond(FakeCdpWebSocket socket, JsonElement command)
     {
-        if (command.GetProperty("method").GetString() != "Browser.getWindowForTarget")
+        var method = command.GetProperty("method").GetString();
+        if (method == "Target.activateTarget")
         {
-            socket.ReplyError(command, -32601, "'" + command.GetProperty("method").GetString() + "' wasn't found");
+            var id = command.GetProperty("params").GetProperty("targetId").GetString()!;
+            if (_tabs.Any(t => t.Id == id))
+            {
+                Activated.Add(id);
+                socket.ReplyEmpty(command);
+            }
+            else
+            {
+                socket.ReplyError(command, -32602, "No target with given id found");
+            }
+
+            return;
+        }
+
+        if (method == "Target.createTarget")
+        {
+            var url = command.GetProperty("params").GetProperty("url").GetString()!;
+            Created.Add(url);
+            var id = $"NEW{Created.Count}";
+            if (!HideCreatedTabs)
+                _tabs.Add((id, "", url, LastActiveWindow));
+
+            socket.Enqueue(JsonSerializer.Serialize(new { id = command.GetProperty("id").GetInt32(), result = new { targetId = id } }));
+            return;
+        }
+
+        if (method != "Browser.getWindowForTarget")
+        {
+            socket.ReplyError(command, -32601, "'" + method + "' wasn't found");
             return;
         }
 

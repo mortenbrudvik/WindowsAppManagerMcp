@@ -22,7 +22,7 @@ public static class ServerIdentity
         "- Act: element_action acts on an element ref via UI Automation. Input tools (click, right_click, double_click, mouse_click, drag, mouse_move, scroll, type_text, send_keys, press_keys) take the target as windowHandle (or a window selector); click at a clickPoint or at an image point with its captureId. Close windows with close_window, not key chords.",
         "- A ref with refMoved: true names a re-created element: find it again with find_ui_elements before acting. respond_to_dialog reads a dialog; then press a button with its dialogHandle. file_dialog takes the dialog's handle.",
         "- Verify: read every result (success, errorCode, receivingWindow, foregroundAfter, bounds); check the new state (get_desktop_state, a read or a capture) before the next step.",
-        "- Wait, not sleeping: wait_for_window (a window opens, closes, comes to front, is retitled), wait_for_element (a control appears, goes, enables, changes).",
+        "- Wait, not sleeping: wait_for_window (opens, closes, comes to front, is retitled), wait_for_element (appears, goes, enables, changes), wait_for_browser.",
         "Coordinates are physical virtual-screen pixels; monitors left of or above the primary one are negative. Capture images are usually scaled: without captureId, map an image point with imageToScreen, never with scaleFactor.",
         "Error codes that mean stop or change course:",
         "- PausedByUser: the user paused input with the pause hotkey. Stop and tell the user; never resume input yourself (resume_input only when the user asks).",

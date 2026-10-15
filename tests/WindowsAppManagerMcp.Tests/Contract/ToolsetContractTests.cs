@@ -120,17 +120,38 @@ public class ToolsetContractTests
         Toolsets.Server.ToolNames.Should().BeSubsetOf(served, "a toolset must not name a tool the server does not serve");
     }
 
+    /// <summary>The toolsets that are off by default: browser-actions since roadmap M5.5.</summary>
+    private static readonly string[] OptInToolsets = ["browser-actions"];
+
     [Fact]
-    public void TheDefault_ServesEveryToolsetToday()
+    public void TheDefault_ServesEveryToolset_ButTheOptInOnes()
     {
-        // The toolsets M3-M6 add for OCR, visual diffs, browser actions, layouts v2 and workspaces are opt-in; until
-        // then the default is the whole surface. Turning a toolset off by default changes what every user sees: change
-        // this test, the docs and the release notes with it.
+        // The toolsets M3-M6 add for OCR, visual diffs, browser actions, layouts v2 and workspaces are opt-in; the first,
+        // browser-actions (activate_tab, browser_navigate, roadmap M5.5), changes what a debug browser shows. Turning a
+        // toolset off by default changes what every user sees: change this test, the docs and the release notes with it.
         var selection = ToolsetSelection.FromEnvironment(_ => null, Toolsets.Server);
 
-        selection.Disabled.Should().BeEmpty();
+        selection.Disabled.Should().BeEquivalentTo(OptInToolsets);
         selection.Source.Should().Be(ToolsetSelection.DefaultKeyword);
-        ServerToolCatalog.ServedToolNames.Should().OnlyContain(tool => selection.Serves(tool, false));
+        Toolsets.Server.Toolsets.Where(t => !t.OnByDefault).Select(t => t.Name).Should().BeEquivalentTo(OptInToolsets);
+        ServerToolCatalog.ServedToolNames
+            .Where(tool => !OptInToolsets.Contains(Toolsets.Server.ToolsetOf(tool)!.Name))
+            .Should().OnlyContain(tool => selection.Serves(tool, false));
+        Toolsets.Server.Find("browser-actions")!.Tools.Should().BeEquivalentTo(["activate_tab", "browser_navigate"])
+            .And.OnlyContain(tool => !selection.Serves(tool, false));
+    }
+
+    [Fact]
+    public async Task AllToolsets_ServeTheOptInTools()
+    {
+        var selection = ToolsetSelection.FromEnvironment(
+            name => name == ToolsetSelection.ToolsetsVariable ? "all" : null, Toolsets.Server);
+        await using var server = await InProcessMcpServer.StartAsync([], builder => builder.AddWindowsAppManagerTools(selection));
+
+        var tools = (await server.Client.ListToolsAsync()).Select(t => t.Name).ToList();
+
+        tools.Should().Contain(["activate_tab", "browser_navigate", "list_tabs", "wait_for_browser"])
+            .And.HaveCount(ServerToolCatalog.ServedToolNames.Count);
     }
 
     [Fact]
@@ -281,8 +302,10 @@ public class ToolsetContractTests
 
         var tools = await server.Client.ListToolsAsync();
 
+        // The default without kill_process: every tool but the opt-in toolsets' (browser-actions, roadmap M5.5) and the one excluded
+        var optIn = Toolsets.Server.Toolsets.Where(t => !t.OnByDefault).Sum(t => t.Tools.Count);
         tools.Select(t => t.Name).Should().NotContain("kill_process")
-            .And.HaveCount(ServerToolCatalog.ServedToolNames.Count - 1);
+            .And.HaveCount(ServerToolCatalog.ServedToolNames.Count - optIn - 1);
     }
 
     [Fact]

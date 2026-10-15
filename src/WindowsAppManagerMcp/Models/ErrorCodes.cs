@@ -529,6 +529,12 @@ public enum BrowserErrorCode
     /// </summary>
     NewTabPage = 17,
 
+    /// <summary>
+    /// The browser could not load the page browser_navigate asked for (roadmap M5.5): Page.navigate answered with an
+    /// errorText such as net::ERR_NAME_NOT_RESOLVED, which the result carries.
+    /// </summary>
+    NavigationFailed = 18,
+
     // CDP (Chrome DevTools Protocol) errors are numbered from 30 so that other
     // browser error codes can be added above without renumbering.
 

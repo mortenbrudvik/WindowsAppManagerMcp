@@ -77,14 +77,20 @@ public static class InputGateToolFilter
     /// element before it takes the gate, acts on it inside the gate, and releases the gate before its mouse or keyboard path,
     /// which takes it again through the input service, and before it waits for the state after the action. respond_to_dialog
     /// and file_dialog (roadmap M3.5, M3.14) read the dialog without the gate and act only through element_action's service,
-    /// which takes it for each action; they wait for the dialog to close without it.
+    /// which takes it for each action; they wait for the dialog to close without it. activate_tab and browser_navigate
+    /// (roadmap M5.5) find the browser and the tab without it, take it to send the command that shows the tab (the browser
+    /// may bring its window to the front) or navigates it, and release it once the browser answers, at most a second
+    /// later: a page's load wait never holds it. They refuse at once while input is paused.
     /// </summary>
     public static IReadOnlySet<string> SelfGatedTools { get; } = new HashSet<string>(StringComparer.Ordinal)
     {
         "kill_process", "close_window", "close_windows_batch", "close_application",
         "move_window", "resize_window", "set_window_bounds", "set_window_state", "focus_window",
         "snap_window", "move_window_to_monitor", "set_windows_bounds_batch", "snap_windows_batch", "set_windows_state_batch",
-        "element_action", "respond_to_dialog", "file_dialog"
+        "element_action", "respond_to_dialog", "file_dialog",
+        // Find the tab without the gate and take it only to send the command that changes the browser, until the browser
+        // answers (at most a second): not for the page's load (roadmap M5.5)
+        "activate_tab", "browser_navigate"
     };
 
     /// <summary>
@@ -106,7 +112,9 @@ public static class InputGateToolFilter
         // Read an element's text and a table's cells (roadmap M3.9)
         "read_element_text", "read_table",
         // One observation of the desktop: windows, focus, popups, elements and an optional capture (roadmap M3.12)
-        "get_desktop_state"
+        "get_desktop_state",
+        // A debug browser's tabs, and a wait on a page of up to a minute (roadmap M5.5)
+        "list_tabs", "wait_for_browser"
     };
 
     /// <summary>

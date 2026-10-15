@@ -22,8 +22,9 @@ public class CdpService : ICdpService
 
     /// <summary>
     /// The most tabs a window is bound among (one Browser.getWindowForTarget each); with more, the title alone decides.
+    /// list_tabs looks up the windows of as many (roadmap M5.5).
     /// </summary>
-    private const int MaxBoundTabs = 200;
+    internal const int MaxBoundTabs = 200;
 
     /// <summary>The longest the window binding may take (<see cref="BindingBudget"/>).</summary>
     private static readonly TimeSpan MaxBindingTime = TimeSpan.FromSeconds(2);
@@ -201,82 +202,15 @@ public class CdpService : ICdpService
     }
 
     /// <summary>
-    /// The browser window of each tab (Browser.getWindowForTarget, one command per tab over one connection to the
-    /// browser's DevTools URL from /json/version, closed before it returns); a tab the browser says is in no browser
-    /// window (an error reply: not a tab of the tab strip) is left out. Null when the browser's connection cannot be used
-    /// or any reply did not come (timed out, connection closed), so the caller falls back to the title among all tabs: a
-    /// partial binding could narrow the tabs to the wrong ones.
+    /// The browser window of each tab (<see cref="CdpBrowserWindows.QueryAsync"/>), or null when the binding cannot be
+    /// read, so the caller falls back to the title among all tabs.
     /// </summary>
-    private async Task<IReadOnlyDictionary<string, CdpBrowserWindow>?> GetBrowserWindowsAsync(
+    private Task<IReadOnlyDictionary<string, CdpBrowserWindow>?> GetBrowserWindowsAsync(
         int port,
         IReadOnlyList<CdpTarget> targets,
         TimeSpan timeout,
-        CancellationToken cancellationToken)
-    {
-        var stopwatch = Stopwatch.StartNew();
-        if (timeout <= TimeSpan.Zero)
-            return null;
-
-        var version = await GetBrowserVersionAsync(port, timeout, cancellationToken).ConfigureAwait(false);
-        var left = timeout - stopwatch.Elapsed;
-        if (!version.Success || left <= TimeSpan.Zero)
-            return null;
-
-        var connected = await _transport
-            .ConnectAsync(version.Value!.WebSocketDebuggerUrl, port, "the browser", left, cancellationToken)
-            .ConfigureAwait(false);
-        if (!connected.Success)
-            return null;
-
-        await using var connection = connected.Value!;
-        var remaining = timeout - stopwatch.Elapsed;
-        if (remaining <= TimeSpan.Zero)
-            return null;
-
-        var sends = targets
-            .Select(t => (t.Id, Reply: connection.SendAsync("Browser.getWindowForTarget", new { targetId = t.Id }, remaining, cancellationToken)))
-            .ToList();
-        await Task.WhenAll(sends.Select(s => s.Reply)).ConfigureAwait(false);
-
-        var windows = new Dictionary<string, CdpBrowserWindow>(StringComparer.Ordinal);
-        foreach (var (id, reply) in sends)
-        {
-            var answered = reply.Result;
-            if (!answered.Success)
-                return null;
-
-            if (answered.Value!.Error == null && ParseBrowserWindow(answered.Value.Result) is { } browserWindow)
-                windows[id] = browserWindow;
-        }
-
-        return windows;
-    }
-
-    /// <summary>Browser.getWindowForTarget's {windowId, bounds: {left, top, width, height, windowState}}, or null.</summary>
-    private static CdpBrowserWindow? ParseBrowserWindow(JsonElement result)
-    {
-        if (result.ValueKind != JsonValueKind.Object ||
-            !TryGetInt(result, "windowId", out var windowId) ||
-            !result.TryGetProperty("bounds", out var bounds) || bounds.ValueKind != JsonValueKind.Object)
-        {
-            return null;
-        }
-
-        var state = CdpReplies.GetString(bounds, "windowState");
-        TryGetInt(bounds, "left", out var left);
-        TryGetInt(bounds, "top", out var top);
-        TryGetInt(bounds, "width", out var width);
-        TryGetInt(bounds, "height", out var height);
-        return new CdpBrowserWindow(windowId, left, top, width, height, state.Length > 0 ? state : "normal");
-    }
-
-    private static bool TryGetInt(JsonElement element, string name, out int value)
-    {
-        value = 0;
-        return element.TryGetProperty(name, out var property) &&
-               property.ValueKind == JsonValueKind.Number &&
-               property.TryGetInt32(out value);
-    }
+        CancellationToken cancellationToken) =>
+        CdpBrowserWindows.QueryAsync(this, _transport, port, targets, timeout, cancellationToken);
 
     /// <inheritdoc />
     public async Task<CdpResult<CdpTarget>> FindTargetByIdAsync(

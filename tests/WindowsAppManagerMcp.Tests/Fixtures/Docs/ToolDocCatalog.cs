@@ -98,6 +98,15 @@ public static class ToolDocCatalog
             new("get_browser_content", "Text of the page (or HTML through CDP), a page at a time", "handle", "maxLength", "offset", "textOnly", "cdpPort", "requireCdp"),
             new("launch_browser_with_debug", "Start Chrome, Edge or Brave with a DevTools port", "browser", "url", "port", "userDataDir"),
         ]),
+        new("Browser Tabs and Navigation",
+        [
+            new("list_tabs", "A debug browser's tabs (ids, titles, URLs), the window's tabs and the one it shows", "window (or handle)", "cdpPort"),
+            new("activate_tab", "Show a tab in its window (toolset browser-actions)", "targetId", "window (or handle)", "cdpPort"),
+            new("browser_navigate", "Open an http(s) URL in a tab or a new tab and wait for its load (toolset browser-actions)", "url", "window (or handle)", "targetId", "newTab", "waitUntil", "timeoutMs"),
+            new("wait_for_browser", "Wait until a page's URL, title or text contains a string, or a CSS selector matches", "window (or handle)", "targetId", "urlContains", "textContains", "selector", "timeoutMs"),
+        ],
+        SkillNote: "CDP only: a browser started with launch_browser_with_debug (or with its own debug port). activate_tab and " +
+                   "browser_navigate are in the `browser-actions` toolset, off by default (`WAM_TOOLSETS=+browser-actions`)."),
         new("Input Simulation",
         [
             new("click", "Left click at coordinates, on the named window", "x", "y", "windowHandle", "captureId (x, y on its image)"),

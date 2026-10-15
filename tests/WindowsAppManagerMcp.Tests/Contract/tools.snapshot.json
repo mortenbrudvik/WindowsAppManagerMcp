@@ -2,6 +2,117 @@
   "$comment": "The tools/list result of the server, sorted by tool name. Generated: do not edit. After a deliberate change to the tool surface, run the tests with UPDATE_SNAPSHOTS=1 and review the diff (see TESTING.md, \"Tool surface snapshot\").",
   "tools": [
     {
+      "name": "activate_tab",
+      "title": "Activate Browser Tab",
+      "description": "Show a debug browser's tab in its window; the browser may bring the window to the front. CDP only: a browser with a debug port (launch_browser_with_debug).",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "targetId": {
+            "description": "Tab id from list_tabs.",
+            "type": "string"
+          },
+          "handle": {
+            "description": "Browser window handle. Pass handle, window or cdpPort.",
+            "type": [
+              "integer",
+              "null"
+            ],
+            "default": null
+          },
+          "window": {
+            "description": "Alternative to handle: a window selector as in find_windows.",
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "handle": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "titleContains": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "titleEquals": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "titleRegex": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "processName": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "processNameContains": {
+                "type": "boolean"
+              },
+              "processId": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "className": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "foreground": {
+                "type": "boolean"
+              },
+              "index": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "includeCloaked": {
+                "type": "boolean"
+              },
+              "includeUntitled": {
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": false,
+            "default": null
+          },
+          "cdpPort": {
+            "description": "DevTools port; found from the window when omitted. Alone, it names the browser listening on it.",
+            "type": [
+              "integer",
+              "null"
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "targetId"
+        ]
+      },
+      "annotations": {
+        "title": "Activate Browser Tab",
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      }
+    },
+    {
       "name": "apply_layout",
       "title": "Apply Layout",
       "description": "Apply a previously saved layout preset. Takes one snapshot of the open windows and gives each placement its own window, never one window to two placements, preferring the window whose title, class and executable match what save_layout recorded. success is true only if every placement was arranged (and focused, for a placement with focus); status is applied, partial or failed, and placements reports each placement in order (status applied, notFound, notApplicable or failed, with window, errorCode and error). A placement matchBy cannot match (title_only on a placement without titleContains) is notApplicable with NoMatchCriterion, and one on a monitor that does not exist fails with InvalidMonitorIndex; neither falls back to another window or monitor. focus lists the outcome of each focus placement that was arranged, with the same fields as focus_window (isForeground, foregroundHandle, blockingPopup, inMenuMode, errorCode). A window of an app the user's policy denies is not arranged (TargetDeniedByPolicy).",
@@ -35,6 +146,145 @@
       "annotations": {
         "title": "Apply Layout",
         "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": false
+      }
+    },
+    {
+      "name": "browser_navigate",
+      "title": "Navigate Browser Tab",
+      "description": "Open an http(s) or about:blank URL in a debug browser's tab (shown tab, targetId or newTab) and wait for it to load. Returns url, title, httpStatus, loadState; NavigationFailed with errorText; WaitTimedOut while still loading. CDP only: a browser with a debug port (launch_browser_with_debug).",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "description": "http(s) URL, or about:blank.",
+            "type": "string"
+          },
+          "handle": {
+            "description": "Browser window handle. Pass handle, window or cdpPort.",
+            "type": [
+              "integer",
+              "null"
+            ],
+            "default": null
+          },
+          "window": {
+            "description": "Alternative to handle: a window selector as in find_windows.",
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "handle": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "titleContains": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "titleEquals": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "titleRegex": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "processName": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "processNameContains": {
+                "type": "boolean"
+              },
+              "processId": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "className": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "foreground": {
+                "type": "boolean"
+              },
+              "index": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "includeCloaked": {
+                "type": "boolean"
+              },
+              "includeUntitled": {
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": false,
+            "default": null
+          },
+          "cdpPort": {
+            "description": "DevTools port; found from the window when omitted. Alone, it names the browser listening on it.",
+            "type": [
+              "integer",
+              "null"
+            ],
+            "default": null
+          },
+          "targetId": {
+            "description": "Tab id from list_tabs. Default: the tab the window shows.",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "newTab": {
+            "description": "Open it in a new tab (in the browser's last active window).",
+            "type": "boolean",
+            "default": false
+          },
+          "waitUntil": {
+            "description": "load, domcontentloaded or none.",
+            "default": "load",
+            "type": "string",
+            "enum": [
+              "load",
+              "domcontentloaded",
+              "none"
+            ]
+          },
+          "timeoutMs": {
+            "description": "Time limit in ms for the navigation and load (1000-60000).",
+            "type": "integer",
+            "default": 15000
+          }
+        },
+        "required": [
+          "url"
+        ]
+      },
+      "annotations": {
+        "title": "Navigate Browser Tab",
+        "destructiveHint": true,
         "idempotentHint": false,
         "openWorldHint": true,
         "readOnlyHint": false
@@ -3968,6 +4218,110 @@
       }
     },
     {
+      "name": "list_tabs",
+      "title": "List Browser Tabs",
+      "description": "List a debug browser's tabs (targetId, title, url, windowId). With a window, its tabs come first (inWindow) and shownTargetId is the one it shows when its title tells. CDP only: a browser with a debug port (launch_browser_with_debug).",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "handle": {
+            "description": "Browser window handle. Pass handle, window or cdpPort.",
+            "type": [
+              "integer",
+              "null"
+            ],
+            "default": null
+          },
+          "window": {
+            "description": "Alternative to handle: a window selector as in find_windows.",
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "handle": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "titleContains": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "titleEquals": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "titleRegex": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "processName": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "processNameContains": {
+                "type": "boolean"
+              },
+              "processId": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "className": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "foreground": {
+                "type": "boolean"
+              },
+              "index": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "includeCloaked": {
+                "type": "boolean"
+              },
+              "includeUntitled": {
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": false,
+            "default": null
+          },
+          "cdpPort": {
+            "description": "DevTools port; found from the window when omitted. Alone, it names the browser listening on it.",
+            "type": [
+              "integer",
+              "null"
+            ],
+            "default": null
+          }
+        }
+      },
+      "annotations": {
+        "title": "List Browser Tabs",
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      }
+    },
+    {
       "name": "mouse_click",
       "title": "Mouse Click",
       "description": "Click any mouse button 1-3 times at a point, with modifier keys held if asked: ctrl+click, shift+click, a middle click, a triple click (selects a line), x1/x2 (Back/Forward). The modifier key-downs, the move, the clicks and the key-ups go in one batch, so nothing stays held. A right or middle click in a terminal pastes, so there it follows send_keys' paste rule (PasteNotAllowed). To act on an element, element_action with its ref needs no point; pass a point seen on a capture with its captureId. Pass windowHandle with the window you mean (without it the click goes to whatever window is at the point: check it with get_foreground_window); the same checks as for click apply (TargetOccluded, BlockedByModal, TargetIsAgentHost, CursorNotAtPoint, CursorClamped, MouseInUse). Refused, with nothing sent, for windows of apps running as administrator (TargetElevated), apps the user's policy denies (TargetDeniedByPolicy), a locked session (SessionLocked) or a UAC prompt (DesktopUnavailable). The result reports receivingWindow (where the input went) and foregroundAfter. While the user has paused input with the pause hotkey, nothing is sent (PausedByUser): stop and ask the user, and never try to resume. Refused while a modifier key is held down (ModifiersHeld) unless releaseHeldModifiers is true, and after waiting 30 s for another call (InputBusy).",
@@ -6694,6 +7048,155 @@
         "idempotentHint": false,
         "openWorldHint": false,
         "readOnlyHint": false
+      }
+    },
+    {
+      "name": "wait_for_browser",
+      "title": "Wait for Browser Page",
+      "description": "Wait until a debug browser tab's page meets every condition given (the *Contains ignore case). Returns satisfied, elapsedMs, url, title; WaitTimedOut with the page as last seen. CDP only: a browser with a debug port (launch_browser_with_debug).",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "handle": {
+            "description": "Browser window handle. Pass handle, window or cdpPort.",
+            "type": [
+              "integer",
+              "null"
+            ],
+            "default": null
+          },
+          "window": {
+            "description": "Alternative to handle: a window selector as in find_windows.",
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "handle": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "titleContains": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "titleEquals": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "titleRegex": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "processName": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "processNameContains": {
+                "type": "boolean"
+              },
+              "processId": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "className": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "foreground": {
+                "type": "boolean"
+              },
+              "index": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "includeCloaked": {
+                "type": "boolean"
+              },
+              "includeUntitled": {
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": false,
+            "default": null
+          },
+          "cdpPort": {
+            "description": "DevTools port; found from the window when omitted. Alone, it names the browser listening on it.",
+            "type": [
+              "integer",
+              "null"
+            ],
+            "default": null
+          },
+          "targetId": {
+            "description": "Tab id from list_tabs. Default: the tab the window shows.",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "urlContains": {
+            "description": "The URL contains this.",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "titleContains": {
+            "description": "The title contains this.",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "textContains": {
+            "description": "The visible text contains this.",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "selector": {
+            "description": "A CSS selector that matches an element.",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "timeoutMs": {
+            "description": "Time limit in ms (0-60000; 0 checks once).",
+            "type": "integer",
+            "default": 10000
+          }
+        }
+      },
+      "annotations": {
+        "title": "Wait for Browser Page",
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": true
       }
     },
     {

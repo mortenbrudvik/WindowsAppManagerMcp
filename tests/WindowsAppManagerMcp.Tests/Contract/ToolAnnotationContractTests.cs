@@ -88,7 +88,9 @@ public class ToolAnnotationContractTests
             "respond_to_dialog", "file_dialog",
             "launch_application", "launch_applications_batch", "launch_browser_with_debug",
             "take_screenshot", "capture_region", "capture_window", "capture_with_elements",
-            "set_clipboard"
+            "set_clipboard",
+            // browser_navigate replaces the tab's page, and what was typed into it (roadmap M5.5)
+            "browser_navigate"
         ];
 
         var tools = await ToolSurface.ListToolsAsync();
@@ -112,7 +114,9 @@ public class ToolAnnotationContractTests
             "get_ui_elements", "get_focused_element", "get_element_at_point", "get_browser_url", "get_active_browser_url",
             "get_browser_content", "list_processes", "list_layouts", "get_layout", "get_control_status", "get_server_info",
             "get_owned_windows", "get_clipboard", "get_window_info", "wait_for_window", "find_ui_elements", "get_active_popups",
-            "read_element_text", "read_table", "wait_for_element", "get_desktop_state"
+            "read_element_text", "read_table", "wait_for_element", "get_desktop_state",
+            // A debug browser's tabs and a wait on its page (roadmap M5.5)
+            "list_tabs", "wait_for_browser"
         ]);
 
         // The captures can write image files (output 'file' or 'both'), so they are not read-only
@@ -128,10 +132,12 @@ public class ToolAnnotationContractTests
         var tools = await ToolSurface.ListToolsAsync();
 
         // They start any program or open any URI (apply_layout with launchMissing runs a preset's launch commands);
-        // get_browser_content returns what a website wrote
+        // get_browser_content returns what a website wrote; browser_navigate loads any web page and wait_for_browser
+        // reads a page's text (roadmap M5.5)
         tools.Where(t => t!["annotations"]!["openWorldHint"]!.GetValue<bool>()).Select(t => t!["name"]!.GetValue<string>())
             .Should().BeEquivalentTo(
-                ["launch_application", "launch_applications_batch", "launch_browser_with_debug", "apply_layout", "get_browser_content"]);
+                ["launch_application", "launch_applications_batch", "launch_browser_with_debug", "apply_layout", "get_browser_content",
+                    "browser_navigate", "wait_for_browser"]);
     }
 
     [Theory]

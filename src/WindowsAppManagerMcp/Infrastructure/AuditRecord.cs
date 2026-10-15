@@ -51,8 +51,17 @@ public static class AuditRecord
         // recorded as pathLength: a file name can say what the user works on
         "button",
         // type_text (roadmap M4.1, M4.4): fixed values; its text is recorded as textLength
-        "controlChars", "method"
+        "controlChars", "method",
+        // activate_tab and browser_navigate (roadmap M5.5): a CDP tab id and a fixed value; browser_navigate's url is kept
+        // as its scheme and host (NavigatedUrlTool)
+        "targetId", "waitUntil"
     };
+
+    /// <summary>
+    /// The tool whose <c>url</c> argument is kept as its scheme, host and port, as a launched URL is
+    /// (<see cref="RedactExecutable"/>): the page's path and query can hold a secret (a reset or share link).
+    /// </summary>
+    private const string NavigatedUrlTool = "browser_navigate";
 
     /// <summary>
     /// The arguments of <see cref="NamedStringArguments"/> that are content for one tool, and are recorded as their length
@@ -142,8 +151,8 @@ public static class AuditRecord
     /// under <see cref="UnknownArgumentsCount"/>: its name can be anything the client sent.</item>
     /// <item>A number or boolean is kept where the tool declares the parameter as one; where it does not (a PIN sent as
     /// a number for a text), or with no schema, it is recorded as the length of its JSON text.</item>
-    /// <item>A string in <see cref="NamedStringArguments"/> is kept (<c>executable</c> redacted, with
-    /// <c>executableLength</c> when something was cut), unless it is content for <paramref name="tool"/>
+    /// <item>A string in <see cref="NamedStringArguments"/> is kept (<c>executable</c>, and browser_navigate's <c>url</c>,
+    /// redacted, with <c>executableLength</c> or <c>urlLength</c> when something was cut), unless it is content for <paramref name="tool"/>
     /// (<see cref="ContentArguments"/>); any other string is recorded as <c>&lt;name&gt;Length</c>.</item>
     /// <item>An array is recorded as <c>&lt;name&gt;Count</c>; objects and nulls are left out.</item>
     /// </list>
@@ -180,7 +189,7 @@ public static class AuditRecord
                 case JsonValueKind.Number or JsonValueKind.True or JsonValueKind.False:
                     summary[name + "Length"] = value.GetRawText().Length;
                     break;
-                case JsonValueKind.String when name == ExecutableArgument:
+                case JsonValueKind.String when name == ExecutableArgument || (name == "url" && tool == NavigatedUrlTool):
                     var executable = value.GetString()!;
                     var redacted = RedactExecutable(executable);
                     summary[name] = redacted;

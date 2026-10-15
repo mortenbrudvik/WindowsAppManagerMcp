@@ -68,6 +68,9 @@ public static class ServiceRegistration
         // through Native wrappers; it connects to nothing
         services.AddSingleton<IDebugPortLocator, DebugPortLocator>();
         services.AddSingleton<IBrowserReadingService, BrowserReadingService>();
+        // The tab tools (roadmap M5.5): CDP only, over the same transport, port lookup and target policy as the reads
+        services.AddSingleton<ICdpTabService, CdpTabService>();
+        services.AddSingleton<IBrowserTabService, BrowserTabService>();
         services.AddSingleton<IProcessService, ProcessService>();
         // Finds the window a launch opens, whichever process owns it (launch tools and apply_layout's launchMissing)
         services.AddSingleton<IWindowWaitService, WindowWaitService>();
@@ -228,6 +231,7 @@ public static class ServiceRegistration
         services.AddSingleton<AppLauncherTools>();
         services.AddSingleton<LayoutPresetTools>();
         services.AddSingleton<BrowserReadingTools>();
+        services.AddSingleton<BrowserTabTools>();
         services.AddSingleton<ScreenshotTools>();
         services.AddSingleton<UIElementTools>();
         services.AddSingleton<PopupTools>();
@@ -306,6 +310,7 @@ public static class ServiceRegistration
             .WithServerTools<AppLauncherTools>()
             .WithServerTools<LayoutPresetTools>()
             .WithServerTools<BrowserReadingTools>()
+            .WithServerTools<BrowserTabTools>()
             .WithServerTools<ScreenshotTools>()
             .WithServerTools<UIElementTools>()
             .WithServerTools<PopupTools>()

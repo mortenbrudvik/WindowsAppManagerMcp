@@ -50,6 +50,9 @@ public sealed class ContractServices : IDisposable
     public Mock<IMonitorService> Monitors { get; } = new();
     public Mock<IProcessService> Processes { get; } = new();
     public Mock<IBrowserReadingService> Browser { get; } = new();
+
+    /// <summary>The tab tools (roadmap M5.5): three tabs of a debug Chrome on port 9222, the first shown by the browser window.</summary>
+    public Mock<IBrowserTabService> BrowserTabs { get; } = new();
     public Mock<ILayoutService> Layouts { get; } = new();
     public Mock<IUIElementService> UiElements { get; } = new();
     public Mock<IElementInspectionService> Inspection { get; } = new();
@@ -134,6 +137,7 @@ public sealed class ContractServices : IDisposable
         services.AddSingleton(Monitors.Object);
         services.AddSingleton(Processes.Object);
         services.AddSingleton(Browser.Object);
+        services.AddSingleton(BrowserTabs.Object);
         services.AddSingleton(Layouts.Object);
         services.AddSingleton(UiElements.Object);
         services.AddSingleton(Inspection.Object);
@@ -342,6 +346,21 @@ public sealed class ContractServices : IDisposable
                 null, BrowserErrorCode.None, Source: BrowserReadSource.Cdp, TargetId: url.TargetId,
                 Offset: 0, TotalLength: TypicalDesktop.ArticleLength, Truncated: false));
 
+        BrowserTabs.Setup(b => b.ListTabsAsync(It.IsAny<BrowserTabTarget>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new BrowserTabsResult(true,
+            [
+                new BrowserTabInfo(url.TargetId!, url.PageTitle!, url.Url!, 1, true),
+                new BrowserTabInfo("2B7E4F1A9C3D5E6F7A8B9C0D1E2F3A4B", "Pull requests - GitHub", "https://github.com/pulls", 1, true),
+                new BrowserTabInfo("5C9D8E7F6A5B4C3D2E1F0A9B8C7D6E5F", "Example Domain", "https://example.com/", 2, false)
+            ], TabCount: 3, ShownTargetId: url.TargetId, WindowBound: true, CdpPort: 9222));
+        BrowserTabs.Setup(b => b.ActivateTabAsync(It.IsAny<BrowserTabTarget>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new BrowserTabResult(true, "2B7E4F1A9C3D5E6F7A8B9C0D1E2F3A4B", "Pull requests - GitHub", "https://github.com/pulls", 9222));
+        BrowserTabs.Setup(b => b.NavigateAsync(It.IsAny<BrowserTabTarget>(), It.IsAny<BrowserNavigateOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new BrowserNavigateResult(true, url.TargetId, "https://example.com/docs/", "Docs - Example", 200, "load", 412,
+                CdpPort: 9222));
+        BrowserTabs.Setup(b => b.WaitAsync(It.IsAny<BrowserTabTarget>(), It.IsAny<BrowserWaitCondition>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new BrowserWaitResult(true, true, false, 630, url.TargetId, "https://example.com/docs/", "Docs - Example", 9222));
+
         var preset = TypicalDesktop.Layouts[0];
         Layouts.Setup(l => l.GetStorageError()).Returns((string?)null);
         Layouts.Setup(l => l.GetAllPresets()).Returns(TypicalDesktop.Layouts);
@@ -548,6 +567,17 @@ public sealed class ContractServices : IDisposable
             .ReturnsAsync(new BrowserUrlResult(false, null, null, null, "No browser in the foreground", BrowserErrorCode.NoBrowserInForeground));
         Browser.Setup(b => b.GetBrowserContentAsync(It.IsAny<nint>(), It.IsAny<BrowserContentOptions?>(), It.IsAny<CdpOptions?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new BrowserContentResult(false, null, null, null, null, null, "Not a browser window", BrowserErrorCode.NotABrowser));
+        BrowserTabs.Setup(b => b.ListTabsAsync(It.IsAny<BrowserTabTarget>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(BrowserTabsResult.Failed(nameof(BrowserErrorCode.NotABrowser), "Window process 'notepad' is not a recognized browser. Nothing was done."));
+        BrowserTabs.Setup(b => b.ActivateTabAsync(It.IsAny<BrowserTabTarget>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(BrowserTabResult.Failed(nameof(BrowserErrorCode.CdpTargetNotFound), "No tab with that targetId; it may have closed.", 9222));
+        BrowserTabs.Setup(b => b.NavigateAsync(It.IsAny<BrowserTabTarget>(), It.IsAny<BrowserNavigateOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new BrowserNavigateResult(false, "8F4C1D2E9A7B6C5D4E3F2A1B0C9D8E7F", LoadState: "failed", ElapsedMs: 40, CdpPort: 9222,
+                ErrorText: "net::ERR_NAME_NOT_RESOLVED", Error: "The browser could not load the page: net::ERR_NAME_NOT_RESOLVED.",
+                ErrorCode: nameof(BrowserErrorCode.NavigationFailed)));
+        BrowserTabs.Setup(b => b.WaitAsync(It.IsAny<BrowserTabTarget>(), It.IsAny<BrowserWaitCondition>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new BrowserWaitResult(false, false, true, 10_000, "8F4C1D2E9A7B6C5D4E3F2A1B0C9D8E7F", "https://example.com/", "Example Domain", 9222,
+                "The page did not meet the condition within 10000 ms: no element matches '#results'.", "WaitTimedOut"));
 
         Layouts.Setup(l => l.GetStorageError()).Returns("The layouts folder cannot be written");
         Layouts.Setup(l => l.CaptureCurrentLayoutAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string[]?>(), It.IsAny<string[]?>(), It.IsAny<CancellationToken>()))

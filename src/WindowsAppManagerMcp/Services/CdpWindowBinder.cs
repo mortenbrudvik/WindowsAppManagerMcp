@@ -46,6 +46,25 @@ public static class CdpWindowBinder
                Near(window.Bottom - window.Top, candidate.Height * scale, tolerance);
     }
 
+    /// <summary>
+    /// The window a tab is looked up for (roadmap M5.3, shared with the tab tools of M5.5): its process, its title and,
+    /// when its rectangle can be read, its bounds, state (minimized, maximized or normal) and DPI scale.
+    /// </summary>
+    public static CdpWindow Describe(INativeWindowWrapper windows, nint handle, uint processId, string title)
+    {
+        CdpWindowGeometry? geometry = null;
+        if (windows.GetWindowRect(handle) is { } rect)
+        {
+            var state = windows.IsIconic(handle)
+                ? CdpWindowState.Minimized
+                : windows.IsZoomed(handle) ? CdpWindowState.Maximized : CdpWindowState.Normal;
+            var dpi = windows.GetDpiForWindow(handle);
+            geometry = new CdpWindowGeometry(rect.Left, rect.Top, rect.Right, rect.Bottom, state, dpi > 0 ? dpi / 96.0 : 1.0);
+        }
+
+        return new CdpWindow((int)processId, title, geometry);
+    }
+
     /// <summary>How far, in pixels, a scaled edge may be from the window's: 3 DIPs of rounding, and one pixel.</summary>
     public static int TolerancePx(double scale) => (int)Math.Ceiling(3 * scale) + 1;
 
