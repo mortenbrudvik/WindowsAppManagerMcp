@@ -26,6 +26,21 @@ public interface ICdpService
         CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Reads the browser's /json/version (roadmap M5.1): whether a DevTools endpoint answers on the port, and its
+    /// browser-level WebSocket URL, which must be ws:// on 127.0.0.1, on <paramref name="port"/> and under
+    /// /devtools/browser/ (<see cref="Services.CdpEndpointValidator"/>). Only 127.0.0.1:<paramref name="port"/> is asked;
+    /// nothing is connected. CdpUnavailable when nothing listens, CdpTimeout when it does not answer in time, and
+    /// CdpProtocolError when the answer is not a browser's DevTools endpoint or its URL is refused.
+    /// </summary>
+    /// <param name="port">The CDP debug port.</param>
+    /// <param name="timeout">Maximum time to wait for the browser.</param>
+    /// <param name="cancellationToken">Cancels the request.</param>
+    Task<CdpResult<CdpBrowserVersion>> GetBrowserVersionAsync(
+        int port,
+        TimeSpan timeout,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Finds the tab that a browser window is showing.
     /// Fails with CdpPortOwnerMismatch when the port belongs to another process than the window,
     /// and with CdpTargetNotFound or CdpTargetAmbiguous when no single tab matches the window title.
@@ -92,6 +107,25 @@ public record CdpTarget(
     string? WebSocketDebuggerUrl,
     int Port
 );
+
+/// <summary>
+/// What a DevTools endpoint's /json/version reports about its browser (roadmap M5.1).
+/// </summary>
+/// <param name="Browser">The product and version, for example "Chrome/141.0.7390.55" or "Edg/141.0.3537.57"; empty when
+/// the endpoint does not report it.</param>
+/// <param name="ProtocolVersion">The DevTools protocol version, for example "1.3"; empty when not reported.</param>
+/// <param name="WebSocketDebuggerUrl">The browser-level DevTools WebSocket URL, already checked to be ws:// on 127.0.0.1
+/// and on <paramref name="Port"/>.</param>
+/// <param name="Port">The DevTools port that answered.</param>
+public record CdpBrowserVersion(
+    string Browser,
+    string ProtocolVersion,
+    Uri WebSocketDebuggerUrl,
+    int Port)
+{
+    /// <summary>The DevTools HTTP endpoint, http://127.0.0.1:port, as CDP clients such as Playwright take it.</summary>
+    public string HttpEndpoint => $"http://{Services.CdpEndpointValidator.Host}:{Port}";
+}
 
 /// <summary>
 /// Title, URL and content read from a tab at the same moment.

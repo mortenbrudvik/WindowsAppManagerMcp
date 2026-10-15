@@ -118,7 +118,11 @@ public class ToolResultSerializationTests
                 CdpPort: 9222,
                 UserDataDir: userDataDir,
                 Error: null,
-                ErrorCode: null));
+                ErrorCode: null,
+                CdpReady: true,
+                BrowserVersion: "Edg/141.0.3537.57",
+                CdpEndpoint: "http://127.0.0.1:9222",
+                BrowserWsEndpoint: "ws://127.0.0.1:9222/devtools/browser/0a1b"));
         var tools = new BrowserReadingTools(Mock.Of<IBrowserReadingService>(), processService.Object);
         await using var server = await InProcessMcpServer.StartAsync([], builder => builder.WithTools(tools));
 
@@ -134,6 +138,10 @@ public class ToolResultSerializationTests
         json.GetProperty("windowHandle").GetInt64().Should().Be(5678);
         json.GetProperty("cdpPort").GetInt32().Should().Be(9222);
         json.GetProperty("userDataDir").GetString().Should().Be(userDataDir);
+        json.GetProperty("cdpReady").GetBoolean().Should().BeTrue();
+        json.GetProperty("browserVersion").GetString().Should().Be("Edg/141.0.3537.57");
+        json.GetProperty("cdpEndpoint").GetString().Should().Be("http://127.0.0.1:9222");
+        json.GetProperty("browserWsEndpoint").GetString().Should().Be("ws://127.0.0.1:9222/devtools/browser/0a1b");
     }
 
     [Fact]

@@ -463,6 +463,7 @@ public class DependencyInjectionTests : IDisposable
     [InlineData(typeof(ICdpService))]
     [InlineData(typeof(ICdpTransport))]
     [InlineData(typeof(ITcpPortOwnerResolver))]
+    [InlineData(typeof(IDebugBrowserReadiness))]
     public void AddWindowsAppManagerServices_RegistersService(Type serviceType)
     {
         _serviceProvider.GetService(serviceType).Should().NotBeNull();
@@ -483,6 +484,30 @@ public class DependencyInjectionTests : IDisposable
         // Assert
         result.ErrorCode.Should().Be(BrowserErrorCode.CdpUnavailable);
         transport.Paths.Should().Equal("/json/list");
+    }
+
+    [Fact]
+    public async Task LaunchBrowserWithDebug_ChecksReadiness_ThroughTheRegisteredCdpService()
+    {
+        // Arrange - the server's registrations with the transport and the port owner replaced, so nothing reaches the
+        // network or reads the real TCP table
+        var transport = new RecordingCdpTransport();
+        var services = BuildServerServices();
+        services.AddSingleton<ICdpTransport>(transport);
+        services.AddSingleton<ITcpPortOwnerResolver>(new FakePortOwnerResolver(null));
+        using var provider = services.BuildServiceProvider();
+        var processService = provider.GetRequiredService<IProcessService>();
+        var readiness = typeof(ProcessService).GetField("_debugBrowserReadiness", BindingFlags.NonPublic | BindingFlags.Instance)!
+            .GetValue(processService);
+
+        // Act
+        var answer = await ((IDebugBrowserReadiness)readiness!).WaitUntilReadyAsync(
+            new DebugBrowserEndpoint("chrome", 4321, 13538, Path.GetTempPath()), TimeSpan.FromMilliseconds(100), CancellationToken.None);
+
+        // Assert
+        readiness.Should().BeSameAs(provider.GetRequiredService<IDebugBrowserReadiness>()).And.BeOfType<DebugBrowserReadinessProbe>();
+        answer.Ready.Should().BeFalse();
+        transport.Paths.Should().NotBeEmpty().And.OnlyContain(path => path == "/json/version");
     }
 
     [Fact]

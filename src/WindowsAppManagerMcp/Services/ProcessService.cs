@@ -1815,7 +1815,8 @@ public class ProcessService : IProcessService
     /// start the browser with <see cref="BuildDebugBrowserArguments"/> and wait for a window of the started process only
     /// (<see cref="LaunchRequest.OnlyStartedProcess"/>); refuse a launch that handed off or did not start; for port 0, read
     /// the port from DevToolsActivePort; then let <see cref="IDebugBrowserReadiness"/>, when the server has one, confirm
-    /// that the endpoint answers. A failure after the start keeps the process, window and profile in the result while the
+    /// that the endpoint answers (<see cref="DebugBrowserReadinessProbe"/>), and report cdpReady, the browser version and
+    /// the endpoints it found. A failure after the start keeps the process, window and profile in the result while the
     /// browser still runs, so that it can be closed.
     /// </remarks>
     public async Task<DebugBrowserLaunchResult> LaunchBrowserWithDebugAsync(
@@ -1925,7 +1926,7 @@ public class ProcessService : IProcessService
                 try
                 {
                     readiness = await _debugBrowserReadiness.WaitUntilReadyAsync(
-                        new DebugBrowserEndpoint(browser, processId, started.CdpPort!.Value, userDataDir),
+                        new DebugBrowserEndpoint(browser, processId, started.CdpPort!.Value, userDataDir, startTime),
                         DebugReadinessTimeout,
                         cancellationToken).ConfigureAwait(false);
                 }
@@ -1938,8 +1939,21 @@ public class ProcessService : IProcessService
 
                 if (!readiness.Ready)
                 {
-                    return FailedAfterStart(started, startTime, readiness.Error ?? "The DevTools endpoint did not answer.");
+                    // A port another process holds, or one whose answer nothing ties to this browser, is not offered as
+                    // its cdpPort: a CDP client pointed at it would control whatever listens there
+                    var notTheBrowsers = readiness.Reason is DebugBrowserNotReadyReason.PortHeldByOtherProcess
+                        or DebugBrowserNotReadyReason.PortOwnerUnknown;
+                    return FailedAfterStart(notTheBrowsers ? started with { CdpPort = null } : started, startTime,
+                        readiness.Error ?? "The DevTools endpoint did not answer.");
                 }
+
+                started = started with
+                {
+                    CdpReady = true,
+                    BrowserVersion = readiness.BrowserVersion,
+                    CdpEndpoint = readiness.CdpEndpoint,
+                    BrowserWsEndpoint = readiness.BrowserWebSocketUrl
+                };
             }
 
             return started;
@@ -2014,9 +2028,10 @@ public class ProcessService : IProcessService
     }
 
     /// <summary>
-    /// A failure after the browser started: it keeps the process, window and port while that process still runs (its
-    /// start time is the one read after the start), so that it can be closed; once it exited, its PID may be another
-    /// process's, so the result names none.
+    /// A failure after the browser started: it keeps the process, window and port (when <paramref name="started"/> has
+    /// one) while that process still runs (its start time is the one read after the start), so that it can be closed;
+    /// once it exited, its PID may be another process's, so the result names none. Either way the endpoint is not ready
+    /// (cdpReady false).
     /// </summary>
     private DebugBrowserLaunchResult FailedAfterStart(DebugBrowserLaunchResult started, DateTime? startTime, string error)
     {
@@ -2027,7 +2042,8 @@ public class ProcessService : IProcessService
             {
                 Success = false,
                 Error = $"{error} The browser (processId {processId}) is still running: close it as this tool's description says.",
-                ErrorCode = nameof(BrowserErrorCode.DebugLaunchFailed)
+                ErrorCode = nameof(BrowserErrorCode.DebugLaunchFailed),
+                CdpReady = false
             }
             : started with
             {
@@ -2036,7 +2052,8 @@ public class ProcessService : IProcessService
                 WindowHandle = null,
                 CdpPort = null,
                 Error = $"{error} The browser (processId {processId}) is no longer running, so there is nothing to close.",
-                ErrorCode = nameof(BrowserErrorCode.DebugLaunchFailed)
+                ErrorCode = nameof(BrowserErrorCode.DebugLaunchFailed),
+                CdpReady = false
             };
     }
 

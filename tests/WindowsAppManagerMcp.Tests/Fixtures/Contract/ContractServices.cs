@@ -328,7 +328,10 @@ public sealed class ContractServices : IDisposable
                 apps.Select((_, i) => TypicalLaunch(wait, TypicalDesktop.Windows[i], 20_000 + i)).ToList());
         Processes.Setup(p => p.LaunchBrowserWithDebugAsync(It.IsAny<DebugBrowserLaunchRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new DebugBrowserLaunchResult(true, 31_337, (nint)TypicalDesktop.BrowserHandle, 9222,
-                @"C:\Users\user\AppData\Local\Temp\WindowsAppManagerMcp\browser-9222", null, null));
+                @"C:\Users\user\AppData\Local\Temp\WindowsAppManagerMcp\browser-9222", null, null,
+                LaunchStatus: LaunchStatus.WindowObserved, CdpReady: true, BrowserVersion: "Chrome/141.0.7390.55",
+                CdpEndpoint: "http://127.0.0.1:9222",
+                BrowserWsEndpoint: "ws://127.0.0.1:9222/devtools/browser/6f1c2d3e-4a5b-6c7d-8e9f-0a1b2c3d4e5f"));
 
         var url = new BrowserUrlResult(true, "https://github.com/mortenbrudvik/WindowsAppManagerMcp", "chrome",
             "Windows App Manager - GitHub", null, BrowserErrorCode.None, Source: BrowserReadSource.Cdp, TargetId: "8F4C1D2E9A7B6C5D4E3F2A1B0C9D8E7F");
