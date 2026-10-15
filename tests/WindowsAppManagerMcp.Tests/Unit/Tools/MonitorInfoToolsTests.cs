@@ -9,13 +9,15 @@ using WindowsAppManagerMcp.Tools;
 public class MonitorInfoToolsTests
 {
     private readonly Mock<IMonitorService> _mockMonitorService;
+    private readonly Mock<IScreenCaptureWrapper> _screen = new();
 
     public MonitorInfoToolsTests()
     {
         _mockMonitorService = new Mock<IMonitorService>();
+        _screen.Setup(s => s.GetVirtualScreenBounds()).Returns((0, 0, 1920, 1080));
     }
 
-    private MonitorInfoTools CreateSut() => new MonitorInfoTools(_mockMonitorService.Object);
+    private MonitorInfoTools CreateSut() => new MonitorInfoTools(_mockMonitorService.Object, _screen.Object);
 
     #region GetMonitors Tests
 
@@ -116,6 +118,39 @@ public class MonitorInfoToolsTests
         // Assert
         result.Monitors.Should().BeEmpty();
         result.PrimaryIndex.Should().Be(0);
+    }
+
+    [Fact]
+    public void GetMonitors_ReportsTheVirtualScreen()
+    {
+        // Arrange - roadmap M6.1: the bounds list_screens reports, the area take_screenshot captures with monitorIndex -1
+        _mockMonitorService.Setup(m => m.GetAllMonitors()).Returns(TestDataFactory.CreateDualMonitorSetup());
+        _screen.Setup(s => s.GetVirtualScreenBounds()).Returns((-1920, -120, 4480, 1560));
+
+        // Act
+        var result = CreateSut().GetMonitors();
+
+        // Assert
+        result.VirtualScreen.Should().Be(new VirtualScreenBounds(-1920, -120, 4480, 1560));
+    }
+
+    [Fact]
+    public void GetMonitors_ReportsTheVirtualScreen_AsListScreensDoes()
+    {
+        // Arrange - the same monitors and capture wrapper behind both tools
+        var monitors = TestDataFactory.CreateDualMonitorSetup();
+        _mockMonitorService.Setup(m => m.GetAllMonitors()).Returns(monitors);
+        _screen.Setup(s => s.GetVirtualScreenBounds()).Returns((0, -300, 4480, 1740));
+        var screenshots = new ScreenshotService(_screen.Object, _mockMonitorService.Object, Mock.Of<INativeWindowWrapper>());
+
+        // Act
+        var monitorsResult = CreateSut().GetMonitors();
+        var screens = screenshots.ListScreens();
+
+        // Assert
+        monitorsResult.VirtualScreen.Should().Be(screens.VirtualScreen);
+        monitorsResult.PrimaryIndex.Should().Be(screens.PrimaryIndex);
+        monitorsResult.Monitors.Select(m => m.Index).Should().Equal(screens.Screens.Select(s => s.Index));
     }
 
     [Fact]

@@ -46,7 +46,7 @@ public static class ToolDocCatalog
         [
             new("move_window", "Move to x,y position", "window (or handle)", "x", "y"),
             new("resize_window", "Change dimensions", "window (or handle)", "width", "height"),
-            new("set_window_bounds", "Move + resize combined", "window (or handle)", "x", "y", "width", "height"),
+            new("set_window_bounds", "Move, resize, or both (x and y, width and height, or all four)", "window (or handle)", "x", "y", "width", "height"),
             new("set_window_state", "Min/max/restore", "window (or handle)", "state"),
             new("focus_window", "Bring to foreground, verified; reports what is in front", "window (or handle)"),
             new("close_window", "Close gracefully and verify: closed, hidden, stillOpen or promptShown", "window (or handle)", "waitMs", "force"),
@@ -63,7 +63,7 @@ public static class ToolDocCatalog
         ]),
         new("Monitor Info",
         [
-            new("get_monitors", "List all displays"),
+            new("get_monitors", "List all displays, and the virtual screen's bounds"),
             new("get_primary_monitor", "Get primary display"),
         ]),
         new("Screenshot",
@@ -93,7 +93,7 @@ public static class ToolDocCatalog
         ]),
         new("Browser Reading",
         [
-            new("get_browser_url", "URL of a browser window", "handle", "cdpPort", "requireCdp"),
+            new("get_browser_url", "URL of a browser window (`window: {\"foreground\": true}` for the one in front)", "handle", "window", "cdpPort", "requireCdp"),
             new("get_active_browser_url", "URL of the foreground browser window", "cdpPort", "requireCdp"),
             new("get_browser_content", "Text of the page (or HTML through CDP), a page at a time", "handle", "maxLength", "offset", "textOnly", "cdpPort", "requireCdp"),
             new("launch_browser_with_debug", "Start Chrome, Edge or Brave with a DevTools port", "browser", "url", "port", "userDataDir", "profile", "reuseIfRunning"),

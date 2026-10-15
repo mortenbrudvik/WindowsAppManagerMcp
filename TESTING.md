@@ -2523,6 +2523,28 @@ around `#q` whose submit goes to `/done`), `/dialogs` (buttons that open `alert(
 - **The browser's own pages, policy, pause, a port of another process and Firefox** are covered by the fakes
   (`BrowserPageServiceTests`, `BrowserPageToolsTests`); they are not provoked on the desktop.
 
+### Desktop check: M6.1 additive consolidations
+
+M6.1a's consolidations are tested over fakes: set_window_bounds' pairs in `WindowManagerToolsTests` (each pair goes to
+the service call move_window or resize_window makes, half a pair is `InvalidArguments` with no call) and
+`WindowServiceGeometryTests` (a resize that raises keeps SWP_NOACTIVATE), get_monitors' `virtualScreen` in
+`MonitorInfoToolsTests` (the same rectangle as list_screens over the same wrappers), get_browser_url's bare foreground
+selector in `BrowserReadingToolsTests`, and mouse_click's description in `ToolDescriptionTests`. Not yet run on a real
+desktop; before the release that carries it, the owner checks:
+
+1. **Partial set_window_bounds on the fixture.** On the WamFixtureApp main window the harness started (and only on it),
+   by its handle: `x` and `y` alone keep the visible frame's size to the pixel; `width` and `height` alone keep its
+   top-left corner and leave the z-order and the foreground as they were (read get_foreground_window before and after:
+   the agent's host stays in front); `x` and `y` alone onto the monitor with the other scale go through the second
+   placement, as move_window does (skip with one monitor); half a pair is `InvalidArguments` and the window does not
+   move. The harness closes only the fixture windows it opened.
+2. **get_monitors' `virtualScreen`** (no input, no window): equal to list_screens' `virtualScreen`, and to
+   take_screenshot's `capturedRegion` with `monitorIndex: -1`.
+3. **get_browser_url with `window: {"foreground": true}`** (optional, as in "Desktop check: M5 browser bridge"): with the
+   agent's terminal in front the result is `NoBrowserInForeground`. With a throwaway debug browser from
+   launch_browser_with_debug, focused by its handle, it returns that browser's URL; close it with close_debug_browser by
+   its processId. Never focus or close a browser by its title.
+
 ### Tool surface snapshot
 
 `Contract/ToolSurfaceSnapshotTests` tests the server the way an agent sees it. It lists the tools of an
@@ -2655,14 +2677,42 @@ typical result over 300 tokens, and tools/list itself, measured in October 2026:
 | `read_table` | Task Manager's first 50 processes, 5 columns with headers | 643 | 1,000 |
 | `get_server_info` | The default deny list, five host processes, two monitors | 634 | 850 |
 | `get_layout` | A preset of 6 placements, each with the captured window identity | 529 | 800 |
-| tools/list | Every tool's name, title, description, schemas and annotations: 78 tools, 254,692 bytes (`ToolList_StaysWithinItsBudget`; M5.8's six DOM bridge tools added 2,970, 936 of them their window selectors; M5.8's dialog option and the UI Automation browser_handle_dialog 199 more) | 63,673 | 63,709 |
+| tools/list | Every tool's name, title, description, schemas and annotations: 78 tools, 256,309 bytes (`ToolList_StaysWithinItsBudget`; M5.8's six DOM bridge tools added 2,970, 936 of them their window selectors; M5.8's dialog option and the UI Automation browser_handle_dialog 199 more; M6.1a's additive consolidations 405 more: mouse_click's own click checks 249, set_window_bounds' optional pairs 87, get_browser_url's foreground sentence 41, get_monitors' virtualScreen 28) | 64,078 | 64,114 |
+| Default tools/list | The 70 tools a server serves without WAM_TOOLSETS, WAM_EXCLUDE_TOOLS and WAM_READ_ONLY, 240,125 bytes (`DefaultToolList_StaysWithinItsBudget`, roadmap M6.1; 59,627 before M6.1a) | 60,032 | 60,070 |
 
 Every other typical result is at most 300 tokens. When a change makes a result larger on purpose, raise its
 budget in the same change (the failure message gives the new size); when a change shrinks one a lot, lower it.
 `ToolList_StaysWithinItsBudget` bounds tools/list, which a client that loads every tool up front keeps in context
 for the whole session, serialized as the SDK writes it. Its budget is a ratchet, not a margin: raise it only in a
 change that adds to the surface on purpose, by what the failure message measures, and lower it when descriptions are
-trimmed. There is no per-description cap.
+trimmed. `DefaultToolList_StaysWithinItsBudget` (roadmap M6.1) is the same ratchet for the default surface, the one
+nearly every user pays for: a tool added to a toolset that is off by default leaves it alone, and
+`DefaultToolList_IsTheToolsOfTheToolsetsOnByDefault` checks that it measures exactly those toolsets.
+`EveryToolset_StaysWithinItsBudget` holds each toolset's share of tools/list (the sum of its tool objects as the SDK
+writes them) to a ratchet just above its measured size, and docs/TOOLS.md publishes the sizes, to the nearest 100, in
+the generated Tokens column of its toolsets table (`GeneratedToolDocsTests`); `EveryToolset_HasATokenBudget` makes a
+new toolset come with a budget. `EveryTool_SchemaWithinCap` caps every single tool object at 2,400 tokens: a cap, not a
+ratchet, so a tool that needs more is split or trimmed rather than the cap raised. Measured in October 2026 after
+M6.1a (the largest tools were capture_with_elements at 2,396 and element_action at 2,386, so they have no room to grow):
+
+| Toolset | Default | Tools | Tokens | Budget |
+|---------|---------|------:|-------:|-------:|
+| `server` | always on | 4 | 1,028 | 1,050 |
+| `windows` | on | 18 | 13,724 | 13,750 |
+| `monitors` | on | 3 | 314 | 350 |
+| `capture` | on | 4 | 5,865 | 5,900 |
+| `elements` | on | 9 | 8,271 | 8,300 |
+| `input` | on | 13 | 19,415 | 19,450 |
+| `clipboard` | on | 2 | 734 | 750 |
+| `launch` | on | 2 | 2,890 | 2,900 |
+| `process` | on | 3 | 1,921 | 1,950 |
+| `layouts` | on | 5 | 1,181 | 1,200 |
+| `browser` | on | 7 | 4,674 | 4,700 |
+| `browser-actions` | off | 7 | 3,577 | 3,600 |
+| `browser-script` | off | 1 | 468 | 500 |
+
+A change states its default, per-toolset and all-tools deltas, and raises only the ratchets it moves: a new opt-in
+toolset moves the all-tools figure and its own row, never the default figure.
 `Contract/ElementReadContractTests` also bounds the largest result read_element_text and read_table can return
 (a million-character document of English, Cyrillic, CJK, emoji or quotes, a 1000 x 100 grid of long, short or empty
 cells in English, Cyrillic or CJK, read end to end through the real read service over a fake tree) at 16,000 tokens:

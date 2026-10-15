@@ -215,13 +215,13 @@ public class InputSimulationTools
     }
 
     [McpServerTool(Name = "mouse_click", Title = "Mouse Click", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = false)]
-    [Description("Click any mouse button 1-3 times at a point, with modifier keys held if asked: ctrl+click, shift+click, a middle " +
-                 "click, a triple click (selects a line), x1/x2 (Back/Forward). The modifier key-downs, the move, the clicks and the " +
-                 "key-ups go in one batch, so nothing stays held. A right or middle click in a terminal pastes, so there it follows " +
-                 "send_keys' paste rule (PasteNotAllowed). To act on an element, element_action with its ref needs no point; pass a " +
-                 "point seen on a capture with its captureId. Pass windowHandle with the window you mean (without it the click goes to " +
-                 "whatever window is at the point: check it with get_foreground_window); the same checks as for click apply " +
-                 "(TargetOccluded, BlockedByModal, TargetIsAgentHost, CursorNotAtPoint, CursorClamped, MouseInUse)." + GuardNote)]
+    [Description("Click any mouse button 1-3 times at a point, or at a point of a capture's image (space), with modifier keys held " +
+                 "if asked: ctrl+click, shift+click, a right or middle click, a double click, a triple click (selects a line), x1/x2 " +
+                 "(Back/Forward). The modifier key-downs, the move, the clicks and the key-ups go in one batch, so nothing stays held. " +
+                 "A right or middle click in a terminal (console, Windows Terminal, PuTTY, and anywhere in VS Code) pastes, so there it " +
+                 "follows send_keys' paste rule (PasteNotAllowed)." + ClickTargetNote +
+                 " With windowHandle the point must be on that window or a popup or dialog of it (TargetOccluded), and the window not " +
+                 "disabled by a modal dialog (BlockedByModal).")]
     [ToolResultPayload(typeof(ClickResult))]
     public async Task<CallToolResult> MouseClick(
         [Description(XDescription)]

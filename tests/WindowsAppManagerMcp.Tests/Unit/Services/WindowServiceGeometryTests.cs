@@ -107,6 +107,29 @@ public class WindowServiceGeometryTests
     }
 
     [Fact]
+    public void ResizeWindow_WithBringToFront_RaisesTheWindow_WithoutActivatingIt()
+    {
+        // Act - set_window_bounds with a size only and bringToFront true (roadmap M6.1)
+        var result = CreateSut().ResizeWindow(Window, 1000, 700, bringToFront: true);
+
+        // Assert - SWP_NOMOVE keeps the corner; HWND_TOP without SWP_NOZORDER raises it, SWP_NOACTIVATE keeps the keyboard where it is
+        result.Success.Should().BeTrue(result.Error);
+        var call = _window.Calls.Should().ContainSingle().Subject;
+        call.Flags.Should().Be(SwpNoMove | SwpNoActivate);
+        _window.Visible.Should().Be(new WindowRect(100, 100, 1000, 700));
+    }
+
+    [Fact]
+    public void ResizeWindow_WithoutBringToFront_IsTheResizeThatNeverRaises()
+    {
+        // Act
+        CreateSut().ResizeWindow(Window, 1000, 700, bringToFront: false).Success.Should().BeTrue();
+
+        // Assert
+        _window.Calls.Should().ContainSingle().Which.Flags.Should().Be(SwpNoMove | SwpNoZOrder | SwpNoActivate);
+    }
+
+    [Fact]
     public void SnapWindow_PlacesTheVisibleFrame_SoHalvesMeetEdgeToEdge()
     {
         // Act

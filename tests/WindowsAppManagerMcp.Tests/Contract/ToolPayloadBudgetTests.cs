@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json;
 using ModelContextProtocol.Protocol;
+using WindowsAppManagerMcp.Infrastructure;
 
 namespace WindowsAppManagerMcp.Tests.Contract;
 
@@ -149,26 +150,142 @@ public class ToolPayloadBudgetTests
     /// <summary>
     /// The token budget of the whole tools/list result (every tool's name, title, description, schemas and annotations), as
     /// clients that load every tool up front pay it for the whole session. A ratchet, not a margin: it sits just above the
-    /// measured size (58,758 tokens, 235,029 bytes for 68 tools, October 2026, after M3.F32's screenshotMarks and observe on six action tools, M3.F8's launch arguments description, M3.F38's markPrefix, M4.2's CursorClamped and mouse buttons, and M4.1's key grammar, send_keys' delayMs and keysSent, and type_text's controlChars, M4.3's mouse_click, drag and press_keys, M4.4's type_text method and paste, and M5.2's targetId on get_browser_url and get_browser_content, +110 after the three cdpPort descriptions were shortened, less after get_active_browser_url's requireCdp stopped naming targetId, M5.7's get_browser_url description, M5.1's launch_browser_with_debug executablePath, port 0 and launch results, and M5.1's readiness sentence (cdpReady, cdpEndpoint, browserVersion, the 10-second wait) in its description, M5.3's useCdp on the three reading tools and their found debug port, and M5.6's paged get_browser_content (offset, selector, the page fields in its description, and offset's 'a uia page continues with useCdp=false'), and M5.4's close_debug_browser and launch_browser_with_debug's profile, reuseIfRunning and placement (launch_application's placement schema, about 420 tokens of the 791), with its cleanup advice shortened to close_debug_browser; then 60,504 tokens, 242,016 bytes for 72 tools after M5.5's list_tabs, activate_tab, browser_navigate and wait_for_browser, each with handle, the window selector and cdpPort; then 63,474 tokens, 253,893 bytes for 78 tools after M5.8's DOM bridge, browser_element_rect, browser_click, browser_type, browser_handle_dialog, browser_screenshot and browser_evaluate, each with handle, the window selector (156 tokens each), cdpPort and targetId; then 63,673 tokens, 254,692 bytes after M5.8's dialog option (dialog and promptText on browser_click, browser_type and browser_navigate) and browser_handle_dialog through UI Automation (window only, accept optional)), so every addition to the surface is a decision. When a change
+    /// measured size (58,758 tokens, 235,029 bytes for 68 tools, October 2026, after M3.F32's screenshotMarks and observe on six action tools, M3.F8's launch arguments description, M3.F38's markPrefix, M4.2's CursorClamped and mouse buttons, and M4.1's key grammar, send_keys' delayMs and keysSent, and type_text's controlChars, M4.3's mouse_click, drag and press_keys, M4.4's type_text method and paste, and M5.2's targetId on get_browser_url and get_browser_content, +110 after the three cdpPort descriptions were shortened, less after get_active_browser_url's requireCdp stopped naming targetId, M5.7's get_browser_url description, M5.1's launch_browser_with_debug executablePath, port 0 and launch results, and M5.1's readiness sentence (cdpReady, cdpEndpoint, browserVersion, the 10-second wait) in its description, M5.3's useCdp on the three reading tools and their found debug port, and M5.6's paged get_browser_content (offset, selector, the page fields in its description, and offset's 'a uia page continues with useCdp=false'), and M5.4's close_debug_browser and launch_browser_with_debug's profile, reuseIfRunning and placement (launch_application's placement schema, about 420 tokens of the 791), with its cleanup advice shortened to close_debug_browser; then 60,504 tokens, 242,016 bytes for 72 tools after M5.5's list_tabs, activate_tab, browser_navigate and wait_for_browser, each with handle, the window selector and cdpPort; then 63,474 tokens, 253,893 bytes for 78 tools after M5.8's DOM bridge, browser_element_rect, browser_click, browser_type, browser_handle_dialog, browser_screenshot and browser_evaluate, each with handle, the window selector (156 tokens each), cdpPort and targetId; then 63,673 tokens, 254,692 bytes after M5.8's dialog option (dialog and promptText on browser_click, browser_type and browser_navigate) and browser_handle_dialog through UI Automation (window only, accept optional); then 64,078 tokens, 256,309 bytes after M6.1a's virtualScreen on get_monitors (+28), set_window_bounds' optional x/y and width/height pairs and nullable bringToFront (+87), get_browser_url's bare foreground selector (+41) and mouse_click's own click checks instead of 'as for click' (+249); DefaultToolListTokenBudget measures the 70 tools served by default), so every addition to the surface is a decision. When a change
     /// adds to the surface on purpose, raise it in the same change by what the failure message measures; when a change
     /// trims descriptions, lower it.
     /// </summary>
-    public const int ToolListTokenBudget = 63_709;
+    public const int ToolListTokenBudget = 64_114;
+
+    /// <summary>
+    /// The token budget of the default tools/list (roadmap M6.1): the tools a server started without WAM_TOOLSETS,
+    /// WAM_EXCLUDE_TOOLS and WAM_READ_ONLY serves, which is what nearly every user pays for in every session. A ratchet like
+    /// <see cref="ToolListTokenBudget"/>, just above the measured size: 59,627 tokens (238,508 bytes, 70 tools) before M6.1,
+    /// then 60,032 tokens (240,125 bytes) after M6.1a's virtualScreen on get_monitors, set_window_bounds' optional pairs (the
+    /// nullable x, y, width and height are most of its 87 tokens), get_browser_url's foreground sentence and mouse_click's own
+    /// click checks (+249), October 2026. A tool in a toolset that is off by default never moves it; a change to the default
+    /// surface raises it by what the failure message measures, in the same change, or lowers it.
+    /// </summary>
+    public const int DefaultToolListTokenBudget = 60_070;
+
+    /// <summary>
+    /// The most tokens one tool object (name, title, description, input schema, annotations) may cost in tools/list (roadmap
+    /// M6.1). Not a ratchet but a cap: a tool that needs more is doing too much, or repeats what another tool or the server
+    /// instructions say. The largest were capture_with_elements (2,396) and element_action (2,386), October 2026.
+    /// </summary>
+    public const int ToolSchemaTokenCap = 2_400;
+
+    /// <summary>
+    /// The token budget of each toolset's tools in tools/list (roadmap M6.1): what turning the toolset on adds, and what turning
+    /// it off saves. Ratchets, just above the measured sizes (the comments, October 2026); docs/TOOLS.md publishes the measured
+    /// sizes in its toolsets table. A change that grows a toolset raises its budget by what the failure message measures.
+    /// </summary>
+    private static readonly IReadOnlyDictionary<string, int> ToolsetTokenBudgets = new Dictionary<string, int>(StringComparer.Ordinal)
+    {
+        ["server"] = 1_050, // 1,028
+        ["windows"] = 13_750, // 13,724: 18 tools, 15 of them with the window selector
+        ["monitors"] = 350, // 314
+        ["capture"] = 5_900, // 5,865
+        ["elements"] = 8_300, // 8,271
+        ["input"] = 19_450, // 19,415: 13 tools; the click trio is about 4,700 of it
+        ["clipboard"] = 750, // 734
+        ["launch"] = 2_900, // 2,890
+        ["process"] = 1_950, // 1,921
+        ["layouts"] = 1_200, // 1,181
+        ["browser"] = 4_700, // 4,674
+        ["browser-actions"] = 3_600, // 3,577 (off by default)
+        ["browser-script"] = 500, // 468 (off by default)
+    };
 
     public static TheoryData<string> ServedTools() => EveryToolContractTests.ServedTools();
+
+    public static TheoryData<string> ToolsetNames()
+    {
+        var data = new TheoryData<string>();
+        foreach (var toolset in Toolsets.Server.Toolsets)
+        {
+            data.Add(toolset.Name);
+        }
+
+        return data;
+    }
 
     [Fact]
     public async Task ToolList_StaysWithinItsBudget()
     {
         // Act - the tools as a client receives them, serialized as the SDK writes them
         var tools = await ToolSurface.ListToolsAsync();
-        var bytes = Encoding.UTF8.GetByteCount(tools.ToJsonString(ModelContextProtocol.McpJsonUtilities.DefaultOptions));
-        var tokens = (bytes + BytesPerToken - 1) / BytesPerToken;
+        var bytes = ToolSurface.WireBytes(tools);
+        var tokens = ToolSurface.EstimatedTokens(bytes);
 
         // Assert
         tokens.Should().BeLessThanOrEqualTo(ToolListTokenBudget,
             "tools/list is about {0} tokens ({1} bytes, {2} tools; budget {3}); if the surface grew on purpose, raise the budget",
             tokens, bytes, tools.Count, ToolListTokenBudget);
+    }
+
+    [Fact]
+    public async Task DefaultToolList_StaysWithinItsBudget()
+    {
+        // Act - the tools of a server started with no toolset variables
+        var tools = await ToolSurface.ListDefaultToolsAsync();
+        var bytes = ToolSurface.WireBytes(tools);
+        var tokens = ToolSurface.EstimatedTokens(bytes);
+
+        // Assert
+        tokens.Should().BeLessThanOrEqualTo(DefaultToolListTokenBudget,
+            "the default tools/list is about {0} tokens ({1} bytes, {2} tools; budget {3}); if the default surface grew on purpose, " +
+            "raise the budget, and if a tool should not cost every user this, put it in a toolset that is off by default",
+            tokens, bytes, tools.Count, DefaultToolListTokenBudget);
+    }
+
+    [Fact]
+    public async Task DefaultToolList_IsTheToolsOfTheToolsetsOnByDefault()
+    {
+        // The default ratchet measures what users get: every tool of a default toolset, and nothing of an opt-in one
+        var served = (await ToolSurface.ListDefaultToolsAsync()).Select(t => (string)t!["name"]!).ToList();
+        var expected = Toolsets.Server.Toolsets.Where(t => t.OnByDefault).SelectMany(t => t.Tools);
+
+        served.Should().BeEquivalentTo(expected);
+    }
+
+    [Fact]
+    public void EveryToolset_HasATokenBudget()
+    {
+        ToolsetTokenBudgets.Keys.Should().BeEquivalentTo(Toolsets.Server.Toolsets.Select(t => t.Name),
+            "every toolset's share of tools/list is measured; a new toolset needs a budget here (see TESTING.md)");
+    }
+
+    [Theory]
+    [MemberData(nameof(ToolsetNames))]
+    public async Task EveryToolset_StaysWithinItsBudget(string toolset)
+    {
+        // Arrange
+        var budget = ToolsetTokenBudgets.GetValueOrDefault(toolset);
+
+        // Act
+        var tokens = ToolSurface.ToolsetTokens(await ToolSurface.ListToolsAsync(), Toolsets.Server.Find(toolset)!);
+
+        // Assert
+        tokens.Should().BeLessThanOrEqualTo(budget,
+            "the tools of toolset '{0}' are about {1} tokens of tools/list (budget {2}); if it grew on purpose, raise its budget",
+            toolset, tokens, budget);
+    }
+
+    [Fact]
+    public async Task EveryTool_SchemaWithinCap()
+    {
+        // Act
+        var tools = await ToolSurface.ListToolsAsync();
+        var over = tools
+            .Select(tool => (Name: (string)tool!["name"]!, Tokens: ToolSurface.EstimatedTokens(ToolSurface.WireBytes(tool))))
+            .Where(tool => tool.Tokens > ToolSchemaTokenCap)
+            .Select(tool => $"{tool.Name}: about {tool.Tokens} tokens")
+            .ToList();
+
+        // Assert
+        over.Should().BeEmpty(
+            "no tool object may cost more than {0} tokens of tools/list: shorten its description or parameters, or split what it does",
+            ToolSchemaTokenCap);
     }
 
     [Fact]

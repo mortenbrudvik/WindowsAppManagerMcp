@@ -82,6 +82,12 @@ public interface IWindowService
     WindowChangeResult ResizeWindow(nint handle, int width, int height);
 
     /// <summary>
+    /// Resizes the window's visible frame, keeping its top-left corner (SWP_NOMOVE), and raises it without activating it when
+    /// <paramref name="bringToFront"/> is true (set_window_bounds with a size only, roadmap M6.1). Fails with ResizeFailed.
+    /// </summary>
+    WindowChangeResult ResizeWindow(nint handle, int width, int height, bool bringToFront);
+
+    /// <summary>
     /// Moves and resizes the window rect (GetWindowRect, with the invisible borders: <see cref="BoundsFrame.Outer"/>), the
     /// rect layouts save and apply. set_window_bounds uses <see cref="SetWindowFrame"/>.
     /// </summary>

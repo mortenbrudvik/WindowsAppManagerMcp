@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -89,7 +90,7 @@ public static partial class ToolDocGenerator
         {
             ("README.md", "tool-table") => ReadmeToolTable(count),
             ("docs/TOOLS.md", "summary") => ToolsSummary(count),
-            ("docs/TOOLS.md", "toolsets") => ToolsetsTable(Toolsets.Server),
+            ("docs/TOOLS.md", "toolsets") => ToolsetsTable(Toolsets.Server, tools),
             ("docs/TOOLS.md", "read-only") => ReadOnlyTools(tools),
             ("docs/TOOLS.md", _) when id.StartsWith(ParamsPrefix, StringComparison.Ordinal) =>
                 ParameterTables(ToolSurface.Tool(tools, id[ParamsPrefix.Length..]), current),
@@ -130,19 +131,29 @@ public static partial class ToolDocGenerator
         return string.Join('\n', lines);
     }
 
-    /// <summary>The toolsets of <paramref name="catalog"/>: whether each is on by default, what it covers and its tools.</summary>
-    public static string ToolsetsTable(ToolsetCatalog catalog)
+    /// <summary>
+    /// The toolsets of <paramref name="catalog"/>: whether each is on by default, what its tools cost in tools/list (roadmap
+    /// M6.1, <see cref="ToolSurface.ToolsetTokens"/>, rounded to the nearest 100 so that a small description change leaves the
+    /// table alone), what it covers and its tools.
+    /// </summary>
+    public static string ToolsetsTable(ToolsetCatalog catalog, JsonArray tools)
     {
         var lines = new List<string>
         {
-            "| Toolset | Default | What it covers | Tools |",
-            "|---------|---------|----------------|-------|"
+            "| Toolset | Default | Tokens | What it covers | Tools |",
+            "|---------|---------|--------|----------------|-------|"
         };
         lines.AddRange(catalog.Toolsets.Select(t =>
-            $"| `{t.Name}` | {(t.Name == catalog.AlwaysOn ? "always on" : t.OnByDefault ? "on" : "off")} | {Cell(t.Description)} | " +
+            $"| `{t.Name}` | {(t.Name == catalog.AlwaysOn ? "always on" : t.OnByDefault ? "on" : "off")} | " +
+            $"{RoundedTokens(ToolSurface.ToolsetTokens(tools, t))} | {Cell(t.Description)} | " +
             $"{string.Join(", ", t.Tools.Select(tool => $"[{tool}](#{tool})"))} |"));
         return string.Join('\n', lines);
     }
+
+    /// <summary>A token estimate for the docs, to the nearest 100: "about 13,700", and at least "about 100".</summary>
+    public static string RoundedTokens(int tokens) =>
+        "about " + Math.Max(100, (int)Math.Round(tokens / 100.0, MidpointRounding.AwayFromZero) * 100)
+            .ToString("N0", CultureInfo.InvariantCulture);
 
     /// <summary>
     /// The tools annotated readOnlyHint, which read-only mode serves, in catalog order: the Observer profile is exactly

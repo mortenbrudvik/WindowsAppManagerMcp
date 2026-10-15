@@ -4,6 +4,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using ModelContextProtocol.Protocol;
 using WindowsAppManagerMcp.Infrastructure;
+using WindowsAppManagerMcp.Tests.Contract;
 
 namespace WindowsAppManagerMcp.Tests.Fixtures;
 
@@ -38,6 +39,14 @@ public static class ToolSurface
 
     private static readonly Lazy<Task<JsonArray>> LazyTools = new(() => ListToolsFromServerAsync(revision: null));
 
+    private static readonly Lazy<Task<JsonArray>> LazyDefaultTools = new(() => ListToolsFromServerAsync(revision: null, DefaultSelection));
+
+    /// <summary>
+    /// The toolsets a server started without WAM_TOOLSETS, WAM_EXCLUDE_TOOLS and WAM_READ_ONLY serves: the default surface
+    /// that every user pays for unless they change it (roadmap M6.1).
+    /// </summary>
+    public static ToolsetSelection DefaultSelection => ToolsetSelection.FromEnvironment(_ => null, Toolsets.Server);
+
     public static string SnapshotPath => RepositoryFiles.PathOf(SnapshotRelativePath);
 
     /// <summary>
@@ -45,6 +54,31 @@ public static class ToolSurface
     /// each call returns a copy the caller may change.
     /// </summary>
     public static async Task<JsonArray> ListToolsAsync() => (JsonArray)(await LazyTools.Value).DeepClone();
+
+    /// <summary>
+    /// The tools of a server started with no toolset variables (<see cref="DefaultSelection"/>), as raw JSON objects sorted by
+    /// name. Listed once per test run; each call returns a copy the caller may change.
+    /// </summary>
+    public static async Task<JsonArray> ListDefaultToolsAsync() => (JsonArray)(await LazyDefaultTools.Value).DeepClone();
+
+    /// <summary>The UTF-8 bytes of a tools/list node as the SDK writes it on the wire.</summary>
+    public static int WireBytes(JsonNode node) =>
+        Encoding.UTF8.GetByteCount(node.ToJsonString(ModelContextProtocol.McpJsonUtilities.DefaultOptions));
+
+    /// <summary>The estimated tokens of <paramref name="bytes"/> of JSON text, rounded up (<see cref="ToolPayloadBudgetTests.BytesPerToken"/>).</summary>
+    public static int EstimatedTokens(int bytes) =>
+        (bytes + ToolPayloadBudgetTests.BytesPerToken - 1) / ToolPayloadBudgetTests.BytesPerToken;
+
+    /// <summary>
+    /// The estimated tokens <paramref name="toolset"/> adds to tools/list: the sum of its tool objects as the SDK writes them,
+    /// which is what turning it on (or off) costs (or saves) a client that loads every tool up front.
+    /// </summary>
+    public static int ToolsetTokens(JsonArray tools, Toolset toolset)
+    {
+        ArgumentNullException.ThrowIfNull(tools);
+        ArgumentNullException.ThrowIfNull(toolset);
+        return EstimatedTokens(toolset.Tools.Sum(name => WireBytes(Tool(tools, name))));
+    }
 
     /// <summary>The snapshot document for <paramref name="tools"/>, as written to <see cref="SnapshotPath"/> (LF line ends).</summary>
     public static string ToSnapshotText(JsonArray tools)
@@ -80,11 +114,13 @@ public static class ToolSurface
     /// Lists the tools of a new in-process server whose client negotiates <paramref name="revision"/> (null: the SDK
     /// client's default, <see cref="InProcessMcpServer.LatestRevision"/>), sorted by name.
     /// </summary>
-    public static async Task<JsonArray> ListToolsFromServerAsync(string? revision)
+    /// <param name="revision">The protocol revision the client negotiates.</param>
+    /// <param name="toolsets">The toolsets the server serves; null serves every tool (<see cref="ToolsetSelection.All"/>).</param>
+    public static async Task<JsonArray> ListToolsFromServerAsync(string? revision, ToolsetSelection? toolsets = null)
     {
         await using var server = await InProcessMcpServer.StartAsync(
             [],
-            builder => builder.AddWindowsAppManagerTools(),
+            builder => builder.AddWindowsAppManagerTools(toolsets),
             clientOptions: InProcessMcpServer.WithRevision(null, revision));
 
         var tools = new List<JsonObject>();

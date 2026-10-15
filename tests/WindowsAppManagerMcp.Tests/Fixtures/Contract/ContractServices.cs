@@ -50,6 +50,9 @@ public sealed class ContractServices : IDisposable
     public Mock<IWindowService> Windows { get; } = new();
     public Mock<IForegroundService> Foreground { get; } = new();
     public Mock<IMonitorService> Monitors { get; } = new();
+
+    /// <summary>get_monitors' virtualScreen (roadmap M6.1): the bounds of <see cref="TypicalDesktop.Monitors"/> together, or none.</summary>
+    public Mock<IScreenCaptureWrapper> Screen { get; } = new();
     public Mock<IProcessService> Processes { get; } = new();
     public Mock<IBrowserReadingService> Browser { get; } = new();
 
@@ -169,6 +172,7 @@ public sealed class ContractServices : IDisposable
         services.AddSingleton(DebugBrowsers.Object);
         services.AddSingleton(Foreground.Object);
         services.AddSingleton(Monitors.Object);
+        services.AddSingleton(Screen.Object);
         services.AddSingleton(Processes.Object);
         services.AddSingleton(Browser.Object);
         services.AddSingleton(BrowserTabs.Object);
@@ -360,6 +364,7 @@ public sealed class ContractServices : IDisposable
         Monitors.Setup(m => m.GetAllMonitors()).Returns(TypicalDesktop.Monitors);
         Monitors.Setup(m => m.GetPrimaryMonitor()).Returns(TypicalDesktop.Monitors[0]);
         Monitors.Setup(m => m.GetMonitorIndex(It.IsAny<nint>())).Returns(0);
+        Screen.Setup(s => s.GetVirtualScreenBounds()).Returns((-1920, 0, 4480, 1440));
 
         Processes.Setup(p => p.LaunchApplicationAsync(It.IsAny<string>(), It.IsAny<string[]?>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new LaunchResult(true, ProcessId: TypicalDesktop.NotepadProcessId, WindowHandle: (nint)TypicalDesktop.NotepadHandle));
@@ -616,6 +621,7 @@ public sealed class ContractServices : IDisposable
 
         Monitors.Setup(m => m.GetAllMonitors()).Returns([]);
         Monitors.Setup(m => m.GetPrimaryMonitor()).Throws(new InvalidOperationException("No monitors found"));
+        Screen.Setup(s => s.GetVirtualScreenBounds()).Returns((0, 0, 0, 0));
 
         Processes.Setup(p => p.LaunchApplicationAsync(It.IsAny<string>(), It.IsAny<string[]?>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new LaunchResult(false, ErrorMessage: "The executable was not found", ErrorCode: "ExecutableNotFound"));
