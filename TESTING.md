@@ -2332,6 +2332,19 @@ Roadmap M5.2 (after its merge, on a real Edge):
   back to UI Automation: the check failed; stop and record it.
 - **No Origin header.** The reads above work without `--remote-allow-origins`.
 
+Roadmap M5.1 readiness (on a real Edge, then Chrome, by the same rules; only the check's own debug instances):
+
+- **Port 0** (the one exception to rule 2's explicit port). launch_browser_with_debug without `port` returns `success: true` and `cdpReady: true`; `cdpPort` is the
+  first line of the profile's `DevToolsActivePort`; `browserVersion` starts with `Edg/` (Chrome: `Chrome/`);
+  `cdpEndpoint` is `http://127.0.0.1:<cdpPort>`; `browserWsEndpoint` is `ws://127.0.0.1:<cdpPort>/devtools/browser/...`
+  and matches the profile file's second line. Record how much longer the launch took than before (expected well under
+  a second).
+- **Explicit free port.** The same with `port` set to a free port from 1024-65535: `cdpPort` is that port.
+- **Read after ready.** get_browser_content with the returned `cdpPort` and `requireCdp: true` on the launch's own
+  `windowHandle`, on a `data:` page, returns `source: "cdp"` at once, without a retry.
+- **Endpoint not ready** (the 10-second wait, a non-DevTools answer, a port another process holds) is covered by the
+  fakes (`DebugBrowserReadinessProbeTests`); it is not provoked on a real browser.
+
 ### Tool surface snapshot
 
 `Contract/ToolSurfaceSnapshotTests` tests the server the way an agent sees it. It lists the tools of an
