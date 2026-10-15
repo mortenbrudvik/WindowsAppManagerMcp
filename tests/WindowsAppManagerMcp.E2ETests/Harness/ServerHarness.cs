@@ -24,8 +24,9 @@ namespace WindowsAppManagerMcp.E2ETests.Harness;
 /// behind the guard.
 /// </summary>
 /// <remarks>
-/// Tests call the services directly until the in-process MCP client path exists (roadmap M2.12); then
-/// the same harness can host the MCP server over in-memory pipes.
+/// Tests call the services directly. The in-process MCP host (<see cref="InProcessMcpServer"/>, shared with the contract
+/// tests) can run the real MCP pipeline in this tier too; a scenario that hosts the server's tools through it must hand
+/// them this harness's guarded services, not the defaults of <see cref="ServiceRegistration.AddWindowsAppManagerServices"/>.
 /// </remarks>
 public sealed class ServerHarness : IDisposable
 {
