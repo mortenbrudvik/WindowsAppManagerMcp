@@ -303,6 +303,9 @@ public class MonitorServiceSnapshotTests
             return Topology(call).ToList();
         }
 
+        // No display configuration: these tests are about the snapshot, MonitorServiceIdentityTests about the identity
+        public IReadOnlyList<DisplayTarget>? GetDisplayTargets() => null;
+
         public nint MonitorFromWindow(nint windowHandle) => WindowMonitor;
 
         public nint MonitorFromPoint(int x, int y) => PointMonitor;

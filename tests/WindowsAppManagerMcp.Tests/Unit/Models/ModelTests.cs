@@ -401,6 +401,30 @@ public class ModelTests
     }
 
     [Fact]
+    public void MonitorInfo_WithoutTheDisplayConfiguration_HasNoIdentity_AndADpiFromItsScale()
+    {
+        // Arrange & Act - roadmap M6.7: the identity comes from the display configuration, which may be unreadable
+        var info = TestDataFactory.CreateMonitorInfo(scaleFactor: 1.5);
+
+        // Assert
+        info.Dpi.Should().Be(144);
+        info.Id.Should().BeNull();
+        info.FriendlyName.Should().BeNull();
+        info.IsInternal.Should().BeNull();
+    }
+
+    [Fact]
+    public void MonitorInfo_Identity_TakesPartInEquality()
+    {
+        // A monitor is a value: the same geometry with another id is another monitor
+        var info = TestDataFactory.CreateMonitorInfo();
+
+        (info with { Id = "m-00000001" }).Should().NotBe(info with { Id = "m-00000002" });
+        (info with { Dpi = 120 }).Should().NotBe(info);
+        (info with { FriendlyName = "DELL" }).Should().Be(info with { FriendlyName = "DELL" });
+    }
+
+    [Fact]
     public void WindowInfo_CreatesWithAllProperties()
     {
         // Arrange & Act

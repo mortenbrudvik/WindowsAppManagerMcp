@@ -234,7 +234,9 @@ public static class WrapperCatalog
                 [nameof(INativeMonitorWrapper.EnumerateMonitors)] = WrapperMember.Read,
                 // find_windows looks up the monitor of every window, fixture or not
                 [nameof(INativeMonitorWrapper.MonitorFromWindow)] = WrapperMember.Read,
-                [nameof(INativeMonitorWrapper.MonitorFromPoint)] = WrapperMember.Read
+                [nameof(INativeMonitorWrapper.MonitorFromPoint)] = WrapperMember.Read,
+                // QueryDisplayConfig and DisplayConfigGetDeviceInfo: monitor identity (roadmap M6.7); never SetDisplayConfig
+                [nameof(INativeMonitorWrapper.GetDisplayTargets)] = WrapperMember.Read
             },
             [typeof(ITcpPortOwnerResolver)] = new Dictionary<string, WrapperMember>
             {
