@@ -39,7 +39,7 @@ public class BrowserReadingTools
         "Time limit in ms for the CDP requests, and again for the UI Automation read (default: 10000, range: 1000-30000). A page with an open JavaScript dialog (alert/confirm/prompt/beforeunload) never answers CDP, so the call returns CdpTimeout or CdpDialogOpen instead of hanging.";
 
     [McpServerTool(Name = "get_browser_url", Title = "Get Browser URL", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
-    [Description("Get the current URL from a browser window. Uses Windows UI Automation to read the address bar, or CDP (Chrome DevTools Protocol) if a port is specified." + CdpBehaviorDescription + " Supports Chrome, Edge, Firefox, Brave, Opera, Vivaldi, and other Chromium/Firefox-based browsers.")]
+    [Description("Get the current URL from a browser window. Uses Windows UI Automation to read the address of the shown tab's page, else the address bar (urlSource says which), or CDP (Chrome DevTools Protocol) if a port is specified." + CdpBehaviorDescription + " Supports Chrome, Edge, Firefox, Brave, Opera, Vivaldi, and other Chromium/Firefox-based browsers.")]
     public async Task<BrowserUrlResultDto> GetBrowserUrl(
         [Description("Window handle of the browser (as integer). Get this from find_windows or get_foreground_window. Pass handle or window, not both.")]
         long? handle = null,

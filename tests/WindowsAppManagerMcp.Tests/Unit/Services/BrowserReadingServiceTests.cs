@@ -261,6 +261,44 @@ public class BrowserReadingServiceTests
     }
 
     [Fact]
+    public async Task GetBrowserUrl_DoesNotReturnTheAddressBarsText_WhenTheBrowserIsNotInFront()
+    {
+        // Arrange - the agent's terminal is in front; the address bar holds text typed and left there, which a browser
+        // behind another window reports as not focused
+        var handle = new nint(12345);
+        SetupValidBrowserWindow(handle, "chrome", "chrome");
+        _mockNativeWrapper.Setup(n => n.GetForegroundWindow()).Returns(new nint(4242));
+        ShowBrowser(handle, new FakeBrowserWindow(BrowserNames.ChromeEnglish, committedUrl: null,
+            addressBarText: "intranet.corp/secret-project"));
+
+        // Act
+        var result = await CreateSut().GetBrowserUrlAsync(handle);
+
+        // Assert
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(BrowserErrorCode.UrlExtractionFailed);
+        result.Url.Should().BeNull();
+        result.DisplayUrl.Should().Be("intranet.corp/secret-project");
+        result.IsEditing.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task GetBrowserUrl_TakesThePagesAddress_WhenTheBrowserIsNotInFront()
+    {
+        var handle = new nint(12345);
+        SetupValidBrowserWindow(handle, "chrome", "chrome");
+        _mockNativeWrapper.Setup(n => n.GetForegroundWindow()).Returns(new nint(4242));
+        ShowBrowser(handle, new FakeBrowserWindow(BrowserNames.ChromeEnglish));
+
+        var result = await CreateSut().GetBrowserUrlAsync(handle);
+
+        result.Success.Should().BeTrue();
+        result.Url.Should().Be(FakeBrowserWindow.CommittedUrl);
+        result.UrlSource.Should().Be(BrowserUrlSource.Document);
+        result.IsEditing.Should().BeNull();
+    }
+
+    [Fact]
     public async Task GetBrowserUrlAndContent_ReadAChildWindowsHandle_AsItsTopLevelWindow()
     {
         // Arrange - the handle of the page's render widget, from an element's nativeWindowHandle
@@ -601,6 +639,7 @@ public class BrowserReadingServiceTests
         _mockNativeWrapper.Setup(n => n.GetWindowThreadProcessId(handle)).Returns(1000u);
         _mockNativeWrapper.Setup(n => n.GetProcessName(1000u)).Returns("msedge");
         _mockBrowserDetection.Setup(b => b.IsBrowser("msedge")).Returns(true);
+        _mockNativeWrapper.Setup(n => n.GetForegroundWindow()).Returns(handle);
         ShowPage(handle, "https://example.com");
         var sut = CreateSut();
 
@@ -1247,16 +1286,48 @@ public class BrowserReadingServiceTests
     }
 
     [Fact]
-    public async Task GetBrowserUrl_DoesNotWarmUpThePage()
+    public async Task GetBrowserUrl_WarmsUpThePage_BeforeFindingTheShownPages()
     {
-        // The page's Document is read through its render widget, without waiting for the page's tree
+        // Arrange - the warm-up builds the page's Document, and gives the render widgets shown now, not the ones an
+        // earlier read's warm-up left behind
         var handle = new nint(12345);
         SetupValidBrowserWindow(handle, "chrome", "chrome");
-        ShowPage(handle, "https://example.com");
+        var browser = new FakeBrowserWindow(BrowserNames.ChromeEnglish);
+        ShowBrowser(handle, browser);
+        var calls = new List<string>();
+        _warmup.Setup(w => w.WarmUp(handle, It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .Callback(() => calls.Add("WarmUp")).Returns(Warmed);
+        _warmup.Setup(w => w.FindPages(handle, It.IsAny<CancellationToken>()))
+            .Callback(() => calls.Add("FindPages"))
+            .Returns(browser.Pages.Select(page => new RenderWidgetPage(new nint(700), handle, page)).ToList());
 
-        await CreateSut().GetBrowserUrlAsync(handle);
+        // Act
+        var result = await CreateSut().GetBrowserUrlAsync(handle, new CdpOptions(TimeoutMs: 3000));
 
-        _warmup.Verify(w => w.WarmUp(It.IsAny<nint>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()), Times.Never);
+        // Assert
+        result.Url.Should().Be(FakeBrowserWindow.CommittedUrl);
+        calls.Should().Equal("WarmUp", "FindPages");
+        _warmup.Verify(w => w.WarmUp(handle, AccessibilityWarmup.BudgetFor(TimeSpan.FromMilliseconds(3000)), _worker.LastToken), Times.Once);
+    }
+
+    [Fact]
+    public async Task GetBrowserContent_ReturnsOperationTimedOut_WhenTheSearchForThePageTimesOut()
+    {
+        // Arrange - a browser whose page does not answer, which is not a window without a page
+        var handle = new nint(12345);
+        SetupValidBrowserWindow(handle, "firefox", "firefox");
+        var window = new FakeUiaNode("Window", "Example - Mozilla Firefox").With(
+            new FakeUiaNode("Document", "Example").WithPattern<IUiaTextPattern>(new FakeTextPattern("text")));
+        window.FindAllException = new TimeoutException("The provider did not answer.");
+        _tree.WithWindow(handle, window);
+
+        // Act
+        var result = await CreateSut().GetBrowserContentAsync(handle);
+
+        // Assert
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(BrowserErrorCode.OperationTimedOut);
+        result.Error.Should().Contain("did not answer");
     }
 
     [Fact]
@@ -1354,6 +1425,7 @@ public class BrowserReadingServiceTests
         _mockNativeWrapper.Setup(n => n.GetWindowThreadProcessId(handle)).Returns(1000u);
         _mockNativeWrapper.Setup(n => n.GetProcessName(1000u)).Returns(processName);
         _mockNativeWrapper.Setup(n => n.GetWindowText(handle)).Returns($"Test Page - {processName}");
+        _mockNativeWrapper.Setup(n => n.GetForegroundWindow()).Returns(handle);
         _mockBrowserDetection.Setup(b => b.IsBrowser(It.IsAny<string>())).Returns(true);
     }
 

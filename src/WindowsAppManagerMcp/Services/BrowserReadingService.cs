@@ -672,8 +672,9 @@ public class BrowserReadingService : IBrowserReadingService
 
     /// <summary>
     /// Reads the browser window through UI Automation (roadmap M3.F24): its title and the page's address, or with
-    /// <paramref name="content"/> its page, warmed up first. The target policy is checked before anything is read;
-    /// then the read runs on the worker under <paramref name="timeout"/>, and its failures come back as an error code.
+    /// <paramref name="content"/> its page, warmed up first in both cases (roadmap M5.7). The target policy is checked
+    /// before anything is read; then the read runs on the worker under <paramref name="timeout"/>, and its failures come
+    /// back as an error code.
     /// </summary>
     /// <param name="windowText">The window's text, the title when UI Automation cannot read the window's name.</param>
     /// <param name="content">The content options of get_browser_content, or null to read only the title and the URL.</param>
@@ -724,10 +725,10 @@ public class BrowserReadingService : IBrowserReadingService
     }
 
     /// <summary>
-    /// The UI Automation read, on the worker thread: whether the window responds, then (for the content) the warm-up, then
-    /// the window's title and the shown pages, then the page's address (get_browser_url) or its text (get_browser_content,
-    /// which takes the address from the page and does not look up the address bar). A window UI Automation has no element
-    /// for reads as nothing found.
+    /// The UI Automation read, on the worker thread: whether the window responds, then the warm-up, then the window's title
+    /// and the shown pages, then the page's address (get_browser_url, which trusts the address bar's focus only while the
+    /// browser is the foreground window) or its text (get_browser_content, which takes the address from the page and does
+    /// not look up the address bar). A window UI Automation has no element for reads as nothing found.
     /// </summary>
     private UiaRead ReadThroughUia(
         nint browserHandle,
@@ -747,10 +748,9 @@ public class BrowserReadingService : IBrowserReadingService
             return UiaRead.Failed("UI Automation is not available", BrowserErrorCode.AutomationUnavailable);
         }
 
-        if (content != null)
-        {
-            warmup.Value = _warmup?.WarmUp(browserHandle, warmupBudget, cancellationToken);
-        }
+        // The URL's read too: the page's Document holds the address, and the warm-up gives the render widgets shown now
+        // (FindPages), not the ones an earlier read's warm-up of the window left behind
+        warmup.Value = _warmup?.WarmUp(browserHandle, warmupBudget, cancellationToken);
 
         IUiaNode? window;
         try
@@ -779,12 +779,16 @@ public class BrowserReadingService : IBrowserReadingService
             title = null;
         }
 
-        // The shown tabs' pages, through their render widgets: after the warm-up of the content, the ones it found
+        // The shown tabs' pages, through their render widgets: the ones the warm-up found
         var pages = _warmup?.FindPages(browserHandle, cancellationToken)?.Select(page => page.Root).ToList();
         var windowTitle = title ?? windowText;
-        return content != null
-            ? new UiaRead(title, null, _reader.ReadContent(window, windowTitle, pages, content.MaxLength, cancellationToken), warmup.Value)
-            : new UiaRead(title, _reader.ReadUrl(window, windowTitle, pages, cancellationToken), null, warmup.Value);
+        if (content != null)
+        {
+            return new UiaRead(title, null, _reader.ReadContent(window, windowTitle, pages, content.MaxLength, cancellationToken), warmup.Value);
+        }
+
+        var foreground = TopLevel(_nativeWrapper.GetForegroundWindow()) == browserHandle;
+        return new UiaRead(title, _reader.ReadUrl(window, windowTitle, pages, foreground, cancellationToken), null, warmup.Value);
     }
 
     /// <summary>

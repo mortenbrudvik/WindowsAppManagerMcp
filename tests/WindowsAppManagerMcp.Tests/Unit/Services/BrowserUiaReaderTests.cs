@@ -30,8 +30,8 @@ public class BrowserUiaReaderTests
         return url != null ? document.WithPattern<IUiaValuePattern>(new FakeValuePattern(url)) : document;
     }
 
-    private BrowserUiaUrl ReadUrl(FakeBrowserWindow browser, bool withPages = true) =>
-        CreateSut().ReadUrl(browser.Window, browser.Title, withPages ? browser.Pages : null, CancellationToken.None);
+    private BrowserUiaUrl ReadUrl(FakeBrowserWindow browser, bool withPages = true, bool foreground = true) =>
+        CreateSut().ReadUrl(browser.Window, browser.Title, withPages ? browser.Pages : null, foreground, CancellationToken.None);
 
     #region get_browser_url: the page's address
 
@@ -158,7 +158,7 @@ public class BrowserUiaReaderTests
             .With(Edit("Inside the widget", "https://widget.example/", className: BrowserUiaReader.OmniboxClassName)));
 
         // Act
-        CreateSut().ReadUrl(browser.Window, browser.Title, [], CancellationToken.None);
+        CreateSut().ReadUrl(browser.Window, browser.Title, [], true, CancellationToken.None);
 
         // Assert
         _tree.ChildListings.Should().NotContain([FakeBrowserWindow.PageTitle, "Address and search bar", "Chrome Legacy Window"]);
@@ -179,10 +179,10 @@ public class BrowserUiaReaderTests
                 new FakeUiaNode("ComboBox") { AutomationId = "urlbar" }.With(urlBar)));
 
         // Act
-        var url = CreateSut().ReadUrl(window, "Mozilla — Mozilla Firefox", null, CancellationToken.None);
+        var url = CreateSut().ReadUrl(window, "Mozilla — Mozilla Firefox", null, true, CancellationToken.None);
         var withoutPage = CreateSut().ReadUrl(new FakeUiaNode("Window", "Firefox").With(
             new FakeUiaNode("ToolBar").With(Edit("Adresse", "mozilla.org/nb-NO/", automationId: BrowserUiaReader.FirefoxUrlBarAutomationId))),
-            null, null, CancellationToken.None);
+            null, null, true, CancellationToken.None);
 
         // Assert
         url.Should().Be(new BrowserUiaUrl("https://www.mozilla.org/nb-NO/", "mozilla.org/nb-NO/", BrowserUrlSource.Document, false));
@@ -238,6 +238,61 @@ public class BrowserUiaReaderTests
         fromDocument.Should().Be(new BrowserUiaUrl(FakeBrowserWindow.CommittedUrl, null, BrowserUrlSource.Document, true));
     }
 
+    [Fact]
+    public void ReadUrl_DoesNotTrustTheAddressBar_WhenTheBrowserIsNotInFront()
+    {
+        // Arrange - text typed in the address bar and left there; a browser behind another window reports no focus, so its
+        // address bar reads as not edited
+        var typed = new FakeBrowserWindow(BrowserNames.ChromeNorwegian, committedUrl: null, addressBarText: "intranet.corp/secret-project");
+        var committed = new FakeBrowserWindow(BrowserNames.ChromeNorwegian, addressBarText: "intranet.corp/secret-project");
+
+        // Act
+        var fromBar = ReadUrl(typed, foreground: false);
+        var fromDocument = ReadUrl(committed, foreground: false);
+
+        // Assert - whether the text was typed cannot be told, so only the page's own address is taken
+        fromBar.ErrorCode.Should().Be(BrowserErrorCode.UrlExtractionFailed);
+        fromBar.Url.Should().BeNull();
+        fromBar.DisplayUrl.Should().Be("intranet.corp/secret-project");
+        fromBar.IsEditing.Should().BeNull();
+        fromBar.Error.Should().Contain("foreground").And.NotContain("secret-project");
+        fromDocument.Should().Be(
+            new BrowserUiaUrl(FakeBrowserWindow.CommittedUrl, "intranet.corp/secret-project", BrowserUrlSource.Document, null));
+        _tree.Reads.Should().NotContain(read => read.StartsWith("Interaction:", StringComparison.Ordinal),
+            "the focus of a browser that is not in front tells nothing");
+    }
+
+    [Fact]
+    public void ReadUrl_DoesNotTrustTheAddressBar_WhenItsFocusCannotBeRead()
+    {
+        // Arrange
+        var browser = new FakeBrowserWindow(BrowserNames.EdgeEnglish, committedUrl: null, addressBarText: "intranet.corp/secret-project");
+        browser.Omnibox.InteractionException = FakeUiaTree.Vanished();
+
+        // Act
+        var url = ReadUrl(browser);
+
+        // Assert - a focus that cannot be read counts as an address bar being edited
+        url.ErrorCode.Should().Be(BrowserErrorCode.UrlExtractionFailed);
+        url.Url.Should().BeNull();
+        url.DisplayUrl.Should().Be("intranet.corp/secret-project");
+        url.IsEditing.Should().BeNull();
+    }
+
+    [Fact]
+    public void ReadUrl_ReadsTheAddressBar_WhenTheSearchForThePageTimesOut()
+    {
+        // Arrange - Chromium's page tree does not answer, its own UI does
+        var browser = new FakeBrowserWindow(BrowserNames.ChromeEnglish);
+        browser.Window.FindAllException = new TimeoutException("The provider did not answer.");
+
+        // Act
+        var url = ReadUrl(browser, withPages: false);
+
+        // Assert
+        url.Should().Be(new BrowserUiaUrl(FakeBrowserWindow.ShownUrl, FakeBrowserWindow.ShownUrl, BrowserUrlSource.AddressBar, false));
+    }
+
     [Theory]
     [InlineData("hello world")]
     [InlineData("Søk på Google eller skriv inn en nettadresse")]
@@ -265,7 +320,7 @@ public class BrowserUiaReaderTests
         IReadOnlyList<IUiaNode> pages = [devTools, sidePanel, browser.Sidebar!, browser.Document];
 
         // Act
-        var url = CreateSut().ReadUrl(browser.Window, browser.Title, pages, CancellationToken.None);
+        var url = CreateSut().ReadUrl(browser.Window, browser.Title, pages, true, CancellationToken.None);
         var content = CreateSut().ReadContent(browser.Window, browser.Title, pages, null, CancellationToken.None);
 
         // Assert
@@ -282,7 +337,7 @@ public class BrowserUiaReaderTests
         var other = Document(FakeBrowserWindow.PageTitle, "https://other.example/", new UiaRect(0, 0, 3000, 3000));
 
         // Act
-        var url = CreateSut().ReadUrl(browser.Window, browser.Title, [other, browser.Document], CancellationToken.None);
+        var url = CreateSut().ReadUrl(browser.Window, browser.Title, [other, browser.Document], true, CancellationToken.None);
 
         // Assert
         url.Url.Should().Be(FakeBrowserWindow.CommittedUrl);
@@ -308,7 +363,7 @@ public class BrowserUiaReaderTests
             Document("Example", "not a url"));
 
         // Act
-        var url = CreateSut().ReadUrl(window, "Example - Google Chrome", null, CancellationToken.None);
+        var url = CreateSut().ReadUrl(window, "Example - Google Chrome", null, true, CancellationToken.None);
 
         // Assert
         url.ErrorCode.Should().Be(BrowserErrorCode.UrlExtractionFailed);
@@ -325,7 +380,7 @@ public class BrowserUiaReaderTests
             Edit("Omnibox", "example.com/", className: BrowserUiaReader.OmniboxClassName)));
 
         // Act
-        var url = CreateSut().ReadUrl(window, null, null, CancellationToken.None);
+        var url = CreateSut().ReadUrl(window, null, null, true, CancellationToken.None);
 
         // Assert
         url.Url.Should().Be("example.com/");
@@ -350,8 +405,8 @@ public class BrowserUiaReaderTests
         var tooDeep = Window(Nest(14, Edit("Omnibox", "deeper.example/", className: BrowserUiaReader.OmniboxClassName)));
 
         // Act
-        var found = CreateSut().ReadUrl(reachable, null, [], CancellationToken.None);
-        var missed = CreateSut().ReadUrl(tooDeep, null, [], CancellationToken.None);
+        var found = CreateSut().ReadUrl(reachable, null, [], true, CancellationToken.None);
+        var missed = CreateSut().ReadUrl(tooDeep, null, [], true, CancellationToken.None);
 
         // Assert
         found.Url.Should().Be("deep.example/");
@@ -369,7 +424,7 @@ public class BrowserUiaReaderTests
         var window = Window(new FakeUiaNode("Pane", "Wide").With(wide));
 
         // Act
-        var url = CreateSut().ReadUrl(window, null, [], CancellationToken.None);
+        var url = CreateSut().ReadUrl(window, null, [], true, CancellationToken.None);
 
         // Assert - the address bar past the limit is never read
         url.ErrorCode.Should().Be(BrowserErrorCode.UrlBarNotFound);
@@ -383,7 +438,7 @@ public class BrowserUiaReaderTests
         window.ChildrenException = FakeUiaTree.Vanished();
         window.FindAllException = FakeUiaTree.Vanished();
 
-        var url = CreateSut().ReadUrl(window, null, null, CancellationToken.None);
+        var url = CreateSut().ReadUrl(window, null, null, true, CancellationToken.None);
 
         url.ErrorCode.Should().Be(BrowserErrorCode.UrlBarNotFound);
     }
@@ -396,7 +451,7 @@ public class BrowserUiaReaderTests
         cancelled.Cancel();
 
         // Act
-        var act = () => CreateSut().ReadUrl(new FakeBrowserWindow(BrowserNames.ChromeEnglish).Window, null, null, cancelled.Token);
+        var act = () => CreateSut().ReadUrl(new FakeBrowserWindow(BrowserNames.ChromeEnglish).Window, null, null, true, cancelled.Token);
 
         // Assert
         act.Should().Throw<OperationCanceledException>();
@@ -462,6 +517,32 @@ public class BrowserUiaReaderTests
         var content = CreateSut().ReadContent(window, "Page - Google Chrome", null, maxLength: null, CancellationToken.None);
 
         content.Text.Should().Be("page");
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("Mozilla Firefox")]
+    public void ReadContentAndUrl_TakeTheTabsPage_NotALargerFrameInIt_WhatEitherIsTitled(string? frameTitle)
+    {
+        // Arrange - Firefox (no render widget gives the pages): an untitled page holding a frame of another site, taller
+        // than the window (its bounds are not cut to the window), untitled too or titled like the window
+        var frame = new FakeUiaNode("Document", frameTitle) { Bounds = new UiaRect(0, 300, 1600, 5000) }
+            .WithPattern<IUiaValuePattern>(new FakeValuePattern("https://bank.example/"))
+            .WithPattern<IUiaTextPattern>(new FakeTextPattern("frame"));
+        var page = new FakeUiaNode("Document") { Bounds = new UiaRect(0, 100, 1600, 900) }
+            .WithPattern<IUiaValuePattern>(new FakeValuePattern("https://embedder.example/"))
+            .WithPattern<IUiaTextPattern>(new FakeTextPattern("page"))
+            .With(new FakeUiaNode("Group").With(new FakeUiaNode("Pane").With(frame)));
+        var window = new FakeUiaNode("Window", "Mozilla Firefox").With(new FakeUiaNode("Pane").With(page));
+
+        // Act
+        var content = CreateSut().ReadContent(window, "Mozilla Firefox", null, maxLength: null, CancellationToken.None);
+        var url = CreateSut().ReadUrl(window, "Mozilla Firefox", null, true, CancellationToken.None);
+
+        // Assert - a frame's Document is inside the page's, so it is never the tab's page
+        content.Should().Be(new BrowserUiaContent(true, "page", "https://embedder.example/"));
+        url.Url.Should().Be("https://embedder.example/");
+        url.UrlSource.Should().Be(BrowserUrlSource.Document);
     }
 
     [Fact]
@@ -601,11 +682,25 @@ public class BrowserUiaReaderTests
     public void ReadContent_FindsNoPage_WhenTheSearchForTheDocumentFails()
     {
         var window = Window(new FakeUiaNode("Document").WithPattern<IUiaTextPattern>(new FakeTextPattern("text")));
-        window.FindAllException = new TimeoutException("The provider did not answer.");
+        window.FindAllException = FakeUiaTree.Vanished();
 
         var content = CreateSut().ReadContent(window, null, null, maxLength: null, CancellationToken.None);
 
         content.Found.Should().BeFalse();
+    }
+
+    [Fact]
+    public void ReadContent_LetsAProviderTimeoutOfTheSearchForThePageThrough()
+    {
+        // Arrange - a browser that does not answer is not a window without a page
+        var window = Window(new FakeUiaNode("Document").WithPattern<IUiaTextPattern>(new FakeTextPattern("text")));
+        window.FindAllException = new TimeoutException("The provider did not answer.");
+
+        // Act
+        var act = () => CreateSut().ReadContent(window, null, null, maxLength: null, CancellationToken.None);
+
+        // Assert
+        act.Should().Throw<TimeoutException>();
     }
 
     [Fact]

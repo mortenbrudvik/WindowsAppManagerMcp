@@ -42,7 +42,9 @@ namespace WindowsAppManagerMcp.Services;
 /// <item>A walk of the window lists its render widgets' pages under their parent windows' elements (roadmap M3.F35:
 /// Chromium's own views lie between those elements and the page, deeper than the walk reaches). <see cref="FindPages"/>
 /// gives them each page's root, the element the warm-up checks: it reuses the render widgets the warm-up just found in the
-/// window, so a window without web content costs the walk no further call. A page hosted as a visual is given with the
+/// window, so a window without web content costs the walk no further call, as long as each is still shown in that window
+/// (a read that warmed the window up without walking it leaves them behind, and a tab may have been switched since);
+/// otherwise it looks for them again. A page hosted as a visual is given with the
 /// root of Chromium's views, whose children the walk replaces with it (roadmap M3.F43): the page the warm-up just found,
 /// or, for a window remembered with such a page, the one the bounded search finds again (the walk needs the page's current
 /// Document, which a navigation replaces).</item>
@@ -183,7 +185,7 @@ public sealed class AccessibilityWarmup : IAccessibilityWarmup
             }
 
             var found = TakeFound(window);
-            var widgets = found?.Widgets ?? FindRenderWidgets(window);
+            var widgets = found != null && StillShown(window, found.Widgets) ? found.Widgets : FindRenderWidgets(window);
             var pages = new List<RenderWidgetPage>();
             foreach (var widget in widgets)
             {
@@ -239,6 +241,18 @@ public sealed class AccessibilityWarmup : IAccessibilityWarmup
             // A courtesy: the walk lists the window's tree without its pages
             return [];
         }
+    }
+
+    /// <summary>
+    /// Whether the render widgets a warm-up found are all still shown in <paramref name="window"/>: visible, and in its
+    /// top-level window (GA_ROOT). A warm-up whose read did not walk the window leaves them behind, and since then a tab may
+    /// have been switched (its render widget is hidden, but alive) or dragged out into another window.
+    /// </summary>
+    private bool StillShown(nint window, IReadOnlyList<nint> widgets)
+    {
+        var root = _windows.GetAncestor(window, WindowAncestor.Root);
+        return widgets.All(widget => widget == window ||
+            (_windows.IsWindowVisible(widget) && _windows.GetAncestor(widget, WindowAncestor.Root) == root));
     }
 
     /// <summary>Whether <paramref name="window"/> is remembered with web content hosted as a visual (roadmap M3.F23).</summary>

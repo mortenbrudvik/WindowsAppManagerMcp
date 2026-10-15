@@ -2559,7 +2559,7 @@
     {
       "name": "get_browser_url",
       "title": "Get Browser URL",
-      "description": "Get the current URL from a browser window. Uses Windows UI Automation to read the address bar, or CDP (Chrome DevTools Protocol) if a port is specified. With cdpPort, the window is matched to the tab whose exact title it shows, and the port must belong to the same browser process as the window; if no single tab matches, CDP is not used rather than guessing. If CDP cannot be used, the tool falls back to UI Automation and explains why in cdpError, unless requireCdp is true. The result's source field says which method produced the data ('cdp' or 'uia'); targetId identifies the CDP tab. Supports Chrome, Edge, Firefox, Brave, Opera, Vivaldi, and other Chromium/Firefox-based browsers.",
+      "description": "Get the current URL from a browser window. Uses Windows UI Automation to read the address of the shown tab's page, else the address bar (urlSource says which), or CDP (Chrome DevTools Protocol) if a port is specified. With cdpPort, the window is matched to the tab whose exact title it shows, and the port must belong to the same browser process as the window; if no single tab matches, CDP is not used rather than guessing. If CDP cannot be used, the tool falls back to UI Automation and explains why in cdpError, unless requireCdp is true. The result's source field says which method produced the data ('cdp' or 'uia'); targetId identifies the CDP tab. Supports Chrome, Edge, Firefox, Brave, Opera, Vivaldi, and other Chromium/Firefox-based browsers.",
       "inputSchema": {
         "type": "object",
         "properties": {

@@ -2421,7 +2421,7 @@ typical result over 300 tokens, and tools/list itself, measured in October 2026:
 | `read_table` | Task Manager's first 50 processes, 5 columns with headers | 643 | 1,000 |
 | `get_server_info` | The default deny list, five host processes, two monitors | 634 | 850 |
 | `get_layout` | A preset of 6 placements, each with the captured window identity | 529 | 800 |
-| tools/list | Every tool's name, title, description, schemas and annotations: 67 tools, 229,660 bytes (`ToolList_StaysWithinItsBudget`) | 57,415 | 57,451 |
+| tools/list | Every tool's name, title, description, schemas and annotations: 67 tools, 229,730 bytes (`ToolList_StaysWithinItsBudget`) | 57,433 | 57,469 |
 
 Every other typical result is at most 300 tokens. When a change makes a result larger on purpose, raise its
 budget in the same change (the failure message gives the new size); when a change shrinks one a lot, lower it.

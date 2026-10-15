@@ -468,14 +468,14 @@ public enum BrowserErrorCode
     UrlBarNotFound = 3,
 
     /// <summary>
-    /// UI Automation found the address bar but not the page's address: the address bar has the keyboard focus (its text
-    /// may be typed, not the page's), or holds text that is not a URL (roadmap M5.7).
+    /// UI Automation found the address bar but not the page's address: the address bar has the keyboard focus, or whether
+    /// it has cannot be told (the browser is not the foreground window, or its focus cannot be read), so its text may be
+    /// typed, not the page's; or it holds text that is not a URL (roadmap M5.7).
     /// </summary>
     UrlExtractionFailed = 4,
 
     /// <summary>
-    /// The page shown has no Document UI Automation can read: no shown, onscreen Document of a tab (roadmap M5.7), or the
-    /// CDP tab list was empty.
+    /// The page shown has no Document UI Automation can read: no shown, onscreen Document of a tab (roadmap M5.7).
     /// </summary>
     ContentAreaNotFound = 5,
 

@@ -15,21 +15,27 @@ namespace WindowsAppManagerMcp.Services;
 /// <list type="bullet">
 /// <item>The page: the shown tab's Document. The caller passes the roots of the window's shown pages, the Documents of its
 /// visible render widgets (<see cref="IAccessibilityWarmup.FindPages"/>; a background tab's render widget is hidden); without
-/// them (Firefox has no render widget) the window's Documents are searched. Of those, offscreen ones and the browser's own
-/// pages (docked DevTools, Chrome's side panels) are left out, and the tab's page is the one the address bar shows, else the
-/// one whose name (the page's title) starts the window's title, else the largest. Its Value pattern holds the address the
-/// tab committed, with its scheme.</item>
+/// them (Firefox has no render widget) the window's Documents are searched, and a frame's, inside another Document (whose
+/// title, size and address its page sets), is left out. Of those, offscreen ones and the browser's own pages (docked
+/// DevTools, Chrome's side panels) are left out, and the tab's page is the one the address bar shows, else the one whose
+/// name (the page's title) starts the window's title, else the largest. Its Value pattern holds the address the tab
+/// committed, with its scheme.</item>
 /// <item>The address bar: the edit box of class OmniboxViewViews (Chromium's views: Chrome, Edge, Brave), else the one with
 /// the AutomationId urlbar-input (Firefox), else the first edit box inside a toolbar; looked for breadth first from the
 /// window's children, at most <see cref="MaxAddressBarSearchDepth"/> levels down and <see cref="MaxAddressBarSearchElements"/>
 /// elements, and never inside a Document or a render widget (the page, whose elements' class names and ids the page sets)
 /// or a tab. Its value is what it shows (Chrome leaves out the scheme), and only its Value or Text pattern is read, never
-/// its name.</item>
+/// its name. Its text is taken for the URL only when it is known not to be edited: the browser is the foreground window
+/// (one behind another window reports no keyboard focus, also while text typed in its address bar is left there) and the
+/// address bar's focus reads false.</item>
 /// <item>Call it on the UI Automation worker, inside the read the caller runs under its deadline (<see cref="IUiaWorker"/>):
 /// every read can wait for the browser. Once the token is cancelled the reads stop with
 /// <see cref="OperationCanceledException"/>.</item>
 /// <item>Any other failure (a provider error, an element that disappeared) leaves out what could not be read: an element
-/// that cannot be read is skipped with what is below it, and a search that fails finds nothing.</item>
+/// that cannot be read is skipped with what is below it, and a search that fails finds nothing. A provider that times out
+/// (<see cref="TimeoutException"/>) in the search for the page is the exception: the read of the text stops with it, so a
+/// browser that does not answer is not reported as a window without a page, and the read of the address goes on to the
+/// address bar.</item>
 /// <item>The children of an element are listed in one call, and a level of at most
 /// <see cref="UIElementService.CachedLevelLimit"/> children is then read in one more call with their properties and class
 /// names, as the tree walk reads them; a wider level, or one whose cached read fails, is read one element at a time.</item>
@@ -54,6 +60,12 @@ public sealed class BrowserUiaReader
     /// <summary>The AutomationId of Firefox's address bar (its DOM id), in every language.</summary>
     public const string FirefoxUrlBarAutomationId = "urlbar-input";
 
+    /// <summary>
+    /// How many levels above a Document found in the window are read to tell a frame (inside another Document) from a tab's
+    /// page; one that is deeper is taken for a frame.
+    /// </summary>
+    public const int MaxPageAncestorDepth = 40;
+
     private readonly IUiaTree _tree;
 
     /// <param name="tree">The UI Automation tree.</param>
@@ -64,25 +76,39 @@ public sealed class BrowserUiaReader
 
     /// <summary>
     /// The page's address: the shown tab's Document's when it holds a URL (<see cref="BrowserUrlSource.Document"/>), else the
-    /// address bar's text when it is URL-like and not being edited (<see cref="BrowserUrlSource.AddressBar"/>). A new tab
-    /// page (or an empty address bar) is <see cref="BrowserErrorCode.NewTabPage"/>; an address bar being edited, holding
-    /// something else than a URL or unreadable, with no Document to read, <see cref="BrowserErrorCode.UrlExtractionFailed"/>;
-    /// neither found,
+    /// address bar's text when it is URL-like and known not to be edited (<see cref="BrowserUrlSource.AddressBar"/>). A new
+    /// tab page (or an empty address bar) is <see cref="BrowserErrorCode.NewTabPage"/>; an address bar being edited, or that
+    /// may be (the browser is not in front, or its focus cannot be read), holding something else than a URL or unreadable,
+    /// with no Document to read, <see cref="BrowserErrorCode.UrlExtractionFailed"/>; neither found,
     /// <see cref="BrowserErrorCode.UrlBarNotFound"/>.
     /// </summary>
     /// <param name="window">The browser window's element.</param>
     /// <param name="windowTitle">The window's title, which starts with the shown page's title; null when unknown.</param>
     /// <param name="pages">The roots of the window's shown pages, or none to search the window for its Documents.</param>
+    /// <param name="foreground">Whether the browser is the foreground window. A browser behind another window reports no
+    /// keyboard focus, so its address bar's focus is then not read and tells nothing (<see cref="BrowserUiaUrl.IsEditing"/>
+    /// null).</param>
     /// <param name="cancellationToken">The read's deadline.</param>
     public BrowserUiaUrl ReadUrl(
-        IUiaNode window, string? windowTitle, IReadOnlyList<IUiaNode>? pages, CancellationToken cancellationToken)
+        IUiaNode window, string? windowTitle, IReadOnlyList<IUiaNode>? pages, bool foreground, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         var bar = FindAddressBar(window, cancellationToken);
         var shown = bar != null ? ValueOf(bar, cancellationToken) : null;
-        var editing = bar != null ? HasKeyboardFocus(bar) : null;
+        var editing = bar != null && foreground ? HasKeyboardFocus(bar) : null;
         var display = BrowserUrls.IsUrlLike(shown) ? shown : null;
-        var page = FindPage(window, windowTitle, pages, editing == true ? null : display, cancellationToken);
+
+        // Text that may be typed does not choose the page
+        Page? page;
+        try
+        {
+            page = FindPage(window, windowTitle, pages, editing == false ? display : null, cancellationToken);
+        }
+        catch (TimeoutException)
+        {
+            // The page did not answer in time; the address bar, part of the browser's own UI, may still tell
+            page = null;
+        }
 
         if (page?.Url is { } url)
         {
@@ -119,11 +145,25 @@ public sealed class BrowserUiaReader
                 null, display, editing);
         }
 
-        return display != null
-            ? new BrowserUiaUrl(display, display, BrowserUrlSource.AddressBar, editing)
-            : BrowserUiaUrl.Failed(BrowserErrorCode.UrlExtractionFailed,
+        if (display == null)
+        {
+            return BrowserUiaUrl.Failed(BrowserErrorCode.UrlExtractionFailed,
                 "The address bar holds text that is not a URL, and the page's own address could not be read.",
                 null, null, editing);
+        }
+
+        if (editing == null)
+        {
+            return BrowserUiaUrl.Failed(BrowserErrorCode.UrlExtractionFailed,
+                (foreground
+                    ? "Whether the address bar is being edited could not be read"
+                    : "The browser is not the foreground window, so whether its address bar is being edited cannot be told") +
+                ": its text may be typed rather than the page's address, and the page's own address could not be read. " +
+                "Read again (the page may still be loading), or through CDP.",
+                null, display, editing);
+        }
+
+        return new BrowserUiaUrl(display, display, BrowserUrlSource.AddressBar, editing);
     }
 
     /// <summary>
@@ -231,34 +271,38 @@ public sealed class BrowserUiaReader
     }
 
     /// <summary>
-    /// The shown tab's page: of <paramref name="roots"/> (or, when there are none, the window's Documents), those that are
-    /// onscreen and not the browser's own UI; the one <paramref name="display"/> shows, else the one whose name starts
-    /// <paramref name="windowTitle"/>, else one with an address, else the largest. Null when there is none.
+    /// The shown tab's page: of <paramref name="roots"/> (or, when there are none, the window's Documents that are not a
+    /// frame's), those that are onscreen and not the browser's own UI; the one <paramref name="display"/> shows, else the
+    /// one whose name starts <paramref name="windowTitle"/>, else one with an address, else the largest. Null when there is
+    /// none. A provider that times out in the search for the window's Documents throws <see cref="TimeoutException"/>.
     /// </summary>
     private Page? FindPage(
         IUiaNode window, string? windowTitle, IReadOnlyList<IUiaNode>? roots, string? display, CancellationToken cancellationToken)
     {
-        IEnumerable<Candidate> candidates;
-        if (roots is { Count: > 0 })
+        IReadOnlyList<Candidate> candidates;
+        var searched = roots is not { Count: > 0 };
+        if (!searched)
         {
-            candidates = roots.Select(root => new Candidate(root, null, null));
+            candidates = roots!.Select(root => new Candidate(root, null, null)).ToList();
         }
         else
         {
             try
             {
                 candidates = _tree.FindAll(window, UiaScope.Descendants,
-                    UiaCondition.PropertyEquals(UiaProperty.ControlType, "Document"), cancellationToken).Select(e => new Candidate(e));
+                    UiaCondition.PropertyEquals(UiaProperty.ControlType, "Document"), cancellationToken)
+                    .Select(e => new Candidate(e)).ToList();
             }
-            catch (Exception ex) when (ex is not OperationCanceledException)
+            catch (Exception ex) when (ex is not OperationCanceledException and not TimeoutException)
             {
                 return null;
             }
         }
 
         Page? best = null;
-        foreach (var candidate in candidates)
+        for (var index = 0; index < candidates.Count; index++)
         {
+            var candidate = candidates[index];
             cancellationToken.ThrowIfCancellationRequested();
             if ((candidate.Properties ?? TryRead(candidate.Node)) is not { IsOffscreen: false } properties)
             {
@@ -278,13 +322,51 @@ public sealed class BrowserUiaReader
                 !string.IsNullOrEmpty(properties.Name) && !string.IsNullOrEmpty(windowTitle) &&
                 windowTitle.StartsWith(properties.Name, StringComparison.Ordinal),
                 Math.Max(0, properties.Bounds.Width) * Math.Max(0, properties.Bounds.Height));
-            if (best == null || page.Outranks(best))
+            if (best != null && !page.Outranks(best))
             {
-                best = page;
+                continue;
             }
+
+            // A frame's Document, which its page sizes and titles, is not a tab's page. The search lists the Documents in
+            // tree order, so the first is inside no other; the others are looked at only when they would win
+            if (searched && index > 0 && IsInDocument(candidate.Node, cancellationToken))
+            {
+                continue;
+            }
+
+            best = page;
         }
 
         return best;
+    }
+
+    /// <summary>
+    /// Whether the element lies inside a Document (a frame of a page): its ancestors are read, at most
+    /// <see cref="MaxPageAncestorDepth"/> of them. One whose ancestors cannot be read, or that lies deeper, counts as a frame.
+    /// A provider that times out throws <see cref="TimeoutException"/>.
+    /// </summary>
+    private bool IsInDocument(IUiaNode node, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var ancestor = _tree.GetParent(node);
+            for (var depth = 0; ancestor != null; depth++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (depth >= MaxPageAncestorDepth || _tree.Read(ancestor).ControlType == "Document")
+                {
+                    return true;
+                }
+
+                ancestor = _tree.GetParent(ancestor);
+            }
+
+            return false;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException and not TimeoutException)
+        {
+            return true;
+        }
     }
 
     /// <summary>
@@ -580,7 +662,8 @@ public sealed class BrowserUiaReader
 /// <param name="DisplayUrl">The address bar's text when it is URL-like; null otherwise.</param>
 /// <param name="UrlSource"><see cref="BrowserUrlSource.Document"/> or <see cref="BrowserUrlSource.AddressBar"/>; null on a
 /// failure.</param>
-/// <param name="IsEditing">Whether the address bar has the keyboard focus; null when none was read, or it cannot be told.</param>
+/// <param name="IsEditing">Whether the address bar has the keyboard focus; null when none was read, or it cannot be told (its
+/// focus cannot be read, or the browser is not the foreground window, whose address bar reports no focus).</param>
 /// <param name="ErrorCode">None, or UrlBarNotFound, UrlExtractionFailed or NewTabPage.</param>
 /// <param name="Error">Why there is no address; null with <see cref="BrowserErrorCode.None"/>.</param>
 public sealed record BrowserUiaUrl(
