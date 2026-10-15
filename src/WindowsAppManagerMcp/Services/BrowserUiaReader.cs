@@ -1,38 +1,58 @@
 using System.Text;
+using WindowsAppManagerMcp.Models;
 using WindowsAppManagerMcp.Services.Interfaces;
 
 namespace WindowsAppManagerMcp.Services;
 
 /// <summary>
-/// The UI Automation reads of get_browser_url and get_browser_content (roadmap M3.F24): the address bar's text and the
-/// page's text, read through <see cref="IUiaTree"/>, so both engines serve them and the unit tests run them over an
-/// in-memory tree. They are the reads UIAutomationWrapper made over the managed client, moved onto the seam as they were:
-/// the address bar is found by its English name, by Firefox's AutomationId or as a URL-like edit box, and the page as the
-/// first Document, else the largest pane. Making the lookup independent of the display language is roadmap M5.7.
+/// The UI Automation reads of get_browser_url and get_browser_content (roadmap M3.F24, M5.7): the page's address and its
+/// text, read through <see cref="IUiaTree"/>, so both engines serve them and the unit tests run them over an in-memory tree.
+/// Nothing is looked up by name, which changes with the browser's display language and which a page sets (its title names
+/// the window and its tab, its links and fields name themselves): the reads key on control types, class names,
+/// AutomationIds and the tree's structure, and a URL is returned only when it is one (<see cref="BrowserUrls"/>).
 /// </summary>
 /// <remarks>
 /// <list type="bullet">
+/// <item>The page: the shown tab's Document. The caller passes the roots of the window's shown pages, the Documents of its
+/// visible render widgets (<see cref="IAccessibilityWarmup.FindPages"/>; a background tab's render widget is hidden); without
+/// them (Firefox has no render widget) the window's Documents are searched. Of those, offscreen ones and the browser's own
+/// pages (docked DevTools, Chrome's side panels) are left out, and the tab's page is the one the address bar shows, else the
+/// one whose name (the page's title) starts the window's title, else the largest. Its Value pattern holds the address the
+/// tab committed, with its scheme.</item>
+/// <item>The address bar: the edit box of class OmniboxViewViews (Chromium's views: Chrome, Edge, Brave), else the one with
+/// the AutomationId urlbar-input (Firefox), else the first edit box inside a toolbar; looked for breadth first from the
+/// window's children, at most <see cref="MaxAddressBarSearchDepth"/> levels down and <see cref="MaxAddressBarSearchElements"/>
+/// elements, and never inside a Document or a render widget (the page, whose elements' class names and ids the page sets)
+/// or a tab. Its value is what it shows (Chrome leaves out the scheme), and only its Value or Text pattern is read, never
+/// its name.</item>
 /// <item>Call it on the UI Automation worker, inside the read the caller runs under its deadline (<see cref="IUiaWorker"/>):
 /// every read can wait for the browser. Once the token is cancelled the reads stop with
 /// <see cref="OperationCanceledException"/>.</item>
-/// <item>Any other failure (a provider error, an element that disappeared) leaves out what could not be read, as the old
-/// wrapper did: an element that cannot be read is skipped with what is below it, and a search that fails finds nothing.</item>
+/// <item>Any other failure (a provider error, an element that disappeared) leaves out what could not be read: an element
+/// that cannot be read is skipped with what is below it, and a search that fails finds nothing.</item>
 /// <item>The children of an element are listed in one call, and a level of at most
-/// <see cref="UIElementService.CachedLevelLimit"/> children is then read in one more call with their properties, as the
-/// tree walk reads them; a wider level, or one whose cached read fails, is read one element at a time.</item>
+/// <see cref="UIElementService.CachedLevelLimit"/> children is then read in one more call with their properties and class
+/// names, as the tree walk reads them; a wider level, or one whose cached read fails, is read one element at a time.</item>
 /// <item>The value of a password field is never read: an edit box's password flag is read first, and one whose flag
 /// cannot be read is treated as a password field.</item>
 /// </list>
 /// </remarks>
 public sealed class BrowserUiaReader
 {
-    /// <summary>How many levels below the window the search for the address bar by name reads.</summary>
-    public const int MaxNameSearchDepth = 10;
+    /// <summary>How many levels below the window the search for the address bar reads (Chrome's is about 8 down).</summary>
+    public const int MaxAddressBarSearchDepth = 14;
+
+    /// <summary>The most elements the search for the address bar reads.</summary>
+    public const int MaxAddressBarSearchElements = 600;
 
     /// <summary>How many levels below the page's document the walk for its text reads.</summary>
     public const int MaxTextDepth = 20;
 
-    private static readonly string[] ChromiumBrowsers = ["chrome", "edge", "brave", "vivaldi", "opera", "chromium"];
+    /// <summary>The class of the address bar's edit box in Chromium's views (Chrome, Edge, Brave), in every language.</summary>
+    public const string OmniboxClassName = "OmniboxViewViews";
+
+    /// <summary>The AutomationId of Firefox's address bar (its DOM id), in every language.</summary>
+    public const string FirefoxUrlBarAutomationId = "urlbar-input";
 
     private readonly IUiaTree _tree;
 
@@ -43,177 +63,233 @@ public sealed class BrowserUiaReader
     }
 
     /// <summary>
-    /// The text of the browser's address bar, or null when no address bar was found or it could not be read. Chromium
-    /// browsers: the element named "Address and search bar", else "Address bar", else the first edit box of an address
-    /// bar's size whose value looks like a URL. Firefox: the element with the AutomationId "urlbar-input", else "urlbar",
-    /// else the one named "Search or enter address". Another browser: Chromium's lookup, then Firefox's.
+    /// The page's address: the shown tab's Document's when it holds a URL (<see cref="BrowserUrlSource.Document"/>), else the
+    /// address bar's text when it is URL-like and not being edited (<see cref="BrowserUrlSource.AddressBar"/>). A new tab
+    /// page (or an empty address bar) is <see cref="BrowserErrorCode.NewTabPage"/>; an address bar being edited, holding
+    /// something else than a URL or unreadable, with no Document to read, <see cref="BrowserErrorCode.UrlExtractionFailed"/>;
+    /// neither found,
+    /// <see cref="BrowserErrorCode.UrlBarNotFound"/>.
     /// </summary>
     /// <param name="window">The browser window's element.</param>
-    /// <param name="browserType">The browser type, for example "chrome" or "firefox" (case ignored).</param>
+    /// <param name="windowTitle">The window's title, which starts with the shown page's title; null when unknown.</param>
+    /// <param name="pages">The roots of the window's shown pages, or none to search the window for its Documents.</param>
     /// <param name="cancellationToken">The read's deadline.</param>
-    public string? ReadUrl(IUiaNode window, string browserType, CancellationToken cancellationToken)
+    public BrowserUiaUrl ReadUrl(
+        IUiaNode window, string? windowTitle, IReadOnlyList<IUiaNode>? pages, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var type = browserType.ToLowerInvariant();
-        if (type == "firefox")
+        var bar = FindAddressBar(window, cancellationToken);
+        var shown = bar != null ? ValueOf(bar, cancellationToken) : null;
+        var editing = bar != null ? HasKeyboardFocus(bar) : null;
+        var display = BrowserUrls.IsUrlLike(shown) ? shown : null;
+        var page = FindPage(window, windowTitle, pages, editing == true ? null : display, cancellationToken);
+
+        if (page?.Url is { } url)
         {
-            return FirefoxUrl(window, cancellationToken);
+            return BrowserUrls.IsNewTabPage(url)
+                ? BrowserUiaUrl.Failed(BrowserErrorCode.NewTabPage, NewTabPageMessage, url, display, editing)
+                : new BrowserUiaUrl(url, display, BrowserUrlSource.Document, editing);
         }
 
-        return ChromiumBrowsers.Contains(type)
-            ? ChromiumUrl(window, cancellationToken)
-            : ChromiumUrl(window, cancellationToken) ?? FirefoxUrl(window, cancellationToken);
+        if (bar == null)
+        {
+            return BrowserUiaUrl.Failed(BrowserErrorCode.UrlBarNotFound,
+                "Found neither the page's address nor the browser's address bar through UI Automation. The window may be an " +
+                "app or kiosk window without an address bar, or the browser's accessibility tree is not available; read it " +
+                "through CDP (cdpPort) instead.",
+                null, null, null);
+        }
+
+        if (shown == null)
+        {
+            return BrowserUiaUrl.Failed(BrowserErrorCode.UrlExtractionFailed,
+                "Found the address bar, but its text could not be read, nor the page's own address.", null, null, editing);
+        }
+
+        if (string.IsNullOrWhiteSpace(shown))
+        {
+            return BrowserUiaUrl.Failed(BrowserErrorCode.NewTabPage, NewTabPageMessage, null, null, editing);
+        }
+
+        if (editing == true)
+        {
+            return BrowserUiaUrl.Failed(BrowserErrorCode.UrlExtractionFailed,
+                "The address bar has the keyboard focus, so its text may be typed rather than the page's address, and the " +
+                "page's own address could not be read. Read again once the address bar is left (Escape), or through CDP.",
+                null, display, editing);
+        }
+
+        return display != null
+            ? new BrowserUiaUrl(display, display, BrowserUrlSource.AddressBar, editing)
+            : BrowserUiaUrl.Failed(BrowserErrorCode.UrlExtractionFailed,
+                "The address bar holds text that is not a URL, and the page's own address could not be read.",
+                null, null, editing);
     }
 
     /// <summary>
-    /// The text of the page the browser shows, or null when no content area was found or it has no text. The content area
-    /// is the first Document below the window, else the largest pane over 200 by 200 pixels; its Text pattern gives the
-    /// text in one call, else its text is collected from the names of its text, edit box and link elements and from the
-    /// values that differ from them, one per line, at most <see cref="MaxTextDepth"/> levels down.
+    /// The page the browser shows and its text: the shown tab's Document (as <see cref="ReadUrl"/> finds it, without reading
+    /// the address bar). Its Text pattern gives the text in one call, else its text is collected from the names of its text,
+    /// edit box and link elements and from the values that differ from them, one per line, at most
+    /// <see cref="MaxTextDepth"/> levels down. <see cref="BrowserUiaContent.Found"/> is false when the window shows no
+    /// such page; the text is null when the page has none or it could not be read.
     /// </summary>
     /// <param name="window">The browser window's element.</param>
+    /// <param name="windowTitle">The window's title, which starts with the shown page's title; null when unknown.</param>
+    /// <param name="pages">The roots of the window's shown pages, or none to search the window for its Documents.</param>
     /// <param name="maxLength">The most characters returned, or null for all of them. The walk stops once it has read
     /// that many, so a long page is not read to its end only to be cut.</param>
     /// <param name="cancellationToken">The read's deadline.</param>
-    public string? ReadContent(IUiaNode window, int? maxLength, CancellationToken cancellationToken)
+    public BrowserUiaContent ReadContent(
+        IUiaNode window, string? windowTitle, IReadOnlyList<IUiaNode>? pages, int? maxLength, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         var limit = maxLength is >= 0 ? maxLength : null;
-        if (FindContentArea(window, cancellationToken) is not { } area)
+        if (FindPage(window, windowTitle, pages, display: null, cancellationToken) is not { } page)
         {
-            return null;
+            return new BrowserUiaContent(false, null, null);
         }
 
         string? content;
         try
         {
-            content = _tree.GetPattern<IUiaTextPattern>(area.Node) is { } text
+            content = _tree.GetPattern<IUiaTextPattern>(page.Root.Node) is { } text
                 ? text.GetText(limit ?? -1)
-                : CollectText(area, limit, cancellationToken);
+                : CollectText(page.Root, limit, cancellationToken);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            return null;
+            content = null;
         }
 
-        return content != null && limit is int max && content.Length > max ? content[..max] : content;
+        if (content != null && limit is int max && content.Length > max)
+        {
+            content = content[..max];
+        }
+
+        return new BrowserUiaContent(true, content, page.Url);
     }
 
-    /// <summary>The address bar of a Chromium browser, read.</summary>
-    private string? ChromiumUrl(IUiaNode window, CancellationToken cancellationToken)
-    {
-        var urlBar = FindByNameContains(window, "Address and search bar", cancellationToken) ??
-                     FindByNameContains(window, "Address bar", cancellationToken);
-        return urlBar != null ? ValueOf(urlBar, cancellationToken) : UrlLikeEditValue(window, cancellationToken);
-    }
-
-    /// <summary>The address bar of Firefox, read.</summary>
-    private string? FirefoxUrl(IUiaNode window, CancellationToken cancellationToken)
-    {
-        var urlBar = FindByAutomationId(window, "urlbar-input", cancellationToken) ??
-                     FindByAutomationId(window, "urlbar", cancellationToken) ??
-                     FindByNameContains(window, "Search or enter address", cancellationToken);
-        return urlBar != null ? ValueOf(urlBar, cancellationToken) : null;
-    }
+    private const string NewTabPageMessage =
+        "The tab shows the browser's new tab page, which has no address of a site. Navigate the tab first, or read another window.";
 
     /// <summary>
-    /// The first element, the window itself included, whose name contains <paramref name="text"/> (case ignored), depth
-    /// first in tree order and at most <see cref="MaxNameSearchDepth"/> levels below the window.
+    /// The address bar: breadth first from the window's children, the first edit box of class
+    /// <see cref="OmniboxClassName"/> or with the AutomationId <see cref="FirefoxUrlBarAutomationId"/>, else the first edit box
+    /// met inside a toolbar; null when there is neither. Documents, render widgets and tabs are not looked inside.
     /// </summary>
-    private Candidate? FindByNameContains(IUiaNode window, string text, CancellationToken cancellationToken)
+    private Candidate? FindAddressBar(IUiaNode window, CancellationToken cancellationToken)
     {
-        if (TryRead(window) is not { } properties)
+        var pending = new Queue<(Candidate Element, int Depth, bool InToolBar)>();
+        foreach (var child in Children(window, cancellationToken))
         {
-            return null;
+            pending.Enqueue((child, 1, false));
         }
 
-        var root = new Candidate(window, properties, null);
-        return NameContains(properties, text) ? root : SearchByName(root, 0, text, cancellationToken);
-    }
-
-    private Candidate? SearchByName(Candidate node, int depth, string text, CancellationToken cancellationToken)
-    {
-        if (depth >= MaxNameSearchDepth)
-        {
-            return null;
-        }
-
-        foreach (var child in Children(node.Node, cancellationToken))
+        Candidate? inToolBar = null;
+        var read = 0;
+        while (pending.Count > 0 && read < MaxAddressBarSearchElements)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if ((child.Properties ?? TryRead(child.Node)) is not { } properties)
+            var (element, depth, insideToolBar) = pending.Dequeue();
+            read++;
+            if (Complete(element) is not { Properties: { } properties } known)
             {
                 continue;
             }
 
-            var read = child with { Properties = properties };
-            if (NameContains(properties, text))
+            // The page, whose elements' class names and ids the page sets, and the tab strip's tabs, named by their pages
+            if (properties.ControlType is "Document" or "TabItem" ||
+                string.Equals(known.ClassName, AccessibilityWarmup.RenderWidgetHostClass, StringComparison.Ordinal))
             {
-                return read;
+                continue;
             }
 
-            if (SearchByName(read, depth + 1, text, cancellationToken) is { } found)
+            if (properties.ControlType == "Edit")
             {
-                return found;
+                if (string.Equals(known.ClassName, OmniboxClassName, StringComparison.Ordinal) ||
+                    string.Equals(properties.AutomationId, FirefoxUrlBarAutomationId, StringComparison.Ordinal))
+                {
+                    return known;
+                }
+
+                if (insideToolBar)
+                {
+                    inToolBar ??= known;
+                }
+            }
+
+            if (depth < MaxAddressBarSearchDepth)
+            {
+                foreach (var child in Children(known.Node, cancellationToken))
+                {
+                    pending.Enqueue((child, depth + 1, insideToolBar || properties.ControlType == "ToolBar"));
+                }
             }
         }
 
-        return null;
-    }
-
-    private static bool NameContains(UiaNodeProperties properties, string text) =>
-        !string.IsNullOrEmpty(properties.Name) && properties.Name.Contains(text, StringComparison.OrdinalIgnoreCase);
-
-    /// <summary>The first element below the window with the AutomationId, or null.</summary>
-    private Candidate? FindByAutomationId(IUiaNode window, string automationId, CancellationToken cancellationToken)
-    {
-        try
-        {
-            var found = _tree.FindAll(window, UiaScope.Descendants,
-                UiaCondition.PropertyEquals(UiaProperty.AutomationId, automationId), cancellationToken);
-            return found.Count == 0 ? null : new Candidate(found[0]);
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            return null;
-        }
+        return inToolBar;
     }
 
     /// <summary>
-    /// The value of the first edit box below the window that is the size of an address bar (wider than 200 and narrower
-    /// than 2000 pixels, higher than 15 and lower than 60) and whose value looks like a URL (it has "://" or a dot).
+    /// The shown tab's page: of <paramref name="roots"/> (or, when there are none, the window's Documents), those that are
+    /// onscreen and not the browser's own UI; the one <paramref name="display"/> shows, else the one whose name starts
+    /// <paramref name="windowTitle"/>, else one with an address, else the largest. Null when there is none.
     /// </summary>
-    private string? UrlLikeEditValue(IUiaNode window, CancellationToken cancellationToken)
+    private Page? FindPage(
+        IUiaNode window, string? windowTitle, IReadOnlyList<IUiaNode>? roots, string? display, CancellationToken cancellationToken)
     {
-        IReadOnlyList<UiaElement> edits;
-        try
+        IEnumerable<Candidate> candidates;
+        if (roots is { Count: > 0 })
         {
-            edits = _tree.FindAll(window, UiaScope.Descendants,
-                UiaCondition.PropertyEquals(UiaProperty.ControlType, "Edit"), cancellationToken);
+            candidates = roots.Select(root => new Candidate(root, null, null));
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        else
         {
-            return null;
+            try
+            {
+                candidates = _tree.FindAll(window, UiaScope.Descendants,
+                    UiaCondition.PropertyEquals(UiaProperty.ControlType, "Document"), cancellationToken).Select(e => new Candidate(e));
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                return null;
+            }
         }
 
-        foreach (var edit in edits)
+        Page? best = null;
+        foreach (var candidate in candidates)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var bounds = edit.Properties.Bounds;
-            if (bounds.Width is > 200 and < 2000 && bounds.Height is > 15 and < 60 &&
-                ValueOf(new Candidate(edit), cancellationToken) is { } value &&
-                (value.Contains("://", StringComparison.Ordinal) || value.Contains('.', StringComparison.Ordinal)))
+            if ((candidate.Properties ?? TryRead(candidate.Node)) is not { IsOffscreen: false } properties)
             {
-                return value;
+                continue;
+            }
+
+            var root = candidate with { Properties = properties };
+            var value = properties.ControlType == "Document" ? ValueOf(root, cancellationToken) : null;
+            var url = BrowserUrls.IsAbsoluteUrl(value) ? value : null;
+            if (BrowserUrls.IsBrowserUi(url))
+            {
+                continue;
+            }
+
+            var page = new Page(root, url,
+                BrowserUrls.Shows(display, url),
+                !string.IsNullOrEmpty(properties.Name) && !string.IsNullOrEmpty(windowTitle) &&
+                windowTitle.StartsWith(properties.Name, StringComparison.Ordinal),
+                Math.Max(0, properties.Bounds.Width) * Math.Max(0, properties.Bounds.Height));
+            if (best == null || page.Outranks(best))
+            {
+                best = page;
             }
         }
 
-        return null;
+        return best;
     }
 
     /// <summary>
-    /// What an address bar holds: its Value pattern's value, else its Text pattern's text, else its name; null when it
-    /// cannot be read. A password field's value and text are not read, so only its name can be returned.
+    /// What an address bar or a Document holds: its Value pattern's value, else its Text pattern's text; null when it has
+    /// neither or it cannot be read. Never its name. A password field's value and text are not read.
     /// </summary>
     private string? ValueOf(Candidate element, CancellationToken cancellationToken)
     {
@@ -221,20 +297,19 @@ public sealed class BrowserUiaReader
         try
         {
             var properties = element.Properties ?? _tree.Read(element.Node);
-            if (!MayBePassword(element.Node, properties))
+            if (MayBePassword(element.Node, properties))
             {
-                if (_tree.GetPattern<IUiaValuePattern>(element.Node) is { } value)
-                {
-                    return value.Value;
-                }
-
-                if (_tree.GetPattern<IUiaTextPattern>(element.Node) is { } text)
-                {
-                    return text.GetText(-1);
-                }
+                return null;
             }
 
-            return properties.Name;
+            if (_tree.GetPattern<IUiaValuePattern>(element.Node) is { } value)
+            {
+                return value.Value;
+            }
+
+            return properties.ControlType == "Edit" && _tree.GetPattern<IUiaTextPattern>(element.Node) is { } text
+                ? text.GetText(-1)
+                : null;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -242,37 +317,12 @@ public sealed class BrowserUiaReader
         }
     }
 
-    /// <summary>
-    /// The first Document below the window in tree order, else its largest pane over 200 by 200 pixels; null when there is
-    /// neither or the search fails.
-    /// </summary>
-    private Candidate? FindContentArea(IUiaNode window, CancellationToken cancellationToken)
+    /// <summary>Whether the element has the keyboard focus, or null when that cannot be read.</summary>
+    private bool? HasKeyboardFocus(Candidate element)
     {
         try
         {
-            var documents = _tree.FindAll(window, UiaScope.Descendants,
-                UiaCondition.PropertyEquals(UiaProperty.ControlType, "Document"), cancellationToken);
-            if (documents.Count > 0)
-            {
-                return new Candidate(documents[0]);
-            }
-
-            var panes = _tree.FindAll(window, UiaScope.Descendants,
-                UiaCondition.PropertyEquals(UiaProperty.ControlType, "Pane"), cancellationToken);
-            UiaElement? largest = null;
-            var largestArea = 0.0;
-            foreach (var pane in panes)
-            {
-                var bounds = pane.Properties.Bounds;
-                var area = bounds.Width * bounds.Height;
-                if (area > largestArea && bounds.Width > 200 && bounds.Height > 200)
-                {
-                    largestArea = area;
-                    largest = pane;
-                }
-            }
-
-            return largest == null ? null : new Candidate(largest);
+            return _tree.ReadInteraction(element.Node).HasKeyboardFocus;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -311,7 +361,9 @@ public sealed class BrowserUiaReader
             text.AppendLine(name);
         }
 
-        if ((element.Patterns is not { } patterns || (patterns & UiaPatterns.Value) != 0) &&
+        // The page's own Document holds its address as its value, not its text
+        if (depth > 0 &&
+            (element.Patterns is not { } patterns || (patterns & UiaPatterns.Value) != 0) &&
             ReadValue(element.Node, properties) is { } value && !string.IsNullOrWhiteSpace(value) && value != name)
         {
             text.AppendLine(value);
@@ -396,9 +448,9 @@ public sealed class BrowserUiaReader
 
     /// <summary>
     /// The children of an element: listed in one call, then, for a level of at most
-    /// <see cref="UIElementService.CachedLevelLimit"/>, read in one more call with their properties and patterns. A wider
-    /// level, or one whose cached read fails, comes as elements to read one at a time; a level that cannot be listed, or
-    /// whose provider timed out, as none.
+    /// <see cref="UIElementService.CachedLevelLimit"/>, read in one more call with their properties, class names and
+    /// patterns. A wider level, or one whose cached read fails, comes as elements to read one at a time; a level that
+    /// cannot be listed, or whose provider timed out, as none.
     /// </summary>
     private IReadOnlyList<Candidate> Children(IUiaNode node, CancellationToken cancellationToken)
     {
@@ -438,6 +490,35 @@ public sealed class BrowserUiaReader
         return children.Select(child => new Candidate(child, null, null)).ToList();
     }
 
+    /// <summary>
+    /// The element with its properties and class name: as its cached read gave them, else read now (two calls); null when
+    /// its properties cannot be read. A class name that cannot be read is left null.
+    /// </summary>
+    private Candidate? Complete(Candidate element)
+    {
+        if (element.Cached)
+        {
+            return element;
+        }
+
+        if (TryRead(element.Node) is not { } properties)
+        {
+            return null;
+        }
+
+        string? className;
+        try
+        {
+            className = _tree.ReadIdentity(element.Node).ClassName;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            className = null;
+        }
+
+        return element with { Properties = properties, ClassName = className, Cached = true };
+    }
+
     /// <summary>The element's properties, or null when they cannot be read.</summary>
     private UiaNodeProperties? TryRead(IUiaNode node)
     {
@@ -452,14 +533,70 @@ public sealed class BrowserUiaReader
     }
 
     /// <summary>
-    /// An element of the walk: with the properties and patterns a cached read gave it, or with neither when it is still to
-    /// be read one at a time (<see cref="IUiaTree.Read"/> gives no patterns, so its Value pattern is then asked for).
+    /// An element of the walk: with the properties, patterns and class name a cached read gave it (<see cref="Cached"/>), or
+    /// with none of them when it is still to be read one at a time (<see cref="IUiaTree.Read"/> gives no patterns, so its
+    /// Value pattern is then asked for).
     /// </summary>
-    private sealed record Candidate(IUiaNode Node, UiaNodeProperties? Properties, UiaPatterns? Patterns)
+    private sealed record Candidate(
+        IUiaNode Node, UiaNodeProperties? Properties, UiaPatterns? Patterns, string? ClassName = null, bool Cached = false)
     {
         public Candidate(UiaElement element)
-            : this(element.Node, element.Properties, element.Patterns)
+            : this(element.Node, element.Properties, element.Patterns, element.ClassName, Cached: true)
         {
         }
     }
+
+    /// <summary>A shown page: its root, its address (null when it holds none) and what ranks it.</summary>
+    private sealed record Page(Candidate Root, string? Url, bool ShownInAddressBar, bool TitleStartsWindowTitle, double Area)
+    {
+        /// <summary>Whether this page is more likely the tab's than <paramref name="other"/> (a tie keeps the first).</summary>
+        public bool Outranks(Page other)
+        {
+            if (ShownInAddressBar != other.ShownInAddressBar)
+            {
+                return ShownInAddressBar;
+            }
+
+            if (TitleStartsWindowTitle != other.TitleStartsWindowTitle)
+            {
+                return TitleStartsWindowTitle;
+            }
+
+            if ((Url != null) != (other.Url != null))
+            {
+                return Url != null;
+            }
+
+            return Area > other.Area;
+        }
+    }
 }
+
+/// <summary>
+/// What <see cref="BrowserUiaReader.ReadUrl"/> found: the page's address (<see cref="Url"/>, with
+/// <see cref="BrowserErrorCode.None"/>), or why there is none.
+/// </summary>
+/// <param name="Url">The page's address; on a new tab page the new tab page's, when its Document gave it.</param>
+/// <param name="DisplayUrl">The address bar's text when it is URL-like; null otherwise.</param>
+/// <param name="UrlSource"><see cref="BrowserUrlSource.Document"/> or <see cref="BrowserUrlSource.AddressBar"/>; null on a
+/// failure.</param>
+/// <param name="IsEditing">Whether the address bar has the keyboard focus; null when none was read, or it cannot be told.</param>
+/// <param name="ErrorCode">None, or UrlBarNotFound, UrlExtractionFailed or NewTabPage.</param>
+/// <param name="Error">Why there is no address; null with <see cref="BrowserErrorCode.None"/>.</param>
+public sealed record BrowserUiaUrl(
+    string? Url,
+    string? DisplayUrl,
+    string? UrlSource,
+    bool? IsEditing,
+    BrowserErrorCode ErrorCode = BrowserErrorCode.None,
+    string? Error = null)
+{
+    public static BrowserUiaUrl Failed(BrowserErrorCode code, string error, string? url, string? displayUrl, bool? isEditing) =>
+        new(url, displayUrl, null, isEditing, code, error);
+}
+
+/// <summary>What <see cref="BrowserUiaReader.ReadContent"/> found.</summary>
+/// <param name="Found">Whether the window shows a page to read.</param>
+/// <param name="Text">The page's text, or null when it has none or could not be read.</param>
+/// <param name="Url">The page's address from its Document, or null when it holds none.</param>
+public sealed record BrowserUiaContent(bool Found, string? Text, string? Url);

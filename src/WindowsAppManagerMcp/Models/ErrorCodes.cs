@@ -461,13 +461,22 @@ public enum BrowserErrorCode
     /// <summary>The window is not a recognized browser.</summary>
     NotABrowser = 2,
 
-    /// <summary>Failed to find the URL bar element in the browser.</summary>
+    /// <summary>
+    /// UI Automation found neither the page's address in its Document nor the browser's address bar (roadmap M5.7: looked
+    /// up by class, AutomationId and structure, never by name).
+    /// </summary>
     UrlBarNotFound = 3,
 
-    /// <summary>Failed to get the URL value from the browser.</summary>
+    /// <summary>
+    /// UI Automation found the address bar but not the page's address: the address bar has the keyboard focus (its text
+    /// may be typed, not the page's), or holds text that is not a URL (roadmap M5.7).
+    /// </summary>
     UrlExtractionFailed = 4,
 
-    /// <summary>Failed to find the content area in the browser.</summary>
+    /// <summary>
+    /// The page shown has no Document UI Automation can read: no shown, onscreen Document of a tab (roadmap M5.7), or the
+    /// CDP tab list was empty.
+    /// </summary>
     ContentAreaNotFound = 5,
 
     /// <summary>Failed to extract content from the browser.</summary>
@@ -513,6 +522,12 @@ public enum BrowserErrorCode
     /// still stuck; the browser may be busy or hung.
     /// </summary>
     OperationTimedOut = 16,
+
+    /// <summary>
+    /// The tab shows the browser's new tab page (roadmap M5.7): its Document is the new tab page, or the address bar is
+    /// empty. It has no address of a site.
+    /// </summary>
+    NewTabPage = 17,
 
     // CDP (Chrome DevTools Protocol) errors are numbered from 30 so that other
     // browser error codes can be added above without renumbering.

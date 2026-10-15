@@ -16,8 +16,12 @@ namespace WindowsAppManagerMcp.Services;
 /// window, the user's target policy is checked (TargetDeniedByPolicy, <see cref="UiaTargets.ReadVerdict"/>), and then whether
 /// the window responds (NotResponding). get_browser_content warms up the page first (<see cref="IAccessibilityWarmup"/>,
 /// roadmap M3.3), within a third of the timeout, so the first read of a page whose accessibility tree Chromium has not built
-/// yet does not come back empty (D-BRW-15); get_browser_url reads only the address bar, the browser's own UI, and does not
-/// wait for the page. The CDP reads are not covered by the target policy: they read the debug browser through its port.
+/// yet does not come back empty (D-BRW-15); get_browser_url does not wait for the page. Both read the shown tab's page
+/// through its render widget (<see cref="IAccessibilityWarmup.FindPages"/>), whose Document holds the address the tab
+/// committed, and get_browser_url the address bar as well (roadmap M5.7); asking for the page's element turns on Chromium's
+/// accessibility tree for it, as any UI Automation client does. A child window's handle (a render widget's, from an
+/// element) is read as its top-level window's (GA_ROOT). The CDP reads are not covered by the target policy: they read the
+/// debug browser through its port.
 /// </remarks>
 public class BrowserReadingService : IBrowserReadingService
 {
@@ -112,6 +116,8 @@ public class BrowserReadingService : IBrowserReadingService
                     ErrorCode: BrowserErrorCode.InvalidHandle);
             }
 
+            browserHandle = TopLevel(browserHandle);
+
             // Get process info
             var processId = _nativeWrapper.GetWindowThreadProcessId(browserHandle);
             var processName = GetProcessName(processId);
@@ -183,7 +189,7 @@ public class BrowserReadingService : IBrowserReadingService
 
             // Fall back to UI Automation
             var read = await ReadThroughUiaAsync(
-                browserHandle, browserType, content: null, (cdp ?? new CdpOptions()).EffectiveTimeout, cancellationToken);
+                browserHandle, pageTitle, content: null, (cdp ?? new CdpOptions()).EffectiveTimeout, cancellationToken);
             if (read.ErrorCode != BrowserErrorCode.None)
             {
                 return new BrowserUrlResult(
@@ -199,30 +205,20 @@ public class BrowserReadingService : IBrowserReadingService
 
             // The window's title as UI Automation names it, else its window text
             pageTitle = read.Title ?? pageTitle;
-            var url = read.Url;
-
-            if (string.IsNullOrEmpty(url))
-            {
-                return new BrowserUrlResult(
-                    Success: false,
-                    Url: null,
-                    BrowserType: browserType,
-                    PageTitle: pageTitle,
-                    Error: "Could not find or read the URL bar",
-                    ErrorCode: BrowserErrorCode.UrlBarNotFound,
-                    Source: BrowserReadSource.Uia,
-                    CdpError: cdpError);
-            }
+            var url = read.Url ?? WindowWithoutElement;
 
             return new BrowserUrlResult(
-                Success: true,
-                Url: url,
+                Success: url.ErrorCode == BrowserErrorCode.None,
+                Url: url.Url,
                 BrowserType: browserType,
                 PageTitle: pageTitle,
-                Error: null,
-                ErrorCode: BrowserErrorCode.None,
+                Error: url.Error,
+                ErrorCode: url.ErrorCode,
                 Source: BrowserReadSource.Uia,
-                CdpError: cdpError);
+                CdpError: cdpError,
+                DisplayUrl: url.DisplayUrl,
+                UrlSource: url.UrlSource,
+                IsEditing: url.IsEditing);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -264,6 +260,8 @@ public class BrowserReadingService : IBrowserReadingService
                     Error: "Invalid window handle",
                     ErrorCode: BrowserErrorCode.InvalidHandle);
             }
+
+            browserHandle = TopLevel(browserHandle);
 
             // Get process info
             var processId = _nativeWrapper.GetWindowThreadProcessId(browserHandle);
@@ -366,7 +364,7 @@ public class BrowserReadingService : IBrowserReadingService
 
             // Fall back to UI Automation
             var read = await ReadThroughUiaAsync(
-                browserHandle, browserType, options, (cdp ?? new CdpOptions()).EffectiveTimeout, cancellationToken);
+                browserHandle, pageTitle, options, (cdp ?? new CdpOptions()).EffectiveTimeout, cancellationToken);
             if (read.ErrorCode != BrowserErrorCode.None)
             {
                 return new BrowserContentResult(
@@ -385,14 +383,31 @@ public class BrowserReadingService : IBrowserReadingService
 
             // The window's title as UI Automation names it, else its window text
             pageTitle = read.Title ?? pageTitle;
-            var uiaContent = read.Content;
+            if (read.Content is not { Found: true } shown)
+            {
+                return new BrowserContentResult(
+                    Success: false,
+                    Content: null,
+                    Url: null,
+                    BrowserType: browserType,
+                    PageTitle: pageTitle,
+                    ContentLength: null,
+                    Error: "Found no page in the browser window through UI Automation: no shown, onscreen Document of a tab. " +
+                           "The tab may still be loading, or the browser's accessibility tree is not available; read again, " +
+                           "or read it through CDP (cdpPort).",
+                    ErrorCode: BrowserErrorCode.ContentAreaNotFound,
+                    Source: BrowserReadSource.Uia,
+                    CdpError: cdpError,
+                    AccessibilityWarmup: read.Warmup);
+            }
 
+            var uiaContent = shown.Text;
             if (string.IsNullOrEmpty(uiaContent))
             {
                 return new BrowserContentResult(
                     Success: false,
                     Content: null,
-                    Url: read.Url,
+                    Url: shown.Url,
                     BrowserType: browserType,
                     PageTitle: pageTitle,
                     ContentLength: null,
@@ -406,7 +421,7 @@ public class BrowserReadingService : IBrowserReadingService
             return new BrowserContentResult(
                 Success: true,
                 Content: uiaContent,
-                Url: read.Url,
+                Url: shown.Url,
                 BrowserType: browserType,
                 PageTitle: pageTitle,
                 ContentLength: uiaContent.Length,
@@ -656,14 +671,15 @@ public class BrowserReadingService : IBrowserReadingService
 
 
     /// <summary>
-    /// Reads the browser window through UI Automation (roadmap M3.F24): its title and address bar, and with
-    /// <paramref name="content"/> its page as well, warmed up first. The target policy is checked before anything is read;
+    /// Reads the browser window through UI Automation (roadmap M3.F24): its title and the page's address, or with
+    /// <paramref name="content"/> its page, warmed up first. The target policy is checked before anything is read;
     /// then the read runs on the worker under <paramref name="timeout"/>, and its failures come back as an error code.
     /// </summary>
+    /// <param name="windowText">The window's text, the title when UI Automation cannot read the window's name.</param>
     /// <param name="content">The content options of get_browser_content, or null to read only the title and the URL.</param>
     private async Task<UiaRead> ReadThroughUiaAsync(
         nint browserHandle,
-        string browserType,
+        string windowText,
         BrowserContentOptions? content,
         TimeSpan timeout,
         CancellationToken cancellationToken)
@@ -680,7 +696,7 @@ public class BrowserReadingService : IBrowserReadingService
         {
             return await _worker.RunAsync(
                 UiaTargets.TargetProcessId(_nativeWrapper, browserHandle),
-                token => ReadThroughUia(browserHandle, browserType, content, AccessibilityWarmup.BudgetFor(timeout), warmup, token),
+                token => ReadThroughUia(browserHandle, windowText, content, AccessibilityWarmup.BudgetFor(timeout), warmup, token),
                 deadline.Token,
                 TimeSpan.Zero).ConfigureAwait(false);
         }
@@ -709,12 +725,13 @@ public class BrowserReadingService : IBrowserReadingService
 
     /// <summary>
     /// The UI Automation read, on the worker thread: whether the window responds, then (for the content) the warm-up, then
-    /// the window's title, its address bar and its page. A window UI Automation has no element for reads as nothing found,
-    /// as the old wrapper reported it.
+    /// the window's title and the shown pages, then the page's address (get_browser_url) or its text (get_browser_content,
+    /// which takes the address from the page and does not look up the address bar). A window UI Automation has no element
+    /// for reads as nothing found.
     /// </summary>
     private UiaRead ReadThroughUia(
         nint browserHandle,
-        string browserType,
+        string windowText,
         BrowserContentOptions? content,
         TimeSpan warmupBudget,
         WarmupSlot warmup,
@@ -762,9 +779,22 @@ public class BrowserReadingService : IBrowserReadingService
             title = null;
         }
 
-        var url = _reader.ReadUrl(window, browserType, cancellationToken);
-        var text = content != null ? _reader.ReadContent(window, content.MaxLength, cancellationToken) : null;
-        return new UiaRead(title, url, text, warmup.Value);
+        // The shown tabs' pages, through their render widgets: after the warm-up of the content, the ones it found
+        var pages = _warmup?.FindPages(browserHandle, cancellationToken)?.Select(page => page.Root).ToList();
+        var windowTitle = title ?? windowText;
+        return content != null
+            ? new UiaRead(title, null, _reader.ReadContent(window, windowTitle, pages, content.MaxLength, cancellationToken), warmup.Value)
+            : new UiaRead(title, _reader.ReadUrl(window, windowTitle, pages, cancellationToken), null, warmup.Value);
+    }
+
+    /// <summary>
+    /// The top-level window of <paramref name="handle"/> (GA_ROOT): a browser is read by its frame, also when given the
+    /// handle of a window inside it, such as a render widget's from an element; the handle itself when it has none.
+    /// </summary>
+    private nint TopLevel(nint handle)
+    {
+        var root = _nativeWrapper.GetAncestor(handle, WindowAncestor.Root);
+        return root != nint.Zero ? root : handle;
     }
 
     /// <summary>
@@ -820,15 +850,20 @@ public class BrowserReadingService : IBrowserReadingService
     /// <summary>The name of the process, or "Unknown" when it has exited or cannot be read.</summary>
     private string GetProcessName(uint processId) => _nativeWrapper.GetProcessName(processId) ?? "Unknown";
 
+    /// <summary>The address of a window UI Automation has no element for.</summary>
+    private static readonly BrowserUiaUrl WindowWithoutElement = BrowserUiaUrl.Failed(
+        BrowserErrorCode.UrlBarNotFound, "UI Automation has no element for the browser window, so neither the page's address " +
+        "nor the address bar could be read.", null, null, null);
+
     /// <summary>
-    /// What the UI Automation read of a browser window found: the window's title as UI Automation names it, the address
-    /// bar's text and the page's text (each null when nothing was found) and the warm-up; or, with an error code, why
-    /// nothing was read.
+    /// What the UI Automation read of a browser window found: the window's title as UI Automation names it (null when it
+    /// could not be read), the page's address (get_browser_url) or its page (get_browser_content), each null when the window
+    /// has no element, and the warm-up; or, with an error code, why nothing was read.
     /// </summary>
     private sealed record UiaRead(
         string? Title,
-        string? Url,
-        string? Content,
+        BrowserUiaUrl? Url,
+        BrowserUiaContent? Content,
         AccessibilityWarmupInfo? Warmup,
         string? Error = null,
         BrowserErrorCode ErrorCode = BrowserErrorCode.None)

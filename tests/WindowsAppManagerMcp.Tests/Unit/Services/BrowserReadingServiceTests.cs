@@ -34,9 +34,9 @@ public class BrowserReadingServiceTests
         _policy);
 
     /// <summary>
-    /// Shows a page in the browser window <paramref name="handle"/>: Window <paramref name="title"/> > ToolBar > Edit
-    /// "Address and search bar" with <paramref name="url"/> (none when null), and a Document with <paramref name="content"/>
-    /// as its text (none when null).
+    /// Shows a page in the browser window <paramref name="handle"/>: Window <paramref name="title"/> > ToolBar > Edit of
+    /// Chromium's address bar class with <paramref name="url"/> (none when null), and a Document "Example" with
+    /// <paramref name="content"/> as its text and <paramref name="url"/> as its value (none when the content is null).
     /// </summary>
     private void ShowPage(nint handle, string? url, string? content = null, string? title = "Example - Google Chrome")
     {
@@ -44,16 +44,25 @@ public class BrowserReadingServiceTests
         if (url != null)
         {
             window.With(new FakeUiaNode("ToolBar").With(
-                new FakeUiaNode("Edit", "Address and search bar") { ActionPatterns = ["Value"] }
+                new FakeUiaNode("Edit", "Adresse- og søkefelt") { ClassName = BrowserUiaReader.OmniboxClassName, ActionPatterns = ["Value"] }
                     .WithPattern<IUiaValuePattern>(new FakeValuePattern(url))));
         }
 
         if (content != null)
         {
-            window.With(new FakeUiaNode("Document", "Example").WithPattern<IUiaTextPattern>(new FakeTextPattern(content)));
+            var document = new FakeUiaNode("Document", "Example").WithPattern<IUiaTextPattern>(new FakeTextPattern(content));
+            window.With(url != null ? document.WithPattern<IUiaValuePattern>(new FakeValuePattern(url)) : document);
         }
 
         _tree.WithWindow(handle, window);
+    }
+
+    /// <summary>Shows <paramref name="browser"/> in the window <paramref name="handle"/>, its pages given by its render widgets.</summary>
+    private void ShowBrowser(nint handle, FakeBrowserWindow browser)
+    {
+        _tree.WithWindow(handle, browser.Window);
+        _warmup.Setup(w => w.FindPages(handle, It.IsAny<CancellationToken>()))
+            .Returns(browser.Pages.Select((page, i) => new RenderWidgetPage(new nint(700 + i), handle, page)).ToList());
     }
 
     #region GetBrowserUrl Tests
@@ -180,6 +189,100 @@ public class BrowserReadingServiceTests
         result.BrowserType.Should().Be("chrome");
         result.PageTitle.Should().Be(expectedTitle);
         result.ErrorCode.Should().Be(BrowserErrorCode.None);
+        result.UrlSource.Should().Be(BrowserUrlSource.AddressBar);
+        result.DisplayUrl.Should().Be(expectedUrl);
+        result.IsEditing.Should().BeFalse();
+    }
+
+    [Theory]
+    [MemberData(nameof(Languages))]
+    public async Task GetBrowserUrl_ReadsTheCommittedUrlFromTheShownPage_AndReportsTheAddressBar(BrowserNames names)
+    {
+        // Arrange
+        var handle = new nint(12345);
+        SetupValidBrowserWindow(handle, "msedge", "edge");
+        var browser = new FakeBrowserWindow(names);
+        ShowBrowser(handle, browser);
+
+        // Act
+        var result = await CreateSut().GetBrowserUrlAsync(handle);
+
+        // Assert
+        result.Should().BeEquivalentTo(new
+        {
+            Success = true,
+            Url = FakeBrowserWindow.CommittedUrl,
+            DisplayUrl = FakeBrowserWindow.ShownUrl,
+            UrlSource = BrowserUrlSource.Document,
+            IsEditing = (bool?)false,
+            PageTitle = browser.Title,
+            Source = BrowserReadSource.Uia
+        });
+        _warmup.Verify(w => w.FindPages(handle, _worker.LastToken), Times.Once);
+    }
+
+    public static TheoryData<BrowserNames> Languages() => new(BrowserNames.Localized);
+
+    [Fact]
+    public async Task GetBrowserUrl_ReportsTheNewTabPage_ApartFromAMissingAddressBar()
+    {
+        // Arrange
+        var handle = new nint(12345);
+        SetupValidBrowserWindow(handle, "chrome", "chrome");
+        ShowBrowser(handle, new FakeBrowserWindow(BrowserNames.ChromeNorwegian, pageTitle: "Ny fane",
+            committedUrl: "chrome://new-tab-page/", addressBarText: ""));
+
+        // Act
+        var result = await CreateSut().GetBrowserUrlAsync(handle);
+
+        // Assert
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(BrowserErrorCode.NewTabPage);
+        result.Url.Should().Be("chrome://new-tab-page/");
+        result.Error.Should().Contain("new tab page");
+    }
+
+    [Fact]
+    public async Task GetBrowserUrl_ReturnsUrlExtractionFailed_WhenTheAddressBarIsBeingEdited()
+    {
+        var handle = new nint(12345);
+        SetupValidBrowserWindow(handle, "chrome", "chrome");
+        var browser = new FakeBrowserWindow(BrowserNames.ChromeEnglish, committedUrl: null, addressBarText: "evil.example");
+        browser.Omnibox.HasKeyboardFocus = true;
+        ShowBrowser(handle, browser);
+
+        var result = await CreateSut().GetBrowserUrlAsync(handle);
+
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(BrowserErrorCode.UrlExtractionFailed);
+        result.Url.Should().BeNull();
+        result.DisplayUrl.Should().Be("evil.example");
+        result.IsEditing.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task GetBrowserUrlAndContent_ReadAChildWindowsHandle_AsItsTopLevelWindow()
+    {
+        // Arrange - the handle of the page's render widget, from an element's nativeWindowHandle
+        var handle = new nint(12345);
+        var renderWidget = new nint(777);
+        SetupValidBrowserWindow(handle, "chrome", "chrome");
+        _mockNativeWrapper.Setup(n => n.IsWindow(renderWidget)).Returns(true);
+        _mockNativeWrapper.Setup(n => n.GetAncestor(renderWidget, WindowAncestor.Root)).Returns(handle);
+        ShowBrowser(handle, new FakeBrowserWindow(BrowserNames.ChromeEnglish));
+        var sut = CreateSut();
+
+        // Act
+        var url = await sut.GetBrowserUrlAsync(renderWidget);
+        var content = await sut.GetBrowserContentAsync(renderWidget);
+
+        // Assert
+        url.Url.Should().Be(FakeBrowserWindow.CommittedUrl);
+        url.PageTitle.Should().Be(new FakeBrowserWindow(BrowserNames.ChromeEnglish).Title);
+        content.Success.Should().BeTrue();
+        _worker.LastTargetProcessId.Should().Be(1000);
+        _warmup.Verify(w => w.FindPages(handle, It.IsAny<CancellationToken>()), Times.Exactly(2));
+        _warmup.Verify(w => w.FindPages(renderWidget, It.IsAny<CancellationToken>()), Times.Never);
     }
 
     // Note: Browser type detection is tested separately in GetBrowserType tests.
@@ -222,9 +325,9 @@ public class BrowserReadingServiceTests
     }
 
     [Fact]
-    public async Task GetBrowserContent_ReturnsError_WhenContentExtractionFails()
+    public async Task GetBrowserContent_ReturnsContentAreaNotFound_WhenTheWindowShowsNoPage()
     {
-        // Arrange
+        // Arrange - the address bar and the browser's panes are there, but no Document of a tab
         var handle = new nint(12345);
         SetupValidBrowserWindow(handle, "chrome", "chrome");
         ShowPage(handle, "https://example.com", content: null);
@@ -235,7 +338,54 @@ public class BrowserReadingServiceTests
 
         // Assert
         result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(BrowserErrorCode.ContentAreaNotFound);
+        result.Content.Should().BeNull();
+        result.Url.Should().BeNull();
+        result.Source.Should().Be("uia");
+    }
+
+    [Fact]
+    public async Task GetBrowserContent_ReturnsContentExtractionFailed_WhenThePageHasNoText()
+    {
+        // Arrange
+        var handle = new nint(12345);
+        SetupValidBrowserWindow(handle, "chrome", "chrome");
+        ShowPage(handle, "https://example.com", content: "");
+        var sut = CreateSut();
+
+        // Act
+        var result = await sut.GetBrowserContentAsync(handle);
+
+        // Assert
+        result.Success.Should().BeFalse();
         result.ErrorCode.Should().Be(BrowserErrorCode.ContentExtractionFailed);
+        result.Url.Should().Be("https://example.com");
+    }
+
+    [Fact]
+    public async Task GetBrowserContent_ReadsTheShownPage_AfterTheWarmup_WithoutTheAddressBar()
+    {
+        // Arrange
+        var handle = new nint(12345);
+        SetupValidBrowserWindow(handle, "msedge", "edge");
+        var browser = new FakeBrowserWindow(BrowserNames.EdgeNorwegian);
+        ShowBrowser(handle, browser);
+        var calls = new List<string>();
+        _warmup.Setup(w => w.WarmUp(handle, It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .Callback(() => calls.Add("WarmUp")).Returns(Warmed);
+        _warmup.Setup(w => w.FindPages(handle, It.IsAny<CancellationToken>()))
+            .Callback(() => calls.Add("FindPages"))
+            .Returns(browser.Pages.Select(page => new RenderWidgetPage(new nint(700), handle, page)).ToList());
+
+        // Act
+        var result = await CreateSut().GetBrowserContentAsync(handle);
+
+        // Assert
+        result.Success.Should().BeTrue();
+        result.Url.Should().Be(FakeBrowserWindow.CommittedUrl);
+        result.Content.Should().StartWith($"Welcome to {FakeBrowserWindow.PageTitle}");
+        calls.Should().Equal("WarmUp", "FindPages");
+        _tree.ChildListings.Should().NotContain([browser.Names.Frame, "ToolBar"]);
     }
 
     [Fact]
@@ -1019,7 +1169,7 @@ public class BrowserReadingServiceTests
     [Fact]
     public async Task GetBrowserUrl_StillReadsTheAddressBar_WhenTheWindowsNameCannotBeRead()
     {
-        // Arrange - the name search starts at the window, so only the edit box lookup can find the bar
+        // Arrange - the window's name is unreadable; the address bar below it is still found (the first edit box in a toolbar)
         var handle = new nint(12345);
         SetupValidBrowserWindow(handle, "chrome", "chrome");
         var window = new FakeUiaNode("Window", "Example - Google Chrome") { ReadException = FakeUiaTree.Vanished("window's name") }
@@ -1099,7 +1249,7 @@ public class BrowserReadingServiceTests
     [Fact]
     public async Task GetBrowserUrl_DoesNotWarmUpThePage()
     {
-        // The address bar is the browser's own UI, which Chromium serves without the page's tree
+        // The page's Document is read through its render widget, without waiting for the page's tree
         var handle = new nint(12345);
         SetupValidBrowserWindow(handle, "chrome", "chrome");
         ShowPage(handle, "https://example.com");
@@ -1143,8 +1293,7 @@ public class BrowserReadingServiceTests
 
         var result = await CreateSut().GetBrowserContentAsync(handle);
 
-        result.ErrorCode.Should().Be(BrowserErrorCode.ContentExtractionFailed);
-        result.Url.Should().Be("https://example.com");
+        result.ErrorCode.Should().Be(BrowserErrorCode.ContentAreaNotFound);
         result.AccessibilityWarmup.Should().Be(notReady);
     }
 

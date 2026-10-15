@@ -216,7 +216,10 @@ public class BrowserReadingTools
         ErrorCode: result.ErrorCode.ToString(),
         Source: result.Source,
         TargetId: result.TargetId,
-        CdpError: result.CdpError
+        CdpError: result.CdpError,
+        DisplayUrl: result.DisplayUrl,
+        UrlSource: result.UrlSource,
+        IsEditing: result.IsEditing
     );
 
     private static BrowserContentResultDto ToDto(BrowserContentResult result) => new(
@@ -247,7 +250,9 @@ public class BrowserReadingTools
 
 /// <summary>
 /// DTO for browser URL result returned by MCP tools.
-/// Source is "cdp" or "uia"; CdpError explains a fallback from CDP to UI Automation.
+/// Source is "cdp" or "uia"; CdpError explains a fallback from CDP to UI Automation. With UI Automation (roadmap M5.7),
+/// UrlSource says whether Url came from the page's Document ("document") or the address bar ("addressBar"), DisplayUrl is
+/// the address bar's text and IsEditing whether the address bar has the keyboard focus.
 /// </summary>
 public record BrowserUrlResultDto(
     bool Success,
@@ -258,7 +263,10 @@ public record BrowserUrlResultDto(
     string ErrorCode,
     string? Source = null,
     string? TargetId = null,
-    string? CdpError = null
+    string? CdpError = null,
+    string? DisplayUrl = null,
+    string? UrlSource = null,
+    bool? IsEditing = null
 );
 
 /// <summary>

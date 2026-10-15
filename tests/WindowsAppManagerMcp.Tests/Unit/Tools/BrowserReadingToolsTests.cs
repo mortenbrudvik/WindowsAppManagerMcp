@@ -71,6 +71,23 @@ public class BrowserReadingToolsTests
     }
 
     [Fact]
+    public async Task GetBrowserUrl_PassesOnWhereTheUiAutomationReadFoundTheUrl()
+    {
+        // Arrange - roadmap M5.7
+        _mockBrowserReadingService.Setup(s => s.GetBrowserUrlAsync(new nint(12345), It.IsAny<CdpOptions?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new BrowserUrlResult(true, "https://example.com/a", "edge", "A - Microsoft Edge", null, BrowserErrorCode.None,
+                Source: BrowserReadSource.Uia, DisplayUrl: "example.com/a", UrlSource: BrowserUrlSource.Document, IsEditing: false));
+
+        // Act
+        var result = await CreateSut().GetBrowserUrl(12345);
+
+        // Assert
+        result.DisplayUrl.Should().Be("example.com/a");
+        result.UrlSource.Should().Be("document");
+        result.IsEditing.Should().BeFalse();
+    }
+
+    [Fact]
     public async Task GetBrowserUrl_ReturnsMappedDto_OnError()
     {
         // Arrange
