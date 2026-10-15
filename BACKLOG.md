@@ -689,6 +689,8 @@ M3 is complete on the integration branch `m3-semantic-find-act-wait` (PR #6) and
 
 ### M5: Browser bridge
 
+*Released in 2.1.0 on 2026-10-15.*
+
 *Reliable CDP for debug-enabled Chromium, bound to the right window and tab, with a few high-value tools: readiness, tabs, navigation, waits and paged content. The UIA fallback is locale-independent, and anything richer is handed to Playwright MCP explicitly. After M2 this milestone can run in parallel with M3/M4.*
 
 | # | Task | Status | Priority | Effort | Notes |
