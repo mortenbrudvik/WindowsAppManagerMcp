@@ -294,22 +294,31 @@ public class NativeProcessWrapper : INativeProcessWrapper
         WalkAncestors(processId, parentByProcessId, getStartTime).ToList();
 
     /// <summary>
-    /// The parent of <paramref name="processId"/> by the rule of <see cref="FindAncestors"/>: the first step of that walk,
-    /// or null when the walk stops at once (the parent is not running, is the process itself, or started after its child,
-    /// so its PID was reused). When either start time is unknown, the parent is trusted, as the walk trusts it. Reads only
-    /// the start times of the process and its parent.
+    /// The parent of <paramref name="processId"/>, for reporting it: the parent in <paramref name="parentByProcessId"/>
+    /// when it is still running, is not the process itself, and both start times are known and show it started no later
+    /// than its child; null otherwise. Stricter than <see cref="FindAncestors"/>, which trusts a parent whose start time
+    /// (or whose child's) is unknown: a reported parent must never be a later process that reused the real parent's PID,
+    /// and an unknown start time cannot rule that out. Reads only the start times of the process and its parent.
     /// </summary>
     public static int? FindParent(
         int processId,
         IReadOnlyDictionary<int, int> parentByProcessId,
         Func<int, DateTime?> getStartTime)
     {
-        foreach (var parent in WalkAncestors(processId, parentByProcessId, getStartTime))
+        if (!parentByProcessId.TryGetValue(processId, out var parent) ||
+            parent <= 0 ||
+            parent == processId ||
+            !parentByProcessId.ContainsKey(parent))
         {
-            return parent;
+            return null;
         }
 
-        return null;
+        if (getStartTime(processId) is not { } childStart)
+        {
+            return null;
+        }
+
+        return getStartTime(parent) is { } parentStart && parentStart <= childStart ? parent : null;
     }
 
     /// <summary>The walk of <see cref="FindAncestors"/>, lazily: each step reads only the start time it needs.</summary>

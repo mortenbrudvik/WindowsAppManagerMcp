@@ -51,8 +51,9 @@ public interface IProcessService
     /// Lists running processes, optionally filtered by name, in the order the system lists them. The list comes from
     /// <see cref="INativeProcessWrapper.ListRunningProcesses"/>; each listed process is opened once, for its path and start
     /// time (<see cref="INativeProcessWrapper.ReadProcessDetails"/>), and its parent is taken from one process snapshot
-    /// with the PID-reuse rule of <see cref="Native.NativeProcessWrapper.FindParent"/>. Empty when the process list cannot
-    /// be read. Never throws for a process that exits or cannot be opened: its unreadable fields are null.
+    /// with the PID-reuse rule of <see cref="Native.NativeProcessWrapper.FindParent"/> (named only when both start times
+    /// are known). Empty when the process list cannot be read. Never throws for a process that exits or cannot be
+    /// opened: its unreadable fields are null.
     /// </summary>
     /// <param name="nameFilter">Part of the process name, case-insensitive.</param>
     /// <param name="includeWindowless">
@@ -149,9 +150,10 @@ public interface IProcessService
 /// <param name="WindowCount">The process's visible, titled top-level windows (see GetRunningProcesses).</param>
 /// <param name="MemoryUsageMB">The working set in MB; null when it cannot be read.</param>
 /// <param name="ParentProcessId">
-/// The process that started it, when that process is still running and did not start after it (a later process that
-/// reused the parent's PID is not named); null otherwise, or when the process snapshot cannot be read. Not reported by
-/// list_processes yet (roadmap M6.6).
+/// The process that started it, when that process is still running and both start times can be read and show it
+/// started no later than the child (so a later process that reused the parent's PID is not named); null otherwise:
+/// when either process cannot be opened for its start time, or when the process snapshot cannot be read. Not reported
+/// by list_processes yet (roadmap M6.6).
 /// </param>
 /// <param name="StartTime">When the process started (UTC); null when it cannot be read. Not reported by list_processes yet.</param>
 public record ProcessInfo(

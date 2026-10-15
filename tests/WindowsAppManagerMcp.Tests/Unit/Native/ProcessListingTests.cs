@@ -47,14 +47,38 @@ public class ProcessListingTests
         NativeProcessWrapper.FindParent(500, parents, _ => null).Should().BeNull();
     }
 
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(false, false)]
+    public void FindParent_WhenAStartTimeIsUnknown_IsNull_ThoughFindAncestorsTrustsTheParent(bool childKnown, bool parentKnown)
+    {
+        // Arrange - unknown start times cannot rule out a reused PID; the parent here did start after the child
+        var parents = new Dictionary<int, int> { [500] = 400, [400] = 0 };
+        var starts = new Dictionary<int, DateTime>();
+        if (childKnown)
+        {
+            starts[500] = T0;
+        }
+
+        if (parentKnown)
+        {
+            starts[400] = T0.AddHours(1);
+        }
+
+        // Act & Assert - a parent is named only when both start times show it started first; the kill checks'
+        // walk keeps trusting it
+        NativeProcessWrapper.FindParent(500, parents, StartTimes(starts)).Should().BeNull();
+        NativeProcessWrapper.FindAncestors(500, parents, StartTimes(starts)).Should().Equal(400);
+    }
+
     [Fact]
-    public void FindParent_WhenAStartTimeIsUnknown_TrustsTheParent_AsFindAncestorsDoes()
+    public void FindParent_ThatStartedAtTheSameTimeAsTheChild_IsTheParent()
     {
         var parents = new Dictionary<int, int> { [500] = 400, [400] = 0 };
-        var starts = new Dictionary<int, DateTime> { [400] = T0.AddHours(1) };
+        var starts = new Dictionary<int, DateTime> { [400] = T0, [500] = T0 };
 
         NativeProcessWrapper.FindParent(500, parents, StartTimes(starts)).Should().Be(400);
-        NativeProcessWrapper.FindAncestors(500, parents, StartTimes(starts)).Should().Equal(400);
     }
 
     [Fact]

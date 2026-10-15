@@ -1139,20 +1139,26 @@ public class ProcessServiceTests
         result.Should().ContainSingle().Which.ParentProcessId.Should().BeNull();
     }
 
-    [Fact]
-    public void GetRunningProcesses_NamesTheParent_WhenItsStartTimeCannotBeRead_AsTheAncestorWalkDoes()
+    [Theory]
+    [InlineData(Explorer)]
+    [InlineData(Notepad)]
+    public void GetRunningProcesses_NamesNoParent_WhenAStartTimeCannotBeRead(int unreadable)
     {
-        // Arrange - the parent cannot be opened, so its start time is unknown
-        UseProcessTable(details: new Dictionary<int, ProcessDetails?>
+        // Arrange - the parent or the child cannot be opened, so its start time is unknown, and a later process that
+        // took the parent's PID cannot be ruled out
+        var details = new Dictionary<int, ProcessDetails?>
         {
+            [Explorer] = new(@"C:\Windows\explorer.exe", T0),
             [Notepad] = new(@"C:\Windows\System32\notepad.exe", T0.AddMinutes(5)),
-        });
+        };
+        details[unreadable] = null;
+        UseProcessTable(details: details);
 
         // Act
         var result = CreateSut().GetRunningProcesses(nameFilter: "notepad", includeWindowless: true);
 
         // Assert
-        result.Should().ContainSingle().Which.ParentProcessId.Should().Be(Explorer);
+        result.Should().ContainSingle().Which.ParentProcessId.Should().BeNull();
     }
 
     [Fact]
