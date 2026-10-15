@@ -416,7 +416,8 @@ public class LayoutService : ILayoutService
         // One snapshot of the windows get_all_windows lists; every placement is matched against it, so a window is
         // given to at most one placement
         var snapshot = _windowService.GetAllWindows(includeMinimized: true);
-        var plans = PlanPlacements(orderedPlacements, snapshot, monitors, matchBy);
+        var exePaths = new Dictionary<int, string?>();
+        var plans = LayoutPlanner.Plan(orderedPlacements, snapshot, monitors, matchBy, processId => ExePathOf(processId, exePaths));
         var assignedTo = plans
             .Where(plan => plan.Window != null)
             .ToDictionary(plan => plan.Window!.Handle, plan => plan.Placement.Order);
@@ -486,7 +487,7 @@ public class LayoutService : ILayoutService
         );
 
         // Arranges one placement and returns what happened to it, and the outcome in words for the progress report
-        async Task<(LayoutPlacementResult Result, string Outcome)> ApplyPlacementAsync(PlacementPlan plan)
+        async Task<(LayoutPlacementResult Result, string Outcome)> ApplyPlacementAsync(PlannedPlacement plan)
         {
             var placement = plan.Placement;
             var label = plan.Label;
@@ -720,159 +721,10 @@ public class LayoutService : ILayoutService
         return _windowService.SetWindowBounds(window.Handle, target.X, target.Y, target.Width, target.Height);
     }
 
-    #region Matching
-
-    // How much each identity signal counts when ranking the windows that pass a placement's matchBy filter. The title is
-    // the strongest identity, the class tells a main window from a dialog, the exe path two installations apart; the
-    // distance from the placement's rectangle and the z-order ordinal only break ties.
-    private const double TitleWeight = 40;
-    private const double ClassWeight = 20;
-    private const double ExePathWeight = 10;
-    private const double DistanceWeight = 8;
-    private const double OrdinalWeight = 4;
+    #region Capture helpers
 
     /// <summary>The longest title save_layout records.</summary>
     private const int MaxTitlePatternLength = 260;
-
-    private static readonly string[] TitleSeparators = [" - ", " – ", " — ", " | ", " · "];
-
-    /// <summary>A placement on its way to being applied: the window it was given and where it goes.</summary>
-    private sealed class PlacementPlan(WindowPlacement placement, string label)
-    {
-        public WindowPlacement Placement { get; } = placement;
-        public string Label { get; } = label;
-
-        /// <summary>Why the placement cannot be matched under the chosen matchBy; null when it can.</summary>
-        public string? NotApplicable { get; set; }
-
-        /// <summary>Why the placement's monitor cannot be used; null when it can.</summary>
-        public string? MonitorError { get; set; }
-
-        /// <summary>The placement's rectangle on its monitor; null when it is not applicable or its monitor does not exist.</summary>
-        public WindowRect? Target { get; set; }
-
-        /// <summary>The work area of the placement's monitor; null when the monitor does not exist.</summary>
-        public MonitorRect? WorkArea { get; set; }
-
-        /// <summary>The window the placement was given from the snapshot; null when none matched.</summary>
-        public WindowInfo? Window { get; set; }
-    }
-
-    /// <summary>
-    /// Gives each placement at most one window of <paramref name="snapshot"/>, and each window to at most one placement.
-    /// Every (placement, window) pair that passes the matchBy filter is scored on the recorded identity (title pattern,
-    /// class name, exe path, ordinal) and the distance from the placement's rectangle; the pairs are taken best first,
-    /// so a placement that recognizes its window by title is not robbed of it by an earlier placement that would take
-    /// any window of the process. Ties go to the earlier placement, then the window higher in the z-order.
-    /// </summary>
-    private List<PlacementPlan> PlanPlacements(
-        IReadOnlyList<WindowPlacement> placements,
-        IReadOnlyList<WindowInfo> snapshot,
-        IReadOnlyList<MonitorInfo> monitors,
-        LayoutMatchBy matchBy)
-    {
-        var plans = placements.Select(p => new PlacementPlan(p, DescribePlacement(p))).ToList();
-        foreach (var plan in plans)
-        {
-            var placement = plan.Placement;
-            if (MissingCriterion(placement.Matcher, matchBy) is { } missing)
-            {
-                plan.NotApplicable = $"Skipped {plan.Label}: {missing}";
-                continue;
-            }
-
-            // A saved monitor that is gone is reported, not swapped for the primary one: the window would land on the
-            // wrong screen with success
-            if (placement.MonitorIndex < 0 || placement.MonitorIndex >= monitors.Count)
-            {
-                plan.MonitorError = $"Did not arrange {plan.Label}: {WindowService.MonitorIndexMessage(placement.MonitorIndex, monitors.Count)}";
-                continue;
-            }
-
-            var workArea = monitors[placement.MonitorIndex].WorkArea;
-            plan.WorkArea = workArea;
-            plan.Target = new WindowRect(
-                (int)(workArea.X + placement.Position.X * workArea.Width),
-                (int)(workArea.Y + placement.Position.Y * workArea.Height),
-                (int)(placement.Position.Width * workArea.Width),
-                (int)(placement.Position.Height * workArea.Height));
-        }
-
-        // The position of each window among the snapshot's windows of its process, as save_layout counted it
-        var ordinals = new int[snapshot.Count];
-        var seen = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-        for (var i = 0; i < snapshot.Count; i++)
-        {
-            ordinals[i] = seen.GetValueOrDefault(snapshot[i].ProcessName);
-            seen[snapshot[i].ProcessName] = ordinals[i] + 1;
-        }
-
-        var exePaths = new Dictionary<int, string?>();
-        var pairs = new List<(double Score, int Plan, int Window)>();
-        for (var p = 0; p < plans.Count; p++)
-        {
-            if (plans[p].Target is not { } target)
-                continue;
-
-            var matcher = plans[p].Placement.Matcher;
-            for (var w = 0; w < snapshot.Count; w++)
-            {
-                if (Matches(snapshot[w], matcher, matchBy))
-                    pairs.Add((Score(matcher, snapshot[w], ordinals[w], target, plans[p].WorkArea!, exePaths), p, w));
-            }
-        }
-
-        var taken = new bool[snapshot.Count];
-        foreach (var (_, p, w) in pairs.OrderByDescending(pair => pair.Score).ThenBy(pair => pair.Plan).ThenBy(pair => pair.Window))
-        {
-            if (plans[p].Window != null || taken[w])
-                continue;
-
-            plans[p].Window = snapshot[w];
-            taken[w] = true;
-        }
-
-        return plans;
-    }
-
-    /// <summary>
-    /// Why <paramref name="matcher"/> has nothing <paramref name="matchBy"/> can match on, or null when it has. An empty
-    /// criterion used to match every window, so title_only on a captured layout moved arbitrary windows.
-    /// </summary>
-    private static string? MissingCriterion(WindowMatcher matcher, LayoutMatchBy matchBy)
-    {
-        var hasProcess = !string.IsNullOrEmpty(matcher.ProcessName);
-        var hasTitle = !string.IsNullOrEmpty(matcher.TitleContains);
-        return matchBy switch
-        {
-            LayoutMatchBy.TitleOnly when !hasTitle =>
-                "matchBy title_only needs titleContains, and this placement has none (save_layout records the process, " +
-                "not title text); use process_and_title or process_only",
-            LayoutMatchBy.ProcessOnly when !hasProcess =>
-                "matchBy process_only needs a processName, and this placement has none; use process_and_title or title_only",
-            LayoutMatchBy.ProcessAndTitle when !hasProcess && !hasTitle =>
-                "the placement has neither a processName nor titleContains, so it would match any window",
-            _ => null
-        };
-    }
-
-    private static bool Matches(WindowInfo window, WindowMatcher matcher, LayoutMatchBy matchBy) => matchBy switch
-    {
-        LayoutMatchBy.ProcessOnly => MatchesProcessName(window, matcher),
-        LayoutMatchBy.TitleOnly => MatchesTitle(window, matcher),
-        LayoutMatchBy.ProcessAndTitle =>
-            (string.IsNullOrEmpty(matcher.ProcessName) || MatchesProcessName(window, matcher)) &&
-            (string.IsNullOrEmpty(matcher.TitleContains) || MatchesTitle(window, matcher)),
-        _ => throw new ArgumentOutOfRangeException(nameof(matchBy), matchBy, "Not a matchBy value.")
-    };
-
-    /// <summary>
-    /// A captured process name (<see cref="WindowMatcher.ExactProcessName"/>) must be the window's whole process name,
-    /// so "Code" does not match "Code - Insiders"; a hand-written one may be part of it. Either may name a UWP window's
-    /// frame host. The rule is the window selectors' (<see cref="WindowMatching"/>, roadmap M2.4).
-    /// </summary>
-    private static bool MatchesProcessName(WindowInfo window, WindowMatcher matcher) =>
-        WindowMatching.ProcessNameMatches(window.ProcessName, window.HostProcessName, matcher.ProcessName!, contains: !matcher.ExactProcessName);
 
     /// <summary>
     /// True when <paramref name="name"/> is part of the window's process name or, for a UWP window, of
@@ -881,66 +733,6 @@ public class LayoutService : ILayoutService
     /// </summary>
     private static bool ProcessNameContains(WindowInfo window, string name) =>
         WindowMatching.ProcessNameMatches(window.ProcessName, window.HostProcessName, name, contains: true);
-
-    /// <summary>
-    /// The title criterion, compared as the window selectors compare titles (<see cref="WindowTitles"/>, roadmap M2.4):
-    /// ignoring case, invisible format characters and Edge's " and N more pages", so a preset written for
-    /// "Microsoft Edge" finds the Edge window whose title has a zero-width space in it.
-    /// </summary>
-    private static bool MatchesTitle(WindowInfo window, WindowMatcher matcher) =>
-        WindowTitles.Contains(window.Title, matcher.TitleContains);
-
-    private double Score(
-        WindowMatcher matcher, WindowInfo window, int ordinal, WindowRect target, MonitorRect workArea, Dictionary<int, string?> exePaths)
-    {
-        var score = DistanceWeight * Closeness(window.Bounds, target, workArea);
-
-        if (!string.IsNullOrEmpty(matcher.TitlePattern))
-            score += TitleWeight * TitleSimilarity(matcher.TitlePattern, window.Title);
-
-        if (!string.IsNullOrEmpty(matcher.ClassName) && !string.IsNullOrEmpty(window.ClassName))
-            score += string.Equals(matcher.ClassName, window.ClassName, StringComparison.OrdinalIgnoreCase) ? ClassWeight : -ClassWeight;
-
-        if (!string.IsNullOrEmpty(matcher.ExePath) && ExePathOf(window.ProcessId, exePaths) is { } exePath)
-            score += string.Equals(matcher.ExePath, exePath, StringComparison.OrdinalIgnoreCase) ? ExePathWeight : -ExePathWeight;
-
-        if (matcher.Ordinal == ordinal)
-            score += OrdinalWeight;
-
-        return score;
-    }
-
-    /// <summary>
-    /// 1 when the titles are equal (ignoring case); otherwise up to 0.8 for the share of the pattern's parts (split at
-    /// " - ", " | " and dashes, so "Inbox - Mail - Google Chrome" has three) that are also parts of the title.
-    /// </summary>
-    private static double TitleSimilarity(string pattern, string title)
-    {
-        if (string.Equals(pattern, title, StringComparison.OrdinalIgnoreCase))
-            return 1;
-
-        var patternParts = SplitTitle(pattern);
-        if (patternParts.Length == 0)
-            return 0;
-
-        var titleParts = new HashSet<string>(SplitTitle(title), StringComparer.OrdinalIgnoreCase);
-        return 0.8 * patternParts.Count(titleParts.Contains) / patternParts.Length;
-    }
-
-    private static string[] SplitTitle(string title) =>
-        title.Split(TitleSeparators, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-
-    /// <summary>1 when the window is exactly at the target rectangle, falling to 0 as its edges move a work area away.</summary>
-    private static double Closeness(WindowRect bounds, WindowRect target, MonitorRect workArea)
-    {
-        double scale = 2L * (workArea.Width + workArea.Height);
-        if (scale <= 0)
-            return 0;
-
-        double offset = Math.Abs((long)bounds.X - target.X) + Math.Abs((long)bounds.Y - target.Y) +
-                        Math.Abs((long)bounds.Width - target.Width) + Math.Abs((long)bounds.Height - target.Height);
-        return 1 - Math.Min(1, offset / scale);
-    }
 
     /// <summary>The process's executable path, read once per process; null when it cannot be read.</summary>
     private string? ExePathOf(int processId, Dictionary<int, string?> cache)
@@ -964,17 +756,6 @@ public class LayoutService : ILayoutService
     }
 
     private static string Truncate(string text, int maxLength) => text.Length <= maxLength ? text : text[..maxLength];
-
-    private static string DescribePlacement(WindowPlacement placement)
-    {
-        var criteria = new List<string>();
-        if (!string.IsNullOrEmpty(placement.Matcher.ProcessName))
-            criteria.Add($"process '{placement.Matcher.ProcessName}'");
-        if (!string.IsNullOrEmpty(placement.Matcher.TitleContains))
-            criteria.Add($"title containing '{placement.Matcher.TitleContains}'");
-
-        return $"placement {placement.Order} ({(criteria.Count > 0 ? string.Join(", ", criteria) : "no matcher")})";
-    }
 
     #endregion
 
