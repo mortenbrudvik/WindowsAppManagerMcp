@@ -143,6 +143,11 @@ public sealed record DebugBrowserLaunchRequest(
 /// <param name="CdpPort">The DevTools port the browser listens on: the one it reported for port 0, else the one asked for.</param>
 /// <param name="Warning">What the launch's window wait found, when it was not a window (see LaunchResult.Warning).</param>
 /// <param name="LaunchStatus">What the launch led to (LaunchResult.Status), when the browser was started.</param>
+/// <param name="CdpReady">True once the DevTools endpoint answered /json/version, false when a launch that started the
+/// browser failed before it did; null when it was not checked (nothing was started, or the server has no readiness check).</param>
+/// <param name="BrowserVersion">The browser and version the endpoint reported, when it is ready.</param>
+/// <param name="CdpEndpoint">The DevTools HTTP endpoint, http://127.0.0.1:port, when it is ready.</param>
+/// <param name="BrowserWsEndpoint">The browser-level DevTools WebSocket URL from /json/version, when it is ready.</param>
 public record DebugBrowserLaunchResult(
     bool Success,
     int? ProcessId,
@@ -152,7 +157,11 @@ public record DebugBrowserLaunchResult(
     string? Error,
     string? ErrorCode,
     string? Warning = null,
-    LaunchStatus? LaunchStatus = null
+    LaunchStatus? LaunchStatus = null,
+    bool? CdpReady = null,
+    string? BrowserVersion = null,
+    string? CdpEndpoint = null,
+    string? BrowserWsEndpoint = null
 );
 
 /// <summary>
@@ -161,4 +170,13 @@ public record DebugBrowserLaunchResult(
 public sealed record DebugBrowserEndpoint(string Browser, int ProcessId, int Port, string UserDataDir);
 
 /// <summary>Whether a debug browser's DevTools endpoint answers, and if not, why (a sentence for the result's error).</summary>
-public sealed record DebugBrowserReadiness(bool Ready, string? Error = null);
+/// <param name="BrowserVersion">The browser and version its /json/version reported, for example "Chrome/141.0.7390.55".</param>
+/// <param name="CdpEndpoint">The DevTools HTTP endpoint that answered, http://127.0.0.1:port.</param>
+/// <param name="BrowserWebSocketUrl">The browser-level DevTools WebSocket URL from /json/version, checked to be ws:// on
+/// 127.0.0.1 and on the port.</param>
+public sealed record DebugBrowserReadiness(
+    bool Ready,
+    string? Error = null,
+    string? BrowserVersion = null,
+    string? CdpEndpoint = null,
+    string? BrowserWebSocketUrl = null);

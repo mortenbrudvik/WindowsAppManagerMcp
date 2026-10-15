@@ -196,6 +196,8 @@ public sealed class DebugBrowserLaunchTests : IDisposable
         result.WindowHandle.Should().Be(BrowserWindow.Handle);
         result.UserDataDir.Should().Be(_profile);
         result.LaunchStatus.Should().Be(LaunchStatus.WindowObserved);
+        result.CdpReady.Should().BeNull("this server has no readiness check, so nothing says whether the endpoint answers");
+        result.CdpEndpoint.Should().BeNull();
     }
 
     [Fact]
@@ -518,6 +520,68 @@ public sealed class DebugBrowserLaunchTests : IDisposable
         result.Error.Should().StartWith("/json/version did not answer").And.Contain("still running");
         result.ProcessId.Should().Be(BrowserProcessId);
         result.CdpPort.Should().Be(50123);
+        result.CdpReady.Should().BeFalse();
+        result.CdpEndpoint.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task AReadyEndpoint_IsReported_WithTheBrowserVersionAndItsEndpoints()
+    {
+        // Arrange
+        BrowserReportsPort("50123\n");
+        var readiness = new Mock<IDebugBrowserReadiness>();
+        readiness.Setup(r => r.WaitUntilReadyAsync(It.IsAny<DebugBrowserEndpoint>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DebugBrowserReadiness(Ready: true, BrowserVersion: "Chrome/141.0.7390.55",
+                CdpEndpoint: "http://127.0.0.1:50123", BrowserWebSocketUrl: "ws://127.0.0.1:50123/devtools/browser/0a1b"));
+
+        // Act
+        var result = await CreateSut(readiness: readiness.Object).LaunchBrowserWithDebugAsync(Request());
+
+        // Assert
+        result.Success.Should().BeTrue(result.Error);
+        result.CdpReady.Should().BeTrue();
+        result.CdpPort.Should().Be(50123);
+        result.BrowserVersion.Should().Be("Chrome/141.0.7390.55");
+        result.CdpEndpoint.Should().Be("http://127.0.0.1:50123");
+        result.BrowserWsEndpoint.Should().Be("ws://127.0.0.1:50123/devtools/browser/0a1b");
+        result.ProcessId.Should().Be(BrowserProcessId);
+    }
+
+    [Fact]
+    public async Task TheReadinessCheck_IsBoundedByTheReadinessTimeout()
+    {
+        // Arrange
+        BrowserReportsPort("50123\n");
+        var readiness = new Mock<IDebugBrowserReadiness>();
+        readiness.Setup(r => r.WaitUntilReadyAsync(It.IsAny<DebugBrowserEndpoint>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DebugBrowserReadiness(Ready: true));
+
+        // Act
+        await CreateSut(readiness: readiness.Object).LaunchBrowserWithDebugAsync(Request());
+
+        // Assert - about 10 seconds by default, as the port file's wait
+        readiness.Verify(r => r.WaitUntilReadyAsync(It.IsAny<DebugBrowserEndpoint>(), TimeSpan.FromSeconds(10), It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task AnExplicitPort_IsCheckedForReadiness_Too()
+    {
+        // Arrange - the browser writes no port file for an explicit port to be read; the endpoint is the requested port
+        var port = FreeLoopbackPort();
+        var readiness = new Mock<IDebugBrowserReadiness>();
+        readiness.Setup(r => r.WaitUntilReadyAsync(It.IsAny<DebugBrowserEndpoint>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DebugBrowserReadiness(Ready: false, Error: "Port belongs to process 999."));
+
+        // Act
+        var result = await CreateSut(readiness: readiness.Object).LaunchBrowserWithDebugAsync(Request(port));
+
+        // Assert
+        readiness.Verify(r => r.WaitUntilReadyAsync(new DebugBrowserEndpoint("chrome", BrowserProcessId, port, _profile),
+            It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()), Times.Once);
+        result.Success.Should().BeFalse();
+        result.CdpReady.Should().BeFalse();
+        result.Error.Should().Contain("process 999").And.Contain($"processId {BrowserProcessId}) is still running");
     }
 
     public static TheoryData<Exception> HookFailures() => new()

@@ -241,6 +241,25 @@ public class ServerHarnessTests : IDisposable
     [Theory]
     [InlineData(DesktopTier.NoInput)]
     [InlineData(DesktopTier.Input)]
+    public async Task TheDebugBrowserReadinessCheck_CannotReachCdp(DesktopTier tier)
+    {
+        // Arrange - launch_browser_with_debug's readiness check (roadmap M5.1) asks /json/version through ICdpService
+        using var provider = CreateServicesWithMockedWrappers(tier).BuildServiceProvider();
+        var readiness = provider.GetRequiredService<IDebugBrowserReadiness>();
+        Wrapper<ITcpPortOwnerResolver>().Setup(r => r.GetListeningProcessId(It.IsAny<int>())).Returns((int?)null);
+
+        // Act
+        var check = () => readiness.WaitUntilReadyAsync(
+            new DebugBrowserEndpoint("chrome", 4321, 9222, Path.GetTempPath()), TimeSpan.FromSeconds(1), CancellationToken.None);
+
+        // Assert
+        readiness.Should().BeOfType<DebugBrowserReadinessProbe>();
+        await check.Should().ThrowAsync<E2EGuardException>().WithMessage("*ICdpService*");
+    }
+
+    [Theory]
+    [InlineData(DesktopTier.NoInput)]
+    [InlineData(DesktopTier.Input)]
     public void EveryRegisteredCdpService_IsRefused(DesktopTier tier)
     {
         // A CDP service added later (a browser-level session, a debug-browser lifecycle) must be refused too
