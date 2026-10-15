@@ -152,6 +152,14 @@ public class BrowserUrlsTests
     [InlineData("", true)]
     [InlineData(null, true)]
     [InlineData("not a url", true)]
+    [InlineData("blob:chrome-extension://abcdefghijklmnop/6f1c0e1a-2b3c-4d5e-8f90-a1b2c3d4e5f6", true)]
+    [InlineData("filesystem:chrome-extension://abcdefghijklmnop/temporary/a.html", true)]
+    [InlineData("blob:null/6f1c0e1a-2b3c-4d5e-8f90-a1b2c3d4e5f6", true)]
+    [InlineData("isolated-app://aerugqztij5biqquuk3mfwpsaibuegaqcitgfchwuosuofdjabzqaaic/", true)]
+    [InlineData("some-future-scheme://page", true)]
+    [InlineData("ftp://example.com/file", true)]
+    [InlineData("blob:https://example.com/6f1c0e1a-2b3c-4d5e-8f90-a1b2c3d4e5f6", false)]
+    [InlineData("filesystem:https://example.com/temporary/a.html", false)]
     [InlineData("about:blank", false)]
     [InlineData("about:blank#top", false)]
     [InlineData("about:srcdoc", false)]
@@ -159,8 +167,23 @@ public class BrowserUrlsTests
     [InlineData("http://127.0.0.1:8080/form", false)]
     [InlineData("file:///C:/Users/me/AppData/Local/Temp/page.html", false)]
     [InlineData("data:text/html,<p>x</p>", false)]
-    public void IsBrowserOwnPage_KnowsTheBrowsersOwnPages_FromTheWeb(string? url, bool expected)
+    public void IsBrowserOwnPage_AllowsOnlyWebPages(string? url, bool expected)
     {
         BrowserUrls.IsBrowserOwnPage(url).Should().Be(expected);
+    }
+
+    [Theory]
+    [InlineData("https://example.com/inbox", "https://example.com/inbox", true)]
+    [InlineData("https://www.example.com/inbox/", "http://example.com/inbox", true)]
+    [InlineData("https://example.com/inbox#top", "https://example.com/inbox", true)]
+    [InlineData("https://example.com/", "https://example.com/inbox", false)]
+    [InlineData("https://example.com/inbox", "https://example.com/", false)]
+    [InlineData("https://example.com/inbox", "https://example.com/inbox?x=1", false)]
+    [InlineData("", "https://example.com/", false)]
+    [InlineData(null, null, false)]
+    public void SamePage_IsTheSameAddress_NotTheStartOfOne(string? a, string? b, bool expected)
+    {
+        BrowserUrls.SamePage(a, b).Should().Be(expected);
+        BrowserUrls.SamePage(b, a).Should().Be(expected);
     }
 }

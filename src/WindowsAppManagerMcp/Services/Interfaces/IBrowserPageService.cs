@@ -10,8 +10,9 @@ namespace WindowsAppManagerMcp.Services.Interfaces;
 /// <remarks>
 /// Before anything is sent, the browser is checked as the tab tools check it (<see cref="IBrowserTabService"/>): a
 /// recognized Chromium browser, allowed by the user's target policy (with a port alone, the process that listens on it),
-/// whose port's listener is that browser's process (fail closed). The tab must not be one of the browser's own pages
-/// (BrowserInternalPage: chrome:, edge:, devtools:, extensions'). The calls that change the page take the input gate only
+/// whose port's listener is that browser's process (fail closed). The tab must show a web page (BrowserInternalPage
+/// otherwise: the browser's own pages, extensions' and apps' pages; an allow list, checked on the listed URL and again on
+/// the call's connection). The calls that change the page take the input gate only
 /// for the commands that change it, and are refused while the user has paused input (PausedByUser, InputBusy: a tool
 /// error). The results carry their errorCode as a string, null on success.
 /// </remarks>
@@ -21,11 +22,14 @@ public interface IBrowserPageService
     Task<BrowserEvaluateResult> EvaluateAsync(
         BrowserTabTarget target, string expression, bool awaitPromise, int timeoutMs, CancellationToken cancellationToken = default);
 
-    /// <summary>Accepts or dismisses the tab's open JavaScript dialog.</summary>
+    /// <summary>Accepts or dismisses the tab's open JavaScript dialog; one the browser did not report is never accepted unread.</summary>
     Task<BrowserDialogResult> HandleDialogAsync(
         BrowserTabTarget target, bool accept, string? promptText, CancellationToken cancellationToken = default);
 
-    /// <summary>An element's rectangle in physical screen pixels; needs the window (<see cref="BrowserTabTarget.WindowHandle"/>).</summary>
+    /// <summary>
+    /// An element's rectangle in physical screen pixels; needs the window (<see cref="BrowserTabTarget.WindowHandle"/>), and
+    /// a tab that is the one the window shows and whose page is shown (ContentAreaNotFound otherwise).
+    /// </summary>
     Task<BrowserElementRectResult> GetElementRectAsync(
         BrowserTabTarget target, BrowserElementLocator locator, CancellationToken cancellationToken = default);
 

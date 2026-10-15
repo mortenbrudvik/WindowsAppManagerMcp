@@ -146,7 +146,8 @@ public static partial class ToolDocGenerator
 
     /// <summary>
     /// The tools annotated readOnlyHint, which read-only mode serves, in catalog order: the Observer profile is exactly
-    /// this list, so it cannot drift from the annotations.
+    /// this list, so it cannot drift from the annotations. Those of a toolset that is off by default are named apart: read-only
+    /// mode alone does not serve them.
     /// </summary>
     private static string ReadOnlyTools(JsonArray tools)
     {
@@ -154,7 +155,13 @@ public static partial class ToolDocGenerator
             .Select(t => t.Name)
             .Where(name => ToolSurface.Tool(tools, name)["annotations"]?["readOnlyHint"]?.GetValue<bool>() == true)
             .ToList();
-        return $"Read-only mode serves these {readOnly.Count} tools: {string.Join(", ", readOnly.Select(name => $"[{name}](#{name})"))}.";
+        var optIn = readOnly.Where(name => Toolsets.Server.ToolsetOf(name) is { OnByDefault: false }).ToList();
+        var byDefault = readOnly.Except(optIn).ToList();
+        var sentence = $"Read-only mode serves these {byDefault.Count} tools: {string.Join(", ", byDefault.Select(name => $"[{name}](#{name})"))}.";
+        return optIn.Count == 0
+            ? sentence
+            : sentence + " With their opt-in toolset turned on it also serves " +
+              string.Join(", ", optIn.Select(name => $"[{name}](#{name}) (`{Toolsets.Server.ToolsetOf(name)!.Name}`)")) + ".";
     }
 
     private static string SkillToolTables(int count)

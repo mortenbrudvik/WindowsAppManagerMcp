@@ -5,7 +5,8 @@ namespace WindowsAppManagerMcp.Services.Interfaces;
 /// <summary>
 /// Where a browser window shows a tab's page on the screen (roadmap M5.8), so a rectangle in the page's CSS pixels can be
 /// turned into physical screen pixels: the tab's Document through UI Automation (its BoundingRectangle; the Document whose
-/// address is the tab's), else the visible render widget window (Chrome_RenderWidgetHostHWND) of the page's size. Both must
+/// address is the tab's), else, unless the window shows a Document of another address, the visible render widget window
+/// (Chrome_RenderWidgetHostHWND) of the page's size. Both must
 /// be the size of the page's viewport in device pixels, so a docked DevTools pane, a side panel or another tab's page is
 /// never taken for it. Nothing is computed from screenX or the window's outer and inner sizes, which leave out the
 /// browser's own toolbars and side panels differently in every browser.

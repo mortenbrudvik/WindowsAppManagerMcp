@@ -115,10 +115,11 @@ public static class ToolDocCatalog
             new("browser_type", "Type into a page's focused field or a selector's (toolset browser-actions)", "text", "selector", "replace", "pressEnter", "window (or handle)"),
             new("browser_handle_dialog", "Accept or dismiss a page's JavaScript dialog (toolset browser-actions)", "accept", "promptText", "window (or handle)", "targetId"),
             new("browser_screenshot", "Capture a tab's page as an image, without the browser frame (toolset browser-actions)", "window (or handle)", "targetId", "maxDimension"),
-            new("browser_evaluate", "Run a JavaScript expression in a page; its value or what it threw (toolset browser-script)", "expression", "awaitPromise", "timeoutMs", "window (or handle)"),
+            new("browser_evaluate", "Run a JavaScript expression in a page; its value or what it threw (toolset browser-actions)", "expression", "awaitPromise", "timeoutMs", "window (or handle)"),
         ],
         SkillNote: "CDP only, on a debug browser, no real mouse or keyboard: work on a window behind others without taking the " +
-                   "foreground. Off by default: `WAM_TOOLSETS=+browser-actions` (and `+browser-script` for browser_evaluate). For " +
+                   "foreground (browser_screenshot may bring a tab that is not shown, and its window, to the front). Off by default: " +
+                   "`WAM_TOOLSETS=+browser-actions`. For " +
                    "anything richer, attach Playwright MCP to the same browser: `--cdp-endpoint` set to launch_browser_with_debug's " +
                    "`browserWsEndpoint` (or `cdpEndpoint`)."),
         new("Input Simulation",

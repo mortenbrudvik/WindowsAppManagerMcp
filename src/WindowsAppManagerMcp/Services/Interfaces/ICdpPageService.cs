@@ -13,9 +13,12 @@ namespace WindowsAppManagerMcp.Services.Interfaces;
 /// <para>
 /// CDP's input goes to the page through the browser, not through Windows: it needs no foreground window, works on a window
 /// behind others, is not subject to UIPI and moves no real cursor. It is still an action on the user's browser, so the
-/// commands that change the page are sent inside the input gate (<see cref="CdpGate"/>), which refuses while the user has
-/// paused input and orders them with the input and window tools; the gate is let go once the browser answered, at most
-/// about a second per command, never for a page's work after it.
+/// commands that change the page (a click's scroll and mouse events, browser_type's focus, selection, text and Enter, a
+/// dialog's answer, a script, a capture's bring to front) are sent inside the input gate (<see cref="CdpGate"/>), which
+/// refuses while the user has paused input and orders them with the input and window tools; the read-only lookup of the
+/// tab and the element comes before it. The gate is let go once the browser answered, at most a second or two per command,
+/// never for a page's work after it. A pause while the gate is held stops a click or a typing between its commands
+/// (<see cref="ICdpGateHold"/>): PausedByUser, saying what was sent; a press already sent is released.
 /// </para>
 /// <para>
 /// The tab is the caller's to choose and check (the window's own debug port, the target policy, not one of the browser's
@@ -33,9 +36,10 @@ public interface ICdpPageService
 
     /// <summary>
     /// Accepts or dismisses the JavaScript dialog the tab has open (Page.handleJavaScriptDialog, sent while the dialog
-    /// blocks the page), also one that was open before this connection: the browser may not report such a dialog to a new
-    /// connection (Edge 155 does not), so the command is sent whether or not it was reported. DialogNotFound when the page
-    /// has none open (it answers); CdpDialogOpen when it does not answer and the browser would not hand its dialog over.
+    /// blocks the page). The browser may not report a dialog that was open before this connection (Edge 155 does not), so
+    /// its text is unknown: such a dialog is dismissed all the same, but never accepted unread (CdpDialogOpen, pointing to
+    /// respond_to_dialog, which reads it). DialogNotFound when the page has none open (it answers); CdpDialogOpen when it
+    /// does not answer and the browser would not hand its dialog over.
     /// </summary>
     Task<CdpPageResult<CdpDialogOutcome>> HandleDialogAsync(
         CdpTarget target, bool accept, string? promptText, CdpGate gate, TimeSpan timeout, CancellationToken cancellationToken = default);
@@ -45,16 +49,18 @@ public interface ICdpPageService
         CdpTarget target, BrowserElementLocator locator, TimeSpan timeout, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Clicks the element <paramref name="locator"/> names: scrolls it into view, checks that nothing covers its middle
-    /// (ElementObscured) and that it is not disabled (ElementNotEnabled), then sends the mouse events there inside the gate.
+    /// Clicks the element <paramref name="locator"/> names: checks that it is not disabled (ElementNotEnabled), then inside
+    /// the gate scrolls it into view, checks that nothing covers its middle (ElementObscured; an element inside frames frame
+    /// by frame) and sends the mouse events there.
     /// </summary>
     Task<CdpPageResult<CdpInputOutcome>> ClickAsync(
         CdpTarget target, BrowserElementLocator locator, MouseButton button, int clickCount, CdpGate gate, TimeSpan timeout,
         CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Types <see cref="BrowserTypeOptions.Text"/> into the element its selector names (focused first) or the page's
-    /// focused element, which must take text (FocusNotOnElement otherwise), with Input.insertText inside the gate.
+    /// Types <see cref="BrowserTypeOptions.Text"/> into the element its selector names (focused first, and still holding
+    /// the focus after the page's focus handlers) or the page's focused element, which must take text (FocusNotOnElement
+    /// otherwise), with Input.insertText; the focus, the selection and the text are sent inside the gate.
     /// </summary>
     Task<CdpPageResult<CdpInputOutcome>> TypeAsync(
         CdpTarget target, BrowserTypeOptions options, CdpGate gate, TimeSpan timeout, CancellationToken cancellationToken = default);
@@ -99,12 +105,23 @@ public sealed record CdpEvaluation(JsonElement? Value, string ValueType, Browser
 public sealed record CdpDialogOutcome(CdpDialog? Dialog);
 
 /// <summary>
-/// An element's box: what it is, how many elements matched, its rectangle in CSS pixels of the viewport (all its boxes
-/// together), and the page's devicePixelRatio, viewport size in CSS pixels, pinch-zoom scale and visibilityState.
+/// An element's box: what it is, how many elements matched, its rectangle in CSS pixels of the main frame's viewport (all
+/// its boxes together), the page's devicePixelRatio, viewport size in CSS pixels, pinch-zoom scale and visibilityState (read
+/// in the main frame, also for an element inside a frame), and its boxes one by one (a wrapped link has one per line).
 /// </summary>
 public sealed record CdpElementBox(
     BrowserElementInfo Element, int MatchCount, CssRect Rect, double DevicePixelRatio, double ViewportWidth, double ViewportHeight,
-    double Scale, string Visibility, bool InMainDocument);
+    double Scale, string Visibility, IReadOnlyList<CssRect> Quads);
+
+/// <summary>
+/// The input gate as a DOM bridge action holds it (<see cref="CdpGate"/>): it also tells whether the user has paused input
+/// since it was taken, so a click or a typing stops between its commands. A gate that is not one never reports a pause.
+/// </summary>
+public interface ICdpGateHold : IDisposable
+{
+    /// <summary>True once the user has paused input.</summary>
+    bool IsPaused { get; }
+}
 
 /// <summary>
 /// What a click or a typing did: the element, how many matched, the point clicked (CSS pixels), the length typed, the

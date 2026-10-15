@@ -92,8 +92,9 @@ public sealed record BrowserScriptException(string Text, int? LineNumber = null,
 
 /// <summary>
 /// browser_handle_dialog's result (roadmap M5.8). DialogType and DialogMessage are the dialog's when the browser reported it
-/// to this connection (Chrome does after Page.enable; Edge 155 does not for a dialog that was open before), else null. The
-/// message is written by the page: untrusted.
+/// to this connection (Chrome does after Page.enable; Edge 155 does not for a dialog that was open before), else null, and
+/// Warning says that a dialog was dismissed unread (one is never accepted unread). The message is written by the page:
+/// untrusted.
 /// </summary>
 public sealed record BrowserDialogResult(
     bool Success,
@@ -103,7 +104,8 @@ public sealed record BrowserDialogResult(
     string? DialogMessage = null,
     int? CdpPort = null,
     string? Error = null,
-    string? ErrorCode = null)
+    string? ErrorCode = null,
+    string? Warning = null)
 {
     /// <summary>A failed result.</summary>
     public static BrowserDialogResult Failed(string errorCode, string error, int? cdpPort = null, string? targetId = null) =>
@@ -114,7 +116,8 @@ public sealed record BrowserDialogResult(
 /// browser_element_rect's result (roadmap M5.8). ScreenRect is the element's box in physical virtual-screen pixels (the
 /// space of the input and capture tools): the page's viewport on the screen (the tab's Document through UI Automation, or
 /// its render widget's window) plus the CSS rectangle times devicePixelRatio (browser zoom and display scale).
-/// ClickPoint is the middle of the part of the element inside the viewport, null when none of it is (scroll first).
+/// ClickPoint is the middle of the element's first box inside the viewport, where browser_click aims (a wrapped link's
+/// first line, not the middle of its boxes together), null when none of it is (scroll first).
 /// </summary>
 public sealed record BrowserElementRectResult(
     bool Success,

@@ -14,15 +14,17 @@ namespace WindowsAppManagerMcp.Services;
 /// <para>
 /// Every call sends Page.enable first without waiting for it (a page blocked by a dialog may never answer it), so the
 /// browser reports a JavaScript dialog the page opens, and a command that would wait on it ends with CdpDialogOpen; a page
-/// that answers nothing is CdpTimeout with the advice to answer a dialog with browser_handle_dialog, since Edge does not
-/// report a dialog that was open before the connection.
+/// that answers nothing is CdpTimeout with the advice to read a dialog with respond_to_dialog first, since Edge does not
+/// report a dialog that was open before the connection. Every call but the dialog's then reads the page in its main frame
+/// (<see cref="BrowserPageScripts.ViewportExpression"/>): its viewport, which an element inside a frame shares, and its
+/// address, refused when it is not a web page (the tab may have navigated since it was listed).
 /// </para>
 /// <para>
 /// Elements: a selector or a text is found by one script (<see cref="BrowserPageScripts.BuildFindExpression"/>, its input
 /// as JSON literals), a role and name through the browser's accessibility tree (Accessibility.queryAXTree, then
 /// DOM.resolveNode). Several matches without an index are AmbiguousElement, so an action never picks the first of several
-/// look-alikes. The box is DOM.getContentQuads', in CSS pixels of the viewport: the coordinates Input.dispatchMouseEvent
-/// takes.
+/// look-alikes. The box is DOM.getContentQuads', in CSS pixels of the main frame's viewport (also for an element inside a
+/// frame): the coordinates Input.dispatchMouseEvent takes.
 /// </para>
 /// </remarks>
 public sealed class CdpPageService : ICdpPageService
@@ -45,13 +47,23 @@ public sealed class CdpPageService : ICdpPageService
     /// </summary>
     public static readonly TimeSpan ScriptGrace = TimeSpan.FromSeconds(1);
 
+    /// <summary>
+    /// How long a command sent inside the gate before the input (scrolling the element into view, its box, the hit test,
+    /// the focus, the selection) may take: the gate is never held long for a slow page.
+    /// </summary>
+    public static readonly TimeSpan GatedCommandTime = TimeSpan.FromSeconds(2);
+
+    /// <summary>How long the release of a press that opened a dialog is given to go out (the page cannot answer it).</summary>
+    public static readonly TimeSpan ReleaseAfterDialogTime = TimeSpan.FromMilliseconds(250);
+
     /// <summary>A script's exception text is cut to this many characters.</summary>
     public const int MaxExceptionLength = 1_000;
 
     /// <summary>What a page that answers nothing probably has, and what to do.</summary>
     internal const string UnansweredAdvice =
-        "It probably has a JavaScript dialog open (answer it deliberately with browser_handle_dialog), is paused in the " +
-        "debugger, or is busy.";
+        "It probably has a JavaScript dialog open: read it first (respond_to_dialog on the browser window shows its text and " +
+        "buttons), then answer it deliberately (respond_to_dialog, or browser_handle_dialog). Or it is paused in the " +
+        "debugger, or busy.";
 
     private readonly ICdpTransport _transport;
 
@@ -75,6 +87,14 @@ public sealed class CdpPageService : ICdpPageService
         await using var connection = connected.Value!;
         var total = timeout + ScriptGrace;
         EnablePage(connection, total, cancellationToken);
+
+        // The page the connection shows now, not only the one the tab was listed with, must be a web page
+        var page = await ReadPageAsync(connection, target, total, stopwatch, cancellationToken).ConfigureAwait(false);
+        if (!page.Success)
+            return page.FailAs<CdpEvaluation>();
+
+        // The script's own time limit starts with the script: the page's read does not shorten it
+        stopwatch.Restart();
 
         // The browser stops the script at its limit and answers; the call waits a little longer for that answer
         var reply = await CdpGatedSend.SendAsync(connection, gate, "Runtime.evaluate", new
@@ -139,8 +159,9 @@ public sealed class CdpPageService : ICdpPageService
 
         await using var connection = connected.Value!;
 
-        // Chrome reports a dialog that is open again after Page.enable; Edge 155 does not, so the dialog is answered either
-        // way. Page.enable is sent while the dialog blocks the page, and only waited for briefly
+        // Chrome reports a dialog that is open again after Page.enable; Edge 155 does not, so a dialog it did not report is
+        // dismissed all the same (never accepted unread). Page.enable is sent while the dialog blocks the page, and only
+        // waited for briefly
         using (var opening = connection.ExpectEvent("Page.javascriptDialogOpening"))
         {
             var enable = connection.SendAsync("Page.enable", null, timeout, cancellationToken, CdpSendOptions.AllowWhileDialogOpen);
@@ -156,6 +177,14 @@ public sealed class CdpPageService : ICdpPageService
 
         // Read before it is answered: Page.javascriptDialogClosed, which follows the answer at once, clears it
         var dialog = connection.OpenDialog;
+        if (dialog == null && accept)
+        {
+            // A dialog whose text the browser did not hand over is never accepted unread (it may confirm a deletion): a page
+            // that answers has none; one that does not has one to read through UI Automation first
+            return await ProbeForDialogAsync(connection, target, accept, "the browser did not report one to this connection", timeout,
+                stopwatch, cancellationToken).ConfigureAwait(false);
+        }
+
         var parameters = new Dictionary<string, object> { ["accept"] = accept };
         if (promptText != null)
             parameters["promptText"] = promptText;
@@ -173,18 +202,31 @@ public sealed class CdpPageService : ICdpPageService
 
         // "No dialog is showing": a page that answers has none; one that does not may have a dialog the browser does not
         // hand to a new connection
+        return await ProbeForDialogAsync(connection, target, accept, $"the browser: {fault.Message}", timeout, stopwatch, cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// When no dialog the browser reported was answered: DialogNotFound when the page answers a check (it has none open),
+    /// else CdpDialogOpen pointing to respond_to_dialog, which reads the dialog the browser keeps from this connection.
+    /// </summary>
+    private static async Task<CdpPageResult<CdpDialogOutcome>> ProbeForDialogAsync(
+        ICdpConnection connection, CdpTarget target, bool accept, string why, TimeSpan timeout, Stopwatch stopwatch,
+        CancellationToken cancellationToken)
+    {
         var probe = await connection.SendAsync("Runtime.evaluate", new { expression = "1", returnByValue = true },
             Min(DialogProbeTime, Left(timeout, stopwatch)), cancellationToken).ConfigureAwait(false);
         if (probe.Success)
         {
             return CdpPageResult<CdpDialogOutcome>.Fail(nameof(UIElementErrorCode.DialogNotFound),
-                $"Tab {target.Id} has no JavaScript dialog open (the browser: {fault.Message}), and its page answers. Nothing was done.");
+                $"Tab {target.Id} has no JavaScript dialog open ({why}), and its page answers. Nothing was done.");
         }
 
         return CdpPageResult<CdpDialogOutcome>.Fail(BrowserErrorCode.CdpDialogOpen,
             $"Tab {target.Id} does not answer, so a JavaScript dialog is probably open, but the browser did not hand it to this " +
-            $"DevTools connection ({fault.Message}). Nothing was done. Answer it through UI Automation instead: respond_to_dialog " +
-            "on the browser window reads it and names its buttons; decide deliberately which to press, or ask the user.");
+            $"DevTools connection ({why}){(accept ? ", so its text is unknown and it is not accepted unread" : string.Empty)}. " +
+            "Nothing was done. Read it through UI Automation: respond_to_dialog on the browser window shows its text and names " +
+            "its buttons; decide deliberately which to press, or ask the user.");
     }
 
     /// <inheritdoc />
@@ -201,12 +243,20 @@ public sealed class CdpPageService : ICdpPageService
         await using var connection = connected.Value!;
         EnablePage(connection, timeout, cancellationToken);
 
+        var page = await ReadPageAsync(connection, target, timeout, stopwatch, cancellationToken).ConfigureAwait(false);
+        if (!page.Success)
+            return page.FailAs<CdpElementBox>();
+
         var element = await FindAsync(connection, target, locator, timeout, stopwatch, cancellationToken).ConfigureAwait(false);
         if (!element.Success)
             return element.FailAs<CdpElementBox>();
 
-        var box = await BoxAsync(connection, target, element.Value!, timeout, stopwatch, cancellationToken).ConfigureAwait(false);
-        return box.Success ? CdpPageResult<CdpElementBox>.Ok(box.Value!.Box) : box.FailAs<CdpElementBox>();
+        var state = await StateAsync(connection, target, element.Value!.ObjectId, timeout, stopwatch, cancellationToken).ConfigureAwait(false);
+        if (!state.Success)
+            return state.FailAs<CdpElementBox>();
+
+        return await BoxAsync(connection, target, element.Value, state.Value!.Info, page.Value!, Bounded(Left(timeout, stopwatch)),
+            cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc />
@@ -224,6 +274,10 @@ public sealed class CdpPageService : ICdpPageService
         await using var connection = connected.Value!;
         EnablePage(connection, timeout, cancellationToken);
 
+        var page = await ReadPageAsync(connection, target, timeout, stopwatch, cancellationToken).ConfigureAwait(false);
+        if (!page.Success)
+            return page.FailAs<CdpInputOutcome>();
+
         var element = await FindAsync(connection, target, locator, timeout, stopwatch, cancellationToken).ConfigureAwait(false);
         if (!element.Success)
             return element.FailAs<CdpInputOutcome>();
@@ -233,67 +287,86 @@ public sealed class CdpPageService : ICdpPageService
         if (!state.Success)
             return state.FailAs<CdpInputOutcome>();
 
-        if (state.Value!.Disabled)
+        var info = state.Value!.Info;
+        if (state.Value.Disabled)
         {
             return CdpPageResult<CdpInputOutcome>.Fail(nameof(UIElementErrorCode.ElementNotEnabled),
-                $"The element ({Describe(state.Value.Info)}) that {locator.Describe()} names is disabled. Nothing was clicked.");
+                $"The element ({Describe(info)}) that {locator.Describe()} names is disabled (or inside a disabled control). Nothing was clicked.");
         }
-
-        // Scrolled into view first: the click goes to a point in the viewport. A browser without the command scrolls nothing,
-        // and an element outside the viewport is then ElementOffscreen
-        var scrolled = await connection.SendAsync("DOM.scrollIntoViewIfNeeded", new { objectId = found.ObjectId },
-            Bounded(Left(timeout, stopwatch)), cancellationToken).ConfigureAwait(false);
-        if (!scrolled.Success)
-            return Unanswered<CdpInputOutcome>("DOM.scrollIntoViewIfNeeded", scrolled, target);
-
-        var box = await BoxAsync(connection, target, found, timeout, stopwatch, cancellationToken).ConfigureAwait(false);
-        if (!box.Success)
-            return box.FailAs<CdpInputOutcome>();
-
-        var (_, quads) = box.Value!;
-        var viewport = box.Value.Box;
-        if (ClickPoint(quads, viewport.ViewportWidth, viewport.ViewportHeight) is not { } point)
-        {
-            return CdpPageResult<CdpInputOutcome>.Fail(nameof(UIElementErrorCode.ElementOffscreen),
-                $"The element ({Describe(viewport.Element)}) is outside the page's viewport after scrolling it into view. Nothing was clicked.");
-        }
-
-        var hit = await CallOnAsync(connection, found.ObjectId, BrowserPageScripts.HitTestFunction, [point.X, point.Y], byValue: true,
-            Bounded(Left(timeout, stopwatch)), cancellationToken).ConfigureAwait(false);
-        if (!hit.Success)
-            return Unanswered<CdpInputOutcome>("Runtime.callFunctionOn", hit, target);
-
-        if (ValueOf(hit.Value!.Result) is { } hitTest && hitTest.TryGetProperty("hit", out var reached) &&
-            reached.ValueKind == JsonValueKind.False)
-        {
-            return CdpPageResult<CdpInputOutcome>.Fail(nameof(BrowserErrorCode.ElementObscured),
-                $"Another element ({CdpReplies.GetString(hitTest, "by")}, written by the page) covers the middle of the element " +
-                $"({Describe(viewport.Element)}) at ({Css(point.X)}, {Css(point.Y)}) CSS pixels, so the click would reach it instead. " +
-                "Nothing was clicked. Close what covers it first (a banner or dialog of the page), or capture the page to see it.");
-        }
-
-        // The page takes the events as if it had the focus, also in a window behind others; ends with the connection
-        await SendQuietlyAsync(connection, "Emulation.setFocusEmulationEnabled", new { enabled = true }, Min(InputAckTime, Left(timeout, stopwatch)),
-            cancellationToken).ConfigureAwait(false);
 
         var (name, buttons) = ButtonOf(button);
         using var opening = connection.ExpectEvent("Page.javascriptDialogOpening");
         var dialogOpened = opening.WaitAsync(Left(timeout, stopwatch), cancellationToken);
         var unconfirmed = false;
-        using (await gate(cancellationToken).ConfigureAwait(false))
+        CssPoint point;
+
+        // Everything that changes the page is sent inside the gate, so a pause or another input call never meets it half
+        // done: the scroll, then the box and the hit test right before the events, so the page has the least time to move
+        using (var hold = await gate(cancellationToken).ConfigureAwait(false))
         {
-            var events = new List<Dictionary<string, object>>
+            // Scrolled into view first: the click goes to a point in the viewport. A browser without the command scrolls
+            // nothing, and an element outside the viewport is then ElementOffscreen
+            var scrolled = await connection.SendAsync("DOM.scrollIntoViewIfNeeded", new { objectId = found.ObjectId },
+                Gated(timeout, stopwatch), cancellationToken).ConfigureAwait(false);
+            if (!scrolled.Success)
+                return Unanswered<CdpInputOutcome>("DOM.scrollIntoViewIfNeeded", scrolled, target);
+
+            var box = await BoxAsync(connection, target, found, info, page.Value!, Gated(timeout, stopwatch), cancellationToken)
+                .ConfigureAwait(false);
+            if (!box.Success)
+                return box.FailAs<CdpInputOutcome>();
+
+            if (ClickPoint(box.Value!.Quads, page.Value!.ViewportWidth, page.Value.ViewportHeight) is not { } inside)
             {
-                MouseEvent("mouseMoved", point, "none", 0, 0)
-            };
+                return CdpPageResult<CdpInputOutcome>.Fail(nameof(UIElementErrorCode.ElementOffscreen),
+                    $"The element ({Describe(info)}) is outside the page's viewport after scrolling it into view. Nothing was clicked.");
+            }
+
+            point = inside;
+            var hit = await CallOnAsync(connection, found.ObjectId, BrowserPageScripts.HitTestFunction, [point.X, point.Y], byValue: true,
+                Gated(timeout, stopwatch), cancellationToken).ConfigureAwait(false);
+            if (!hit.Success)
+                return Unanswered<CdpInputOutcome>("Runtime.callFunctionOn", hit, target);
+
+            if (ValueOf(hit.Value!.Result) is { } hitTest && hitTest.TryGetProperty("hit", out var reached) &&
+                reached.ValueKind == JsonValueKind.False)
+            {
+                return CdpPageResult<CdpInputOutcome>.Fail(nameof(BrowserErrorCode.ElementObscured), IsTrue(hitTest, "frame")
+                    ? $"The element ({Describe(info)}) is inside a frame of another origin, so whether a click at its middle reaches " +
+                      "it cannot be checked. Nothing was clicked. Place it with browser_element_rect and check the point with " +
+                      "get_element_at_point before you click it with the input tools, or ask the user."
+                    : $"Another element ({CdpReplies.GetString(hitTest, "by")}, written by the page) covers the middle of the element " +
+                      $"({Describe(info)}) at ({Css(point.X)}, {Css(point.Y)}) CSS pixels, so the click would reach it instead. " +
+                      "Nothing was clicked. Close what covers it first (a banner or dialog of the page), or capture the page to see it.");
+            }
+
+            if (Paused(hold))
+                return PausedFail("The element was scrolled into view; no mouse event was sent.");
+
+            // The page takes the events as if it had the focus, also in a window behind others; ends with the connection
+            await SendQuietlyAsync(connection, "Emulation.setFocusEmulationEnabled", new { enabled = true },
+                Min(InputAckTime, Left(timeout, stopwatch)), cancellationToken).ConfigureAwait(false);
+
+            var events = new List<Dictionary<string, object>> { MouseEvent("mouseMoved", point, "none", 0, 0) };
             for (var click = 1; click <= clickCount; click++)
             {
                 events.Add(MouseEvent("mousePressed", point, name, buttons, click));
                 events.Add(MouseEvent("mouseReleased", point, name, 0, click));
             }
 
-            foreach (var mouse in events)
+            for (var index = 0; index < events.Count; index++)
             {
+                var mouse = events[index];
+                var type = (string)mouse["type"];
+
+                // A pause stops the click between events; a press already sent is always released
+                if (type != "mouseReleased" && Paused(hold))
+                {
+                    return PausedFail(index == 0
+                        ? "No mouse event was sent."
+                        : $"{index / 2} of {clickCount} click(s) were sent; the rest were not.");
+                }
+
                 var sent = await SendUntilDialogAsync(connection, "Input.dispatchMouseEvent", mouse,
                     Min(InputAckTime, Left(timeout, stopwatch)), dialogOpened, cancellationToken).ConfigureAwait(false);
                 if (sent is { Success: true, Value.Error: { } refused })
@@ -304,12 +377,22 @@ public sealed class CdpPageService : ICdpPageService
 
                 unconfirmed |= sent is { Success: false };
                 if (DialogOf(dialogOpened) != null)
+                {
+                    // A dialog opened on the press (a mousedown handler): the button is released all the same, or the page
+                    // would keep it pressed. The page cannot answer while the dialog is open, so the release is not waited for
+                    if (type == "mousePressed")
+                    {
+                        _ = await connection.SendAsync("Input.dispatchMouseEvent", events[index + 1], ReleaseAfterDialogTime, cancellationToken,
+                            CdpSendOptions.AllowWhileDialogOpen).ConfigureAwait(false);
+                    }
+
                     break;
+                }
             }
         }
 
         var dialog = DialogOf(dialogOpened);
-        return CdpPageResult<CdpInputOutcome>.Ok(new CdpInputOutcome(viewport.Element, found.MatchCount, point,
+        return CdpPageResult<CdpInputOutcome>.Ok(new CdpInputOutcome(info, found.MatchCount, point,
             Dialog: dialog,
             Warning: unconfirmed && dialog == null
                 ? "The page did not confirm the click within a second (it may be busy); it was sent. Check the page before you click again."
@@ -330,12 +413,17 @@ public sealed class CdpPageService : ICdpPageService
         await using var connection = connected.Value!;
         EnablePage(connection, timeout, cancellationToken);
 
+        var page = await ReadPageAsync(connection, target, timeout, stopwatch, cancellationToken).ConfigureAwait(false);
+        if (!page.Success)
+            return page.FailAs<CdpInputOutcome>();
+
         BrowserElementInfo? info = null;
         int? matches = null;
+        string? objectId = null;
         if (options.Selector != null)
         {
             var element = await FindAsync(connection, target, new BrowserElementLocator(options.Selector, null, null, null), timeout, stopwatch,
-                cancellationToken).ConfigureAwait(false);
+                cancellationToken, takesIndex: false).ConfigureAwait(false);
             if (!element.Success)
                 return element.FailAs<CdpInputOutcome>();
 
@@ -345,54 +433,94 @@ public sealed class CdpPageService : ICdpPageService
 
             info = state.Value!.Info;
             matches = element.Value.MatchCount;
-            var focused = await connection.SendAsync("DOM.focus", new { objectId = element.Value.ObjectId }, Bounded(Left(timeout, stopwatch)),
-                cancellationToken).ConfigureAwait(false);
-            if (!focused.Success)
-                return Unanswered<CdpInputOutcome>("DOM.focus", focused, target);
-
-            if (focused.Value!.Error is { } unfocusable)
-            {
-                return CdpPageResult<CdpInputOutcome>.Fail(nameof(UIElementErrorCode.FocusNotOnElement),
-                    $"The element ({Describe(info)}) that selector '{options.Selector}' names cannot take the focus ({unfocusable.Message}). " +
-                    "Nothing was typed.");
-            }
+            objectId = element.Value.ObjectId;
         }
-
-        var field = await FieldAsync(connection, target, options.Replace, timeout, stopwatch, cancellationToken).ConfigureAwait(false);
-        if (!field.Success)
-            return field.FailAs<CdpInputOutcome>();
-
-        if (!field.Value!.Editable)
-        {
-            var what = field.Value.Tag is { } tag ? $"the focused element is a {tag} that does not take text" : "no element of the page has the focus";
-            return CdpPageResult<CdpInputOutcome>.Fail(nameof(UIElementErrorCode.FocusNotOnElement),
-                $"Nothing was typed: {what}. Pass the field's selector, or click it first with browser_click.");
-        }
-
-        await SendQuietlyAsync(connection, "Emulation.setFocusEmulationEnabled", new { enabled = true }, Min(InputAckTime, Left(timeout, stopwatch)),
-            cancellationToken).ConfigureAwait(false);
 
         using var opening = connection.ExpectEvent("Page.javascriptDialogOpening");
         var dialogOpened = opening.WaitAsync(Left(timeout, stopwatch), cancellationToken);
         var unconfirmed = false;
-        using (await gate(cancellationToken).ConfigureAwait(false))
+        FocusedField field;
+
+        // The focus, the selection and the text are sent inside the gate; the read-only lookup comes before it
+        using (var hold = await gate(cancellationToken).ConfigureAwait(false))
         {
-            var commands = new List<(string Method, object Parameters)> { ("Input.insertText", new { text = options.Text }) };
+            if (objectId != null)
+            {
+                var focused = await connection.SendAsync("DOM.focus", new { objectId }, Gated(timeout, stopwatch), cancellationToken)
+                    .ConfigureAwait(false);
+                if (!focused.Success)
+                    return Unanswered<CdpInputOutcome>("DOM.focus", focused, target);
+
+                if (focused.Value!.Error is { } unfocusable)
+                {
+                    return CdpPageResult<CdpInputOutcome>.Fail(nameof(UIElementErrorCode.FocusNotOnElement),
+                        $"The element ({Describe(info!)}) that selector '{options.Selector}' names cannot take the focus ({unfocusable.Message}). " +
+                        "Nothing was typed.");
+                }
+
+                // The page's focus handlers may have moved the focus on (an auto-advancing field, an overlay): the text goes
+                // only to the field the selector names
+                var holder = await CallOnAsync(connection, objectId, BrowserPageScripts.FocusHolderFunction, null, byValue: true,
+                    Gated(timeout, stopwatch), cancellationToken).ConfigureAwait(false);
+                if (!holder.Success)
+                    return Unanswered<CdpInputOutcome>("Runtime.callFunctionOn", holder, target);
+
+                var holds = ValueOf(holder.Value!.Result);
+                if (holds is not { } answer || !IsTrue(answer, "holds"))
+                {
+                    var elsewhere = holds is { } moved && CdpReplies.GetString(moved, "tag") is { Length: > 0 } tag ? $"to a {tag}" : "elsewhere";
+                    return CdpPageResult<CdpInputOutcome>.Fail(nameof(UIElementErrorCode.FocusNotOnElement),
+                        $"The page moved the focus {elsewhere} once the field ({Describe(info!)}) that selector '{options.Selector}' names " +
+                        "was focused, so the text could land in another field. Nothing was typed. Read the page (get_browser_content " +
+                        "or browser_screenshot) to see what took the focus.");
+                }
+            }
+
+            var read = await FieldAsync(connection, target, options.Replace, Gated(timeout, stopwatch), cancellationToken).ConfigureAwait(false);
+            if (!read.Success)
+                return read.FailAs<CdpInputOutcome>();
+
+            field = read.Value!;
+            if (!field.Editable)
+            {
+                var what = field.Tag is { } tag ? $"the focused element is a {tag} that does not take text" : "no element of the page has the focus";
+                return CdpPageResult<CdpInputOutcome>.Fail(nameof(UIElementErrorCode.FocusNotOnElement),
+                    $"Nothing was typed: {what}. Pass the field's selector, or click it first with browser_click.");
+            }
+
+            var prepared = objectId != null
+                ? "The field was focused" + (options.Replace ? " and its content selected" : string.Empty) + ", but nothing was typed."
+                : options.Replace ? "The focused field's content was selected, but nothing was typed." : "Nothing was typed.";
+
+            // A pause stops the typing before the text, and before Enter; the Enter key's release always follows its press
+            var commands = new List<(string Method, object Parameters, string? PausedBefore)>
+            {
+                ("Input.insertText", new { text = options.Text }, prepared)
+            };
             if (options.PressEnter)
             {
                 commands.Add(("Input.dispatchKeyEvent", new
                 {
                     type = "keyDown", key = "Enter", code = "Enter", windowsVirtualKeyCode = 13, nativeVirtualKeyCode = 13, text = "\r",
                     unmodifiedText = "\r"
-                }));
+                }, "The text was typed, but Enter was not pressed."));
                 commands.Add(("Input.dispatchKeyEvent", new
                 {
                     type = "keyUp", key = "Enter", code = "Enter", windowsVirtualKeyCode = 13, nativeVirtualKeyCode = 13
-                }));
+                }, null));
             }
 
-            foreach (var (method, parameters) in commands)
+            if (Paused(hold))
+                return PausedFail(prepared);
+
+            await SendQuietlyAsync(connection, "Emulation.setFocusEmulationEnabled", new { enabled = true },
+                Min(InputAckTime, Left(timeout, stopwatch)), cancellationToken).ConfigureAwait(false);
+
+            foreach (var (method, parameters, pausedBefore) in commands)
             {
+                if (pausedBefore != null && Paused(hold))
+                    return PausedFail(pausedBefore);
+
                 var sent = await SendUntilDialogAsync(connection, method, parameters, Min(InputAckTime, Left(timeout, stopwatch)), dialogOpened,
                     cancellationToken).ConfigureAwait(false);
                 if (sent is { Success: true, Value.Error: { } refused })
@@ -414,10 +542,10 @@ public sealed class CdpPageService : ICdpPageService
 
         // A page that has the focus takes the text; one that does not (a frame's, or focus emulation missing) leaves the
         // field as it was, which the field's length tells when Enter did not leave the page
-        if (warning == null && dialog == null && !options.PressEnter && !field.Value.Frame && options.Text.Length > 0 &&
-            field.Value.Length is int before)
+        if (warning == null && dialog == null && !options.PressEnter && !field.Frame && options.Text.Length > 0 &&
+            field.Length is int before)
         {
-            var after = await FieldAsync(connection, target, replace: false, timeout, stopwatch, cancellationToken).ConfigureAwait(false);
+            var after = await FieldAsync(connection, target, replace: false, Bounded(Left(timeout, stopwatch)), cancellationToken).ConfigureAwait(false);
             if (after is { Success: true, Value.Length: int now } && now == before && !(options.Replace && before == options.Text.Length))
             {
                 warning = "The focused field's length did not change, so the page may not have taken the text (the field may refuse " +
@@ -425,7 +553,7 @@ public sealed class CdpPageService : ICdpPageService
             }
         }
 
-        return CdpPageResult<CdpInputOutcome>.Ok(new CdpInputOutcome(info ?? (field.Value.Tag is { } t ? new BrowserElementInfo(t) : null),
+        return CdpPageResult<CdpInputOutcome>.Ok(new CdpInputOutcome(info ?? (field.Tag is { } t ? new BrowserElementInfo(t) : null),
             matches, TypedLength: options.Text.Length, PressedEnter: options.PressEnter ? true : null, Dialog: dialog, Warning: warning));
     }
 
@@ -442,21 +570,17 @@ public sealed class CdpPageService : ICdpPageService
         await using var connection = connected.Value!;
         EnablePage(connection, timeout, cancellationToken);
 
-        var view = await connection.SendAsync("Runtime.evaluate", new { expression = BrowserPageScripts.ViewportExpression, returnByValue = true },
-            Bounded(Left(timeout, stopwatch)), cancellationToken).ConfigureAwait(false);
-        if (!view.Success)
-            return Unanswered<CdpScreenshot>("Runtime.evaluate", view, target);
+        var read = await ReadPageAsync(connection, target, timeout, stopwatch, cancellationToken).ConfigureAwait(false);
+        if (!read.Success)
+            return read.FailAs<CdpScreenshot>();
 
-        if (view.Value!.Error is { } viewFault)
-            return CdpPageResult<CdpScreenshot>.From(CdpReplies.ToFailure<bool>("Runtime.evaluate", viewFault));
-
-        var page = ValueOf(view.Value.Result);
-        var url = page is { } p ? CdpReplies.GetString(p, "url") : target.Url;
-        var title = page is { } q ? CdpReplies.GetString(q, "title") : target.Title;
+        var page = read.Value!;
+        var url = page.Url;
+        var title = page.Title;
 
         // A page that is not shown (a tab behind another, a covered or minimized window) produces no frames to capture
         var activated = false;
-        if (page is not { } shown || CdpReplies.GetString(shown, "visibility") != "visible")
+        if (page.Visibility != "visible")
         {
             var front = await CdpGatedSend.SendAsync(connection, gate, "Page.bringToFront", null, Bounded(Left(timeout, stopwatch)),
                 cancellationToken).ConfigureAwait(false);
@@ -504,18 +628,19 @@ public sealed class CdpPageService : ICdpPageService
     /// ElementNotFound, AmbiguousElement (several and no index, with the first ones described), CdpEvaluationFailed (a
     /// selector that is not valid CSS), or the failure of a command.
     /// </summary>
+    /// <param name="takesIndex">Whether the tool takes an index (browser_type does not), for the advice of AmbiguousElement.</param>
     private static async Task<CdpPageResult<FoundElement>> FindAsync(
         ICdpConnection connection, CdpTarget target, BrowserElementLocator locator, TimeSpan timeout, Stopwatch stopwatch,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, bool takesIndex = true)
     {
         return locator.ByAccessibility
             ? await FindByAccessibilityAsync(connection, target, locator, timeout, stopwatch, cancellationToken).ConfigureAwait(false)
-            : await FindByScriptAsync(connection, target, locator, timeout, stopwatch, cancellationToken).ConfigureAwait(false);
+            : await FindByScriptAsync(connection, target, locator, timeout, stopwatch, cancellationToken, takesIndex).ConfigureAwait(false);
     }
 
     private static async Task<CdpPageResult<FoundElement>> FindByScriptAsync(
         ICdpConnection connection, CdpTarget target, BrowserElementLocator locator, TimeSpan timeout, Stopwatch stopwatch,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, bool takesIndex)
     {
         var found = await connection.SendAsync("Runtime.evaluate", new
         {
@@ -577,7 +702,7 @@ public sealed class CdpPageService : ICdpPageService
 
         return element != null
             ? CdpPageResult<FoundElement>.Ok(new FoundElement(element, count))
-            : NoSingleMatch(locator, count, first);
+            : NoSingleMatch(locator, count, first, takesIndex);
     }
 
     private static async Task<CdpPageResult<FoundElement>> FindByAccessibilityAsync(
@@ -631,7 +756,7 @@ public sealed class CdpPageService : ICdpPageService
 
         var index = locator.Index ?? 0;
         if (matches.Count == 0 || (locator.Index == null && matches.Count > 1) || index >= matches.Count)
-            return NoSingleMatch(locator, matches.Count, string.Join("; ", matches.Take(5).Select(m => m.Description)));
+            return NoSingleMatch(locator, matches.Count, string.Join("; ", matches.Take(5).Select(m => m.Description)), takesIndex: true);
 
         var resolved = await connection.SendAsync("DOM.resolveNode", new { backendNodeId = matches[index].BackendNodeId },
             Bounded(Left(timeout, stopwatch)), cancellationToken).ConfigureAwait(false);
@@ -647,13 +772,15 @@ public sealed class CdpPageService : ICdpPageService
     }
 
     /// <summary>ElementNotFound (none, or an index past the matches) or AmbiguousElement (several and no index).</summary>
-    private static CdpPageResult<FoundElement> NoSingleMatch(BrowserElementLocator locator, int count, string? first)
+    private static CdpPageResult<FoundElement> NoSingleMatch(BrowserElementLocator locator, int count, string? first, bool takesIndex)
     {
         if (count > 1 && locator.Index == null)
         {
             return CdpPageResult<FoundElement>.Fail(nameof(UIElementErrorCode.AmbiguousElement),
-                $"{count} elements match {locator.Describe()} (the first: {first}; text from the page). Nothing was done. Pass index " +
-                "(from 0, in document order) once you know which you mean, or narrow it.");
+                $"{count} elements match {locator.Describe()} (the first: {first}; text from the page). Nothing was done. " + (takesIndex
+                    ? "Pass index (from 0, in document order) once you know which you mean, or narrow it."
+                    : "Narrow the selector to one field (an id, an attribute, :nth-of-type), or click the field with browser_click " +
+                      "(which takes index) and type without a selector."));
         }
 
         return CdpPageResult<FoundElement>.Fail(nameof(UIElementErrorCode.ElementNotFound),
@@ -664,7 +791,7 @@ public sealed class CdpPageService : ICdpPageService
                 : $"Only {count} element(s) match {locator.Describe()}, so index {locator.Index} names none. Nothing was done.");
     }
 
-    /// <summary>The element's description and the page's viewport (<see cref="BrowserPageScripts.ElementStateFunction"/>).</summary>
+    /// <summary>The element's description and whether it is disabled (<see cref="BrowserPageScripts.ElementStateFunction"/>).</summary>
     private static async Task<CdpPageResult<ElementState>> StateAsync(
         ICdpConnection connection, CdpTarget target, string objectId, TimeSpan timeout, Stopwatch stopwatch, CancellationToken cancellationToken)
     {
@@ -684,45 +811,74 @@ public sealed class CdpPageService : ICdpPageService
 
         var text = CdpReplies.GetString(value, "text");
         return CdpPageResult<ElementState>.Ok(new ElementState(
-            new BrowserElementInfo(CdpReplies.GetString(value, "tag"), text.Length > 0 ? text : null),
-            IsTrue(value, "disabled"),
-            !value.TryGetProperty("top", out var top) || top.ValueKind != JsonValueKind.False,
-            Number(value, "dpr") is > 0 and var dpr ? dpr : 1,
-            Number(value, "vw") ?? 0,
-            Number(value, "vh") ?? 0,
-            Number(value, "scale") is > 0 and var scale ? scale : 1,
-            CdpReplies.GetString(value, "visibility")));
+            new BrowserElementInfo(CdpReplies.GetString(value, "tag"), text.Length > 0 ? text : null), IsTrue(value, "disabled")));
     }
 
-    /// <summary>The element's state and its boxes (DOM.getContentQuads): ElementOffscreen when it has none (not rendered).</summary>
-    private static async Task<CdpPageResult<(CdpElementBox Box, IReadOnlyList<CssRect> Quads)>> BoxAsync(
-        ICdpConnection connection, CdpTarget target, FoundElement found, TimeSpan timeout, Stopwatch stopwatch, CancellationToken cancellationToken)
+    /// <summary>
+    /// The page the connection shows (<see cref="BrowserPageScripts.ViewportExpression"/>, in the tab's main frame): its
+    /// viewport, devicePixelRatio, pinch-zoom scale and visibilityState, which an element inside a frame shares (its quads
+    /// are in the main frame's viewport), and its URL and title. BrowserInternalPage when the page is not a web page
+    /// (<see cref="BrowserUrls.IsBrowserOwnPage"/>): the tab may have navigated there after it was listed.
+    /// </summary>
+    private static async Task<CdpPageResult<PageView>> ReadPageAsync(
+        ICdpConnection connection, CdpTarget target, TimeSpan timeout, Stopwatch stopwatch, CancellationToken cancellationToken)
     {
-        var state = await StateAsync(connection, target, found.ObjectId, timeout, stopwatch, cancellationToken).ConfigureAwait(false);
-        if (!state.Success)
-            return state.FailAs<(CdpElementBox, IReadOnlyList<CssRect>)>();
+        var view = await connection.SendAsync("Runtime.evaluate", new { expression = BrowserPageScripts.ViewportExpression, returnByValue = true },
+            Bounded(Left(timeout, stopwatch)), cancellationToken).ConfigureAwait(false);
+        if (!view.Success)
+            return Unanswered<PageView>("Runtime.evaluate", view, target);
 
-        var quads = await connection.SendAsync("DOM.getContentQuads", new { objectId = found.ObjectId }, Bounded(Left(timeout, stopwatch)),
-            cancellationToken).ConfigureAwait(false);
+        if (view.Value!.Error is { } fault)
+            return CdpPageResult<PageView>.From(CdpReplies.ToFailure<bool>("Runtime.evaluate", fault));
+
+        if (ValueOf(view.Value.Result) is not { } page)
+        {
+            return CdpPageResult<PageView>.Fail(BrowserErrorCode.CdpEvaluationFailed,
+                $"The page in tab {target.Id} could not be read (it may be loading a new document). Nothing was done. Try again.");
+        }
+
+        var url = CdpReplies.GetString(page, "url");
+        if (BrowserUrls.IsBrowserOwnPage(url))
+        {
+            var colon = url.IndexOf(':');
+            return CdpPageResult<PageView>.Fail(BrowserErrorCode.BrowserInternalPage,
+                $"Tab {target.Id} now shows a page that is not a web page ({(colon > 0 ? url[..colon].ToLowerInvariant() : "no address")}: " +
+                "one of the browser's own pages, an extension's or an app's), which these tools never read or act on. Nothing was done.");
+        }
+
+        return CdpPageResult<PageView>.Ok(new PageView(
+            CdpReplies.GetString(page, "visibility"),
+            Number(page, "vw") ?? 0,
+            Number(page, "vh") ?? 0,
+            Number(page, "dpr") is > 0 and var dpr ? dpr : 1,
+            Number(page, "scale") is > 0 and var scale ? scale : 1,
+            url,
+            CdpReplies.GetString(page, "title")));
+    }
+
+    /// <summary>The element's boxes (DOM.getContentQuads) on the page: ElementOffscreen when it has none (not rendered).</summary>
+    private static async Task<CdpPageResult<CdpElementBox>> BoxAsync(
+        ICdpConnection connection, CdpTarget target, FoundElement found, BrowserElementInfo info, PageView page, TimeSpan limit,
+        CancellationToken cancellationToken)
+    {
+        var quads = await connection.SendAsync("DOM.getContentQuads", new { objectId = found.ObjectId }, limit, cancellationToken)
+            .ConfigureAwait(false);
         if (!quads.Success)
-            return Unanswered<(CdpElementBox, IReadOnlyList<CssRect>)>("DOM.getContentQuads", quads, target);
+            return Unanswered<CdpElementBox>("DOM.getContentQuads", quads, target);
 
-        var s = state.Value!;
         var rects = quads.Value!.Error == null ? QuadsOf(quads.Value.Result) : [];
         if (rects.Count == 0)
         {
-            return CdpPageResult<(CdpElementBox, IReadOnlyList<CssRect>)>.Fail(nameof(UIElementErrorCode.ElementOffscreen),
-                $"The element ({Describe(s.Info)}) has no box on the page: it is hidden (display: none) or not rendered" +
+            return CdpPageResult<CdpElementBox>.Fail(nameof(UIElementErrorCode.ElementOffscreen),
+                $"The element ({Describe(info)}) has no box on the page: it is hidden (display: none) or not rendered" +
                 (quads.Value.Error is { } fault ? $" ({fault.Message})" : string.Empty) + ".");
         }
 
         var left = rects.Min(r => r.X);
         var top = rects.Min(r => r.Y);
         var union = new CssRect(left, top, rects.Max(r => r.X + r.Width) - left, rects.Max(r => r.Y + r.Height) - top);
-        return CdpPageResult<(CdpElementBox, IReadOnlyList<CssRect>)>.Ok((
-            new CdpElementBox(s.Info, found.MatchCount, union, s.DevicePixelRatio, s.ViewportWidth, s.ViewportHeight, s.Scale, s.Visibility,
-                s.InMainDocument),
-            rects));
+        return CdpPageResult<CdpElementBox>.Ok(new CdpElementBox(info, found.MatchCount, union, page.DevicePixelRatio, page.ViewportWidth,
+            page.ViewportHeight, page.Scale, page.Visibility, rects));
     }
 
     /// <summary>
@@ -747,13 +903,13 @@ public sealed class CdpPageService : ICdpPageService
 
     /// <summary>The focused field, after selecting its content with <paramref name="replace"/>.</summary>
     private static async Task<CdpPageResult<FocusedField>> FieldAsync(
-        ICdpConnection connection, CdpTarget target, bool replace, TimeSpan timeout, Stopwatch stopwatch, CancellationToken cancellationToken)
+        ICdpConnection connection, CdpTarget target, bool replace, TimeSpan limit, CancellationToken cancellationToken)
     {
         var field = await connection.SendAsync("Runtime.evaluate", new
         {
             expression = BrowserPageScripts.BuildFocusedFieldExpression(replace),
             returnByValue = true
-        }, Bounded(Left(timeout, stopwatch)), cancellationToken).ConfigureAwait(false);
+        }, limit, cancellationToken).ConfigureAwait(false);
         if (!field.Success)
             return Unanswered<FocusedField>("Runtime.evaluate", field, target);
 
@@ -943,6 +1099,18 @@ public sealed class CdpPageService : ICdpPageService
 
     private static TimeSpan Bounded(TimeSpan left) => left < MaxCommandTime ? left : MaxCommandTime;
 
+    /// <summary>The time a command sent inside the gate may take: at most <see cref="GatedCommandTime"/>.</summary>
+    private static TimeSpan Gated(TimeSpan timeout, Stopwatch stopwatch) => Min(GatedCommandTime, Left(timeout, stopwatch));
+
+    /// <summary>Whether the user paused input since the gate was taken (<see cref="ICdpGateHold"/>).</summary>
+    private static bool Paused(IDisposable hold) => hold is ICdpGateHold { IsPaused: true };
+
+    /// <summary>PausedByUser for an action the pause stopped part way, saying what had been sent.</summary>
+    private static CdpPageResult<CdpInputOutcome> PausedFail(string done) =>
+        CdpPageResult<CdpInputOutcome>.Fail(nameof(WindowErrorCode.PausedByUser),
+            $"Input was paused: the user pressed the pause hotkey while this call ran, so it stopped. {done} Stop and ask the user " +
+            "how to continue; do not try to resume input yourself.");
+
     private static TimeSpan Min(TimeSpan a, TimeSpan b) => a < b ? a : b;
 
     private static string FormatMs(TimeSpan timeout) => $"{(long)timeout.TotalMilliseconds} ms";
@@ -962,9 +1130,11 @@ public sealed class CdpPageService : ICdpPageService
     private sealed record FoundElement(string ObjectId, int MatchCount);
 
     /// <summary>What <see cref="BrowserPageScripts.ElementStateFunction"/> read.</summary>
-    private sealed record ElementState(
-        BrowserElementInfo Info, bool Disabled, bool InMainDocument, double DevicePixelRatio, double ViewportWidth, double ViewportHeight,
-        double Scale, string Visibility);
+    private sealed record ElementState(BrowserElementInfo Info, bool Disabled);
+
+    /// <summary>What <see cref="BrowserPageScripts.ViewportExpression"/> read of the page, in its main frame.</summary>
+    private sealed record PageView(
+        string Visibility, double ViewportWidth, double ViewportHeight, double DevicePixelRatio, double Scale, string Url, string Title);
 
     /// <summary>The page's focused element: whether it takes text, its tag, whether it is a frame, and its content's length.</summary>
     private sealed record FocusedField(bool Editable, string? Tag, bool Frame, int? Length);

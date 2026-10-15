@@ -9,9 +9,9 @@ using static WindowsAppManagerMcp.Tools.BrowserTabTools;
 namespace WindowsAppManagerMcp.Tools;
 
 /// <summary>
-/// The thin DOM bridge (roadmap M5.8): browser_element_rect, browser_click, browser_type, browser_handle_dialog and
-/// browser_screenshot (toolset browser-actions, off by default) and browser_evaluate (toolset browser-script, off by
-/// default), on a debug browser's tab through CDP only. Anything richer (snapshots of the page, forms, file uploads,
+/// The thin DOM bridge (roadmap M5.8): browser_element_rect, browser_click, browser_type, browser_handle_dialog,
+/// browser_screenshot and browser_evaluate (toolset browser-actions, off by default), on a debug browser's tab through CDP
+/// only. Anything richer (snapshots of the page, forms, file uploads,
 /// network) is Playwright MCP's, attached to the debug browser with --cdp-endpoint (docs/TOOLS.md, SKILL.md).
 /// </summary>
 /// <remarks>

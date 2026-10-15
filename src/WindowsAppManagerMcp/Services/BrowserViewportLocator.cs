@@ -7,7 +7,8 @@ namespace WindowsAppManagerMcp.Services;
 /// Finds where a browser window shows a tab's page (roadmap M5.8, <see cref="IBrowserViewportLocator"/>): the tab's
 /// Document through UI Automation first (read on a real Edge and Chrome 155: the Document, AutomationId RootWebArea, bounds
 /// the page's viewport), on the UI Automation worker under the call's deadline and after the same warm-up as the reads;
-/// else the window's visible Chrome_RenderWidgetHostHWND child of the viewport's size. A window that stayed behind other
+/// else, when UI Automation shows no Document of another address, the window's visible Chrome_RenderWidgetHostHWND child of
+/// the viewport's size (a shown Document of another address means the widget is another page's). A window that stayed behind other
 /// windows since its page loaded has no Document (Chromium builds the page's tree only while it is shown) and may have no
 /// visible render widget either: then nothing is found.
 /// </summary>
@@ -40,9 +41,16 @@ public sealed class BrowserViewportLocator : IBrowserViewportLocator
         nint window, string pageUrl, double expectedWidth, double expectedHeight, TimeSpan timeout, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(pageUrl);
-        var document = await ReadDocumentAsync(window, pageUrl, timeout, cancellationToken).ConfigureAwait(false);
+        var shown = await ReadDocumentAsync(window, pageUrl, timeout, cancellationToken).ConfigureAwait(false);
+        if (shown is { OtherUrl: { } other })
+        {
+            // The window shows another page: its render widget is that page's, so it is not looked at
+            return new BrowserViewportLookup(null,
+                $"the window shows another page ({Cut(other, 120)}, from UI Automation), not the tab's");
+        }
+
         string? documentDetail = null;
-        if (document is { } bounds)
+        if (shown?.Bounds is { } bounds)
         {
             if (Fits(bounds.Width, bounds.Height, expectedWidth, expectedHeight))
             {
@@ -81,8 +89,8 @@ public sealed class BrowserViewportLocator : IBrowserViewportLocator
         return new BrowserViewportLookup(null, why);
     }
 
-    /// <summary>The tab's Document's bounds through UI Automation, or null.</summary>
-    private async Task<UiaRect?> ReadDocumentAsync(nint window, string pageUrl, TimeSpan timeout, CancellationToken cancellationToken)
+    /// <summary>The tab's Document's bounds, or the other address the shown Document holds, through UI Automation; or null.</summary>
+    private async Task<BrowserPageBounds?> ReadDocumentAsync(nint window, string pageUrl, TimeSpan timeout, CancellationToken cancellationToken)
     {
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         deadline.CancelAfter(timeout);
@@ -91,7 +99,7 @@ public sealed class BrowserViewportLocator : IBrowserViewportLocator
             return await _worker.RunAsync(UiaTargets.TargetProcessId(_windows, window), token =>
             {
                 if (!_tree.IsAvailable())
-                    return (UiaRect?)null;
+                    return (BrowserPageBounds?)null;
 
                 _warmup?.WarmUp(window, AccessibilityWarmup.BudgetFor(timeout), token);
                 var node = _tree.FromHandle(window);
@@ -108,6 +116,8 @@ public sealed class BrowserViewportLocator : IBrowserViewportLocator
             return null;
         }
     }
+
+    private static string Cut(string text, int max) => text.Length > max ? text[..(max - 3)] + "..." : text;
 
     /// <summary>Whether a rectangle is the viewport's size, within <see cref="SizeTolerancePx"/> pixels or 1 %.</summary>
     public static bool Fits(double width, double height, double expectedWidth, double expectedHeight)

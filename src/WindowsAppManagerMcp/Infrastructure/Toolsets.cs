@@ -80,7 +80,7 @@ public sealed class ToolsetCatalog
 /// <summary>
 /// The server's toolsets (roadmap M2.14). Each tool the server serves is in exactly one of them (ToolsetCatalogTests),
 /// and docs/TOOLS.md lists them in a generated region. Every toolset is on by default except browser-actions (roadmap
-/// M5.5, M5.8) and browser-script (roadmap M5.8); the tools that M3-M6 add for OCR, visual diffs, layouts v2 and workspaces come in toolsets that are off by default too.
+/// M5.5, M5.8); the tools that M3-M6 add for OCR, visual diffs, layouts v2 and workspaces come in toolsets that are off by default too.
 /// </summary>
 public static class Toolsets
 {
@@ -134,17 +134,15 @@ public static class Toolsets
             new("browser", OnByDefault: true,
                 "Read the URL and text of browser pages, list a debug browser's tabs and wait for a page; start and close a browser with a DevTools port.",
                 ["get_browser_url", "get_active_browser_url", "get_browser_content", "launch_browser_with_debug", "close_debug_browser", "list_tabs", "wait_for_browser"]),
-            // Off by default (roadmap M2.14, M5.5, M5.8): they change what a browser shows, through its DevTools port
+            // Off by default (roadmap M2.14, M5.5, M5.8): they change what a browser shows, through its DevTools port. A
+            // script runs with the page's rights, so browser_evaluate is Destructive, refused while paused and audited with
+            // lengths only, like the clicks and the typing
             new("browser-actions", OnByDefault: false,
                 "Act on a debug browser's pages through CDP: show and navigate tabs (with a load wait), click and type in a page " +
-                "without the real mouse or keyboard, answer its JavaScript dialogs, place its elements on the screen, capture it.",
+                "without the real mouse or keyboard, answer its JavaScript dialogs, place its elements on the screen, capture it, " +
+                "run a script in it.",
                 ["activate_tab", "browser_navigate", "browser_element_rect", "browser_click", "browser_type", "browser_handle_dialog",
-                    "browser_screenshot"]),
-            // Off by default, apart from browser-actions (roadmap M5.8): a script runs with the page's rights and leaves no trace
-            // on the screen, so turning on clicks and typing does not turn it on
-            new("browser-script", OnByDefault: false,
-                "Run JavaScript in a debug browser's page through CDP, with the page's rights.",
-                ["browser_evaluate"]),
+                    "browser_screenshot", "browser_evaluate"]),
         ],
         // It reports the toolsets in force and why a tool is missing, and the server instructions send the agent to it
         alwaysServedTool: "get_server_info");

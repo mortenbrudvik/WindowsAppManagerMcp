@@ -58,35 +58,65 @@ public static class BrowserPageScripts
     }
 
     /// <summary>
-    /// The function (Runtime.callFunctionOn, on the element) that describes an element and the page around it: its tag, the
-    /// start of its text, whether it is disabled, whether it is in the page's main document, and the page's
-    /// devicePixelRatio, viewport size in CSS pixels, pinch-zoom scale and visibilityState.
+    /// The function (Runtime.callFunctionOn, on the element) that describes an element: its tag, the start of its text, and
+    /// whether it is disabled: the form control it is or is inside matches :disabled (its own disabled attribute, or a
+    /// disabled fieldset's), or it or an ancestor has aria-disabled="true". The text search finds the innermost element
+    /// with the text, such as a span inside a disabled button, so the ancestors count. The function runs in the element's
+    /// own frame, so it reads nothing of the page's viewport (<see cref="ViewportExpression"/> does, in the main frame).
     /// </summary>
     public const string ElementStateFunction =
         "function () { " +
-        "const e = this; const norm = s => String(s == null ? '' : s).replace(/\\s+/g, ' ').trim(); " +
+        "const e = this.nodeType === 1 ? this : this.parentElement; " +
+        "const norm = s => String(s == null ? '' : s).replace(/\\s+/g, ' ').trim(); " +
+        "if (!e) return { tag: String(this.nodeName || '').toLowerCase(), text: '', disabled: false }; " +
         "const t = (e instanceof HTMLInputElement && /^(button|submit|reset)$/i.test(e.type)) ? norm(e.value) : norm(e.innerText); " +
-        "const vv = window.visualViewport; " +
+        "const control = e.closest('button, input, select, textarea, optgroup, option'); " +
         "return { tag: String(e.tagName || e.nodeName || '').toLowerCase(), text: t.slice(0, 80), " +
-        "disabled: !!e.disabled || (e.getAttribute && e.getAttribute('aria-disabled') === 'true'), " +
-        "top: e.ownerDocument === document, dpr: window.devicePixelRatio, vw: window.innerWidth, vh: window.innerHeight, " +
-        "scale: vv ? vv.scale : 1, visibility: document.visibilityState }; }";
+        "disabled: !!(control && control.matches(':disabled')) || !!e.closest('[aria-disabled=\"true\"]') }; }";
 
     /// <summary>
-    /// The function (Runtime.callFunctionOn, on the element, with the point in CSS pixels) that tells whether a click at
-    /// the point reaches the element: the element at the point is it, inside it, or a label of it; else what covers it.
-    /// An element inside a frame is not checked (the point is the main frame's).
+    /// The function (Runtime.callFunctionOn, on the element, with the point in CSS pixels of the main frame's viewport, as
+    /// DOM.getContentQuads gives it) that tells whether a click at the point reaches the element: the element at the point
+    /// is it, inside it, or a label of it; else what covers it. An element inside frames is checked frame by frame, from
+    /// the main document down: the point must reach each frame's element, and is moved into the frame's content box for
+    /// the next. A frame whose parent is of another origin cannot be followed, so such an element is refused (frame: true).
+    /// The function runs in the element's own frame, whose document is not the main one for an element inside a frame.
     /// </summary>
     public const string HitTestFunction =
         "function (x, y) { " +
-        "if (this.ownerDocument !== document) return { hit: true }; " +
-        "const root = this.getRootNode && this.getRootNode().elementFromPoint ? this.getRootNode() : document; " +
-        "const h = root.elementFromPoint(x, y); " +
-        "if (!h) return { hit: false, by: 'nothing (outside the page)' }; " +
         "const self = this.nodeType === 1 ? this : this.parentElement; " +
-        "if (self && (h === self || self.contains(h) || h.control === self)) return { hit: true }; " +
-        "const t = String(h.innerText || '').replace(/\\s+/g, ' ').trim(); " +
-        "return { hit: false, by: h.tagName.toLowerCase() + (h.id ? '#' + h.id : '') + (t ? \" '\" + t.slice(0, 40) + \"'\" : '') }; }";
+        "if (!self || !self.ownerDocument) return { hit: false, by: 'nothing (the element left the page)' }; " +
+        "const say = h => { const t = String(h.innerText || '').replace(/\\s+/g, ' ').trim(); " +
+        "return h.tagName.toLowerCase() + (h.id ? '#' + h.id : '') + (t ? \" '\" + t.slice(0, 40) + \"'\" : ''); }; " +
+        "const at = (n, px, py) => { const r = n.getRootNode && n.getRootNode().elementFromPoint ? n.getRootNode() : n.ownerDocument; " +
+        "return r.elementFromPoint(px, py); }; " +
+        "const frames = []; " +
+        "for (let w = self.ownerDocument.defaultView; w && w !== w.top; ) { " +
+        "let f = null; try { f = w.frameElement; } catch (x) { f = null; } " +
+        "if (!f) return { hit: false, frame: true }; " +
+        "frames.unshift(f); w = f.ownerDocument.defaultView; } " +
+        "let px = x, py = y; " +
+        "for (const f of frames) { " +
+        "const h = at(f, px, py); " +
+        "if (h !== f) return { hit: false, by: h ? say(h) : 'nothing (outside the page)' }; " +
+        "const r = f.getBoundingClientRect(); const s = f.ownerDocument.defaultView.getComputedStyle(f); " +
+        "px -= r.left + f.clientLeft + (parseFloat(s.paddingLeft) || 0); py -= r.top + f.clientTop + (parseFloat(s.paddingTop) || 0); } " +
+        "const h = at(self, px, py); " +
+        "if (!h) return { hit: false, by: 'nothing (outside the page)' }; " +
+        "if (h === self || self.contains(h) || h.control === self) return { hit: true }; " +
+        "return { hit: false, by: say(h) }; }";
+
+    /// <summary>
+    /// The function (Runtime.callFunctionOn, on the element browser_type focused) that tells whether the focus is on it or
+    /// inside it (through shadow roots and frames: a frame's element holds the focus of what is inside it), and the tag
+    /// of what has it. A page's focus handler may move the focus elsewhere, and the text must not follow it.
+    /// </summary>
+    public const string FocusHolderFunction =
+        "function () { " +
+        "const d = this.ownerDocument || document; let a = d.activeElement; " +
+        "while (a && a.shadowRoot && a.shadowRoot.activeElement) a = a.shadowRoot.activeElement; " +
+        "for (let n = a; n; n = n.parentNode || n.host) { if (n === this) return { holds: true }; } " +
+        "return { holds: false, tag: a && a.tagName ? a.tagName.toLowerCase() : null }; }";
 
     /// <summary>
     /// The script that checks the page's focused element can take typed text (a text input, a textarea or an editable
@@ -108,8 +138,12 @@ public static class BrowserPageScripts
         "const s = getSelection(); s.removeAllRanges(); s.addRange(r); } } " +
         "return { editable: true, tag, length: field ? String(a.value).length : String(a.textContent).length }; })()";
 
-    /// <summary>The script that reads what browser_screenshot needs of the page: whether it is shown, its viewport, URL and title.</summary>
+    /// <summary>
+    /// The script that reads the page around an element, run in the tab's main frame (Runtime.evaluate without a context):
+    /// whether it is shown (visibilityState), its viewport in CSS pixels, devicePixelRatio and pinch-zoom scale, which
+    /// DOM.getContentQuads' coordinates are in also for an element inside a frame, and its URL and title.
+    /// </summary>
     public const string ViewportExpression =
         "({ visibility: document.visibilityState, vw: window.innerWidth, vh: window.innerHeight, dpr: window.devicePixelRatio, " +
-        "url: location.href, title: document.title })";
+        "scale: window.visualViewport ? window.visualViewport.scale : 1, url: location.href, title: document.title })";
 }

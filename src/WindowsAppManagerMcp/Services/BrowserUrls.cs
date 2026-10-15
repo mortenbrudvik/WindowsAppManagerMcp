@@ -88,38 +88,50 @@ public static partial class BrowserUrls
             (url.Length == page.Length || url[page.Length] is '/' or '?' or '#'));
 
     /// <summary>
-    /// The schemes of the browsers' own pages (roadmap M5.8): settings, flags, passwords, history, DevTools, extensions'
-    /// pages and the browsers' new tab pages. Their pages run with the browser's privileges (chrome.send, extension APIs), so
-    /// the DOM bridge never reads or acts on them. view-source: shows another page's source in the browser's own viewer.
+    /// True when a tab at <paramref name="url"/> shows anything but a web page (roadmap M5.8), so the DOM bridge never reads
+    /// or acts on it: an allow list, not a deny list. Web pages are http: and https: pages, file: and data: pages,
+    /// about:blank and about:srcdoc, and blob: and filesystem: URLs whose origin is an http: or https: one. Everything else is
+    /// refused: the browsers' own pages (chrome:, edge:, devtools:, view-source:, about: pages), extensions' pages and their
+    /// blob: and filesystem: URLs (blob:chrome-extension://...), isolated-app: pages, schemes a browser adds later, and a URL
+    /// that is no URL at all. Such pages may run with the browser's or an extension's privileges.
     /// </summary>
-    private static readonly HashSet<string> BrowserOwnSchemes = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "chrome", "chrome-extension", "chrome-untrusted", "chrome-search", "devtools", "edge", "extension", "brave", "opera",
-        "vivaldi", "view-source"
-    };
+    public static bool IsBrowserOwnPage(string? url) => !IsWebPage(url);
 
-    /// <summary>
-    /// True when a tab at <paramref name="url"/> shows one of the browser's own pages (chrome:, edge:, devtools:, an
-    /// extension's chrome-extension: page, view-source:, an about: page other than about:blank and about:srcdoc), or a URL
-    /// that is no URL at all; false for web pages, file: pages, data: pages and about:blank (roadmap M5.8).
-    /// </summary>
-    public static bool IsBrowserOwnPage(string? url)
+    /// <summary>True when <paramref name="url"/> is a web page in the sense of <see cref="IsBrowserOwnPage"/>.</summary>
+    private static bool IsWebPage(string? url)
     {
-        if (string.IsNullOrWhiteSpace(url) || SchemeOf(url.Trim()) is not { } scheme)
+        if (string.IsNullOrWhiteSpace(url) || url.Any(char.IsControl) || SchemeOf(url.Trim()) is not { } scheme)
         {
-            return true;
+            return false;
         }
 
-        if (scheme.Equals("about", StringComparison.OrdinalIgnoreCase))
+        var text = url.Trim();
+        var rest = text[(scheme.Length + 1)..];
+        switch (scheme.ToLowerInvariant())
         {
-            var page = url.Trim()[(scheme.Length + 1)..];
-            var end = page.IndexOfAny(['?', '#']);
-            page = end >= 0 ? page[..end] : page;
-            return !page.Equals("blank", StringComparison.OrdinalIgnoreCase) && !page.Equals("srcdoc", StringComparison.OrdinalIgnoreCase);
+            case "http":
+            case "https":
+                return IsWebAddress(text);
+            case "file":
+            case "data":
+                return true;
+            case "about":
+                var end = rest.IndexOfAny(['?', '#']);
+                var page = end >= 0 ? rest[..end] : rest;
+                return page.Equals("blank", StringComparison.OrdinalIgnoreCase) || page.Equals("srcdoc", StringComparison.OrdinalIgnoreCase);
+            case "blob":
+            case "filesystem":
+                // The URL's origin is the page that made it: only a web page's counts
+                return SchemeOf(rest) is { } inner &&
+                       (inner.Equals("http", StringComparison.OrdinalIgnoreCase) || inner.Equals("https", StringComparison.OrdinalIgnoreCase)) &&
+                       IsWebAddress(rest);
+            default:
+                return false;
         }
-
-        return BrowserOwnSchemes.Contains(scheme) || IsBrowserUi(url);
     }
+
+    private static bool IsWebAddress(string url) =>
+        Uri.TryCreate(url, UriKind.Absolute, out var uri) && !string.IsNullOrEmpty(uri.Host) && !IsBrowserUi(url);
 
     /// <summary>
     /// True when <paramref name="url"/> is a page of the browser's own UI rather than a tab's: docked DevTools, and
@@ -148,6 +160,28 @@ public static partial class BrowserUrls
         return shown.Length > 0 &&
                (address.Equals(shown, StringComparison.OrdinalIgnoreCase) ||
                 (address.StartsWith(shown, StringComparison.OrdinalIgnoreCase) && address[shown.Length] is '/' or '?' or '#'));
+    }
+
+    /// <summary>
+    /// True when <paramref name="a"/> and <paramref name="b"/> are the same page's address (roadmap M5.8): equal once the
+    /// scheme, a leading "www.", a trailing slash and the fragment are left out of both. Case is ignored. Unlike
+    /// <see cref="Shows"/>, the start of an address is not the page: a site's root is not every page under it.
+    /// </summary>
+    public static bool SamePage(string? a, string? b)
+    {
+        if (string.IsNullOrEmpty(a) || string.IsNullOrEmpty(b))
+        {
+            return false;
+        }
+
+        static string Page(string url)
+        {
+            var hash = url.IndexOf('#');
+            return Bare(hash >= 0 ? url[..hash] : url);
+        }
+
+        var first = Page(a);
+        return first.Length > 0 && first.Equals(Page(b), StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>The address without its scheme, a leading "www." and a trailing slash.</summary>

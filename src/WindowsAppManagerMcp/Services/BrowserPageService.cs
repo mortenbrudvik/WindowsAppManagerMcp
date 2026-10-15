@@ -104,7 +104,11 @@ public sealed class BrowserPageService : IBrowserPageService
 
         var dialog = answered.Value!.Dialog;
         return new BrowserDialogResult(true, tab.Target!.Id, accept, dialog?.Type is { Length: > 0 } type ? type : null,
-            dialog == null ? null : Cut(dialog.Message, CdpDialogText.MaxDialogMessageLength), tab.Port);
+            dialog == null ? null : Cut(dialog.Message, CdpDialogText.MaxDialogMessageLength), tab.Port,
+            Warning: dialog == null
+                ? "The browser did not report this dialog to the connection, so its text is unknown; it was dismissed unread. Read " +
+                  "the page to see what that changed."
+                : null);
     }
 
     /// <inheritdoc />
@@ -123,6 +127,20 @@ public sealed class BrowserPageService : IBrowserPageService
                 "page. Nothing was read.", tab.Port, tab.Target!.Id);
         }
 
+        // A tab named by id must be the one the window shows: every tab of a window has the same viewport, so another tab's
+        // element would be placed on the page the window shows
+        if (target.TargetId != null)
+        {
+            var shown = await _targets.FindTabAsync(tab.Browser!, null, cancellationToken).ConfigureAwait(false);
+            if (!shown.Success || shown.Value!.Id != tab.Target!.Id)
+            {
+                return BrowserElementRectResult.Failed(nameof(BrowserErrorCode.ContentAreaNotFound),
+                    $"Tab {tab.Target!.Id} is not the tab the window shows ({(shown.Success ? $"it shows tab {shown.Value!.Id}" : $"which tab it shows could not be told: {shown.Error}")}), " +
+                    "so its element is not on the screen. Nothing was read. Show the tab first (activate_tab), or leave targetId out " +
+                    "for the tab the window shows.", tab.Port, tab.Target.Id);
+            }
+        }
+
         var located = await _pages.LocateAsync(tab.Target!, locator, ActionTimeout, cancellationToken).ConfigureAwait(false);
         if (!located.Success)
             return BrowserElementRectResult.Failed(located.ErrorCode!, located.Error!, tab.Port, tab.Target!.Id);
@@ -130,6 +148,19 @@ public sealed class BrowserPageService : IBrowserPageService
         var box = located.Value!;
         var failed = new BrowserElementRectResult(false, tab.Target!.Id, box.Element, box.MatchCount, CssRect: Round(box.Rect),
             DevicePixelRatio: box.DevicePixelRatio, CdpPort: tab.Port, ErrorCode: nameof(BrowserErrorCode.ContentAreaNotFound));
+        if (box.Visibility != "visible")
+        {
+            // A tab behind another, or a covered or minimized window: the page is not on the screen, and whatever the window
+            // shows there is another page's
+            return failed with
+            {
+                Error = $"The tab's page is not shown (its visibilityState is '{Cut(box.Visibility, 20)}'): another tab is in front of " +
+                        "it, or its window is minimized or covered, so the element is not on the screen. Show the tab (activate_tab) " +
+                        "and bring the window to the front (focus_window), then try again. cssRect is the element's place in the " +
+                        "page's viewport."
+            };
+        }
+
         if (Math.Abs(box.Scale - 1) > 0.01)
         {
             return failed with
@@ -159,7 +190,9 @@ public sealed class BrowserPageService : IBrowserPageService
         var top = (int)Math.Round(viewport.Y + box.Rect.Y * scaleY);
         var right = (int)Math.Round(viewport.X + (box.Rect.X + box.Rect.Width) * scaleX);
         var bottom = (int)Math.Round(viewport.Y + (box.Rect.Y + box.Rect.Height) * scaleY);
-        var inside = CdpPageService.ClickPoint([box.Rect], box.ViewportWidth, box.ViewportHeight);
+        // The middle of the element's first box in the viewport, as browser_click aims: a wrapped link's boxes together
+        // would put the point between its lines, on other text
+        var inside = CdpPageService.ClickPoint(box.Quads, box.ViewportWidth, box.ViewportHeight);
         var click = inside is { } p
             ? new ScreenPoint((int)Math.Round(viewport.X + p.X * scaleX), (int)Math.Round(viewport.Y + p.Y * scaleY))
             : null;
@@ -291,16 +324,17 @@ public sealed class BrowserPageService : IBrowserPageService
         if (BrowserUrls.IsBrowserOwnPage(tab.Value!.Url))
         {
             return new FoundTab(null, browser.Port, browser.WindowHandle, (nameof(BrowserErrorCode.BrowserInternalPage),
-                $"Tab {tab.Value.Id} shows one of the browser's own pages ({Scheme(tab.Value.Url)}: settings, extensions, DevTools and " +
-                "the like), which these tools never read or act on. Nothing was done. Navigate the tab to a web page first, or ask " +
-                "the user to do this step."));
+                $"Tab {tab.Value.Id} shows a page that is not a web page ({Scheme(tab.Value.Url)}: the browser's settings, extensions, " +
+                "DevTools, an app and the like), which these tools never read or act on. Nothing was done. Navigate the tab to a web " +
+                "page first, or ask the user to do this step."));
         }
 
-        return new FoundTab(tab.Value, browser.Port, browser.WindowHandle, null);
+        return new FoundTab(tab.Value, browser.Port, browser.WindowHandle, null, browser);
     }
 
-    private Task<IDisposable> EnterGateAsync(CancellationToken cancellationToken) =>
-        InputGateToolFilter.EnterAsync(_session, cancellationToken);
+    /// <summary>The input gate for CDP, which also tells whether the user paused input while it is held.</summary>
+    private async Task<IDisposable> EnterGateAsync(CancellationToken cancellationToken) =>
+        new GateHold(await InputGateToolFilter.EnterAsync(_session, cancellationToken).ConfigureAwait(false), _session);
 
     private static string Scheme(string url)
     {
@@ -314,6 +348,15 @@ public sealed class BrowserPageService : IBrowserPageService
     [return: System.Diagnostics.CodeAnalysis.NotNullIfNotNull(nameof(text))]
     private static string? Cut(string? text, int max) => text != null && text.Length > max ? text[..(max - 3)] + "..." : text;
 
-    /// <summary>The tab a call works on (with its port and window), or why not.</summary>
-    private sealed record FoundTab(CdpTarget? Target, int? Port, nint? WindowHandle, (string Code, string Error)? Refusal);
+    /// <summary>The tab a call works on (with its port, window and browser), or why not.</summary>
+    private sealed record FoundTab(
+        CdpTarget? Target, int? Port, nint? WindowHandle, (string Code, string Error)? Refusal, ResolvedBrowser? Browser = null);
+
+    /// <summary>The input gate held by a DOM bridge action, and the input session whose pause stops it.</summary>
+    private sealed class GateHold(IDisposable gate, IInputSession? session) : ICdpGateHold
+    {
+        public bool IsPaused => session?.IsPaused == true;
+
+        public void Dispose() => gate.Dispose();
+    }
 }

@@ -244,15 +244,17 @@ public sealed class BrowserUiaReader
     /// <summary>
     /// Where the window shows the page whose address is <paramref name="pageUrl"/> (roadmap M5.8): the bounding rectangle of
     /// the shown tab's Document (found as <see cref="ReadContent"/> finds the page, preferring the Document that holds the
-    /// address), in physical screen pixels, when that Document holds the address (or one it starts, or that starts it).
-    /// Null when no such Document is shown, or the search did not finish in time.
+    /// address), in physical screen pixels, when that Document holds the same page's address (<see cref="BrowserUrls.SamePage"/>:
+    /// a site's root is not every page under it). When the shown Document holds another address, that address is returned
+    /// instead: the window shows another page, so nothing else of the window may be taken for this one's. Null when no
+    /// Document with an address is shown, or the search did not finish in time.
     /// </summary>
     /// <param name="window">The browser window's element.</param>
     /// <param name="windowTitle">The window's title; null when unknown.</param>
     /// <param name="pages">The roots of the window's shown pages, or none to search the window for its Documents.</param>
     /// <param name="pageUrl">The tab's address, as CDP lists it.</param>
     /// <param name="cancellationToken">The read's deadline.</param>
-    public UiaRect? FindPageBounds(
+    public BrowserPageBounds? FindPageBounds(
         IUiaNode window, string? windowTitle, IReadOnlyList<IUiaNode>? pages, string pageUrl, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -266,10 +268,12 @@ public sealed class BrowserUiaReader
             return null;
         }
 
-        return page is { IsDocument: true, Url: { } url, Root.Properties: { } properties } &&
-               (BrowserUrls.Shows(pageUrl, url) || BrowserUrls.Shows(url, pageUrl))
-            ? properties.Bounds
-            : null;
+        if (page is not { IsDocument: true, Url: { } url, Root.Properties: { } properties })
+        {
+            return null;
+        }
+
+        return BrowserUrls.SamePage(url, pageUrl) ? new BrowserPageBounds(properties.Bounds, null) : new BrowserPageBounds(null, url);
     }
 
     /// <summary>
@@ -817,3 +821,9 @@ public sealed record BrowserUiaUrl(
 /// provider's character it ends in is skipped. Null otherwise.</param>
 public sealed record BrowserUiaContent(
     bool Found, string? Text, string? Url, int Offset = 0, int? TotalLength = null, int? NextOffset = null, bool? TextSkipped = null);
+
+/// <summary>
+/// Where a browser window shows a tab's page (<see cref="BrowserUiaReader.FindPageBounds"/>): the Document's bounds when it
+/// holds the tab's address, else the other address the shown Document holds.
+/// </summary>
+public sealed record BrowserPageBounds(UiaRect? Bounds, string? OtherUrl);

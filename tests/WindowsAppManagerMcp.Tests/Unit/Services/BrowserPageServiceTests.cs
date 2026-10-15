@@ -60,11 +60,18 @@ public class BrowserPageServiceTests
 
     private static BrowserTabTarget ByWindow(string? targetId = null) => new(BrowserWindow, null, targetId);
 
-    /// <summary>The element box CDP reports: 88 x 32 CSS pixels at (920, 180) in a 1280 x 720 viewport at devicePixelRatio 1.5.</summary>
-    private void LocateSave(double dpr = 1.5, double scale = 1, CssRect? rect = null) =>
-        _pages.Setup(p => p.LocateAsync(Shown, Save, It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+    /// <summary>
+    /// The element box CDP reports: 88 x 32 CSS pixels at (920, 180) in a 1280 x 720 viewport at devicePixelRatio 1.5, on a
+    /// shown page; its boxes are the rectangle alone unless given.
+    /// </summary>
+    private void LocateSave(double dpr = 1.5, double scale = 1, CssRect? rect = null, string visibility = "visible", CssRect[]? quads = null,
+        CdpTarget? tab = null)
+    {
+        var box = rect ?? new CssRect(920, 180, 88, 32);
+        _pages.Setup(p => p.LocateAsync(tab ?? Shown, Save, It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(CdpPageResult<CdpElementBox>.Ok(new CdpElementBox(new BrowserElementInfo("button", "Save draft"), 1,
-                rect ?? new CssRect(920, 180, 88, 32), dpr, 1280, 720, scale, "visible", true)));
+                box, dpr, 1280, 720, scale, visibility, quads ?? [box])));
+    }
 
     #region Which browser and tab
 
@@ -123,6 +130,8 @@ public class BrowserPageServiceTests
     [InlineData("devtools://devtools/bundled/inspector.html")]
     [InlineData("about:version")]
     [InlineData("view-source:https://example.com/")]
+    [InlineData("blob:chrome-extension://abcdefghijklmnopabcdefghijklmnop/6f1c0e1a")]
+    [InlineData("isolated-app://aerugqztij5biqquuk3mfwpsaibuegaqcitgfchwuosuofdjabzqaaic/")]
     public async Task ATabShowingOneOfTheBrowsersOwnPages_IsBrowserInternalPage_AndNothingIsSent(string url)
     {
         ShowTab(Shown with { Url = url });
@@ -172,6 +181,23 @@ public class BrowserPageServiceTests
         var enter = () => handed!(CancellationToken.None);
 
         (await enter.Should().ThrowAsync<ToolErrorException>()).Which.ErrorCode.Should().Be(nameof(WindowErrorCode.PausedByUser));
+    }
+
+    [Fact]
+    public async Task TheGateHandedToCdp_TellsAPauseWhileItIsHeld()
+    {
+        CdpGate? handed = null;
+        _pages.Setup(p => p.ClickAsync(Shown, Save, MouseButton.Primary, 1, It.IsAny<CdpGate>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .Callback((CdpTarget _, BrowserElementLocator _, MouseButton _, int _, CdpGate gate, TimeSpan _, CancellationToken _) => handed = gate)
+            .ReturnsAsync(CdpPageResult<CdpInputOutcome>.Ok(new CdpInputOutcome()));
+        await CreateSut().ClickAsync(ByWindow(), Save, MouseButton.Primary, 1);
+
+        using var hold = await handed!(CancellationToken.None);
+        var before = ((ICdpGateHold)hold).IsPaused;
+        _session.Pause(InputControlSources.Hotkey);
+
+        before.Should().BeFalse();
+        ((ICdpGateHold)hold).IsPaused.Should().BeTrue("a click or a typing stops between its commands once the user pauses");
     }
 
     #endregion
@@ -237,6 +263,66 @@ public class BrowserPageServiceTests
         result.Success.Should().BeTrue();
         result.ClickPoint.Should().BeNull();
         result.ScreenRect!.Y.Should().Be(3000);
+    }
+
+    [Fact]
+    public async Task ElementRect_ClickPoint_IsTheMiddleOfTheFirstBox_NotOfAWrappedElementsBoxesTogether()
+    {
+        // A link that wraps from the end of one line to the start of the next: the middle of both boxes together is between
+        // the lines, on other text
+        LocateSave(dpr: 1, rect: new CssRect(0, 100, 400, 40), quads: [new CssRect(300, 100, 100, 20), new CssRect(0, 120, 50, 20)]);
+        _viewports.Setup(v => v.FindAsync(BrowserWindow, Shown.Url, 1280, 720, It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new BrowserViewportLookup(new BrowserViewport(0, 0, 1280, 720, BrowserViewport.DocumentSource)));
+
+        var result = await CreateSut().GetElementRectAsync(ByWindow(), Save);
+
+        result.ClickPoint.Should().Be(new ScreenPoint(350, 110), "browser_click aims at the same point");
+        result.ScreenRect.Should().Be(new BoundsDto(0, 100, 400, 40));
+    }
+
+    [Theory]
+    [InlineData("hidden")]
+    [InlineData("prerender")]
+    public async Task ElementRect_OfAPageThatIsNotShown_IsContentAreaNotFound_WithoutLookingForTheViewport(string visibility)
+    {
+        // A tab behind another, or a covered window: what the window shows there is another page's (or nothing)
+        LocateSave(visibility: visibility);
+
+        var result = await CreateSut().GetElementRectAsync(ByWindow(), Save);
+
+        result.ErrorCode.Should().Be(nameof(BrowserErrorCode.ContentAreaNotFound));
+        result.Error.Should().Contain("not shown").And.Contain("activate_tab").And.Contain("focus_window");
+        result.CssRect.Should().Be(new CssRect(920, 180, 88, 32));
+        result.ScreenRect.Should().BeNull();
+        _viewports.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task ElementRect_OfATabTheWindowDoesNotShow_IsContentAreaNotFound_AndNothingIsRead()
+    {
+        // Every tab of a window has the shown tab's viewport, so a background tab's element would be placed on the shown page
+        var background = Shown with { Id = "BACK", Url = "https://example.com/" };
+        _cdp.Setup(c => c.FindTargetByIdAsync(Port, It.IsAny<int>(), "BACK", It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(CdpResult<CdpTarget>.Ok(background));
+
+        var result = await CreateSut().GetElementRectAsync(ByWindow("BACK"), Save);
+
+        result.ErrorCode.Should().Be(nameof(BrowserErrorCode.ContentAreaNotFound));
+        result.Error.Should().Contain("it shows tab SHOWN").And.Contain("activate_tab");
+        _pages.VerifyNoOtherCalls();
+        _viewports.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task ElementRect_OfTheShownTabNamedById_IsPlaced()
+    {
+        LocateSave();
+        _viewports.Setup(v => v.FindAsync(BrowserWindow, Shown.Url, 1920, 1080, It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new BrowserViewportLookup(new BrowserViewport(0, 0, 1920, 1080, BrowserViewport.DocumentSource)));
+
+        var result = await CreateSut().GetElementRectAsync(ByWindow("SHOWN"), Save);
+
+        result.Success.Should().BeTrue(result.Error);
     }
 
     [Fact]
@@ -353,6 +439,19 @@ public class BrowserPageServiceTests
         var result = await CreateSut().HandleDialogAsync(ByWindow(), accept: false, promptText: null);
 
         result.Should().Be(new BrowserDialogResult(true, "SHOWN", false, "beforeunload", "Leave?", Port));
+    }
+
+    [Fact]
+    public async Task HandleDialog_ADialogTheBrowserDidNotReport_IsDismissed_WithAWarningThatItsTextIsUnknown()
+    {
+        _pages.Setup(p => p.HandleDialogAsync(Shown, false, null, It.IsAny<CdpGate>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(CdpPageResult<CdpDialogOutcome>.Ok(new CdpDialogOutcome(null)));
+
+        var result = await CreateSut().HandleDialogAsync(ByWindow(), accept: false, promptText: null);
+
+        result.Success.Should().BeTrue();
+        result.DialogMessage.Should().BeNull();
+        result.Warning.Should().Contain("text is unknown");
     }
 
     #endregion

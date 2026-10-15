@@ -64,13 +64,29 @@ public class BrowserViewportLocatorTests
     }
 
     [Fact]
-    public async Task ADocumentWithAnotherAddress_IsNotTheTabs()
+    public async Task ADocumentWithAnotherAddress_IsNotTheTabs_NorIsTheShownPagesRenderWidget()
     {
-        // The sidebar's page is a Document too, and so is another tab's: the address tells
+        // A background tab of the window has the shown tab's viewport size, so the shown page's render widget fits it too:
+        // the address of the shown Document tells it is another page
         var browser = new FakeBrowserWindow(BrowserNames.EdgeEnglish);
         _tree.WithWindow(BrowserWindow, browser.Window);
+        Widget(RenderWidget, 0, 120, 1200, 1000);
 
         var found = await CreateSut().FindAsync(BrowserWindow, "https://example.com/another-tab", 1200, 880, TimeSpan.FromSeconds(5));
+
+        found.Viewport.Should().BeNull();
+        found.Detail.Should().Contain("another page").And.Contain(FakeBrowserWindow.CommittedUrl);
+    }
+
+    [Fact]
+    public async Task ADocumentAtTheSitesRoot_IsNotTheDocumentOfAPageUnderIt()
+    {
+        // The window shows the repository's page; the tab asked for is the site's root, in the background
+        var browser = new FakeBrowserWindow(BrowserNames.EdgeEnglish);
+        _tree.WithWindow(BrowserWindow, browser.Window);
+        Widget(RenderWidget, 0, 120, 1200, 1000);
+
+        var found = await CreateSut().FindAsync(BrowserWindow, "https://github.com/", 1200, 880, TimeSpan.FromSeconds(5));
 
         found.Viewport.Should().BeNull();
     }

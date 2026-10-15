@@ -39,8 +39,22 @@ public class CdpPageServiceTests
         sent.GetProperty("params").GetProperty("returnByValue").GetBoolean().Should().BeTrue();
         sent.GetProperty("params").GetProperty("awaitPromise").GetBoolean().Should().BeTrue();
         sent.GetProperty("params").GetProperty("timeout").GetDouble().Should().BeGreaterThan(0, "the script itself is stopped at the limit");
-        page.GateAt["Runtime.evaluate"].Should().BeTrue();
+        page.HeldAt("Runtime.evaluate", c => Param(c, "expression") == "({ a: 1 })").Should().BeTrue();
+        page.HeldAt("Runtime.evaluate", c => Param(c, "expression")!.Contains("visibilityState")).Should().BeFalse(
+            "the page is read, without the gate, before the script runs");
         gate.Held.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task EvaluateAsync_APageThatIsNoLongerAWebPage_IsBrowserInternalPage_AndTheScriptIsNotRun()
+    {
+        // The tab was listed with a web page, and has since gone to an extension's page
+        var page = new FakePage { PageUrl = "blob:chrome-extension://abcdefghijklmnop/6f1c0e1a", Evaluate = _ => new { result = new { type = "number", value = 1 } } };
+
+        var result = await CreateSut(page).EvaluateAsync(Tab, "document.cookie", true, new RecordingGate().EnterAsync, LongTimeout);
+
+        result.ErrorCode.Should().Be(nameof(BrowserErrorCode.BrowserInternalPage));
+        page.Commands("Runtime.evaluate").Should().NotContain(c => Param(c, "expression") == "document.cookie");
     }
 
     [Theory]
@@ -121,7 +135,7 @@ public class CdpPageServiceTests
     public async Task EvaluateAsync_AScriptThatGivesNoResultInTime_IsCdpTimeout_AndTheGateIsNotHeldMeanwhile()
     {
         var gate = new RecordingGate();
-        var page = new FakePage { Unresponsive = true, GateHeld = () => gate.Held };
+        var page = new FakePage { ScriptHangs = true, GateHeld = () => gate.Held };
         var stopwatch = Stopwatch.StartNew();
 
         var evaluate = CreateSut(page).EvaluateAsync(Tab, "new Promise(() => {})", true, gate.EnterAsync, TimeSpan.FromSeconds(2));
@@ -130,7 +144,7 @@ public class CdpPageServiceTests
         var result = await evaluate;
 
         result.ErrorCode.Should().Be(nameof(BrowserErrorCode.CdpTimeout));
-        result.Error.Should().Contain("promise").And.Contain("browser_handle_dialog");
+        result.Error.Should().Contain("promise").And.Contain("browser_handle_dialog").And.Contain("respond_to_dialog");
         heldWhileWaiting.Should().BeFalse("the gate is let go after at most a second, not held for a script's work");
         stopwatch.Elapsed.Should().BeLessThan(HangBound);
     }
@@ -181,7 +195,21 @@ public class CdpPageServiceTests
     }
 
     [Fact]
-    public async Task HandleDialogAsync_ADialogOpenBeforeTheConnection_ThatTheBrowserDoesNotReport_IsAnsweredAll_The_Same()
+    public async Task HandleDialogAsync_ADialogOpenBeforeTheConnection_ThatTheBrowserDoesNotReport_IsNeverAcceptedUnread()
+    {
+        // Edge 155 does not report a dialog that was open before the connection: its text is unknown, and it may confirm a
+        // deletion, so it is read through UI Automation (respond_to_dialog) first
+        var page = new FakePage { SilentDialog = true };
+
+        var result = await CreateSut(page).HandleDialogAsync(Tab, accept: true, promptText: null, new RecordingGate().EnterAsync, LongTimeout);
+
+        result.ErrorCode.Should().Be(nameof(BrowserErrorCode.CdpDialogOpen));
+        result.Error.Should().Contain("respond_to_dialog").And.Contain("not accepted unread");
+        page.Methods.Should().NotContain("Page.handleJavaScriptDialog");
+    }
+
+    [Fact]
+    public async Task HandleDialogAsync_ADialogOpenBeforeTheConnection_ThatTheBrowserDoesNotReport_IsDismissedAllTheSame()
     {
         // Edge 155 does not report a dialog that was open before the connection, not even after Page.enable
         var page = new FakePage { SilentDialog = true };
@@ -233,6 +261,8 @@ public class CdpPageServiceTests
         result.Success.Should().BeTrue(result.Error);
         var box = result.Value!;
         box.Rect.Should().Be(new CssRect(100, 200, 88, 48), "the box around every quad of an element that wraps");
+        box.Quads.Should().Equal(new CssRect(100, 200, 88, 32), new CssRect(100, 232, 50, 16));
+        box.Visibility.Should().Be("visible");
         box.DevicePixelRatio.Should().Be(1.5);
         (box.ViewportWidth, box.ViewportHeight).Should().Be((1280, 720));
         box.Element.Should().Be(new BrowserElementInfo("button", "Save draft"));
@@ -241,6 +271,22 @@ public class CdpPageServiceTests
             "browser_element_rect only reads");
         Param(page.Command("Runtime.evaluate", c => Param(c, "expression")!.Contains("querySelectorAll")), "expression")
             .Should().Contain(JsonSerializer.Serialize("#save"));
+    }
+
+    [Fact]
+    public async Task LocateAsync_AnElementInsideAFrame_HasTheMainFramesViewport_NotItsFrames()
+    {
+        // The element's own functions run in its frame (a 300 x 150 iframe here), but its quads are in the main frame's
+        // viewport: the viewport is read in the main frame
+        var page = new FakePage
+        {
+            AxNodes = [(31, "button", "Save draft", false)], ElementRealmViewport = (300, 150, 1), Quads = [[10, 410, 98, 410, 98, 442, 10, 442]]
+        };
+
+        var result = await CreateSut(page).LocateAsync(Tab, new BrowserElementLocator(null, null, "button", "Save draft"), LongTimeout);
+
+        result.Success.Should().BeTrue(result.Error);
+        (result.Value!.ViewportWidth, result.Value.ViewportHeight, result.Value.DevicePixelRatio).Should().Be((1280, 720, 1.5));
     }
 
     [Fact]
@@ -368,9 +414,78 @@ public class CdpPageServiceTests
         mouse[1].GetProperty("buttons").GetInt32().Should().Be(1);
         mouse[1].GetProperty("clickCount").GetInt32().Should().Be(1);
         page.GateAt["Input.dispatchMouseEvent"].Should().BeTrue();
+        page.GateAt["DOM.scrollIntoViewIfNeeded"].Should().BeTrue("scrolling changes the page");
         page.GateAt["Runtime.evaluate"].Should().BeFalse("the element is found without the gate");
         gate.Entered.Should().Be(1);
         gate.Held.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task ClickAsync_AnElementInsideAFrame_IsClippedToTheMainViewport_NotTheFrames()
+    {
+        // A button in a 300 x 150 iframe placed 400 pixels down: its quad is in the main frame's viewport
+        var page = new FakePage
+        {
+            AxNodes = [(31, "button", "Save draft", false)], ElementRealmViewport = (300, 150, 1), Quads = [[10, 410, 98, 410, 98, 442, 10, 442]]
+        };
+
+        var result = await CreateSut(page).ClickAsync(Tab, new BrowserElementLocator(null, null, "button", "Save draft"), MouseButton.Primary, 1,
+            new RecordingGate().EnterAsync, LongTimeout);
+
+        result.Success.Should().BeTrue(result.Error);
+        result.Value!.Point.Should().Be(new CssPoint(54, 426));
+    }
+
+    [Fact]
+    public async Task ClickAsync_AnElementInAFrameOfAnotherOrigin_IsElementObscured_SayingItCannotBeChecked()
+    {
+        var page = new FakePage { HitTestReply = new { hit = false, frame = true } };
+
+        var result = await CreateSut(page).ClickAsync(Tab, BySelector("#save"), MouseButton.Primary, 1, new RecordingGate().EnterAsync, LongTimeout);
+
+        result.ErrorCode.Should().Be(nameof(BrowserErrorCode.ElementObscured));
+        result.Error.Should().Contain("another origin");
+        page.Methods.Should().NotContain("Input.dispatchMouseEvent");
+    }
+
+    [Fact]
+    public async Task ClickAsync_APageThatIsNoLongerAWebPage_IsBrowserInternalPage_AndNothingIsClicked()
+    {
+        var page = new FakePage { PageUrl = "chrome-extension://abcdefghijklmnop/options.html" };
+
+        var result = await CreateSut(page).ClickAsync(Tab, BySelector("#save"), MouseButton.Primary, 1, new RecordingGate().EnterAsync, LongTimeout);
+
+        result.ErrorCode.Should().Be(nameof(BrowserErrorCode.BrowserInternalPage));
+        page.Methods.Should().NotContain(m => m.StartsWith("Input.", StringComparison.Ordinal) || m == "DOM.scrollIntoViewIfNeeded");
+    }
+
+    [Fact]
+    public async Task ClickAsync_APauseBeforeThePress_StopsTheClick_WithPausedByUser()
+    {
+        var page = new FakePage();
+        var gate = new RecordingGate { Paused = () => page.Commands("Input.dispatchMouseEvent").Any() };
+
+        var result = await CreateSut(page).ClickAsync(Tab, BySelector("#save"), MouseButton.Primary, 1, gate.EnterAsync, LongTimeout);
+
+        result.ErrorCode.Should().Be(nameof(WindowErrorCode.PausedByUser));
+        result.Error.Should().Contain("0 of 1 click");
+        page.Commands("Input.dispatchMouseEvent").Select(c => c.GetProperty("params").GetProperty("type").GetString())
+            .Should().Equal("mouseMoved");
+        gate.Held.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task ClickAsync_APauseAfterAPress_StillReleasesIt_AndSendsNoFurtherClick()
+    {
+        var page = new FakePage();
+        var gate = new RecordingGate { Paused = () => page.Commands("Input.dispatchMouseEvent").Count() >= 2 };
+
+        var result = await CreateSut(page).ClickAsync(Tab, BySelector("#save"), MouseButton.Primary, 2, gate.EnterAsync, LongTimeout);
+
+        result.ErrorCode.Should().Be(nameof(WindowErrorCode.PausedByUser));
+        result.Error.Should().Contain("1 of 2 click");
+        page.Commands("Input.dispatchMouseEvent").Select(c => c.GetProperty("params").GetProperty("type").GetString())
+            .Should().Equal("mouseMoved", "mousePressed", "mouseReleased");
     }
 
     [Fact]
@@ -408,7 +523,8 @@ public class CdpPageServiceTests
         result.ErrorCode.Should().Be(nameof(BrowserErrorCode.ElementObscured));
         result.Error.Should().Contain("div#cover 'Accept cookies'");
         page.Methods.Should().NotContain("Input.dispatchMouseEvent");
-        gate.Entered.Should().Be(0);
+        gate.Entered.Should().Be(1, "the scroll and the hit test right before the click are inside the gate");
+        gate.Held.Should().BeFalse();
         var hitTest = page.Command("Runtime.callFunctionOn", c => Param(c, "functionDeclaration")!.Contains("elementFromPoint"));
         hitTest.GetProperty("params").GetProperty("arguments").EnumerateArray().Select(a => a.GetProperty("value").GetDouble())
             .Should().Equal(144, 216);
@@ -437,6 +553,21 @@ public class CdpPageServiceTests
         result.Value!.Dialog!.Type.Should().Be("confirm");
         result.Value.Warning.Should().BeNull();
         stopwatch.Elapsed.Should().BeLessThan(CdpPageService.InputAckTime, "the dialog ends the wait for the release's answer");
+    }
+
+    [Fact]
+    public async Task ClickAsync_AClickThatOpensADialogOnThePress_StillReleasesTheButton()
+    {
+        // A mousedown handler opens the dialog: the press is never answered, and the release must still go out, or the
+        // page keeps the button pressed
+        var page = new FakePage { DialogOnPress = true };
+
+        var result = await CreateSut(page).ClickAsync(Tab, BySelector("#delete"), MouseButton.Primary, 2, new RecordingGate().EnterAsync, LongTimeout);
+
+        result.Success.Should().BeTrue(result.Error);
+        result.Value!.Dialog!.Type.Should().Be("confirm");
+        page.Commands("Input.dispatchMouseEvent").Select(c => c.GetProperty("params").GetProperty("type").GetString())
+            .Should().Equal(["mouseMoved", "mousePressed", "mouseReleased"], "the release of the press, and no second click");
     }
 
     [Fact]
@@ -485,8 +616,54 @@ public class CdpPageServiceTests
         page.Methods.Should().ContainInOrder("DOM.focus", "Runtime.evaluate", "Emulation.setFocusEmulationEnabled", "Input.insertText");
         page.Command("Input.insertText").GetProperty("params").GetProperty("text").GetString().Should().Be("hello");
         page.GateAt["Input.insertText"].Should().BeTrue();
-        page.GateAt["DOM.focus"].Should().BeFalse();
+        page.GateAt["DOM.focus"].Should().BeTrue("moving the focus changes the page");
+        page.HeldAt("Runtime.evaluate", c => Param(c, "expression")!.Contains("querySelectorAll")).Should().BeFalse(
+            "the field is found without the gate");
+        page.Command("Runtime.callFunctionOn", c => Param(c, "functionDeclaration")!.Contains("activeElement"))
+            .GetProperty("params").GetProperty("objectId").GetString().Should().Be("EL", "the focus is checked to be on the field");
         page.Methods.Should().NotContain("Input.dispatchKeyEvent");
+    }
+
+    [Fact]
+    public async Task TypeAsync_AFieldWhosePageMovesTheFocusOn_IsFocusNotOnElement_AndNothingIsTyped()
+    {
+        // An auto-advancing code field, an overlay that grabs the focus: the text must not follow the focus
+        var page = new FakePage { FocusMovedTo = "textarea" };
+
+        var result = await CreateSut(page).TypeAsync(Tab, new BrowserTypeOptions("secret", "#password", false, false),
+            new RecordingGate().EnterAsync, LongTimeout);
+
+        result.ErrorCode.Should().Be(nameof(UIElementErrorCode.FocusNotOnElement));
+        result.Error.Should().Contain("moved the focus to a textarea");
+        page.Methods.Should().NotContain("Input.insertText");
+    }
+
+    [Fact]
+    public async Task TypeAsync_APauseAfterTheText_DoesNotPressEnter_AndSaysTheTextWasTyped()
+    {
+        var page = new FakePage();
+        var gate = new RecordingGate { Paused = () => page.Commands("Input.insertText").Any() };
+
+        var result = await CreateSut(page).TypeAsync(Tab, new BrowserTypeOptions("query", "#q", false, PressEnter: true), gate.EnterAsync,
+            LongTimeout);
+
+        result.ErrorCode.Should().Be(nameof(WindowErrorCode.PausedByUser));
+        result.Error.Should().Contain("text was typed, but Enter was not pressed");
+        page.Methods.Should().NotContain("Input.dispatchKeyEvent");
+        gate.Held.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task TypeAsync_APauseBeforeTheText_TypesNothing()
+    {
+        var page = new FakePage();
+        var gate = new RecordingGate { Paused = () => page.Commands("DOM.focus").Any() };
+
+        var result = await CreateSut(page).TypeAsync(Tab, new BrowserTypeOptions("query", "#q", false, false), gate.EnterAsync, LongTimeout);
+
+        result.ErrorCode.Should().Be(nameof(WindowErrorCode.PausedByUser));
+        result.Error.Should().Contain("nothing was typed");
+        page.Methods.Should().NotContain("Input.insertText");
     }
 
     [Fact]
@@ -538,6 +715,8 @@ public class CdpPageServiceTests
         var result = await CreateSut(page).TypeAsync(Tab, new BrowserTypeOptions("x", "input", false, false), new RecordingGate().EnterAsync, LongTimeout);
 
         result.ErrorCode.Should().Be(nameof(UIElementErrorCode.AmbiguousElement));
+        result.Error.Should().Contain("Narrow the selector").And.Contain("browser_click").And.NotContain("Pass index",
+            "browser_type takes no index");
         page.Methods.Should().NotContain("Input.insertText");
     }
 
@@ -595,12 +774,18 @@ public class CdpPageServiceTests
     private static string? Param(JsonElement command, string name) =>
         command.TryGetProperty("params", out var p) && p.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
 
-    /// <summary>Takes the gate and records whether it is held, as InputGateToolFilter.EnterAsync would hand it out.</summary>
+    /// <summary>
+    /// Takes the gate and records whether it is held, as BrowserPageService hands it out: a hold that tells when the user
+    /// has paused input (<see cref="Paused"/>).
+    /// </summary>
     private sealed class RecordingGate
     {
         public int Entered { get; private set; }
 
         public bool Held { get; private set; }
+
+        /// <summary>Whether the user has paused input, asked each time the hold is.</summary>
+        public Func<bool>? Paused { get; init; }
 
         public Task<IDisposable> EnterAsync(CancellationToken cancellationToken)
         {
@@ -609,8 +794,10 @@ public class CdpPageServiceTests
             return Task.FromResult<IDisposable>(new Release(this));
         }
 
-        private sealed class Release(RecordingGate gate) : IDisposable
+        private sealed class Release(RecordingGate gate) : ICdpGateHold
         {
+            public bool IsPaused => gate.Paused?.Invoke() == true;
+
             public void Dispose() => gate.Held = false;
         }
     }
@@ -675,6 +862,27 @@ public class CdpPageServiceTests
 
         public bool DialogOnRelease { get; init; }
 
+        /// <summary>A mousedown handler opens the dialog: the press is never answered.</summary>
+        public bool DialogOnPress { get; init; }
+
+        /// <summary>The page answers its reads, but not the agent's script.</summary>
+        public bool ScriptHangs { get; init; }
+
+        /// <summary>The address the page reports on the connection (default: the tab's).</summary>
+        public string PageUrl { get; init; } = Tab.Url;
+
+        /// <summary>
+        /// The viewport the element's own frame has (innerWidth, innerHeight, devicePixelRatio), which its functions would read;
+        /// default the main frame's.
+        /// </summary>
+        public (double Width, double Height, double Dpr) ElementRealmViewport { get; init; } = (1280, 720, 1.5);
+
+        /// <summary>The tag of the element a focus handler moves the focus to, after DOM.focus; null: it stays.</summary>
+        public string? FocusMovedTo { get; init; }
+
+        /// <summary>The hit test's answer, instead of hit or <see cref="CoveredBy"/>.</summary>
+        public object? HitTestReply { get; init; }
+
         public bool InputNeverAcked { get; init; }
 
         public bool CaptureNeverAnswers { get; init; }
@@ -683,6 +891,18 @@ public class CdpPageServiceTests
 
         /// <summary>Whether the gate was held when each method was first sent.</summary>
         public Dictionary<string, bool?> GateAt { get; } = new();
+
+        /// <summary>Every command sent, with whether the gate was held then.</summary>
+        private List<(JsonElement Command, bool? Held)> Sent { get; } = [];
+
+        /// <summary>Whether the gate was held when the first command of <paramref name="method"/> that matches was sent.</summary>
+        public bool? HeldAt(string method, Func<JsonElement, bool> where)
+        {
+            lock (_lock)
+            {
+                return Sent.First(s => s.Command.GetProperty("method").GetString() == method && where(s.Command)).Held;
+            }
+        }
 
         public IReadOnlyList<string> Methods => Socket.SentCommands.Select(c => c.GetProperty("method").GetString()!).ToList();
 
@@ -697,7 +917,9 @@ public class CdpPageServiceTests
             lock (_lock)
             {
                 var method = command.GetProperty("method").GetString()!;
-                GateAt.TryAdd(method, GateHeld?.Invoke());
+                var held = GateHeld?.Invoke();
+                GateAt.TryAdd(method, held);
+                Sent.Add((command.Clone(), held));
                 var p = command.TryGetProperty("params", out var given) ? given : default;
                 switch (method)
                 {
@@ -751,14 +973,19 @@ public class CdpPageServiceTests
                         var function = p.GetProperty("functionDeclaration").GetString()!;
                         if (function.Contains("elementFromPoint", StringComparison.Ordinal))
                         {
-                            socket.ReplyWithValue(command, CoveredBy == null ? new { hit = true } : new { hit = false, by = CoveredBy });
+                            socket.ReplyWithValue(command, HitTestReply ?? (CoveredBy == null ? (object)new { hit = true } : new { hit = false, by = CoveredBy }));
+                        }
+                        else if (function.Contains("activeElement", StringComparison.Ordinal))
+                        {
+                            socket.ReplyWithValue(command, FocusMovedTo == null ? new { holds = true, tag = (string?)null } : new { holds = false, tag = (string?)FocusMovedTo });
                         }
                         else
                         {
+                            // What the element's own frame would read of its viewport: never used for the page's
+                            var (vw, vh, dpr) = ElementRealmViewport;
                             socket.ReplyWithValue(command, new
                             {
-                                tag = "button", text = "Save draft", disabled = Disabled, top = true, dpr = 1.5, vw = 1280, vh = 720, scale = 1,
-                                visibility = Visibility
+                                tag = "button", text = "Save draft", disabled = Disabled, top = true, dpr, vw, vh, scale = 1, visibility = Visibility
                             });
                         }
 
@@ -787,6 +1014,12 @@ public class CdpPageServiceTests
                         break;
 
                     case "Input.dispatchMouseEvent" when InputNeverAcked:
+                        break;
+
+                    case "Input.dispatchMouseEvent" when DialogOnPress && p.GetProperty("type").GetString() == "mousePressed":
+                        _dialogOpen = true;
+                        socket.EnqueueEvent("Page.javascriptDialogOpening",
+                            new { url = Tab.Url, message = "Delete it?", type = "confirm", hasBrowserHandler = true });
                         break;
 
                     case "Input.dispatchMouseEvent" when DialogOnRelease && p.GetProperty("type").GetString() == "mouseReleased":
@@ -827,11 +1060,15 @@ public class CdpPageServiceTests
             }
             else if (expression.Contains("visibilityState", StringComparison.Ordinal))
             {
-                socket.ReplyWithValue(command, new { visibility = Visibility, vw = 1280, vh = 720, dpr = 1.5, url = Tab.Url, title = Tab.Title });
+                socket.ReplyWithValue(command, new { visibility = Visibility, vw = 1280, vh = 720, dpr = 1.5, scale = 1, url = PageUrl, title = Tab.Title });
             }
             else if (expression == "1")
             {
                 socket.ReplyWithValue(command, 1);
+            }
+            else if (ScriptHangs)
+            {
+                // The agent's script never settles
             }
             else if (EvaluateError != null)
             {

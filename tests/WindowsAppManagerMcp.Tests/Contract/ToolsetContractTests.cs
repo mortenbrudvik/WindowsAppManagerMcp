@@ -120,8 +120,8 @@ public class ToolsetContractTests
         Toolsets.Server.ToolNames.Should().BeSubsetOf(served, "a toolset must not name a tool the server does not serve");
     }
 
-    /// <summary>The toolsets that are off by default: browser-actions since roadmap M5.5, browser-script since M5.8.</summary>
-    private static readonly string[] OptInToolsets = ["browser-actions", "browser-script"];
+    /// <summary>The toolsets that are off by default: browser-actions since roadmap M5.5 (and the DOM bridge of M5.8).</summary>
+    private static readonly string[] OptInToolsets = ["browser-actions"];
 
     [Fact]
     public void TheDefault_ServesEveryToolset_ButTheOptInOnes()
@@ -137,15 +137,12 @@ public class ToolsetContractTests
         ServerToolCatalog.ServedToolNames
             .Where(tool => !OptInToolsets.Contains(Toolsets.Server.ToolsetOf(tool)!.Name))
             .Should().OnlyContain(tool => selection.Serves(tool, false));
+        // The DOM bridge, browser_evaluate included, is in the one opt-in toolset the roadmap names (M5.8)
         Toolsets.Server.Find("browser-actions")!.Tools.Should().BeEquivalentTo(
                 ["activate_tab", "browser_navigate", "browser_element_rect", "browser_click", "browser_type", "browser_handle_dialog",
-                    "browser_screenshot"])
+                    "browser_screenshot", "browser_evaluate"])
             .And.OnlyContain(tool => !selection.Serves(tool, false));
-
-        // A script runs with the page's rights and leaves no trace on the screen: turning clicks and typing on does not turn
-        // it on (roadmap M5.8)
-        Toolsets.Server.Find("browser-script")!.Tools.Should().BeEquivalentTo(["browser_evaluate"])
-            .And.OnlyContain(tool => !selection.Serves(tool, false));
+        Toolsets.Server.Find("browser-script").Should().BeNull();
     }
 
     [Fact]

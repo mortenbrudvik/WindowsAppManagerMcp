@@ -39,7 +39,34 @@ public class BrowserPageScriptsTests
     [Fact]
     public void TheElementFunctions_AreFunctionsOfTheElement_ThatTakeNothingOfTheAgents()
     {
-        BrowserPageScripts.ElementStateFunction.Should().StartWith("function () {").And.Contain("devicePixelRatio");
-        BrowserPageScripts.HitTestFunction.Should().StartWith("function (x, y) {").And.Contain("elementFromPoint(x, y)");
+        BrowserPageScripts.ElementStateFunction.Should().StartWith("function () {");
+        BrowserPageScripts.HitTestFunction.Should().StartWith("function (x, y) {").And.Contain("elementFromPoint(px, py)");
+        BrowserPageScripts.FocusHolderFunction.Should().StartWith("function () {").And.Contain("activeElement");
+    }
+
+    [Fact]
+    public void TheElementState_ReadsNothingOfTheViewport_WhichItsFrameWouldGiveForAnElementInAFrame()
+    {
+        // The function runs in the element's own frame: the page's viewport comes from the main frame (ViewportExpression)
+        BrowserPageScripts.ElementStateFunction.Should().NotContain("innerWidth").And.NotContain("devicePixelRatio")
+            .And.NotContain("visibilityState");
+        BrowserPageScripts.ViewportExpression.Should().Contain("innerWidth").And.Contain("devicePixelRatio").And.Contain("visualViewport")
+            .And.Contain("visibilityState").And.Contain("location.href");
+    }
+
+    [Fact]
+    public void TheElementState_CountsADisabledControlItIsInside_AndAriaDisabledAncestors()
+    {
+        // A span inside <button disabled>, a button inside <fieldset disabled>, a div inside role=button aria-disabled
+        BrowserPageScripts.ElementStateFunction.Should().Contain("e.closest('button, input, select, textarea, optgroup, option')")
+            .And.Contain("matches(':disabled')").And.Contain("e.closest('[aria-disabled=\"true\"]')");
+    }
+
+    [Fact]
+    public void TheHitTest_FollowsTheFramesFromTheMainDocument_AndRefusesAFrameItCannotFollow()
+    {
+        BrowserPageScripts.HitTestFunction.Should().Contain("w !== w.top").And.Contain("frameElement")
+            .And.Contain("{ hit: false, frame: true }").And.NotContain("this.ownerDocument !== document",
+                "an element in a frame is checked, not taken on trust");
     }
 }
