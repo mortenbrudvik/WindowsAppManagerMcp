@@ -71,6 +71,157 @@ public class BrowserUiaReaderTests
 
     [Theory]
     [MemberData(nameof(Languages))]
+    public void ReadUrlAndContent_TakeTheDocumentBesideTheRenderWidgetsPane_WithTheBrowserBehindAnotherWindow(BrowserNames names)
+    {
+        // Arrange - Chrome and Edge on a real desktop: the warm-up gives the render widget's pane "Chrome Legacy Window",
+        // which holds the page's elements but not its address; the tab's Document sits beside it in the web view. The
+        // browser is not in front, so the address bar tells nothing
+        var browser = new FakeBrowserWindow(names);
+
+        // Act
+        var url = ReadUrl(browser, foreground: false);
+        var content = CreateSut().ReadContent(browser.Window, browser.Title, browser.Pages, null, CancellationToken.None);
+
+        // Assert
+        browser.Pages.Should().StartWith(browser.RenderWidgetPane);
+        url.Should().Be(new BrowserUiaUrl(FakeBrowserWindow.CommittedUrl, FakeBrowserWindow.ShownUrl, BrowserUrlSource.Document, null));
+        content.Url.Should().Be(FakeBrowserWindow.CommittedUrl);
+        content.Text.Should().StartWith($"Welcome to {FakeBrowserWindow.PageTitle}");
+    }
+
+    [Theory]
+    [MemberData(nameof(Languages))]
+    public void ReadUrlAndContent_FindTheDocument_WhenTheRenderWidgetIsHiddenBehindOtherWindows(BrowserNames names)
+    {
+        // Arrange - a browser covered by other windows has no render widget, so the warm-up gives no page; the Document
+        // built before stays in the views
+        var browser = new FakeBrowserWindow(names, renderWidgetShown: false);
+
+        // Act
+        var url = ReadUrl(browser, foreground: false);
+        var content = CreateSut().ReadContent(browser.Window, browser.Title, browser.Pages, null, CancellationToken.None);
+
+        // Assert
+        browser.Pages.Should().BeEmpty();
+        url.Url.Should().Be(FakeBrowserWindow.CommittedUrl);
+        url.UrlSource.Should().Be(BrowserUrlSource.Document);
+        content.Url.Should().Be(FakeBrowserWindow.CommittedUrl);
+    }
+
+    [Fact]
+    public void ReadUrlAndContent_SearchTheWindowForTheDocument_WhenNoneIsBesideTheRenderWidgetsPane()
+    {
+        // Arrange - the pane's parent cannot be read
+        var browser = new FakeBrowserWindow(BrowserNames.EdgeNorwegian);
+        browser.RenderWidgetPane.ParentException = FakeUiaTree.Vanished();
+        browser.SidebarRenderWidgetPane!.ParentException = FakeUiaTree.Vanished();
+
+        // Act
+        var url = ReadUrl(browser, foreground: false);
+        var content = CreateSut().ReadContent(browser.Window, browser.Title, browser.Pages, null, CancellationToken.None);
+
+        // Assert - the tab's page, not Edge's sidebar
+        url.Url.Should().Be(FakeBrowserWindow.CommittedUrl);
+        content.Url.Should().Be(FakeBrowserWindow.CommittedUrl);
+        content.Text.Should().StartWith($"Welcome to {FakeBrowserWindow.PageTitle}");
+    }
+
+    [Fact]
+    public void ReadContent_ReadsTheRenderWidgetsPane_WhenTheWindowHasNoDocument()
+    {
+        // Arrange - WebView2 runtime 155 (roadmap M3.F33): the render widget's pane holds the page's elements, and there is
+        // no Document anywhere
+        var pane = new FakeUiaNode("Pane", FakeBrowserWindow.LegacyWindowName)
+        {
+            ClassName = AccessibilityWarmup.RenderWidgetHostClass, FrameworkId = "Win32"
+        }.With(new FakeUiaNode("Text", "Web content") { FrameworkId = "Chrome" });
+        var window = Window(new FakeUiaNode("Pane") { ClassName = "Chrome_WidgetWin_0" }.With(pane));
+
+        // Act
+        var content = CreateSut().ReadContent(window, null, [pane], null, CancellationToken.None);
+        var url = CreateSut().ReadUrl(window, null, [pane], false, CancellationToken.None);
+
+        // Assert
+        content.Should().Be(new BrowserUiaContent(true, "Web content", null));
+        url.ErrorCode.Should().Be(BrowserErrorCode.UrlBarNotFound);
+    }
+
+    [Theory]
+    [MemberData(nameof(Languages))]
+    public void ReadUrlAndContent_SayThePageMayNotBeShown_WhenItsTreeWasNeverBuilt(BrowserNames names)
+    {
+        // Arrange - a browser that stayed behind other windows since its page loaded: no render widget and no Document
+        var browser = new FakeBrowserWindow(names, withDocument: false, renderWidgetShown: false);
+
+        // Act
+        var url = ReadUrl(browser, foreground: false);
+        var content = CreateSut().ReadContent(browser.Window, browser.Title, browser.Pages, null, CancellationToken.None);
+
+        // Assert
+        url.ErrorCode.Should().Be(BrowserErrorCode.UrlExtractionFailed);
+        url.Url.Should().BeNull();
+        url.DisplayUrl.Should().Be(FakeBrowserWindow.ShownUrl);
+        url.Error.Should().Contain("behind other windows").And.Contain("CDP");
+        content.Found.Should().BeFalse();
+    }
+
+    [Theory]
+    [MemberData(nameof(Languages))]
+    public void ReadUrl_TakesThePagesAddress_OfAPageTitledLikeTheAddressBar(BrowserNames names)
+    {
+        // Arrange - a data: page titled "Address bar", as read on a real desktop: the Document's value is encoded, the
+        // address bar shows the text decoded
+        const string committed = "data:text/html,%3Ctitle%3EAddress%20bar%3C/title%3E%3Cp%3Ea%20page%3C/p%3E";
+        const string shown = "data:text/html,<title>Address%20bar</title><p>a%20page</p>";
+        var browser = new FakeBrowserWindow(names, pageTitle: "Address bar", committedUrl: committed, addressBarText: shown);
+
+        // Act
+        var front = ReadUrl(browser);
+        var behind = ReadUrl(browser, foreground: false);
+
+        // Assert
+        front.Should().Be(new BrowserUiaUrl(committed, shown, BrowserUrlSource.Document, false));
+        behind.Should().Be(new BrowserUiaUrl(committed, shown, BrowserUrlSource.Document, null));
+    }
+
+    [Theory]
+    [MemberData(nameof(Languages))]
+    public void ReadUrl_TakesAFilePagesAddress_FromItsDocument_WhileTheAddressBarShowsItsPath(BrowserNames names)
+    {
+        // Arrange - Chrome and Edge show a file: page's address as its path, without file:///
+        var browser = new FakeBrowserWindow(names, pageTitle: "WAM file page", committedUrl: FileUrl, addressBarText: FilePath);
+
+        // Act
+        var front = ReadUrl(browser);
+        var behind = ReadUrl(browser, foreground: false);
+
+        // Assert
+        front.Should().Be(new BrowserUiaUrl(FileUrl, FilePath, BrowserUrlSource.Document, false));
+        behind.Should().Be(new BrowserUiaUrl(FileUrl, FilePath, BrowserUrlSource.Document, null));
+    }
+
+    [Fact]
+    public void ReadUrl_TakesAFilePagesPath_FromTheAddressBar_AsItsFileUrl()
+    {
+        // Arrange - no Document gives the address
+        var browser = new FakeBrowserWindow(BrowserNames.EdgeNorwegian, committedUrl: null, addressBarText: FilePath);
+
+        // Act
+        var front = ReadUrl(browser);
+        var behind = ReadUrl(browser, foreground: false);
+
+        // Assert - a path is a URL shown without its scheme, trusted as any address bar text is
+        front.Should().Be(new BrowserUiaUrl(FileUrl, FilePath, BrowserUrlSource.AddressBar, false));
+        behind.ErrorCode.Should().Be(BrowserErrorCode.UrlExtractionFailed);
+        behind.DisplayUrl.Should().Be(FilePath);
+        behind.Error.Should().Contain("foreground").And.NotContain("not a URL");
+    }
+
+    private const string FilePath = "C:/Users/me/AppData/Local/Temp/wam-m57%20local%20page.html";
+    private const string FileUrl = "file:///" + FilePath;
+
+    [Theory]
+    [MemberData(nameof(Languages))]
     public void ReadUrl_SearchesTheWindowForItsDocument_WhenNoPagesAreGiven(BrowserNames names)
     {
         var url = ReadUrl(new FakeBrowserWindow(names), withPages: false);
@@ -477,7 +628,7 @@ public class BrowserUiaReaderTests
         content.Text.Should().Be(string.Join(Environment.NewLine,
             $"Welcome to {FakeBrowserWindow.PageTitle}", "Address and search bar", FakeBrowserWindow.AttackerUrl, "Search",
             FakeBrowserWindow.AttackerUrl));
-        _tree.ChildListings.Should().NotContain([names.Frame, "ToolBar"]);
+        _tree.ChildListings.Should().NotContain([browser.RootView.Name!, browser.ToolBar.Name ?? "ToolBar"]);
         _tree.Reads.Should().NotContain(read => read.StartsWith("Interaction:", StringComparison.Ordinal));
     }
 

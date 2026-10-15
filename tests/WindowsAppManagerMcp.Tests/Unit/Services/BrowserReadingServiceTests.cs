@@ -298,6 +298,54 @@ public class BrowserReadingServiceTests
         result.IsEditing.Should().BeNull();
     }
 
+    [Theory]
+    [MemberData(nameof(Languages))]
+    public async Task GetBrowserUrlAndContent_ReadTheTabsPage_WithTheBrowserBehindAnotherWindow(BrowserNames names)
+    {
+        // Arrange - Chrome and Edge as read on a real desktop: the warm-up gives the render widget's pane, the tab's
+        // Document is beside it, and the agent's terminal is in front
+        var handle = new nint(12345);
+        SetupValidBrowserWindow(handle, names.IsEdge ? "msedge" : "chrome", names.IsEdge ? "edge" : "chrome");
+        _mockNativeWrapper.Setup(n => n.GetForegroundWindow()).Returns(new nint(4242));
+        ShowBrowser(handle, new FakeBrowserWindow(names));
+        var sut = CreateSut();
+
+        // Act
+        var url = await sut.GetBrowserUrlAsync(handle);
+        var content = await sut.GetBrowserContentAsync(handle);
+
+        // Assert
+        url.Should().BeEquivalentTo(new
+        {
+            Success = true, Url = FakeBrowserWindow.CommittedUrl, DisplayUrl = FakeBrowserWindow.ShownUrl,
+            UrlSource = BrowserUrlSource.Document, IsEditing = (bool?)null, Source = BrowserReadSource.Uia
+        });
+        content.Success.Should().BeTrue();
+        content.Url.Should().Be(FakeBrowserWindow.CommittedUrl);
+        content.Content.Should().StartWith($"Welcome to {FakeBrowserWindow.PageTitle}");
+    }
+
+    [Fact]
+    public async Task GetBrowserUrlAndContent_SayThePageMayNotBeShown_WhenItsTreeWasNeverBuilt()
+    {
+        // Arrange - an Edge that stayed behind other windows since its page loaded: no render widget, no Document
+        var handle = new nint(12345);
+        SetupValidBrowserWindow(handle, "msedge", "edge");
+        _mockNativeWrapper.Setup(n => n.GetForegroundWindow()).Returns(new nint(4242));
+        ShowBrowser(handle, new FakeBrowserWindow(BrowserNames.EdgeEnglish, withDocument: false, renderWidgetShown: false));
+        var sut = CreateSut();
+
+        // Act
+        var url = await sut.GetBrowserUrlAsync(handle);
+        var content = await sut.GetBrowserContentAsync(handle);
+
+        // Assert
+        url.ErrorCode.Should().Be(BrowserErrorCode.UrlExtractionFailed);
+        url.Error.Should().Contain("behind other windows").And.Contain("cdpPort");
+        content.ErrorCode.Should().Be(BrowserErrorCode.ContentAreaNotFound);
+        content.Error.Should().Contain("behind other windows").And.Contain("cdpPort");
+    }
+
     [Fact]
     public async Task GetBrowserUrlAndContent_ReadAChildWindowsHandle_AsItsTopLevelWindow()
     {
@@ -423,7 +471,7 @@ public class BrowserReadingServiceTests
         result.Url.Should().Be(FakeBrowserWindow.CommittedUrl);
         result.Content.Should().StartWith($"Welcome to {FakeBrowserWindow.PageTitle}");
         calls.Should().Equal("WarmUp", "FindPages");
-        _tree.ChildListings.Should().NotContain([browser.Names.Frame, "ToolBar"]);
+        _tree.ChildListings.Should().NotContain([browser.RootView.Name!, browser.ToolBar.Name!]);
     }
 
     [Fact]

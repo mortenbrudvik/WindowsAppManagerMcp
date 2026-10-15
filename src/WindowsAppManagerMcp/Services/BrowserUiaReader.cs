@@ -13,10 +13,13 @@ namespace WindowsAppManagerMcp.Services;
 /// </summary>
 /// <remarks>
 /// <list type="bullet">
-/// <item>The page: the shown tab's Document. The caller passes the roots of the window's shown pages, the Documents of its
-/// visible render widgets (<see cref="IAccessibilityWarmup.FindPages"/>; a background tab's render widget is hidden); without
-/// them (Firefox has no render widget) the window's Documents are searched, and a frame's, inside another Document (whose
-/// title, size and address its page sets), is left out. Of those, offscreen ones and the browser's own pages (docked
+/// <item>The page: the shown tab's Document. The caller passes the roots of the window's shown pages, those of its visible
+/// render widgets (<see cref="IAccessibilityWarmup.FindPages"/>; a background tab's render widget is hidden). In Chrome and
+/// Edge such a root is the render widget's own pane ("Chrome Legacy Window"), which lists the page's elements but holds no
+/// address, and the tab's Document is beside it, among its parent's children. When the roots give no Document (a browser
+/// behind other windows has no render widget; Firefox has none), the window's Documents are searched, and a frame's,
+/// inside another Document (whose title, size and address its page sets), is left out; only when there is none either is
+/// a pane the page (WebView2 runtime 155). Of those, offscreen ones and the browser's own pages (docked
 /// DevTools, Chrome's side panels) are left out, and the tab's page is the one the address bar shows, else the one whose
 /// name (the page's title) starts the window's title, else the largest. Its Value pattern holds the address the tab
 /// committed, with its scheme.</item>
@@ -24,10 +27,10 @@ namespace WindowsAppManagerMcp.Services;
 /// the AutomationId urlbar-input (Firefox), else the first edit box inside a toolbar; looked for breadth first from the
 /// window's children, at most <see cref="MaxAddressBarSearchDepth"/> levels down and <see cref="MaxAddressBarSearchElements"/>
 /// elements, and never inside a Document or a render widget (the page, whose elements' class names and ids the page sets)
-/// or a tab. Its value is what it shows (Chrome leaves out the scheme), and only its Value or Text pattern is read, never
-/// its name. Its text is taken for the URL only when it is known not to be edited: the browser is the foreground window
-/// (one behind another window reports no keyboard focus, also while text typed in its address bar is left there) and the
-/// address bar's focus reads false.</item>
+/// or a tab. Its value is what it shows (Chrome leaves out the scheme; Chrome and Edge show a file page as its path, taken
+/// as its file:/// URL), and only its Value or Text pattern is read, never its name. Its text is taken for the URL only
+/// when it is known not to be edited: the browser is the foreground window (one behind another window reports no keyboard
+/// focus, also while text typed in its address bar is left there) and the address bar's focus reads false.</item>
 /// <item>Call it on the UI Automation worker, inside the read the caller runs under its deadline (<see cref="IUiaWorker"/>):
 /// every read can wait for the browser. Once the token is cancelled the reads stop with
 /// <see cref="OperationCanceledException"/>.</item>
@@ -126,10 +129,12 @@ public sealed class BrowserUiaReader
                 null, null, null);
         }
 
+        // No page at all: Chromium may not have built its tree
+        var noPage = page == null ? " " + PageNotShownHint : string.Empty;
         if (shown == null)
         {
             return BrowserUiaUrl.Failed(BrowserErrorCode.UrlExtractionFailed,
-                "Found the address bar, but its text could not be read, nor the page's own address.", null, null, editing);
+                "Found the address bar, but its text could not be read, nor the page's own address." + noPage, null, null, editing);
         }
 
         if (string.IsNullOrWhiteSpace(shown))
@@ -148,7 +153,7 @@ public sealed class BrowserUiaReader
         if (display == null)
         {
             return BrowserUiaUrl.Failed(BrowserErrorCode.UrlExtractionFailed,
-                "The address bar holds text that is not a URL, and the page's own address could not be read.",
+                "The address bar holds text that is not a URL, and the page's own address could not be read." + noPage,
                 null, null, editing);
         }
 
@@ -159,11 +164,11 @@ public sealed class BrowserUiaReader
                     ? "Whether the address bar is being edited could not be read"
                     : "The browser is not the foreground window, so whether its address bar is being edited cannot be told") +
                 ": its text may be typed rather than the page's address, and the page's own address could not be read. " +
-                "Read again (the page may still be loading), or through CDP.",
+                (page == null ? PageNotShownHint : "Read again (the page may still be loading), or through CDP."),
                 null, display, editing);
         }
 
-        return new BrowserUiaUrl(display, display, BrowserUrlSource.AddressBar, editing);
+        return new BrowserUiaUrl(BrowserUrls.AddressOf(display), display, BrowserUrlSource.AddressBar, editing);
     }
 
     /// <summary>
@@ -208,6 +213,15 @@ public sealed class BrowserUiaReader
 
         return new BrowserUiaContent(true, content, page.Url);
     }
+
+    /// <summary>
+    /// Why a browser window may show no page through UI Automation, and what to do: read on a real desktop on 2026-10-15,
+    /// an Edge window that stayed behind another window since its page loaded had no render widget and no Document.
+    /// </summary>
+    public const string PageNotShownHint =
+        "Chromium builds a page's accessibility tree only while the page is shown, so a browser window that has stayed " +
+        "behind other windows since the page loaded may have none. Read it through CDP (cdpPort), or read again once the " +
+        "window has been shown.";
 
     private const string NewTabPageMessage =
         "The tab shows the browser's new tab page, which has no address of a site. Navigate the tab first, or read another window.";
@@ -271,34 +285,54 @@ public sealed class BrowserUiaReader
     }
 
     /// <summary>
-    /// The shown tab's page: of <paramref name="roots"/> (or, when there are none, the window's Documents that are not a
-    /// frame's), those that are onscreen and not the browser's own UI; the one <paramref name="display"/> shows, else the
-    /// one whose name starts <paramref name="windowTitle"/>, else one with an address, else the largest. Null when there is
-    /// none. A provider that times out in the search for the window's Documents throws <see cref="TimeoutException"/>.
+    /// The shown tab's page (<see cref="Best"/>): of <paramref name="roots"/>, each a Document or a render widget's pane that
+    /// stands for the Document beside it (<see cref="DocumentBeside"/>); when they give no Document, of the window's
+    /// Documents that are not a frame's; else the pane of a page that has no Document element (WebView2 runtime 155,
+    /// roadmap M3.F33). Null when there is none. A provider that times out in the search for the window's Documents throws
+    /// <see cref="TimeoutException"/>, unless a pane was found.
     /// </summary>
     private Page? FindPage(
         IUiaNode window, string? windowTitle, IReadOnlyList<IUiaNode>? roots, string? display, CancellationToken cancellationToken)
     {
-        IReadOnlyList<Candidate> candidates;
-        var searched = roots is not { Count: > 0 };
-        if (!searched)
+        // The render widgets' pages: a root that is not a Document is the widget's own pane, and Chrome and Edge keep the
+        // tab's Document beside it, in the web view that is the pane's parent
+        Page? shown = null;
+        if (roots is { Count: > 0 })
         {
-            candidates = roots!.Select(root => new Candidate(root, null, null)).ToList();
-        }
-        else
-        {
-            try
+            var resolved = roots.Select(root => DocumentBeside(root, cancellationToken) ?? new Candidate(root, null, null)).ToList();
+            shown = Best(resolved, searched: false, windowTitle, display, cancellationToken);
+            if (shown is { IsDocument: true })
             {
-                candidates = _tree.FindAll(window, UiaScope.Descendants,
-                    UiaCondition.PropertyEquals(UiaProperty.ControlType, "Document"), cancellationToken)
-                    .Select(e => new Candidate(e)).ToList();
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException and not TimeoutException)
-            {
-                return null;
+                return shown;
             }
         }
 
+        // No render widget gave a Document: a browser behind other windows has no render widget, though the Document built
+        // before stays in its views; Firefox has none
+        IReadOnlyList<Candidate> candidates;
+        try
+        {
+            candidates = _tree.FindAll(window, UiaScope.Descendants,
+                UiaCondition.PropertyEquals(UiaProperty.ControlType, "Document"), cancellationToken)
+                .Select(e => new Candidate(e)).ToList();
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException && (ex is not TimeoutException || shown != null))
+        {
+            return shown;
+        }
+
+        return Best(candidates, searched: true, windowTitle, display, cancellationToken) ?? shown;
+    }
+
+    /// <summary>
+    /// The page among <paramref name="candidates"/>: of those that are onscreen and not the browser's own UI, the one
+    /// <paramref name="display"/> shows, else the one whose name starts <paramref name="windowTitle"/>, else one with an
+    /// address, else the largest. A Document found by a search (<paramref name="searched"/>) inside another Document is a
+    /// frame's and is left out. Null when there is none.
+    /// </summary>
+    private Page? Best(
+        IReadOnlyList<Candidate> candidates, bool searched, string? windowTitle, string? display, CancellationToken cancellationToken)
+    {
         Page? best = null;
         for (var index = 0; index < candidates.Count; index++)
         {
@@ -317,7 +351,7 @@ public sealed class BrowserUiaReader
                 continue;
             }
 
-            var page = new Page(root, url,
+            var page = new Page(root, url, properties.ControlType == "Document",
                 BrowserUrls.Shows(display, url),
                 !string.IsNullOrEmpty(properties.Name) && !string.IsNullOrEmpty(windowTitle) &&
                 windowTitle.StartsWith(properties.Name, StringComparison.Ordinal),
@@ -338,6 +372,40 @@ public sealed class BrowserUiaReader
         }
 
         return best;
+    }
+
+    /// <summary>
+    /// The page a render widget's root stands for: the root when it is a Document; else (the widget's own pane, "Chrome
+    /// Legacy Window", which lists the page's elements but holds no address) the first Document among the children of its
+    /// parent, the tab's web view, where Chrome and Edge keep the tab's Document beside the pane (read on a real desktop on
+    /// 2026-10-15). Null when there is none, or it cannot be read.
+    /// </summary>
+    private Candidate? DocumentBeside(IUiaNode root, CancellationToken cancellationToken)
+    {
+        if (TryRead(root) is not { } properties)
+        {
+            return null;
+        }
+
+        if (properties.ControlType == "Document")
+        {
+            return new Candidate(root, properties, null);
+        }
+
+        IUiaNode? parent;
+        try
+        {
+            parent = _tree.GetParent(root);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return null;
+        }
+
+        return parent == null
+            ? null
+            : Children(parent, cancellationToken).Select(Complete)
+                .FirstOrDefault(child => child is { Properties.ControlType: "Document" });
     }
 
     /// <summary>
@@ -629,7 +697,8 @@ public sealed class BrowserUiaReader
     }
 
     /// <summary>A shown page: its root, its address (null when it holds none) and what ranks it.</summary>
-    private sealed record Page(Candidate Root, string? Url, bool ShownInAddressBar, bool TitleStartsWindowTitle, double Area)
+    private sealed record Page(
+        Candidate Root, string? Url, bool IsDocument, bool ShownInAddressBar, bool TitleStartsWindowTitle, double Area)
     {
         /// <summary>Whether this page is more likely the tab's than <paramref name="other"/> (a tie keeps the first).</summary>
         public bool Outranks(Page other)

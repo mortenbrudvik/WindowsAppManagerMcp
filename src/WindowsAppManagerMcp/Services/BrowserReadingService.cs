@@ -392,8 +392,8 @@ public class BrowserReadingService : IBrowserReadingService
                     PageTitle: pageTitle,
                     ContentLength: null,
                     Error: "Found no page in the browser window through UI Automation: no shown, onscreen Document of a tab. " +
-                           "The tab may still be loading, or the browser's accessibility tree is not available; read again, " +
-                           "or read it through CDP (cdpPort).",
+                           "The tab may still be loading, or the browser's accessibility tree is not available. " +
+                           BrowserUiaReader.PageNotShownHint,
                     ErrorCode: BrowserErrorCode.ContentAreaNotFound,
                     Source: BrowserReadSource.Uia,
                     CdpError: cdpError,

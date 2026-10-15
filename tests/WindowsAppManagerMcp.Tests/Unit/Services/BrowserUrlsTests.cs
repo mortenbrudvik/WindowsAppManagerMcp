@@ -102,8 +102,36 @@ public class BrowserUrlsTests
     [InlineData("github.com/x", "https://evil.example/github.com/x", false)]
     [InlineData("", "https://github.com/x", false)]
     [InlineData("github.com/x", null, false)]
+    [InlineData("C:/Users/me/a%20b.html", "file:///C:/Users/me/a%20b.html", true)]
+    [InlineData("C:/Users/me/a%20b.html", "file:///C:/Users/me/other.html", false)]
     public void Shows_TellsWhetherTheAddressBarShowsTheUrl(string? display, string? url, bool expected)
     {
         BrowserUrls.Shows(display, url).Should().Be(expected);
+    }
+
+    [Theory]
+    [InlineData("C:/Users/me/AppData/Local/Temp/wam-m57%20local%20page.html", true)]
+    [InlineData("c:/page.html", true)]
+    [InlineData("D:/", true)]
+    [InlineData("C:\\Users\\me\\page.html", false)]
+    [InlineData("C:/Users/me/a page.html", false)]
+    [InlineData("C:", false)]
+    [InlineData("C:page.html", false)]
+    [InlineData("//server/share/page.html", false)]
+    [InlineData("CD:/page.html", false)]
+    [InlineData(null, false)]
+    public void IsShownFilePath_AcceptsAFilePagesPathAsChromeAndEdgeShowIt(string? text, bool expected)
+    {
+        BrowserUrls.IsShownFilePath(text).Should().Be(expected);
+        BrowserUrls.IsUrlLike(text).Should().Be(expected);
+    }
+
+    [Theory]
+    [InlineData("C:/Users/me/a%20b.html", "file:///C:/Users/me/a%20b.html")]
+    [InlineData("github.com/x", "github.com/x")]
+    [InlineData("https://example.com/", "https://example.com/")]
+    public void AddressOf_GivesAShownFilePathsFileUrl_AndAnyOtherTextAsItIs(string display, string expected)
+    {
+        BrowserUrls.AddressOf(display).Should().Be(expected);
     }
 }
