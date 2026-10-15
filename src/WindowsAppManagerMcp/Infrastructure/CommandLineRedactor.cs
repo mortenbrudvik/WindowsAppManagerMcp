@@ -14,19 +14,23 @@ public sealed record RedactedCommandLine(string Text, bool Redacted);
 /// <para>Each masked value becomes <see cref="Mask"/>; everything else, quotes included, is kept as it was. It masks:</para>
 /// <list type="bullet">
 /// <item>the value of a switch with a secret name (see below), as <c>--name=value</c>, <c>--name:value</c>,
-/// <c>/name:value</c> or <c>--name value</c>, with <c>-</c>, <c>--</c> or <c>/</c>; a following switch is not taken as the
-/// value;</item>
+/// <c>/name:value</c> or <c>--name value</c>, with <c>-</c>, <c>--</c> or <c>/</c>; an attached value runs to the end of
+/// the argument, a <c>;</c> included (<c>--password=a;b</c>); a following switch is not taken as the value;</item>
 /// <item><c>name=value</c> pairs with a secret name in an argument, alone (<c>API_TOKEN=x</c>) or in a connection string or
-/// property list (<c>Server=db;Password=x;</c>, <c>/p:Password=x;Configuration=Release</c>);</item>
+/// property list (<c>Server=db;Password=x;</c>, <c>/p:Password=x;Configuration=Release</c>), where a value runs on over
+/// a <c>;</c> to the next segment that looks like <c>Name=</c> (<c>Password=a;b;Encrypt=true</c> masks <c>a;b</c>);</item>
 /// <item>header-like text, <c>Name: value</c>, with a secret name (<c>Authorization: Bearer x</c>,
-/// <c>X-Api-Key: x</c>, <c>Cookie: x</c>);</item>
+/// <c>X-Api-Key: x</c>, <c>Cookie: x</c>), also as the value of another switch (wget's
+/// <c>--header="Authorization: token x"</c>);</item>
 /// <item>the credential after <c>Bearer</c>, and after <c>Basic</c> when it looks like base64;</item>
 /// <item>the user info of a URL: the password of <c>scheme://user:password@</c>, or all of it when it has no colon (a
-/// token in the user name's place);</item>
+/// token in the user name's place); the user info runs to the last <c>@</c> before the host, as git and curl read it,
+/// so an unencoded <c>@</c> in a password is masked too;</item>
 /// <item>URL query parameters with a secret name (<c>?sig=</c> of an Azure SAS, <c>X-Amz-Signature</c>,
 /// <c>access_token</c>, <c>key</c>);</item>
 /// <item>the password of a <c>user:password</c> pair given to <c>-u</c> or <c>--user</c> (curl);</item>
-/// <item><c>-pVALUE</c> of the MySQL and MariaDB tools (elsewhere <c>-p</c> is usually a port).</item>
+/// <item><c>-pVALUE</c> of the MySQL and MariaDB tools (elsewhere <c>-p</c> is usually a port);</item>
+/// <item><c>-P value</c> and <c>-Pvalue</c> of the SQL Server tools sqlcmd, bcp and osql (also <c>/P value</c>).</item>
 /// </list>
 /// <para>
 /// A name is secret when one of its words (split at <c>-</c>, <c>_</c>, <c>.</c>, spaces and camelCase) is token,
@@ -40,6 +44,11 @@ public sealed record RedactedCommandLine(string Text, bool Redacted);
 /// <para>
 /// Arguments are split as Windows splits them (CommandLineToArgvW: spaces and tabs outside double quotes, <c>\"</c> a
 /// literal quote); single quotes do not group.
+/// </para>
+/// <para>
+/// A process sets its own command line (up to 32,767 characters), so the patterns run on the non-backtracking engine,
+/// in time linear in the argument, and with a match timeout; an argument whose scan times out is masked whole rather
+/// than shown unmasked.
 /// </para>
 /// </summary>
 public static class CommandLineRedactor
@@ -65,28 +74,49 @@ public static class CommandLineRedactor
         "method", "name", "id", "url", "uri", "host", "server", "port", "user", "username", "env", "timeout", "version"
     };
 
+    /// <summary>
+    /// How long one pattern may scan one argument. The non-backtracking engine is linear, so this is a backstop; an
+    /// argument whose scan runs out is masked whole.
+    /// </summary>
+    private static readonly TimeSpan MatchTimeout = TimeSpan.FromMilliseconds(100);
+
     // A switch's name and attached value: --name=value, -name:value, /name:value (the prefix already removed)
-    private static readonly Regex ColonValue = new(@"^(?<name>[A-Za-z][A-Za-z0-9_.\-]*):\s*(?<value>.*)$", RegexOptions.Singleline);
+    private static readonly Regex ColonValue = Linear(@"^(?<name>[A-Za-z][A-Za-z0-9_.\-]*):\s*(?<value>.*)$", RegexOptions.Singleline);
 
     // A switch with no value: --name, -name, /name
-    private static readonly Regex BareSwitch = new(@"^(?:--?|/)(?<name>[A-Za-z][A-Za-z0-9_.\-]*)$");
+    private static readonly Regex BareSwitch = Linear(@"^(?:--?|/)(?<name>[A-Za-z][A-Za-z0-9_.\-]*)$");
 
     // name=value at the start of a ;-separated segment, after an optional switch prefix and an optional /p: style
     // property switch
-    private static readonly Regex Assignment = new(
-        @"^\s*(?:(?:--?|/)(?:[A-Za-z]+:)?)?(?<name>[A-Za-z][A-Za-z0-9_. \-]*?)\s*=\s*(?<value>.*)$", RegexOptions.Singleline);
+    private static readonly Regex Assignment = Linear(
+        @"^\s*(?:(?<prefix>--?|/)(?<property>[A-Za-z]+:)?)?(?<name>[A-Za-z][A-Za-z0-9_. \-]*?)\s*=\s*(?<value>.*)$",
+        RegexOptions.Singleline);
 
-    private static readonly Regex BearerValue = new(@"\bBearer\s+(?<value>\S+)", RegexOptions.IgnoreCase);
+    private static readonly Regex BearerValue = Linear(@"\bBearer\s+(?<value>\S+)", RegexOptions.IgnoreCase);
 
-    private static readonly Regex BasicValue = new(@"\bBasic\s+(?<value>[A-Za-z0-9+/]{6,}={0,2})(?=\s|$)", RegexOptions.IgnoreCase);
+    private static readonly Regex BasicValue = Linear(@"\bBasic\s+(?<value>[A-Za-z0-9+/]{6,}={0,2})(?:\s|$)", RegexOptions.IgnoreCase);
 
-    private static readonly Regex Base64Like = new(@"^[A-Za-z0-9+/]{6,}={0,2}$");
+    private static readonly Regex Base64Like = Linear(@"^[A-Za-z0-9+/]{6,}={0,2}$");
 
-    private static readonly Regex UrlUserInfo = new(@"\b[A-Za-z][A-Za-z0-9+.\-]*://(?<userinfo>[^/\s@?#]+)@");
+    // The user info runs to the last @ before the host: an @ may be in it, a / ? # or space may not
+    private static readonly Regex UrlUserInfo = Linear(@"\b[A-Za-z][A-Za-z0-9+.\-]*://(?<userinfo>[^/\s?#]+)@");
 
-    private static readonly Regex QueryParameter = new(@"[?&](?<name>[^=&#\s]+)=(?<value>[^&#\s]*)");
+    private static readonly Regex QueryParameter = Linear(@"[?&](?<name>[^=&#\s]+)=(?<value>[^&#\s]*)");
 
-    private static readonly Regex MySqlPassword = new(@"^-p(?<value>.+)$", RegexOptions.Singleline);
+    private static readonly Regex MySqlPassword = Linear(@"^-p(?<value>.+)$", RegexOptions.Singleline);
+
+    private static readonly Regex SqlServerPassword = Linear(@"^-P(?<value>.+)$", RegexOptions.Singleline);
+
+    /// <summary>The tools whose one-letter switches carry a password.</summary>
+    private enum Tool
+    {
+        Other,
+        MySql,
+        SqlServer
+    }
+
+    private static Regex Linear(string pattern, RegexOptions options = RegexOptions.None) =>
+        new(pattern, options | RegexOptions.NonBacktracking | RegexOptions.CultureInvariant, MatchTimeout);
 
     /// <summary>Masks the secrets in <paramref name="commandLine"/>; see the class summary for what counts.</summary>
     public static RedactedCommandLine Redact(string commandLine)
@@ -95,14 +125,14 @@ public static class CommandLineRedactor
 
         var arguments = Split(commandLine);
         var spans = new List<(int Start, int End)>();
-        var isMySqlTool = arguments.Count > 0 && IsMySqlTool(arguments[0].Text);
+        var tool = arguments.Count > 0 ? ToolOf(arguments[0].Text) : Tool.Other;
 
         for (var i = 0; i < arguments.Count; i++)
         {
             var argument = arguments[i];
             var next = i + 1 < arguments.Count ? arguments[i + 1] : null;
-            var mySqlArgument = isMySqlTool && i > 0;
-            foreach (var (start, length) in SecretsIn(argument.Text, mySqlArgument))
+            var argumentTool = i > 0 ? tool : Tool.Other;
+            foreach (var (start, length) in MaskedWholeOnTimeout(argument.Text, text => SecretsIn(text, argumentTool)))
             {
                 if (length > 0)
                 {
@@ -110,11 +140,29 @@ public static class CommandLineRedactor
                 }
             }
 
-            // -pVALUE of a MySQL tool is a password with its value attached, not a switch named pVALUE
-            var attachedMySqlPassword = mySqlArgument && MySqlPassword.IsMatch(argument.Text);
-            if (next != null && !attachedMySqlPassword && TakesTheNextArgument(argument.Text) is { } nextSecret)
+            if (next == null)
             {
-                foreach (var (start, length) in nextSecret(next.Text))
+                continue;
+            }
+
+            Func<string, IEnumerable<(int Start, int Length)>>? nextSecret;
+            try
+            {
+                // -pVALUE of a MySQL tool and -PVALUE of a SQL Server tool are passwords with the value attached, not
+                // switches named pVALUE
+                nextSecret = AttachedPassword(argumentTool) is { } attached && attached.IsMatch(argument.Text)
+                    ? null
+                    : TakesTheNextArgument(argument.Text, argumentTool);
+            }
+            catch (RegexMatchTimeoutException)
+            {
+                // Whether this is a secret switch could not be told: the next argument may be its value
+                nextSecret = text => [(0, text.Length)];
+            }
+
+            if (nextSecret != null)
+            {
+                foreach (var (start, length) in MaskedWholeOnTimeout(next.Text, nextSecret))
                 {
                     if (length > 0)
                     {
@@ -129,42 +177,70 @@ public static class CommandLineRedactor
             : new RedactedCommandLine(Replace(commandLine, spans), true);
     }
 
+    /// <summary>
+    /// The spans <paramref name="find"/> names in <paramref name="text"/>, or all of it when a pattern's scan times out:
+    /// a secret that could not be looked for is not shown.
+    /// </summary>
+    private static List<(int Start, int Length)> MaskedWholeOnTimeout(
+        string text, Func<string, IEnumerable<(int Start, int Length)>> find)
+    {
+        try
+        {
+            return find(text).ToList();
+        }
+        catch (RegexMatchTimeoutException)
+        {
+            return [(0, text.Length)];
+        }
+    }
+
     /// <summary>The secret values inside one argument, as (start, length) in its text.</summary>
-    private static IEnumerable<(int Start, int Length)> SecretsIn(string text, bool mySqlArgument)
+    private static IEnumerable<(int Start, int Length)> SecretsIn(string text, Tool tool)
     {
         var unprefixed = StripSwitchPrefix(text);
         var prefixLength = text.Length - unprefixed.Length;
 
-        // --name:value, /name:value, and header-like Name: value
+        // --name:value, /name:value, and header-like Name: value; a header can also be the value of another switch
+        // (/header:Authorization: x)
         var colon = ColonValue.Match(unprefixed);
-        if (colon.Success && IsSecretName(colon.Groups["name"].Value))
+        if (colon.Success)
         {
             var value = colon.Groups["value"];
-            yield return (prefixLength + value.Index, value.Length);
+            if (IsSecretName(colon.Groups["name"].Value))
+            {
+                yield return (prefixLength + value.Index, value.Length);
+            }
+            else if (prefixLength > 0 && HeaderValueIn(value.Value) is var (start, length))
+            {
+                yield return (prefixLength + value.Index + start, length);
+            }
         }
 
-        // name=value, alone or in ;-separated segments (connection strings, /p: property lists)
         if (text.Contains('='))
         {
-            var segmentStart = 0;
-            foreach (var segment in text.Split(';'))
+            // A switch with its value attached (--name=value, not /p:name=value): the value runs to the end of the
+            // argument, a ; included, since a switch is no connection string
+            var assignment = Assignment.Match(text);
+            var isSwitch = assignment.Success && assignment.Groups["prefix"].Success && !assignment.Groups["property"].Success;
+            if (isSwitch && IsSecretName(assignment.Groups["name"].Value))
             {
-                var assignment = Assignment.Match(segment);
-                if (assignment.Success)
+                var value = assignment.Groups["value"];
+                yield return (value.Index, value.Length);
+            }
+            else
+            {
+                if (isSwitch && HeaderValueIn(assignment.Groups["value"].Value) is var (start, length))
                 {
-                    var name = assignment.Groups["name"].Value;
-                    var value = assignment.Groups["value"];
-                    if (IsSecretName(name))
-                    {
-                        yield return (segmentStart + value.Index, value.Length);
-                    }
-                    else if (IsUserSwitch(name) && value.Value.IndexOf(':') is var at and >= 0)
-                    {
-                        yield return (segmentStart + value.Index + at + 1, value.Length - at - 1);
-                    }
+                    // wget --header="Authorization: token x"
+                    yield return (assignment.Groups["value"].Index + start, length);
                 }
 
-                segmentStart += segment.Length + 1;
+                // name=value, alone or in ;-separated segments (connection strings, /p: property lists, and a switch's
+                // value that is one: --connection=Server=db;Password=x)
+                foreach (var span in AssignmentSecretsIn(text))
+                {
+                    yield return span;
+                }
             }
         }
 
@@ -195,18 +271,78 @@ public static class CommandLineRedactor
             }
         }
 
-        if (mySqlArgument && MySqlPassword.Match(text) is { Success: true } password)
+        if (AttachedPassword(tool)?.Match(text) is { Success: true } password)
         {
             yield return (password.Groups["value"].Index, password.Groups["value"].Length);
         }
     }
 
     /// <summary>
-    /// When <paramref name="text"/> is a switch or a word whose value is the next argument (--password, /token,
-    /// Authorization:, Bearer, -u), what to mask in that argument; otherwise null.
+    /// The secret values of the name=value segments of a ;-separated argument. A value runs on over a ; to the next
+    /// segment that looks like Name= (a ; inside a password), or to the end of the argument less a trailing ;.
     /// </summary>
-    private static Func<string, IEnumerable<(int Start, int Length)>>? TakesTheNextArgument(string text)
+    private static IEnumerable<(int Start, int Length)> AssignmentSecretsIn(string text)
     {
+        var segments = text.Split(';');
+        var starts = new int[segments.Length];
+        var assignments = new Match[segments.Length];
+        for (int i = 0, start = 0; i < segments.Length; start += segments[i].Length + 1, i++)
+        {
+            starts[i] = start;
+            assignments[i] = Assignment.Match(segments[i]);
+        }
+
+        for (var i = 0; i < segments.Length; i++)
+        {
+            if (!assignments[i].Success)
+            {
+                continue;
+            }
+
+            var next = Array.FindIndex(assignments, i + 1, a => a.Success);
+            var end = next >= 0 ? starts[next] - 1 : text.TrimEnd(';').Length;
+            var name = assignments[i].Groups["name"].Value;
+            var value = assignments[i].Groups["value"];
+            var valueStart = starts[i] + value.Index;
+            if (IsSecretName(name))
+            {
+                yield return (valueStart, Math.Max(0, end - valueStart));
+            }
+            else if (IsUserSwitch(name) && value.Value.IndexOf(':') is var at and >= 0)
+            {
+                yield return (valueStart + at + 1, Math.Max(0, end - valueStart - at - 1));
+            }
+        }
+    }
+
+    /// <summary>The value of header-like text, <c>Name: value</c>, with a secret name, as (start, length); else null.</summary>
+    private static (int Start, int Length)? HeaderValueIn(string text)
+    {
+        var header = ColonValue.Match(text);
+        return header.Success && IsSecretName(header.Groups["name"].Value)
+            ? (header.Groups["value"].Index, header.Groups["value"].Length)
+            : null;
+    }
+
+    /// <summary>The attached password switch of a tool's arguments (-pVALUE, -PVALUE), or null.</summary>
+    private static Regex? AttachedPassword(Tool tool) => tool switch
+    {
+        Tool.MySql => MySqlPassword,
+        Tool.SqlServer => SqlServerPassword,
+        _ => null
+    };
+
+    /// <summary>
+    /// When <paramref name="text"/> is a switch or a word whose value is the next argument (--password, /token,
+    /// Authorization:, Bearer, -u, and -P of a SQL Server tool), what to mask in that argument; otherwise null.
+    /// </summary>
+    private static Func<string, IEnumerable<(int Start, int Length)>>? TakesTheNextArgument(string text, Tool tool)
+    {
+        if (tool == Tool.SqlServer && text is "-P" or "/P")
+        {
+            return next => LooksLikeASwitch(next) ? [] : [(0, next.Length)];
+        }
+
         var bareSwitch = BareSwitch.Match(text);
         if (bareSwitch.Success)
         {
@@ -320,11 +456,20 @@ public static class CommandLineRedactor
         text.Length > 1 &&
         (text[0] == '-' || (text[0] == '/' && text.IndexOfAny(['/', '\\'], 1) < 0));
 
-    private static bool IsMySqlTool(string program)
+    private static Tool ToolOf(string program)
     {
         var name = Path.GetFileNameWithoutExtension(program);
-        return name.StartsWith("mysql", StringComparison.OrdinalIgnoreCase) ||
-               name.StartsWith("mariadb", StringComparison.OrdinalIgnoreCase);
+        if (name.StartsWith("mysql", StringComparison.OrdinalIgnoreCase) ||
+            name.StartsWith("mariadb", StringComparison.OrdinalIgnoreCase))
+        {
+            return Tool.MySql;
+        }
+
+        return name.Equals("sqlcmd", StringComparison.OrdinalIgnoreCase) ||
+               name.Equals("bcp", StringComparison.OrdinalIgnoreCase) ||
+               name.Equals("osql", StringComparison.OrdinalIgnoreCase)
+            ? Tool.SqlServer
+            : Tool.Other;
     }
 
     private static string Replace(string commandLine, List<(int Start, int End)> spans)

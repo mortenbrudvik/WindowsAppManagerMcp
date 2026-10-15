@@ -32,6 +32,11 @@ public class CommandLineRedactorTests
     // Quoted values and quoted switches keep their quotes, and lose the whole value, spaces included
     [InlineData(@"app.exe --password=""hunter 2"" --verbose", @"app.exe --password=""***"" --verbose")]
     [InlineData(@"app.exe ""--password=hunter 2"" --verbose", @"app.exe ""--password=***"" --verbose")]
+    // A switch's value runs to the end of the argument, a ; included: it is not a connection string
+    [InlineData(@"app.exe --password=abc;def", @"app.exe --password=***")]
+    [InlineData(@"app.exe --password=""a;b"" --verbose", @"app.exe --password=""***"" --verbose")]
+    [InlineData(@"app.exe --token=a;b;c", @"app.exe --token=***")]
+    [InlineData(@"app.exe -password=a;b=c", @"app.exe -password=***")]
     // The space-separated form
     [InlineData(@"app.exe --password hunter2 --verbose", @"app.exe --password *** --verbose")]
     [InlineData(@"app.exe /token hunter2", @"app.exe /token ***")]
@@ -44,10 +49,17 @@ public class CommandLineRedactorTests
     [InlineData(@"tool ""Bearer abc.def""", @"tool ""Bearer ***""")]
     [InlineData(@"tool Basic dXNlcjpwYXNz", @"tool Basic ***")]
     [InlineData(@"tool Authorization: Bearer abc", @"tool Authorization: *** ***")]
+    // A header given as the value of a switch (wget --header=)
+    [InlineData(@"wget --header=""Authorization: token ghp_SECRET"" https://x", @"wget --header=""Authorization: ***"" https://x")]
+    [InlineData(@"wget --header=""X-Api-Key: SECRET"" https://x", @"wget --header=""X-Api-Key: ***"" https://x")]
+    [InlineData(@"wget --header=""Cookie: session=SECRET"" https://x", @"wget --header=""Cookie: ***"" https://x")]
+    [InlineData(@"tool ""/header:Authorization: token abc""", @"tool ""/header:Authorization: ***""")]
     // URL user info: the password, or a token standing alone where the user name goes
     [InlineData(@"git clone https://user:pa55@example.com/repo.git", @"git clone https://user:***@example.com/repo.git")]
     [InlineData(@"git clone https://ghp_abc123@github.com/o/r.git", @"git clone https://***@github.com/o/r.git")]
     [InlineData(@"app.exe --url=http://u:p@host:8080/x", @"app.exe --url=http://u:***@host:8080/x")]
+    // An unencoded @ in the password: the user info runs to the last @ before the host, as git and curl read it
+    [InlineData(@"git clone https://user:p@ss@host/repo", @"git clone https://user:***@host/repo")]
     // URL query parameters with secret names, including Azure SAS and AWS signed URLs
     [InlineData(@"app.exe https://acct.blob.core.windows.net/c/b?sv=2022&sig=AbC%2Bd&se=2026", @"app.exe https://acct.blob.core.windows.net/c/b?sv=2022&sig=***&se=2026")]
     [InlineData(@"app.exe https://example.com/cb?access_token=abc#frag", @"app.exe https://example.com/cb?access_token=***#frag")]
@@ -59,9 +71,22 @@ public class CommandLineRedactorTests
     [InlineData(@"app.exe ""DefaultEndpointsProtocol=https;AccountName=a;AccountKey=Zm9v==;EndpointSuffix=core.windows.net""", @"app.exe ""DefaultEndpointsProtocol=https;AccountName=a;AccountKey=***;EndpointSuffix=core.windows.net""")]
     [InlineData(@"env API_TOKEN=abc node app.js", @"env API_TOKEN=*** node app.js")]
     [InlineData(@"msbuild /p:Password=hunter2;Configuration=Release", @"msbuild /p:Password=***;Configuration=Release")]
+    // A ; inside a connection string's or property list's value: the value runs on to the next Name= segment
+    [InlineData(@"app.exe ""Password=a;b""", @"app.exe ""Password=***""")]
+    [InlineData(@"app.exe ""Server=db;Password=a;b;Encrypt=true""", @"app.exe ""Server=db;Password=***;Encrypt=true""")]
+    [InlineData(@"app.exe ""Server=db;Pwd=hunter2;""", @"app.exe ""Server=db;Pwd=***;""")]
+    [InlineData(@"msbuild /p:Password=a;b;Configuration=Release", @"msbuild /p:Password=***;Configuration=Release")]
+    // A connection string as the value of a switch with an ordinary name
+    [InlineData(@"app.exe ""--connection=Server=db;Password=a;b;Encrypt=true""", @"app.exe ""--connection=Server=db;Password=***;Encrypt=true""")]
     // mysql-style -pVALUE, for the MySQL and MariaDB tools only
     [InlineData(@"mysql.exe -u root -phunter2 shop", @"mysql.exe -u root -p*** shop")]
     [InlineData(@"""C:\Program Files\MariaDB\bin\mariadb-dump.exe"" -psecret db", @"""C:\Program Files\MariaDB\bin\mariadb-dump.exe"" -p*** db")]
+    // -P of the SQL Server tools, apart or attached
+    [InlineData(@"sqlcmd -S srv -U sa -P hunter2", @"sqlcmd -S srv -U sa -P ***")]
+    [InlineData(@"sqlcmd.exe -S srv -U sa -Phunter2 -d db", @"sqlcmd.exe -S srv -U sa -P*** -d db")]
+    [InlineData(@"bcp db.dbo.t out t.dat -S srv -U sa -P ""hun ter2""", @"bcp db.dbo.t out t.dat -S srv -U sa -P ""***""")]
+    [InlineData(@"osql -U sa -P pw", @"osql -U sa -P ***")]
+    [InlineData(@"""C:\Program Files\Microsoft SQL Server\Tools\Binn\SQLCMD.EXE"" /U sa /P pw", @"""C:\Program Files\Microsoft SQL Server\Tools\Binn\SQLCMD.EXE"" /U sa /P ***")]
     // A user:password pair given to -u or --user (curl)
     [InlineData(@"curl -u alice:pw123 https://example.com", @"curl -u alice:*** https://example.com")]
     [InlineData(@"curl --user=alice:pw123 https://example.com", @"curl --user=alice:*** https://example.com")]
@@ -103,6 +128,15 @@ public class CommandLineRedactorTests
     [InlineData(@"ssh.exe -p2222 host")]
     [InlineData(@"docker.exe run -p8080:80 image")]
     [InlineData(@"mysql.exe -u root -p shop")]
+    // -P is a password only for the SQL Server tools; sqlcmd's -p prints statistics
+    [InlineData(@"app.exe -P 8080")]
+    [InlineData(@"sqlcmd -S srv -E -p")]
+    [InlineData(@"sqlcmd -S srv -E -P -d db")]
+    // A header with an ordinary name, given as a switch's value
+    [InlineData(@"wget --header=""Accept: text/html"" https://x")]
+    // An @ after the host is not user info
+    [InlineData(@"app.exe https://example.com/u/@user")]
+    [InlineData(@"app.exe https://example.com/?mail=a@b.c")]
     // Ordinary arguments, paths, URLs and drive letters
     [InlineData(@"""C:\Program Files\App\app.exe"" --profile-directory=""Profile 1"" C:\docs\notes.txt")]
     [InlineData(@"chrome.exe --remote-debugging-port=9222 --user-data-dir=C:\tmp\p https://example.com/path?q=1&lang=en")]
@@ -145,6 +179,30 @@ public class CommandLineRedactorTests
         var result = CommandLineRedactor.Redact(@"app.exe ""--password=a\""b c"" --verbose");
 
         result.Text.Should().Be(@"app.exe ""--password=***"" --verbose");
+    }
+
+    [Fact]
+    public void ACraftedLongArgument_IsRedactedInLinearTime()
+    {
+        // Each of these took about half a second with backtracking regexes, which rescanned the argument from every
+        // start position; a process sets its own command line, up to Windows' 32,767 characters
+        string[] arguments =
+        [
+            string.Concat(Enumerable.Repeat("a.", 16_000)),
+            new string('?', 32_000),
+            string.Concat(Enumerable.Repeat("a-", 16_000)),
+            "\"a" + new string(' ', 32_000) + "b=\"",
+            "a://" + string.Concat(Enumerable.Repeat("a://", 8_000)),
+        ];
+        CommandLineRedactor.Redact("app.exe --password=x https://u:p@h/?sig=y");
+
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        foreach (var argument in arguments)
+        {
+            CommandLineRedactor.Redact("app.exe " + argument);
+        }
+
+        stopwatch.Elapsed.Should().BeLessThan(TimeSpan.FromMilliseconds(500));
     }
 
     [Fact]
