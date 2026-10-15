@@ -26,6 +26,16 @@ public class CdpServiceTests
         WebSocketDebuggerUrl: "ws://127.0.0.1:9222/devtools/page/TAB1",
         Port: Port);
 
+    /// <summary>The whole page's text, as get_browser_content's first page asks for it.</summary>
+    private static readonly CdpPageRequest TextPage = new(TextOnly: true, Offset: 0, MaxLength: BrowserContentOptions.DefaultMaxLength);
+
+    /// <summary>The whole page's HTML.</summary>
+    private static readonly CdpPageRequest HtmlPage = TextPage with { TextOnly = false };
+
+    /// <summary>What the snapshot script returns for a page whose whole content is <paramref name="content"/>.</summary>
+    private static object Snapshot(string title, string url, string content) =>
+        new { title, url, content, offset = 0, totalLength = content.Length, matches = (int?)null };
+
     private static CdpService CreateSut(
         FakeCdpHttpHandler? http = null,
         ICdpWebSocketFactory? sockets = null,
@@ -227,23 +237,23 @@ public class CdpServiceTests
     [Fact]
     public async Task GetPageSnapshotAsync_ReturnsTitleUrlAndContentFromOneEvaluate()
     {
-        var socket = PageAnswering(new { title = "Inbox", url = "https://mail.example/#inbox", content = "3 unread" });
+        var socket = PageAnswering(Snapshot("Inbox", "https://mail.example/#inbox", "3 unread"));
         var sut = CreateSut(sockets: new FakeCdpWebSocketFactory(socket));
 
-        var result = await sut.GetPageSnapshotAsync(Tab, textOnly: true, maxLength: null, LongTimeout);
+        var result = await sut.GetPageSnapshotAsync(Tab, TextPage, LongTimeout);
 
         result.Success.Should().BeTrue();
-        result.Value.Should().Be(new CdpPageSnapshot("Inbox", "https://mail.example/#inbox", "3 unread"));
+        result.Value.Should().Be(new CdpPageSnapshot("Inbox", "https://mail.example/#inbox", "3 unread", Offset: 0, TotalLength: 8));
         socket.SentCommands.Count(c => c.GetProperty("method").GetString() == "Runtime.evaluate").Should().Be(1);
     }
 
     [Fact]
     public async Task GetPageSnapshotAsync_SendsEvaluateWithReturnByValueAndTimeout()
     {
-        var socket = PageAnswering(new { title = "t", url = "u", content = "c" });
+        var socket = PageAnswering(Snapshot("t", "u", "c"));
         var sut = CreateSut(sockets: new FakeCdpWebSocketFactory(socket));
 
-        await sut.GetPageSnapshotAsync(Tab, textOnly: true, maxLength: 50, TimeSpan.FromSeconds(7));
+        await sut.GetPageSnapshotAsync(Tab, new CdpPageRequest(TextOnly: true, Offset: 0, MaxLength: 50), TimeSpan.FromSeconds(7));
 
         var parameters = socket.EvaluateCommand!.Value.GetProperty("params");
         parameters.GetProperty("returnByValue").GetBoolean().Should().BeTrue();
@@ -255,10 +265,10 @@ public class CdpServiceTests
     [Fact]
     public async Task GetPageSnapshotAsync_RequestsHtml_WhenNotTextOnly()
     {
-        var socket = PageAnswering(new { title = "t", url = "u", content = "<html></html>" });
+        var socket = PageAnswering(Snapshot("t", "u", "<html></html>"));
         var sut = CreateSut(sockets: new FakeCdpWebSocketFactory(socket));
 
-        await sut.GetPageSnapshotAsync(Tab, textOnly: false, maxLength: null, LongTimeout);
+        await sut.GetPageSnapshotAsync(Tab, HtmlPage, LongTimeout);
 
         var expression = socket.EvaluateCommand!.Value.GetProperty("params").GetProperty("expression").GetString();
         expression.Should().Contain("outerHTML").And.NotContain("innerText");
@@ -272,7 +282,7 @@ public class CdpServiceTests
         var sut = CreateSut(sockets: new FakeCdpWebSocketFactory(socket));
         var stopwatch = Stopwatch.StartNew();
 
-        var result = await sut.GetPageSnapshotAsync(Tab, textOnly: true, maxLength: null, ShortTimeout);
+        var result = await sut.GetPageSnapshotAsync(Tab, TextPage, ShortTimeout);
 
         stopwatch.Elapsed.Should().BeLessThan(HangBound);
         result.Success.Should().BeFalse();
@@ -289,7 +299,7 @@ public class CdpServiceTests
         var sut = CreateSut(sockets: FakeCdpWebSocketFactory.NeverConnects());
         var stopwatch = Stopwatch.StartNew();
 
-        var result = await sut.GetPageSnapshotAsync(Tab, textOnly: true, maxLength: null, ShortTimeout);
+        var result = await sut.GetPageSnapshotAsync(Tab, TextPage, ShortTimeout);
 
         stopwatch.Elapsed.Should().BeLessThan(HangBound);
         result.ErrorCode.Should().Be(BrowserErrorCode.CdpTimeout);
@@ -302,7 +312,7 @@ public class CdpServiceTests
         var sut = CreateSut(sockets: new FakeCdpWebSocketFactory(new FakeCdpWebSocket()));
         using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
 
-        var act = () => sut.GetPageSnapshotAsync(Tab, textOnly: true, maxLength: null, LongTimeout, cts.Token);
+        var act = () => sut.GetPageSnapshotAsync(Tab, TextPage, LongTimeout, cts.Token);
 
         await act.Should().ThrowAsync<OperationCanceledException>();
     }
@@ -312,10 +322,10 @@ public class CdpServiceTests
     {
         // 5-byte frames split multi-byte UTF-8 characters between frames.
         const string content = "Blåbærsyltetøy – 日本語 😀 done";
-        var socket = PageAnswering(new { title = "Ærlig talt", url = "https://example.com/æ", content }, frameSize: 5);
+        var socket = PageAnswering(Snapshot("Ærlig talt", "https://example.com/æ", content), frameSize: 5);
         var sut = CreateSut(sockets: new FakeCdpWebSocketFactory(socket));
 
-        var result = await sut.GetPageSnapshotAsync(Tab, textOnly: true, maxLength: null, LongTimeout);
+        var result = await sut.GetPageSnapshotAsync(Tab, TextPage, LongTimeout);
 
         result.Success.Should().BeTrue();
         result.Value!.Content.Should().Be(content);
@@ -337,12 +347,12 @@ public class CdpServiceTests
             else if (method == "Runtime.evaluate")
             {
                 s.Enqueue("""{"method":"Runtime.consoleAPICalled","params":{"type":"log"}}""");
-                s.ReplyWithValue(command, new { title = "t", url = "u", content = "the content" });
+                s.ReplyWithValue(command, Snapshot("t", "u", "the content"));
             }
         });
         var sut = CreateSut(sockets: new FakeCdpWebSocketFactory(socket));
 
-        var result = await sut.GetPageSnapshotAsync(Tab, textOnly: true, maxLength: null, LongTimeout);
+        var result = await sut.GetPageSnapshotAsync(Tab, TextPage, LongTimeout);
 
         result.Success.Should().BeTrue();
         result.Value!.Content.Should().Be("the content");
@@ -362,7 +372,7 @@ public class CdpServiceTests
         var sut = CreateSut(sockets: new FakeCdpWebSocketFactory(socket));
         var stopwatch = Stopwatch.StartNew();
 
-        var result = await sut.GetPageSnapshotAsync(Tab, textOnly: true, maxLength: null, LongTimeout);
+        var result = await sut.GetPageSnapshotAsync(Tab, TextPage, LongTimeout);
 
         stopwatch.Elapsed.Should().BeLessThan(HangBound);
         result.ErrorCode.Should().Be(BrowserErrorCode.CdpDialogOpen);
@@ -383,7 +393,7 @@ public class CdpServiceTests
         });
         var sut = CreateSut(sockets: new FakeCdpWebSocketFactory(socket));
 
-        var result = await sut.GetPageSnapshotAsync(Tab, textOnly: true, maxLength: null, LongTimeout);
+        var result = await sut.GetPageSnapshotAsync(Tab, TextPage, LongTimeout);
 
         result.ErrorCode.Should().Be(BrowserErrorCode.CdpDialogOpen);
         result.Error.Should().Contain("JavaScript confirm dialog")
@@ -410,7 +420,7 @@ public class CdpServiceTests
         });
         var sut = CreateSut(sockets: new FakeCdpWebSocketFactory(socket));
 
-        var result = await sut.GetPageSnapshotAsync(Tab, textOnly: true, maxLength: null, LongTimeout);
+        var result = await sut.GetPageSnapshotAsync(Tab, TextPage, LongTimeout);
 
         result.ErrorCode.Should().Be(BrowserErrorCode.CdpEvaluationFailed);
         result.Error.Should().Contain("TypeError: boom");
@@ -427,7 +437,7 @@ public class CdpServiceTests
         });
         var sut = CreateSut(sockets: new FakeCdpWebSocketFactory(socket));
 
-        var result = await sut.GetPageSnapshotAsync(Tab, textOnly: true, maxLength: null, LongTimeout);
+        var result = await sut.GetPageSnapshotAsync(Tab, TextPage, LongTimeout);
 
         result.ErrorCode.Should().Be(BrowserErrorCode.CdpProtocolError);
         result.Error.Should().Contain("exceptionDetails");
@@ -445,7 +455,7 @@ public class CdpServiceTests
         });
         var sut = CreateSut(sockets: new FakeCdpWebSocketFactory(socket));
 
-        var result = await sut.GetPageSnapshotAsync(Tab, textOnly: true, maxLength: null, LongTimeout);
+        var result = await sut.GetPageSnapshotAsync(Tab, TextPage, LongTimeout);
 
         result.ErrorCode.Should().Be(BrowserErrorCode.CdpEvaluationFailed);
         result.Error.Should().Contain("Cannot find context");
@@ -462,7 +472,7 @@ public class CdpServiceTests
         });
         var sut = CreateSut(sockets: new FakeCdpWebSocketFactory(socket));
 
-        var result = await sut.GetPageSnapshotAsync(Tab, textOnly: true, maxLength: null, LongTimeout);
+        var result = await sut.GetPageSnapshotAsync(Tab, TextPage, LongTimeout);
 
         result.ErrorCode.Should().Be(BrowserErrorCode.CdpTargetClosed);
     }
@@ -477,7 +487,7 @@ public class CdpServiceTests
         });
         var sut = CreateSut(sockets: new FakeCdpWebSocketFactory(socket));
 
-        var result = await sut.GetPageSnapshotAsync(Tab, textOnly: true, maxLength: null, LongTimeout);
+        var result = await sut.GetPageSnapshotAsync(Tab, TextPage, LongTimeout);
 
         result.ErrorCode.Should().Be(BrowserErrorCode.CdpTargetClosed);
         result.Error.Should().Contain("target_closed").And.Contain("without targetId");
@@ -487,10 +497,10 @@ public class CdpServiceTests
     [Fact]
     public async Task GetPageSnapshotAsync_ReturnsResponseTooLarge_WhenTheAnswerIsOverTheLimit()
     {
-        var socket = PageAnswering(new { title = "t", url = "u", content = new string('a', 4096) });
+        var socket = PageAnswering(Snapshot("t", "u", new string('a', 4096)));
         var sut = CreateSut(sockets: new FakeCdpWebSocketFactory(socket), limits: new CdpTransportLimits(MaxMessageBytes: 1024));
 
-        var result = await sut.GetPageSnapshotAsync(Tab, textOnly: false, maxLength: null, LongTimeout);
+        var result = await sut.GetPageSnapshotAsync(Tab, HtmlPage, LongTimeout);
 
         result.ErrorCode.Should().Be(BrowserErrorCode.CdpResponseTooLarge);
         result.Error.Should().Contain("maxLength");
@@ -500,10 +510,10 @@ public class CdpServiceTests
     public async Task GetPageSnapshotAsync_Succeeds_WhenPageEnableIsNeverAnswered()
     {
         // A page may never answer Page.enable; the read does not wait for it
-        var socket = PageAnswering(new { title = "t", url = "u", content = "read anyway" });
+        var socket = PageAnswering(Snapshot("t", "u", "read anyway"));
         var sut = CreateSut(sockets: new FakeCdpWebSocketFactory(socket));
 
-        var result = await sut.GetPageSnapshotAsync(Tab, textOnly: true, maxLength: null, ShortTimeout);
+        var result = await sut.GetPageSnapshotAsync(Tab, TextPage, ShortTimeout);
 
         result.Success.Should().BeTrue();
         result.Value!.Content.Should().Be("read anyway");
@@ -517,11 +527,11 @@ public class CdpServiceTests
             if (command.GetProperty("method").GetString() == "Page.enable")
                 s.ReplyError(command, -32000, "Page domain is not available");
             else
-                s.ReplyWithValue(command, new { title = "t", url = "u", content = "c" });
+                s.ReplyWithValue(command, Snapshot("t", "u", "c"));
         });
         var sut = CreateSut(sockets: new FakeCdpWebSocketFactory(socket));
 
-        var result = await sut.GetPageSnapshotAsync(Tab, textOnly: true, maxLength: null, LongTimeout);
+        var result = await sut.GetPageSnapshotAsync(Tab, TextPage, LongTimeout);
 
         result.Success.Should().BeTrue();
     }
@@ -536,7 +546,7 @@ public class CdpServiceTests
         });
         var sut = CreateSut(sockets: new FakeCdpWebSocketFactory(socket));
 
-        var result = await sut.GetPageSnapshotAsync(Tab, textOnly: true, maxLength: null, ShortTimeout);
+        var result = await sut.GetPageSnapshotAsync(Tab, TextPage, ShortTimeout);
 
         result.ErrorCode.Should().Be(BrowserErrorCode.CdpTimeout);
         result.Error.Should().Contain("Page.enable was refused: Page domain is not available (-32000)");
@@ -545,11 +555,11 @@ public class CdpServiceTests
     [Fact]
     public async Task GetPageSnapshotAsync_RefusesAWebSocketUrlOnAnotherPortThanTheTabsOwn()
     {
-        var factory = new FakeCdpWebSocketFactory(PageAnswering(new { title = "t", url = "u", content = "c" }));
+        var factory = new FakeCdpWebSocketFactory(PageAnswering(Snapshot("t", "u", "c")));
         var sut = CreateSut(sockets: factory);
 
         var result = await sut.GetPageSnapshotAsync(
-            Tab with { WebSocketDebuggerUrl = "ws://127.0.0.1:9333/devtools/page/TAB1" }, true, null, LongTimeout);
+            Tab with { WebSocketDebuggerUrl = "ws://127.0.0.1:9333/devtools/page/TAB1" }, TextPage, LongTimeout);
 
         result.ErrorCode.Should().Be(BrowserErrorCode.CdpProtocolError);
         result.Error.Should().StartWith("Refusing");
@@ -576,7 +586,7 @@ public class CdpServiceTests
         });
         var sut = CreateSut(sockets: new FakeCdpWebSocketFactory(socket));
 
-        var result = await sut.GetPageSnapshotAsync(Tab, textOnly: true, maxLength: null, LongTimeout);
+        var result = await sut.GetPageSnapshotAsync(Tab, TextPage, LongTimeout);
 
         result.ErrorCode.Should().Be(BrowserErrorCode.CdpProtocolError);
     }
@@ -588,13 +598,190 @@ public class CdpServiceTests
     [InlineData("http://127.0.0.1:9222/devtools/page/TAB1")]
     public async Task GetPageSnapshotAsync_RefusesMissingOrNonLoopbackWebSocketUrl(string? webSocketUrl)
     {
-        var factory = new FakeCdpWebSocketFactory(PageAnswering(new { title = "t", url = "u", content = "c" }));
+        var factory = new FakeCdpWebSocketFactory(PageAnswering(Snapshot("t", "u", "c")));
         var sut = CreateSut(sockets: factory);
 
-        var result = await sut.GetPageSnapshotAsync(Tab with { WebSocketDebuggerUrl = webSocketUrl }, true, null, LongTimeout);
+        var result = await sut.GetPageSnapshotAsync(Tab with { WebSocketDebuggerUrl = webSocketUrl }, TextPage, LongTimeout);
 
         result.Success.Should().BeFalse();
         factory.ConnectedUris.Should().BeEmpty();
+    }
+
+    #endregion
+
+    #region Paged content (roadmap M5.6)
+
+    /// <summary>
+    /// A fake page whose whole content is <paramref name="whole"/>: it answers Runtime.evaluate as the snapshot script does,
+    /// with the slice the script's offset and max ask for, where it starts, and the whole length.
+    /// </summary>
+    private static FakeCdpWebSocket PageOf(string whole) =>
+        new((socket, command) =>
+        {
+            if (command.GetProperty("method").GetString() != "Runtime.evaluate")
+                return;
+
+            var expression = command.GetProperty("params").GetProperty("expression").GetString()!;
+            var match = System.Text.RegularExpressions.Regex.Match(expression, @"const offset = (\d+); const max = (\d+);");
+            var start = Math.Min(int.Parse(match.Groups[1].Value), whole.Length);
+            var end = Math.Min(whole.Length, start + int.Parse(match.Groups[2].Value));
+            socket.ReplyWithValue(command, new
+            {
+                title = "t", url = "u", content = whole[start..end], offset = start, totalLength = whole.Length, matches = (int?)null
+            });
+        });
+
+    [Fact]
+    public async Task GetPageSnapshotAsync_AsksThePageForTheSlice_AndForItsWholeLength()
+    {
+        // Arrange
+        var socket = PageAnswering(Snapshot("t", "u", "c"));
+        var sut = CreateSut(sockets: new FakeCdpWebSocketFactory(socket));
+
+        // Act
+        await sut.GetPageSnapshotAsync(Tab, new CdpPageRequest(TextOnly: true, Offset: 120, MaxLength: 50), LongTimeout);
+
+        // Assert - the page slices, so only the slice crosses the connection
+        var expression = socket.EvaluateCommand!.Value.GetProperty("params").GetProperty("expression").GetString();
+        expression.Should().Contain("document.body.innerText").And.Contain("const offset = 120; const max = 50;")
+            .And.Contain("content.slice(start, end)").And.Contain("totalLength: total")
+            .And.NotContain("querySelectorAll", "no selector reads the whole body");
+    }
+
+    [Fact]
+    public async Task GetPageSnapshotAsync_ReturnsTheSlice_WithWhereItStarts_AndTheLengthThePageMeasured()
+    {
+        // Arrange - a page of 100 million characters, larger than the 64 MB message limit: only its slice is sent
+        var socket = PageAnswering(new { title = "t", url = "u", content = "bcd", offset = 1, totalLength = 100_000_000, matches = (int?)null });
+        var sut = CreateSut(sockets: new FakeCdpWebSocketFactory(socket));
+
+        // Act
+        var result = await sut.GetPageSnapshotAsync(Tab, TextPage with { Offset = 1, MaxLength = 3 }, LongTimeout);
+
+        // Assert
+        result.Success.Should().BeTrue(result.Error);
+        result.Value.Should().Be(new CdpPageSnapshot("t", "u", "bcd", Offset: 1, TotalLength: 100_000_000));
+    }
+
+    [Fact]
+    public async Task GetPageSnapshotAsync_ReadsAPageLargerThanTheMessageLimit_ASliceAtATime()
+    {
+        // Arrange - a message limit of 1 KB and a page of 4,096 characters: all of it at once does not fit
+        var whole = string.Concat(Enumerable.Range(0, 4096).Select(i => (char)('a' + i % 26)));
+        var sut = CreateSut(
+            sockets: FakeCdpWebSocketFactory.EachConnect(() => PageOf(whole)), limits: new CdpTransportLimits(MaxMessageBytes: 1024));
+
+        // Act
+        var atOnce = await sut.GetPageSnapshotAsync(Tab, TextPage with { MaxLength = 4096 }, LongTimeout);
+        var read = new System.Text.StringBuilder();
+        for (var offset = 0; offset < whole.Length; offset += 500)
+        {
+            var slice = await sut.GetPageSnapshotAsync(Tab, TextPage with { Offset = offset, MaxLength = 500 }, LongTimeout);
+            slice.Success.Should().BeTrue(slice.Error);
+            slice.Value!.TotalLength.Should().Be(4096);
+            read.Append(slice.Value.Content);
+        }
+
+        // Assert
+        atOnce.ErrorCode.Should().Be(BrowserErrorCode.CdpResponseTooLarge);
+        read.ToString().Should().Be(whole);
+    }
+
+    [Fact]
+    public async Task GetPageSnapshotAsync_ScopesTheReadToTheSelectorsMatches_OnePerLine()
+    {
+        // Arrange
+        var socket = PageAnswering(new { title = "t", url = "u", content = "Title\nPart", offset = 0, totalLength = 10, matches = 2 });
+        var sut = CreateSut(sockets: new FakeCdpWebSocketFactory(socket));
+
+        // Act
+        var text = await sut.GetPageSnapshotAsync(Tab, TextPage with { Selector = "h1,h2" }, LongTimeout);
+        var expression = socket.EvaluateCommand!.Value.GetProperty("params").GetProperty("expression").GetString();
+
+        // Assert
+        text.Value!.Content.Should().Be("Title\nPart");
+        expression.Should().Contain("document.querySelectorAll(\"h1,h2\")").And.Contain(".join('\\n')").And.Contain("innerText")
+            .And.NotContain("document.body.innerText");
+    }
+
+    [Fact]
+    public async Task GetPageSnapshotAsync_ReadsTheSelectorsMatchesHtml_WhenNotTextOnly()
+    {
+        var socket = PageAnswering(new { title = "t", url = "u", content = "<main></main>", offset = 0, totalLength = 13, matches = 1 });
+        var sut = CreateSut(sockets: new FakeCdpWebSocketFactory(socket));
+
+        await sut.GetPageSnapshotAsync(Tab, HtmlPage with { Selector = "main" }, LongTimeout);
+
+        var expression = socket.EvaluateCommand!.Value.GetProperty("params").GetProperty("expression").GetString();
+        expression.Should().Contain("e => e.outerHTML").And.NotContain("innerText");
+    }
+
+    [Fact]
+    public async Task GetPageSnapshotAsync_PutsTheSelectorInTheScript_OnlyAsAStringLiteral()
+    {
+        // Arrange - a selector that would close the string and run its own script if it were pasted in
+        const string selector = "a\"); window.hacked = true; (\"";
+        var socket = PageAnswering(Snapshot("t", "u", "c"));
+        var sut = CreateSut(sockets: new FakeCdpWebSocketFactory(socket));
+
+        // Act
+        await sut.GetPageSnapshotAsync(Tab, TextPage with { Selector = selector }, LongTimeout);
+
+        // Assert
+        var expression = socket.EvaluateCommand!.Value.GetProperty("params").GetProperty("expression").GetString();
+        expression.Should().NotContain(selector).And.Contain($"document.querySelectorAll({System.Text.Json.JsonSerializer.Serialize(selector)})");
+    }
+
+    [Fact]
+    public async Task GetPageSnapshotAsync_ReturnsContentExtractionFailed_WhenNoElementMatchesTheSelector()
+    {
+        var socket = PageAnswering(new { title = "t", url = "u", content = "", offset = 0, totalLength = 0, matches = 0 });
+        var sut = CreateSut(sockets: new FakeCdpWebSocketFactory(socket));
+
+        var result = await sut.GetPageSnapshotAsync(Tab, TextPage with { Selector = "article" }, LongTimeout);
+
+        result.ErrorCode.Should().Be(BrowserErrorCode.ContentExtractionFailed);
+        result.Error.Should().Contain("'article'");
+    }
+
+    [Fact]
+    public async Task GetPageSnapshotAsync_ReturnsEvaluationFailed_ForASelectorThatIsNotCss()
+    {
+        // Arrange - querySelectorAll throws a SyntaxError
+        var socket = new FakeCdpWebSocket((s, command) =>
+        {
+            if (command.GetProperty("method").GetString() == "Runtime.evaluate")
+            {
+                s.Enqueue(System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    id = command.GetProperty("id").GetInt32(),
+                    result = new
+                    {
+                        result = new { type = "object" },
+                        exceptionDetails = new { text = "Uncaught", exception = new { description = "SyntaxError: '##' is not a valid selector." } }
+                    }
+                }));
+            }
+        });
+        var sut = CreateSut(sockets: new FakeCdpWebSocketFactory(socket));
+
+        // Act
+        var result = await sut.GetPageSnapshotAsync(Tab, TextPage with { Selector = "##" }, LongTimeout);
+
+        // Assert
+        result.ErrorCode.Should().Be(BrowserErrorCode.CdpEvaluationFailed);
+        result.Error.Should().Contain("is not a valid selector");
+    }
+
+    [Fact]
+    public async Task GetPageSnapshotAsync_ReturnsProtocolError_WhenTheAnswerDoesNotSayHowLongTheContentIs()
+    {
+        var socket = PageAnswering(new { title = "t", url = "u", content = "c" });
+        var sut = CreateSut(sockets: new FakeCdpWebSocketFactory(socket));
+
+        var result = await sut.GetPageSnapshotAsync(Tab, TextPage, LongTimeout);
+
+        result.ErrorCode.Should().Be(BrowserErrorCode.CdpProtocolError);
     }
 
     #endregion

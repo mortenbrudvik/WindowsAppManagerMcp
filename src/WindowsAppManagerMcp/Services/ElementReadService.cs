@@ -94,9 +94,6 @@ public sealed partial class ElementReadService : IElementReadService
     /// <summary>How many of a grid's first children are checked for a Header.</summary>
     private const int HeaderSearchChildren = 3;
 
-    /// <summary>How many times a text page that does not fit one result is read again over fewer characters before it is cut.</summary>
-    private const int TextPageFits = 3;
-
     /// <summary>The most rows a grid's column headers are taken to fill (a header row over a header row, as Q1 over Revenue).</summary>
     private const int MaxHeaderRows = 4;
 
@@ -439,62 +436,13 @@ public sealed partial class ElementReadService : IElementReadService
         }
     }
 
-    /// <summary>
-    /// The page made to fit one result: at most <paramref name="maxLength"/> characters and <see cref="MaxTextBytes"/> bytes of
-    /// JSON. A page whose text does not fit is read again over fewer of the provider's characters, in proportion to the part
-    /// that fits, so that its end (Start + Length, the next page's offset) is still just past its text and nothing is skipped.
-    /// Only when that does not work (one of the provider's characters is longer than the page, or the document changes under
-    /// the read) is the text cut, and the page says so (<see cref="UiaTextPage.Cut"/>: the rest of its range is skipped).
-    /// </summary>
-    private UiaTextPage FitTextPage(IUiaNode node, UiaTextPage page, int offset, int maxLength)
-    {
-        for (var tries = 0; tries < TextPageFits; tries++)
-        {
-            var fits = FittingLength(page.Text, maxLength, MaxTextBytes);
-            if (fits == page.Text.Length || page.Length <= 1)
-            {
-                break;
-            }
+    /// <summary>The page made to fit one result (<see cref="TextPages.Fit"/>), read again at the same offset when it must be.</summary>
+    private UiaTextPage FitTextPage(IUiaNode node, UiaTextPage page, int offset, int maxLength) =>
+        TextPages.Fit(page, maxLength, MaxTextBytes, fewer => TryTextPage(node, offset, fewer));
 
-            var fewer = (int)Math.Clamp((long)page.Length * fits / page.Text.Length, 1, page.Length - 1);
-            if (TryTextPage(node, offset, fewer) is not { } shorter)
-            {
-                break;
-            }
-
-            page = shorter;
-        }
-
-        var end = FittingLength(page.Text, maxLength, MaxTextBytes);
-        return end == page.Text.Length ? page : page with { Text = page.Text[..end], Cut = true };
-    }
-
-    /// <summary>
-    /// How many characters from the start of <paramref name="text"/> fit both limits: at most <paramref name="maxChars"/>
-    /// characters that take at most <paramref name="maxBytes"/> bytes in the result's JSON (<see cref="ToolJson.StringBytes"/>),
-    /// never ending between the two halves of a surrogate pair (unless that would leave nothing).
-    /// </summary>
-    private static int FittingLength(ReadOnlySpan<char> text, int maxChars, int maxBytes)
-    {
-        var end = Math.Min(text.Length, maxChars);
-        var bytes = 0;
-        for (var i = 0; i < end; i++)
-        {
-            bytes += ToolJson.CharBytes(text[i]);
-            if (bytes > maxBytes)
-            {
-                end = i;
-                break;
-            }
-        }
-
-        if (end < text.Length && end > 1 && char.IsHighSurrogate(text[end - 1]))
-        {
-            end--;
-        }
-
-        return end;
-    }
+    /// <summary>How many characters fit both limits (<see cref="TextPages.FittingLength"/>).</summary>
+    private static int FittingLength(ReadOnlySpan<char> text, int maxChars, int maxBytes) =>
+        TextPages.FittingLength(text, maxChars, maxBytes);
 
     private string? TryValue(IUiaNode node)
     {

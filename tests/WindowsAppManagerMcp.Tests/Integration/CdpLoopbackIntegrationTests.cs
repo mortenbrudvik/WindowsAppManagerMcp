@@ -41,7 +41,7 @@ public sealed class CdpLoopbackIntegrationTests : IAsyncLifetime
     {
         // Act - the port's owner is this test process, so the targetId path's owner check passes
         var target = await _sut.FindTargetByIdAsync(_server.Port, Environment.ProcessId, "T1", CallTimeout);
-        var snapshot = await _sut.GetPageSnapshotAsync(target.Value!, textOnly: true, maxLength: null, CallTimeout);
+        var snapshot = await _sut.GetPageSnapshotAsync(target.Value!, new CdpPageRequest(true, 0, 20_000), CallTimeout);
 
         // Assert
         target.Success.Should().BeTrue(target.Error);
@@ -59,7 +59,7 @@ public sealed class CdpLoopbackIntegrationTests : IAsyncLifetime
         _server.RefuseHandshake = true;
         var target = await _sut.FindTargetByIdAsync(_server.Port, Environment.ProcessId, "T1", CallTimeout);
 
-        var snapshot = await _sut.GetPageSnapshotAsync(target.Value!, textOnly: true, maxLength: null, CallTimeout);
+        var snapshot = await _sut.GetPageSnapshotAsync(target.Value!, new CdpPageRequest(true, 0, 20_000), CallTimeout);
 
         snapshot.ErrorCode.Should().Be(BrowserErrorCode.CdpUnavailable);
         snapshot.Error.Should().Contain("403").And.Contain("--remote-allow-origins");
@@ -71,7 +71,7 @@ public sealed class CdpLoopbackIntegrationTests : IAsyncLifetime
         _server.ResetOnEvaluate = true;
         var target = await _sut.FindTargetByIdAsync(_server.Port, Environment.ProcessId, "T1", CallTimeout);
 
-        var snapshot = await _sut.GetPageSnapshotAsync(target.Value!, textOnly: true, maxLength: null, CallTimeout);
+        var snapshot = await _sut.GetPageSnapshotAsync(target.Value!, new CdpPageRequest(true, 0, 20_000), CallTimeout);
 
         snapshot.ErrorCode.Should().Be(BrowserErrorCode.CdpTargetClosed, snapshot.Error);
     }
@@ -285,7 +285,7 @@ public sealed class CdpLoopbackIntegrationTests : IAsyncLifetime
                 }
 
                 object reply = method == "Runtime.evaluate"
-                    ? new { id, result = new { result = new { type = "object", value = new { title = "Loopback", url = "data:text/html,loopback", content = "served over a real socket" } } } }
+                    ? new { id, result = new { result = new { type = "object", value = new { title = "Loopback", url = "data:text/html,loopback", content = "served over a real socket", offset = 0, totalLength = 25 } } } }
                     : new { id, result = new { } };
                 await socket.SendAsync(JsonSerializer.SerializeToUtf8Bytes(reply), WebSocketMessageType.Text, true, _stop.Token);
             }

@@ -8,6 +8,12 @@ namespace WindowsAppManagerMcp.Tests.Unit.Services;
 /// </summary>
 public class BrowserUiaReaderTests
 {
+    /// <summary>A page long enough for the whole of every test page.</summary>
+    private const int Whole = ElementReadService.MaxTextLength;
+
+    /// <summary>read_element_text's bytes of JSON per page, which get_browser_content's pages share (roadmap M5.6).</summary>
+    private const int Bytes = ElementReadService.MaxTextBytes;
+
     private readonly FakeUiaTree _tree = new();
 
     private BrowserUiaReader CreateSut() => new(_tree);
@@ -80,7 +86,7 @@ public class BrowserUiaReaderTests
 
         // Act
         var url = ReadUrl(browser, foreground: false);
-        var content = CreateSut().ReadContent(browser.Window, browser.Title, browser.Pages, null, CancellationToken.None);
+        var content = CreateSut().ReadContent(browser.Window, browser.Title, browser.Pages, 0, Whole, Bytes, CancellationToken.None);
 
         // Assert
         browser.Pages.Should().StartWith(browser.RenderWidgetPane);
@@ -99,7 +105,7 @@ public class BrowserUiaReaderTests
 
         // Act
         var url = ReadUrl(browser, foreground: false);
-        var content = CreateSut().ReadContent(browser.Window, browser.Title, browser.Pages, null, CancellationToken.None);
+        var content = CreateSut().ReadContent(browser.Window, browser.Title, browser.Pages, 0, Whole, Bytes, CancellationToken.None);
 
         // Assert
         browser.Pages.Should().BeEmpty();
@@ -118,7 +124,7 @@ public class BrowserUiaReaderTests
 
         // Act
         var url = ReadUrl(browser, foreground: false);
-        var content = CreateSut().ReadContent(browser.Window, browser.Title, browser.Pages, null, CancellationToken.None);
+        var content = CreateSut().ReadContent(browser.Window, browser.Title, browser.Pages, 0, Whole, Bytes, CancellationToken.None);
 
         // Assert - the tab's page, not Edge's sidebar
         url.Url.Should().Be(FakeBrowserWindow.CommittedUrl);
@@ -138,11 +144,11 @@ public class BrowserUiaReaderTests
         var window = Window(new FakeUiaNode("Pane") { ClassName = "Chrome_WidgetWin_0" }.With(pane));
 
         // Act
-        var content = CreateSut().ReadContent(window, null, [pane], null, CancellationToken.None);
+        var content = CreateSut().ReadContent(window, null, [pane], 0, Whole, Bytes, CancellationToken.None);
         var url = CreateSut().ReadUrl(window, null, [pane], false, CancellationToken.None);
 
         // Assert
-        content.Should().Be(new BrowserUiaContent(true, "Web content", null));
+        content.Should().Be(new BrowserUiaContent(true, "Web content", null, 0, TotalLength: "Web content".Length));
         url.ErrorCode.Should().Be(BrowserErrorCode.UrlBarNotFound);
     }
 
@@ -155,7 +161,7 @@ public class BrowserUiaReaderTests
 
         // Act
         var url = ReadUrl(browser, foreground: false);
-        var content = CreateSut().ReadContent(browser.Window, browser.Title, browser.Pages, null, CancellationToken.None);
+        var content = CreateSut().ReadContent(browser.Window, browser.Title, browser.Pages, 0, Whole, Bytes, CancellationToken.None);
 
         // Assert
         url.ErrorCode.Should().Be(BrowserErrorCode.UrlExtractionFailed);
@@ -472,7 +478,7 @@ public class BrowserUiaReaderTests
 
         // Act
         var url = CreateSut().ReadUrl(browser.Window, browser.Title, pages, true, CancellationToken.None);
-        var content = CreateSut().ReadContent(browser.Window, browser.Title, pages, null, CancellationToken.None);
+        var content = CreateSut().ReadContent(browser.Window, browser.Title, pages, 0, Whole, Bytes, CancellationToken.None);
 
         // Assert
         url.Url.Should().Be("https://example.com/");
@@ -620,7 +626,7 @@ public class BrowserUiaReaderTests
         var browser = new FakeBrowserWindow(names);
 
         // Act
-        var content = CreateSut().ReadContent(browser.Window, browser.Title, browser.Pages, null, CancellationToken.None);
+        var content = CreateSut().ReadContent(browser.Window, browser.Title, browser.Pages, 0, Whole, Bytes, CancellationToken.None);
 
         // Assert - the page's text, not its address; the address bar is not looked up (D-BRW-20)
         content.Found.Should().BeTrue();
@@ -641,7 +647,7 @@ public class BrowserUiaReaderTests
             new FakeUiaNode("Document", "Example").WithPattern<IUiaTextPattern>(text).With(new FakeUiaNode("Text", "Ignored"))));
 
         // Act
-        var content = CreateSut().ReadContent(window, null, null, maxLength: null, CancellationToken.None);
+        var content = CreateSut().ReadContent(window, null, null, 0, Whole, Bytes, CancellationToken.None);
 
         // Assert
         content.Text.Should().Be("The whole article.");
@@ -653,9 +659,74 @@ public class BrowserUiaReaderTests
     {
         var window = Window(new FakeUiaNode("Document").WithPattern<IUiaTextPattern>(new FakeTextPattern("abcdefghij")));
 
-        var content = CreateSut().ReadContent(window, null, null, maxLength: 4, CancellationToken.None);
+        var content = CreateSut().ReadContent(window, null, null, 0, 4, Bytes, CancellationToken.None);
 
         content.Text.Should().Be("abcd");
+    }
+
+    [Fact]
+    public void ReadContent_PagesTheTextPattern_ReadingOnlyThePage()
+    {
+        // Arrange
+        var text = new FakeTextPattern("abcdefghij");
+        var window = Window(new FakeUiaNode("Document").WithPattern<IUiaTextPattern>(text));
+
+        // Act
+        var first = CreateSut().ReadContent(window, null, null, 4, 3, Bytes, CancellationToken.None);
+        var last = CreateSut().ReadContent(window, null, null, 8, 3, Bytes, CancellationToken.None);
+
+        // Assert - read_element_text's paging: the whole length is known once the last page is read
+        first.Should().Be(new BrowserUiaContent(true, "efg", null, 4, TotalLength: null, NextOffset: 7));
+        last.Should().Be(new BrowserUiaContent(true, "ij", null, 8, TotalLength: 10, NextOffset: null));
+        text.PageLengths.Should().Equal([3, 3], "a page costs its own length, not the document's");
+    }
+
+    [Fact]
+    public void ReadContent_FitsATextPatternPage_ToTheBytesOfJson_SoTheNextPageSkipsNothing()
+    {
+        var text = new FakeTextPattern("abcdefghijkl");
+        var window = Window(new FakeUiaNode("Document").WithPattern<IUiaTextPattern>(text));
+
+        var content = CreateSut().ReadContent(window, null, null, 0, 12, maxBytes: 5, CancellationToken.None);
+
+        content.Should().Be(new BrowserUiaContent(true, "abcde", null, 0, TotalLength: null, NextOffset: 5));
+    }
+
+    [Fact]
+    public void ReadContent_ReturnsAnEmptyPage_PastTheEndOfTheText()
+    {
+        var window = Window(new FakeUiaNode("Document").WithPattern<IUiaTextPattern>(new FakeTextPattern("abc")));
+
+        var content = CreateSut().ReadContent(window, null, null, 50, 10, Bytes, CancellationToken.None);
+
+        content.Should().Be(new BrowserUiaContent(true, "", null, 3, TotalLength: 3, NextOffset: null));
+    }
+
+    [Fact]
+    public void ReadContent_PagesTheWalkedText_AndKnowsItsLength_OnceTheWalkReachedItsEnd()
+    {
+        // Arrange - no Text pattern: the text is collected from the elements, "One\r\nTwo\r\nThree"
+        var window = Window(new FakeUiaNode("Document").With(
+            new FakeUiaNode("Text", "One"), new FakeUiaNode("Text", "Two"), new FakeUiaNode("Text", "Three")));
+        var whole = string.Join(Environment.NewLine, "One", "Two", "Three");
+
+        // Act
+        var first = CreateSut().ReadContent(window, null, null, 0, 4, Bytes, CancellationToken.None);
+        var rest = CreateSut().ReadContent(window, null, null, first.NextOffset!.Value, Whole, Bytes, CancellationToken.None);
+
+        // Assert
+        first.Should().Be(new BrowserUiaContent(true, whole[..4], null, 0, TotalLength: null, NextOffset: 4));
+        rest.Should().Be(new BrowserUiaContent(true, whole[4..], null, 4, TotalLength: whole.Length, NextOffset: null));
+    }
+
+    [Fact]
+    public void ReadContent_FitsAWalkedPage_ToTheBytesOfJson()
+    {
+        var window = Window(new FakeUiaNode("Document").With(new FakeUiaNode("Text", "abcdefghij")));
+
+        var content = CreateSut().ReadContent(window, null, null, 2, 8, maxBytes: 3, CancellationToken.None);
+
+        content.Should().Be(new BrowserUiaContent(true, "cde", null, 2, TotalLength: 10, NextOffset: 5));
     }
 
     [Fact]
@@ -665,7 +736,7 @@ public class BrowserUiaReaderTests
             new FakeUiaNode("Document", "Page") { Bounds = new UiaRect(0, 0, 100, 100) }.WithPattern<IUiaTextPattern>(new FakeTextPattern("page")).With(
                 new FakeUiaNode("Document", "Frame") { Bounds = new UiaRect(0, 0, 900, 900) }.WithPattern<IUiaTextPattern>(new FakeTextPattern("frame"))));
 
-        var content = CreateSut().ReadContent(window, "Page - Google Chrome", null, maxLength: null, CancellationToken.None);
+        var content = CreateSut().ReadContent(window, "Page - Google Chrome", null, 0, Whole, Bytes, CancellationToken.None);
 
         content.Text.Should().Be("page");
     }
@@ -687,11 +758,11 @@ public class BrowserUiaReaderTests
         var window = new FakeUiaNode("Window", "Mozilla Firefox").With(new FakeUiaNode("Pane").With(page));
 
         // Act
-        var content = CreateSut().ReadContent(window, "Mozilla Firefox", null, maxLength: null, CancellationToken.None);
+        var content = CreateSut().ReadContent(window, "Mozilla Firefox", null, 0, Whole, Bytes, CancellationToken.None);
         var url = CreateSut().ReadUrl(window, "Mozilla Firefox", null, true, CancellationToken.None);
 
         // Assert - a frame's Document is inside the page's, so it is never the tab's page
-        content.Should().Be(new BrowserUiaContent(true, "page", "https://embedder.example/"));
+        content.Should().Be(new BrowserUiaContent(true, "page", "https://embedder.example/", 0, TotalLength: 4));
         url.Url.Should().Be("https://embedder.example/");
         url.UrlSource.Should().Be(BrowserUrlSource.Document);
     }
@@ -711,7 +782,7 @@ public class BrowserUiaReaderTests
             new FakeUiaNode("Group").With(new FakeUiaNode("Text", "Nested"))));
 
         // Act
-        var content = CreateSut().ReadContent(window, null, null, maxLength: null, CancellationToken.None);
+        var content = CreateSut().ReadContent(window, null, null, 0, Whole, Bytes, CancellationToken.None);
 
         // Assert
         content.Text.Should().Be(string.Join(Environment.NewLine,
@@ -726,7 +797,7 @@ public class BrowserUiaReaderTests
             new FakeUiaNode("Text", "Sign in"),
             Edit("Password", "hunter2", isPassword: true)));
 
-        var content = CreateSut().ReadContent(window, null, null, maxLength: null, CancellationToken.None);
+        var content = CreateSut().ReadContent(window, null, null, 0, Whole, Bytes, CancellationToken.None);
 
         content.Text.Should().Be($"Sign in{Environment.NewLine}Password");
         _tree.Reads.Should().NotContain("Pattern:IUiaValuePattern:Password");
@@ -739,7 +810,7 @@ public class BrowserUiaReaderTests
             new FakeUiaNode("Edit", "Field") { ActionPatterns = ["Value"], IdentityException = FakeUiaTree.Vanished() }
                 .WithPattern<IUiaValuePattern>(new FakeValuePattern("maybe secret"))));
 
-        var content = CreateSut().ReadContent(window, null, null, maxLength: null, CancellationToken.None);
+        var content = CreateSut().ReadContent(window, null, null, 0, Whole, Bytes, CancellationToken.None);
 
         content.Text.Should().Be("Field");
     }
@@ -754,7 +825,7 @@ public class BrowserUiaReaderTests
             new FakeUiaNode("Group", "Later").With(new FakeUiaNode("Text", "Never read"))));
 
         // Act
-        var content = CreateSut().ReadContent(window, null, null, maxLength: 14, CancellationToken.None);
+        var content = CreateSut().ReadContent(window, null, null, 0, 14, Bytes, CancellationToken.None);
 
         // Assert - the same text as a walk of the whole page cut afterwards
         content.Text.Should().Be($"First line{Environment.NewLine}Se"[..14]);
@@ -773,7 +844,7 @@ public class BrowserUiaReaderTests
         var window = Window(document);
 
         // Act
-        var content = CreateSut().ReadContent(window, null, null, maxLength: null, CancellationToken.None);
+        var content = CreateSut().ReadContent(window, null, null, 0, Whole, Bytes, CancellationToken.None);
 
         // Assert
         content.Text!.Split(Environment.NewLine).Should().HaveCount(items.Length);
@@ -794,7 +865,7 @@ public class BrowserUiaReaderTests
         var window = Window(new FakeUiaNode("Document").With(node));
 
         // Act
-        var content = CreateSut().ReadContent(window, null, null, maxLength: null, CancellationToken.None);
+        var content = CreateSut().ReadContent(window, null, null, 0, Whole, Bytes, CancellationToken.None);
 
         // Assert
         content.Text.Should().Be("Level 20");
@@ -811,8 +882,8 @@ public class BrowserUiaReaderTests
         hidden.Document.IsOffscreen = true;
 
         // Act
-        var none = CreateSut().ReadContent(panes, null, null, maxLength: null, CancellationToken.None);
-        var offscreen = CreateSut().ReadContent(hidden.Window, hidden.Title, null, maxLength: null, CancellationToken.None);
+        var none = CreateSut().ReadContent(panes, null, null, 0, Whole, Bytes, CancellationToken.None);
+        var offscreen = CreateSut().ReadContent(hidden.Window, hidden.Title, null, 0, Whole, Bytes, CancellationToken.None);
 
         // Assert
         none.Should().Be(new BrowserUiaContent(false, null, null));
@@ -824,7 +895,7 @@ public class BrowserUiaReaderTests
     {
         var window = Window(new FakeUiaNode("Document").With(new FakeUiaNode("Button", "Only a button")));
 
-        var content = CreateSut().ReadContent(window, null, null, maxLength: null, CancellationToken.None);
+        var content = CreateSut().ReadContent(window, null, null, 0, Whole, Bytes, CancellationToken.None);
 
         content.Should().Be(new BrowserUiaContent(true, null, null));
     }
@@ -835,7 +906,7 @@ public class BrowserUiaReaderTests
         var window = Window(new FakeUiaNode("Document").WithPattern<IUiaTextPattern>(new FakeTextPattern("text")));
         window.FindAllException = FakeUiaTree.Vanished();
 
-        var content = CreateSut().ReadContent(window, null, null, maxLength: null, CancellationToken.None);
+        var content = CreateSut().ReadContent(window, null, null, 0, Whole, Bytes, CancellationToken.None);
 
         content.Found.Should().BeFalse();
     }
@@ -848,7 +919,7 @@ public class BrowserUiaReaderTests
         window.FindAllException = new TimeoutException("The provider did not answer.");
 
         // Act
-        var act = () => CreateSut().ReadContent(window, null, null, maxLength: null, CancellationToken.None);
+        var act = () => CreateSut().ReadContent(window, null, null, 0, Whole, Bytes, CancellationToken.None);
 
         // Assert
         act.Should().Throw<TimeoutException>();
@@ -864,7 +935,7 @@ public class BrowserUiaReaderTests
             new FakeUiaNode("Group").With(new FakeUiaNode("Text", "Second"))));
 
         // Act
-        var act = () => CreateSut().ReadContent(window, null, null, maxLength: null, cancellation.Token);
+        var act = () => CreateSut().ReadContent(window, null, null, 0, Whole, Bytes, cancellation.Token);
 
         // Assert
         act.Should().Throw<OperationCanceledException>();

@@ -172,46 +172,62 @@ public sealed class BrowserUiaReader
     }
 
     /// <summary>
-    /// The page the browser shows and its text: the shown tab's Document (as <see cref="ReadUrl"/> finds it, without reading
-    /// the address bar). Its Text pattern gives the text in one call, else its text is collected from the names of its text,
-    /// edit box and link elements and from the values that differ from them, one per line, at most
-    /// <see cref="MaxTextDepth"/> levels down. <see cref="BrowserUiaContent.Found"/> is false when the window shows no
-    /// such page; the text is null when the page has none or it could not be read.
+    /// The page the browser shows and one page of its text (roadmap M5.6), with read_element_text's paging: the shown tab's
+    /// Document (as <see cref="ReadUrl"/> finds it, without reading the address bar). Its Text pattern is read a page at a
+    /// time (<see cref="IUiaTextPattern.GetTextPage"/>, so a page costs its own length and not the document's, and offsets
+    /// count the provider's characters), made to fit <paramref name="maxBytes"/> bytes of JSON
+    /// (<see cref="TextPages.Fit"/>); its whole length is known once the last page is read. Without a Text pattern the text
+    /// is collected from the names of its text, edit box and link elements and from the values that differ from them, one
+    /// per line, at most <see cref="MaxTextDepth"/> levels down, until it reaches the page's end (plus one character, to
+    /// tell whether more follows), and the page is sliced from it. <see cref="BrowserUiaContent.Found"/> is false when the
+    /// window shows no such page; the text is null when the page has none or it could not be read.
     /// </summary>
     /// <param name="window">The browser window's element.</param>
     /// <param name="windowTitle">The window's title, which starts with the shown page's title; null when unknown.</param>
     /// <param name="pages">The roots of the window's shown pages, or none to search the window for its Documents.</param>
-    /// <param name="maxLength">The most characters returned, or null for all of them. The walk stops once it has read
-    /// that many, so a long page is not read to its end only to be cut.</param>
+    /// <param name="offset">Where the page starts (0 or more).</param>
+    /// <param name="maxLength">The most characters returned (1 or more). The walk stops once it has read to the page's
+    /// end, so a long page is not read to its end only to be cut.</param>
+    /// <param name="maxBytes">The most bytes the page's text takes in the result's JSON.</param>
     /// <param name="cancellationToken">The read's deadline.</param>
     public BrowserUiaContent ReadContent(
-        IUiaNode window, string? windowTitle, IReadOnlyList<IUiaNode>? pages, int? maxLength, CancellationToken cancellationToken)
+        IUiaNode window, string? windowTitle, IReadOnlyList<IUiaNode>? pages, int offset, int maxLength, int maxBytes,
+        CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var limit = maxLength is >= 0 ? maxLength : null;
+        offset = Math.Max(0, offset);
+        maxLength = Math.Max(1, maxLength);
         if (FindPage(window, windowTitle, pages, display: null, cancellationToken) is not { } page)
         {
             return new BrowserUiaContent(false, null, null);
         }
 
-        string? content;
         try
         {
-            content = _tree.GetPattern<IUiaTextPattern>(page.Root.Node) is { } text
-                ? text.GetText(limit ?? -1)
-                : CollectText(page.Root, limit, cancellationToken);
+            if (_tree.GetPattern<IUiaTextPattern>(page.Root.Node) is { } text)
+            {
+                var read = TextPages.Fit(text.GetTextPage(offset, maxLength), maxLength, maxBytes, fewer => text.GetTextPage(offset, fewer));
+                var end = read.Start + read.Length;
+                return new BrowserUiaContent(true, read.Text, page.Url, read.Start,
+                    TotalLength: read.HasMore ? null : end, NextOffset: read.HasMore ? end : null);
+            }
+
+            // One character past the page tells whether more follows
+            var limit = (int)Math.Min(int.MaxValue, (long)offset + maxLength + 1);
+            if (CollectText(page.Root, limit, cancellationToken) is not { } collected)
+            {
+                return new BrowserUiaContent(true, null, page.Url);
+            }
+
+            var start = Math.Min(offset, collected.Length);
+            var stop = start + TextPages.FittingLength(collected.AsSpan(start), maxLength, maxBytes);
+            return new BrowserUiaContent(true, collected[start..stop], page.Url, start,
+                TotalLength: collected.Length < limit ? collected.Length : null, NextOffset: stop < collected.Length ? stop : null);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            content = null;
+            return new BrowserUiaContent(true, null, page.Url);
         }
-
-        if (content != null && limit is int max && content.Length > max)
-        {
-            content = content[..max];
-        }
-
-        return new BrowserUiaContent(true, content, page.Url);
     }
 
     /// <summary>
@@ -749,6 +765,11 @@ public sealed record BrowserUiaUrl(
 
 /// <summary>What <see cref="BrowserUiaReader.ReadContent"/> found.</summary>
 /// <param name="Found">Whether the window shows a page to read.</param>
-/// <param name="Text">The page's text, or null when it has none or could not be read.</param>
+/// <param name="Text">The page of text asked for (empty past the end of the text), or null when the page has no text or it
+/// could not be read.</param>
 /// <param name="Url">The page's address from its Document, or null when it holds none.</param>
-public sealed record BrowserUiaContent(bool Found, string? Text, string? Url);
+/// <param name="Offset">Where <paramref name="Text"/> starts: the offset asked for, or the end of a shorter text.</param>
+/// <param name="TotalLength">The whole text's length, when known (the last page was read).</param>
+/// <param name="NextOffset">Where the next page starts, when more text follows.</param>
+public sealed record BrowserUiaContent(
+    bool Found, string? Text, string? Url, int Offset = 0, int? TotalLength = null, int? NextOffset = null);

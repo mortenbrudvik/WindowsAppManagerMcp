@@ -324,7 +324,7 @@ All capture tools also accept `format` (`auto`, `png`, `jpeg`), `quality` (JPEG)
 |------|-------------|----------------|
 | `get_browser_url` | URL of a browser window | handle, cdpPort, requireCdp |
 | `get_active_browser_url` | URL of the foreground browser window | cdpPort, requireCdp |
-| `get_browser_content` | Text of the page (or HTML through CDP) | handle, maxLength, textOnly, cdpPort, requireCdp |
+| `get_browser_content` | Text of the page (or HTML through CDP), a page at a time | handle, maxLength, offset, textOnly, cdpPort, requireCdp |
 | `launch_browser_with_debug` | Start Chrome, Edge or Brave with a DevTools port | browser, url, port, userDataDir |
 
 ### Input Simulation (10 tools)
@@ -416,7 +416,7 @@ To get a page's URL or text, use these tools instead of screenshots:
 |------|-----|
 | URL of a specific browser window | `get_browser_url` with the window `handle` |
 | URL of the browser in the foreground | `get_active_browser_url` (returns `NoBrowserInForeground` when another window, such as your terminal, is in front) |
-| Text of a page | `get_browser_content` with `handle` and, for long pages, `maxLength` |
+| Text of a page | `get_browser_content` with `handle`; a long page comes in pages: call again with `offset` set to `nextOffset` while `truncated` is true |
 | Text of a JavaScript-heavy page, or its HTML | `launch_browser_with_debug`, then `get_browser_content` with `cdpPort` (and `textOnly: false` for HTML) |
 
 - Locate the browser window first (`find_windows` with `processName` such as `chrome`, `msedge` or `brave`), and verify the page with `get_browser_url` before you read or act on it.

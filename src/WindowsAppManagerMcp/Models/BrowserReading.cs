@@ -53,6 +53,14 @@ public record BrowserUrlResult(
 /// <param name="CdpError">Why CDP was not used ("Code: message") when a cdpPort was given but the result came from UI Automation.</param>
 /// <param name="AccessibilityWarmup">Set when the page is web content (Chromium) and the UI Automation read waited for its
 /// accessibility tree first (roadmap M3.3, M3.F24); also on a failed read.</param>
+/// <param name="ContentLength">How many characters <paramref name="Content"/> holds.</param>
+/// <param name="Offset">Where the page starts in the text of <paramref name="Source"/> (roadmap M5.6): the offset asked for,
+/// or the end of a shorter text. CDP counts UTF-16 characters of the page's innerText or HTML (of the selector's matches);
+/// UI Automation counts the Text pattern's characters, or those of the text collected from the page's elements.</param>
+/// <param name="TotalLength">The whole text's length, when known: always through CDP (measured in the page, before it is
+/// cut), through UI Automation once the last page was read.</param>
+/// <param name="Truncated">True when more text follows the page.</param>
+/// <param name="NextOffset">The offset of the next page, when more text follows.</param>
 public record BrowserContentResult(
     bool Success,
     string? Content,
@@ -65,16 +73,40 @@ public record BrowserContentResult(
     string? Source = null,
     string? TargetId = null,
     string? CdpError = null,
-    AccessibilityWarmupInfo? AccessibilityWarmup = null
+    AccessibilityWarmupInfo? AccessibilityWarmup = null,
+    int? Offset = null,
+    int? TotalLength = null,
+    bool? Truncated = null,
+    int? NextOffset = null
 );
 
 /// <summary>
-/// Options for browser content extraction.
+/// Options for browser content extraction: one page of the page's text or HTML (roadmap M5.6).
 /// </summary>
+/// <param name="MaxLength">The most characters to return, from 1 to <see cref="MaxMaxLength"/>; a page also holds at most
+/// <see cref="Services.ElementReadService.MaxTextBytes"/> bytes of JSON, as read_element_text's do.</param>
+/// <param name="TextOnly">True for the text, false for the HTML (CDP only).</param>
+/// <param name="Offset">Where the page starts, in the text of the source that reads it (0 or more).</param>
+/// <param name="Selector">A CSS selector whose matches' text (or HTML) is read instead of the whole page's, one per line;
+/// CDP only, so it never falls back to UI Automation. Null for the whole page.</param>
 public record BrowserContentOptions(
-    int? MaxLength = null,
-    bool TextOnly = true
-);
+    int MaxLength = BrowserContentOptions.DefaultMaxLength,
+    bool TextOnly = true,
+    int Offset = 0,
+    string? Selector = null)
+{
+    /// <summary>The page length when none is given: read_element_text's.</summary>
+    public const int DefaultMaxLength = 20_000;
+
+    /// <summary>The longest page: read_element_text's.</summary>
+    public const int MaxMaxLength = Services.ElementReadService.MaxTextLength;
+
+    /// <summary>The page length after clamping to 1-<see cref="MaxMaxLength"/>.</summary>
+    public int EffectiveMaxLength => Math.Clamp(MaxLength, 1, MaxMaxLength);
+
+    /// <summary>The offset, never below 0.</summary>
+    public int EffectiveOffset => Math.Max(0, Offset);
+}
 
 /// <summary>
 /// Options for reading a browser window via CDP (Chrome DevTools Protocol).

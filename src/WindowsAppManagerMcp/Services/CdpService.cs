@@ -187,11 +187,11 @@ public class CdpService : ICdpService
     /// <inheritdoc />
     public async Task<CdpResult<CdpPageSnapshot>> GetPageSnapshotAsync(
         CdpTarget target,
-        bool textOnly,
-        int? maxLength,
+        CdpPageRequest request,
         TimeSpan timeout,
         CancellationToken cancellationToken = default)
     {
+        ArgumentNullException.ThrowIfNull(request);
         var label = $"tab {target.Id}";
         var webSocketUrl = CdpEndpointValidator.ValidateWebSocketUrl(target.WebSocketDebuggerUrl, target.Port, label);
         if (!webSocketUrl.Success)
@@ -215,7 +215,7 @@ public class CdpService : ICdpService
             enable = connection.SendAsync("Page.enable", null, remaining, cancellationToken);
             var evaluate = connection.SendAsync("Runtime.evaluate", new
             {
-                expression = BuildSnapshotExpression(textOnly, maxLength),
+                expression = BuildSnapshotExpression(request),
                 returnByValue = true,
                 awaitPromise = false,
                 timeout = (int)timeout.TotalMilliseconds
@@ -236,7 +236,7 @@ public class CdpService : ICdpService
         {
             return evaluated.Value!.Error is { } fault
                 ? CdpReplies.ToFailure<CdpPageSnapshot>("Runtime.evaluate", fault)
-                : ParseEvaluateResult(evaluated.Value.Result);
+                : ParseEvaluateResult(evaluated.Value.Result, request);
         }
 
         var failure = evaluated.ErrorCode == BrowserErrorCode.CdpTimeout
@@ -262,7 +262,7 @@ public class CdpService : ICdpService
         return failure;
     }
 
-    private static CdpResult<CdpPageSnapshot> ParseEvaluateResult(JsonElement result)
+    private static CdpResult<CdpPageSnapshot> ParseEvaluateResult(JsonElement result, CdpPageRequest request)
     {
         if (result.ValueKind != JsonValueKind.Object)
         {
@@ -297,11 +297,36 @@ public class CdpService : ICdpService
                 "The Runtime.evaluate response does not contain the page snapshot.");
         }
 
+        // The script always reports where its slice starts and the whole length it measured
+        if (ReadCount(value, "offset") is not int offset || ReadCount(value, "totalLength") is not int totalLength)
+        {
+            return CdpResult<CdpPageSnapshot>.Fail(
+                BrowserErrorCode.CdpProtocolError,
+                "The Runtime.evaluate response does not say where the page's slice starts or how long its content is.");
+        }
+
+        if (request.Selector != null && ReadCount(value, "matches") == 0)
+        {
+            return CdpResult<CdpPageSnapshot>.Fail(
+                BrowserErrorCode.ContentExtractionFailed,
+                $"No element on the page matches the selector '{request.Selector}', so nothing was read. Check the selector, " +
+                "or leave it out to read the whole page.");
+        }
+
         return CdpResult<CdpPageSnapshot>.Ok(new CdpPageSnapshot(
             Title: CdpReplies.GetString(value, "title"),
             Url: CdpReplies.GetString(value, "url"),
-            Content: CdpReplies.GetString(value, "content")));
+            Content: CdpReplies.GetString(value, "content"),
+            Offset: offset,
+            TotalLength: totalLength));
     }
+
+    /// <summary>A count the script reported: a whole number from 0 to <see cref="int.MaxValue"/>, else null.</summary>
+    private static int? ReadCount(JsonElement value, string name) =>
+        value.TryGetProperty(name, out var count) && count.ValueKind == JsonValueKind.Number &&
+        count.TryGetInt32(out var number) && number >= 0
+            ? number
+            : null;
 
     private static string DescribeException(JsonElement exceptionDetails)
     {
@@ -316,21 +341,43 @@ public class CdpService : ICdpService
     }
 
     /// <summary>
-    /// Builds the script that reads title, URL and content in one round trip.
-    /// The content is truncated in the page so large pages are not transferred in full.
+    /// Builds the script that reads title, URL and one slice of the content in one round trip (roadmap M5.6). The page
+    /// measures the whole text (innerText) or HTML (outerHTML), of the body or of each element the selector matches (one per
+    /// line), and returns only the slice from the offset, at most maxLength UTF-16 characters, never ending between the two
+    /// halves of a surrogate pair, with the offset it starts at and the whole length: only the slice crosses the DevTools
+    /// connection, so a page of any size can be read a slice at a time. The selector goes into the script as a JSON string
+    /// literal, so it is only ever data; one that is not valid CSS makes querySelectorAll throw (CdpEvaluationFailed).
     /// </summary>
-    private static string BuildSnapshotExpression(bool textOnly, int? maxLength)
+    private static string BuildSnapshotExpression(CdpPageRequest request)
     {
-        var content = textOnly
-            ? "document.body ? document.body.innerText : ''"
-            : "document.documentElement ? document.documentElement.outerHTML : ''";
-        var limit = maxLength is >= 0 ? maxLength.Value.ToString(CultureInfo.InvariantCulture) : "-1";
+        var offset = Math.Max(0, request.Offset).ToString(CultureInfo.InvariantCulture);
+        var max = Math.Max(1, request.MaxLength).ToString(CultureInfo.InvariantCulture);
+        string content;
+        if (request.Selector == null)
+        {
+            var whole = request.TextOnly
+                ? "document.body ? document.body.innerText : ''"
+                : "document.documentElement ? document.documentElement.outerHTML : ''";
+            content = $"const matches = null; const content = String({whole}); ";
+        }
+        else
+        {
+            var each = request.TextOnly
+                ? "e => typeof e.innerText === 'string' ? e.innerText : (e.textContent || '')"
+                : "e => e.outerHTML";
+            content = $"const found = document.querySelectorAll({JsonSerializer.Serialize(request.Selector)}); " +
+                      "const matches = found.length; " +
+                      $"const content = Array.from(found, {each}).join('\\n'); ";
+        }
 
         return "(() => { " +
-               $"let content = String({content}); " +
-               $"const max = {limit}; " +
-               "if (max >= 0 && content.length > max) { content = content.slice(0, max); } " +
-               "return { title: document.title, url: location.href, content: content }; " +
+               content +
+               $"const offset = {offset}; const max = {max}; " +
+               "const total = content.length; " +
+               "const start = Math.min(offset, total); " +
+               "let end = Math.min(total, start + max); " +
+               "if (end < total && end - start > 1) { const c = content.charCodeAt(end - 1); if (c >= 0xD800 && c <= 0xDBFF) { end--; } } " +
+               "return { title: document.title, url: location.href, content: content.slice(start, end), offset: start, totalLength: total, matches: matches }; " +
                "})()";
     }
 

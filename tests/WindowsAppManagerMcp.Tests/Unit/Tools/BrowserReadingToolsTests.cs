@@ -222,13 +222,13 @@ public class BrowserReadingToolsTests
     }
 
     [Fact]
-    public async Task GetBrowserContent_DefaultsToNullMaxLength()
+    public async Task GetBrowserContent_DefaultsToTheFirstPageOf20000Characters_OfTheWholePage()
     {
         // Arrange
         var handle = 12345L;
         _mockBrowserReadingService.Setup(s => s.GetBrowserContentAsync(
                 new nint(handle),
-                It.Is<BrowserContentOptions>(o => o.MaxLength == null),
+                It.Is<BrowserContentOptions>(o => o.MaxLength == 20_000 && o.Offset == 0 && o.Selector == null && o.TextOnly),
                 It.IsAny<CdpOptions?>(),
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(new BrowserContentResult(
@@ -248,10 +248,44 @@ public class BrowserReadingToolsTests
         // Assert
         _mockBrowserReadingService.Verify(s => s.GetBrowserContentAsync(
             new nint(handle),
-            It.Is<BrowserContentOptions>(o => o.MaxLength == null),
+            It.Is<BrowserContentOptions>(o => o.MaxLength == 20_000 && o.Offset == 0 && o.Selector == null && o.TextOnly),
             It.IsAny<CdpOptions?>(),
             It.IsAny<CancellationToken>()),
             Times.Once);
+    }
+
+    [Fact]
+    public async Task GetBrowserContent_PassesOffsetAndSelector_AndClampsMaxLengthToTheLongestPage()
+    {
+        // Arrange
+        _mockBrowserReadingService
+            .Setup(s => s.GetBrowserContentAsync(It.IsAny<nint>(), It.IsAny<BrowserContentOptions?>(), It.IsAny<CdpOptions?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new BrowserContentResult(true, "page", "u", "chrome", "t", 4, null, BrowserErrorCode.None, BrowserReadSource.Cdp,
+                Offset: 40_000, TotalLength: 90_000, Truncated: true, NextOffset: 40_004));
+        var sut = CreateSut();
+
+        // Act
+        var result = await sut.GetBrowserContent(12345, maxLength: 1_000_000, offset: 40_000, selector: "main", cdpPort: 9222);
+
+        // Assert
+        _mockBrowserReadingService.Verify(s => s.GetBrowserContentAsync(
+            new nint(12345), new BrowserContentOptions(50_000, true, 40_000, "main"), It.IsAny<CdpOptions?>(), It.IsAny<CancellationToken>()),
+            Times.Once);
+        result.Should().BeEquivalentTo(new { Offset = 40_000, TotalLength = 90_000, Truncated = true, NextOffset = 40_004, ContentLength = 4 });
+    }
+
+    [Theory]
+    [InlineData(-1, null, null, "offset must be 0 or more")]
+    [InlineData(0, "main", null, "selector is read through CDP only, so it needs cdpPort")]
+    [InlineData(0, "  ", 9222, "selector must be a CSS selector")]
+    public async Task GetBrowserContent_RefusesABadOffsetOrSelector_BeforeAnythingIsRead(int offset, string? selector, int? cdpPort, string message)
+    {
+        var sut = CreateSut();
+
+        var act = () => sut.GetBrowserContent(12345, offset: offset, selector: selector, cdpPort: cdpPort);
+
+        (await act.Should().ThrowAsync<ToolErrorException>()).Which.Message.Should().Contain(message).And.Contain("Nothing was read");
+        _mockBrowserReadingService.VerifyNoOtherCalls();
     }
 
     #endregion
@@ -419,7 +453,7 @@ public class BrowserReadingToolsTests
         await sut.GetBrowserContent(12345, maxLength: 10, textOnly: false, cdpPort: 9222, requireCdp: true, timeoutMs: 2500, cancellationToken: cts.Token);
 
         _mockBrowserReadingService.Verify(s => s.GetBrowserContentAsync(
-            new nint(12345), new BrowserContentOptions(10, false), new CdpOptions(9222, true, 2500, null), cts.Token), Times.Once);
+            new nint(12345), new BrowserContentOptions(10, false, 0, null), new CdpOptions(9222, true, 2500, null), cts.Token), Times.Once);
     }
 
     [Fact]

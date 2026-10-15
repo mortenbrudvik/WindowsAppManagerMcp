@@ -794,7 +794,7 @@ public class BrowserReadingServiceTests
     private void SetupCdpSnapshot(CdpResult<CdpPageSnapshot> result) =>
         _mockCdpService
             .Setup(c => c.GetPageSnapshotAsync(
-                It.IsAny<CdpTarget>(), It.IsAny<bool>(), It.IsAny<int?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+                It.IsAny<CdpTarget>(), It.IsAny<CdpPageRequest>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(result);
 
     [Fact]
@@ -1005,7 +1005,7 @@ public class BrowserReadingServiceTests
 
         result.Content.Should().Be("<html>");
         _mockCdpService.Verify(c => c.GetPageSnapshotAsync(
-            CdpTab, false, 6,
+            CdpTab, new CdpPageRequest(false, 0, 6, null),
             It.Is<TimeSpan>(t => t > TimeSpan.Zero && t <= TimeSpan.FromMilliseconds(CdpOptions.DefaultTimeoutMs)),
             It.IsAny<CancellationToken>()), Times.Once);
     }
@@ -1078,7 +1078,7 @@ public class BrowserReadingServiceTests
         result.Source.Should().Be("uia");
         result.CdpError.Should().StartWith("CdpTargetAmbiguous:");
         _mockCdpService.Verify(c => c.GetPageSnapshotAsync(
-            It.IsAny<CdpTarget>(), It.IsAny<bool>(), It.IsAny<int?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()), Times.Never);
+            It.IsAny<CdpTarget>(), It.IsAny<CdpPageRequest>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
@@ -1143,7 +1143,7 @@ public class BrowserReadingServiceTests
         // tick early (a run once read 29700.1 ms), and the service's own stopwatch runs at least as long as this one
         matching.Should().BeGreaterThan(TimeSpan.FromMilliseconds(250));
         _mockCdpService.Verify(c => c.GetPageSnapshotAsync(
-            It.IsAny<CdpTarget>(), It.IsAny<bool>(), It.IsAny<int?>(),
+            It.IsAny<CdpTarget>(), It.IsAny<CdpPageRequest>(),
             It.Is<TimeSpan>(t => t > TimeSpan.Zero && t <= TimeSpan.FromMilliseconds(CdpOptions.MaxTimeoutMs) - matching),
             It.IsAny<CancellationToken>()), Times.Once);
     }
@@ -1167,7 +1167,7 @@ public class BrowserReadingServiceTests
 
         result.ErrorCode.Should().Be(BrowserErrorCode.CdpTimeout);
         _mockCdpService.Verify(c => c.GetPageSnapshotAsync(
-            It.IsAny<CdpTarget>(), It.IsAny<bool>(), It.IsAny<int?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()), Times.Never);
+            It.IsAny<CdpTarget>(), It.IsAny<CdpPageRequest>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Theory]
@@ -1294,7 +1294,7 @@ public class BrowserReadingServiceTests
         result.TargetId.Should().Be(OtherTabId);
         lookup.Should().BeGreaterThan(TimeSpan.FromMilliseconds(250));
         _mockCdpService.Verify(c => c.GetPageSnapshotAsync(
-            OtherTab, true, null,
+            OtherTab, new CdpPageRequest(true, 0, BrowserContentOptions.DefaultMaxLength, null),
             It.Is<TimeSpan>(t => t > TimeSpan.Zero && t <= TimeSpan.FromMilliseconds(CdpOptions.MaxTimeoutMs) - lookup),
             It.IsAny<CancellationToken>()), Times.Once);
         _mockCdpService.Verify(c => c.FindTargetForWindowAsync(
@@ -1331,6 +1331,176 @@ public class BrowserReadingServiceTests
         result.ErrorCode.Should().Be(BrowserErrorCode.CdpUnavailable);
         _worker.Calls.Should().Be(0);
         _mockCdpService.VerifyNoOtherCalls();
+    }
+
+    #endregion
+
+    #region Paged content (roadmap M5.6)
+
+    [Fact]
+    public async Task GetBrowserContent_ReturnsACdpPage_WithItsOffsetTheMeasuredTotalLengthAndTheNextOffset()
+    {
+        // Arrange - the page sliced 50 characters from offset 100 of 1,000
+        var handle = new nint(12345);
+        SetupValidBrowserWindow(handle, "chrome", "chrome");
+        SetupCdpMatch(CdpResult<CdpTarget>.Ok(CdpTab));
+        SetupCdpSnapshot(CdpResult<CdpPageSnapshot>.Ok(new CdpPageSnapshot("t", "u", new string('x', 50), Offset: 100, TotalLength: 1_000)));
+        var sut = CreateSut();
+
+        // Act
+        var result = await sut.GetBrowserContentAsync(
+            handle, new BrowserContentOptions(MaxLength: 50, Offset: 100, Selector: "main"), new CdpOptions(Port: CdpPort));
+
+        // Assert
+        result.Success.Should().BeTrue(result.Error);
+        result.ContentLength.Should().Be(50);
+        result.Offset.Should().Be(100);
+        result.TotalLength.Should().Be(1_000);
+        result.Truncated.Should().BeTrue();
+        result.NextOffset.Should().Be(150);
+        _mockCdpService.Verify(c => c.GetPageSnapshotAsync(
+            CdpTab, new CdpPageRequest(true, 100, 50, "main"), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task GetBrowserContent_ReturnsTheLastCdpPage_WithoutANextOffset()
+    {
+        var handle = new nint(12345);
+        SetupValidBrowserWindow(handle, "chrome", "chrome");
+        SetupCdpMatch(CdpResult<CdpTarget>.Ok(CdpTab));
+        SetupCdpSnapshot(CdpResult<CdpPageSnapshot>.Ok(new CdpPageSnapshot("t", "u", "end", Offset: 997, TotalLength: 1_000)));
+        var sut = CreateSut();
+
+        var result = await sut.GetBrowserContentAsync(handle, new BrowserContentOptions(Offset: 997), new CdpOptions(Port: CdpPort));
+
+        result.Content.Should().Be("end");
+        result.TotalLength.Should().Be(1_000);
+        result.Truncated.Should().BeFalse();
+        result.NextOffset.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task GetBrowserContent_FitsACdpPageToReadElementTextsBytesOfJson_AndTheNextPageStartsAfterIt()
+    {
+        // Arrange - 50,000 Cyrillic characters take 100,000 bytes of JSON: only 30,000 fit a page
+        var handle = new nint(12345);
+        SetupValidBrowserWindow(handle, "chrome", "chrome");
+        SetupCdpMatch(CdpResult<CdpTarget>.Ok(CdpTab));
+        SetupCdpSnapshot(CdpResult<CdpPageSnapshot>.Ok(new CdpPageSnapshot("t", "u", new string('ж', 50_000), Offset: 0, TotalLength: 80_000)));
+        var sut = CreateSut();
+
+        // Act
+        var result = await sut.GetBrowserContentAsync(handle, new BrowserContentOptions(MaxLength: 50_000), new CdpOptions(Port: CdpPort));
+
+        // Assert
+        result.ContentLength.Should().Be(ElementReadService.MaxTextBytes / 2);
+        result.NextOffset.Should().Be(ElementReadService.MaxTextBytes / 2);
+        result.Truncated.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task GetBrowserContent_ClampsMaxLength_AndAsksCdpForAtMostReadElementTextsLongestPage()
+    {
+        var handle = new nint(12345);
+        SetupValidBrowserWindow(handle, "chrome", "chrome");
+        SetupCdpMatch(CdpResult<CdpTarget>.Ok(CdpTab));
+        SetupCdpSnapshot(CdpResult<CdpPageSnapshot>.Ok(new CdpPageSnapshot("t", "u", "c", Offset: 0, TotalLength: 1)));
+        var sut = CreateSut();
+
+        await sut.GetBrowserContentAsync(handle, new BrowserContentOptions(MaxLength: 1_000_000), new CdpOptions(Port: CdpPort));
+
+        _mockCdpService.Verify(c => c.GetPageSnapshotAsync(
+            CdpTab, new CdpPageRequest(true, 0, ElementReadService.MaxTextLength, null), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Theory]
+    [InlineData(20, null)]
+    [InlineData(0, "main")]
+    public async Task GetBrowserContent_DoesNotFallBackToUiAutomation_ForALaterCdpPage_OrASelector(int offset, string? selector)
+    {
+        // Arrange - CDP fails; UI Automation would read other text, whose offsets count something else
+        var handle = new nint(12345);
+        SetupValidBrowserWindow(handle, "chrome", "chrome");
+        ShowPage(handle, "https://example.com/", "UI Automation's text");
+        SetupCdpMatch(CdpResult<CdpTarget>.Ok(CdpTab));
+        SetupCdpSnapshot(CdpResult<CdpPageSnapshot>.Fail(BrowserErrorCode.CdpTimeout, "did not answer"));
+        var sut = CreateSut();
+
+        // Act
+        var result = await sut.GetBrowserContentAsync(
+            handle, new BrowserContentOptions(Offset: offset, Selector: selector), new CdpOptions(Port: CdpPort));
+
+        // Assert
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(BrowserErrorCode.CdpTimeout);
+        result.Source.Should().Be(BrowserReadSource.Cdp);
+        _worker.Calls.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task GetBrowserContent_StillFallsBackToUiAutomation_ForTheFirstPage()
+    {
+        var handle = new nint(12345);
+        SetupValidBrowserWindow(handle, "chrome", "chrome");
+        ShowPage(handle, "https://example.com/", "UI Automation's text");
+        SetupCdpMatch(CdpResult<CdpTarget>.Ok(CdpTab));
+        SetupCdpSnapshot(CdpResult<CdpPageSnapshot>.Fail(BrowserErrorCode.CdpTimeout, "did not answer"));
+        var sut = CreateSut();
+
+        var result = await sut.GetBrowserContentAsync(handle, new BrowserContentOptions(), new CdpOptions(Port: CdpPort));
+
+        result.Success.Should().BeTrue(result.Error);
+        result.Source.Should().Be(BrowserReadSource.Uia);
+        result.CdpError.Should().StartWith("CdpTimeout");
+    }
+
+    [Fact]
+    public async Task GetBrowserContent_RefusesASelector_WithoutCdpPort()
+    {
+        var handle = new nint(12345);
+        SetupValidBrowserWindow(handle, "chrome", "chrome");
+        ShowPage(handle, "https://example.com/", "UI Automation's text");
+        var sut = CreateSut();
+
+        var result = await sut.GetBrowserContentAsync(handle, new BrowserContentOptions(Selector: "main"));
+
+        result.ErrorCode.Should().Be(BrowserErrorCode.CdpUnavailable);
+        result.Error.Should().Contain("selector").And.Contain("cdpPort");
+        _worker.Calls.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task GetBrowserContent_PagesTheUiAutomationText_FromTheOffset()
+    {
+        // Arrange
+        var handle = new nint(12345);
+        SetupValidBrowserWindow(handle, "chrome", "chrome");
+        ShowPage(handle, "https://example.com/", "abcdefghij");
+        var sut = CreateSut();
+
+        // Act
+        var first = await sut.GetBrowserContentAsync(handle, new BrowserContentOptions(MaxLength: 4));
+        var last = await sut.GetBrowserContentAsync(handle, new BrowserContentOptions(MaxLength: 4, Offset: first.NextOffset!.Value + 4));
+        var past = await sut.GetBrowserContentAsync(handle, new BrowserContentOptions(MaxLength: 4, Offset: 50));
+
+        // Assert
+        first.Should().BeEquivalentTo(new { Success = true, Content = "abcd", Offset = 0, TotalLength = (int?)null, Truncated = true, NextOffset = 4, Source = "uia" });
+        last.Should().BeEquivalentTo(new { Success = true, Content = "ij", Offset = 8, TotalLength = 10, Truncated = false, NextOffset = (int?)null });
+        past.Should().BeEquivalentTo(new { Success = true, Content = "", Offset = 10, TotalLength = 10, Truncated = false, ContentLength = 0 });
+    }
+
+    [Fact]
+    public async Task GetBrowserContent_ReadsAnEmptyUiAutomationPage_AsNoContent()
+    {
+        var handle = new nint(12345);
+        SetupValidBrowserWindow(handle, "chrome", "chrome");
+        ShowPage(handle, "https://example.com/", "");
+        var sut = CreateSut();
+
+        var result = await sut.GetBrowserContentAsync(handle);
+
+        result.ErrorCode.Should().Be(BrowserErrorCode.ContentExtractionFailed);
     }
 
     #endregion

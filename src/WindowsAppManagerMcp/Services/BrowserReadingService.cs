@@ -28,6 +28,9 @@ public class BrowserReadingService : IBrowserReadingService
     private const string CdpPortRequiredMessage =
         "requireCdp=true (or targetId) needs cdpPort: the debug port of the browser instance that owns the window.";
 
+    private const string SelectorNeedsCdpPortMessage =
+        "selector is read through CDP only, so it needs cdpPort: the debug port of the browser instance that owns the window.";
+
     private readonly INativeWindowWrapper _nativeWrapper;
     private readonly IBrowserDetectionService _browserDetection;
     private readonly ICdpService _cdpService;
@@ -284,6 +287,11 @@ public class BrowserReadingService : IBrowserReadingService
             // Get window title (page title)
             var pageTitle = _nativeWrapper.GetWindowText(browserHandle);
 
+            // A selector is CDP's alone, and a later page's offset counts in the text of the source that read the first
+            // (roadmap M5.6): neither falls back to UI Automation, which would read other text
+            var required = cdp?.EffectiveRequired == true || options.Selector != null ||
+                           (cdp?.Port != null && options.EffectiveOffset > 0);
+
             // Try CDP first if a port is specified
             string? cdpError = null;
             if (cdp?.Port is int port)
@@ -294,7 +302,13 @@ public class BrowserReadingService : IBrowserReadingService
                 if (snapshot.Success)
                 {
                     var page = snapshot.Value!;
-                    var content = Truncate(page.Content, options.MaxLength);
+
+                    // The page sliced at most maxLength characters; a page also holds at most read_element_text's bytes
+                    // of JSON, and the next one starts just past its text
+                    var content = page.Content[..TextPages.FittingLength(
+                        page.Content, options.EffectiveMaxLength, ElementReadService.MaxTextBytes)];
+                    var end = page.Offset + content.Length;
+                    var total = page.TotalLength ?? page.Offset + page.Content.Length;
                     return new BrowserContentResult(
                         Success: true,
                         Content: content,
@@ -305,11 +319,15 @@ public class BrowserReadingService : IBrowserReadingService
                         Error: null,
                         ErrorCode: BrowserErrorCode.None,
                         Source: BrowserReadSource.Cdp,
-                        TargetId: targetId);
+                        TargetId: targetId,
+                        Offset: page.Offset,
+                        TotalLength: total,
+                        Truncated: end < total,
+                        NextOffset: end < total ? end : null);
                 }
 
                 // A page too large for CDP is reported as it is, not as HtmlRequiresCdp's "CDP could not be used"
-                if (cdp.EffectiveRequired ||
+                if (required ||
                     (!options.TextOnly && snapshot.ErrorCode == BrowserErrorCode.CdpResponseTooLarge))
                 {
                     return new BrowserContentResult(
@@ -328,7 +346,7 @@ public class BrowserReadingService : IBrowserReadingService
 
                 cdpError = snapshot.DescribeError();
             }
-            else if (cdp?.EffectiveRequired == true)
+            else if (required)
             {
                 return new BrowserContentResult(
                     Success: false,
@@ -337,7 +355,7 @@ public class BrowserReadingService : IBrowserReadingService
                     BrowserType: browserType,
                     PageTitle: pageTitle,
                     ContentLength: null,
-                    Error: CdpPortRequiredMessage,
+                    Error: options.Selector != null ? SelectorNeedsCdpPortMessage : CdpPortRequiredMessage,
                     ErrorCode: BrowserErrorCode.CdpUnavailable);
             }
 
@@ -401,7 +419,9 @@ public class BrowserReadingService : IBrowserReadingService
             }
 
             var uiaContent = shown.Text;
-            if (string.IsNullOrEmpty(uiaContent))
+
+            // Past the end of the text an empty page is the answer; at its start the page has no text to read
+            if (uiaContent == null || (uiaContent.Length == 0 && shown.Offset == 0))
             {
                 return new BrowserContentResult(
                     Success: false,
@@ -428,7 +448,11 @@ public class BrowserReadingService : IBrowserReadingService
                 ErrorCode: BrowserErrorCode.None,
                 Source: BrowserReadSource.Uia,
                 CdpError: cdpError,
-                AccessibilityWarmup: read.Warmup);
+                AccessibilityWarmup: read.Warmup,
+                Offset: shown.Offset,
+                TotalLength: shown.TotalLength,
+                Truncated: shown.NextOffset != null,
+                NextOffset: shown.NextOffset);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -670,7 +694,9 @@ public class BrowserReadingService : IBrowserReadingService
         var windowTitle = title ?? windowText;
         if (content != null)
         {
-            return new UiaRead(title, null, _reader.ReadContent(window, windowTitle, pages, content.MaxLength, cancellationToken), warmup.Value);
+            var page = _reader.ReadContent(window, windowTitle, pages, content.EffectiveOffset, content.EffectiveMaxLength,
+                ElementReadService.MaxTextBytes, cancellationToken);
+            return new UiaRead(title, null, page, warmup.Value);
         }
 
         var foreground = TopLevel(_nativeWrapper.GetForegroundWindow()) == browserHandle;
@@ -721,8 +747,8 @@ public class BrowserReadingService : IBrowserReadingService
             return (match.FailAs<CdpPageSnapshot>(), null);
 
         var target = match.Value!;
-        var snapshot = await ReadSnapshotWithinBudgetAsync(
-            target, options.TextOnly, options.MaxLength, timeout, stopwatch, cancellationToken);
+        var request = new CdpPageRequest(options.TextOnly, options.EffectiveOffset, options.EffectiveMaxLength, options.Selector);
+        var snapshot = await ReadSnapshotWithinBudgetAsync(target, request, timeout, stopwatch, cancellationToken);
         return (snapshot, target.Id);
     }
 
@@ -731,8 +757,7 @@ public class BrowserReadingService : IBrowserReadingService
     /// </summary>
     private async Task<CdpResult<CdpPageSnapshot>> ReadSnapshotWithinBudgetAsync(
         CdpTarget target,
-        bool textOnly,
-        int? maxLength,
+        CdpPageRequest request,
         TimeSpan budget,
         Stopwatch stopwatch,
         CancellationToken cancellationToken)
@@ -745,11 +770,8 @@ public class BrowserReadingService : IBrowserReadingService
                 $"The CDP time budget of {(long)budget.TotalMilliseconds} ms was used up before tab {target.Id} could be read.");
         }
 
-        return await _cdpService.GetPageSnapshotAsync(target, textOnly, maxLength, remaining, cancellationToken);
+        return await _cdpService.GetPageSnapshotAsync(target, request, remaining, cancellationToken);
     }
-
-    private static string Truncate(string content, int? maxLength) =>
-        maxLength is int max && max >= 0 && content.Length > max ? content[..max] : content;
 
 
     /// <summary>The name of the process, or "Unknown" when it has exited or cannot be read.</summary>

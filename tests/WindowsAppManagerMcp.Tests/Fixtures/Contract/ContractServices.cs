@@ -339,7 +339,8 @@ public sealed class ContractServices : IDisposable
         Browser.Setup(b => b.GetActiveBrowserUrlAsync(It.IsAny<CdpOptions?>(), It.IsAny<CancellationToken>())).ReturnsAsync(url);
         Browser.Setup(b => b.GetBrowserContentAsync(It.IsAny<nint>(), It.IsAny<BrowserContentOptions?>(), It.IsAny<CdpOptions?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new BrowserContentResult(true, TypicalDesktop.Article, url.Url, "chrome", url.PageTitle, TypicalDesktop.ArticleLength,
-                null, BrowserErrorCode.None, Source: BrowserReadSource.Cdp, TargetId: url.TargetId));
+                null, BrowserErrorCode.None, Source: BrowserReadSource.Cdp, TargetId: url.TargetId,
+                Offset: 0, TotalLength: TypicalDesktop.ArticleLength, Truncated: false));
 
         var preset = TypicalDesktop.Layouts[0];
         Layouts.Setup(l => l.GetStorageError()).Returns((string?)null);

@@ -217,6 +217,8 @@ public sealed class ToolArgumentContractTests : IDisposable
 
     [Theory]
     [InlineData("get_browser_content", """{ "handle": 2821181, "maxLength": 0 }""", "maxLength must be at least 1")]
+    [InlineData("get_browser_content", """{ "handle": 2821181, "offset": -1 }""", "offset must be 0 or more")]
+    [InlineData("get_browser_content", """{ "handle": 2821181, "selector": "main" }""", "selector is read through CDP only, so it needs cdpPort")]
     [InlineData("launch_browser_with_debug", """{ "port": 80 }""", "port must be 0 (the browser picks a free port) or a TCP port from 1024 to 65535")]
     [InlineData("launch_browser_with_debug", """{ "port": 70000 }""", "port must be 0 (the browser picks a free port) or a TCP port from 1024 to 65535")]
     public async Task OutOfRangeValues_AreInvalidArguments(string tool, string arguments, string message)

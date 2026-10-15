@@ -76,23 +76,35 @@ public interface ICdpService
         CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Reads the title, URL and content of a tab with a single Runtime.evaluate call.
+    /// Reads the title, URL and one page of the content of a tab with a single Runtime.evaluate call (roadmap M5.6): the
+    /// page measures its text (or HTML) and returns only the slice <paramref name="request"/> asks for with its whole
+    /// length, so a page larger than the message limit can still be read a slice at a time.
     /// Fails with CdpTimeout when the page does not answer (for example while a JavaScript dialog
     /// is open), with CdpDialogOpen when the browser reports an open dialog, with CdpTargetClosed when the tab's
-    /// connection ends during the read, and with CdpResponseTooLarge when the answer is over the size limit.
+    /// connection ends during the read, with CdpResponseTooLarge when the answer is over the size limit, with
+    /// CdpEvaluationFailed when the page throws (a selector that is not valid CSS), and with ContentExtractionFailed when
+    /// no element matches the selector.
     /// </summary>
     /// <param name="target">The tab to read.</param>
-    /// <param name="textOnly">True for the page text (innerText), false for the full HTML.</param>
-    /// <param name="maxLength">Maximum content length in characters, or null for no limit.</param>
+    /// <param name="request">What to read: text or HTML, the slice, and the selector.</param>
     /// <param name="timeout">Maximum time to wait for the browser.</param>
     /// <param name="cancellationToken">Cancels the request.</param>
     Task<CdpResult<CdpPageSnapshot>> GetPageSnapshotAsync(
         CdpTarget target,
-        bool textOnly,
-        int? maxLength,
+        CdpPageRequest request,
         TimeSpan timeout,
         CancellationToken cancellationToken = default);
 }
+
+/// <summary>
+/// The slice of a tab's content to read (roadmap M5.6).
+/// </summary>
+/// <param name="TextOnly">True for the page text (innerText), false for the HTML (outerHTML).</param>
+/// <param name="Offset">Where the slice starts, in UTF-16 characters of the text (0 or more).</param>
+/// <param name="MaxLength">The most characters of the slice (1 or more).</param>
+/// <param name="Selector">A CSS selector: the text (or HTML) of each element it matches, one per line, instead of the
+/// whole page's; null for the whole page.</param>
+public record CdpPageRequest(bool TextOnly, int Offset, int MaxLength, string? Selector = null);
 
 /// <summary>
 /// Represents a CDP browser target (tab).
@@ -128,10 +140,15 @@ public record CdpBrowserVersion(
 }
 
 /// <summary>
-/// Title, URL and content read from a tab at the same moment.
+/// Title, URL and a slice of the content read from a tab at the same moment.
 /// </summary>
+/// <param name="Content">The slice of the text (or HTML) asked for.</param>
+/// <param name="Offset">Where the slice starts: the offset asked for, or the text's length when it is shorter.</param>
+/// <param name="TotalLength">The whole text's length, measured in the page before it was sliced; null when not reported.</param>
 public record CdpPageSnapshot(
     string Title,
     string Url,
-    string Content
+    string Content,
+    int Offset = 0,
+    int? TotalLength = null
 );

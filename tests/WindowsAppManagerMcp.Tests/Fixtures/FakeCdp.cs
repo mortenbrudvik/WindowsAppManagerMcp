@@ -351,6 +351,7 @@ public sealed class FakeCdpWebSocket : WebSocket
 public sealed class FakeCdpWebSocketFactory : ICdpWebSocketFactory
 {
     private readonly FakeCdpWebSocket? _socket;
+    private readonly Func<FakeCdpWebSocket>? _newSocket;
     private readonly Exception? _failure;
     private readonly List<Uri> _connectedUris = new();
 
@@ -363,6 +364,14 @@ public sealed class FakeCdpWebSocketFactory : ICdpWebSocketFactory
     {
         _failure = failure;
     }
+
+    private FakeCdpWebSocketFactory(Func<FakeCdpWebSocket> newSocket)
+    {
+        _newSocket = newSocket;
+    }
+
+    /// <summary>Hands out a new socket on every connect, as a browser opens a connection for every call.</summary>
+    public static FakeCdpWebSocketFactory EachConnect(Func<FakeCdpWebSocket> newSocket) => new(newSocket);
 
     public static FakeCdpWebSocketFactory NeverConnects() => new();
 
@@ -389,6 +398,9 @@ public sealed class FakeCdpWebSocketFactory : ICdpWebSocketFactory
 
         if (_failure != null)
             throw _failure;
+
+        if (_newSocket != null)
+            return _newSocket();
 
         if (_socket == null)
         {
