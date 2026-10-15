@@ -119,7 +119,8 @@ public static class LayoutPlanner
     /// <summary>
     /// The rectangle of <paramref name="position"/> (fractions of a work area) on <paramref name="workArea"/>, in
     /// virtual-screen pixels. Each component is truncated toward zero on its own, as apply_layout has always done, so
-    /// neighbouring placements can be a pixel apart.
+    /// neighbouring placements can be a pixel apart; <see cref="RelativeRectMath.FromFractions(MonitorRect, RelativePosition)"/>
+    /// is the exact tiling M6.8 can switch to, a change of at most one pixel per edge.
     /// </summary>
     public static WindowRect TargetOf(RelativePosition position, MonitorRect workArea)
     {

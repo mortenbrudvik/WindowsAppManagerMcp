@@ -49,5 +49,32 @@ public static class SnapMath
     }
 
     /// <summary>Edge <paramref name="k"/> of <paramref name="n"/> equal parts: origin + length*k/n, computed without overflow.</summary>
-    private static int Edge(int origin, int length, int k, int n) => origin + (int)((long)length * k / n);
+    internal static int Edge(int origin, int length, int k, int n) => origin + (int)((long)length * k / n);
+
+    /// <summary>
+    /// How far below a whole pixel a computed edge may land and still count as that pixel: far more than the error of a
+    /// double product of screen sizes (about 1e-11 px), far less than the smallest fraction of a pixel an edge k/n of a
+    /// screen can really have.
+    /// </summary>
+    private const double EdgeTolerance = 1e-6;
+
+    /// <summary>
+    /// The edge at <paramref name="fraction"/> of the way along: origin + floor(length*fraction), the same rule as
+    /// <see cref="Edge(int, int, int, int)"/>, so fraction k/n gives exactly the snap edge k of n. The floor forgives
+    /// floating-point error (0.29 * 100 is 28.999999999999996, which is edge 29), so an edge given as a percentage that
+    /// is whole in decimal is not a pixel short. Rectangles that share an edge fraction share the pixel edge, which is
+    /// what makes them tile (RelativeRectMath).
+    /// </summary>
+    /// <exception cref="ArgumentOutOfRangeException">The fraction is not finite, or the edge is outside the int range.</exception>
+    internal static int Edge(int origin, int length, double fraction)
+    {
+        if (!double.IsFinite(fraction))
+            throw new ArgumentOutOfRangeException(nameof(fraction), fraction, "Not a finite number.");
+
+        var edge = origin + Math.Floor(length * fraction + EdgeTolerance);
+        if (edge < int.MinValue || edge > int.MaxValue)
+            throw new ArgumentOutOfRangeException(nameof(fraction), fraction, "The edge is outside the virtual screen's coordinates.");
+
+        return (int)edge;
+    }
 }
