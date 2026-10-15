@@ -2301,7 +2301,7 @@ own debug browsers, separate instances with throwaway profiles, and never reads,
 Every run keeps these rules, for every debug instance it starts:
 
 1. Before starting, record every top-level window handle and every `msedge`, `chrome` and `brave` process ID.
-2. Start the browser only with launch_browser_with_debug (`edge`), with no `userDataDir` or a new
+2. Start the browser only with launch_browser_with_debug (`edge`, or `chrome` where a check below says so), with no `userDataDir` or a new
    `%TEMP%\WamM5Check-<guid>` folder, on an explicit free port. Its `processId` must be new and its command line must
    carry that `--user-data-dir`; if the process or the window was already there, the launch was handed to the user's
    browser: stop and close nothing.
@@ -2332,9 +2332,11 @@ Roadmap M5.2 (after its merge, on a real Edge):
   back to UI Automation: the check failed; stop and record it.
 - **No Origin header.** The reads above work without `--remote-allow-origins`.
 
-Roadmap M5.1 readiness (on a real Edge, then Chrome, by the same rules; only the check's own debug instances):
+Roadmap M5.1 readiness (on a real Edge, then on a real Chrome with `browser: "chrome"`, which rule 2 allows for this
+block; every other rule is unchanged, including the throwaway profile, the new process ID and cleanup by process ID;
+only the check's own debug instances):
 
-- **Port 0** (the one exception to rule 2's explicit port). launch_browser_with_debug without `port` returns `success: true` and `cdpReady: true`; `cdpPort` is the
+- **Port 0** (an exception to rule 2's explicit port, and to the explicit free port of the owner-approved exception above). launch_browser_with_debug without `port` returns `success: true` and `cdpReady: true`; `cdpPort` is the
   first line of the profile's `DevToolsActivePort`; `browserVersion` starts with `Edg/` (Chrome: `Chrome/`);
   `cdpEndpoint` is `http://127.0.0.1:<cdpPort>`; `browserWsEndpoint` is `ws://127.0.0.1:<cdpPort>/devtools/browser/...`
   and matches the profile file's second line. Record how much longer the launch took than before (expected well under
@@ -2342,8 +2344,9 @@ Roadmap M5.1 readiness (on a real Edge, then Chrome, by the same rules; only the
 - **Explicit free port.** The same with `port` set to a free port from 1024-65535: `cdpPort` is that port.
 - **Read after ready.** get_browser_content with the returned `cdpPort` and `requireCdp: true` on the launch's own
   `windowHandle`, on a `data:` page, returns `source: "cdp"` at once, without a retry.
-- **Endpoint not ready** (the 10-second wait, a non-DevTools answer, a port another process holds) is covered by the
-  fakes (`DebugBrowserReadinessProbeTests`); it is not provoked on a real browser.
+- **Endpoint not ready** (the 10-second wait, a non-DevTools answer, a port another process holds or whose owner cannot
+  be read, a browser that exits during the wait) is covered by the fakes (`DebugBrowserReadinessProbeTests`,
+  `DebugBrowserLaunchTests`); it is not provoked on a real browser.
 
 ### Tool surface snapshot
 
