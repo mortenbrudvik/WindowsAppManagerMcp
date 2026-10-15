@@ -295,6 +295,14 @@ public class RelativeRectMathTests
     [InlineData(0, double.NegativeInfinity, 0.5, 1)]
     [InlineData(1e12, 0, 0.5, 1)]
     [InlineData(0, 0, -1e12, 1)]
+    // Both edges fit in int, but the distance between them does not (3.84e9 px wide, 2.288e9 px high)
+    [InlineData(-1e6, 0, 2e6, 1)]
+    [InlineData(0, -1.1e6, 1, 2.2e6)]
+    // A size that is not above 0 is not a window, even one hanging off the area
+    [InlineData(0.5, 0, -0.25, 1)]
+    [InlineData(0, 0.5, 1, -0.25)]
+    [InlineData(0, 0, 0, 1)]
+    [InlineData(0, 0, 1, 0)]
     public void FromFractions_AValueThatIsNotARealPositionOnScreen_Throws(double x, double y, double width, double height)
     {
         var act = () => RelativeRectMath.FromFractions(new MonitorRect(0, 0, 1920, 1040), x, y, width, height);

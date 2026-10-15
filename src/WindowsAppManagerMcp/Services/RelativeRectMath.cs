@@ -93,16 +93,28 @@ public static class RelativeRectMath
     /// The rectangle at fractions <paramref name="x"/>, <paramref name="y"/> of size <paramref name="width"/> x
     /// <paramref name="height"/> (1 is the whole area) of <paramref name="area"/>, in virtual-screen pixels. Unlike
     /// percentages, fractions are not limited to the area: a saved window that hung off its work area keeps doing so.
+    /// The width and height must still be above 0: a size of 0 or less is not a window, wherever it hangs.
     /// </summary>
-    /// <exception cref="ArgumentOutOfRangeException">A value is not finite, or an edge is outside the int range.</exception>
+    /// <exception cref="ArgumentOutOfRangeException">
+    /// A value is not finite, the width or height is not above 0, or an edge or the pixel width or height is outside
+    /// the int range.
+    /// </exception>
     public static MonitorRect FromFractions(MonitorRect area, double x, double y, double width, double height)
     {
         ArgumentNullException.ThrowIfNull(area);
+        if (!(width > 0))
+            throw new ArgumentOutOfRangeException(nameof(width), width, "The width must be above 0.");
+        if (!(height > 0))
+            throw new ArgumentOutOfRangeException(nameof(height), height, "The height must be above 0.");
+
         return Rect(area, x, y, x + width, y + height);
     }
 
     /// <summary>The rectangle of a layout placement's <paramref name="position"/> on <paramref name="area"/>.</summary>
-    /// <exception cref="ArgumentOutOfRangeException">A value is not finite, or an edge is outside the int range.</exception>
+    /// <exception cref="ArgumentOutOfRangeException">
+    /// A value is not finite, the width or height is not above 0, or an edge or the pixel width or height is outside
+    /// the int range.
+    /// </exception>
     public static MonitorRect FromFractions(MonitorRect area, RelativePosition position)
     {
         ArgumentNullException.ThrowIfNull(position);
@@ -110,12 +122,25 @@ public static class RelativeRectMath
     }
 
     /// <summary>The rectangle between the edges at the given fractions of the area's width and height.</summary>
+    /// <exception cref="ArgumentOutOfRangeException">
+    /// An edge is outside the int range, or the edges are further apart than an int can hold (two edges that each fit
+    /// can be up to twice that far apart) or the wrong way round.
+    /// </exception>
     private static MonitorRect Rect(MonitorRect area, double left, double top, double right, double bottom)
     {
         var leftEdge = SnapMath.Edge(area.X, area.Width, left);
         var topEdge = SnapMath.Edge(area.Y, area.Height, top);
         var rightEdge = SnapMath.Edge(area.X, area.Width, right);
         var bottomEdge = SnapMath.Edge(area.Y, area.Height, bottom);
-        return new MonitorRect(leftEdge, topEdge, rightEdge - leftEdge, bottomEdge - topEdge);
+        return new MonitorRect(leftEdge, topEdge, Size(leftEdge, rightEdge, "width"), Size(topEdge, bottomEdge, "height"));
+
+        // Subtracted as long: in int, edges 3.84e9 px apart would wrap to a negative size without an error
+        static int Size(int start, int end, string name)
+        {
+            var size = (long)end - start;
+            return size is < 0 or > int.MaxValue
+                ? throw new ArgumentOutOfRangeException(name, size, $"The {name} in pixels is outside the virtual screen's coordinates.")
+                : (int)size;
+        }
     }
 }
