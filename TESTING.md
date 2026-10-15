@@ -2454,6 +2454,67 @@ instance, named by the launch's `windowHandle`:
 - **Policy, pause, Firefox, another process's port** are covered by the fakes (`BrowserTabServiceTests`,
   `BrowserTabToolsTests`); they are not provoked on the desktop.
 
+Roadmap M5.8 (on a real Edge, then on a real Chrome with `browser: "chrome"` as in the M5.1 block; every other rule is
+unchanged: a throwaway-profile debug instance started by launch_browser_with_debug, cleanup by process ID with
+close_debug_browser, and no window of the user's browser passed to any call). The server runs with
+`WAM_TOOLSETS=+browser-actions,+browser-script` and an audit folder of the check's own. The pages come from a 127.0.0.1
+HttpListener the check runs, each under 1 MB: `/form` (title `Form`: a labelled text input `#q`, a button `Save draft`
+that writes `saved` into `#out`, a disabled button `Archive`, two buttons `Delete` that write `d0` and `d1`, a button
+`Hidden` under a `div#cover` overlay, a `contenteditable` div `#note`, an input `#short` with `maxlength="3"`, and a form
+around `#q` whose submit goes to `/done`), `/dialogs` (buttons that open `alert('a')`, `confirm('c')` and
+`prompt('p', 'd')`, each writing the answer into `#out`), `/alert-on-load` (calls `alert('loaded')` on load), `/long`
+(a button `Bottom` 3000 CSS pixels down) and `/frame` (`/form` in a same-origin iframe). Launch with `url` set to `/form`:
+
+- **Default surface.** Without `WAM_TOOLSETS`, tools/list has none of the six tools; with `+browser-actions` it has
+  five and not browser_evaluate; get_server_info reports `browser-script` off.
+- **Rect on the 150 % monitor.** With the debug window on the primary monitor (150 %): browser_element_rect with
+  `role: "button"`, `name: "Save draft"` returns `anchor: "document"` and `devicePixelRatio: 1.5`; get_element_at_point
+  at its `clickPoint` returns that button (UI Automation), and capture_region of its `screenRect` shows the button.
+  Record the anchor's distance from the window's client area.
+- **Rect on the 100 % monitor at negative x.** move_window the debug window to the secondary monitor (100 %, left of
+  the primary): the same call returns `devicePixelRatio: 1`, a negative `screenRect.x`, and get_element_at_point at the
+  new `clickPoint` returns the button. Browser zoom other than 100 % is not provoked (it needs keyboard input to the
+  browser or an edited profile); its scaling is covered by the fakes (`BrowserPageServiceTests`).
+- **Covered window.** Cover the debug window with a window the check opened (and closes by its handle afterwards)
+  since a reload of `/form`: browser_element_rect returns `anchor: "renderWidget"` or `ContentAreaNotFound`; record
+  which, and that the call never returned a rect another window's page holds.
+- **Click without the foreground.** With the check's own terminal in front: browser_click with `text: "Save draft"`
+  returns success with `point`; `#out` reads `saved` (get_browser_content with `selector: "#out"`), and
+  get_foreground_window returns the same window before and after. `text: "Delete"` returns `AmbiguousElement` with
+  `matchCount` 2 in the error; with `index: 1`, `#out` reads `d1`. `role: "button"`, `name: "Archive"` returns
+  `ElementNotEnabled`; `text: "Hidden"` returns `ElementObscured` naming `div#cover`; `selector: "##"` returns
+  `CdpEvaluationFailed`. On `/long`, `text: "Bottom"` clicks it (the page scrolled).
+- **Type without the foreground.** browser_type with `selector: "#q"`, `text: "hello"`: browser_evaluate
+  `document.querySelector('#q').value` returns `hello`; again with `replace: true` and `bye`: `bye`. Into `#note`
+  (contenteditable): its text ends with the typed text. Into `#short` with `abcdef`: record the value and whether a
+  `warning` came. With no selector after clicking `Save draft` (a button has the focus): `FocusNotOnElement`. With
+  `selector: "#q"`, `pressEnter: true`: browser_navigate is not needed, the tab's URL ends in `/done` (record it).
+- **Dialogs.** On `/dialogs`, browser_click on the `alert` button returns success with `dialog.type` `alert`; then
+  browser_handle_dialog with `accept: true` returns success (record whether `dialogType` came: Chrome, not Edge, is
+  expected to report it), and the page answers again. `confirm` with `accept: false`: `#out` reads `false`. `prompt`
+  with `accept: true`, `promptText: "x"`: `#out` reads `x`. With no dialog open: `DialogNotFound`. **Dialog before the
+  connection:** browser_navigate to `/alert-on-load` with `waitUntil: "none"`, then get_browser_url with `requireCdp:
+  true` (record `CdpDialogOpen` or `CdpTimeout`), then browser_handle_dialog with `accept: true`: record whether it
+  returns success on Edge 155 and on Chrome 155. If it returns `CdpDialogOpen`, close the dialog with respond_to_dialog
+  on the debug window and record that.
+- **Screenshot.** On the shown tab: an image of the page without the browser's frame, `activated` absent, `width`
+  1568 or less. Open `/long` with browser_navigate `newTab: true`, then browser_screenshot with the first tab's
+  `targetId`: `activated: true`, an image of `/form`; record whether Windows brought the window to the front or
+  flashed it. With the window covered by the check's window: record the result (an image or `CdpTimeout`).
+- **Script.** browser_evaluate `1 + 1` returns `value: 2`, `valueType: "number"`; `Promise.resolve({ a: 1 })` returns
+  `{ "a": 1 }`; `throw new Error('x')` returns `CdpEvaluationFailed` with `exception.text` starting `Error: x`;
+  `'x'.repeat(30000)` returns `truncated: true` and `valueLength: 30002`; `document.body` returns
+  `CdpEvaluationFailed` or `{}` (record which); `while (true) {}` with `timeoutMs: 1000` returns within about 2 seconds
+  and the next call on the page answers.
+- **Frames.** On `/frame`: `role: "button"`, `name: "Save draft"` finds the frame's button (record `matchCount`), and
+  browser_click on it writes `saved` in the frame; `selector: "button"` finds only the main document's elements.
+- **Audit and clients.** The audit log has one line per browser_click, browser_type, browser_handle_dialog,
+  browser_evaluate and browser_screenshot call; none holds the typed text, the expression, a selector, a name, a
+  prompt answer or browser_evaluate's value (only their lengths). After the block, `edge://inspect` (Chrome:
+  `chrome://inspect`) lists no DevTools client and no infobar appeared.
+- **The browser's own pages, policy, pause, a port of another process and Firefox** are covered by the fakes
+  (`BrowserPageServiceTests`, `BrowserPageToolsTests`); they are not provoked on the desktop.
+
 ### Tool surface snapshot
 
 `Contract/ToolSurfaceSnapshotTests` tests the server the way an agent sees it. It lists the tools of an
@@ -2586,7 +2647,7 @@ typical result over 300 tokens, and tools/list itself, measured in October 2026:
 | `read_table` | Task Manager's first 50 processes, 5 columns with headers | 643 | 1,000 |
 | `get_server_info` | The default deny list, five host processes, two monitors | 634 | 850 |
 | `get_layout` | A preset of 6 placements, each with the captured window identity | 529 | 800 |
-| tools/list | Every tool's name, title, description, schemas and annotations: 72 tools, 242,016 bytes (`ToolList_StaysWithinItsBudget`) | 60,504 | 60,540 |
+| tools/list | Every tool's name, title, description, schemas and annotations: 78 tools, 253,893 bytes (`ToolList_StaysWithinItsBudget`; M5.8's six DOM bridge tools added 2,970, 936 of them their window selectors) | 63,474 | 63,510 |
 
 Every other typical result is at most 300 tokens. When a change makes a result larger on purpose, raise its
 budget in the same change (the failure message gives the new size); when a change shrinks one a lot, lower it.
