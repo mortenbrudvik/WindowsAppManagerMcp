@@ -125,7 +125,7 @@ public sealed class BrowserUiaReader
             return BrowserUiaUrl.Failed(BrowserErrorCode.UrlBarNotFound,
                 "Found neither the page's address nor the browser's address bar through UI Automation. The window may be an " +
                 "app or kiosk window without an address bar, or the browser's accessibility tree is not available; read it " +
-                "through CDP (cdpPort) instead.",
+                "through CDP instead (a browser started with launch_browser_with_debug, or cdpPort).",
                 null, null, null);
         }
 
@@ -220,8 +220,8 @@ public sealed class BrowserUiaReader
     /// </summary>
     public const string PageNotShownHint =
         "Chromium builds a page's accessibility tree only while the page is shown, so a browser window that has stayed " +
-        "behind other windows since the page loaded may have none. Read it through CDP (cdpPort), or read again once the " +
-        "window has been shown.";
+        "behind other windows since the page loaded may have none. Read it through CDP (a browser started with " +
+        "launch_browser_with_debug, or cdpPort), or read again once the window has been shown.";
 
     private const string NewTabPageMessage =
         "The tab shows the browser's new tab page, which has no address of a site. Navigate the tab first, or read another window.";

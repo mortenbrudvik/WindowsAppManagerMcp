@@ -21,8 +21,8 @@ namespace WindowsAppManagerMcp.Services;
 /// through its render widget (<see cref="IAccessibilityWarmup.FindPages"/>), whose Document holds the address the tab
 /// committed, and get_browser_url the address bar as well (roadmap M5.7); asking for the page's element turns on Chromium's
 /// accessibility tree for it, as any UI Automation client does. A child window's handle (a render widget's, from an
-/// element) is read as its top-level window's (GA_ROOT). The CDP reads are not covered by the target policy: they read the
-/// debug browser through its port. The CDP lookup is given the window's bounds, state and DPI scale, so it can bind the
+/// element) is read as its top-level window's (GA_ROOT). The CDP reads with cdpPort are not covered by the target policy:
+/// they read the debug browser through the port the agent gave; no port is looked for in a denied browser. The CDP lookup is given the window's bounds, state and DPI scale, so it can bind the
 /// window to its browser window before the title picks the tab (<see cref="CdpWindowBinder"/>).
 /// </remarks>
 public class BrowserReadingService : IBrowserReadingService
@@ -143,7 +143,7 @@ public class BrowserReadingService : IBrowserReadingService
             var pageTitle = _nativeWrapper.GetWindowText(browserHandle);
 
             // Try CDP first: on cdpPort, else on the port the window's own process listens on (roadmap M5.3)
-            var choice = ChoosePort(processId, browserType, cdp);
+            var choice = ChoosePort(browserHandle, processId, browserType, cdp);
             var cdpError = choice.FallbackReason;
             if (cdp != null && choice.Port is int port)
             {
@@ -293,7 +293,7 @@ public class BrowserReadingService : IBrowserReadingService
             var pageTitle = _nativeWrapper.GetWindowText(browserHandle);
 
             // Try CDP first: on cdpPort, else on the port the window's own process listens on (roadmap M5.3)
-            var choice = ChoosePort(processId, browserType, cdp);
+            var choice = ChoosePort(browserHandle, processId, browserType, cdp);
             var cdpError = choice.FallbackReason;
             if (cdp != null && choice.Port is int port)
             {
@@ -356,12 +356,20 @@ public class BrowserReadingService : IBrowserReadingService
             // silently change the format, so report it instead.
             if (!options.TextOnly)
             {
-                var reason = cdpError != null
-                    ? $"CDP could not be used ({cdpError})."
-                    : cdp?.UseCdp == false
-                        ? "useCdp is false."
-                        : "The browser was not started with a debug port: start it with launch_browser_with_debug, whose " +
-                          "windows are then read through CDP, or pass cdpPort.";
+                if (choice.Denied)
+                {
+                    return new BrowserContentResult(
+                        Success: false,
+                        Content: null,
+                        Url: null,
+                        BrowserType: browserType,
+                        PageTitle: pageTitle,
+                        ContentLength: null,
+                        Error: choice.RequiredError,
+                        ErrorCode: choice.RequiredErrorCode);
+                }
+
+                var reason = cdpError != null ? $"CDP could not be used ({cdpError})." : choice.NoPortReason;
                 return new BrowserContentResult(
                     Success: false,
                     Content: null,
@@ -617,8 +625,8 @@ public class BrowserReadingService : IBrowserReadingService
             var reason = ex is TimeoutException ? $" ({ex.Message})" : string.Empty;
             return UiaRead.Failed(
                 $"Reading the browser window through UI Automation did not finish within {timeout.TotalMilliseconds:0} ms{reason}. " +
-                "Try again with a larger timeoutMs or a smaller maxLength, or read it through CDP (cdpPort); if it keeps " +
-                "happening, the browser may be hung.",
+                "Try again with a larger timeoutMs or a smaller maxLength, or read it through CDP (a browser started " +
+                "with launch_browser_with_debug, or cdpPort); if it keeps happening, the browser may be hung.",
                 BrowserErrorCode.OperationTimedOut,
                 warmup.Value);
         }
@@ -762,36 +770,67 @@ public class BrowserReadingService : IBrowserReadingService
 
     /// <summary>
     /// The DevTools port to read the window through (roadmap M5.3): cdpPort when it is given; otherwise, for a Chromium
-    /// browser, the port its own process listens on (<see cref="IDebugPortLocator"/>); none with useCdp=false or without
-    /// CDP options. Without a port, also what a call that needs CDP returns, and what a fallback says in cdpError: nothing
-    /// for a browser started without a debug port, which reads through UI Automation as before.
+    /// browser the target policy allows, the port its own process listens on (<see cref="IDebugPortLocator"/>); none with
+    /// useCdp=false or without CDP options. Without a port, also what a call that needs CDP returns, what a fallback says in
+    /// cdpError (nothing for a browser started without a debug port, which reads through UI Automation as before), and why
+    /// HTML cannot be read.
     /// </summary>
-    private PortChoice ChoosePort(uint processId, string browserType, CdpOptions? cdp)
+    /// <remarks>
+    /// The port found on its own is the policy's to refuse: before M5.3 a window was read through CDP only with the agent's
+    /// cdpPort, so a denied browser is not read through a port found for it, and its command line is not read to find one.
+    /// An explicit cdpPort reads the debug browser as before (the CDP reads are not covered by the policy).
+    /// </remarks>
+    private PortChoice ChoosePort(nint browserHandle, uint processId, string browserType, CdpOptions? cdp)
     {
         if (cdp is { UseCdp: false })
         {
             return new PortChoice(null, null, BrowserErrorCode.CdpUnavailable,
-                "requireCdp=true (or targetId) needs CDP, which useCdp=false turns off. Nothing was read.");
+                "requireCdp=true (or targetId) needs CDP, which useCdp=false turns off. Nothing was read.", "useCdp is false.");
         }
 
         if (cdp?.Port is int given)
-            return new PortChoice(given, null, BrowserErrorCode.None, null);
+            return new PortChoice(given, null, BrowserErrorCode.None, null, null);
+
+        const string StartWithDebugPort = "Start the browser with launch_browser_with_debug, or pass cdpPort.";
+        if (cdp == null || _portLocator == null)
+        {
+            return new PortChoice(null, null, BrowserErrorCode.CdpUnavailable,
+                $"requireCdp=true (or targetId) needs a debug port, and none is looked for. {StartWithDebugPort}",
+                "No cdpPort was given: pass the browser's, or start it with launch_browser_with_debug, whose windows are then " +
+                "read through CDP.");
+        }
+
+        if (UiaTargets.ReadVerdict(_nativeWrapper, _policy, browserHandle) is { Allowed: false } verdict)
+        {
+            return new PortChoice(null, null, BrowserErrorCode.TargetDeniedByPolicy,
+                UiaTargets.PolicyRefusalMessage(browserHandle, verdict), null);
+        }
 
         // Firefox speaks WebDriver BiDi on its debug port, not CDP
-        var lookup = cdp != null && _portLocator != null && browserType != "firefox" ? _portLocator.Find((int)processId) : null;
-        if (lookup?.Port is int found)
-            return new PortChoice(found, null, BrowserErrorCode.None, null);
+        if (browserType == "firefox")
+        {
+            return new PortChoice(null, null, BrowserErrorCode.CdpUnavailable,
+                "requireCdp=true (or targetId) needs CDP, which Firefox does not have. Nothing was read.",
+                "Firefox has no CDP; HTML is only available for a Chromium browser started with a debug port.");
+        }
 
-        var code = lookup?.Status == DebugPortLookupStatus.HeldByOtherProcess
+        var lookup = _portLocator.Find((int)processId);
+        if (lookup.Port is int found)
+            return new PortChoice(found, null, BrowserErrorCode.None, null, null);
+
+        var code = lookup.Status == DebugPortLookupStatus.HeldByOtherProcess
             ? BrowserErrorCode.CdpPortOwnerMismatch
             : BrowserErrorCode.CdpUnavailable;
-        var why = lookup?.Detail ?? "No debug port is looked for in this browser.";
         return new PortChoice(
             null,
-            lookup is { WorthReporting: true } ? $"{code}: {why}" : null,
+            lookup.WorthReporting ? $"{code}: {lookup.Detail}" : null,
             code,
-            $"requireCdp=true (or targetId) needs the DevTools port of the browser that owns the window, and none was found. {why} " +
-            "Start the browser with launch_browser_with_debug, or pass cdpPort.");
+            "requireCdp=true (or targetId) needs the DevTools port of the browser that owns the window, and none was found. " +
+            $"{lookup.Detail} {StartWithDebugPort}",
+            lookup.Status == DebugPortLookupStatus.NoDebugPort
+                ? "The browser was not started with a debug port: start it with launch_browser_with_debug, whose windows are " +
+                  "then read through CDP, or pass cdpPort."
+                : $"{lookup.Detail} Pass cdpPort if it was started with one, or start it with launch_browser_with_debug.");
     }
 
     /// <summary>The window a tab is looked up for: its process, its title and where it is (roadmap M5.3).</summary>
@@ -811,10 +850,19 @@ public class BrowserReadingService : IBrowserReadingService
     }
 
     /// <summary>
-    /// The port to read through, or null; without one, why a fallback did not use CDP (null when there is nothing to say)
-    /// and what a call that requires CDP returns.
+    /// The port to read through, or null; without one, why a fallback did not use CDP (null when there is nothing to say),
+    /// what a call that requires CDP returns, and why HTML cannot be read. TargetDeniedByPolicy as the required error code
+    /// means the target policy refuses the window.
     /// </summary>
-    private sealed record PortChoice(int? Port, string? FallbackReason, BrowserErrorCode RequiredErrorCode, string? RequiredError);
+    private sealed record PortChoice(
+        int? Port,
+        string? FallbackReason,
+        BrowserErrorCode RequiredErrorCode,
+        string? RequiredError,
+        string? NoPortReason)
+    {
+        public bool Denied => RequiredErrorCode == BrowserErrorCode.TargetDeniedByPolicy;
+    }
 
     private static string Truncate(string content, int? maxLength) =>
         maxLength is int max && max >= 0 && content.Length > max ? content[..max] : content;

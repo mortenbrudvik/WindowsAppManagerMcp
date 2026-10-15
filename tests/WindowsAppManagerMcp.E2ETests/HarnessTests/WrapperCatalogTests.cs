@@ -182,6 +182,7 @@ public class WrapperCatalogTests
     [InlineData(typeof(INativeMonitorWrapper), nameof(INativeMonitorWrapper.MonitorFromWindow), WrapperCallKind.Read)]
     [InlineData(typeof(INativeMonitorWrapper), nameof(INativeMonitorWrapper.MonitorFromPoint), WrapperCallKind.Read)]
     [InlineData(typeof(ITcpPortOwnerResolver), nameof(ITcpPortOwnerResolver.GetListeningProcessId), WrapperCallKind.Read)]
+    [InlineData(typeof(ITcpPortOwnerResolver), nameof(ITcpPortOwnerResolver.TryGetListeningProcessId), WrapperCallKind.Read)]
     [InlineData(typeof(INativeProcessWrapper), nameof(INativeProcessWrapper.OpenProcess), WrapperCallKind.Read)]
     [InlineData(typeof(INativeProcessWrapper), nameof(INativeProcessWrapper.StartProcess), WrapperCallKind.ProcessStart)]
     [InlineData(typeof(IProcessHandle), nameof(IProcessHandle.CloseMainWindow), WrapperCallKind.ProcessAction)]

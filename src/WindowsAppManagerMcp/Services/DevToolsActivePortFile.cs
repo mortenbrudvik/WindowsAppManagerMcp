@@ -50,11 +50,26 @@ public static class DevToolsActivePortFile
         return ParsePort(content) == port && string.Equals(ParseBrowserPath(content), browserPath, StringComparison.Ordinal);
     }
 
+    /// <summary>The most of the file that is read: its two short lines fit many times over.</summary>
+    private const int MaxBytes = 1024;
+
     private static string? TryReadText(string userDataDir)
     {
         try
         {
-            return File.ReadAllText(PathIn(userDataDir));
+            // Bounded, and only a seekable (regular) file: never a whole large file, and never a pipe or a device that
+            // could keep the read waiting
+            using var stream = new FileStream(
+                PathIn(userDataDir), FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, bufferSize: 1);
+            if (!stream.CanSeek)
+                return null;
+
+            var buffer = new byte[MaxBytes];
+            var read = 0;
+            while (read < buffer.Length && stream.Read(buffer, read, buffer.Length - read) is var n and > 0)
+                read += n;
+
+            return System.Text.Encoding.UTF8.GetString(buffer, 0, read);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
         {

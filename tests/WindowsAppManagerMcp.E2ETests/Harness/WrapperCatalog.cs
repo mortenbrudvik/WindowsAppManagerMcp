@@ -238,7 +238,8 @@ public static class WrapperCatalog
             },
             [typeof(ITcpPortOwnerResolver)] = new Dictionary<string, WrapperMember>
             {
-                [nameof(ITcpPortOwnerResolver.GetListeningProcessId)] = WrapperMember.Read
+                [nameof(ITcpPortOwnerResolver.GetListeningProcessId)] = WrapperMember.Read,
+                [nameof(ITcpPortOwnerResolver.TryGetListeningProcessId)] = WrapperMember.Read
             },
             [typeof(INativeProcessWrapper)] = new Dictionary<string, WrapperMember>
             {

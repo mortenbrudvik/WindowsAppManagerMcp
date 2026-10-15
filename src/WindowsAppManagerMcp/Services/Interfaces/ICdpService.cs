@@ -46,7 +46,9 @@ public interface ICdpService
     /// path does). With <see cref="CdpWindow.Geometry"/> and more than one tab, the window is first bound to its browser
     /// window (Browser.getWindowForTarget over the browser's DevTools connection, <see cref="Services.CdpWindowBinder"/>),
     /// and the tab is the one there whose exact title the window shows; CDP reports no active tab, so the title picks it.
-    /// When no browser window matches, or the binding cannot be read, the title is matched among all tabs. Fails with
+    /// When no browser window matches, the binding cannot be read (also when a reply did not come), or the bound window has
+    /// no tab with the title, the title is matched among all tabs. The binding takes at most a third of what is left of
+    /// <paramref name="timeout"/> (at most 2 s). Nothing listening on the port is CdpUnavailable. Fails with
     /// CdpTargetNotFound or CdpTargetAmbiguous when no single tab matches.
     /// </summary>
     /// <param name="port">The CDP debug port.</param>

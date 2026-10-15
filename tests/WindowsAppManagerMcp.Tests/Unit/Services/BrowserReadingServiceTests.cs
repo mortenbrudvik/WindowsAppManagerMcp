@@ -1469,6 +1469,78 @@ public class BrowserReadingServiceTests
     }
 
     [Fact]
+    public async Task GetBrowserUrlAndContent_DoNotLookForTheDebugPort_OfAWindowThePolicyDenies()
+    {
+        // Before M5.3 CDP needed the agent's cdpPort; the port found on its own must not read a denied browser, nor is
+        // the denied process's command line read to find it
+        var handle = new nint(12345);
+        SetupValidBrowserWindow(handle, "chrome", "chrome");
+        ShowPage(handle, "https://example.com", "Page text");
+        _policy = new TargetPolicy(TargetPolicySettings.Default with { DeniedProcesses = ["chrome"] });
+        var sut = CreateSutWithLocator();
+
+        var url = await sut.GetBrowserUrlAsync(handle, new CdpOptions());
+        var text = await sut.GetBrowserContentAsync(handle, cdp: new CdpOptions());
+        var html = await sut.GetBrowserContentAsync(handle, new BrowserContentOptions(TextOnly: false), new CdpOptions());
+        var required = await sut.GetBrowserContentAsync(handle, cdp: new CdpOptions(Required: true));
+
+        url.ErrorCode.Should().Be(BrowserErrorCode.TargetDeniedByPolicy);
+        text.ErrorCode.Should().Be(BrowserErrorCode.TargetDeniedByPolicy);
+        html.ErrorCode.Should().Be(BrowserErrorCode.TargetDeniedByPolicy);
+        html.Error.Should().Contain("'chrome'");
+        required.ErrorCode.Should().Be(BrowserErrorCode.TargetDeniedByPolicy);
+        required.Error.Should().Contain("'chrome'");
+        _locator.VerifyNoOtherCalls();
+        _mockCdpService.VerifyNoOtherCalls();
+        _worker.Calls.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task GetBrowserContent_HtmlRequiresCdp_SaysFirefoxHasNoCdp_InsteadOfADebugPort()
+    {
+        var handle = new nint(12345);
+        SetupValidBrowserWindow(handle, "firefox", "firefox");
+        var sut = CreateSutWithLocator();
+
+        var result = await sut.GetBrowserContentAsync(handle, new BrowserContentOptions(TextOnly: false), new CdpOptions());
+
+        result.ErrorCode.Should().Be(BrowserErrorCode.HtmlRequiresCdp);
+        result.Error.Should().Contain("Firefox has no CDP").And.NotContain("not started with a debug port")
+            .And.NotContain("launch_browser_with_debug");
+        _locator.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task GetBrowserContent_HtmlRequiresCdp_GivesTheLookupsReason_WhenTheCommandLineCannotBeRead()
+    {
+        var handle = new nint(12345);
+        SetupValidBrowserWindow(handle, "chrome", "chrome");
+        PortLookup(DebugPortLookupStatus.CommandLineUnreadable,
+            detail: "The command line of the browser's process 1000 could not be read, so its debug port is not known.");
+        var sut = CreateSutWithLocator();
+
+        var result = await sut.GetBrowserContentAsync(handle, new BrowserContentOptions(TextOnly: false), new CdpOptions());
+
+        result.ErrorCode.Should().Be(BrowserErrorCode.HtmlRequiresCdp);
+        result.Error.Should().Contain("could not be read, so its debug port is not known").And.Contain("cdpPort")
+            .And.NotContain("not started with a debug port");
+    }
+
+    [Fact]
+    public async Task GetBrowserContent_HtmlRequiresCdp_SaysTheBrowserHasNoDebugPort_WhenItWasStartedWithoutOne()
+    {
+        var handle = new nint(12345);
+        SetupValidBrowserWindow(handle, "chrome", "chrome");
+        PortLookup(DebugPortLookupStatus.NoDebugPort);
+        var sut = CreateSutWithLocator();
+
+        var result = await sut.GetBrowserContentAsync(handle, new BrowserContentOptions(TextOnly: false), new CdpOptions());
+
+        result.ErrorCode.Should().Be(BrowserErrorCode.HtmlRequiresCdp);
+        result.Error.Should().Contain("not started with a debug port").And.Contain("launch_browser_with_debug");
+    }
+
+    [Fact]
     public async Task GetBrowserUrl_WithTargetIdAndNoCdpPort_LooksTheTabUpOnTheFoundPort()
     {
         var handle = new nint(12345);

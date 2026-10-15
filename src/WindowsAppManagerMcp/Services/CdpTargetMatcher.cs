@@ -76,7 +76,7 @@ public static class CdpTargetMatcher
             return CdpResult<CdpTarget>.Fail(
                 BrowserErrorCode.CdpTargetAmbiguous,
                 $"{best.Count} tabs have the title '{best[0].Title}', so the tab shown by the window cannot be identified: {listed}. " +
-                "To read one of them, pass one as targetId to get_browser_url or get_browser_content, with the same window and cdpPort.");
+                "To read one of them, pass one as targetId to get_browser_url or get_browser_content, with the same window (and the same cdpPort, if you passed one).");
         }
 
         return CdpResult<CdpTarget>.Ok(best[0].Target);

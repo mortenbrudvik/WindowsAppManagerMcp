@@ -24,25 +24,34 @@ public class TcpPortOwnerResolver : ITcpPortOwnerResolver
     private static readonly byte[] Ipv4Any = [0, 0, 0, 0];
 
     /// <inheritdoc />
-    public int? GetListeningProcessId(int port)
+    public int? GetListeningProcessId(int port) =>
+        TryGetListeningProcessId(port, out var processId) ? processId : null;
+
+    /// <inheritdoc />
+    public bool TryGetListeningProcessId(int port, out int? processId)
     {
+        processId = null;
         if (port is < 1 or > 65535)
-            return null;
+            return true;
 
         try
         {
             var ipv4Table = QueryListenerTable(NativeMethods.Iphlpapi.AF_INET);
-            var pid = ipv4Table == null ? null : FindIpv4ListenerProcessId(ipv4Table, port);
-            if (pid != null)
-                return pid;
+            processId = ipv4Table == null ? null : FindIpv4ListenerProcessId(ipv4Table, port);
+            if (processId != null)
+                return true;
 
             // A dual-mode socket bound to [::] also accepts IPv4 connections to 127.0.0.1.
             var ipv6Table = QueryListenerTable(NativeMethods.Iphlpapi.AF_INET6);
-            return ipv6Table == null ? null : FindIpv6ListenerProcessId(ipv6Table, port);
+            processId = ipv6Table == null ? null : FindIpv6ListenerProcessId(ipv6Table, port);
+
+            // Nothing found is only known when both tables were read
+            return processId != null || (ipv4Table != null && ipv6Table != null);
         }
         catch
         {
-            return null;
+            processId = null;
+            return false;
         }
     }
 

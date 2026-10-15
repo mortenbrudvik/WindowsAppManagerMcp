@@ -106,11 +106,39 @@ public sealed class DebugPortLocator : IDebugPortLocator
                 "full path, so the port it picked cannot be read."));
         }
 
+        // The path is the process's own word: a share, a pipe or a device (\\host\..., \\?\..., \\.\...) could block the
+        // call outside the CDP time budget or reach another host, so only a folder on a local drive is read
+        if (!IsLocalDrivePath(path))
+        {
+            return (null, new DebugPortLookup(DebugPortLookupStatus.PortNotKnown, null,
+                $"The browser (process {process}) was started with --{PortSwitch}=0 and a --{ProfileSwitch} that is not on " +
+                "a local drive, so the port it picked is not read."));
+        }
+
         var port = _readPortFile(path);
         return port != null
             ? (port, null)
             : (null, new DebugPortLookup(DebugPortLookupStatus.PortNotKnown, null,
                 $"The browser (process {process}) was started with --{PortSwitch}=0, but its profile's " +
                 $"{DevToolsActivePortFile.FileName} names no port."));
+    }
+
+    /// <summary>
+    /// Whether <paramref name="path"/> is rooted at a drive letter (C:\...) of a drive that is not a network drive; a UNC,
+    /// device (\\?\, \\.\) or drive-relative path is not.
+    /// </summary>
+    private static bool IsLocalDrivePath(string path)
+    {
+        if (path.Length < 3 || !char.IsAsciiLetter(path[0]) || path[1] != ':' || path[2] is not ('\\' or '/'))
+            return false;
+
+        try
+        {
+            return new DriveInfo(path[..1]).DriveType != DriveType.Network;
+        }
+        catch (Exception ex) when (ex is ArgumentException or IOException or UnauthorizedAccessException)
+        {
+            return false;
+        }
     }
 }

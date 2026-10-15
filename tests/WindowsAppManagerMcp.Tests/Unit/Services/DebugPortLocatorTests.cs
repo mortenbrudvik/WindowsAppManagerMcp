@@ -108,6 +108,47 @@ public class DebugPortLocatorTests
         _owners.VerifyNoOtherCalls();
     }
 
+    [Theory]
+    [InlineData(@"\\server\share\Profile")]
+    [InlineData(@"\\?\UNC\server\share\Profile")]
+    [InlineData(@"\\?\C:\Temp\Profile")]
+    [InlineData(@"\\.\pipe\Profile")]
+    [InlineData(@"//server/share/Profile")]
+    public void Find_DoesNotReadAPortFileOutsideALocalDrive_ForPortZero(string profile)
+    {
+        // The path comes from the process's own command line: a share, a pipe or a device could block the call or reach
+        // another host, so only a drive-rooted local folder is read
+        var reads = new List<string>();
+        CommandLine($@"chrome.exe --remote-debugging-port=0 ""--user-data-dir={profile}""");
+        var sut = new DebugPortLocator(_processes.Object, _owners.Object, dir => { reads.Add(dir); return 51874; });
+
+        var lookup = sut.Find(BrowserPid);
+
+        lookup.Status.Should().Be(DebugPortLookupStatus.PortNotKnown);
+        lookup.Port.Should().BeNull();
+        lookup.Detail.Should().Contain("local");
+        reads.Should().BeEmpty();
+        _owners.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public void DevToolsActivePortFile_ReadsThePort_OfAFileLargerThanItReads()
+    {
+        // The read is bounded: the port is on the first line, whatever follows it
+        var dir = Path.Combine(Path.GetTempPath(), "WamPortFile-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            File.WriteAllText(DevToolsActivePortFile.PathIn(dir), "51874\n/devtools/browser/abc\n" + new string('x', 1_000_000));
+
+            DevToolsActivePortFile.TryReadPort(dir).Should().Be(51874);
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
     [Fact]
     public void Find_DoesNotUseAPortAnotherProcessListensOn()
     {

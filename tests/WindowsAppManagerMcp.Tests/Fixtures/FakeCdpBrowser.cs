@@ -35,6 +35,12 @@ public sealed class FakeCdpBrowser
     /// <summary>When true, /json/version answers as a program that is not a browser's DevTools endpoint.</summary>
     public bool NotABrowsersVersion { get; set; }
 
+    /// <summary>
+    /// The tabs whose Browser.getWindowForTarget is never answered (a reply lost to the time budget); null leaves every
+    /// one unanswered, as a browser connection that stalls.
+    /// </summary>
+    public HashSet<string>? Unanswered { get; set; } = new(StringComparer.Ordinal);
+
     /// <summary>The browser WebSocket URL /json/version lists.</summary>
     public string BrowserUrl => $"ws://127.0.0.1:{_port}/devtools/browser/B1";
 
@@ -93,6 +99,9 @@ public sealed class FakeCdpBrowser
         }
 
         var targetId = command.GetProperty("params").GetProperty("targetId").GetString();
+        if (Unanswered == null || Unanswered.Contains(targetId!))
+            return;
+
         var tab = _tabs.FirstOrDefault(t => t.Id == targetId);
         if (tab.WindowId is not int windowId || !_windows.TryGetValue(windowId, out var window))
         {

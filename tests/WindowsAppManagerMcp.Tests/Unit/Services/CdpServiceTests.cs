@@ -30,10 +30,11 @@ public class CdpServiceTests
         FakeCdpHttpHandler? http = null,
         ICdpWebSocketFactory? sockets = null,
         int? portOwner = BrowserPid,
-        CdpTransportLimits? limits = null) =>
+        CdpTransportLimits? limits = null,
+        bool listenerTableReadable = true) =>
         new(
             new CdpTransport(http ?? FakeCdpHttpHandler.Targets(), sockets ?? FakeCdpWebSocketFactory.NeverConnects(), limits),
-            new FakePortOwnerResolver(portOwner));
+            new FakePortOwnerResolver(portOwner, listenerTableReadable));
 
     /// <summary>A fake page that answers Runtime.evaluate with the given snapshot.</summary>
     private static FakeCdpWebSocket PageAnswering(object snapshot, int? frameSize = null) =>
@@ -215,7 +216,7 @@ public class CdpServiceTests
         // Roadmap M5.3: a title is no proof that what answers on the port is the window's browser, so the title path no
         // longer skips the check when the owner cannot be read (the targetId path never did)
         var http = FakeCdpHttpHandler.Targets(("A", "Inbox", "https://mail.example/"));
-        var sut = CreateSut(http, portOwner: null);
+        var sut = CreateSut(http, portOwner: null, listenerTableReadable: false);
 
         var result = await sut.FindTargetForWindowAsync(Port, TitleOnly("Inbox - Google Chrome"), LongTimeout);
 
@@ -379,6 +380,71 @@ public class CdpServiceTests
         var result = await sut.FindTargetForWindowAsync(Port, At("Inbox - Google Chrome", 0, 0, 1000, 700), LongTimeout);
 
         result.Value!.Id.Should().Be("A");
+    }
+
+    [Fact]
+    public async Task FindTargetForWindowAsync_ReturnsAmbiguous_WhenATabOfTheBoundWindowIsNotAnswered()
+    {
+        // A reply lost to the time budget is no proof that the tab is in no window: a partial binding would return A,
+        // which the window may not show. The binding is unreadable, so the title decides among all tabs, as before M5.3
+        var browser = new FakeCdpBrowser { Unanswered = ["B"] }
+            .Window(1, 0, 0, 1000, 700)
+            .Window(2, 400, 300, 1200, 800)
+            .Tab("A", "Inbox", 1)
+            .Tab("B", "Inbox", 1)
+            .Tab("C", "News", 2);
+        var sut = CreateSut(browser);
+
+        var result = await sut.FindTargetForWindowAsync(
+            Port, At("Inbox - Google Chrome", 0, 0, 1000, 700), TimeSpan.FromMilliseconds(600));
+
+        result.ErrorCode.Should().Be(BrowserErrorCode.CdpTargetAmbiguous, result.Error);
+        result.Error.Should().Contain("targetId A").And.Contain("targetId B");
+    }
+
+    [Fact]
+    public async Task FindTargetForWindowAsync_LeavesMostOfTheBudget_WhenTheBrowsersConnectionStalls()
+    {
+        // The binding is best effort: a browser connection that never answers gets a share of the budget, so the title
+        // still finds the tab with time left to read its page
+        var browser = new FakeCdpBrowser { Unanswered = null }
+            .Window(1, 0, 0, 1000, 700)
+            .Tab("A", "Inbox", 1)
+            .Tab("B", "News", 1);
+        var sut = CreateSut(browser);
+        var budget = TimeSpan.FromMilliseconds(1500);
+        var stopwatch = Stopwatch.StartNew();
+
+        var result = await sut.FindTargetForWindowAsync(Port, At("Inbox - Google Chrome", 0, 0, 1000, 700), budget);
+
+        stopwatch.Stop();
+        result.Value!.Id.Should().Be("A");
+        browser.WindowQueries.Should().Be(2);
+        stopwatch.Elapsed.Should().BeLessThan(budget * 0.8, "the binding may use only a share of the budget");
+    }
+
+    [Theory]
+    [InlineData(9000, 2000)]
+    [InlineData(3000, 1000)]
+    [InlineData(300, 100)]
+    [InlineData(0, 0)]
+    public void BindingBudget_IsAThirdOfWhatIsLeft_AndAtMostTwoSeconds(int remainingMs, int expectedMs)
+    {
+        CdpService.BindingBudget(TimeSpan.FromMilliseconds(remainingMs)).Should().Be(TimeSpan.FromMilliseconds(expectedMs));
+    }
+
+    [Fact]
+    public async Task FindTargetForWindowAsync_ReturnsCdpUnavailable_WhenNothingListensOnThePort()
+    {
+        // A wrong or stale cdpPort: nothing to tie to the window, but no other process holds it either
+        var http = FakeCdpHttpHandler.Targets(("A", "Inbox", "https://mail.example/"));
+        var sut = CreateSut(http, portOwner: null);
+
+        var result = await sut.FindTargetForWindowAsync(Port, TitleOnly("Inbox - Google Chrome"), LongTimeout);
+
+        result.ErrorCode.Should().Be(BrowserErrorCode.CdpUnavailable);
+        result.Error.Should().Contain("Nothing listens on 127.0.0.1:9222").And.Contain("Nothing was read");
+        http.Requests.Should().BeEmpty();
     }
 
     [Fact]
@@ -816,14 +882,27 @@ public class CdpServiceTests
     [Fact]
     public async Task FindTargetByIdAsync_FailsClosed_WhenThePortsOwnerCannotBeRead()
     {
-        // The title path skips an unknown owner and still needs the title to match; an id carries no such evidence
+        // An id carries no evidence that what answers on the port is the window's browser
         var http = FakeCdpHttpHandler.Targets(("A", "Inbox", "https://mail.example/"));
-        var sut = CreateSut(http, portOwner: null);
+        var sut = CreateSut(http, portOwner: null, listenerTableReadable: false);
 
         var result = await sut.FindTargetByIdAsync(Port, BrowserPid, "A", LongTimeout);
 
         result.ErrorCode.Should().Be(BrowserErrorCode.CdpPortOwnerMismatch);
         result.Error.Should().Contain("Could not read which process owns CDP port 9222");
+        http.Requests.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task FindTargetByIdAsync_ReturnsCdpUnavailable_WhenNothingListensOnThePort()
+    {
+        var http = FakeCdpHttpHandler.Targets(("A", "Inbox", "https://mail.example/"));
+        var sut = CreateSut(http, portOwner: null);
+
+        var result = await sut.FindTargetByIdAsync(Port, BrowserPid, "A", LongTimeout);
+
+        result.ErrorCode.Should().Be(BrowserErrorCode.CdpUnavailable);
+        result.Error.Should().Contain("Nothing listens on 127.0.0.1:9222");
         http.Requests.Should().BeEmpty();
     }
 
