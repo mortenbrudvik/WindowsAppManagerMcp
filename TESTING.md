@@ -2375,6 +2375,43 @@ never with keystrokes; windows are moved only with move_window on the check's ow
   without a port file) and **a browser without the switch** are covered by the fakes (`DebugPortLocatorTests`,
   `BrowserReadingServiceTests`); the user's own browser is not passed to any call (rule 4).
 
+Roadmap M5.5 (on a real Edge, then on a real Chrome with `browser: "chrome"` as in the M5.1 block; every other rule is
+unchanged). browser_navigate refuses `data:` and `file:` URLs, so the pages come from a 127.0.0.1 HttpListener the check
+runs (rule 3), each under 1 MB: `/a` (title `A`), `/b` (title `B`, whose script adds an element `#late` after one
+second), `/redirect` (302 to `/a`), `/missing` (404 with a small page), `/slow` (answers after 5 seconds) and `/unload`
+(title `U`, sets `onbeforeunload`). The server runs with `WAM_TOOLSETS=+browser-actions` and an audit folder of the
+check's own (`WAM_AUDIT_PATH`); launch the browser with `url` set to `/a`. Windows are only those of the check's debug
+instance, named by the launch's `windowHandle`:
+
+- **Default surface.** Without `WAM_TOOLSETS`, tools/list has list_tabs and wait_for_browser but not activate_tab or
+  browser_navigate, and get_server_info reports `browser-actions` off.
+- **List.** list_tabs on the window returns one tab with `inWindow: true`, `windowBound: true`, `shownTargetId` that
+  tab's id and `cdpPort` the launch's; list_tabs with that `cdpPort` alone returns the same tab without `windowBound`.
+- **New tab.** browser_navigate with `newTab: true` to `/b` returns a new `targetId`, `newTab: true`, `loadState:
+  "load"`, `httpStatus: 200` and `title: "B"`; list_tabs then lists both tabs in the window, with `shownTargetId` the
+  new one (record if the new tab opened in another window).
+- **Activate.** activate_tab with the first tab's id: the window's title shows `A` (get_window_info) and list_tabs'
+  `shownTargetId` is that tab. Record whether Windows brought the window to the front or flashed it in the taskbar.
+- **Navigate and load.** In the shown tab: `/redirect` returns `url` ending in `/a` and `httpStatus: 200`; `/missing`
+  returns success with `httpStatus: 404`; a 127.0.0.1 port nothing listens on returns `NavigationFailed` with
+  `errorText` `net::ERR_CONNECTION_REFUSED`; `/slow` with `timeoutMs: 2000` returns `WaitTimedOut` with `loadState:
+  "loading"` within about 2 seconds, and wait_for_browser with `urlContains: "slow"` then returns satisfied once it
+  loads; `/a#part` returns `loadState: "sameDocument"`; `waitUntil: "none"` returns `loadState: "notWaited"` at once.
+  During the slow load, move_window on the debug window returns at once (the load does not hold the input gate).
+- **Refused URLs.** `file:///C:/Windows/win.ini`, `data:text/html,x`, `javascript:alert(1)`, `chrome://settings` and
+  `edge://settings` each return `InvalidArguments`, and get_browser_url shows the tab did not change.
+- **Wait.** browser_navigate to `/b` with `waitUntil: "none"`, then wait_for_browser with `selector: "#late"` is
+  satisfied after about a second; `textContains` of text the page does not have with `timeoutMs: 1500` returns
+  `WaitTimedOut` with the page's `url` and `title`; `selector: "##"` returns `CdpEvaluationFailed` at once.
+- **Leaving a page with onbeforeunload.** browser_navigate from `/unload` to `/a`: record whether a dialog appeared
+  (Chromium shows one only after a user gesture on the page, which the check does not make) and the result
+  (`CdpDialogOpen` if one did).
+- **Audit and clients.** The audit log has one line per activate_tab and browser_navigate call, with `url` as scheme
+  and host only (`http://127.0.0.1:<port>`); after the block, `edge://inspect` (Chrome: `chrome://inspect`) lists no
+  DevTools client and no infobar appeared.
+- **Policy, pause, Firefox, another process's port** are covered by the fakes (`BrowserTabServiceTests`,
+  `BrowserTabToolsTests`); they are not provoked on the desktop.
+
 ### Tool surface snapshot
 
 `Contract/ToolSurfaceSnapshotTests` tests the server the way an agent sees it. It lists the tools of an
@@ -2507,7 +2544,7 @@ typical result over 300 tokens, and tools/list itself, measured in October 2026:
 | `read_table` | Task Manager's first 50 processes, 5 columns with headers | 643 | 1,000 |
 | `get_server_info` | The default deny list, five host processes, two monitors | 634 | 850 |
 | `get_layout` | A preset of 6 placements, each with the captured window identity | 529 | 800 |
-| tools/list | Every tool's name, title, description, schemas and annotations: 67 tools, 231,722 bytes (`ToolList_StaysWithinItsBudget`) | 57,931 | 57,967 |
+| tools/list | Every tool's name, title, description, schemas and annotations: 71 tools, 238,709 bytes (`ToolList_StaysWithinItsBudget`) | 59,678 | 59,714 |
 
 Every other typical result is at most 300 tokens. When a change makes a result larger on purpose, raise its
 budget in the same change (the failure message gives the new size); when a change shrinks one a lot, lower it.
