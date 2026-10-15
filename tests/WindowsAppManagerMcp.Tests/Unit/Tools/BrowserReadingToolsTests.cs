@@ -1,3 +1,4 @@
+using WindowsAppManagerMcp.Infrastructure;
 using WindowsAppManagerMcp.Tools;
 
 namespace WindowsAppManagerMcp.Tests.Unit.Tools;
@@ -368,7 +369,7 @@ public class BrowserReadingToolsTests
         await sut.GetBrowserUrl(12345, cdpPort: 9333, requireCdp: true, timeoutMs: 4000, cancellationToken: cts.Token);
 
         _mockBrowserReadingService.Verify(s => s.GetBrowserUrlAsync(
-            new nint(12345), new CdpOptions(9333, true, 4000), cts.Token), Times.Once);
+            new nint(12345), new CdpOptions(9333, true, 4000, null), cts.Token), Times.Once);
     }
 
     [Fact]
@@ -382,7 +383,7 @@ public class BrowserReadingToolsTests
         await sut.GetBrowserUrl(12345);
 
         _mockBrowserReadingService.Verify(s => s.GetBrowserUrlAsync(
-            new nint(12345), new CdpOptions(null, false, 10000), It.IsAny<CancellationToken>()), Times.Once);
+            new nint(12345), new CdpOptions(null, false, 10000, null), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -399,7 +400,7 @@ public class BrowserReadingToolsTests
         await sut.GetBrowserContent(12345, maxLength: 10, textOnly: false, cdpPort: 9222, requireCdp: true, timeoutMs: 2500, cancellationToken: cts.Token);
 
         _mockBrowserReadingService.Verify(s => s.GetBrowserContentAsync(
-            new nint(12345), new BrowserContentOptions(10, false), new CdpOptions(9222, true, 2500), cts.Token), Times.Once);
+            new nint(12345), new BrowserContentOptions(10, false), new CdpOptions(9222, true, 2500, null), cts.Token), Times.Once);
     }
 
     [Fact]
@@ -414,7 +415,62 @@ public class BrowserReadingToolsTests
         await sut.GetActiveBrowserUrl(cdpPort: 9222, requireCdp: false, timeoutMs: 1500, cancellationToken: cts.Token);
 
         _mockBrowserReadingService.Verify(s => s.GetActiveBrowserUrlAsync(
-            new CdpOptions(9222, false, 1500), cts.Token), Times.Once);
+            new CdpOptions(9222, false, 1500, null), cts.Token), Times.Once);
+    }
+
+    [Fact]
+    public async Task GetBrowserUrl_PassesTargetIdThrough()
+    {
+        _mockBrowserReadingService
+            .Setup(s => s.GetBrowserUrlAsync(It.IsAny<nint>(), It.IsAny<CdpOptions?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(AnyUrlResult);
+        var sut = CreateSut();
+
+        await sut.GetBrowserUrl(12345, cdpPort: 9222, targetId: "8C1F0A6E2B7D4F3A");
+
+        _mockBrowserReadingService.Verify(s => s.GetBrowserUrlAsync(
+            new nint(12345), new CdpOptions(9222, false, 10000, "8C1F0A6E2B7D4F3A"), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task GetBrowserContent_PassesTargetIdThrough()
+    {
+        _mockBrowserReadingService
+            .Setup(s => s.GetBrowserContentAsync(
+                It.IsAny<nint>(), It.IsAny<BrowserContentOptions?>(), It.IsAny<CdpOptions?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(AnyContentResult);
+        var sut = CreateSut();
+
+        await sut.GetBrowserContent(12345, cdpPort: 9222, targetId: "8C1F0A6E2B7D4F3A");
+
+        _mockBrowserReadingService.Verify(s => s.GetBrowserContentAsync(
+            new nint(12345), It.IsAny<BrowserContentOptions?>(), new CdpOptions(9222, false, 10000, "8C1F0A6E2B7D4F3A"),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Theory]
+    [InlineData(null, "8C1F0A6E2B7D4F3A", "needs cdpPort")]
+    [InlineData(9222, "", "CDP tab id")]
+    [InlineData(9222, "../browser/1", "CDP tab id")]
+    [InlineData(9222, "TAB1?x", "CDP tab id")]
+    public async Task GetBrowserUrlAndContent_RefuseABadTargetId_BeforeReading(int? cdpPort, string targetId, string message)
+    {
+        var sut = CreateSut();
+
+        var url = () => sut.GetBrowserUrl(12345, cdpPort: cdpPort, targetId: targetId);
+        var content = () => sut.GetBrowserContent(12345, cdpPort: cdpPort, targetId: targetId);
+
+        (await url.Should().ThrowAsync<ToolErrorException>()).Which.ErrorCode.Should().Be(ToolErrorReporting.InvalidArgumentsErrorCode);
+        (await content.Should().ThrowAsync<ToolErrorException>()).Which.Message.Should().Contain(message).And.Contain("Nothing was read");
+        _mockBrowserReadingService.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public void GetActiveBrowserUrl_HasNoTargetId()
+    {
+        // The foreground window defines its tab
+        typeof(BrowserReadingTools).GetMethod(nameof(BrowserReadingTools.GetActiveBrowserUrl))!
+            .GetParameters().Select(p => p.Name).Should().NotContain("targetId");
     }
 
     [Fact]

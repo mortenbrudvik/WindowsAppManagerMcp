@@ -65,10 +65,13 @@ public record BrowserContentOptions(
 /// <param name="Required">If true, a CDP failure is returned as an error instead of falling back to UI Automation.</param>
 /// <param name="TimeoutMs">Time budget for all CDP requests of one call, and another for its UI Automation read (roadmap
 /// M3.F24). Clamped to [MinTimeoutMs, MaxTimeoutMs].</param>
+/// <param name="TargetId">The CDP tab to read instead of the one the window shows (roadmap M5.2), or null. It must be a tab
+/// of the browser on <paramref name="Port"/>, and implies <paramref name="Required"/>.</param>
 public record CdpOptions(
     int? Port = null,
     bool Required = false,
-    int TimeoutMs = CdpOptions.DefaultTimeoutMs)
+    int TimeoutMs = CdpOptions.DefaultTimeoutMs,
+    string? TargetId = null)
 {
     public const int DefaultTimeoutMs = 10000;
     public const int MinTimeoutMs = 1000;
@@ -76,6 +79,12 @@ public record CdpOptions(
 
     /// <summary>The time budget after clamping.</summary>
     public TimeSpan EffectiveTimeout => TimeSpan.FromMilliseconds(Math.Clamp(TimeoutMs, MinTimeoutMs, MaxTimeoutMs));
+
+    /// <summary>
+    /// Whether a CDP failure is returned instead of falling back to UI Automation: requireCdp, or a targetId, which UI
+    /// Automation cannot read (it sees only the tab the window shows).
+    /// </summary>
+    public bool EffectiveRequired => Required || TargetId != null;
 }
 
 /// <summary>

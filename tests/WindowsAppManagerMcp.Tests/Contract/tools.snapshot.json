@@ -2279,7 +2279,7 @@
         "type": "object",
         "properties": {
           "cdpPort": {
-            "description": "Optional CDP port of the browser that owns the window. If the browser was started with --remote-debugging-port=9222 (for example by launch_browser_with_debug), specify 9222 here.",
+            "description": "Optional DevTools port of the browser that owns the window (launch_browser_with_debug returns it); enables CDP reads.",
             "type": [
               "integer",
               "null"
@@ -2287,7 +2287,7 @@
             "default": null
           },
           "requireCdp": {
-            "description": "If true, return the CDP error (for example CdpTimeout, CdpDialogOpen, CdpTargetNotFound) instead of falling back to UI Automation. Requires cdpPort. Default: false.",
+            "description": "If true, return the CDP error (for example CdpTimeout, CdpDialogOpen, CdpTargetNotFound) instead of falling back to UI Automation. Requires cdpPort; implied by targetId. Default: false.",
             "type": "boolean",
             "default": false
           },
@@ -2529,15 +2529,23 @@
             "default": true
           },
           "cdpPort": {
-            "description": "Optional CDP port of the browser that owns the window. If the browser was started with --remote-debugging-port=9222 (for example by launch_browser_with_debug), specify 9222 here for JavaScript-rendered content.",
+            "description": "Optional DevTools port of the browser that owns the window (launch_browser_with_debug returns it); enables CDP reads.",
             "type": [
               "integer",
               "null"
             ],
             "default": null
           },
+          "targetId": {
+            "description": "CDP tab id from an earlier result's targetId or a CdpTargetAmbiguous error; reads that tab instead of the one the window shows. Needs cdpPort, must be a tab of the window's browser, never falls back to UI Automation.",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
           "requireCdp": {
-            "description": "If true, return the CDP error (for example CdpTimeout, CdpDialogOpen, CdpTargetNotFound) instead of falling back to UI Automation. Requires cdpPort. Default: false.",
+            "description": "If true, return the CDP error (for example CdpTimeout, CdpDialogOpen, CdpTargetNotFound) instead of falling back to UI Automation. Requires cdpPort; implied by targetId. Default: false.",
             "type": "boolean",
             "default": false
           },
@@ -2643,15 +2651,23 @@
             "default": null
           },
           "cdpPort": {
-            "description": "Optional CDP port of the browser that owns the window. If the browser was started with --remote-debugging-port=9222 (for example by launch_browser_with_debug), specify 9222 here.",
+            "description": "Optional DevTools port of the browser that owns the window (launch_browser_with_debug returns it); enables CDP reads.",
             "type": [
               "integer",
               "null"
             ],
             "default": null
           },
+          "targetId": {
+            "description": "CDP tab id from an earlier result's targetId or a CdpTargetAmbiguous error; reads that tab instead of the one the window shows. Needs cdpPort, must be a tab of the window's browser, never falls back to UI Automation.",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
           "requireCdp": {
-            "description": "If true, return the CDP error (for example CdpTimeout, CdpDialogOpen, CdpTargetNotFound) instead of falling back to UI Automation. Requires cdpPort. Default: false.",
+            "description": "If true, return the CDP error (for example CdpTimeout, CdpDialogOpen, CdpTargetNotFound) instead of falling back to UI Automation. Requires cdpPort; implied by targetId. Default: false.",
             "type": "boolean",
             "default": false
           },

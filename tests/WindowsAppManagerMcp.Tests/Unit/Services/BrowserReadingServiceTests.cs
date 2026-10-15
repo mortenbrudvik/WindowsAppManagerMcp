@@ -911,6 +911,169 @@ public class BrowserReadingServiceTests
             It.IsAny<CdpTarget>(), It.IsAny<bool>(), It.IsAny<int?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
+    [Theory]
+    [InlineData(BrowserErrorCode.CdpTargetClosed)]
+    [InlineData(BrowserErrorCode.CdpResponseTooLarge)]
+    public async Task GetBrowserContent_FallsBackToUia_OnTheNewCdpCodes_WithoutTargetId(BrowserErrorCode code)
+    {
+        var handle = new nint(12345);
+        SetupValidBrowserWindow(handle, "chrome", "chrome");
+        SetupCdpMatch(CdpResult<CdpTarget>.Ok(CdpTab));
+        SetupCdpSnapshot(CdpResult<CdpPageSnapshot>.Fail(code, "the reason"));
+        ShowPage(handle, "https://example.com", "UIA text");
+        var sut = CreateSut();
+
+        var result = await sut.GetBrowserContentAsync(handle, cdp: new CdpOptions(Port: CdpPort));
+
+        result.Success.Should().BeTrue();
+        result.Source.Should().Be("uia");
+        result.CdpError.Should().Be($"{code}: the reason");
+    }
+
+    [Fact]
+    public async Task GetBrowserContent_ReturnsResponseTooLarge_InsteadOfHtmlRequiresCdp_ForHtml()
+    {
+        // The HTML exists and CDP works; it is only too large, so HtmlRequiresCdp's "CDP could not be used" would mislead
+        var handle = new nint(12345);
+        SetupValidBrowserWindow(handle, "chrome", "chrome");
+        SetupCdpMatch(CdpResult<CdpTarget>.Ok(CdpTab));
+        SetupCdpSnapshot(CdpResult<CdpPageSnapshot>.Fail(BrowserErrorCode.CdpResponseTooLarge, "over 64 MB; use maxLength"));
+        var sut = CreateSut();
+
+        var result = await sut.GetBrowserContentAsync(
+            handle, new BrowserContentOptions(TextOnly: false), new CdpOptions(Port: CdpPort));
+
+        result.ErrorCode.Should().Be(BrowserErrorCode.CdpResponseTooLarge);
+        result.Error.Should().Be("over 64 MB; use maxLength");
+        result.Source.Should().Be("cdp");
+        result.TargetId.Should().Be("TAB1");
+        _worker.Calls.Should().Be(0);
+    }
+
+    #endregion
+
+    #region targetId (roadmap M5.2)
+
+    private const string OtherTabId = "B7D4F3A9E5C1";
+
+    private static readonly CdpTarget OtherTab = CdpTab with { Id = OtherTabId, Title = "Other", Url = "https://example.com/other" };
+
+    private void SetupCdpTargetById(CdpResult<CdpTarget> result) =>
+        _mockCdpService
+            .Setup(c => c.FindTargetByIdAsync(
+                It.IsAny<int>(), It.IsAny<int>(), It.IsAny<string>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(result);
+
+    [Fact]
+    public void CdpOptions_TargetIdImpliesRequired()
+    {
+        new CdpOptions(Port: CdpPort).EffectiveRequired.Should().BeFalse();
+        new CdpOptions(Port: CdpPort, Required: true).EffectiveRequired.Should().BeTrue();
+        new CdpOptions(Port: CdpPort, TargetId: OtherTabId).EffectiveRequired.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task GetBrowserUrl_WithTargetId_LooksTheTabUpById_NotByTheWindowTitle()
+    {
+        var handle = new nint(12345);
+        SetupValidBrowserWindow(handle, "chrome", "chrome");
+        SetupCdpTargetById(CdpResult<CdpTarget>.Ok(OtherTab));
+        var sut = CreateSut();
+
+        var result = await sut.GetBrowserUrlAsync(handle, new CdpOptions(Port: CdpPort, TargetId: OtherTabId));
+
+        result.Success.Should().BeTrue();
+        result.Url.Should().Be("https://example.com/other");
+        result.TargetId.Should().Be(OtherTabId);
+        _mockCdpService.Verify(c => c.FindTargetByIdAsync(
+            CdpPort, 1000, OtherTabId, It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()), Times.Once);
+        _mockCdpService.Verify(c => c.FindTargetForWindowAsync(
+            It.IsAny<int>(), It.IsAny<int>(), It.IsAny<string>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task GetBrowserUrl_WithTargetId_ReturnsTheCdpError_AndNeverReadsThroughUia()
+    {
+        var handle = new nint(12345);
+        SetupValidBrowserWindow(handle, "chrome", "chrome");
+        SetupCdpTargetById(CdpResult<CdpTarget>.Fail(BrowserErrorCode.CdpTargetNotFound, "No tab with targetId"));
+        ShowPage(handle, "https://example.com/uia");
+        var sut = CreateSut();
+
+        var result = await sut.GetBrowserUrlAsync(handle, new CdpOptions(Port: CdpPort, Required: false, TargetId: OtherTabId));
+
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(BrowserErrorCode.CdpTargetNotFound);
+        result.Source.Should().Be("cdp");
+        _worker.Calls.Should().Be(0, "a tab asked for by id is never replaced by the window's address bar");
+    }
+
+    [Fact]
+    public async Task GetBrowserContent_WithTargetId_ReadsThatTab_WithinOneBudget()
+    {
+        var handle = new nint(12345);
+        SetupValidBrowserWindow(handle, "chrome", "chrome");
+        var lookup = TimeSpan.Zero;
+        _mockCdpService
+            .Setup(c => c.FindTargetByIdAsync(
+                It.IsAny<int>(), It.IsAny<int>(), It.IsAny<string>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .Returns(async () =>
+            {
+                var watch = System.Diagnostics.Stopwatch.StartNew();
+                await Task.Delay(300);
+                lookup = watch.Elapsed;
+                return CdpResult<CdpTarget>.Ok(OtherTab);
+            });
+        SetupCdpSnapshot(CdpResult<CdpPageSnapshot>.Ok(new CdpPageSnapshot("Other", "https://example.com/other", "other text")));
+        var sut = CreateSut();
+
+        var result = await sut.GetBrowserContentAsync(
+            handle, cdp: new CdpOptions(Port: CdpPort, TimeoutMs: CdpOptions.MaxTimeoutMs, TargetId: OtherTabId));
+
+        result.Success.Should().BeTrue();
+        result.Content.Should().Be("other text");
+        result.TargetId.Should().Be(OtherTabId);
+        lookup.Should().BeGreaterThan(TimeSpan.FromMilliseconds(250));
+        _mockCdpService.Verify(c => c.GetPageSnapshotAsync(
+            OtherTab, true, null,
+            It.Is<TimeSpan>(t => t > TimeSpan.Zero && t <= TimeSpan.FromMilliseconds(CdpOptions.MaxTimeoutMs) - lookup),
+            It.IsAny<CancellationToken>()), Times.Once);
+        _mockCdpService.Verify(c => c.FindTargetForWindowAsync(
+            It.IsAny<int>(), It.IsAny<int>(), It.IsAny<string>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task GetBrowserContent_WithTargetId_ReturnsTheCdpError_AndNeverReadsThroughUia()
+    {
+        var handle = new nint(12345);
+        SetupValidBrowserWindow(handle, "chrome", "chrome");
+        SetupCdpTargetById(CdpResult<CdpTarget>.Ok(OtherTab));
+        SetupCdpSnapshot(CdpResult<CdpPageSnapshot>.Fail(BrowserErrorCode.CdpTargetClosed, "The tab closed"));
+        ShowPage(handle, "https://example.com", "UIA text");
+        var sut = CreateSut();
+
+        var result = await sut.GetBrowserContentAsync(handle, cdp: new CdpOptions(Port: CdpPort, TargetId: OtherTabId));
+
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(BrowserErrorCode.CdpTargetClosed);
+        result.TargetId.Should().Be(OtherTabId);
+        _worker.Calls.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task GetBrowserContent_WithTargetIdButNoPort_ReturnsCdpUnavailable_WithoutReading()
+    {
+        var handle = new nint(12345);
+        SetupValidBrowserWindow(handle, "chrome", "chrome");
+        var sut = CreateSut();
+
+        var result = await sut.GetBrowserContentAsync(handle, cdp: new CdpOptions(Port: null, TargetId: OtherTabId));
+
+        result.ErrorCode.Should().Be(BrowserErrorCode.CdpUnavailable);
+        _worker.Calls.Should().Be(0);
+        _mockCdpService.VerifyNoOtherCalls();
+    }
+
     #endregion
 
     #region UI Automation path on the seam (roadmap M3.F24)

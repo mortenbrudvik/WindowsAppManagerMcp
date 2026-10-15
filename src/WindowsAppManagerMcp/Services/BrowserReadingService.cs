@@ -22,7 +22,7 @@ namespace WindowsAppManagerMcp.Services;
 public class BrowserReadingService : IBrowserReadingService
 {
     private const string CdpPortRequiredMessage =
-        "requireCdp=true needs cdpPort: the debug port of the browser instance that owns the window.";
+        "requireCdp=true (or targetId) needs cdpPort: the debug port of the browser instance that owns the window.";
 
     private readonly INativeWindowWrapper _nativeWrapper;
     private readonly IBrowserDetectionService _browserDetection;
@@ -136,8 +136,7 @@ public class BrowserReadingService : IBrowserReadingService
             string? cdpError = null;
             if (cdp?.Port is int port)
             {
-                var match = await _cdpService.FindTargetForWindowAsync(
-                    port, (int)processId, pageTitle, cdp.EffectiveTimeout, cancellationToken);
+                var match = await FindTargetAsync(port, (int)processId, pageTitle, cdp, cdp.EffectiveTimeout, cancellationToken);
 
                 if (match.Success)
                 {
@@ -153,7 +152,7 @@ public class BrowserReadingService : IBrowserReadingService
                         TargetId: target.Id);
                 }
 
-                if (cdp.Required)
+                if (cdp.EffectiveRequired)
                 {
                     return new BrowserUrlResult(
                         Success: false,
@@ -168,7 +167,7 @@ public class BrowserReadingService : IBrowserReadingService
 
                 cdpError = match.DescribeError();
             }
-            else if (cdp?.Required == true)
+            else if (cdp?.EffectiveRequired == true)
             {
                 return new BrowserUrlResult(
                     Success: false,
@@ -292,7 +291,7 @@ public class BrowserReadingService : IBrowserReadingService
             if (cdp?.Port is int port)
             {
                 var (snapshot, targetId) = await ReadContentViaCdpAsync(
-                    port, (int)processId, pageTitle, options, cdp.EffectiveTimeout, cancellationToken);
+                    port, (int)processId, pageTitle, cdp, options, cancellationToken);
 
                 if (snapshot.Success)
                 {
@@ -311,7 +310,9 @@ public class BrowserReadingService : IBrowserReadingService
                         TargetId: targetId);
                 }
 
-                if (cdp.Required)
+                // A page too large for CDP is reported as it is, not as HtmlRequiresCdp's "CDP could not be used"
+                if (cdp.EffectiveRequired ||
+                    (!options.TextOnly && snapshot.ErrorCode == BrowserErrorCode.CdpResponseTooLarge))
                 {
                     return new BrowserContentResult(
                         Success: false,
@@ -329,7 +330,7 @@ public class BrowserReadingService : IBrowserReadingService
 
                 cdpError = snapshot.DescribeError();
             }
-            else if (cdp?.Required == true)
+            else if (cdp?.EffectiveRequired == true)
             {
                 return new BrowserContentResult(
                     Success: false,
@@ -653,20 +654,35 @@ public class BrowserReadingService : IBrowserReadingService
     }
 
     /// <summary>
-    /// Finds the tab shown by the window and reads it, all within one time budget.
+    /// The tab to read: the one with <see cref="CdpOptions.TargetId"/> when it is given (roadmap M5.2), otherwise the one
+    /// the window shows.
+    /// </summary>
+    private Task<CdpResult<CdpTarget>> FindTargetAsync(
+        int port,
+        int windowProcessId,
+        string windowTitle,
+        CdpOptions cdp,
+        TimeSpan timeout,
+        CancellationToken cancellationToken) =>
+        cdp.TargetId is { } targetId
+            ? _cdpService.FindTargetByIdAsync(port, windowProcessId, targetId, timeout, cancellationToken)
+            : _cdpService.FindTargetForWindowAsync(port, windowProcessId, windowTitle, timeout, cancellationToken);
+
+    /// <summary>
+    /// Finds the tab to read (<see cref="FindTargetAsync"/>) and reads it, all within one time budget.
     /// </summary>
     private async Task<(CdpResult<CdpPageSnapshot> Snapshot, string? TargetId)> ReadContentViaCdpAsync(
         int port,
         int windowProcessId,
         string windowTitle,
+        CdpOptions cdp,
         BrowserContentOptions options,
-        TimeSpan timeout,
         CancellationToken cancellationToken)
     {
+        var timeout = cdp.EffectiveTimeout;
         var stopwatch = Stopwatch.StartNew();
 
-        var match = await _cdpService.FindTargetForWindowAsync(
-            port, windowProcessId, windowTitle, timeout, cancellationToken);
+        var match = await FindTargetAsync(port, windowProcessId, windowTitle, cdp, timeout, cancellationToken);
         if (!match.Success)
             return (match.FailAs<CdpPageSnapshot>(), null);
 

@@ -3488,8 +3488,9 @@ Get the current URL from a browser window: from the address bar with UI Automati
 |-----------|------|----------|---------|-------------|
 | handle | integer | No | - | Window handle of the browser, from find_windows or get_foreground_window |
 | window | object | No | - | Alternative to handle: the browser window as a selector, resolved to exactly one window or refused (WindowNotFound; AmbiguousWindow with candidates), e.g. {"processName": "msedge", "titleContains": "Inbox"}. Filters as in find_windows (processName is the whole name; titles ignore the zero-width space in 'Microsoft Edge' and ' and N more pages'); index picks a match in z-order; foreground is the window in front; handle plus filters must still match (HandleMismatch). |
-| cdpPort | integer | No | - | CDP debug port of the browser that owns the window (for example 9222) |
-| requireCdp | boolean | No | false | Return the CDP error instead of falling back to UI Automation (needs cdpPort) |
+| cdpPort | integer | No | - | DevTools port of the browser that owns the window, as launch_browser_with_debug returns it |
+| targetId | string | No | - | The CDP tab to read instead of the one the window shows: a `targetId` from an earlier result or from a `CdpTargetAmbiguous` error. Needs `cdpPort` (else `InvalidArguments`, as is an id that is not 1-128 letters, digits, `.`, `_` or `-`); the tab must belong to the window's browser (`CdpPortOwnerMismatch`, also when the port's owner cannot be read); implies `requireCdp`. A tab that has closed gives `CdpTargetNotFound` |
+| requireCdp | boolean | No | false | Return the CDP error instead of falling back to UI Automation (needs cdpPort; implied by targetId) |
 | timeoutMs | integer | No | 10000 | Time limit in ms (1000-30000) for the CDP requests, and again for the UI Automation read |
 <!-- tools:end params:get_browser_url -->
 
@@ -3566,7 +3567,7 @@ Get the URL from the foreground browser window. This combines get_foreground_win
 **Parameters:**
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| cdpPort | integer | No | - | CDP debug port of the browser that owns the window |
+| cdpPort | integer | No | - | DevTools port of the browser that owns the window, as launch_browser_with_debug returns it |
 | requireCdp | boolean | No | false | Return the CDP error instead of falling back to UI Automation (needs cdpPort) |
 | timeoutMs | integer | No | 10000 | Time limit in ms (1000-30000) for the CDP requests, and again for the UI Automation read |
 <!-- tools:end params:get_active_browser_url -->
@@ -3608,8 +3609,9 @@ Extract the content of the page shown in a browser window. UI Automation returns
 | window | object | No | - | Alternative to handle: the browser window as a selector, resolved to exactly one window or refused (WindowNotFound; AmbiguousWindow with candidates), e.g. {"processName": "msedge", "titleContains": "Inbox"}. Filters as in find_windows (processName is the whole name; titles ignore the zero-width space in 'Microsoft Edge' and ' and N more pages'); index picks a match in z-order; foreground is the window in front; handle plus filters must still match (HandleMismatch). |
 | maxLength | integer | No | all | Maximum number of characters to return, at least 1; longer content is cut off. 0 or less fails with `InvalidArguments` (0 used to return empty content as a success) |
 | textOnly | boolean | No | true | Return text only. false returns the full HTML, which requires CDP |
-| cdpPort | integer | No | - | CDP debug port of the browser that owns the window; includes JavaScript-rendered content |
-| requireCdp | boolean | No | false | Return the CDP error instead of falling back to UI Automation (needs cdpPort) |
+| cdpPort | integer | No | - | DevTools port of the browser that owns the window, as launch_browser_with_debug returns it; includes JavaScript-rendered content |
+| targetId | string | No | - | The CDP tab to read instead of the one the window shows: a `targetId` from an earlier result or from a `CdpTargetAmbiguous` error. Needs `cdpPort` (else `InvalidArguments`, as is an id that is not 1-128 letters, digits, `.`, `_` or `-`); the tab must belong to the window's browser (`CdpPortOwnerMismatch`, also when the port's owner cannot be read); implies `requireCdp`. A tab that has closed gives `CdpTargetNotFound` |
+| requireCdp | boolean | No | false | Return the CDP error instead of falling back to UI Automation (needs cdpPort; implied by targetId) |
 | timeoutMs | integer | No | 10000 | Time limit in ms (1000-30000) for the CDP requests, and again for the UI Automation read |
 <!-- tools:end params:get_browser_content -->
 
@@ -6727,6 +6729,23 @@ the new tools; their sections have the rest.
   the new `TextTooLong` (pasting takes up to 1,000,000), and a typed batch is 64 characters (it was 32). A client that
   sent long text to type_text and relied on keystrokes (an app that reacts to each key) must pass `method: "unicode"`,
   in parts of at most 5,000 characters. element_action's `mode: "type"` has the same 5,000-character limit.
+- **CDP transport, targetId and explicit CDP errors (roadmap M5.2).** [get_browser_url](#get_browser_url) and
+  [get_browser_content](#get_browser_content) take a new optional `targetId`: a tab id from an earlier result's
+  `targetId` or from a `CdpTargetAmbiguous` error, read instead of the tab the window shows. It needs `cdpPort` (without
+  it, or with an id that is not 1-128 letters, digits, `.`, `_` or `-`, the call fails with `InvalidArguments` and reads
+  nothing), implies `requireCdp`, and the debug port must belong to the window's process: on this path an owner the
+  server cannot read is `CdpPortOwnerMismatch` too. A tab that has closed is `CdpTargetNotFound`.
+  get_active_browser_url has no `targetId`. Two new codes: `CdpTargetClosed` when the tab's DevTools connection ends
+  during the call (the tab closed, crashed or detached, or the browser exited; it was `CdpProtocolError`), and
+  `CdpResponseTooLarge` for a tab list over 16 MB or a page over 64 MB (it was `CdpUnavailable` or `CdpProtocolError`);
+  with `textOnly: false` an oversize page returns `CdpResponseTooLarge` instead of `HtmlRequiresCdp`. Without `targetId`
+  and `requireCdp`, both fall back to UI Automation and appear in `cdpError` like the other CDP codes. A program on the
+  port that answers, but not as a DevTools endpoint does, is now `CdpProtocolError` (it was `CdpUnavailable`, which
+  stays for a port nothing listens on); a tab whose WebSocket URL is on another port than `cdpPort` is refused
+  (`CdpProtocolError`), and a WebSocket handshake the browser refuses with HTTP 403 is `CdpUnavailable` with the reason.
+  Once the page reports an open dialog, a read returns `CdpDialogOpen` without sending anything more. The `cdpPort`
+  descriptions no longer suggest 9222: pass the port launch_browser_with_debug returns. `ContentAreaNotFound` left the
+  get_browser_content error table: no tool returned it.
 
 ## Error Codes
 
