@@ -5,6 +5,7 @@
 - 🔄 **In Progress** - Currently being worked on
 - ⏳ **Pending** - Not yet started
 - ❌ **Blocked** - Waiting on dependency
+- ➡️ **Moved** - Superseded by a later item, which tracks it
 
 ---
 
@@ -307,7 +308,7 @@
 | Phase 8: Claude Code Plugin | ███████░░░ 70% |
 | Phase 9: Development Tooling | ██████████ 100% |
 | Phase 10: Screenshot Capture | ██████████ 100% |
-| Phase 11: Enhanced Visual Tools | ░░░░░░░░░░ 0% |
+| Phase 11: Enhanced Visual Tools | ███████░░░ 67% (2 of 3; 3 moved to Phase 13) |
 | Phase 12: Advanced Automation | ██████████ 100% |
 | Phase 13: Automation Roadmap | ███████░░░ 71% (M0-M4 done: 55 of 78 items) |
 
@@ -447,9 +448,9 @@ The `/commit` skill automates the release process:
 |---|------|--------|----------|-------|
 | 11.1 | Add `capture_with_elements` tool | ✅ Complete | P2 | Screenshot with UI element bounding box overlays |
 | 11.2 | Add `get_ui_elements` tool | ✅ Complete | P2 | Get UI elements with coordinates (no image) |
-| 11.3 | OCR integration | ⏳ Pending | P3 | Extract text from screenshots using Windows.Media.Ocr |
-| 11.4 | Screenshot diff detection | ⏳ Pending | P3 | Compare screenshots to detect changes |
-| 11.5 | Windows.Graphics.Capture support | ⏳ Pending | P3 | Modern capture API (requires Win10 1903+) |
+| 11.3 | OCR integration | ➡️ Moved | P3 | Moved to Phase 13 M6.3 (read_screen_text and find_text_on_screen) on 2026-10-15 |
+| 11.4 | Screenshot diff detection | ➡️ Moved | P3 | Moved to Phase 13 M6.4 (visual change detection) on 2026-10-15 |
+| 11.5 | Windows.Graphics.Capture support | ➡️ Moved | P3 | Moved to Phase 13 M7.1 (Windows.Graphics.Capture backend) on 2026-10-15 |
 | 11.6 | Video/GIF recording | ⏳ Pending | P3 | Capture sequences for animated workflows |
 
 ### Implemented Tools
