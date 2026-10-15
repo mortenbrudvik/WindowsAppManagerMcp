@@ -104,8 +104,7 @@ public sealed class ToolArgumentContractTests : IDisposable
         var result = await CallAsync("launch_browser_with_debug", """{ "browser": "firefox" }""");
 
         ShouldBeRefused(result, nameof(BrowserErrorCode.UnsupportedBrowser), "chrome, edge, brave");
-        _services.Processes.Verify(p => p.LaunchBrowserWithDebugAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<int>(),
-            It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
+        _services.Processes.Verify(p => p.LaunchBrowserWithDebugAsync(It.IsAny<DebugBrowserLaunchRequest>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     #endregion
@@ -218,8 +217,8 @@ public sealed class ToolArgumentContractTests : IDisposable
 
     [Theory]
     [InlineData("get_browser_content", """{ "handle": 2821181, "maxLength": 0 }""", "maxLength must be at least 1")]
-    [InlineData("launch_browser_with_debug", """{ "port": 0 }""", "port must be a TCP port from 1 to 65535")]
-    [InlineData("launch_browser_with_debug", """{ "port": 70000 }""", "port must be a TCP port from 1 to 65535")]
+    [InlineData("launch_browser_with_debug", """{ "port": 80 }""", "port must be 0 (the browser picks a free port) or a TCP port from 1024 to 65535")]
+    [InlineData("launch_browser_with_debug", """{ "port": 70000 }""", "port must be 0 (the browser picks a free port) or a TCP port from 1024 to 65535")]
     public async Task OutOfRangeValues_AreInvalidArguments(string tool, string arguments, string message)
     {
         var result = await CallAsync(tool, arguments);
@@ -238,24 +237,29 @@ public sealed class ToolArgumentContractTests : IDisposable
     [InlineData("""{ "userDataDir": "C:/Users/someone/AppData/Local/Google/Chrome/User Data" }""", "User Data")]
     [InlineData("""{ "userDataDir": "C:/Users/someone/AppData/Local/Microsoft/Edge/User Data/Default" }""", "User Data")]
     [InlineData("""{ "userDataDir": "C:/Users/someone/AppData/Local/BraveSoftware/Brave-Browser/user data/" }""", "User Data")]
-    public async Task LaunchBrowserWithDebug_RefusesASwitchAsUrl_AndARealProfile_AndLaunchesNothing(string arguments, string message)
+    [InlineData("""{ "executablePath": "chrome.exe" }""", "executablePath must be the full path of chrome.exe")]
+    [InlineData("""{ "browser": "edge", "executablePath": "C:/Windows/System32/cmd.exe" }""", "executablePath must name msedge.exe")]
+    public async Task LaunchBrowserWithDebug_RefusesASwitchAsUrl_ARealProfile_AndAnotherProgram_AndLaunchesNothing(string arguments, string message)
     {
         // Review MCP-S-1: a url that Chromium reads as a switch is a command-line switch of the agent's choosing, and the
-        // open debug port on the user's real profile would hand its signed-in sessions to any local program
+        // open debug port on the user's real profile would hand its signed-in sessions to any local program; an
+        // executablePath that is not the browser's own .exe would start another program with the debug switches (M5.1)
         var result = await CallAsync("launch_browser_with_debug", arguments);
 
         result.IsError.Should().BeTrue();
         var payload = Payload(result);
         payload.GetProperty("errorCode").GetString().Should().Be(ToolErrorReporting.InvalidArgumentsErrorCode);
         payload.GetProperty("error").GetString().Should().Contain(message).And.Contain("Nothing was launched");
-        _services.Processes.Verify(p => p.LaunchBrowserWithDebugAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<int>(),
-            It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
+        _services.Processes.Verify(p => p.LaunchBrowserWithDebugAsync(It.IsAny<DebugBrowserLaunchRequest>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Theory]
     [InlineData("""{ "url": "https://example.com/?q=--flag" }""")]
     [InlineData("""{ "url": "example.com" }""")]
     [InlineData("""{ "userDataDir": "C:/Temp/debug-profile" }""")]
+    [InlineData("""{ "port": 0 }""")]
+    [InlineData("""{ "port": 1024 }""")]
+    [InlineData("""{ "browser": "brave", "executablePath": "D:/Portable/Brave/brave.exe" }""")]
     public async Task LaunchBrowserWithDebug_TakesUrlsAndASeparateProfile(string arguments)
     {
         var result = await CallAsync("launch_browser_with_debug", arguments);

@@ -16,13 +16,6 @@ public interface INativeProcessWrapper
     IProcessHandle? StartProcess(ProcessStartInfo startInfo);
 
     /// <summary>
-    /// Runs where.exe for <paramref name="fileName"/> without a window and returns the first line it
-    /// prints, or null when it finds nothing, cannot be run or does not finish within a few seconds.
-    /// The wait is bounded even if where.exe prints nothing; on timeout where.exe is killed.
-    /// </summary>
-    string? FindWithWhereExe(string fileName);
-
-    /// <summary>
     /// Opens a running process by ID. Returns null when no such process exists.
     /// </summary>
     IProcessHandle? OpenProcess(int processId);

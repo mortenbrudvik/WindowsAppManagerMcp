@@ -110,9 +110,7 @@ public class ToolResultSerializationTests
         // Arrange - the normal success path finds the browser window, so the handle is non-null.
         const string userDataDir = @"C:\Temp\browser-debug";
         var processService = new Mock<IProcessService>();
-        processService.Setup(s => s.LaunchBrowserWithDebugAsync(
-                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<int>(),
-                It.IsAny<CancellationToken>()))
+        processService.Setup(s => s.LaunchBrowserWithDebugAsync(It.IsAny<DebugBrowserLaunchRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new DebugBrowserLaunchResult(
                 Success: true,
                 ProcessId: 4321,

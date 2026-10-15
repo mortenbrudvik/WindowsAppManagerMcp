@@ -3709,9 +3709,15 @@ Launch Chrome, Edge or Brave with a Chrome DevTools Protocol (CDP) debug port, s
 
 > **Security:** This opens a DevTools port on localhost with no authentication. Any program running on this computer can connect to it and take full control of that browser: read pages and cookies, run JavaScript and navigate. The port stays open until that browser has exited. Launch it only when you need CDP. When you are done, close every window of that browser (`find_windows` with the returned `processId` and `includeCloaked: true`, so a window the user moved to another virtual desktop is found too, then `close_window` for each handle) and check with `list_processes` and `includeWindowless: true` that the process has exited; closing one window is not enough if the page opened others.
 
-By default the browser starts as a separate instance with a new, empty profile in `%TEMP%\browser-debug-<guid>`. It has none of the logins, cookies, history or extensions of your normal profile, and the folder is not deleted afterwards. Do not set `userDataDir` to your real browser profile, because that would expose its signed-in sessions through the open port. A `userDataDir` inside a `User Data` folder, where Chrome, Edge and Brave keep the user's profiles, is refused (`InvalidArguments`); a real profile kept elsewhere cannot be told apart.
+By default the browser starts as a separate instance with a new, empty profile in `%TEMP%\browser-debug-<guid>`. It has none of the logins, cookies, history or extensions of your normal profile, and the folder is not deleted afterwards. Do not set `userDataDir` to your real browser profile, because that would expose its signed-in sessions through the open port. A `userDataDir` inside a `User Data` folder, where Chrome, Edge and Brave keep the user's profiles, is refused (`InvalidArguments`); a real profile kept elsewhere cannot be told apart. The profile is never the browser's default one, which also matters because Chrome 136 and later ignore `--remote-debugging-port` on the default profile.
 
-The browser is looked for in its default install folders under `C:\Program Files` and `C:\Program Files (x86)`. If it is not there, the server asks `where.exe`, which searches the server's current directory before `PATH`, so a `chrome.exe`, `msedge.exe` or `brave.exe` in that directory would be started instead.
+The browser starts without the screens a new profile shows first (roadmap M5.1): `--no-first-run` (Chrome's welcome and "make Chrome your own" pages, Edge's welcome, sign-in and personalization pages, Brave's welcome tour, the offer to import another browser's data), `--no-default-browser-check` (the offer to become the default browser), `--disable-search-engine-choice-screen` (Chrome's search engine choice dialog in some regions) and `--disable-sync` (a browser sign-in, by the user or Edge's own with the Windows account, does not copy the account's passwords and history into a profile the open port exposes). So the first tab is `url`, which the window title and the CDP tab match then show.
+
+**Port.** By default (`port` 0) the browser picks a free port and writes it to the `DevToolsActivePort` file in its profile folder; the server reads it there (for up to 10 seconds after the window wait) and returns it as `cdpPort`. Pass that value as `cdpPort` to the reading tools. Nothing can take the port between a check and the start, and the port is not the well-known 9222. A `DevToolsActivePort` that an earlier run left in `userDataDir` is deleted before the start (if it cannot be deleted, nothing is launched). An explicit `port` must be 1024-65535 and free, else `PortInUse`. The server does not yet check that the DevTools endpoint answers: with an explicit port, a browser that could not listen on it is not detected (the readiness check comes with the CDP transport, roadmap M5.2).
+
+**Which browser was started.** The window wait counts only windows of the process the server started and the processes it started, never a window of the user's own browser, so `windowHandle` is always the debug browser's (or null). If a browser already runs with the same `userDataDir`, the new process hands the request to it and exits; that browser ignores the debug switches, so the call fails with `DebugLaunchFailed` and `launchStatus` `exitedWithoutWindow`. `launchStatus` is launch_application's: `windowObserved` normally, or `timedOut` (still a success, with a `warning`) when the browser runs but showed no window within 10 seconds. A failure after the browser started (it did not report its port) still returns its `processId`, `windowHandle` and `userDataDir`, so that you can close it.
+
+The browser is looked for in App Paths (`HKCU`, then `HKLM`; the value must be a full path to the browser's own `.exe`), then in its install folder under Program Files, Program Files (x86) and `%LOCALAPPDATA%` (per-user installs). Nothing is resolved from the server's current directory or `PATH`. For another channel (Beta, Dev, Canary) or a portable copy, pass `executablePath`. `BrowserNotFound` lists every place tried.
 
 <!-- tools:begin params:launch_browser_with_debug -->
 **Parameters:**
@@ -3719,8 +3725,9 @@ The browser is looked for in its default install folders under `C:\Program Files
 |-----------|------|----------|---------|-------------|
 | browser | string (one of: `"chrome"`, `"edge"`, `"brave"`) | No | "chrome" | Browser to launch: "chrome", "edge" or "brave". Any other value fails with `UnsupportedBrowser` before anything is started |
 | url | string | No | - | URL to open. A value that starts with `-` or `/`, or holds a control character, fails with `InvalidArguments` (a tool error): the browser would read it as a command-line switch |
-| port | integer | No | 9222 | CDP debug port, 1-65535 (other values fail with `InvalidArguments`). Pass the same value as `cdpPort` to the reading tools |
+| port | integer | No | 0 | CDP debug port: 0 lets the browser pick a free port, or 1024-65535 (other values fail with `InvalidArguments`). Pass the result's `cdpPort` as `cdpPort` to the reading tools |
 | userDataDir | string | No | new temp folder | Profile folder for the browser instance. A folder inside a `User Data` folder (where Chrome, Edge and Brave keep the user's real profiles) fails with `InvalidArguments`: the open debug port would expose its signed-in sessions |
+| executablePath | string | No | found | Full path of the browser's `.exe` (`chrome.exe`, `msedge.exe` or `brave.exe`, matching `browser`), for a copy the server does not find, such as Chrome Beta or a portable Brave. Nothing else is tried then. A relative path or another file name fails with `InvalidArguments` |
 <!-- tools:end params:launch_browser_with_debug -->
 
 **Example:**
@@ -3742,8 +3749,9 @@ The browser is looked for in its default install folders under `C:\Program Files
   "success": true,
   "processId": 18320,
   "windowHandle": 3342410,
-  "cdpPort": 9222,
-  "userDataDir": "C:\\Users\\me\\AppData\\Local\\Temp\\browser-debug-6f1c2d3e-4a5b-6c7d-8e9f-0a1b2c3d4e5f"
+  "cdpPort": 51874,
+  "userDataDir": "C:\\Users\\me\\AppData\\Local\\Temp\\browser-debug-6f1c2d3e-4a5b-6c7d-8e9f-0a1b2c3d4e5f",
+  "launchStatus": "windowObserved"
 }
 ```
 
@@ -3751,9 +3759,9 @@ The browser is looked for in its default install folders under `C:\Program Files
 | Code | Description |
 |------|-------------|
 | `UnsupportedBrowser` | `browser` is not chrome, edge or brave (a [tool error](#tool-errors) that lists them) |
-| `BrowserNotFound` | The browser was not found in its default install folder or by `where.exe` |
-| `PortInUse` | The port is already in use; pick another port |
-| `DebugLaunchFailed` | The browser could not be started. A launch_application error code can also appear here |
+| `BrowserNotFound` | The browser was not found in App Paths or its install folders (`error` lists every place tried), or `executablePath` does not exist |
+| `PortInUse` | The explicit port is already in use; leave `port` out (0) or pick another one |
+| `DebugLaunchFailed` | The browser could not be started; a browser already running with that `userDataDir` took the request over (`launchStatus` `exitedWithoutWindow`); or it started but did not report its port (it is still running: `processId` names it). A launch_application error code can also appear here |
 
 ---
 
@@ -6725,6 +6733,18 @@ the new tools; their sections have the rest.
   the new `TextTooLong` (pasting takes up to 1,000,000), and a typed batch is 64 characters (it was 32). A client that
   sent long text to type_text and relied on keystrokes (an app that reacts to each key) must pass `method: "unicode"`,
   in parts of at most 5,000 characters. element_action's `mode: "type"` has the same 5,000-character limit.
+- **launch_browser_with_debug: first-run screens, port 0 and the started browser only (roadmap M5.1).** The browser
+  starts with `--no-first-run`, `--no-default-browser-check`, `--disable-search-engine-choice-screen` and
+  `--disable-sync`, so a new profile opens `url` instead of a welcome, sign-in or search engine screen. **Breaking:**
+  `port` defaults to 0 (it was 9222): the browser picks a free port, the server reads it from the profile's
+  `DevToolsActivePort` and returns it as `cdpPort`, which the reading tools need; an explicit port must now be
+  1024-65535 (it was 1-65535, and 0 was refused). A client that assumed 9222 must pass `port: 9222` or use `cdpPort`.
+  The browser is found through App Paths, Program Files, Program Files (x86) and `%LOCALAPPDATA%`, or the new
+  `executablePath`, and no longer through `where.exe` (which searched the server's current directory); `BrowserNotFound`
+  lists the places tried. The window wait counts only the started browser's windows, so `windowHandle` is never the
+  user's own browser window, and a launch that a browser already running with that `userDataDir` took over now fails
+  with `DebugLaunchFailed` instead of reporting a port nobody opened. The result adds `launchStatus` and `warning`, as
+  launch_application reports them, and a failure after the start keeps `processId`, `windowHandle` and `userDataDir`.
 
 ## Error Codes
 
@@ -6814,7 +6834,7 @@ table, it gives more detail.
 | `AutomationUnavailable` | [Browser Reading](#browser-reading) tools, [UI Automation](#ui-automation) tools, [capture_with_elements](#capture_with_elements) | UI Automation is not available |
 | `BlockedByModal` | [Input Simulation](#input-simulation) tools, [element_action](#element_action), [respond_to_dialog](#respond_to_dialog), [file_dialog](#file_dialog) | The target window (`windowHandle`) is disabled by a modal dialog, or a modal dialog of the target opened while typing (`charactersTyped` says how much was typed); the dialog is named in `blockingWindow`, and nothing (more) was sent. respond_to_dialog: a press asked of a dialog named by `handle` or `window` that a modal dialog of its own now disables (the error names that dialog; nothing was pressed) |
 | `BlockedProtocol` | [launch_application](#launch_application), launch_applications_batch | The URI scheme is blocked for security reasons |
-| `BrowserNotFound` | [launch_browser_with_debug](#launch_browser_with_debug) | The browser was not found in its default install folder or by `where.exe` |
+| `BrowserNotFound` | [launch_browser_with_debug](#launch_browser_with_debug) | The browser was not found in App Paths or its install folders (`error` lists every place tried), or `executablePath` does not exist |
 | `CannotTerminateHost` | [kill_process](#kill_process) | The PID belongs to the agent's host (an ancestor of this server such as its terminal or editor, the process that shows its console or the console server behind it, or the app in front when it started), or, with `forceKill`, one of its child processes does |
 | `CannotTerminateSelf` | [kill_process](#kill_process) | The PID is this server |
 | `CaptureFailed` | [Screenshot](#screenshot) tools | Windows could not capture the pixels: PrintWindow and the copy of the window's device context both failed, the window (or the virtual screen, `monitorIndex: -1`) is over the 64-megapixel budget, or it closed during the capture; `error` has the reason |
@@ -6841,7 +6861,7 @@ table, it gives more detail.
 | `CursorClamped` | [click](#click), right_click, double_click, [mouse_click](#mouse_click), [drag](#drag), mouse_move, [scroll](#scroll), [element_action](#element_action) (mouse paths) | The input **was sent**, but right after it the mouse pointer is not at the point (`actualX`, `actualY`): it was confined to a window (a game or remote session), the point is on no monitor, or the user or the application moved it at once. The click, move or wheel may have landed where the pointer is. Look at the window before you send it again; do not simply retry (roadmap M4.2) |
 | `CursorNotAtPoint` | [click](#click), right_click, double_click, [mouse_click](#mouse_click), [drag](#drag), [scroll](#scroll), [element_action](#element_action) (mouse paths) | The mouse pointer does not stay at the point (it is confined to a window, or the user is moving the mouse), so a click would land where the guard did not check; nothing was clicked |
 | `CursorPositionFailed` | [click](#click), right_click, double_click, [mouse_click](#mouse_click), [drag](#drag), [scroll](#scroll), [element_action](#element_action) (mouse paths) | Windows did not move the mouse pointer to the point (SetCursorPos failed), for example because the input desktop cannot be reached; nothing was clicked |
-| `DebugLaunchFailed` | [launch_browser_with_debug](#launch_browser_with_debug) | The browser could not be started. A launch_application error code can appear instead |
+| `DebugLaunchFailed` | [launch_browser_with_debug](#launch_browser_with_debug) | The browser could not be started, a browser already running with that `userDataDir` took the request over (it ignores the debug port), or it started but did not report its port (`processId` names it so that it can be closed). A launch_application error code can appear instead |
 | `DeleteFailed` | [delete_layout](#delete_layout) | The preset file could not be deleted |
 | `DesktopUnavailable` | [Input Simulation](#input-simulation) tools, [element_action](#element_action), [respond_to_dialog](#respond_to_dialog), [file_dialog](#file_dialog) | The input desktop cannot be reached: a UAC prompt or the Ctrl+Alt+Del screen is shown, or the session is disconnected; nothing was sent |
 | `DestructiveChordNeedsTarget` | [send_keys](#send_keys), [press_keys](#press_keys) | The keys contain a chord that closes, quits or locks (such as Alt+F4) and no `windowHandle` was given; nothing was sent |
@@ -6913,7 +6933,7 @@ table, it gives more detail.
 | `PatternNotSupported` | [read_table](#read_table), [element_action](#element_action) | read_table: the element supports neither the Grid pattern nor rows (DataItem, ListItem or TreeItem children, or Custom children holding DataItem cells), so it is no table; nothing was read. Read its text with read_element_text, or find the table inside it. element_action: the element has none of the patterns the action needs (`error` lists the ones it has), and no mouse fallback was allowed; or `mode` `type` or `paste` names an element that is not a text field (a list, grid, pane or button); `focus` on an element that is not keyboard-focusable; a `menu_path` item before the last that has no submenu (it is not invoked). Nothing was done. `fallback: "mouse"` sends a guarded click for `invoke`, `click` and `select` |
 | `PauseChordNotAllowed` | [send_keys](#send_keys), [press_keys](#press_keys) | The keys contain the user's [pause hotkey](#pause-hotkey) chord, which only the user may press; nothing was sent |
 | `PausedByUser` | [Input Simulation](#input-simulation) tools, [element_action](#element_action), [respond_to_dialog](#respond_to_dialog) (with `button`), [file_dialog](#file_dialog), [release_all_input](#release_all_input) (`releaseHeldModifiers`); tool error from every tool that changes windows or starts or stops processes ([Window Control](#window-control), [Batch Operations](#batch-operations), [close_application](#close_application), [apply_layout](#apply_layout), [launch_application](#launch_application), [kill_process](#kill_process), [launch_browser_with_debug](#launch_browser_with_debug)), from [set_clipboard](#set_clipboard), and from [capture_window](#capture_window) and [capture_with_elements](#capture_with_elements) with `restoreIfMinimized`; [focus_window](#focus_window) when the pause comes during the activation, and [apply_layout](#apply_layout) (named in an `ArrangeFailed` error, see [apply_layout](#apply_layout)) when it comes during a `focus` placement's activation | The user paused the input of the servers on the desktop with the [pause hotkey](#pause-hotkey); nothing (more) was sent, activated or changed. Stop and ask the user; never try to resume input yourself |
-| `PortInUse` | [launch_browser_with_debug](#launch_browser_with_debug) | The port is already in use; pick another port |
+| `PortInUse` | [launch_browser_with_debug](#launch_browser_with_debug) | The explicit port is already in use; leave `port` out (0, the browser picks a free one) or pick another one |
 | `PresetNotFound` | [get_layout](#get_layout) (tool error), [apply_layout](#apply_layout), [delete_layout](#delete_layout) | No preset has that name |
 | `ProcessNameMismatch` | [kill_process](#kill_process) | The PID belongs to a different process than `expectedProcessName`, or, after the user confirmed, to a process that started at another time (its PID was reused); nothing was done |
 | `ProcessNotFound` | [kill_process](#kill_process) | No such process (it may have exited) |

@@ -1,3 +1,4 @@
+using WindowsAppManagerMcp.Infrastructure;
 using WindowsAppManagerMcp.Tools;
 
 namespace WindowsAppManagerMcp.Tests.Unit.Tools;
@@ -473,172 +474,54 @@ public class BrowserReadingToolsTests
 
     #region LaunchBrowserWithDebug Tests
 
+    /// <summary>The service returns <paramref name="result"/> and records the request it got.</summary>
+    private List<DebugBrowserLaunchRequest> LaunchReturns(DebugBrowserLaunchResult result)
+    {
+        var requests = new List<DebugBrowserLaunchRequest>();
+        _mockProcessService.Setup(s => s.LaunchBrowserWithDebugAsync(It.IsAny<DebugBrowserLaunchRequest>(), It.IsAny<CancellationToken>()))
+            .Callback<DebugBrowserLaunchRequest, CancellationToken>((request, _) => requests.Add(request))
+            .ReturnsAsync(result);
+        return requests;
+    }
+
+    private static readonly DebugBrowserLaunchResult Launched = new(
+        Success: true,
+        ProcessId: 1234,
+        WindowHandle: new nint(5678),
+        CdpPort: 50123,
+        UserDataDir: @"C:\Temp\browser-debug-test",
+        Error: null,
+        ErrorCode: null,
+        LaunchStatus: LaunchStatus.WindowObserved);
+
     [Fact]
     public async Task LaunchBrowserWithDebug_CallsServiceWithDefaultParameters()
     {
         // Arrange
-        _mockProcessService.Setup(s => s.LaunchBrowserWithDebugAsync(
-                "chrome", null, 9222, null, true, 10000,
-                It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new DebugBrowserLaunchResult(
-                Success: true,
-                ProcessId: 1234,
-                WindowHandle: new nint(5678),
-                CdpPort: 9222,
-                UserDataDir: @"C:\Temp\browser-debug-test",
-                Error: null,
-                ErrorCode: null));
+        var requests = LaunchReturns(Launched);
         var sut = CreateSut();
 
         // Act
         await sut.LaunchBrowserWithDebug();
 
-        // Assert
-        _mockProcessService.Verify(s => s.LaunchBrowserWithDebugAsync(
-            "chrome", null, 9222, null, true, 10000,
-            It.IsAny<CancellationToken>()), Times.Once);
+        // Assert - port 0 by default: the browser picks a free port (roadmap M5.1)
+        requests.Should().Equal(new DebugBrowserLaunchRequest("chrome", Url: null, Port: 0, UserDataDir: null, ExecutablePath: null));
     }
 
     [Fact]
     public async Task LaunchBrowserWithDebug_CallsServiceWithCustomParameters()
     {
         // Arrange
-        var browser = "edge";
-        var url = "https://example.com";
-        var port = 9224;
-        var userDataDir = @"C:\CustomProfile";
-
-        _mockProcessService.Setup(s => s.LaunchBrowserWithDebugAsync(
-                browser, url, port, userDataDir, true, 10000, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new DebugBrowserLaunchResult(
-                Success: true,
-                ProcessId: 1234,
-                WindowHandle: new nint(5678),
-                CdpPort: port,
-                UserDataDir: userDataDir,
-                Error: null,
-                ErrorCode: null));
+        var requests = LaunchReturns(Launched);
         var sut = CreateSut();
 
         // Act
-        await sut.LaunchBrowserWithDebug(DebugBrowser.Edge, url, port, userDataDir);
+        await sut.LaunchBrowserWithDebug(DebugBrowser.Edge, "https://example.com", 9224, @"C:\CustomProfile",
+            @"C:\Edge Beta\Application\msedge.exe");
 
         // Assert
-        _mockProcessService.Verify(s => s.LaunchBrowserWithDebugAsync(
-            browser, url, port, userDataDir, true, 10000, It.IsAny<CancellationToken>()), Times.Once);
-    }
-
-    [Fact]
-    public async Task LaunchBrowserWithDebug_ReturnsMappedDto_OnSuccess()
-    {
-        // Arrange
-        var processId = 1234;
-        var windowHandle = new nint(5678);
-        var cdpPort = 9222;
-        var userDataDir = @"C:\Temp\browser-debug-abc123";
-
-        _mockProcessService.Setup(s => s.LaunchBrowserWithDebugAsync(
-                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<int>(),
-                It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new DebugBrowserLaunchResult(
-                Success: true,
-                ProcessId: processId,
-                WindowHandle: windowHandle,
-                CdpPort: cdpPort,
-                UserDataDir: userDataDir,
-                Error: null,
-                ErrorCode: null));
-        var sut = CreateSut();
-
-        // Act
-        var result = await sut.LaunchBrowserWithDebug();
-
-        // Assert
-        result.Success.Should().BeTrue();
-        result.ProcessId.Should().Be(processId);
-        result.WindowHandle.Should().Be(windowHandle.ToInt64());
-        result.CdpPort.Should().Be(cdpPort);
-        result.UserDataDir.Should().Be(userDataDir);
-        result.Error.Should().BeNull();
-        result.ErrorCode.Should().BeNull();
-    }
-
-    [Fact]
-    public async Task LaunchBrowserWithDebug_ReturnsMappedDto_OnBrowserNotFound()
-    {
-        // Arrange
-        _mockProcessService.Setup(s => s.LaunchBrowserWithDebugAsync(
-                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<int>(),
-                It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new DebugBrowserLaunchResult(
-                Success: false,
-                ProcessId: null,
-                WindowHandle: null,
-                CdpPort: null,
-                UserDataDir: null,
-                Error: "Browser 'chrome' not found. Please ensure it is installed.",
-                ErrorCode: "BrowserNotFound"));
-        var sut = CreateSut();
-
-        // Act
-        var result = await sut.LaunchBrowserWithDebug(DebugBrowser.Chrome);
-
-        // Assert
-        result.Success.Should().BeFalse();
-        result.Error.Should().Contain("not found");
-        result.ErrorCode.Should().Be("BrowserNotFound");
-    }
-
-    [Fact]
-    public async Task LaunchBrowserWithDebug_ReturnsMappedDto_OnPortInUse()
-    {
-        // Arrange
-        _mockProcessService.Setup(s => s.LaunchBrowserWithDebugAsync(
-                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<int>(),
-                It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new DebugBrowserLaunchResult(
-                Success: false,
-                ProcessId: null,
-                WindowHandle: null,
-                CdpPort: null,
-                UserDataDir: null,
-                Error: "Port 9222 is already in use. Choose a different port or close the application using it.",
-                ErrorCode: "PortInUse"));
-        var sut = CreateSut();
-
-        // Act
-        var result = await sut.LaunchBrowserWithDebug(port: 9222);
-
-        // Assert
-        result.Success.Should().BeFalse();
-        result.Error.Should().Contain("already in use");
-        result.ErrorCode.Should().Be("PortInUse");
-    }
-
-    [Fact]
-    public async Task LaunchBrowserWithDebug_ReturnsMappedDto_OnDebugLaunchFailed()
-    {
-        // Arrange
-        _mockProcessService.Setup(s => s.LaunchBrowserWithDebugAsync(
-                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<int>(),
-                It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new DebugBrowserLaunchResult(
-                Success: false,
-                ProcessId: null,
-                WindowHandle: null,
-                CdpPort: null,
-                UserDataDir: null,
-                Error: "Failed to start process",
-                ErrorCode: "DebugLaunchFailed"));
-        var sut = CreateSut();
-
-        // Act
-        var result = await sut.LaunchBrowserWithDebug();
-
-        // Assert
-        result.Success.Should().BeFalse();
-        result.Error.Should().Be("Failed to start process");
-        result.ErrorCode.Should().Be("DebugLaunchFailed");
+        requests.Should().Equal(new DebugBrowserLaunchRequest(
+            "edge", "https://example.com", 9224, @"C:\CustomProfile", @"C:\Edge Beta\Application\msedge.exe"));
     }
 
     [Theory]
@@ -648,16 +531,7 @@ public class BrowserReadingToolsTests
     public async Task LaunchBrowserWithDebug_PassesTheBrowsersNameToTheService(DebugBrowser requested, string browser)
     {
         // Arrange
-        _mockProcessService.Setup(s => s.LaunchBrowserWithDebugAsync(
-                browser, It.IsAny<string?>(), It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new DebugBrowserLaunchResult(
-                Success: true,
-                ProcessId: 1234,
-                WindowHandle: new nint(5678),
-                CdpPort: 9222,
-                UserDataDir: @"C:\Temp\test",
-                Error: null,
-                ErrorCode: null));
+        var requests = LaunchReturns(Launched);
         var sut = CreateSut();
 
         // Act
@@ -665,91 +539,127 @@ public class BrowserReadingToolsTests
 
         // Assert
         result.Success.Should().BeTrue();
-        _mockProcessService.Verify(s => s.LaunchBrowserWithDebugAsync(
-            browser, It.IsAny<string?>(), It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Once);
+        requests.Should().ContainSingle().Which.Browser.Should().Be(browser);
     }
 
     [Fact]
-    public async Task LaunchBrowserWithDebug_PassesUrlToService()
+    public async Task LaunchBrowserWithDebug_ReturnsMappedDto_OnSuccess()
     {
         // Arrange
-        var url = "https://github.com";
-        _mockProcessService.Setup(s => s.LaunchBrowserWithDebugAsync(
-                It.IsAny<string>(), url, It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<int>(),
-                It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new DebugBrowserLaunchResult(
-                Success: true,
-                ProcessId: 1234,
-                WindowHandle: new nint(5678),
-                CdpPort: 9222,
-                UserDataDir: @"C:\Temp\test",
-                Error: null,
-                ErrorCode: null));
+        LaunchReturns(Launched with { LaunchStatus = LaunchStatus.TimedOut, Warning = "No window appeared within 10 seconds." });
         var sut = CreateSut();
 
         // Act
-        await sut.LaunchBrowserWithDebug(url: url);
+        var result = await sut.LaunchBrowserWithDebug();
+
+        // Assert - the port the browser reported, and the launch's status and warning (roadmap M5.1)
+        result.Success.Should().BeTrue();
+        result.ProcessId.Should().Be(1234);
+        result.WindowHandle.Should().Be(5678);
+        result.CdpPort.Should().Be(50123);
+        result.UserDataDir.Should().Be(@"C:\Temp\browser-debug-test");
+        result.LaunchStatus.Should().Be("timedOut");
+        result.Warning.Should().Be("No window appeared within 10 seconds.");
+        result.Error.Should().BeNull();
+        result.ErrorCode.Should().BeNull();
+    }
+
+    [Theory]
+    [InlineData("BrowserNotFound", @"Browser 'chrome' was not found. Tried: App Paths\chrome.exe; C:\Program Files\Google\Chrome\Application\chrome.exe.")]
+    [InlineData("PortInUse", "Port 9222 is already in use. Nothing was launched.")]
+    [InlineData("DebugLaunchFailed", "Failed to start process")]
+    public async Task LaunchBrowserWithDebug_ReturnsMappedDto_OnFailure(string errorCode, string error)
+    {
+        // Arrange
+        LaunchReturns(new DebugBrowserLaunchResult(false, null, null, null, null, error, errorCode));
+        var sut = CreateSut();
+
+        // Act
+        var result = await sut.LaunchBrowserWithDebug(port: 9222);
 
         // Assert
-        _mockProcessService.Verify(s => s.LaunchBrowserWithDebugAsync(
-            It.IsAny<string>(), url, It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<int>(),
-            It.IsAny<CancellationToken>()), Times.Once);
+        result.Success.Should().BeFalse();
+        result.Error.Should().Be(error);
+        result.ErrorCode.Should().Be(errorCode);
+        result.LaunchStatus.Should().BeNull("nothing was started");
     }
 
     [Fact]
-    public async Task LaunchBrowserWithDebug_PassesCustomPortToService()
+    public async Task LaunchBrowserWithDebug_AHandoff_KeepsItsStatusInTheFailure()
     {
-        // Arrange
-        var customPort = 9999;
-        _mockProcessService.Setup(s => s.LaunchBrowserWithDebugAsync(
-                It.IsAny<string>(), It.IsAny<string?>(), customPort, It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<int>(),
-                It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new DebugBrowserLaunchResult(
-                Success: true,
-                ProcessId: 1234,
-                WindowHandle: new nint(5678),
-                CdpPort: customPort,
-                UserDataDir: @"C:\Temp\test",
-                Error: null,
-                ErrorCode: null));
+        // Arrange - the request went to a browser already running with the profile (roadmap M5.1)
+        LaunchReturns(new DebugBrowserLaunchResult(false, null, null, null, @"C:\Profiles\Debug", "The chrome process that was started exited",
+            nameof(BrowserErrorCode.DebugLaunchFailed), LaunchStatus: LaunchStatus.ExitedWithoutWindow));
         var sut = CreateSut();
 
         // Act
-        var result = await sut.LaunchBrowserWithDebug(port: customPort);
+        var result = await sut.LaunchBrowserWithDebug(userDataDir: @"C:\Profiles\Debug");
 
         // Assert
-        result.CdpPort.Should().Be(customPort);
-        _mockProcessService.Verify(s => s.LaunchBrowserWithDebugAsync(
-            It.IsAny<string>(), It.IsAny<string?>(), customPort, It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<int>(),
-            It.IsAny<CancellationToken>()), Times.Once);
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be("DebugLaunchFailed");
+        result.LaunchStatus.Should().Be("exitedWithoutWindow");
+        result.UserDataDir.Should().Be(@"C:\Profiles\Debug");
     }
 
-    [Fact]
-    public async Task LaunchBrowserWithDebug_PassesUserDataDirToService()
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1024)]
+    [InlineData(65535)]
+    public async Task LaunchBrowserWithDebug_TakesPortZeroAndExplicitPortsFrom1024(int port)
     {
         // Arrange
-        var customDir = @"D:\BrowserProfiles\Debug";
-        _mockProcessService.Setup(s => s.LaunchBrowserWithDebugAsync(
-                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<int>(), customDir, It.IsAny<bool>(), It.IsAny<int>(),
-                It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new DebugBrowserLaunchResult(
-                Success: true,
-                ProcessId: 1234,
-                WindowHandle: new nint(5678),
-                CdpPort: 9222,
-                UserDataDir: customDir,
-                Error: null,
-                ErrorCode: null));
+        var requests = LaunchReturns(Launched);
         var sut = CreateSut();
 
         // Act
-        var result = await sut.LaunchBrowserWithDebug(userDataDir: customDir);
+        await sut.LaunchBrowserWithDebug(port: port);
 
         // Assert
-        result.UserDataDir.Should().Be(customDir);
-        _mockProcessService.Verify(s => s.LaunchBrowserWithDebugAsync(
-            It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<int>(), customDir, It.IsAny<bool>(), It.IsAny<int>(),
-            It.IsAny<CancellationToken>()), Times.Once);
+        requests.Should().ContainSingle().Which.Port.Should().Be(port);
+    }
+
+    [Theory]
+    [InlineData(-1)]
+    [InlineData(1)]
+    [InlineData(80)]
+    [InlineData(1023)]
+    [InlineData(65536)]
+    public async Task LaunchBrowserWithDebug_RefusesOtherPorts_AndLaunchesNothing(int port)
+    {
+        // Arrange
+        var sut = CreateSut();
+
+        // Act
+        var act = () => sut.LaunchBrowserWithDebug(port: port);
+
+        // Assert - below 1024 are the well-known service ports (roadmap M5.1)
+        (await act.Should().ThrowAsync<ToolErrorException>()).Which.Message.Should()
+            .Contain("port must be 0 (the browser picks a free port) or a TCP port from 1024 to 65535").And.Contain("Nothing was launched");
+        _mockProcessService.VerifyNoOtherCalls();
+    }
+
+    [Theory]
+    [InlineData("chrome", @"C:\Program Files\Google\Chrome Beta\Application\chrome.exe")]
+    [InlineData("edge", @"D:\Portable\Edge\MSEDGE.EXE")]
+    [InlineData("brave", @"\\server\share\Brave\brave.exe")]
+    [InlineData("chrome", null)]
+    [InlineData("chrome", "  ")]
+    public void DebugExecutableRefusal_TakesAFullPathToTheBrowsersOwnExe(string browser, string? executablePath)
+    {
+        BrowserReadingTools.DebugExecutableRefusal(browser, executablePath).Should().BeNull();
+    }
+
+    [Theory]
+    [InlineData("chrome", "chrome.exe", "is not a full path")]
+    [InlineData("chrome", @"Google\Chrome\Application\chrome.exe", "is not a full path")]
+    [InlineData("chrome", @"C:chrome.exe", "is not a full path")]
+    [InlineData("edge", @"C:\Program Files\Google\Chrome\Application\chrome.exe", "must name msedge.exe for browser 'edge'")]
+    [InlineData("chrome", @"C:\Windows\System32\cmd.exe", "must name chrome.exe")]
+    [InlineData("brave", @"C:\Tools\brave.exe.lnk", "must name brave.exe")]
+    public void DebugExecutableRefusal_RefusesARelativePathAndAnotherProgram(string browser, string executablePath, string message)
+    {
+        BrowserReadingTools.DebugExecutableRefusal(browser, executablePath).Should().Contain(message).And.Contain("Nothing was launched");
     }
 
     #endregion

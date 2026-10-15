@@ -171,10 +171,8 @@ public class WrapperGuardTests
         var guarded = WrapperGuard.Create(inner.Object, new ReadOnlyCallPolicy());
 
         var start = () => guarded.StartProcess(new ProcessStartInfo("app.exe"));
-        var where = () => guarded.FindWithWhereExe("app.exe");
 
         start.Should().Throw<E2EGuardException>().WithMessage("*StartProcess*DesktopNoInput*");
-        where.Should().Throw<E2EGuardException>().WithMessage("*FindWithWhereExe*");
         inner.VerifyNoOtherCalls();
     }
 
@@ -572,10 +570,8 @@ public class WrapperGuardTests
         var guarded = WrapperGuard.Create(inner.Object, FixtureOnly(new FakeDesktop { Foreground = FixtureWindow }));
 
         var start = () => guarded.StartProcess(new ProcessStartInfo(FixtureContract.ProcessName + ".exe"));
-        var where = () => guarded.FindWithWhereExe("app.exe");
 
         start.Should().Throw<E2EGuardException>().WithMessage("*may not start processes*");
-        where.Should().Throw<E2EGuardException>().WithMessage("*may not start processes*");
         inner.VerifyNoOtherCalls();
     }
 

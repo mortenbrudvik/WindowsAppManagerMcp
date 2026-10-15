@@ -25,6 +25,8 @@ public class ProcessService : IProcessService
     private readonly IWindowWaitService _windowWait;
     private readonly ChromiumPrograms _chromiumPrograms;
     private readonly InterpreterGuard _interpreterGuard;
+    private readonly DebugBrowserLocator _debugBrowserLocator;
+    private readonly IDebugBrowserReadiness? _debugBrowserReadiness;
 
     /// <param name="targetPolicy">
     /// The server's target policy, which kill_process enforces (roadmap M1.12). The server always passes
@@ -43,6 +45,10 @@ public class ProcessService : IProcessService
     /// (roadmap M3.3); default the real file system.</param>
     /// <param name="interpreterGuard">Refuses an interpreter with arguments and a script (roadmap M3.F8); default one that
     /// expands 8.3 short names from the real file system.</param>
+    /// <param name="debugBrowserLocator">Finds the browser for launch_browser_with_debug (roadmap M5.1); default the real
+    /// registry and file system.</param>
+    /// <param name="debugBrowserReadiness">Confirms that a debug browser's DevTools endpoint answers before the launch
+    /// reports success (roadmap M5.1); without it the launch is reported once the browser's port is known.</param>
     public ProcessService(
         IWindowService windowService,
         IInputValidationService validationService,
@@ -53,7 +59,9 @@ public class ProcessService : IProcessService
         IHostGuard? hostGuard = null,
         IWindowWaitService? windowWait = null,
         ChromiumPrograms? chromiumPrograms = null,
-        InterpreterGuard? interpreterGuard = null)
+        InterpreterGuard? interpreterGuard = null,
+        DebugBrowserLocator? debugBrowserLocator = null,
+        IDebugBrowserReadiness? debugBrowserReadiness = null)
     {
         _windowService = windowService;
         _validationService = validationService;
@@ -65,6 +73,8 @@ public class ProcessService : IProcessService
         _windowWait = windowWait ?? new WindowWaitService(new NativeWindowWrapper(), windowService, _processWrapper);
         _chromiumPrograms = chromiumPrograms ?? new ChromiumPrograms();
         _interpreterGuard = interpreterGuard ?? new InterpreterGuard();
+        _debugBrowserLocator = debugBrowserLocator ?? new DebugBrowserLocator();
+        _debugBrowserReadiness = debugBrowserReadiness;
     }
 
     /// <summary>
@@ -538,7 +548,8 @@ public class ProcessService : IProcessService
     }
 
     private LaunchWindowOwner OwnerOf(StartedLaunch launch, LaunchRequest request) =>
-        LaunchWindowOwner.For(_processWrapper, launch.Process?.Id, launch.LaunchedAtUtc, launch.Plan.Target!, request.ExpectWindow);
+        LaunchWindowOwner.For(_processWrapper, launch.Process?.Id, launch.LaunchedAtUtc, launch.Plan.Target!, request.ExpectWindow,
+            request.OnlyStartedProcess);
 
     /// <summary>
     /// A batch launch's owner check: <paramref name="owner"/>'s match, except for a window whose process another launch of
@@ -1780,116 +1791,128 @@ public class ProcessService : IProcessService
         ErrorMessage: "Process not found. It may have already exited.",
         ErrorCode: nameof(ProcessErrorCode.ProcessNotFound));
 
-    // Browser executable paths for common browsers
-    private static readonly Dictionary<string, string[]> BrowserPaths = new(StringComparer.OrdinalIgnoreCase)
-    {
-        ["chrome"] = new[]
-        {
-            @"C:\Program Files\Google\Chrome\Application\chrome.exe",
-            @"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe"
-        },
-        ["edge"] = new[]
-        {
-            @"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
-            @"C:\Program Files\Microsoft\Edge\Application\msedge.exe"
-        },
-        ["brave"] = new[]
-        {
-            @"C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe",
-            @"C:\Program Files (x86)\BraveSoftware\Brave-Browser\Application\brave.exe"
-        }
-    };
-
     private static readonly HashSet<string> SupportedBrowsers = new(StringComparer.OrdinalIgnoreCase)
     {
         "chrome", "edge", "brave"
     };
 
+    /// <summary>
+    /// How long a debug browser started with port 0 may take, after its window wait, to write the DevToolsActivePort file
+    /// that names its port (roadmap M5.1); tests shorten it.
+    /// </summary>
+    public TimeSpan DevToolsPortTimeout { get; init; } = TimeSpan.FromSeconds(10);
+
+    /// <summary>How long the <see cref="IDebugBrowserReadiness"/> check may wait for the DevTools endpoint to answer.</summary>
+    public TimeSpan DebugReadinessTimeout { get; init; } = TimeSpan.FromSeconds(10);
+
+    private static readonly TimeSpan DevToolsPortPollInterval = TimeSpan.FromMilliseconds(100);
+
+    /// <remarks>
+    /// The steps (roadmap M5.1): find the .exe (<see cref="DebugBrowserLocator"/>); check an explicit port is free (port 0
+    /// needs no check: the browser picks a free port); delete a DevToolsActivePort file an earlier run of the profile left;
+    /// start the browser with <see cref="BuildDebugBrowserArguments"/> and wait for a window of the started process only
+    /// (<see cref="LaunchRequest.OnlyStartedProcess"/>); refuse a launch that handed off or did not start; for port 0, read
+    /// the port from DevToolsActivePort; then let <see cref="IDebugBrowserReadiness"/>, when the server has one, confirm
+    /// that the endpoint answers. A failure after the start keeps the process, window and profile in the result, so that
+    /// the browser can be closed.
+    /// </remarks>
     public async Task<DebugBrowserLaunchResult> LaunchBrowserWithDebugAsync(
-        string browser = "chrome",
-        string? url = null,
-        int port = 9222,
-        string? userDataDir = null,
-        bool waitForWindow = true,
-        int waitTimeoutMs = 10000,
+        DebugBrowserLaunchRequest request,
         CancellationToken cancellationToken = default)
     {
-        // Validate browser type
+        ArgumentNullException.ThrowIfNull(request);
+        var browser = request.Browser;
         if (!SupportedBrowsers.Contains(browser))
         {
-            return new DebugBrowserLaunchResult(
-                Success: false,
-                ProcessId: null,
-                WindowHandle: null,
-                CdpPort: null,
-                UserDataDir: null,
-                Error: $"Unsupported browser '{browser}'. Supported browsers: chrome, edge, brave.",
-                ErrorCode: nameof(BrowserErrorCode.UnsupportedBrowser));
+            return DebugLaunchFailure($"Unsupported browser '{browser}'. Supported browsers: chrome, edge, brave.", BrowserErrorCode.UnsupportedBrowser);
         }
 
-        // Find browser executable
-        var browserPath = ResolveBrowserPath(browser);
-        if (browserPath == null)
+        var location = _debugBrowserLocator.Locate(browser, request.ExecutablePath);
+        if (location.Path == null)
         {
-            return new DebugBrowserLaunchResult(
-                Success: false,
-                ProcessId: null,
-                WindowHandle: null,
-                CdpPort: null,
-                UserDataDir: null,
-                Error: $"Browser '{browser}' not found. Please ensure it is installed.",
-                ErrorCode: nameof(BrowserErrorCode.BrowserNotFound));
+            return DebugLaunchFailure(BrowserNotFoundMessage(browser, request.ExecutablePath, location.Tried), BrowserErrorCode.BrowserNotFound);
         }
 
-        // Check if port is already in use
-        if (IsPortInUse(port))
+        var port = request.Port;
+        if (port != DebugBrowserLaunchRequest.EphemeralPort && IsPortInUse(port))
         {
-            return new DebugBrowserLaunchResult(
-                Success: false,
-                ProcessId: null,
-                WindowHandle: null,
-                CdpPort: null,
-                UserDataDir: null,
-                Error: $"Port {port} is already in use. Choose a different port or close the application using it.",
-                ErrorCode: nameof(BrowserErrorCode.PortInUse));
+            return DebugLaunchFailure(
+                $"Port {port} is already in use. Nothing was launched. Leave port out (0) to let the browser pick a free port, or choose another one.",
+                BrowserErrorCode.PortInUse);
         }
 
-        // Generate user data directory if not specified
-        var effectiveUserDataDir = userDataDir ?? Path.Combine(Path.GetTempPath(), $"browser-debug-{Guid.NewGuid()}");
+        var userDataDir = request.UserDataDir ?? Path.Combine(Path.GetTempPath(), $"browser-debug-{Guid.NewGuid()}");
+        if (DevToolsActivePortFile.DeleteStale(userDataDir) is { } notDeleted)
+        {
+            return DebugLaunchFailure(
+                $"The {DevToolsActivePortFile.FileName} file an earlier run left in '{userDataDir}' could not be deleted ({notDeleted}): a " +
+                "browser may still be using this profile. Nothing was launched. Close that browser, or leave userDataDir out to use a new temporary profile.",
+                BrowserErrorCode.DebugLaunchFailed);
+        }
 
-        var arguments = BuildDebugBrowserArguments(port, effectiveUserDataDir, url);
+        var arguments = BuildDebugBrowserArguments(port, userDataDir, request.Url);
 
         try
         {
-            // Launch browser
-            var launchResult = await LaunchApplicationAsync(
-                browserPath,
-                arguments.ToArray(),
-                workingDirectory: null,
-                waitForWindow: waitForWindow,
-                waitTimeoutMs: waitTimeoutMs,
-                cancellationToken: cancellationToken).ConfigureAwait(false);
+            var launch = await LaunchApplicationAsync(
+                new LaunchRequest(location.Path, arguments.ToArray()) { OnlyStartedProcess = true },
+                waitForWindow: true,
+                request.WaitTimeoutMs,
+                cancellationToken).ConfigureAwait(false);
 
-            if (!launchResult.Success)
+            if (!launch.Success)
             {
-                return new DebugBrowserLaunchResult(
-                    Success: false,
-                    ProcessId: null,
-                    WindowHandle: null,
-                    CdpPort: null,
-                    UserDataDir: null,
-                    Error: launchResult.ErrorMessage ?? "Failed to launch browser",
-                    ErrorCode: launchResult.ErrorCode ?? nameof(BrowserErrorCode.DebugLaunchFailed));
+                return DebugLaunchFailure(launch.ErrorMessage ?? "Failed to launch browser", launch.ErrorCode ?? nameof(BrowserErrorCode.DebugLaunchFailed)) with
+                {
+                    Warning = launch.Warning
+                };
             }
 
-            return new DebugBrowserLaunchResult(
-                Success: true,
-                ProcessId: launchResult.ProcessId,
-                WindowHandle: launchResult.WindowHandle,
-                CdpPort: port,
-                UserDataDir: effectiveUserDataDir,
-                Error: null,
-                ErrorCode: null);
+            if (NotStartedReason(browser, launch) is { } notStarted)
+            {
+                return new DebugBrowserLaunchResult(false, null, null, null, userDataDir, notStarted,
+                    nameof(BrowserErrorCode.DebugLaunchFailed), launch.Warning, launch.Status);
+            }
+
+            var started = new DebugBrowserLaunchResult(true, launch.ProcessId, launch.WindowHandle, port, userDataDir, null, null,
+                launch.Warning, launch.Status);
+            if (port == DebugBrowserLaunchRequest.EphemeralPort)
+            {
+                if (await WaitForDevToolsPortAsync(userDataDir, cancellationToken).ConfigureAwait(false) is not { } reportedPort)
+                {
+                    return started with
+                    {
+                        Success = false,
+                        CdpPort = null,
+                        Error = $"The browser started (processId {launch.ProcessId}) but did not write its DevTools port to " +
+                                $"'{DevToolsActivePortFile.PathIn(userDataDir)}' within {DevToolsPortTimeout.TotalSeconds:0.#} seconds, so " +
+                                "the port is not known. It is still running: close it as this tool's description says, then try again.",
+                        ErrorCode = nameof(BrowserErrorCode.DebugLaunchFailed)
+                    };
+                }
+
+                started = started with { CdpPort = reportedPort };
+            }
+
+            if (_debugBrowserReadiness != null)
+            {
+                var readiness = await _debugBrowserReadiness.WaitUntilReadyAsync(
+                    new DebugBrowserEndpoint(browser, launch.ProcessId!.Value, started.CdpPort!.Value, userDataDir),
+                    DebugReadinessTimeout,
+                    cancellationToken).ConfigureAwait(false);
+                if (!readiness.Ready)
+                {
+                    return started with
+                    {
+                        Success = false,
+                        Error = $"{readiness.Error ?? "The DevTools endpoint did not answer."} The browser (processId {launch.ProcessId}) " +
+                                "is still running: close it as this tool's description says.",
+                        ErrorCode = nameof(BrowserErrorCode.DebugLaunchFailed)
+                    };
+                }
+            }
+
+            return started;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -1897,25 +1920,95 @@ public class ProcessService : IProcessService
         }
         catch (Exception ex)
         {
-            return new DebugBrowserLaunchResult(
-                Success: false,
-                ProcessId: null,
-                WindowHandle: null,
-                CdpPort: null,
-                UserDataDir: null,
-                Error: ex.Message,
-                ErrorCode: nameof(BrowserErrorCode.DebugLaunchFailed));
+            return DebugLaunchFailure(ex.Message, BrowserErrorCode.DebugLaunchFailed);
+        }
+    }
+
+    private static DebugBrowserLaunchResult DebugLaunchFailure(string error, BrowserErrorCode errorCode) =>
+        DebugLaunchFailure(error, errorCode.ToString());
+
+    private static DebugBrowserLaunchResult DebugLaunchFailure(string error, string errorCode) =>
+        new(Success: false, ProcessId: null, WindowHandle: null, CdpPort: null, UserDataDir: null, Error: error, ErrorCode: errorCode);
+
+    private static string BrowserNotFoundMessage(string browser, string? executablePath, IReadOnlyList<string> tried) =>
+        string.IsNullOrWhiteSpace(executablePath)
+            ? $"Browser '{browser}' was not found. Tried: {string.Join("; ", tried)}. Nothing was launched. If it is installed " +
+              $"elsewhere (another channel or a portable copy), pass the full path of its {DebugBrowserLocator.ExecutableName(browser)} as executablePath."
+            : $"executablePath '{executablePath.Trim()}' does not exist. Nothing was launched.";
+
+    /// <summary>
+    /// Why a launch that Windows accepted did not start a debug browser of its own, or null when it did: the started
+    /// process is running (with its window, or still without one when the wait ended). The window wait counted only the
+    /// started process's windows, so a launch whose request went to a browser already running with the same profile ends
+    /// with the launcher gone and no window; that browser ignores the debug switches of the request.
+    /// </summary>
+    private static string? NotStartedReason(string browser, LaunchResult launch) => launch.Status switch
+    {
+        LaunchStatus.ExitedWithoutWindow or LaunchStatus.PossibleHandoff =>
+            $"The {browser} process that was started exited without a window of its own: most likely a {browser} already " +
+            "running with this userDataDir took the request over. That browser ignores the debug switches, so no debug port " +
+            "was opened by this launch. Close that browser first, or leave userDataDir out to use a new temporary profile.",
+        LaunchStatus.AwaitingUserConsent =>
+            "Windows is showing a consent or security prompt for the browser's start (see warning), so it is not known " +
+            "whether it starts or which port it gets. Ask the user to answer the prompt; do not launch it again meanwhile.",
+        _ when launch.ProcessId == null => "Windows started no browser process, so no debug port was opened.",
+        _ => null
+    };
+
+    /// <summary>
+    /// The port a browser started with port 0 wrote to its profile's DevToolsActivePort, polled for at most
+    /// <see cref="DevToolsPortTimeout"/>; null when it did not appear. The file of an earlier run was deleted before the
+    /// start, so a file here is this launch's.
+    /// </summary>
+    private async Task<int?> WaitForDevToolsPortAsync(string userDataDir, CancellationToken cancellationToken)
+    {
+        var deadline = DateTime.UtcNow + DevToolsPortTimeout;
+        while (true)
+        {
+            if (DevToolsActivePortFile.TryReadPort(userDataDir) is { } port)
+            {
+                return port;
+            }
+
+            var left = deadline - DateTime.UtcNow;
+            if (left <= TimeSpan.Zero)
+            {
+                return null;
+            }
+
+            await Task.Delay(left < DevToolsPortPollInterval ? left : DevToolsPortPollInterval, cancellationToken).ConfigureAwait(false);
         }
     }
 
     /// <summary>
-    /// Builds the argument list for a CDP debug browser launch. Values are left unquoted:
-    /// <see cref="CommandLineBuilder"/> quotes each argument once when the command line is built,
-    /// so user data directories containing spaces or a trailing backslash stay a single argument.
+    /// The switches every debug launch passes first (roadmap M5.1), so that a new profile opens the url rather than a
+    /// screen that asks the user something; such a screen would also be the first tab, which the window title and the CDP
+    /// tab match would land on. Chrome, Edge and Brave are all Chromium and read the same switches.
+    /// </summary>
+    public static readonly IReadOnlyList<string> FirstRunSwitches =
+    [
+        // No first-run experience: Chrome's welcome and "make Chrome your own" pages, Edge's welcome, sign-in and
+        // personalization pages, Brave's welcome tour, and the offer to import another browser's data
+        "--no-first-run",
+        // No bar or dialog that offers to make this browser the user's default browser
+        "--no-default-browser-check",
+        // No search engine choice dialog (Chrome 120 and later, in some regions) over the first window of a new profile
+        "--disable-search-engine-choice-screen",
+        // No sync: a browser sign-in (by the user, or Edge's own with the Windows account) would otherwise copy the account's
+        // passwords, history and other data into a profile that the unauthenticated debug port exposes
+        "--disable-sync"
+    ];
+
+    /// <summary>
+    /// Builds the argument list for a CDP debug browser launch: <see cref="FirstRunSwitches"/>, the port (0: the browser
+    /// picks one and writes it to DevToolsActivePort), the profile and the url. The profile is never the browser's default
+    /// one (launch_browser_with_debug refuses a 'User Data' folder): Chrome 136 and later ignore --remote-debugging-port on
+    /// the default profile. Values are left unquoted: <see cref="CommandLineBuilder"/> quotes each argument once when the
+    /// command line is built, so user data directories containing spaces or a trailing backslash stay a single argument.
     /// </summary>
     public static IReadOnlyList<string> BuildDebugBrowserArguments(int port, string userDataDir, string? url)
     {
-        var arguments = new List<string>
+        var arguments = new List<string>(FirstRunSwitches)
         {
             $"--remote-debugging-port={port}",
             $"--user-data-dir={userDataDir}"
@@ -1927,33 +2020,6 @@ public class ProcessService : IProcessService
         }
 
         return arguments;
-    }
-
-    private string? ResolveBrowserPath(string browser)
-    {
-        // Check common paths
-        if (BrowserPaths.TryGetValue(browser, out var paths))
-        {
-            foreach (var path in paths)
-            {
-                if (File.Exists(path))
-                {
-                    return path;
-                }
-            }
-        }
-
-        // Fall back to PATH lookup
-        var executableName = browser switch
-        {
-            "chrome" => "chrome.exe",
-            "edge" => "msedge.exe",
-            "brave" => "brave.exe",
-            _ => $"{browser}.exe"
-        };
-
-        var output = _processWrapper.FindWithWhereExe(executableName);
-        return !string.IsNullOrWhiteSpace(output) && File.Exists(output) ? output : null;
     }
 
     private static bool IsPortInUse(int port)

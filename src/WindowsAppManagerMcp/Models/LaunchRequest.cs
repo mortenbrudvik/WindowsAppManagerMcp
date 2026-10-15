@@ -29,7 +29,17 @@ public sealed record LaunchRequest(
     string? WorkingDirectory = null,
     LaunchWindowHint? ExpectWindow = null,
     bool ReuseExisting = false,
-    bool ForceAccessibility = false);
+    bool ForceAccessibility = false)
+{
+    /// <summary>
+    /// Count only windows of the process that was started and the processes it started, never a window of another
+    /// instance of the app (by name or path) or of <see cref="ExpectWindow"/>. A launch that hands off to a running
+    /// instance then ends as <see cref="LaunchStatus.ExitedWithoutWindow"/>, not with that instance's window.
+    /// launch_browser_with_debug sets it (roadmap M5.1): the user's own browser window is never the debug browser's. No
+    /// tool parameter sets it.
+    /// </summary>
+    public bool OnlyStartedProcess { get; init; }
+}
 
 /// <summary>
 /// The window a launch is expected to open, for the cases the server cannot work out on its own: a packaged app

@@ -1250,24 +1250,4 @@ public class ProcessServiceTests
     }
 
     #endregion
-
-    #region LaunchBrowserWithDebug Tests
-
-    [Fact]
-    public async Task LaunchBrowserWithDebug_UnsupportedBrowser_ReturnsErrorWithoutTouchingProcesses()
-    {
-        // Arrange
-        var sut = CreateSut();
-
-        // Act
-        var result = await sut.LaunchBrowserWithDebugAsync("firefox");
-
-        // Assert
-        result.Success.Should().BeFalse();
-        result.ErrorCode.Should().Be(nameof(BrowserErrorCode.UnsupportedBrowser));
-        VerifyNothingStarted();
-        _mockProcessWrapper.Verify(w => w.FindWithWhereExe(It.IsAny<string>()), Times.Never);
-    }
-
-    #endregion
 }

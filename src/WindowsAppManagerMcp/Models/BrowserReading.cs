@@ -79,8 +79,43 @@ public record CdpOptions(
 }
 
 /// <summary>
+/// What launch_browser_with_debug starts (roadmap M5.1).
+/// </summary>
+/// <param name="Browser">chrome, edge or brave.</param>
+/// <param name="Url">A URL to open, or null.</param>
+/// <param name="Port">The DevTools port: <see cref="EphemeralPort"/> lets the browser pick a free one and report it in
+/// the profile's DevToolsActivePort file; otherwise <see cref="MinExplicitPort"/> to 65535.</param>
+/// <param name="UserDataDir">The profile folder, or null for a new folder under %TEMP%.</param>
+/// <param name="ExecutablePath">The browser's .exe, or null to look for it (App Paths, Program Files, %LOCALAPPDATA%).</param>
+/// <param name="WaitTimeoutMs">How long to wait for the browser's window.</param>
+public sealed record DebugBrowserLaunchRequest(
+    string Browser = "chrome",
+    string? Url = null,
+    int Port = DebugBrowserLaunchRequest.EphemeralPort,
+    string? UserDataDir = null,
+    string? ExecutablePath = null,
+    int WaitTimeoutMs = 10000)
+{
+    /// <summary>Port 0: the browser picks a free port, so no other program can take it between a check and the start.</summary>
+    public const int EphemeralPort = 0;
+
+    /// <summary>The lowest explicit port: below it are the well-known ports of system services.</summary>
+    public const int MinExplicitPort = 1024;
+
+    public const int MaxPort = 65535;
+
+    /// <summary>Whether <paramref name="port"/> is 0 or an explicit port from 1024 to 65535.</summary>
+    public static bool IsValidPort(int port) => port == EphemeralPort || port is >= MinExplicitPort and <= MaxPort;
+}
+
+/// <summary>
 /// Result of launching a browser with debug mode enabled.
 /// </summary>
+/// <param name="ProcessId">The browser process that was started. A failure after the start still names it (and the
+/// window and profile) when it is running, so that it can be closed.</param>
+/// <param name="CdpPort">The DevTools port the browser listens on: the one it reported for port 0, else the one asked for.</param>
+/// <param name="Warning">What the launch's window wait found, when it was not a window (see LaunchResult.Warning).</param>
+/// <param name="LaunchStatus">What the launch led to (LaunchResult.Status), when the browser was started.</param>
 public record DebugBrowserLaunchResult(
     bool Success,
     int? ProcessId,
@@ -88,5 +123,15 @@ public record DebugBrowserLaunchResult(
     int? CdpPort,
     string? UserDataDir,
     string? Error,
-    string? ErrorCode
+    string? ErrorCode,
+    string? Warning = null,
+    LaunchStatus? LaunchStatus = null
 );
+
+/// <summary>
+/// A debug browser that has started and reported its DevTools port, for <see cref="Services.Interfaces.IDebugBrowserReadiness"/>.
+/// </summary>
+public sealed record DebugBrowserEndpoint(string Browser, int ProcessId, int Port, string UserDataDir);
+
+/// <summary>Whether a debug browser's DevTools endpoint answers, and if not, why (a sentence for the result's error).</summary>
+public sealed record DebugBrowserReadiness(bool Ready, string? Error = null);

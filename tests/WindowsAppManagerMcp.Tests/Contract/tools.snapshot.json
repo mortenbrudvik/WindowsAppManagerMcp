@@ -3811,7 +3811,7 @@
     {
       "name": "launch_browser_with_debug",
       "title": "Launch Browser with Debug Port",
-      "description": "Launch a browser with CDP (Chrome DevTools Protocol) debug port enabled. This enables richer content extraction via get_browser_content with the cdpPort parameter. Uses a separate user data directory by default to avoid conflicts with existing browser sessions. The debug port has no authentication: any program on this computer can control that browser until it exits. Launch it only when CDP is needed, and close every window of that browser when done (find_windows with its processId and includeCloaked=true, so windows on other virtual desktops are found too), then confirm with list_processes and includeWindowless=true that it has exited. InvalidArguments: a url that starts with '-' or '/' (the browser would read it as a command-line switch), or a userDataDir inside a browser's own 'User Data' folder (the user's real profile).",
+      "description": "Launch a browser with CDP (Chrome DevTools Protocol) debug port enabled. This enables richer content extraction via get_browser_content with the cdpPort parameter. Uses a separate user data directory by default to avoid conflicts with existing browser sessions. The debug port has no authentication: any program on this computer can control that browser until it exits. Launch it only when CDP is needed, and close every window of that browser when done (find_windows with its processId and includeCloaked=true, so windows on other virtual desktops are found too), then confirm with list_processes and includeWindowless=true that it has exited. DebugLaunchFailed when a browser already running with that userDataDir takes the request over (it ignores the debug port). InvalidArguments: a url that starts with '-' or '/' (the browser would read it as a command-line switch), or a userDataDir inside a browser's own 'User Data' folder (the user's real profile).",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -3834,12 +3834,20 @@
             "default": null
           },
           "port": {
-            "description": "CDP debug port, 1-65535 (default: 9222). Use this port value with get_browser_content's cdpPort parameter.",
+            "description": "CDP debug port: 0 (default) lets the browser pick a free port, or 1024-65535. Pass the result's cdpPort as the reading tools' cdpPort.",
             "type": "integer",
-            "default": 9222
+            "default": 0
           },
           "userDataDir": {
             "description": "Separate user data directory to avoid conflicts with existing sessions. If not specified, a new temporary directory is created automatically. Never pass the user's real browser profile: the open debug port would expose its signed-in sessions. A path inside a 'User Data' folder (where Chrome, Edge and Brave keep the user's profiles) is refused.",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "executablePath": {
+            "description": "Full path of the browser's chrome.exe, msedge.exe or brave.exe (matching browser), when the server does not find it.",
             "type": [
               "string",
               "null"

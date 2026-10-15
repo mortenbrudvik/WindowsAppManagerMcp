@@ -15,6 +15,8 @@ namespace WindowsAppManagerMcp.Services;
 /// <item>or a match of the caller's <see cref="LaunchWindowHint"/> (every field it sets).</item>
 /// </list>
 /// The process checks are made once per process and remembered for the launch; the hint's title is checked each time.
+/// An owner made with onlyStartedProcess (a debug browser, roadmap M5.1) accepts only the first item: the started process
+/// and the processes it started.
 /// An instance may be used from several threads (the waits of a batch check each other's started processes).
 /// </summary>
 public sealed class LaunchWindowOwner
@@ -54,6 +56,7 @@ public sealed class LaunchWindowOwner
     private readonly string? _imagePath;
     private readonly HashSet<string> _processNames;
     private readonly LaunchWindowHint? _hint;
+    private readonly bool _onlyStartedProcess;
     private readonly Dictionary<int, bool> _processMatches = [];
     private readonly Dictionary<int, bool> _startedProcesses = [];
     private readonly Dictionary<int, string?> _processNamesById = [];
@@ -65,13 +68,16 @@ public sealed class LaunchWindowOwner
     /// <param name="imagePath">The started program's full path when it is a native .exe or .com; else null.</param>
     /// <param name="processNames">Process names (without .exe) whose windows count: the program's own name and its handoff names.</param>
     /// <param name="hint">The caller's expectWindow hint, or null.</param>
+    /// <param name="onlyStartedProcess">Count only windows of the started process and the processes it started, not a
+    /// running instance it may have handed off to (<see cref="LaunchRequest.OnlyStartedProcess"/>).</param>
     public LaunchWindowOwner(
         INativeProcessWrapper processes,
         int? launchedProcessId,
         DateTime launchedAtUtc,
         string? imagePath,
         IEnumerable<string> processNames,
-        LaunchWindowHint? hint)
+        LaunchWindowHint? hint,
+        bool onlyStartedProcess = false)
     {
         _processes = processes;
         _launchedProcessId = launchedProcessId;
@@ -79,14 +85,17 @@ public sealed class LaunchWindowOwner
         _imagePath = imagePath;
         _processNames = new HashSet<string>(processNames.Where(n => !string.IsNullOrWhiteSpace(n)).Select(StripExe), StringComparer.OrdinalIgnoreCase);
         _hint = hint is { IsEmpty: false } ? hint : null;
+        _onlyStartedProcess = onlyStartedProcess;
     }
 
     /// <summary>
     /// The owner of a launch's windows: its process, the program's path, name and handoff names, and the hint.
     /// </summary>
     /// <param name="target">What was started: the resolved file name (or URI) and its kind.</param>
+    /// <param name="onlyStartedProcess">Count only windows of the started process and the processes it started.</param>
     public static LaunchWindowOwner For(
-        INativeProcessWrapper processes, int? launchedProcessId, DateTime launchedAtUtc, ResolvedLaunchTarget target, LaunchWindowHint? hint)
+        INativeProcessWrapper processes, int? launchedProcessId, DateTime launchedAtUtc, ResolvedLaunchTarget target, LaunchWindowHint? hint,
+        bool onlyStartedProcess = false)
     {
         var names = new List<string>();
         string? imagePath = null;
@@ -103,7 +112,7 @@ public sealed class LaunchWindowOwner
         if (target.Kind == LaunchTargetKind.NativeExecutable && Path.IsPathFullyQualified(target.FileName))
             imagePath = target.FileName;
 
-        return new LaunchWindowOwner(processes, launchedProcessId, launchedAtUtc, imagePath, names, hint);
+        return new LaunchWindowOwner(processes, launchedProcessId, launchedAtUtc, imagePath, names, hint, onlyStartedProcess);
     }
 
     /// <summary>
@@ -157,6 +166,9 @@ public sealed class LaunchWindowOwner
     {
         if (window.ProcessId <= 0)
             return false;
+
+        if (_onlyStartedProcess)
+            return StartedProcess(window.ProcessId);
 
         lock (_sync)
         {

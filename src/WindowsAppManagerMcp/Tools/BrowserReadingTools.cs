@@ -2,6 +2,7 @@ using System.ComponentModel;
 using ModelContextProtocol.Server;
 using WindowsAppManagerMcp.Infrastructure;
 using WindowsAppManagerMcp.Models;
+using WindowsAppManagerMcp.Services;
 using WindowsAppManagerMcp.Services.Interfaces;
 
 namespace WindowsAppManagerMcp.Tools;
@@ -113,23 +114,27 @@ public class BrowserReadingTools
     [Description("Launch a browser with CDP (Chrome DevTools Protocol) debug port enabled. This enables richer content extraction via get_browser_content with the cdpPort parameter. Uses a separate user data directory by default to avoid conflicts with existing browser sessions." +
                  " The debug port has no authentication: any program on this computer can control that browser until it exits. Launch it only when CDP is needed, and close every window of that browser when done" +
                  " (find_windows with its processId and includeCloaked=true, so windows on other virtual desktops are found too), then confirm with list_processes and includeWindowless=true that it has exited." +
+                 " DebugLaunchFailed when a browser already running with that userDataDir takes the request over (it ignores the debug port)." +
                  " InvalidArguments: a url that starts with '-' or '/' (the browser would read it as a command-line switch), or a userDataDir inside a browser's own 'User Data' folder (the user's real profile).")]
     public async Task<DebugBrowserLaunchResultDto> LaunchBrowserWithDebug(
         [Description("Browser to launch: chrome (default), edge or brave. Any other value fails with UnsupportedBrowser.")]
         DebugBrowser browser = DebugBrowser.Chrome,
         [Description("URL to open (optional). It must not start with '-' or '/', which the browser reads as a command-line switch.")]
         string? url = null,
-        [Description("CDP debug port, 1-65535 (default: 9222). Use this port value with get_browser_content's cdpPort parameter.")]
-        int port = 9222,
+        [Description("CDP debug port: 0 (default) lets the browser pick a free port, or 1024-65535. Pass the result's cdpPort as the reading tools' cdpPort.")]
+        int port = DebugBrowserLaunchRequest.EphemeralPort,
         [Description("Separate user data directory to avoid conflicts with existing sessions. If not specified, a new temporary directory is created automatically. Never pass the user's real browser profile: the open debug port would expose its signed-in sessions. A path inside a 'User Data' folder (where Chrome, Edge and Brave keep the user's profiles) is refused.")]
         string? userDataDir = null,
+        [Description("Full path of the browser's chrome.exe, msedge.exe or brave.exe (matching browser), when the server does not find it.")]
+        string? executablePath = null,
         CancellationToken cancellationToken = default)
     {
-        if (port is < 1 or > 65535)
+        if (!DebugBrowserLaunchRequest.IsValidPort(port))
         {
-            // Port 0 would let the browser pick a port the result could not report (roadmap M2.2)
+            // Port 0 lets the browser pick a free port, which it writes to the profile's DevToolsActivePort; the result
+            // reports it (roadmap M5.1, which replaced M2.2's refusal of 0). Below 1024 are the well-known service ports
             throw new ToolErrorException(ToolErrorReporting.InvalidArgumentsErrorCode,
-                $"port must be a TCP port from 1 to 65535, but it is {port}. Nothing was launched.");
+                $"port must be 0 (the browser picks a free port) or a TCP port from 1024 to 65535, but it is {port}. Nothing was launched.");
         }
 
         if (DebugUrlRefusal(url) is { } badUrl)
@@ -142,9 +147,40 @@ public class BrowserReadingTools
             throw new ToolErrorException(ToolErrorReporting.InvalidArgumentsErrorCode, badProfile);
         }
 
+        var browserName = ToolEnum<DebugBrowser>.Name(browser);
+        if (DebugExecutableRefusal(browserName, executablePath) is { } badExecutable)
+        {
+            throw new ToolErrorException(ToolErrorReporting.InvalidArgumentsErrorCode, badExecutable);
+        }
+
         var result = await _processService.LaunchBrowserWithDebugAsync(
-            ToolEnum<DebugBrowser>.Name(browser), url, port, userDataDir, cancellationToken: cancellationToken).ConfigureAwait(false);
+            new DebugBrowserLaunchRequest(browserName, url, port, userDataDir, executablePath), cancellationToken).ConfigureAwait(false);
         return ToDto(result);
+    }
+
+    /// <summary>
+    /// Why launch_browser_with_debug refuses <paramref name="executablePath"/>, or null (roadmap M5.1): it must be a full
+    /// path whose file name is the browser's own .exe (chrome.exe for chrome, also for Beta, Dev and Canary), so the tool
+    /// starts the browser it names, with the debug switches, and not another program.
+    /// </summary>
+    public static string? DebugExecutableRefusal(string browser, string? executablePath)
+    {
+        if (string.IsNullOrWhiteSpace(executablePath))
+        {
+            return null;
+        }
+
+        var expected = DebugBrowserLocator.ExecutableName(browser);
+        var path = executablePath.Trim();
+        if (path.Any(char.IsControl) || !Path.IsPathFullyQualified(path))
+        {
+            return $"executablePath must be the full path of {expected}, but '{path}' is not a full path. Nothing was launched.";
+        }
+
+        var fileName = Path.GetFileName(path);
+        return string.Equals(fileName, expected, StringComparison.OrdinalIgnoreCase)
+            ? null
+            : $"executablePath must name {expected} for browser '{browser}', but it names '{fileName}'. Nothing was launched.";
     }
 
     /// <summary>
@@ -241,7 +277,9 @@ public class BrowserReadingTools
         CdpPort: result.CdpPort,
         UserDataDir: result.UserDataDir,
         Error: result.Error,
-        ErrorCode: result.ErrorCode
+        ErrorCode: result.ErrorCode,
+        LaunchStatus: result.LaunchStatus?.ToWireName(),
+        Warning: result.Warning
     );
 }
 
@@ -282,7 +320,8 @@ public record BrowserContentResultDto(
 );
 
 /// <summary>
-/// DTO for debug browser launch result returned by MCP tools.
+/// DTO for debug browser launch result returned by MCP tools. LaunchStatus is launch_application's launchStatus
+/// (roadmap M5.1), and Warning what the window wait found when it was not a window.
 /// </summary>
 public record DebugBrowserLaunchResultDto(
     bool Success,
@@ -291,5 +330,7 @@ public record DebugBrowserLaunchResultDto(
     int? CdpPort,
     string? UserDataDir,
     string? Error,
-    string? ErrorCode
+    string? ErrorCode,
+    string? LaunchStatus = null,
+    string? Warning = null
 );

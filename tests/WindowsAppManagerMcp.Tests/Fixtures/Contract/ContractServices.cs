@@ -326,7 +326,7 @@ public sealed class ContractServices : IDisposable
         Processes.Setup(p => p.LaunchApplicationsBatchAsync(It.IsAny<IReadOnlyList<LaunchRequest>>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<IProgress<OperationProgress>?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((IReadOnlyList<LaunchRequest> apps, bool wait, int _, IProgress<OperationProgress>? _, CancellationToken _) =>
                 apps.Select((_, i) => TypicalLaunch(wait, TypicalDesktop.Windows[i], 20_000 + i)).ToList());
-        Processes.Setup(p => p.LaunchBrowserWithDebugAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+        Processes.Setup(p => p.LaunchBrowserWithDebugAsync(It.IsAny<DebugBrowserLaunchRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new DebugBrowserLaunchResult(true, 31_337, (nint)TypicalDesktop.BrowserHandle, 9222,
                 @"C:\Users\user\AppData\Local\Temp\WindowsAppManagerMcp\browser-9222", null, null));
 
@@ -535,7 +535,7 @@ public sealed class ContractServices : IDisposable
         Processes.Setup(p => p.LaunchApplicationsBatchAsync(It.IsAny<IReadOnlyList<LaunchRequest>>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<IProgress<OperationProgress>?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((IReadOnlyList<LaunchRequest> apps, bool _, int _, IProgress<OperationProgress>? _, CancellationToken _) =>
                 apps.Select(_ => new LaunchResult(false, ErrorMessage: "The executable was not found", ErrorCode: nameof(LaunchErrorCode.ExecutableNotFound))).ToList());
-        Processes.Setup(p => p.LaunchBrowserWithDebugAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+        Processes.Setup(p => p.LaunchBrowserWithDebugAsync(It.IsAny<DebugBrowserLaunchRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new DebugBrowserLaunchResult(false, null, null, null, null, "Chrome is not installed", nameof(BrowserErrorCode.BrowserNotFound)));
 
         Browser.Setup(b => b.GetBrowserUrlAsync(It.IsAny<nint>(), It.IsAny<CdpOptions?>(), It.IsAny<CancellationToken>()))

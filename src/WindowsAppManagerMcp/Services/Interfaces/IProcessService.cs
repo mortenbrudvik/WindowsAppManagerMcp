@@ -125,23 +125,15 @@ public interface IProcessService
         CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Launches a browser with CDP (Chrome DevTools Protocol) debug port enabled.
+    /// Launches a browser with CDP (Chrome DevTools Protocol) debug port enabled, with a profile of its own and without
+    /// first-run screens (roadmap M5.1). Success means the started browser is running and its port is known; a launch
+    /// that handed off to a browser already running with the same profile fails with DebugLaunchFailed.
     /// </summary>
-    /// <param name="browser">Browser to launch: chrome, edge, or brave.</param>
-    /// <param name="url">Optional URL to open.</param>
-    /// <param name="port">CDP debug port (default: 9222).</param>
-    /// <param name="userDataDir">Optional separate user data directory to avoid conflicts with existing sessions.</param>
-    /// <param name="waitForWindow">Whether to wait for the browser window to appear.</param>
-    /// <param name="waitTimeoutMs">Maximum time in milliseconds to wait for the window.</param>
-    /// <param name="cancellationToken">Cancels the call, as for <see cref="LaunchApplicationAsync"/>.</param>
-    /// <returns>Result containing process ID, window handle, CDP port, and user data directory.</returns>
+    /// <param name="request">The browser, url, port (0: the browser picks one), profile and .exe.</param>
+    /// <param name="cancellationToken">Cancels the call, as for <see cref="LaunchApplicationAsync(LaunchRequest, bool, int, CancellationToken)"/>.</param>
+    /// <returns>Result containing process ID, window handle, CDP port, user data directory and the launch status.</returns>
     Task<DebugBrowserLaunchResult> LaunchBrowserWithDebugAsync(
-        string browser = "chrome",
-        string? url = null,
-        int port = 9222,
-        string? userDataDir = null,
-        bool waitForWindow = true,
-        int waitTimeoutMs = 10000,
+        DebugBrowserLaunchRequest request,
         CancellationToken cancellationToken = default);
 }
 

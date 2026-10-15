@@ -184,7 +184,6 @@ public class WrapperCatalogTests
     [InlineData(typeof(ITcpPortOwnerResolver), nameof(ITcpPortOwnerResolver.GetListeningProcessId), WrapperCallKind.Read)]
     [InlineData(typeof(INativeProcessWrapper), nameof(INativeProcessWrapper.OpenProcess), WrapperCallKind.Read)]
     [InlineData(typeof(INativeProcessWrapper), nameof(INativeProcessWrapper.StartProcess), WrapperCallKind.ProcessStart)]
-    [InlineData(typeof(INativeProcessWrapper), nameof(INativeProcessWrapper.FindWithWhereExe), WrapperCallKind.ProcessStart)]
     [InlineData(typeof(IProcessHandle), nameof(IProcessHandle.CloseMainWindow), WrapperCallKind.ProcessAction)]
     [InlineData(typeof(IProcessHandle), nameof(IProcessHandle.Kill), WrapperCallKind.ProcessAction)]
     [InlineData(typeof(IProcessHandle), nameof(IDisposable.Dispose), WrapperCallKind.Read)]

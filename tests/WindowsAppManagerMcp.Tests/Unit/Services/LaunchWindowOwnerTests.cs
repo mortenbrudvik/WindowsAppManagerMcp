@@ -87,6 +87,25 @@ public class LaunchWindowOwnerTests
     }
 
     [Fact]
+    public void OnlyStartedProcess_AcceptsTheStartedProcessAndItsChildren_NotAnotherInstanceOrTheHint()
+    {
+        // Arrange - roadmap M5.1: 2000 is the debug browser's child; 4000 is the user's own Chrome (same name and path),
+        // whose window would otherwise count as a handoff
+        AddProcess(2000, LaunchedProcessId, "chrome.exe", LaunchedAt.AddMilliseconds(50), @"C:\Chrome\chrome.exe");
+        AddProcess(4000, 1, "chrome.exe", LaunchedAt.AddHours(-1), @"C:\Chrome\chrome.exe");
+        var owner = LaunchWindowOwner.For(_processes.Object, LaunchedProcessId, LaunchedAt,
+            new ResolvedLaunchTarget(@"C:\Chrome\chrome.exe", LaunchTargetKind.NativeExecutable),
+            new LaunchWindowHint(ProcessName: "chrome"), onlyStartedProcess: true);
+
+        // Act & Assert
+        owner.Matches(Window(LaunchedProcessId)).Should().BeTrue();
+        owner.Matches(Window(2000)).Should().BeTrue();
+        owner.Matches(Window(4000)).Should().BeFalse("the user's own browser is not the debug browser, by name, path or hint");
+        OwnerOf(@"C:\Chrome\chrome.exe", LaunchTargetKind.NativeExecutable).Matches(Window(4000))
+            .Should().BeTrue("without onlyStartedProcess a running instance counts as a handoff");
+    }
+
+    [Fact]
     public void AProcessWhoseStartTimeCannotBeRead_IsNoChildOfIt()
     {
         // Arrange

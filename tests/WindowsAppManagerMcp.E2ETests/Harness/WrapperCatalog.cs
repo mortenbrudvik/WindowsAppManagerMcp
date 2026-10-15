@@ -243,8 +243,6 @@ public static class WrapperCatalog
             [typeof(INativeProcessWrapper)] = new Dictionary<string, WrapperMember>
             {
                 [nameof(INativeProcessWrapper.StartProcess)] = WrapperMember.ProcessStart,
-                // Runs where.exe: a process start, even though it only looks something up
-                [nameof(INativeProcessWrapper.FindWithWhereExe)] = WrapperMember.ProcessStart,
                 // Opening a process only reads; the handle it returns is guarded in turn
                 [nameof(INativeProcessWrapper.OpenProcess)] = WrapperMember.Read,
                 [nameof(INativeProcessWrapper.IsAncestorOfCurrentProcess)] = WrapperMember.Read,
