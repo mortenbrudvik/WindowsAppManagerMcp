@@ -114,6 +114,21 @@ public class CdpTargetMatcherTests
     }
 
     [Fact]
+    public void Match_Ambiguous_SaysToPassOneOfTheTabsAsTargetId()
+    {
+        // Roadmap M5.2: the listed ids are what get_browser_url and get_browser_content take as targetId
+        var targets = new[]
+        {
+            Page("A", "Inbox", "https://mail.example/a"),
+            Page("B", "Inbox", "https://mail.example/b")
+        };
+
+        var result = CdpTargetMatcher.Match("Inbox - Google Chrome", targets);
+
+        result.Error.Should().Contain("targetId A (https://mail.example/a)").And.Contain("pass one as targetId");
+    }
+
+    [Fact]
     public void Match_HandlesEdgeTitleWithProfileMorePagesAndZeroWidthSpace()
     {
         // Edge titles look like '<title> and N more pages - <Profile> - Microsoft\u200B Edge'.
