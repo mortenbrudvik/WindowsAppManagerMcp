@@ -6,8 +6,9 @@ namespace WindowsAppManagerMcp.Services;
 
 /// <summary>
 /// Service for reading URLs and content from browser windows using UI Automation or CDP.
-/// When a CDP port is specified, CDP is tried first; every result says which method produced it
-/// (Source) and, after a fallback to UI Automation, why CDP was not used (CdpError).
+/// CDP is tried first on cdpPort, or without it on the debug port the window's own browser process listens on (roadmap
+/// M5.3, <see cref="IDebugPortLocator"/>); every result says which method produced it (Source) and, after a fallback to
+/// UI Automation, why CDP was not used (CdpError).
 /// </summary>
 /// <remarks>
 /// The UI Automation reads go through <see cref="IUiaTree"/> as the other UI Automation tools' reads do (roadmap M3.F24,
@@ -21,13 +22,11 @@ namespace WindowsAppManagerMcp.Services;
 /// committed, and get_browser_url the address bar as well (roadmap M5.7); asking for the page's element turns on Chromium's
 /// accessibility tree for it, as any UI Automation client does. A child window's handle (a render widget's, from an
 /// element) is read as its top-level window's (GA_ROOT). The CDP reads are not covered by the target policy: they read the
-/// debug browser through its port.
+/// debug browser through its port. The CDP lookup is given the window's bounds, state and DPI scale, so it can bind the
+/// window to its browser window before the title picks the tab (<see cref="CdpWindowBinder"/>).
 /// </remarks>
 public class BrowserReadingService : IBrowserReadingService
 {
-    private const string CdpPortRequiredMessage =
-        "requireCdp=true (or targetId) needs cdpPort: the debug port of the browser instance that owns the window.";
-
     private readonly INativeWindowWrapper _nativeWrapper;
     private readonly IBrowserDetectionService _browserDetection;
     private readonly ICdpService _cdpService;
@@ -36,6 +35,7 @@ public class BrowserReadingService : IBrowserReadingService
     private readonly BrowserUiaReader _reader;
     private readonly IAccessibilityWarmup? _warmup;
     private readonly ITargetPolicy? _policy;
+    private readonly IDebugPortLocator? _portLocator;
 
     // Map process names to browser types
     private static readonly Dictionary<string, string> ProcessToBrowserType = new(StringComparer.OrdinalIgnoreCase)
@@ -75,6 +75,8 @@ public class BrowserReadingService : IBrowserReadingService
     /// it; without it no page is warmed up.</param>
     /// <param name="policy">The user's target policy, which refuses the UI Automation reads of a window of an app it denies.
     /// The server always passes it; without it no window is refused.</param>
+    /// <param name="portLocator">Finds the debug port of the window's own process when no cdpPort is given (roadmap M5.3).
+    /// The server always passes it; without it a window is read through CDP only with cdpPort.</param>
     public BrowserReadingService(
         INativeWindowWrapper nativeWrapper,
         IBrowserDetectionService browserDetection,
@@ -82,7 +84,8 @@ public class BrowserReadingService : IBrowserReadingService
         IUiaTree tree,
         IUiaWorker worker,
         IAccessibilityWarmup? warmup = null,
-        ITargetPolicy? policy = null)
+        ITargetPolicy? policy = null,
+        IDebugPortLocator? portLocator = null)
     {
         _nativeWrapper = nativeWrapper;
         _browserDetection = browserDetection;
@@ -92,6 +95,7 @@ public class BrowserReadingService : IBrowserReadingService
         _reader = new BrowserUiaReader(tree);
         _warmup = warmup;
         _policy = policy;
+        _portLocator = portLocator;
     }
 
     /// <inheritdoc />
@@ -138,11 +142,13 @@ public class BrowserReadingService : IBrowserReadingService
             // Get window title (page title)
             var pageTitle = _nativeWrapper.GetWindowText(browserHandle);
 
-            // Try CDP first if a port is specified
-            string? cdpError = null;
-            if (cdp?.Port is int port)
+            // Try CDP first: on cdpPort, else on the port the window's own process listens on (roadmap M5.3)
+            var choice = ChoosePort(processId, browserType, cdp);
+            var cdpError = choice.FallbackReason;
+            if (cdp != null && choice.Port is int port)
             {
-                var match = await FindTargetAsync(port, (int)processId, pageTitle, cdp, cdp.EffectiveTimeout, cancellationToken);
+                var match = await FindTargetAsync(
+                    port, Describe(browserHandle, processId, pageTitle), cdp, cdp.EffectiveTimeout, cancellationToken);
 
                 if (match.Success)
                 {
@@ -155,7 +161,8 @@ public class BrowserReadingService : IBrowserReadingService
                         Error: null,
                         ErrorCode: BrowserErrorCode.None,
                         Source: BrowserReadSource.Cdp,
-                        TargetId: target.Id);
+                        TargetId: target.Id,
+                        CdpPort: port);
                 }
 
                 if (cdp.EffectiveRequired)
@@ -168,7 +175,8 @@ public class BrowserReadingService : IBrowserReadingService
                         Error: match.Error,
                         ErrorCode: match.ErrorCode,
                         Source: BrowserReadSource.Cdp,
-                        CdpError: match.DescribeError());
+                        CdpError: match.DescribeError(),
+                        CdpPort: port);
                 }
 
                 cdpError = match.DescribeError();
@@ -180,8 +188,8 @@ public class BrowserReadingService : IBrowserReadingService
                     Url: null,
                     BrowserType: browserType,
                     PageTitle: pageTitle,
-                    Error: CdpPortRequiredMessage,
-                    ErrorCode: BrowserErrorCode.CdpUnavailable);
+                    Error: choice.RequiredError,
+                    ErrorCode: choice.RequiredErrorCode);
             }
 
             // Fall back to UI Automation
@@ -284,12 +292,13 @@ public class BrowserReadingService : IBrowserReadingService
             // Get window title (page title)
             var pageTitle = _nativeWrapper.GetWindowText(browserHandle);
 
-            // Try CDP first if a port is specified
-            string? cdpError = null;
-            if (cdp?.Port is int port)
+            // Try CDP first: on cdpPort, else on the port the window's own process listens on (roadmap M5.3)
+            var choice = ChoosePort(processId, browserType, cdp);
+            var cdpError = choice.FallbackReason;
+            if (cdp != null && choice.Port is int port)
             {
                 var (snapshot, targetId) = await ReadContentViaCdpAsync(
-                    port, (int)processId, pageTitle, cdp, options, cancellationToken);
+                    port, Describe(browserHandle, processId, pageTitle), cdp, options, cancellationToken);
 
                 if (snapshot.Success)
                 {
@@ -305,7 +314,8 @@ public class BrowserReadingService : IBrowserReadingService
                         Error: null,
                         ErrorCode: BrowserErrorCode.None,
                         Source: BrowserReadSource.Cdp,
-                        TargetId: targetId);
+                        TargetId: targetId,
+                        CdpPort: port);
                 }
 
                 // A page too large for CDP is reported as it is, not as HtmlRequiresCdp's "CDP could not be used"
@@ -323,7 +333,8 @@ public class BrowserReadingService : IBrowserReadingService
                         ErrorCode: snapshot.ErrorCode,
                         Source: BrowserReadSource.Cdp,
                         TargetId: targetId,
-                        CdpError: snapshot.DescribeError());
+                        CdpError: snapshot.DescribeError(),
+                        CdpPort: port);
                 }
 
                 cdpError = snapshot.DescribeError();
@@ -337,8 +348,8 @@ public class BrowserReadingService : IBrowserReadingService
                     BrowserType: browserType,
                     PageTitle: pageTitle,
                     ContentLength: null,
-                    Error: CdpPortRequiredMessage,
-                    ErrorCode: BrowserErrorCode.CdpUnavailable);
+                    Error: choice.RequiredError,
+                    ErrorCode: choice.RequiredErrorCode);
             }
 
             // UI Automation only reads text. Returning text when HTML was asked for would
@@ -347,7 +358,10 @@ public class BrowserReadingService : IBrowserReadingService
             {
                 var reason = cdpError != null
                     ? $"CDP could not be used ({cdpError})."
-                    : "No cdpPort was given; pass the cdpPort that launch_browser_with_debug returned (for a browser started otherwise, its --remote-debugging-port).";
+                    : cdp?.UseCdp == false
+                        ? "useCdp is false."
+                        : "The browser was not started with a debug port: start it with launch_browser_with_debug, whose " +
+                          "windows are then read through CDP, or pass cdpPort.";
                 return new BrowserContentResult(
                     Success: false,
                     Content: null,
@@ -693,22 +707,20 @@ public class BrowserReadingService : IBrowserReadingService
     /// </summary>
     private Task<CdpResult<CdpTarget>> FindTargetAsync(
         int port,
-        int windowProcessId,
-        string windowTitle,
+        CdpWindow window,
         CdpOptions cdp,
         TimeSpan timeout,
         CancellationToken cancellationToken) =>
         cdp.TargetId is { } targetId
-            ? _cdpService.FindTargetByIdAsync(port, windowProcessId, targetId, timeout, cancellationToken)
-            : _cdpService.FindTargetForWindowAsync(port, windowProcessId, windowTitle, timeout, cancellationToken);
+            ? _cdpService.FindTargetByIdAsync(port, window.ProcessId, targetId, timeout, cancellationToken)
+            : _cdpService.FindTargetForWindowAsync(port, window, timeout, cancellationToken);
 
     /// <summary>
     /// Finds the tab to read (<see cref="FindTargetAsync"/>) and reads it, all within one time budget.
     /// </summary>
     private async Task<(CdpResult<CdpPageSnapshot> Snapshot, string? TargetId)> ReadContentViaCdpAsync(
         int port,
-        int windowProcessId,
-        string windowTitle,
+        CdpWindow window,
         CdpOptions cdp,
         BrowserContentOptions options,
         CancellationToken cancellationToken)
@@ -716,7 +728,7 @@ public class BrowserReadingService : IBrowserReadingService
         var timeout = cdp.EffectiveTimeout;
         var stopwatch = Stopwatch.StartNew();
 
-        var match = await FindTargetAsync(port, windowProcessId, windowTitle, cdp, timeout, cancellationToken);
+        var match = await FindTargetAsync(port, window, cdp, timeout, cancellationToken);
         if (!match.Success)
             return (match.FailAs<CdpPageSnapshot>(), null);
 
@@ -747,6 +759,62 @@ public class BrowserReadingService : IBrowserReadingService
 
         return await _cdpService.GetPageSnapshotAsync(target, textOnly, maxLength, remaining, cancellationToken);
     }
+
+    /// <summary>
+    /// The DevTools port to read the window through (roadmap M5.3): cdpPort when it is given; otherwise, for a Chromium
+    /// browser, the port its own process listens on (<see cref="IDebugPortLocator"/>); none with useCdp=false or without
+    /// CDP options. Without a port, also what a call that needs CDP returns, and what a fallback says in cdpError: nothing
+    /// for a browser started without a debug port, which reads through UI Automation as before.
+    /// </summary>
+    private PortChoice ChoosePort(uint processId, string browserType, CdpOptions? cdp)
+    {
+        if (cdp is { UseCdp: false })
+        {
+            return new PortChoice(null, null, BrowserErrorCode.CdpUnavailable,
+                "requireCdp=true (or targetId) needs CDP, which useCdp=false turns off. Nothing was read.");
+        }
+
+        if (cdp?.Port is int given)
+            return new PortChoice(given, null, BrowserErrorCode.None, null);
+
+        // Firefox speaks WebDriver BiDi on its debug port, not CDP
+        var lookup = cdp != null && _portLocator != null && browserType != "firefox" ? _portLocator.Find((int)processId) : null;
+        if (lookup?.Port is int found)
+            return new PortChoice(found, null, BrowserErrorCode.None, null);
+
+        var code = lookup?.Status == DebugPortLookupStatus.HeldByOtherProcess
+            ? BrowserErrorCode.CdpPortOwnerMismatch
+            : BrowserErrorCode.CdpUnavailable;
+        var why = lookup?.Detail ?? "No debug port is looked for in this browser.";
+        return new PortChoice(
+            null,
+            lookup is { WorthReporting: true } ? $"{code}: {why}" : null,
+            code,
+            $"requireCdp=true (or targetId) needs the DevTools port of the browser that owns the window, and none was found. {why} " +
+            "Start the browser with launch_browser_with_debug, or pass cdpPort.");
+    }
+
+    /// <summary>The window a tab is looked up for: its process, its title and where it is (roadmap M5.3).</summary>
+    private CdpWindow Describe(nint browserHandle, uint processId, string title)
+    {
+        CdpWindowGeometry? geometry = null;
+        if (_nativeWrapper.GetWindowRect(browserHandle) is { } rect)
+        {
+            var state = _nativeWrapper.IsIconic(browserHandle)
+                ? CdpWindowState.Minimized
+                : _nativeWrapper.IsZoomed(browserHandle) ? CdpWindowState.Maximized : CdpWindowState.Normal;
+            var dpi = _nativeWrapper.GetDpiForWindow(browserHandle);
+            geometry = new CdpWindowGeometry(rect.Left, rect.Top, rect.Right, rect.Bottom, state, dpi > 0 ? dpi / 96.0 : 1.0);
+        }
+
+        return new CdpWindow((int)processId, title, geometry);
+    }
+
+    /// <summary>
+    /// The port to read through, or null; without one, why a fallback did not use CDP (null when there is nothing to say)
+    /// and what a call that requires CDP returns.
+    /// </summary>
+    private sealed record PortChoice(int? Port, string? FallbackReason, BrowserErrorCode RequiredErrorCode, string? RequiredError);
 
     private static string Truncate(string content, int? maxLength) =>
         maxLength is int max && max >= 0 && content.Length > max ? content[..max] : content;

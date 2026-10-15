@@ -128,6 +128,55 @@ public class NativeProcessWrapper : INativeProcessWrapper
         }
     }
 
+    public string? GetProcessCommandLine(int processId)
+    {
+        if (processId <= 0)
+        {
+            return null;
+        }
+
+        var handle = NativeMethods.Kernel32.OpenProcess(NativeEnums.PROCESS_QUERY_LIMITED_INFORMATION, false, (uint)processId);
+        if (handle == nint.Zero)
+        {
+            return null;
+        }
+
+        try
+        {
+            // A UNICODE_STRING followed by its text; asked once for the size, then read (a command line is at most
+            // 32767 characters)
+            NativeMethods.Ntdll.NtQueryInformationProcess(
+                handle, NativeMethods.Ntdll.ProcessCommandLineInformation, nint.Zero, 0, out var size);
+            if (size <= 0 || size > 128 * 1024)
+            {
+                return null;
+            }
+
+            var buffer = Marshal.AllocHGlobal(size);
+            try
+            {
+                var status = NativeMethods.Ntdll.NtQueryInformationProcess(
+                    handle, NativeMethods.Ntdll.ProcessCommandLineInformation, buffer, size, out _);
+                if (status != 0)
+                {
+                    return null;
+                }
+
+                var length = (ushort)Marshal.ReadInt16(buffer);
+                var text = Marshal.ReadIntPtr(buffer, IntPtr.Size);
+                return text == nint.Zero ? string.Empty : Marshal.PtrToStringUni(text, length / 2);
+            }
+            finally
+            {
+                Marshal.FreeHGlobal(buffer);
+            }
+        }
+        finally
+        {
+            NativeMethods.Kernel32.CloseHandle(handle);
+        }
+    }
+
     public bool? WaitForInputIdle(int processId, int milliseconds)
     {
         if (processId <= 0)

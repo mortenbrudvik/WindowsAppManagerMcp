@@ -64,6 +64,9 @@ public static class ServiceRegistration
         services.AddSingleton<IWindowCloseVerifier, WindowCloseVerifier>();
         services.AddSingleton<IInputValidationService, InputValidationService>();
         services.AddSingleton<IBrowserDetectionService, BrowserDetectionService>();
+        // The reading tools find a debug browser's port themselves (roadmap M5.3): its command line and the TCP table, both read
+        // through Native wrappers; it connects to nothing
+        services.AddSingleton<IDebugPortLocator, DebugPortLocator>();
         services.AddSingleton<IBrowserReadingService, BrowserReadingService>();
         services.AddSingleton<IProcessService, ProcessService>();
         // Finds the window a launch opens, whichever process owns it (launch tools and apply_layout's launchMissing)

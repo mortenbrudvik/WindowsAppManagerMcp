@@ -917,7 +917,7 @@ public class WrapperGuardTests
         var cdp = (ICdpService)WrapperGuard.CreateRefusing(typeof(ICdpService), "no CDP target in E2E tests");
 
         Action targets = () => _ = cdp.GetPageTargetsAsync(9222, TimeSpan.FromSeconds(1));
-        Action find = () => _ = cdp.FindTargetForWindowAsync(9222, 1, "title", TimeSpan.FromSeconds(1));
+        Action find = () => _ = cdp.FindTargetForWindowAsync(9222, new CdpWindow(1, "title"), TimeSpan.FromSeconds(1));
 
         targets.Should().Throw<E2EGuardException>().WithMessage("*ICdpService.GetPageTargetsAsync*no CDP target*");
         find.Should().Throw<E2EGuardException>();
