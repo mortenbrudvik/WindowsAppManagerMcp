@@ -67,6 +67,7 @@ public class ScreenshotService : IScreenshotService
     private readonly TimeSpan _restoreSettleTimeout;
     private readonly TimeSpan _restoreStateTimeout;
     private readonly ICaptureRegistry? _captureRegistry;
+    private readonly ICaptureTargetPolicy? _capturePolicy;
 
     /// <summary>take_screenshot's monitorIndex for the whole virtual screen: every monitor in one image (roadmap M3.11).</summary>
     public const int VirtualScreenIndex = -1;
@@ -89,6 +90,11 @@ public class ScreenshotService : IScreenshotService
     /// Where successful captures are registered under their captureId (roadmap M3.11), for the mouse tools' image space.
     /// Without it captures have no captureId. The server always passes it.
     /// </param>
+    /// <param name="capturePolicy">
+    /// The target policy's check of a window whose pixels <see cref="CapturePixels"/> reads (roadmap M6). Without it
+    /// <see cref="CapturePixels"/> refuses every window. The capture tools check the policy themselves, so the capture
+    /// members that return images do not ask it. The server always passes it.
+    /// </param>
     public ScreenshotService(
         IScreenCaptureWrapper captureWrapper,
         IMonitorService monitorService,
@@ -96,8 +102,10 @@ public class ScreenshotService : IScreenshotService
         IWindowCallRunner? windowCalls = null,
         TimeSpan? restoreSettleTimeout = null,
         TimeSpan? restoreStateTimeout = null,
-        ICaptureRegistry? captureRegistry = null)
+        ICaptureRegistry? captureRegistry = null,
+        ICaptureTargetPolicy? capturePolicy = null)
     {
+        _capturePolicy = capturePolicy;
         _captureRegistry = captureRegistry;
         _captureWrapper = captureWrapper;
         _monitorService = monitorService;
@@ -140,33 +148,118 @@ public class ScreenshotService : IScreenshotService
     }
 
     public ScreenCapture<ScreenshotResult> CaptureMonitor(int monitorIndex, CaptureOptions options) =>
-        Run("monitor", options, request =>
+        Run("monitor", options, request => Complete(Acquire(new CaptureTarget.Monitor(monitorIndex)), request));
+
+    public ScreenCapture<ScreenshotResult> CaptureRegion(int x, int y, int width, int height, CaptureOptions options) =>
+        Run("region", options, request => Complete(Acquire(new CaptureTarget.Region(x, y, width, height)), request));
+
+    public ScreenCapture<ScreenshotResult> CaptureWindow(nint windowHandle, bool includeFrame, CaptureOptions options) =>
+        Run("window", options, request => Complete(Acquire(new CaptureTarget.Window(windowHandle, includeFrame)), request));
+
+    /// <inheritdoc />
+    public RawCapture CapturePixels(CaptureTarget target)
+    {
+        ArgumentNullException.ThrowIfNull(target);
+
+        Acquired acquired;
+        try
         {
-            var monitors = _monitorService.GetAllMonitors();
-            if (monitorIndex == VirtualScreenIndex)
+            // The capture tools check the policy themselves, before restoreIfMinimized shows anything; a pixel read has no
+            // tool in front of it, so it checks here, before anything of the window is read
+            if (target is CaptureTarget.Window window)
             {
-                return CaptureVirtualScreen(request, monitors);
+                ThrowIfRefused(_capturePolicy != null
+                    ? _capturePolicy.Check(window.Handle)
+                    : new CaptureRefusal(ScreenshotErrorCode.TargetDeniedByPolicy,
+                        "The window's pixels cannot be read: this server has no target policy check for captures. Nothing was captured."));
             }
 
-            if (monitorIndex < 0 || monitorIndex >= monitors.Count)
-            {
-                throw new CaptureException(ScreenshotErrorCode.InvalidMonitorIndex,
-                    $"Monitor index {monitorIndex} is out of range. Available monitors: 0-{monitors.Count - 1}, or " +
-                    $"{VirtualScreenIndex} for all of them in one image");
-            }
+            acquired = Acquire(target);
+        }
+        catch (Exception ex) when (ex is not CaptureException)
+        {
+            // As Run reports it for the capture tools
+            throw new CaptureException(ScreenshotErrorCode.CaptureFailed, $"Failed to capture {What(target)}: {ex.Message}");
+        }
 
-            var monitor = monitors[monitorIndex];
-            var bounds = monitor.Bounds;
-            var capture = _captureWrapper.CaptureScreenRegion(bounds.X, bounds.Y, bounds.Width, bounds.Height);
-            return Complete(capture, request, monitorIndex, monitor.ScaleFactor, []);
-        });
+        ThrowIfIncomplete(acquired.Capture);
+        AddBlankWarning(acquired.Capture, acquired.Warnings);
+        return new RawCapture(target, acquired.Capture, acquired.MonitorIndex, acquired.ScaleFactor, acquired.Warnings.ToArray(),
+            acquired.Window);
+    }
+
+    /// <inheritdoc />
+    public string? RegisterRaw(RawCapture capture)
+    {
+        ArgumentNullException.ThrowIfNull(capture);
+        var pixels = capture.Pixels;
+        return Register(pixels.Width, pixels.Height, new ImageToScreenTransform(pixels.ScreenOriginX, pixels.ScreenOriginY, 1, 1),
+            CapturedRegionOf(pixels), windowCapture: capture.Target is CaptureTarget.Window, capture.Window);
+    }
+
+    /// <summary>
+    /// The pixels of a capture before they become an image: what a target resolves to, its warnings so far, and for a
+    /// window the window as it was read before its pixels (with its client area). <see cref="Complete"/> renders it;
+    /// <see cref="CapturePixels"/> returns it as it is.
+    /// </summary>
+    private sealed record Acquired(
+        CaptureResult Capture,
+        int? MonitorIndex,
+        double? ScaleFactor,
+        List<string> Warnings,
+        bool WindowCapture,
+        CapturedWindow? Window);
+
+    /// <summary>
+    /// Resolves <paramref name="target"/> and reads its pixels, with every refusal and warning of the capture tools: an
+    /// unknown monitor, a region off the screen or over the budget, a window that cannot be captured right now
+    /// (<see cref="CheckWindow"/>), the screen copy of a window that does not answer, the crop to the visible frame and the
+    /// DPI warning. The target policy is not checked here (see <see cref="CapturePixels"/>), and no image is made.
+    /// </summary>
+    /// <exception cref="CaptureException">The target was refused.</exception>
+    private Acquired Acquire(CaptureTarget target) => target switch
+    {
+        CaptureTarget.Monitor monitor => AcquireMonitor(monitor.Index),
+        CaptureTarget.Region region => AcquireRegion(region.X, region.Y, region.Width, region.Height),
+        CaptureTarget.Window window => AcquireWindow(window.Handle, window.IncludeFrame),
+        _ => throw new ArgumentException($"Unknown capture target {target.GetType().Name}", nameof(target))
+    };
+
+    /// <summary>What a failure message calls the target, as the capture tools name it.</summary>
+    private static string What(CaptureTarget target) => target switch
+    {
+        CaptureTarget.Monitor => "monitor",
+        CaptureTarget.Region => "region",
+        _ => "window"
+    };
+
+    private Acquired AcquireMonitor(int monitorIndex)
+    {
+        var monitors = _monitorService.GetAllMonitors();
+        if (monitorIndex == VirtualScreenIndex)
+        {
+            return AcquireVirtualScreen(monitors);
+        }
+
+        if (monitorIndex < 0 || monitorIndex >= monitors.Count)
+        {
+            throw new CaptureException(ScreenshotErrorCode.InvalidMonitorIndex,
+                $"Monitor index {monitorIndex} is out of range. Available monitors: 0-{monitors.Count - 1}, or " +
+                $"{VirtualScreenIndex} for all of them in one image");
+        }
+
+        var monitor = monitors[monitorIndex];
+        var bounds = monitor.Bounds;
+        var capture = _captureWrapper.CaptureScreenRegion(bounds.X, bounds.Y, bounds.Width, bounds.Height);
+        return new Acquired(capture, monitorIndex, monitor.ScaleFactor, [], WindowCapture: false, Window: null);
+    }
 
     /// <summary>
     /// The whole virtual screen, every monitor in one image (roadmap M3.11), within the pixel budget: a larger desktop is
     /// refused before anything is allocated (CaptureFailed). It has no monitor index or scale factor, and warns when
     /// monitors of different sizes leave parts of the bounding rectangle on no screen (black in the image).
     /// </summary>
-    private ScreenCapture<ScreenshotResult> CaptureVirtualScreen(CaptureRequest request, IReadOnlyList<MonitorInfo> monitors)
+    private Acquired AcquireVirtualScreen(IReadOnlyList<MonitorInfo> monitors)
     {
         var screen = _captureWrapper.GetVirtualScreenBounds();
         if ((long)screen.Width * screen.Height > ScreenCaptureWrapper.MaxCapturePixels ||
@@ -187,92 +280,91 @@ public class ScreenshotService : IScreenshotService
                 "the monitors do not fill the virtual screen's bounding rectangle; the parts on no monitor are black in the image."));
         }
 
-        return Complete(capture, request, monitorIndex: null, scaleFactor: null, warnings);
+        return new Acquired(capture, MonitorIndex: null, ScaleFactor: null, warnings, WindowCapture: false, Window: null);
     }
 
-    public ScreenCapture<ScreenshotResult> CaptureRegion(int x, int y, int width, int height, CaptureOptions options) =>
-        Run("region", options, request =>
+    private Acquired AcquireRegion(int x, int y, int width, int height)
+    {
+        if (width <= 0 || height <= 0)
         {
-            if (width <= 0 || height <= 0)
-            {
-                throw new CaptureException(ScreenshotErrorCode.InvalidRegion, "Width and height must be positive values");
-            }
+            throw new CaptureException(ScreenshotErrorCode.InvalidRegion, "Width and height must be positive values");
+        }
 
-            // Only the part on the virtual screen can be captured: the rest would be black
-            var requested = new Rectangle(x, y, width, height);
-            var screen = _captureWrapper.GetVirtualScreenBounds();
-            var virtualScreen = new Rectangle(screen.X, screen.Y, screen.Width, screen.Height);
-            var region = Rectangle.Intersect(requested, virtualScreen);
-            if (region.Width <= 0 || region.Height <= 0)
-            {
-                throw new CaptureException(ScreenshotErrorCode.RegionOffScreen,
-                    $"No part of the region ({x}, {y}, {width}x{height}) is on the screen: the monitors cover ({virtualScreen.X}, " +
-                    $"{virtualScreen.Y}, {virtualScreen.Width}x{virtualScreen.Height}). Nothing was captured. Coordinates are " +
-                    "physical pixels of the virtual screen; list_screens shows where each monitor is.");
-            }
-
-            if ((long)region.Width * region.Height > ScreenCaptureWrapper.MaxCapturePixels)
-            {
-                throw new CaptureException(ScreenshotErrorCode.InvalidRegion,
-                    $"The region on screen is {region.Width}x{region.Height} pixels, more than the budget of " +
-                    $"{ScreenCaptureWrapper.MaxCapturePixels / (1024 * 1024)} megapixels per capture. Capture it in parts, " +
-                    "or one monitor at a time with take_screenshot.");
-            }
-
-            if (region.Width > ScreenCaptureWrapper.MaxCaptureSize || region.Height > ScreenCaptureWrapper.MaxCaptureSize)
-            {
-                throw new CaptureException(ScreenshotErrorCode.InvalidRegion,
-                    $"The region on screen is {region.Width}x{region.Height} pixels, more than {ScreenCaptureWrapper.MaxCaptureSize} " +
-                    "pixels on an edge. Capture it in parts, or one monitor at a time with take_screenshot.");
-            }
-
-            var warnings = new List<string>();
-            if (region != requested)
-            {
-                warnings.Add(CaptureWarnings.Format(CaptureWarnings.RegionClipped,
-                    $"the region is partly off the screen; only ({region.X}, {region.Y}, {region.Width}x{region.Height}) " +
-                    "was captured (capturedRegion)."));
-            }
-
-            var capture = _captureWrapper.CaptureScreenRegion(region.X, region.Y, region.Width, region.Height);
-
-            var monitors = _monitorService.GetAllMonitors();
-            if (monitors.Count > 0 && CoveredArea(region, monitors) < (long)region.Width * region.Height)
-            {
-                warnings.Add(CaptureWarnings.Format(CaptureWarnings.RegionPartlyOffMonitors,
-                    "part of the region lies between monitors, on no screen, and is black in the image."));
-            }
-
-            // The monitor that contains the region's center, or none (MONITOR_DEFAULTTONULL, not the nearest one)
-            var monitor = MonitorContaining(monitors, region.X + region.Width / 2, region.Y + region.Height / 2);
-            return Complete(capture, request, monitor?.Index, monitor?.ScaleFactor, warnings);
-        });
-
-    public ScreenCapture<ScreenshotResult> CaptureWindow(nint windowHandle, bool includeFrame, CaptureOptions options) =>
-        Run("window", options, request =>
+        // Only the part on the virtual screen can be captured: the rest would be black
+        var requested = new Rectangle(x, y, width, height);
+        var screen = _captureWrapper.GetVirtualScreenBounds();
+        var virtualScreen = new Rectangle(screen.X, screen.Y, screen.Width, screen.Height);
+        var region = Rectangle.Intersect(requested, virtualScreen);
+        if (region.Width <= 0 || region.Height <= 0)
         {
-            ThrowIfRefused(CheckWindow(windowHandle));
-            var window = ReadCapturedWindow(windowHandle, includeFrame);
-            var warnings = new List<string>();
-            var capture = CaptureWindowPixels(windowHandle, includeFrame, warnings);
-            var monitor = _monitorService.GetMonitorForWindow(windowHandle);
-            AddDpiWarning(windowHandle, monitor, warnings);
-            return Complete(capture, request, monitor?.Index, monitor?.ScaleFactor ?? 1.0, warnings, windowCapture: true,
-                WithClientArea(window, capture));
-        });
+            throw new CaptureException(ScreenshotErrorCode.RegionOffScreen,
+                $"No part of the region ({x}, {y}, {width}x{height}) is on the screen: the monitors cover ({virtualScreen.X}, " +
+                $"{virtualScreen.Y}, {virtualScreen.Width}x{virtualScreen.Height}). Nothing was captured. Coordinates are " +
+                "physical pixels of the virtual screen; list_screens shows where each monitor is.");
+        }
+
+        if ((long)region.Width * region.Height > ScreenCaptureWrapper.MaxCapturePixels)
+        {
+            throw new CaptureException(ScreenshotErrorCode.InvalidRegion,
+                $"The region on screen is {region.Width}x{region.Height} pixels, more than the budget of " +
+                $"{ScreenCaptureWrapper.MaxCapturePixels / (1024 * 1024)} megapixels per capture. Capture it in parts, " +
+                "or one monitor at a time with take_screenshot.");
+        }
+
+        if (region.Width > ScreenCaptureWrapper.MaxCaptureSize || region.Height > ScreenCaptureWrapper.MaxCaptureSize)
+        {
+            throw new CaptureException(ScreenshotErrorCode.InvalidRegion,
+                $"The region on screen is {region.Width}x{region.Height} pixels, more than {ScreenCaptureWrapper.MaxCaptureSize} " +
+                "pixels on an edge. Capture it in parts, or one monitor at a time with take_screenshot.");
+        }
+
+        var warnings = new List<string>();
+        if (region != requested)
+        {
+            warnings.Add(CaptureWarnings.Format(CaptureWarnings.RegionClipped,
+                $"the region is partly off the screen; only ({region.X}, {region.Y}, {region.Width}x{region.Height}) " +
+                "was captured (capturedRegion)."));
+        }
+
+        var capture = _captureWrapper.CaptureScreenRegion(region.X, region.Y, region.Width, region.Height);
+
+        var monitors = _monitorService.GetAllMonitors();
+        if (monitors.Count > 0 && CoveredArea(region, monitors) < (long)region.Width * region.Height)
+        {
+            warnings.Add(CaptureWarnings.Format(CaptureWarnings.RegionPartlyOffMonitors,
+                "part of the region lies between monitors, on no screen, and is black in the image."));
+        }
+
+        // The monitor that contains the region's center, or none (MONITOR_DEFAULTTONULL, not the nearest one)
+        var monitor = MonitorContaining(monitors, region.X + region.Width / 2, region.Y + region.Height / 2);
+        return new Acquired(capture, monitor?.Index, monitor?.ScaleFactor, warnings, WindowCapture: false, Window: null);
+    }
+
+    /// <summary>
+    /// A window: refused as <see cref="CheckWindow"/> says before any pixel is read, then read as it was before its pixels
+    /// (<see cref="ReadCapturedWindow"/>, with the client area the capture shows), its pixels (<see cref="CaptureWindowPixels"/>)
+    /// and the DPI warning of its monitor. A window without a monitor reports scale 1.
+    /// </summary>
+    private Acquired AcquireWindow(nint windowHandle, bool includeFrame)
+    {
+        ThrowIfRefused(CheckWindow(windowHandle));
+        var window = ReadCapturedWindow(windowHandle, includeFrame);
+        var warnings = new List<string>();
+        var capture = CaptureWindowPixels(windowHandle, includeFrame, warnings);
+        var monitor = _monitorService.GetMonitorForWindow(windowHandle);
+        AddDpiWarning(windowHandle, monitor, warnings);
+        return new Acquired(capture, monitor?.Index, monitor?.ScaleFactor ?? 1.0, warnings, WindowCapture: true,
+            WithClientArea(window, capture));
+    }
 
     public ScreenCapture<ScreenshotResult> CaptureWindowArea(nint windowHandle, bool includeFrame, BoundsDto area, CaptureOptions options)
     {
         ArgumentNullException.ThrowIfNull(area);
         return Run("window area", options, request =>
         {
-            ThrowIfRefused(CheckWindow(windowHandle));
-            var window = ReadCapturedWindow(windowHandle, includeFrame);
-            var warnings = new List<string>();
-            var capture = CaptureWindowPixels(windowHandle, includeFrame, warnings);
-
-            // The client area before the crop: a click on the crop checks that the client area is still there
-            window = WithClientArea(window, capture);
+            // The client area is the one before the crop: a click on the crop checks that the client area is still there
+            var acquired = Acquire(new CaptureTarget.Window(windowHandle, includeFrame));
+            var capture = acquired.Capture;
 
             // Only what the window capture shows can be cropped to: the visible frame, or the client area without it
             var crop = Rectangle.Intersect(
@@ -289,12 +381,10 @@ public class ScreenshotService : IScreenshotService
 
             if (crop.Width != capture.Width || crop.Height != capture.Height)
             {
-                capture = Crop(capture, crop);
+                acquired = acquired with { Capture = Crop(capture, crop) };
             }
 
-            var monitor = _monitorService.GetMonitorForWindow(windowHandle);
-            AddDpiWarning(windowHandle, monitor, warnings);
-            return Complete(capture, request, monitor?.Index, monitor?.ScaleFactor ?? 1.0, warnings, windowCapture: true, window);
+            return Complete(acquired, request);
         });
     }
 
@@ -728,18 +818,12 @@ public class ScreenshotService : IScreenshotService
     }
 
     /// <summary>
-    /// The metadata and image of a successful capture, registered under its captureId. <paramref name="window"/> is the
-    /// captured window as it was before the capture (<see cref="ReadCapturedWindow"/>) when <paramref name="windowCapture"/>.
+    /// The metadata and image of a successful capture, registered under its captureId. The window is the captured window
+    /// as it was before the capture (<see cref="ReadCapturedWindow"/>) for a window capture.
     /// </summary>
-    private ScreenCapture<ScreenshotResult> Complete(
-        CaptureResult capture,
-        CaptureRequest request,
-        int? monitorIndex,
-        double? scaleFactor,
-        List<string> warnings,
-        bool windowCapture = false,
-        CapturedWindow? window = null)
+    private ScreenCapture<ScreenshotResult> Complete(Acquired acquired, CaptureRequest request)
     {
+        var (capture, monitorIndex, scaleFactor, warnings, windowCapture, window) = acquired;
         ThrowIfIncomplete(capture);
         AddBlankWarning(capture, warnings);
         var rendered = Render(capture, request, annotate: null);

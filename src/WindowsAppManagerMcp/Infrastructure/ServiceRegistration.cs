@@ -98,6 +98,8 @@ public static class ServiceRegistration
         // Captures register under a captureId, and the mouse tools convert image, window and client points (roadmap M3.11)
         services.AddSingleton<ICaptureRegistry, CaptureRegistry>();
         services.AddSingleton<ICoordinateSpaceResolver, CoordinateSpaceResolver>();
+        // The target policy's check of a captured window: the capture tools and the raw pixel reads (roadmap M6) share it
+        services.AddSingleton<ICaptureTargetPolicy, CaptureTargetPolicy>();
         services.AddSingleton<IScreenshotService, ScreenshotService>();
         services.AddSingleton<IUIElementService, UIElementService>();
         // UI Automation tree seam (UIElementService) and single-element reads (get_focused_element,

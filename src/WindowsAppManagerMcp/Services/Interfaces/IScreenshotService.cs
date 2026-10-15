@@ -84,6 +84,29 @@ public interface IScreenshotService
         CapturedWindow? walkedWindow = null);
 
     /// <summary>
+    /// The raw pixels of <paramref name="target"/> (roadmap M6, for OCR and visual change detection), captured as
+    /// <see cref="CaptureMonitor"/>, <see cref="CaptureRegion"/> and <see cref="CaptureWindow"/> capture them: the same
+    /// refusals, warnings, crop to the visible frame, screen-copy fallback for a window that does not answer, and origin,
+    /// but at full resolution and never scaled, encoded, written to a file or registered. A window is first checked
+    /// against the user's target policy (<see cref="ICaptureTargetPolicy"/>), as capture_window checks it; a service built
+    /// without that check refuses every window. A minimized window is refused (WindowMinimized): nothing is restored.
+    /// </summary>
+    /// <param name="target">The monitor, region or window.</param>
+    /// <exception cref="CaptureException">
+    /// The capture was refused or failed, with the capture tools' code: TargetDeniedByPolicy, InvalidHandle, WindowHidden,
+    /// Cloaked, WindowMinimized, InvalidMonitorIndex, InvalidRegion, RegionOffScreen or CaptureFailed.
+    /// </exception>
+    RawCapture CapturePixels(CaptureTarget target);
+
+    /// <summary>
+    /// Registers a capture of <see cref="CapturePixels"/> under a captureId (roadmap M3.11), with its full-resolution size
+    /// and a 1:1 image-to-screen transform from its origin: an image point (x, y) of its pixels is screen point
+    /// (origin x + x, origin y + y), and the mouse tools refuse it with StaleCapture once a captured window moved. Null
+    /// when captures are not registered, or for a window that could not be read.
+    /// </summary>
+    string? RegisterRaw(RawCapture capture);
+
+    /// <summary>
     /// The window's process and rectangle now, as a capture of it registers them (roadmap M3.11); null when the rectangle
     /// cannot be read, or when captures are not registered. capture_with_elements reads it before the UI element walk.
     /// </summary>

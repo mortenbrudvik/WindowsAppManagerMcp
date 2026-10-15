@@ -192,7 +192,10 @@ public static class WrapperCatalog
                 [nameof(IScreenCaptureWrapper.CaptureWindow)] = WrapperMember.Read,
                 [nameof(IScreenCaptureWrapper.CaptureWindowFromScreen)] = WrapperMember.Read,
                 [nameof(IScreenCaptureWrapper.GetVirtualScreenBounds)] = WrapperMember.Read,
-                [nameof(IScreenCaptureWrapper.IsValidWindow)] = WrapperMember.Read
+                [nameof(IScreenCaptureWrapper.IsValidWindow)] = WrapperMember.Read,
+                // The capture members without the copy (roadmap M6, polling for OCR and visual change): the same BitBlt of
+                // the screen or PrintWindow into the server's own memory DC, which changes no window and sends no input
+                [nameof(IScreenCaptureWrapper.WithPixels)] = WrapperMember.Read
             },
             [typeof(INativeSystemInfoWrapper)] = new Dictionary<string, WrapperMember>
             {
