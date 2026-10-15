@@ -16,15 +16,17 @@ namespace WindowsAppManagerMcp.Services;
 /// window, the user's target policy is checked (TargetDeniedByPolicy, <see cref="UiaTargets.ReadVerdict"/>), and then whether
 /// the window responds (NotResponding). get_browser_content warms up the page first (<see cref="IAccessibilityWarmup"/>,
 /// roadmap M3.3), within a third of the timeout, so the first read of a page whose accessibility tree Chromium has not built
-/// yet does not come back empty (D-BRW-15); get_browser_url reads only the address bar, the browser's own UI, and does not
-/// wait for the page. The CDP reads are not covered by the target policy: they read the debug browser through its port.
+/// yet does not come back empty (D-BRW-15); get_browser_url does not wait for the page. Both read the shown tab's page
+/// through its render widget (<see cref="IAccessibilityWarmup.FindPages"/>), whose Document holds the address the tab
+/// committed, and get_browser_url the address bar as well (roadmap M5.7); asking for the page's element turns on Chromium's
+/// accessibility tree for it, as any UI Automation client does. A child window's handle (a render widget's, from an
+/// element) is read as its top-level window's (GA_ROOT). The CDP reads are not covered by the target policy: they read the
+/// debug browser through its port.
 /// </remarks>
 public class BrowserReadingService : IBrowserReadingService
 {
     private const string CdpPortRequiredMessage =
-        "requireCdp=true needs cdpPort: the debug port of the browser instance that owns the window.";
-
-    private static readonly TimeSpan DefaultCdpTimeout = TimeSpan.FromMilliseconds(CdpOptions.DefaultTimeoutMs);
+        "requireCdp=true (or targetId) needs cdpPort: the debug port of the browser instance that owns the window.";
 
     private readonly INativeWindowWrapper _nativeWrapper;
     private readonly IBrowserDetectionService _browserDetection;
@@ -112,6 +114,8 @@ public class BrowserReadingService : IBrowserReadingService
                     ErrorCode: BrowserErrorCode.InvalidHandle);
             }
 
+            browserHandle = TopLevel(browserHandle);
+
             // Get process info
             var processId = _nativeWrapper.GetWindowThreadProcessId(browserHandle);
             var processName = GetProcessName(processId);
@@ -138,8 +142,7 @@ public class BrowserReadingService : IBrowserReadingService
             string? cdpError = null;
             if (cdp?.Port is int port)
             {
-                var match = await _cdpService.FindTargetForWindowAsync(
-                    port, (int)processId, pageTitle, cdp.EffectiveTimeout, cancellationToken);
+                var match = await FindTargetAsync(port, (int)processId, pageTitle, cdp, cdp.EffectiveTimeout, cancellationToken);
 
                 if (match.Success)
                 {
@@ -155,7 +158,7 @@ public class BrowserReadingService : IBrowserReadingService
                         TargetId: target.Id);
                 }
 
-                if (cdp.Required)
+                if (cdp.EffectiveRequired)
                 {
                     return new BrowserUrlResult(
                         Success: false,
@@ -170,7 +173,7 @@ public class BrowserReadingService : IBrowserReadingService
 
                 cdpError = match.DescribeError();
             }
-            else if (cdp?.Required == true)
+            else if (cdp?.EffectiveRequired == true)
             {
                 return new BrowserUrlResult(
                     Success: false,
@@ -183,7 +186,7 @@ public class BrowserReadingService : IBrowserReadingService
 
             // Fall back to UI Automation
             var read = await ReadThroughUiaAsync(
-                browserHandle, browserType, content: null, (cdp ?? new CdpOptions()).EffectiveTimeout, cancellationToken);
+                browserHandle, pageTitle, content: null, (cdp ?? new CdpOptions()).EffectiveTimeout, cancellationToken);
             if (read.ErrorCode != BrowserErrorCode.None)
             {
                 return new BrowserUrlResult(
@@ -199,30 +202,20 @@ public class BrowserReadingService : IBrowserReadingService
 
             // The window's title as UI Automation names it, else its window text
             pageTitle = read.Title ?? pageTitle;
-            var url = read.Url;
-
-            if (string.IsNullOrEmpty(url))
-            {
-                return new BrowserUrlResult(
-                    Success: false,
-                    Url: null,
-                    BrowserType: browserType,
-                    PageTitle: pageTitle,
-                    Error: "Could not find or read the URL bar",
-                    ErrorCode: BrowserErrorCode.UrlBarNotFound,
-                    Source: BrowserReadSource.Uia,
-                    CdpError: cdpError);
-            }
+            var url = read.Url ?? WindowWithoutElement;
 
             return new BrowserUrlResult(
-                Success: true,
-                Url: url,
+                Success: url.ErrorCode == BrowserErrorCode.None,
+                Url: url.Url,
                 BrowserType: browserType,
                 PageTitle: pageTitle,
-                Error: null,
-                ErrorCode: BrowserErrorCode.None,
+                Error: url.Error,
+                ErrorCode: url.ErrorCode,
                 Source: BrowserReadSource.Uia,
-                CdpError: cdpError);
+                CdpError: cdpError,
+                DisplayUrl: url.DisplayUrl,
+                UrlSource: url.UrlSource,
+                IsEditing: url.IsEditing);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -265,6 +258,8 @@ public class BrowserReadingService : IBrowserReadingService
                     ErrorCode: BrowserErrorCode.InvalidHandle);
             }
 
+            browserHandle = TopLevel(browserHandle);
+
             // Get process info
             var processId = _nativeWrapper.GetWindowThreadProcessId(browserHandle);
             var processName = GetProcessName(processId);
@@ -294,7 +289,7 @@ public class BrowserReadingService : IBrowserReadingService
             if (cdp?.Port is int port)
             {
                 var (snapshot, targetId) = await ReadContentViaCdpAsync(
-                    port, (int)processId, pageTitle, options, cdp.EffectiveTimeout, cancellationToken);
+                    port, (int)processId, pageTitle, cdp, options, cancellationToken);
 
                 if (snapshot.Success)
                 {
@@ -313,7 +308,9 @@ public class BrowserReadingService : IBrowserReadingService
                         TargetId: targetId);
                 }
 
-                if (cdp.Required)
+                // A page too large for CDP is reported as it is, not as HtmlRequiresCdp's "CDP could not be used"
+                if (cdp.EffectiveRequired ||
+                    (!options.TextOnly && snapshot.ErrorCode == BrowserErrorCode.CdpResponseTooLarge))
                 {
                     return new BrowserContentResult(
                         Success: false,
@@ -331,7 +328,7 @@ public class BrowserReadingService : IBrowserReadingService
 
                 cdpError = snapshot.DescribeError();
             }
-            else if (cdp?.Required == true)
+            else if (cdp?.EffectiveRequired == true)
             {
                 return new BrowserContentResult(
                     Success: false,
@@ -366,7 +363,7 @@ public class BrowserReadingService : IBrowserReadingService
 
             // Fall back to UI Automation
             var read = await ReadThroughUiaAsync(
-                browserHandle, browserType, options, (cdp ?? new CdpOptions()).EffectiveTimeout, cancellationToken);
+                browserHandle, pageTitle, options, (cdp ?? new CdpOptions()).EffectiveTimeout, cancellationToken);
             if (read.ErrorCode != BrowserErrorCode.None)
             {
                 return new BrowserContentResult(
@@ -385,14 +382,31 @@ public class BrowserReadingService : IBrowserReadingService
 
             // The window's title as UI Automation names it, else its window text
             pageTitle = read.Title ?? pageTitle;
-            var uiaContent = read.Content;
+            if (read.Content is not { Found: true } shown)
+            {
+                return new BrowserContentResult(
+                    Success: false,
+                    Content: null,
+                    Url: null,
+                    BrowserType: browserType,
+                    PageTitle: pageTitle,
+                    ContentLength: null,
+                    Error: "Found no page in the browser window through UI Automation: no shown, onscreen Document of a tab. " +
+                           "The tab may still be loading, or the browser's accessibility tree is not available; read again, " +
+                           "or read it through CDP (cdpPort).",
+                    ErrorCode: BrowserErrorCode.ContentAreaNotFound,
+                    Source: BrowserReadSource.Uia,
+                    CdpError: cdpError,
+                    AccessibilityWarmup: read.Warmup);
+            }
 
+            var uiaContent = shown.Text;
             if (string.IsNullOrEmpty(uiaContent))
             {
                 return new BrowserContentResult(
                     Success: false,
                     Content: null,
-                    Url: read.Url,
+                    Url: shown.Url,
                     BrowserType: browserType,
                     PageTitle: pageTitle,
                     ContentLength: null,
@@ -406,7 +420,7 @@ public class BrowserReadingService : IBrowserReadingService
             return new BrowserContentResult(
                 Success: true,
                 Content: uiaContent,
-                Url: read.Url,
+                Url: shown.Url,
                 BrowserType: browserType,
                 PageTitle: pageTitle,
                 ContentLength: uiaContent.Length,
@@ -490,119 +504,6 @@ public class BrowserReadingService : IBrowserReadingService
     }
 
     /// <inheritdoc />
-    public async Task<bool> IsCdpAvailableAsync(int port = 9222, CancellationToken cancellationToken = default)
-    {
-        var targets = await _cdpService.GetPageTargetsAsync(port, DefaultCdpTimeout, cancellationToken);
-        return targets.Success;
-    }
-
-    /// <inheritdoc />
-    public async Task<BrowserContentResult> GetContentViaCdpAsync(
-        int port = 9222,
-        int targetIndex = 0,
-        CancellationToken cancellationToken = default)
-    {
-        try
-        {
-            var stopwatch = Stopwatch.StartNew();
-            var targets = await _cdpService.GetPageTargetsAsync(port, DefaultCdpTimeout, cancellationToken);
-            if (!targets.Success)
-            {
-                return new BrowserContentResult(
-                    Success: false,
-                    Content: null,
-                    Url: null,
-                    BrowserType: "cdp",
-                    PageTitle: null,
-                    ContentLength: null,
-                    Error: targets.Error,
-                    ErrorCode: targets.ErrorCode,
-                    Source: BrowserReadSource.Cdp,
-                    CdpError: targets.DescribeError());
-            }
-
-            var pages = targets.Value!;
-            if (pages.Count == 0)
-            {
-                return new BrowserContentResult(
-                    Success: false,
-                    Content: null,
-                    Url: null,
-                    BrowserType: "cdp",
-                    PageTitle: null,
-                    ContentLength: null,
-                    Error: "No browser targets found",
-                    ErrorCode: BrowserErrorCode.ContentAreaNotFound,
-                    Source: BrowserReadSource.Cdp);
-            }
-
-            if (targetIndex < 0 || targetIndex >= pages.Count)
-            {
-                return new BrowserContentResult(
-                    Success: false,
-                    Content: null,
-                    Url: null,
-                    BrowserType: "cdp",
-                    PageTitle: null,
-                    ContentLength: null,
-                    Error: $"Target index {targetIndex} out of range (found {pages.Count} targets)",
-                    ErrorCode: BrowserErrorCode.InvalidHandle,
-                    Source: BrowserReadSource.Cdp);
-            }
-
-            var target = pages[targetIndex];
-            var snapshot = await ReadSnapshotWithinBudgetAsync(
-                target, textOnly: true, maxLength: null, DefaultCdpTimeout, stopwatch, cancellationToken);
-
-            if (!snapshot.Success || string.IsNullOrEmpty(snapshot.Value!.Content))
-            {
-                return new BrowserContentResult(
-                    Success: false,
-                    Content: null,
-                    Url: target.Url,
-                    BrowserType: "cdp",
-                    PageTitle: target.Title,
-                    ContentLength: null,
-                    Error: snapshot.Success ? "Could not extract content via CDP" : snapshot.Error,
-                    ErrorCode: snapshot.Success ? BrowserErrorCode.ContentExtractionFailed : snapshot.ErrorCode,
-                    Source: BrowserReadSource.Cdp,
-                    TargetId: target.Id,
-                    CdpError: snapshot.DescribeError());
-            }
-
-            var page = snapshot.Value;
-            return new BrowserContentResult(
-                Success: true,
-                Content: page.Content,
-                Url: page.Url,
-                BrowserType: "cdp",
-                PageTitle: page.Title,
-                ContentLength: page.Content.Length,
-                Error: null,
-                ErrorCode: BrowserErrorCode.None,
-                Source: BrowserReadSource.Cdp,
-                TargetId: target.Id);
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            throw;
-        }
-        catch (Exception ex)
-        {
-            return new BrowserContentResult(
-                Success: false,
-                Content: null,
-                Url: null,
-                BrowserType: "cdp",
-                PageTitle: null,
-                ContentLength: null,
-                Error: $"Exception: {ex.Message}",
-                ErrorCode: BrowserErrorCode.OperationException);
-        }
-    }
-
-
-    /// <inheritdoc />
     public string? GetBrowserType(nint browserHandle, string processName)
     {
         // Try direct mapping first
@@ -656,14 +557,16 @@ public class BrowserReadingService : IBrowserReadingService
 
 
     /// <summary>
-    /// Reads the browser window through UI Automation (roadmap M3.F24): its title and address bar, and with
-    /// <paramref name="content"/> its page as well, warmed up first. The target policy is checked before anything is read;
-    /// then the read runs on the worker under <paramref name="timeout"/>, and its failures come back as an error code.
+    /// Reads the browser window through UI Automation (roadmap M3.F24): its title and the page's address, or with
+    /// <paramref name="content"/> its page, warmed up first in both cases (roadmap M5.7). The target policy is checked
+    /// before anything is read; then the read runs on the worker under <paramref name="timeout"/>, and its failures come
+    /// back as an error code.
     /// </summary>
+    /// <param name="windowText">The window's text, the title when UI Automation cannot read the window's name.</param>
     /// <param name="content">The content options of get_browser_content, or null to read only the title and the URL.</param>
     private async Task<UiaRead> ReadThroughUiaAsync(
         nint browserHandle,
-        string browserType,
+        string windowText,
         BrowserContentOptions? content,
         TimeSpan timeout,
         CancellationToken cancellationToken)
@@ -680,7 +583,7 @@ public class BrowserReadingService : IBrowserReadingService
         {
             return await _worker.RunAsync(
                 UiaTargets.TargetProcessId(_nativeWrapper, browserHandle),
-                token => ReadThroughUia(browserHandle, browserType, content, AccessibilityWarmup.BudgetFor(timeout), warmup, token),
+                token => ReadThroughUia(browserHandle, windowText, content, AccessibilityWarmup.BudgetFor(timeout), warmup, token),
                 deadline.Token,
                 TimeSpan.Zero).ConfigureAwait(false);
         }
@@ -708,13 +611,14 @@ public class BrowserReadingService : IBrowserReadingService
     }
 
     /// <summary>
-    /// The UI Automation read, on the worker thread: whether the window responds, then (for the content) the warm-up, then
-    /// the window's title, its address bar and its page. A window UI Automation has no element for reads as nothing found,
-    /// as the old wrapper reported it.
+    /// The UI Automation read, on the worker thread: whether the window responds, then the warm-up, then the window's title
+    /// and the shown pages, then the page's address (get_browser_url, which trusts the address bar's focus only while the
+    /// browser is the foreground window) or its text (get_browser_content, which takes the address from the page and does
+    /// not look up the address bar). A window UI Automation has no element for reads as nothing found.
     /// </summary>
     private UiaRead ReadThroughUia(
         nint browserHandle,
-        string browserType,
+        string windowText,
         BrowserContentOptions? content,
         TimeSpan warmupBudget,
         WarmupSlot warmup,
@@ -730,10 +634,9 @@ public class BrowserReadingService : IBrowserReadingService
             return UiaRead.Failed("UI Automation is not available", BrowserErrorCode.AutomationUnavailable);
         }
 
-        if (content != null)
-        {
-            warmup.Value = _warmup?.WarmUp(browserHandle, warmupBudget, cancellationToken);
-        }
+        // The URL's read too: the page's Document holds the address, and the warm-up gives the render widgets shown now
+        // (FindPages), not the ones an earlier read's warm-up of the window left behind
+        warmup.Value = _warmup?.WarmUp(browserHandle, warmupBudget, cancellationToken);
 
         IUiaNode? window;
         try
@@ -762,26 +665,58 @@ public class BrowserReadingService : IBrowserReadingService
             title = null;
         }
 
-        var url = _reader.ReadUrl(window, browserType, cancellationToken);
-        var text = content != null ? _reader.ReadContent(window, content.MaxLength, cancellationToken) : null;
-        return new UiaRead(title, url, text, warmup.Value);
+        // The shown tabs' pages, through their render widgets: the ones the warm-up found
+        var pages = _warmup?.FindPages(browserHandle, cancellationToken)?.Select(page => page.Root).ToList();
+        var windowTitle = title ?? windowText;
+        if (content != null)
+        {
+            return new UiaRead(title, null, _reader.ReadContent(window, windowTitle, pages, content.MaxLength, cancellationToken), warmup.Value);
+        }
+
+        var foreground = TopLevel(_nativeWrapper.GetForegroundWindow()) == browserHandle;
+        return new UiaRead(title, _reader.ReadUrl(window, windowTitle, pages, foreground, cancellationToken), null, warmup.Value);
     }
 
     /// <summary>
-    /// Finds the tab shown by the window and reads it, all within one time budget.
+    /// The top-level window of <paramref name="handle"/> (GA_ROOT): a browser is read by its frame, also when given the
+    /// handle of a window inside it, such as a render widget's from an element; the handle itself when it has none.
+    /// </summary>
+    private nint TopLevel(nint handle)
+    {
+        var root = _nativeWrapper.GetAncestor(handle, WindowAncestor.Root);
+        return root != nint.Zero ? root : handle;
+    }
+
+    /// <summary>
+    /// The tab to read: the one with <see cref="CdpOptions.TargetId"/> when it is given (roadmap M5.2), otherwise the one
+    /// the window shows.
+    /// </summary>
+    private Task<CdpResult<CdpTarget>> FindTargetAsync(
+        int port,
+        int windowProcessId,
+        string windowTitle,
+        CdpOptions cdp,
+        TimeSpan timeout,
+        CancellationToken cancellationToken) =>
+        cdp.TargetId is { } targetId
+            ? _cdpService.FindTargetByIdAsync(port, windowProcessId, targetId, timeout, cancellationToken)
+            : _cdpService.FindTargetForWindowAsync(port, windowProcessId, windowTitle, timeout, cancellationToken);
+
+    /// <summary>
+    /// Finds the tab to read (<see cref="FindTargetAsync"/>) and reads it, all within one time budget.
     /// </summary>
     private async Task<(CdpResult<CdpPageSnapshot> Snapshot, string? TargetId)> ReadContentViaCdpAsync(
         int port,
         int windowProcessId,
         string windowTitle,
+        CdpOptions cdp,
         BrowserContentOptions options,
-        TimeSpan timeout,
         CancellationToken cancellationToken)
     {
+        var timeout = cdp.EffectiveTimeout;
         var stopwatch = Stopwatch.StartNew();
 
-        var match = await _cdpService.FindTargetForWindowAsync(
-            port, windowProcessId, windowTitle, timeout, cancellationToken);
+        var match = await FindTargetAsync(port, windowProcessId, windowTitle, cdp, timeout, cancellationToken);
         if (!match.Success)
             return (match.FailAs<CdpPageSnapshot>(), null);
 
@@ -820,15 +755,20 @@ public class BrowserReadingService : IBrowserReadingService
     /// <summary>The name of the process, or "Unknown" when it has exited or cannot be read.</summary>
     private string GetProcessName(uint processId) => _nativeWrapper.GetProcessName(processId) ?? "Unknown";
 
+    /// <summary>The address of a window UI Automation has no element for.</summary>
+    private static readonly BrowserUiaUrl WindowWithoutElement = BrowserUiaUrl.Failed(
+        BrowserErrorCode.UrlBarNotFound, "UI Automation has no element for the browser window, so neither the page's address " +
+        "nor the address bar could be read.", null, null, null);
+
     /// <summary>
-    /// What the UI Automation read of a browser window found: the window's title as UI Automation names it, the address
-    /// bar's text and the page's text (each null when nothing was found) and the warm-up; or, with an error code, why
-    /// nothing was read.
+    /// What the UI Automation read of a browser window found: the window's title as UI Automation names it (null when it
+    /// could not be read), the page's address (get_browser_url) or its page (get_browser_content), each null when the window
+    /// has no element, and the warm-up; or, with an error code, why nothing was read.
     /// </summary>
     private sealed record UiaRead(
         string? Title,
-        string? Url,
-        string? Content,
+        BrowserUiaUrl? Url,
+        BrowserUiaContent? Content,
         AccessibilityWarmupInfo? Warmup,
         string? Error = null,
         BrowserErrorCode ErrorCode = BrowserErrorCode.None)

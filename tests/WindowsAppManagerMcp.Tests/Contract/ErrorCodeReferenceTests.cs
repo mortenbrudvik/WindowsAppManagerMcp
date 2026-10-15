@@ -27,7 +27,8 @@ public class ErrorCodeReferenceTests
     /// </summary>
     private static readonly Dictionary<string, string> CodesNoToolReturns = new(StringComparer.Ordinal)
     {
-        ["ContentAreaNotFound"] = "GetContentViaCdpAsync",
+        // None since roadmap M5.7: ContentAreaNotFound, which only the uncalled GetContentViaCdpAsync returned, is now
+        // get_browser_content's when UI Automation finds no page
     };
 
     [Fact]
@@ -72,7 +73,7 @@ public class ErrorCodeReferenceTests
                 "MoveFailed", // WindowErrorCode.MoveFailed passed to the window service's placement
             ]);
         codes.Should().NotContain(
-            ["UrlExtractionFailed", "InvalidCoordinates"],
+            ["InvalidCoordinates"],
             "these enum members are declared but nothing in src/ returns them");
     }
 

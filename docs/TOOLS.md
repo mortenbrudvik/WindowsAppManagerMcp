@@ -3464,23 +3464,27 @@ Tools for reading the URL and page content of a browser window without screensho
 
 **How the browser is read:**
 
-- **UI Automation (default):** the URL is read from the address bar and the text from the page's accessibility tree. The URL is the text shown in the address bar, so the scheme (`https://`) can be missing. The read goes through the same engine, deadline and checks as the [UI Automation](#ui-automation) tools: it gets `timeoutMs` of its own (the time a CDP attempt took does not count), a browser that does not answer in time gives `OperationTimedOut` and one Windows reports hung `NotResponding` (a read that misses its deadline counts against that browser, as described under `OperationTimedOut` in the [error code reference](#error-code-reference)), the [target policy](#target-policy) is checked first (`TargetDeniedByPolicy`), and a cancelled request stops waiting. A password field's value is never read. Before reading the page, get_browser_content waits for a Chromium page's accessibility tree, as the UI Automation tools do (see [Web content](#ui-automation)), so the first read of a page no longer comes back empty, and reports `accessibilityWarmup`; get_browser_url reads only the address bar, the browser's own UI, and does not wait.
+- **UI Automation (default):** the URL and the text are read from the shown tab's page, and the URL from the address bar when the page does not give it (roadmap M5.7). get_browser_url takes the address the tab committed from the page's Document (`urlSource: "document"`, with its scheme), else the address bar's text when it is URL-like and the address bar is known not to be edited (`urlSource: "addressBar"`; Chrome shows it without `https://`), and reports the address bar's text as `displayUrl` and whether it has the keyboard focus as `isEditing`. A browser behind another window reports no keyboard focus, also while text typed in its address bar is left there, so `isEditing` is left out then, and the address bar's text is taken only while the browser is the foreground window. Nothing is found by its name, which changes with the browser's display language and which a page sets (its title names the window and its tab, and its links and fields name themselves): the address bar is the edit box of Chromium's omnibox class (Chrome, Edge, Brave) or with Firefox's `urlbar-input` id, else the first edit box in a toolbar, and is never looked for inside the page or the tabs; and only text that is a URL is returned. The page is the tab's Document shown in the window, not docked DevTools, a side panel, Edge's sidebar or a frame inside the page. The read goes through the same engine, deadline and checks as the [UI Automation](#ui-automation) tools: it gets `timeoutMs` of its own (the time a CDP attempt took does not count), a browser that does not answer in time gives `OperationTimedOut` and one Windows reports hung `NotResponding` (a read that misses its deadline counts against that browser, as described under `OperationTimedOut` in the [error code reference](#error-code-reference)), the [target policy](#target-policy) is checked first (`TargetDeniedByPolicy`), and a cancelled request stops waiting. A password field's value is never read. Before reading the page, get_browser_content and get_browser_url wait for a Chromium page's accessibility tree, as the UI Automation tools do (see [Web content](#ui-automation)), so the first read of a page no longer comes back empty or without the page's address; get_browser_content reports it as `accessibilityWarmup`. A child window's handle (a page's render widget, from an element's `nativeWindowHandle`) is read as its top-level window's.
 - **CDP (Chrome DevTools Protocol):** used when you pass `cdpPort` and a Chromium browser started with that `--remote-debugging-port` is listening on localhost, for example one started by [launch_browser_with_debug](#launch_browser_with_debug). The page is read with `document.body.innerText` (text) or `document.documentElement.outerHTML` (HTML, `textOnly: false`), so JavaScript-rendered content is included. `get_browser_url` reads the URL from the browser's tab list without opening the page.
 
 **How CDP reading works:**
 
-- **CDP requests never hang.** Every CDP request (tab list, WebSocket connect, send and receive) is bounded by `timeoutMs` (default 10000, clamped to 1000-30000), and MCP request cancellation is honored. A page with an open JavaScript dialog (alert, confirm, prompt, beforeunload) never answers CDP, so the call returns `CdpDialogOpen` or `CdpTimeout` instead of blocking.
-- **Right browser.** The process listening on `cdpPort` must be the process that owns the window. If it is not (for example the handle is your normal Chrome window but the port belongs to a separate debug Chrome), the result is `CdpPortOwnerMismatch`. If the server cannot tell which process owns the port, this check is skipped and only the tab match below applies.
-- **Right tab.** The tab is the one whose whole title starts the window title, followed only by the browser's own decorations (`Inbox - Google Chrome`, or Edge's `Inbox and 2 more pages - Personal - Microsoft Edge`). Substrings, empty titles and URL hosts never match. If no tab matches, the result is `CdpTargetNotFound`; if several tabs have the same title, it is `CdpTargetAmbiguous`. The tool never guesses. Only Edge's English ` and N more pages` text is recognized, so an Edge window with several tabs and another display language gives `CdpTargetNotFound`, as does a page whose window shows something other than its title (for example an untitled page).
-- **No silent fallback.** If CDP cannot be used, the tool falls back to UI Automation and explains why in `cdpError` (`"Code: message"`). With `requireCdp: true`, the CDP error is returned instead of falling back.
+- **CDP requests never hang.** Every CDP request (tab list, WebSocket connect, each command and its answer) is bounded by `timeoutMs` (default 10000, clamped to 1000-30000), and MCP request cancellation is honored. A page with an open JavaScript dialog (alert, confirm, prompt, beforeunload) never answers CDP, so the call returns `CdpDialogOpen` or `CdpTimeout` instead of blocking. Each call opens its own DevTools connection to the tab and closes it before it returns; nothing is kept between calls.
+- **Right browser.** The process listening on `cdpPort` must be the process that owns the window. If it is not (for example the handle is your normal Chrome window but the port belongs to a separate debug Chrome), the result is `CdpPortOwnerMismatch`. If the server cannot tell which process owns the port, this check is skipped and only the tab match below applies; with `targetId` it is not skipped, and the result is `CdpPortOwnerMismatch` as well. Only the address 127.0.0.1 is contacted: the tab list is read from 127.0.0.1 without following redirects, and a tab whose WebSocket URL is not on 127.0.0.1 and on `cdpPort` itself is refused (`CdpProtocolError`).
+- **Right tab.** The tab is the one whose whole title starts the window title, followed only by the browser's own decorations (`Inbox - Google Chrome`, or Edge's `Inbox and 2 more pages - Personal - Microsoft Edge`). Substrings, empty titles and URL hosts never match. If no tab matches, the result is `CdpTargetNotFound`; if several tabs have the same title, it is `CdpTargetAmbiguous`, which lists their ids. The tool never guesses. Only Edge's English ` and N more pages` text is recognized, so an Edge window with several tabs and another display language gives `CdpTargetNotFound`, as does a page whose window shows something other than its title (for example an untitled page).
+- **A tab by id.** get_browser_url and get_browser_content take `targetId`: an id from an earlier result's `targetId` or from a `CdpTargetAmbiguous` error. The call then reads that tab, which need not be the one the window shows, with the same `cdpPort` and the same check that the port belongs to the window's browser. `targetId` implies `requireCdp`: UI Automation sees only the tab the window shows, so there is no fallback. An id that no tab has (the tab closed) is `CdpTargetNotFound`; `targetId` without `cdpPort`, or one that is not 1-128 letters, digits, `.`, `_` or `-`, is `InvalidArguments` and nothing is read.
+- **The tab can go away.** If the tab's DevTools connection ends during the call (the tab closed, crashed or was detached, or the browser exited), the result is `CdpTargetClosed`. Call again with the window and without `targetId` to read the tab it shows now; if that returns `CdpUnavailable`, the browser is gone. An answer too large to read is `CdpResponseTooLarge`: for a page over 64 MB, read less at a time with get_browser_content's `maxLength`; for a tab list over 16 MB, close tabs or omit `cdpPort` to use UI Automation.
+- **No silent fallback.** If CDP cannot be used, the tool falls back to UI Automation and explains why in `cdpError` (`"Code: message"`). With `requireCdp: true` or `targetId`, the CDP error is returned instead of falling back.
 - **Visible source.** `source` is `"cdp"` or `"uia"` and says which method produced the result; `targetId` is the CDP tab ID when `source` is `"cdp"`. With CDP, `pageTitle` is the tab title; with UI Automation, it is the window title.
-- **HTML needs CDP.** `textOnly: false` returns HTML only through CDP. Without a usable CDP connection the result is `HtmlRequiresCdp` instead of plain text.
+- **HTML needs CDP.** `textOnly: false` returns HTML only through CDP. Without a usable CDP connection the result is `HtmlRequiresCdp` instead of plain text; a page whose HTML is too large to read is `CdpResponseTooLarge`.
 
 For clicking, form filling and multi-step navigation inside web pages, a dedicated browser automation tool (such as Playwright MCP) is a better fit.
 
 ### get_browser_url
 
-Get the current URL from a browser window: from the address bar with UI Automation, or from the matched tab with CDP.
+Get the current URL from a browser window: from the shown tab's page or its address bar with UI Automation, or from the matched tab with CDP.
+
+With UI Automation the result says where the URL came from (`urlSource`: `document`, the address the tab committed, or `addressBar`, the text the address bar shows, which can lack the scheme), what the address bar shows (`displayUrl`, when it is URL-like) and whether it has the keyboard focus (`isEditing`). A new tab page returns `NewTabPage` (with `url` when the page gave its address, such as `chrome://new-tab-page/`), not `UrlBarNotFound`. When the page gives no address and the address bar is being edited, or may be (the browser is not the foreground window, or its focus cannot be read; `isEditing` is then left out), holds text that is not a URL or cannot be read, the result is `UrlExtractionFailed`: such an address bar may hold what someone is typing, which is never returned as the URL.
 
 <!-- tools:begin params:get_browser_url -->
 **Parameters:**
@@ -3488,8 +3492,9 @@ Get the current URL from a browser window: from the address bar with UI Automati
 |-----------|------|----------|---------|-------------|
 | handle | integer | No | - | Window handle of the browser, from find_windows or get_foreground_window |
 | window | object | No | - | Alternative to handle: the browser window as a selector, resolved to exactly one window or refused (WindowNotFound; AmbiguousWindow with candidates), e.g. {"processName": "msedge", "titleContains": "Inbox"}. Filters as in find_windows (processName is the whole name; titles ignore the zero-width space in 'Microsoft Edge' and ' and N more pages'); index picks a match in z-order; foreground is the window in front; handle plus filters must still match (HandleMismatch). |
-| cdpPort | integer | No | - | CDP debug port of the browser that owns the window: the `cdpPort` that launch_browser_with_debug returned |
-| requireCdp | boolean | No | false | Return the CDP error instead of falling back to UI Automation (needs cdpPort) |
+| cdpPort | integer | No | - | DevTools port of the browser that owns the window, as launch_browser_with_debug returns it |
+| targetId | string | No | - | The CDP tab to read instead of the one the window shows: a `targetId` from an earlier result or from a `CdpTargetAmbiguous` error. Needs `cdpPort` (else `InvalidArguments`, as is an id that is not 1-128 letters, digits, `.`, `_` or `-`); the tab must belong to the window's browser (`CdpPortOwnerMismatch`, also when the port's owner cannot be read); implies `requireCdp`. A tab that has closed gives `CdpTargetNotFound` |
+| requireCdp | boolean | No | false | Return the CDP error instead of falling back to UI Automation (needs cdpPort; implied by targetId) |
 | timeoutMs | integer | No | 10000 | Time limit in ms (1000-30000) for the CDP requests, and again for the UI Automation read |
 <!-- tools:end params:get_browser_url -->
 
@@ -3509,11 +3514,14 @@ Get the current URL from a browser window: from the address bar with UI Automati
 ```json
 {
   "success": true,
-  "url": "github.com/mortenbrudvik/WindowsAppManagerMcp",
+  "url": "https://github.com/mortenbrudvik/WindowsAppManagerMcp",
   "browserType": "chrome",
   "pageTitle": "mortenbrudvik/WindowsAppManagerMcp - Google Chrome",
   "errorCode": "None",
-  "source": "uia"
+  "source": "uia",
+  "displayUrl": "github.com/mortenbrudvik/WindowsAppManagerMcp",
+  "urlSource": "document",
+  "isEditing": false
 }
 ```
 
@@ -3552,7 +3560,10 @@ Get the current URL from a browser window: from the address bar with UI Automati
   "pageTitle": "Pull requests - Google Chrome",
   "errorCode": "None",
   "source": "uia",
-  "cdpError": "CdpPortOwnerMismatch: CDP port 9222 belongs to process 4242 (chrome), but the window belongs to process 1337 (chrome). ..."
+  "cdpError": "CdpPortOwnerMismatch: CDP port 9222 belongs to process 4242 (chrome), but the window belongs to process 1337 (chrome). ...",
+  "displayUrl": "github.com/pulls",
+  "urlSource": "document",
+  "isEditing": false
 }
 ```
 
@@ -3566,7 +3577,7 @@ Get the URL from the foreground browser window. This combines get_foreground_win
 **Parameters:**
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| cdpPort | integer | No | - | CDP debug port of the browser that owns the window: the `cdpPort` that launch_browser_with_debug returned |
+| cdpPort | integer | No | - | DevTools port of the browser that owns the window, as launch_browser_with_debug returns it |
 | requireCdp | boolean | No | false | Return the CDP error instead of falling back to UI Automation (needs cdpPort) |
 | timeoutMs | integer | No | 10000 | Time limit in ms (1000-30000) for the CDP requests, and again for the UI Automation read |
 <!-- tools:end params:get_active_browser_url -->
@@ -3608,8 +3619,9 @@ Extract the content of the page shown in a browser window. UI Automation returns
 | window | object | No | - | Alternative to handle: the browser window as a selector, resolved to exactly one window or refused (WindowNotFound; AmbiguousWindow with candidates), e.g. {"processName": "msedge", "titleContains": "Inbox"}. Filters as in find_windows (processName is the whole name; titles ignore the zero-width space in 'Microsoft Edge' and ' and N more pages'); index picks a match in z-order; foreground is the window in front; handle plus filters must still match (HandleMismatch). |
 | maxLength | integer | No | all | Maximum number of characters to return, at least 1; longer content is cut off. 0 or less fails with `InvalidArguments` (0 used to return empty content as a success) |
 | textOnly | boolean | No | true | Return text only. false returns the full HTML, which requires CDP |
-| cdpPort | integer | No | - | CDP debug port of the browser that owns the window (the `cdpPort` that launch_browser_with_debug returned); includes JavaScript-rendered content |
-| requireCdp | boolean | No | false | Return the CDP error instead of falling back to UI Automation (needs cdpPort) |
+| cdpPort | integer | No | - | DevTools port of the browser that owns the window, as launch_browser_with_debug returns it; includes JavaScript-rendered content |
+| targetId | string | No | - | The CDP tab to read instead of the one the window shows: a `targetId` from an earlier result or from a `CdpTargetAmbiguous` error. Needs `cdpPort` (else `InvalidArguments`, as is an id that is not 1-128 letters, digits, `.`, `_` or `-`); the tab must belong to the window's browser (`CdpPortOwnerMismatch`, also when the port's owner cannot be read); implies `requireCdp`. A tab that has closed gives `CdpTargetNotFound` |
+| requireCdp | boolean | No | false | Return the CDP error instead of falling back to UI Automation (needs cdpPort; implied by targetId) |
 | timeoutMs | integer | No | 10000 | Time limit in ms (1000-30000) for the CDP requests, and again for the UI Automation read |
 <!-- tools:end params:get_browser_content -->
 
@@ -3631,7 +3643,7 @@ Extract the content of the page shown in a browser window. UI Automation returns
 {
   "success": true,
   "content": "Skip to content\nmortenbrudvik / WindowsAppManagerMcp\n...",
-  "url": "github.com/mortenbrudvik/WindowsAppManagerMcp",
+  "url": "https://github.com/mortenbrudvik/WindowsAppManagerMcp",
   "browserType": "edge",
   "pageTitle": "mortenbrudvik/WindowsAppManagerMcp - Microsoft Edge",
   "contentLength": 5000,
@@ -3640,7 +3652,7 @@ Extract the content of the page shown in a browser window. UI Automation returns
 }
 ```
 
-With UI Automation, a Chromium page whose accessibility tree was not built yet is waited for first, and the result then carries `accessibilityWarmup` (see [Web content](#ui-automation)); with `status: "NotReady"` the page's elements were not there yet, so read again before you conclude that the page is empty.
+With UI Automation, `url` is the address the page's Document holds (the address bar is not read), and is left out when it holds none. A window that shows no tab's Document returns `ContentAreaNotFound`; the browser's own panes (its tabs, bookmarks and address bar) are never returned as the page. A Chromium page whose accessibility tree was not built yet is waited for first, and the result then carries `accessibilityWarmup` (see [Web content](#ui-automation)); with `status: "NotReady"` the page's elements were not there yet, so read again before you conclude that the page is empty.
 
 **Example 2:** Read the HTML of a page in a debug browser, and fail rather than fall back
 > "Get the HTML of the page in the debug browser"
@@ -3684,20 +3696,25 @@ An open dialog is not something to clear out of the way. On a confirm, prompt or
 | `InvalidHandle` | Window handle is invalid |
 | `NotABrowser` | The window's process is not a recognized browser |
 | `NoBrowserInForeground` | The foreground window is not a browser (get_active_browser_url) |
-| `UrlBarNotFound` | UI Automation could not find or read the address bar |
-| `ContentAreaNotFound` / `ContentExtractionFailed` | UI Automation could not find or read the page content |
+| `UrlBarNotFound` | UI Automation found neither the page's address nor the address bar (for example an app or kiosk window whose page holds no address) |
+| `UrlExtractionFailed` | The page gave no address, and the address bar has the keyboard focus (`isEditing`: its text may be typed) or may have it (the browser is not the foreground window), holds text that is not a URL, or cannot be read |
+| `NewTabPage` | The tab shows the browser's new tab page, which has no site address (get_browser_url, get_active_browser_url) |
+| `ContentAreaNotFound` | UI Automation found no page in the window: no shown, onscreen Document of a tab (get_browser_content) |
+| `ContentExtractionFailed` | The page was found but UI Automation could not read any text from it |
 | `AutomationUnavailable` | UI Automation is not available |
 | `NotResponding` | The browser window did not answer a message within 500 ms, or Windows reports it hung; nothing was read through UI Automation |
 | `OperationTimedOut` | The UI Automation read did not finish within `timeoutMs`, or earlier reads of this browser are still stuck. Try a larger `timeoutMs`, a smaller `maxLength` or CDP |
 | `TargetDeniedByPolicy` | The [target policy](#target-policy) refuses the UI Automation read of the browser window; ask the user |
-| `CdpUnavailable` | Nothing answered on the CDP port, or `requireCdp` was set without `cdpPort` |
+| `CdpUnavailable` | Nothing answered on the CDP port, `cdpPort` is not 1-65535, the browser refused the DevTools WebSocket (HTTP 403) or listed no WebSocket URL for the tab, or `requireCdp` was set without `cdpPort` |
 | `CdpTimeout` | The browser or page did not answer within `timeoutMs` (often an open JavaScript dialog) |
 | `CdpDialogOpen` | The page has a JavaScript dialog open. Inspect it and decide deliberately how to close it, or ask the user, then retry (do not press Enter blindly) |
-| `CdpPortOwnerMismatch` | The CDP port belongs to a different process than the window |
-| `CdpTargetNotFound` | No tab's title matches the window title |
-| `CdpTargetAmbiguous` | Several tabs have the window's title; the tool will not guess |
+| `CdpPortOwnerMismatch` | The CDP port belongs to a different process than the window (with `targetId`, also when the port's owner cannot be read) |
+| `CdpTargetNotFound` | No tab's title matches the window title, or no tab has the `targetId` (it may have closed) |
+| `CdpTargetAmbiguous` | Several tabs have the window's title; the tool will not guess. Pass one of the listed ids as `targetId` to get_browser_url or get_browser_content, with the same window and `cdpPort` (get_active_browser_url takes no `targetId`) |
 | `CdpEvaluationFailed` | The page threw, or the browser rejected the script |
-| `CdpProtocolError` | The CDP connection closed early or returned an unreadable response |
+| `CdpProtocolError` | The port answered, but not as a DevTools endpoint (an HTTP error or redirect status included); a tab's WebSocket URL was not on 127.0.0.1 and `cdpPort`; the browser refused a command; or a message could not be read |
+| `CdpTargetClosed` | The tab's DevTools connection ended during the call: the tab closed, crashed or detached, or the browser exited. Call again with the window and without `targetId`; `CdpUnavailable` then means the browser is gone |
+| `CdpResponseTooLarge` | The browser's answer was too large to read. A page over 64 MB: read less at a time with `maxLength`. A tab list over 16 MB: close tabs, or omit `cdpPort` to use UI Automation |
 | `HtmlRequiresCdp` | `textOnly: false` was requested but CDP could not be used |
 | `OperationException` | Unexpected error; see `error` |
 
@@ -6733,6 +6750,45 @@ the new tools; their sections have the rest.
   the new `TextTooLong` (pasting takes up to 1,000,000), and a typed batch is 64 characters (it was 32). A client that
   sent long text to type_text and relied on keystrokes (an app that reacts to each key) must pass `method: "unicode"`,
   in parts of at most 5,000 characters. element_action's `mode: "type"` has the same 5,000-character limit.
+- **CDP transport, targetId and explicit CDP errors (roadmap M5.2).** [get_browser_url](#get_browser_url) and
+  [get_browser_content](#get_browser_content) take a new optional `targetId`: a tab id from an earlier result's
+  `targetId` or from a `CdpTargetAmbiguous` error, read instead of the tab the window shows. It needs `cdpPort` (without
+  it, or with an id that is not 1-128 letters, digits, `.`, `_` or `-`, the call fails with `InvalidArguments` and reads
+  nothing), implies `requireCdp`, and the debug port must belong to the window's process: on this path an owner the
+  server cannot read is `CdpPortOwnerMismatch` too. A tab that has closed is `CdpTargetNotFound`.
+  get_active_browser_url has no `targetId`. Two new codes: `CdpTargetClosed` when the tab's DevTools connection ends
+  during the call (the tab closed, crashed or detached, or the browser exited; it was `CdpProtocolError`), and
+  `CdpResponseTooLarge` for a tab list over 16 MB or a page over 64 MB (it was `CdpUnavailable` or `CdpProtocolError`);
+  with `textOnly: false` an oversize page returns `CdpResponseTooLarge` instead of `HtmlRequiresCdp`. Without `targetId`
+  and `requireCdp`, both fall back to UI Automation and appear in `cdpError` like the other CDP codes. A program on the
+  port that answers, but not as a DevTools endpoint does (an HTTP error or redirect status included), is now
+  `CdpProtocolError` (it was `CdpUnavailable`, which stays for a port nothing listens on); a tab whose WebSocket URL is
+  on another port than `cdpPort`, or on another address than 127.0.0.1 (localhost and `[::1]` included), is refused
+  (`CdpProtocolError`), the tab list is read without following redirects, and a WebSocket handshake the browser refuses
+  with HTTP 403 is `CdpUnavailable` with the reason. The `CdpTargetAmbiguous` message names get_browser_url and
+  get_browser_content as the tools that take `targetId`.
+  Once the page reports an open dialog, a read returns `CdpDialogOpen` without sending anything more. The `cdpPort`
+  descriptions no longer suggest 9222: pass the port launch_browser_with_debug returns. `ContentAreaNotFound` left the
+  get_browser_content error table: no tool returned it.
+
+- **Browser reading through UI Automation (roadmap M5.7).** get_browser_url, get_active_browser_url and
+  get_browser_content no longer find anything by its name, which changes with the browser's display language and which
+  a page sets. get_browser_url takes the URL from the shown tab's Document (the address the tab committed, with its
+  scheme; `urlSource: "document"`), else from the address bar, found as Chromium's omnibox class, Firefox's
+  `urlbar-input` id or the first edit box in a toolbar, never inside the page or the tabs (`urlSource: "addressBar"`),
+  and returns it only when it is a URL. New result fields: `displayUrl` (the address bar's text, when URL-like),
+  `urlSource` and `isEditing`. **Changed:** `url` now has its scheme when the page gives it (it was the address bar's
+  text, often without `https://`); a window title, tab, bookmark or page link named like the address bar is no longer
+  returned as the URL; a new tab page is the new `NewTabPage` (it was `UrlBarNotFound`); an address bar with the
+  keyboard focus, or of a browser that is not the foreground window (whose address bar reports no focus), holding text
+  that is not a URL or unreadable, when the page gives no address, is `UrlExtractionFailed` (its text was returned as
+  the URL). get_browser_url now waits for a Chromium page's accessibility tree before it reads, as get_browser_content
+  does, and its description says where the URL comes from. get_browser_content reads the shown tab's Document, not
+  docked DevTools, a side panel, Edge's sidebar or a frame inside the page, returns `ContentAreaNotFound` when there is
+  none (it was `ContentExtractionFailed`, or the text of the browser's own panes as the page) and `OperationTimedOut`
+  when the browser does not answer the search for it, and takes `url` from the page without reading the address bar. A
+  child window's handle, such as a render widget's, is read as its top-level window's.
+
 - **launch_browser_with_debug: first-run screens, port 0 and the started browser only (roadmap M5.1).** The browser
   starts with `--no-first-run`, `--no-default-browser-check`, `--disable-search-engine-choice-screen` and
   `--disable-sync`, so a new profile opens `url` instead of a welcome, sign-in or search engine screen. **Breaking:**
@@ -6845,12 +6901,14 @@ table, it gives more detail.
 | `CaptureNotFound` | [click](#click), right_click, double_click, [mouse_click](#mouse_click), [drag](#drag), mouse_move, [scroll](#scroll) | The `captureId` names no capture: mistyped, from an earlier run of the server, older than 10 minutes, or 32 newer captures pushed it out; nothing was sent. Capture again (see [Coordinate spaces for the mouse tools](#coordinate-spaces-for-the-mouse-tools)) |
 | `CdpDialogOpen` | [Browser Reading](#browser-reading) tools | The page has a JavaScript dialog open. Inspect it and decide deliberately how to close it, or ask the user, then retry (do not press Enter blindly) |
 | `CdpEvaluationFailed` | [Browser Reading](#browser-reading) tools | The page threw, or the browser rejected the script |
-| `CdpPortOwnerMismatch` | [Browser Reading](#browser-reading) tools | The CDP port belongs to a different process than the window |
-| `CdpProtocolError` | [Browser Reading](#browser-reading) tools | The CDP connection closed early or returned an unreadable response |
-| `CdpTargetAmbiguous` | [Browser Reading](#browser-reading) tools | Several tabs have the window's title; the tool will not guess |
-| `CdpTargetNotFound` | [Browser Reading](#browser-reading) tools | No tab's title matches the window title |
+| `CdpPortOwnerMismatch` | [Browser Reading](#browser-reading) tools | The CDP port belongs to a different process than the window (with `targetId`, also when the port's owner cannot be read) |
+| `CdpProtocolError` | [Browser Reading](#browser-reading) tools | The port answered, but not as a DevTools endpoint (an HTTP error or redirect status included); a tab's WebSocket URL was not on 127.0.0.1 and `cdpPort`; the browser refused a command; or a message could not be read |
+| `CdpResponseTooLarge` | [Browser Reading](#browser-reading) tools | The browser's answer was too large to read. A page over 64 MB: read less at a time with get_browser_content's `maxLength`. A tab list over 16 MB: close tabs, or omit `cdpPort` to use UI Automation |
+| `CdpTargetAmbiguous` | [Browser Reading](#browser-reading) tools | Several tabs have the window's title; the tool will not guess. Pass one of the listed ids as `targetId` to get_browser_url or get_browser_content, with the same window and `cdpPort` (get_active_browser_url takes no `targetId`) |
+| `CdpTargetClosed` | [Browser Reading](#browser-reading) tools | The tab's DevTools connection ended during the call: the tab closed, crashed or detached, or the browser exited. Call again with the window and without `targetId`; `CdpUnavailable` then means the browser is gone |
+| `CdpTargetNotFound` | [Browser Reading](#browser-reading) tools | No tab's title matches the window title, or no tab has the `targetId` (it may have closed) |
 | `CdpTimeout` | [Browser Reading](#browser-reading) tools | The browser or page did not answer within `timeoutMs` (often an open JavaScript dialog) |
-| `CdpUnavailable` | [Browser Reading](#browser-reading) tools | Nothing answered on the CDP port, or `requireCdp` was set without `cdpPort` |
+| `CdpUnavailable` | [Browser Reading](#browser-reading) tools | Nothing answered on the CDP port, `cdpPort` is not 1-65535, the browser refused the DevTools WebSocket (HTTP 403) or listed no WebSocket URL for the tab, or `requireCdp` was set without `cdpPort` |
 | `ClipboardBusy` | [get_clipboard](#get_clipboard), [set_clipboard](#set_clipboard) | Another application held the clipboard open, or did not answer within 5 seconds; nothing was read or changed. Try again |
 | `ClipboardFailed` | [get_clipboard](#get_clipboard), [set_clipboard](#set_clipboard) | Windows refused to hand out or take the clipboard data; `error` has the Win32 error |
 | `ClipboardNotFromAgent` | [get_clipboard](#get_clipboard) | The clipboard holds content the agent did not put there (the user or another app copied it), or the clipboard changed while the user was asked; nothing was read. Copy it yourself with `send_keys` `^c`, or ask the user |
@@ -6860,7 +6918,8 @@ table, it gives more detail.
 | `CloseFailed` | [close_window](#close_window), close_windows_batch and [close_application](#close_application) (per window) | Windows did not accept the close message; `error` gives the Win32 error |
 | `ConfirmationDeclined` | [kill_process](#kill_process), [close_windows_batch](#close_windows_batch), [close_application](#close_application) (tool error), [close_window](#close_window) (`force` on a protected window), [get_clipboard](#get_clipboard) | The MCP client asked the user to confirm (elicitation), and the user declined, dismissed or did not tick the question, or did not answer within 2 minutes; nothing was done (get_clipboard: nothing was read; also while another get_clipboard call's question is open). Ask the user how to continue |
 | `ConfirmationRequired` | [kill_process](#kill_process), [close_windows_batch](#close_windows_batch), [close_application](#close_application) (tool error), [close_window](#close_window) (`force` on a protected window) | `confirm` was not true (close_windows_batch and close_application: more than 3 windows; close_window and close_windows_batch: `force` on a protected window), and the MCP client cannot ask the user; nothing was done |
-| `ContentExtractionFailed` | [get_browser_content](#get_browser_content) | The page content could not be found or read |
+| `ContentAreaNotFound` | [get_browser_content](#get_browser_content) | UI Automation found no page in the window: no shown, onscreen Document of a tab (roadmap M5.7) |
+| `ContentExtractionFailed` | [get_browser_content](#get_browser_content) | The page was found, but no text could be read from it (UI Automation), or the CDP read gave none |
 | `CoordinatesOutOfBounds` | [click](#click), right_click, double_click, [mouse_click](#mouse_click), [drag](#drag), mouse_move, [scroll](#scroll), [get_element_at_point](#get_element_at_point) | The coordinates are outside the screen; scroll without a point: the window has no client area on screen (minimized). With `captureId`: the point is outside the capture's image; with `space` `window` or `client`: the window is minimized |
 | `CursorClamped` | [click](#click), right_click, double_click, [mouse_click](#mouse_click), [drag](#drag), mouse_move, [scroll](#scroll), [element_action](#element_action) (mouse paths) | The input **was sent**, but right after it the mouse pointer is not at the point (`actualX`, `actualY`): it was confined to a window (a game or remote session), the point is on no monitor, or the user or the application moved it at once. The click, move or wheel may have landed where the pointer is. Look at the window before you send it again; do not simply retry (roadmap M4.2) |
 | `CursorNotAtPoint` | [click](#click), right_click, double_click, [mouse_click](#mouse_click), [drag](#drag), [scroll](#scroll), [element_action](#element_action) (mouse paths) | The mouse pointer does not stay at the point (it is confined to a window, or the user is moving the mouse), so a click would land where the guard did not check; nothing was clicked |
@@ -6921,6 +6980,7 @@ table, it gives more detail.
 | `ModifiersHeld` | [Input Simulation](#input-simulation) tools, [element_action](#element_action) (mouse and keyboard paths), [release_all_input](#release_all_input) (`releaseHeldModifiers`) | Shift, Ctrl, Alt or Windows is down (`heldModifiers`), held by the user or stuck, or keys the server pressed earlier could not be released; nothing (more) was sent. Wait and retry; for a stuck key pass `releaseHeldModifiers: true` or call [release_all_input](#release_all_input) (element_action has no `releaseHeldModifiers`: call release_all_input). While any modifier of the [pause hotkey](#pause-hotkey) is down, no modifier is released for the agent: ask the user |
 | `MouseInUse` | [click](#click), right_click, double_click, [mouse_click](#mouse_click), [drag](#drag), mouse_move, [scroll](#scroll), [element_action](#element_action) (mouse paths) | A mouse button is held down (the user is dragging or selecting), or another window has captured the mouse, so the input would go to that window instead of the one at the point, or the capture could not be read; nothing (more) was sent |
 | `MoveFailed` | move_window, set_window_bounds, snap_window, move_window_to_monitor (see [Window Control](#window-control)), their batches (per window) | Windows did not move the window (`error` gives the Win32 error); a minimized or maximized window did not return to normal, or is hidden, so it was not placed; or move_window_to_monitor did not get the window onto the monitor asked for (with `positioning: "maximize"` it is then not maximized) |
+| `NewTabPage` | [get_browser_url](#get_browser_url), [get_active_browser_url](#get_active_browser_url) | The tab shows the browser's new tab page, which has no site address; `url` is the new tab page's when the page gave it (roadmap M5.7) |
 | `NoBrowserInForeground` | [get_active_browser_url](#get_active_browser_url) | The foreground window is not a browser |
 | `NoClosableWindow` | [kill_process](#kill_process), [close_application](#close_application) | Graceful mode: the process has no closable main window and was left running (when the client can ask the user, a process without a main window is refused before the question). close_application: the application has no window in the Alt+Tab set of the current virtual desktop; nothing was sent |
 | `NoForegroundWindow` | [get_foreground_window](#get_foreground_window) (tool error), [get_desktop_state](#get_desktop_state) (in `errors`, section `target`, when no window was named; the rest is returned) | No window is in the foreground right now (windows are switching, or a UAC prompt or the lock screen is shown); call again shortly |
@@ -6974,7 +7034,8 @@ table, it gives more detail.
 | `UnknownProtocol` | [launch_application](#launch_application), launch_applications_batch | The URI scheme is not one of the built-in schemes (http, https, mailto, tel, ms-settings, `shell:AppsFolder\<AppUserModelID>`; file URIs are checked as paths) or the schemes the user allows in `WAM_ALLOWED_PROTOCOLS`; `get_server_info` lists them as `safety.allowedProtocols` |
 | `UnsafeBatchArguments` | [launch_application](#launch_application), launch_applications_batch | An argument would be interpreted by `cmd.exe` (see [launch_application](#launch_application)) |
 | `UnsupportedBrowser` | [launch_browser_with_debug](#launch_browser_with_debug) (tool error) | `browser` is not chrome, edge or brave |
-| `UrlBarNotFound` | [get_browser_url](#get_browser_url), [get_active_browser_url](#get_active_browser_url) | UI Automation could not find or read the address bar |
+| `UrlBarNotFound` | [get_browser_url](#get_browser_url), [get_active_browser_url](#get_active_browser_url) | UI Automation found neither the page's address nor the browser's address bar (roadmap M5.7: looked up by class and structure, never by name) |
+| `UrlExtractionFailed` | [get_browser_url](#get_browser_url), [get_active_browser_url](#get_active_browser_url) | The page gave no address, and the address bar has the keyboard focus (`isEditing`: its text may be typed) or may have it (the browser is not the foreground window, or its focus cannot be read), holds text that is not a URL, or cannot be read (roadmap M5.7) |
 | `WaitTimedOut` | [wait_for_window](#wait_for_window), [wait_for_element](#wait_for_element) | The condition did not hold within `timeoutMs`. The result still carries `satisfied: false`, `timedOut: true`, `elapsedMs` and the window as last seen (still open, not in front, not on screen, not idle, or with its old title), or for wait_for_element `lastObservedState` and the element as last seen (or no `windowHandle` when its window never appeared), and `error` says what was seen. Nothing was changed: wait again with a longer `timeoutMs`, or check the state with a read tool |
 | `WheelFollowsFocus` | [scroll](#scroll) | Windows sends the wheel to the focused window ("Scroll inactive windows when I hover over them" is off, or the setting cannot be read), and the window at the point is not in front, so the wheel would scroll another window; nothing was sent. Call [focus_window](#focus_window) first |
 | `WindowHidden` | [focus_window](#focus_window), [apply_layout](#apply_layout) (named in an `ArrangeFailed` error, see [apply_layout](#apply_layout)), the [Input Simulation](#input-simulation) tools and [element_action](#element_action) (`windowHandle`, as `TargetNotForeground`), [capture_window](#capture_window), [capture_with_elements](#capture_with_elements) | The window is hidden (no WS_VISIBLE, for example an app's window hidden in the notification area), so it was not activated: keys would go to a window the user cannot see. The captures refuse it too: a hidden window draws nothing |

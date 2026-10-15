@@ -45,6 +45,10 @@ public static class ServiceRegistration
         // The keyboard layout send_keys maps characters with (roadmap M4.1)
         services.AddSingleton<INativeKeyboardLayoutWrapper, NativeKeyboardLayoutWrapper>();
         services.AddSingleton<IUIAutomationWrapper, UIAutomationWrapper>();
+        // CDP (roadmap M5.2): the transport is the only part that talks to a browser's debug port over the network, so the
+        // E2E harness refuses it with ICdpService; the port owner check reads the TCP table through a Native wrapper
+        services.AddSingleton<ITcpPortOwnerResolver, TcpPortOwnerResolver>();
+        services.AddSingleton<ICdpTransport>(_ => new CdpTransport(new ClientWebSocketFactory()));
         services.AddSingleton<ICdpService, CdpService>();
         services.AddSingleton<IMonitorService, MonitorService>();
         // SetWindowPos and ShowWindow wait for the window's thread; this gives up on a hung window at a deadline,

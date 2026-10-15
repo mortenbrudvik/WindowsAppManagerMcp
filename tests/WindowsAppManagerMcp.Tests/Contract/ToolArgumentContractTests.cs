@@ -230,6 +230,37 @@ public sealed class ToolArgumentContractTests : IDisposable
     }
 
     [Theory]
+    [InlineData("get_browser_url", """{ "handle": 2821181, "targetId": "8C1F0A6E2B7D4F3A" }""", "targetId needs cdpPort")]
+    [InlineData("get_browser_content", """{ "handle": 2821181, "targetId": "8C1F0A6E2B7D4F3A" }""", "targetId needs cdpPort")]
+    [InlineData("get_browser_url", """{ "handle": 2821181, "cdpPort": 9222, "targetId": "../browser/1" }""", "CDP tab id")]
+    [InlineData("get_browser_content", """{ "handle": 2821181, "cdpPort": 9222, "targetId": "TAB1%2F" }""", "CDP tab id")]
+    public async Task TargetId_WithoutCdpPortOrMalformed_IsInvalidArguments_AndNothingIsRead(string tool, string arguments, string message)
+    {
+        // Roadmap M5.2: targetId names a tab of the browser on cdpPort, and is never sent anywhere unchecked
+        var result = await CallAsync(tool, arguments);
+
+        result.IsError.Should().BeTrue();
+        var payload = Payload(result);
+        payload.GetProperty("errorCode").GetString().Should().Be(ToolErrorReporting.InvalidArgumentsErrorCode);
+        payload.GetProperty("error").GetString().Should().Contain(message);
+        _services.Browser.Verify(b => b.GetBrowserUrlAsync(It.IsAny<nint>(), It.IsAny<CdpOptions?>(), It.IsAny<CancellationToken>()), Times.Never);
+        _services.Browser.Verify(b => b.GetBrowserContentAsync(It.IsAny<nint>(), It.IsAny<BrowserContentOptions?>(), It.IsAny<CdpOptions?>(),
+            It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Theory]
+    [InlineData("get_browser_url")]
+    [InlineData("get_browser_content")]
+    public async Task TargetId_WithCdpPort_IsPassedToTheRead(string tool)
+    {
+        var result = await CallAsync(tool, """{ "handle": 2821181, "cdpPort": 9222, "targetId": "8C1F0A6E2B7D4F3A" }""");
+
+        result.IsError.Should().NotBe(true, Payload(result).ToString());
+        _services.Browser.Invocations.SelectMany(i => i.Arguments).OfType<CdpOptions>()
+            .Should().ContainSingle().Which.TargetId.Should().Be("8C1F0A6E2B7D4F3A");
+    }
+
+    [Theory]
     [InlineData("""{ "url": "--remote-allow-origins=*" }""", "url")]
     [InlineData("""{ "url": "  --utility-cmd-prefix=calc.exe" }""", "url")]
     [InlineData("""{ "url": "/gpu-launcher=calc.exe" }""", "url")]

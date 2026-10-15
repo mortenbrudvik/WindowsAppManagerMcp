@@ -461,9 +461,70 @@ public class DependencyInjectionTests : IDisposable
     [InlineData(typeof(IUIElementService))]
     [InlineData(typeof(IInputSimulationService))]
     [InlineData(typeof(ICdpService))]
+    [InlineData(typeof(ICdpTransport))]
+    [InlineData(typeof(ITcpPortOwnerResolver))]
     public void AddWindowsAppManagerServices_RegistersService(Type serviceType)
     {
         _serviceProvider.GetService(serviceType).Should().NotBeNull();
+    }
+
+    [Fact]
+    public async Task CdpService_ReachesTheBrowserThroughTheRegisteredTransport()
+    {
+        // Arrange - the server's registrations with the transport replaced, so nothing reaches the network
+        var transport = new RecordingCdpTransport();
+        var services = BuildServerServices();
+        services.AddSingleton<ICdpTransport>(transport);
+        using var provider = services.BuildServiceProvider();
+
+        // Act
+        var result = await provider.GetRequiredService<ICdpService>().GetPageTargetsAsync(9222, TimeSpan.FromSeconds(1));
+
+        // Assert
+        result.ErrorCode.Should().Be(BrowserErrorCode.CdpUnavailable);
+        transport.Paths.Should().Equal("/json/list");
+    }
+
+    [Fact]
+    public async Task DisposingTheServer_DisposesTheCdpTransport()
+    {
+        // Arrange - a port this test listens on, so a transport that was not disposed reaches only the test, never a browser
+        var provider = BuildServerServices().BuildServiceProvider();
+        var transport = provider.GetRequiredService<ICdpTransport>();
+        var listener = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
+        listener.Start();
+        try
+        {
+            var port = ((System.Net.IPEndPoint)listener.LocalEndpoint).Port;
+
+            // Act
+            provider.Dispose();
+            var result = await transport.GetJsonAsync(port, "/json/list", TimeSpan.FromSeconds(1), CancellationToken.None);
+
+            // Assert - its HttpClient is gone, so nothing was sent
+            result.Error.Should().Contain(nameof(ObjectDisposedException));
+        }
+        finally
+        {
+            listener.Stop();
+        }
+    }
+
+    /// <summary>Answers every /json request with CdpUnavailable and records its path.</summary>
+    private sealed class RecordingCdpTransport : ICdpTransport
+    {
+        public List<string> Paths { get; } = new();
+
+        public Task<CdpResult<System.Text.Json.JsonDocument>> GetJsonAsync(
+            int port, string path, TimeSpan timeout, CancellationToken cancellationToken)
+        {
+            Paths.Add(path);
+            return Task.FromResult(CdpResult<System.Text.Json.JsonDocument>.Fail(BrowserErrorCode.CdpUnavailable, "recorded"));
+        }
+
+        public Task<CdpResult<ICdpConnection>> ConnectAsync(
+            Uri webSocketUrl, int expectedPort, string label, TimeSpan timeout, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("No connection is expected.");
     }
 
     [Fact]

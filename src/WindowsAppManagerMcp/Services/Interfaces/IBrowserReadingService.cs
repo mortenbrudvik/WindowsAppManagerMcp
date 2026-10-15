@@ -63,24 +63,4 @@ public interface IBrowserReadingService
     /// <param name="handle">The window handle to check.</param>
     /// <returns>True if the window is a recognized browser.</returns>
     bool IsBrowserWindow(nint handle);
-
-    /// <summary>
-    /// Checks if CDP is available on the specified port.
-    /// </summary>
-    /// <param name="port">The port to check (default 9222).</param>
-    /// <param name="cancellationToken">Cancels the check.</param>
-    /// <returns>True if CDP answered within the default timeout.</returns>
-    Task<bool> IsCdpAvailableAsync(int port = 9222, CancellationToken cancellationToken = default);
-
-    /// <summary>
-    /// Gets URL and content using CDP directly (without window handle).
-    /// </summary>
-    /// <param name="port">The CDP port.</param>
-    /// <param name="targetIndex">Index of the target/tab (0 = first).</param>
-    /// <param name="cancellationToken">Cancels the operation.</param>
-    /// <returns>Result containing URL and content.</returns>
-    Task<BrowserContentResult> GetContentViaCdpAsync(
-        int port = 9222,
-        int targetIndex = 0,
-        CancellationToken cancellationToken = default);
 }

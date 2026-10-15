@@ -37,6 +37,7 @@ public class AccessibilityWarmupTests
         _windows.Setup(w => w.GetProcessName(WebViewProcess)).Returns("msedgewebview2");
         _windows.Setup(w => w.GetAncestor(It.IsAny<nint>(), WindowAncestor.Parent))
             .Returns((nint h, WindowAncestor _) => _desktop.TryGetValue(h, out var w) ? w.Parent : nint.Zero);
+        _windows.Setup(w => w.GetAncestor(It.IsAny<nint>(), WindowAncestor.Root)).Returns((nint h, WindowAncestor _) => RootOf(h));
         _windows.Setup(w => w.EnumChildWindows(It.IsAny<nint>(), It.IsAny<Func<nint, bool>>()))
             .Callback((nint parent, Func<nint, bool> callback) =>
             {
@@ -57,6 +58,22 @@ public class AccessibilityWarmupTests
         public nint Parent { get; } = parent;
         public bool Visible { get; set; } = visible;
         public bool Alive { get; set; } = true;
+    }
+
+    /// <summary>The top-level window <paramref name="handle"/> is in (GA_ROOT), or zero when it is not on the desktop.</summary>
+    private nint RootOf(nint handle)
+    {
+        while (_desktop.TryGetValue(handle, out var window))
+        {
+            if (window.Parent == nint.Zero)
+            {
+                return handle;
+            }
+
+            handle = window.Parent;
+        }
+
+        return nint.Zero;
     }
 
     private IEnumerable<nint> Descendants(nint parent)
@@ -1302,6 +1319,45 @@ public class AccessibilityWarmupTests
         sut.WarmUp(Browser, Budget, CancellationToken.None);
         sut.FindPages(Browser, CancellationToken.None).Should().ContainSingle();
         _desktop[RenderWidget].Visible = false;
+
+        // Act
+        var pages = sut.FindPages(Browser, CancellationToken.None);
+
+        // Assert
+        pages.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void FindPages_AfterAWarmUpWhoseTabWasHiddenSince_GivesTheTabShownNow()
+    {
+        // Arrange - a read warmed the window up and did not walk it (find_ui_elements); then another tab was shown, and
+        // the first tab's render widget hidden
+        ChromeWithPage(documentChildren: 2);
+        var sut = CreateSut();
+        sut.WarmUp(Browser, Budget, CancellationToken.None);
+        _desktop[RenderWidget].Visible = false;
+        _desktop[HiddenTab] = new FakeWindow(AccessibilityWarmup.RenderWidgetHostClass, BrowserProcess, Browser);
+        var shownTab = new FakeUiaNode("Document", "Other tab");
+        AddChildren(shownTab, 1);
+        _tree.WithWindow(HiddenTab, shownTab);
+
+        // Act
+        var pages = sut.FindPages(Browser, CancellationToken.None);
+
+        // Assert - the background tab's page is not given as shown
+        pages.Should().Equal(new RenderWidgetPage(HiddenTab, Browser, shownTab));
+    }
+
+    [Fact]
+    public void FindPages_AfterAWarmUpWhoseTabWasMovedToAnotherWindowSince_LeavesItOut()
+    {
+        // Arrange - the tab was dragged out of the window into one of its own
+        const nint TornOff = 0x400;
+        ChromeWithPage(documentChildren: 2);
+        var sut = CreateSut();
+        sut.WarmUp(Browser, Budget, CancellationToken.None);
+        _desktop[TornOff] = new FakeWindow("Chrome_WidgetWin_1", BrowserProcess, 0);
+        _desktop[RenderWidget] = new FakeWindow(AccessibilityWarmup.RenderWidgetHostClass, BrowserProcess, TornOff);
 
         // Act
         var pages = sut.FindPages(Browser, CancellationToken.None);

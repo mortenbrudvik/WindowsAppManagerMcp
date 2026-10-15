@@ -34,9 +34,9 @@ public class BrowserReadingServiceTests
         _policy);
 
     /// <summary>
-    /// Shows a page in the browser window <paramref name="handle"/>: Window <paramref name="title"/> > ToolBar > Edit
-    /// "Address and search bar" with <paramref name="url"/> (none when null), and a Document with <paramref name="content"/>
-    /// as its text (none when null).
+    /// Shows a page in the browser window <paramref name="handle"/>: Window <paramref name="title"/> > ToolBar > Edit of
+    /// Chromium's address bar class with <paramref name="url"/> (none when null), and a Document "Example" with
+    /// <paramref name="content"/> as its text and <paramref name="url"/> as its value (none when the content is null).
     /// </summary>
     private void ShowPage(nint handle, string? url, string? content = null, string? title = "Example - Google Chrome")
     {
@@ -44,16 +44,25 @@ public class BrowserReadingServiceTests
         if (url != null)
         {
             window.With(new FakeUiaNode("ToolBar").With(
-                new FakeUiaNode("Edit", "Address and search bar") { ActionPatterns = ["Value"] }
+                new FakeUiaNode("Edit", "Adresse- og søkefelt") { ClassName = BrowserUiaReader.OmniboxClassName, ActionPatterns = ["Value"] }
                     .WithPattern<IUiaValuePattern>(new FakeValuePattern(url))));
         }
 
         if (content != null)
         {
-            window.With(new FakeUiaNode("Document", "Example").WithPattern<IUiaTextPattern>(new FakeTextPattern(content)));
+            var document = new FakeUiaNode("Document", "Example").WithPattern<IUiaTextPattern>(new FakeTextPattern(content));
+            window.With(url != null ? document.WithPattern<IUiaValuePattern>(new FakeValuePattern(url)) : document);
         }
 
         _tree.WithWindow(handle, window);
+    }
+
+    /// <summary>Shows <paramref name="browser"/> in the window <paramref name="handle"/>, its pages given by its render widgets.</summary>
+    private void ShowBrowser(nint handle, FakeBrowserWindow browser)
+    {
+        _tree.WithWindow(handle, browser.Window);
+        _warmup.Setup(w => w.FindPages(handle, It.IsAny<CancellationToken>()))
+            .Returns(browser.Pages.Select((page, i) => new RenderWidgetPage(new nint(700 + i), handle, page)).ToList());
     }
 
     #region GetBrowserUrl Tests
@@ -180,6 +189,138 @@ public class BrowserReadingServiceTests
         result.BrowserType.Should().Be("chrome");
         result.PageTitle.Should().Be(expectedTitle);
         result.ErrorCode.Should().Be(BrowserErrorCode.None);
+        result.UrlSource.Should().Be(BrowserUrlSource.AddressBar);
+        result.DisplayUrl.Should().Be(expectedUrl);
+        result.IsEditing.Should().BeFalse();
+    }
+
+    [Theory]
+    [MemberData(nameof(Languages))]
+    public async Task GetBrowserUrl_ReadsTheCommittedUrlFromTheShownPage_AndReportsTheAddressBar(BrowserNames names)
+    {
+        // Arrange
+        var handle = new nint(12345);
+        SetupValidBrowserWindow(handle, "msedge", "edge");
+        var browser = new FakeBrowserWindow(names);
+        ShowBrowser(handle, browser);
+
+        // Act
+        var result = await CreateSut().GetBrowserUrlAsync(handle);
+
+        // Assert
+        result.Should().BeEquivalentTo(new
+        {
+            Success = true,
+            Url = FakeBrowserWindow.CommittedUrl,
+            DisplayUrl = FakeBrowserWindow.ShownUrl,
+            UrlSource = BrowserUrlSource.Document,
+            IsEditing = (bool?)false,
+            PageTitle = browser.Title,
+            Source = BrowserReadSource.Uia
+        });
+        _warmup.Verify(w => w.FindPages(handle, _worker.LastToken), Times.Once);
+    }
+
+    public static TheoryData<BrowserNames> Languages() => new(BrowserNames.Localized);
+
+    [Fact]
+    public async Task GetBrowserUrl_ReportsTheNewTabPage_ApartFromAMissingAddressBar()
+    {
+        // Arrange
+        var handle = new nint(12345);
+        SetupValidBrowserWindow(handle, "chrome", "chrome");
+        ShowBrowser(handle, new FakeBrowserWindow(BrowserNames.ChromeNorwegian, pageTitle: "Ny fane",
+            committedUrl: "chrome://new-tab-page/", addressBarText: ""));
+
+        // Act
+        var result = await CreateSut().GetBrowserUrlAsync(handle);
+
+        // Assert
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(BrowserErrorCode.NewTabPage);
+        result.Url.Should().Be("chrome://new-tab-page/");
+        result.Error.Should().Contain("new tab page");
+    }
+
+    [Fact]
+    public async Task GetBrowserUrl_ReturnsUrlExtractionFailed_WhenTheAddressBarIsBeingEdited()
+    {
+        var handle = new nint(12345);
+        SetupValidBrowserWindow(handle, "chrome", "chrome");
+        var browser = new FakeBrowserWindow(BrowserNames.ChromeEnglish, committedUrl: null, addressBarText: "evil.example");
+        browser.Omnibox.HasKeyboardFocus = true;
+        ShowBrowser(handle, browser);
+
+        var result = await CreateSut().GetBrowserUrlAsync(handle);
+
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(BrowserErrorCode.UrlExtractionFailed);
+        result.Url.Should().BeNull();
+        result.DisplayUrl.Should().Be("evil.example");
+        result.IsEditing.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task GetBrowserUrl_DoesNotReturnTheAddressBarsText_WhenTheBrowserIsNotInFront()
+    {
+        // Arrange - the agent's terminal is in front; the address bar holds text typed and left there, which a browser
+        // behind another window reports as not focused
+        var handle = new nint(12345);
+        SetupValidBrowserWindow(handle, "chrome", "chrome");
+        _mockNativeWrapper.Setup(n => n.GetForegroundWindow()).Returns(new nint(4242));
+        ShowBrowser(handle, new FakeBrowserWindow(BrowserNames.ChromeEnglish, committedUrl: null,
+            addressBarText: "intranet.corp/secret-project"));
+
+        // Act
+        var result = await CreateSut().GetBrowserUrlAsync(handle);
+
+        // Assert
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(BrowserErrorCode.UrlExtractionFailed);
+        result.Url.Should().BeNull();
+        result.DisplayUrl.Should().Be("intranet.corp/secret-project");
+        result.IsEditing.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task GetBrowserUrl_TakesThePagesAddress_WhenTheBrowserIsNotInFront()
+    {
+        var handle = new nint(12345);
+        SetupValidBrowserWindow(handle, "chrome", "chrome");
+        _mockNativeWrapper.Setup(n => n.GetForegroundWindow()).Returns(new nint(4242));
+        ShowBrowser(handle, new FakeBrowserWindow(BrowserNames.ChromeEnglish));
+
+        var result = await CreateSut().GetBrowserUrlAsync(handle);
+
+        result.Success.Should().BeTrue();
+        result.Url.Should().Be(FakeBrowserWindow.CommittedUrl);
+        result.UrlSource.Should().Be(BrowserUrlSource.Document);
+        result.IsEditing.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task GetBrowserUrlAndContent_ReadAChildWindowsHandle_AsItsTopLevelWindow()
+    {
+        // Arrange - the handle of the page's render widget, from an element's nativeWindowHandle
+        var handle = new nint(12345);
+        var renderWidget = new nint(777);
+        SetupValidBrowserWindow(handle, "chrome", "chrome");
+        _mockNativeWrapper.Setup(n => n.IsWindow(renderWidget)).Returns(true);
+        _mockNativeWrapper.Setup(n => n.GetAncestor(renderWidget, WindowAncestor.Root)).Returns(handle);
+        ShowBrowser(handle, new FakeBrowserWindow(BrowserNames.ChromeEnglish));
+        var sut = CreateSut();
+
+        // Act
+        var url = await sut.GetBrowserUrlAsync(renderWidget);
+        var content = await sut.GetBrowserContentAsync(renderWidget);
+
+        // Assert
+        url.Url.Should().Be(FakeBrowserWindow.CommittedUrl);
+        url.PageTitle.Should().Be(new FakeBrowserWindow(BrowserNames.ChromeEnglish).Title);
+        content.Success.Should().BeTrue();
+        _worker.LastTargetProcessId.Should().Be(1000);
+        _warmup.Verify(w => w.FindPages(handle, It.IsAny<CancellationToken>()), Times.Exactly(2));
+        _warmup.Verify(w => w.FindPages(renderWidget, It.IsAny<CancellationToken>()), Times.Never);
     }
 
     // Note: Browser type detection is tested separately in GetBrowserType tests.
@@ -222,9 +363,9 @@ public class BrowserReadingServiceTests
     }
 
     [Fact]
-    public async Task GetBrowserContent_ReturnsError_WhenContentExtractionFails()
+    public async Task GetBrowserContent_ReturnsContentAreaNotFound_WhenTheWindowShowsNoPage()
     {
-        // Arrange
+        // Arrange - the address bar and the browser's panes are there, but no Document of a tab
         var handle = new nint(12345);
         SetupValidBrowserWindow(handle, "chrome", "chrome");
         ShowPage(handle, "https://example.com", content: null);
@@ -235,7 +376,54 @@ public class BrowserReadingServiceTests
 
         // Assert
         result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(BrowserErrorCode.ContentAreaNotFound);
+        result.Content.Should().BeNull();
+        result.Url.Should().BeNull();
+        result.Source.Should().Be("uia");
+    }
+
+    [Fact]
+    public async Task GetBrowserContent_ReturnsContentExtractionFailed_WhenThePageHasNoText()
+    {
+        // Arrange
+        var handle = new nint(12345);
+        SetupValidBrowserWindow(handle, "chrome", "chrome");
+        ShowPage(handle, "https://example.com", content: "");
+        var sut = CreateSut();
+
+        // Act
+        var result = await sut.GetBrowserContentAsync(handle);
+
+        // Assert
+        result.Success.Should().BeFalse();
         result.ErrorCode.Should().Be(BrowserErrorCode.ContentExtractionFailed);
+        result.Url.Should().Be("https://example.com");
+    }
+
+    [Fact]
+    public async Task GetBrowserContent_ReadsTheShownPage_AfterTheWarmup_WithoutTheAddressBar()
+    {
+        // Arrange
+        var handle = new nint(12345);
+        SetupValidBrowserWindow(handle, "msedge", "edge");
+        var browser = new FakeBrowserWindow(BrowserNames.EdgeNorwegian);
+        ShowBrowser(handle, browser);
+        var calls = new List<string>();
+        _warmup.Setup(w => w.WarmUp(handle, It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .Callback(() => calls.Add("WarmUp")).Returns(Warmed);
+        _warmup.Setup(w => w.FindPages(handle, It.IsAny<CancellationToken>()))
+            .Callback(() => calls.Add("FindPages"))
+            .Returns(browser.Pages.Select(page => new RenderWidgetPage(new nint(700), handle, page)).ToList());
+
+        // Act
+        var result = await CreateSut().GetBrowserContentAsync(handle);
+
+        // Assert
+        result.Success.Should().BeTrue();
+        result.Url.Should().Be(FakeBrowserWindow.CommittedUrl);
+        result.Content.Should().StartWith($"Welcome to {FakeBrowserWindow.PageTitle}");
+        calls.Should().Equal("WarmUp", "FindPages");
+        _tree.ChildListings.Should().NotContain([browser.Names.Frame, "ToolBar"]);
     }
 
     [Fact]
@@ -451,6 +639,7 @@ public class BrowserReadingServiceTests
         _mockNativeWrapper.Setup(n => n.GetWindowThreadProcessId(handle)).Returns(1000u);
         _mockNativeWrapper.Setup(n => n.GetProcessName(1000u)).Returns("msedge");
         _mockBrowserDetection.Setup(b => b.IsBrowser("msedge")).Returns(true);
+        _mockNativeWrapper.Setup(n => n.GetForegroundWindow()).Returns(handle);
         ShowPage(handle, "https://example.com");
         var sut = CreateSut();
 
@@ -545,7 +734,8 @@ public class BrowserReadingServiceTests
         Type: "page",
         Title: "Test Page",
         Url: "https://example.com/cdp",
-        WebSocketDebuggerUrl: "ws://127.0.0.1:9222/devtools/page/TAB1");
+        WebSocketDebuggerUrl: "ws://127.0.0.1:9222/devtools/page/TAB1",
+        Port: CdpPort);
 
     private void SetupCdpMatch(CdpResult<CdpTarget> result) =>
         _mockCdpService
@@ -707,6 +897,28 @@ public class BrowserReadingServiceTests
 
         result.Source.Should().Be("cdp");
         result.TargetId.Should().Be("TAB1");
+    }
+
+    [Fact]
+    public async Task GetActiveBrowserUrl_Ambiguous_DoesNotTellTheCallerToPassTargetIdToItself()
+    {
+        // get_active_browser_url takes no targetId (an undeclared argument is refused), so the hint names the tools that do
+        var handle = new nint(12345);
+        _mockNativeWrapper.Setup(n => n.GetForegroundWindow()).Returns(handle);
+        SetupValidBrowserWindow(handle, "chrome", "chrome");
+        var cdp = new CdpService(
+            new CdpTransport(
+                FakeCdpHttpHandler.Targets(("A", "Test Page", "https://example.com/a"), ("B", "Test Page", "https://example.com/b")),
+                FakeCdpWebSocketFactory.NeverConnects()),
+            new FakePortOwnerResolver(1000));
+        var sut = new BrowserReadingService(
+            _mockNativeWrapper.Object, _mockBrowserDetection.Object, cdp, _tree, _worker, _warmup.Object, _policy);
+
+        var result = await sut.GetActiveBrowserUrlAsync(new CdpOptions(Port: CdpPort, Required: true));
+
+        result.ErrorCode.Should().Be(BrowserErrorCode.CdpTargetAmbiguous);
+        result.Error.Should().Contain("targetId to get_browser_url or get_browser_content")
+            .And.NotContain("pass one as targetId (");
     }
 
     [Fact]
@@ -910,6 +1122,169 @@ public class BrowserReadingServiceTests
             It.IsAny<CdpTarget>(), It.IsAny<bool>(), It.IsAny<int?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
+    [Theory]
+    [InlineData(BrowserErrorCode.CdpTargetClosed)]
+    [InlineData(BrowserErrorCode.CdpResponseTooLarge)]
+    public async Task GetBrowserContent_FallsBackToUia_OnTheNewCdpCodes_WithoutTargetId(BrowserErrorCode code)
+    {
+        var handle = new nint(12345);
+        SetupValidBrowserWindow(handle, "chrome", "chrome");
+        SetupCdpMatch(CdpResult<CdpTarget>.Ok(CdpTab));
+        SetupCdpSnapshot(CdpResult<CdpPageSnapshot>.Fail(code, "the reason"));
+        ShowPage(handle, "https://example.com", "UIA text");
+        var sut = CreateSut();
+
+        var result = await sut.GetBrowserContentAsync(handle, cdp: new CdpOptions(Port: CdpPort));
+
+        result.Success.Should().BeTrue();
+        result.Source.Should().Be("uia");
+        result.CdpError.Should().Be($"{code}: the reason");
+    }
+
+    [Fact]
+    public async Task GetBrowserContent_ReturnsResponseTooLarge_InsteadOfHtmlRequiresCdp_ForHtml()
+    {
+        // The HTML exists and CDP works; it is only too large, so HtmlRequiresCdp's "CDP could not be used" would mislead
+        var handle = new nint(12345);
+        SetupValidBrowserWindow(handle, "chrome", "chrome");
+        SetupCdpMatch(CdpResult<CdpTarget>.Ok(CdpTab));
+        SetupCdpSnapshot(CdpResult<CdpPageSnapshot>.Fail(BrowserErrorCode.CdpResponseTooLarge, "over 64 MB; use maxLength"));
+        var sut = CreateSut();
+
+        var result = await sut.GetBrowserContentAsync(
+            handle, new BrowserContentOptions(TextOnly: false), new CdpOptions(Port: CdpPort));
+
+        result.ErrorCode.Should().Be(BrowserErrorCode.CdpResponseTooLarge);
+        result.Error.Should().Be("over 64 MB; use maxLength");
+        result.Source.Should().Be("cdp");
+        result.TargetId.Should().Be("TAB1");
+        _worker.Calls.Should().Be(0);
+    }
+
+    #endregion
+
+    #region targetId (roadmap M5.2)
+
+    private const string OtherTabId = "B7D4F3A9E5C1";
+
+    private static readonly CdpTarget OtherTab = CdpTab with { Id = OtherTabId, Title = "Other", Url = "https://example.com/other" };
+
+    private void SetupCdpTargetById(CdpResult<CdpTarget> result) =>
+        _mockCdpService
+            .Setup(c => c.FindTargetByIdAsync(
+                It.IsAny<int>(), It.IsAny<int>(), It.IsAny<string>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(result);
+
+    [Fact]
+    public void CdpOptions_TargetIdImpliesRequired()
+    {
+        new CdpOptions(Port: CdpPort).EffectiveRequired.Should().BeFalse();
+        new CdpOptions(Port: CdpPort, Required: true).EffectiveRequired.Should().BeTrue();
+        new CdpOptions(Port: CdpPort, TargetId: OtherTabId).EffectiveRequired.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task GetBrowserUrl_WithTargetId_LooksTheTabUpById_NotByTheWindowTitle()
+    {
+        var handle = new nint(12345);
+        SetupValidBrowserWindow(handle, "chrome", "chrome");
+        SetupCdpTargetById(CdpResult<CdpTarget>.Ok(OtherTab));
+        var sut = CreateSut();
+
+        var result = await sut.GetBrowserUrlAsync(handle, new CdpOptions(Port: CdpPort, TargetId: OtherTabId));
+
+        result.Success.Should().BeTrue();
+        result.Url.Should().Be("https://example.com/other");
+        result.TargetId.Should().Be(OtherTabId);
+        _mockCdpService.Verify(c => c.FindTargetByIdAsync(
+            CdpPort, 1000, OtherTabId, It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()), Times.Once);
+        _mockCdpService.Verify(c => c.FindTargetForWindowAsync(
+            It.IsAny<int>(), It.IsAny<int>(), It.IsAny<string>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task GetBrowserUrl_WithTargetId_ReturnsTheCdpError_AndNeverReadsThroughUia()
+    {
+        var handle = new nint(12345);
+        SetupValidBrowserWindow(handle, "chrome", "chrome");
+        SetupCdpTargetById(CdpResult<CdpTarget>.Fail(BrowserErrorCode.CdpTargetNotFound, "No tab with targetId"));
+        ShowPage(handle, "https://example.com/uia");
+        var sut = CreateSut();
+
+        var result = await sut.GetBrowserUrlAsync(handle, new CdpOptions(Port: CdpPort, Required: false, TargetId: OtherTabId));
+
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(BrowserErrorCode.CdpTargetNotFound);
+        result.Source.Should().Be("cdp");
+        _worker.Calls.Should().Be(0, "a tab asked for by id is never replaced by the window's address bar");
+    }
+
+    [Fact]
+    public async Task GetBrowserContent_WithTargetId_ReadsThatTab_WithinOneBudget()
+    {
+        var handle = new nint(12345);
+        SetupValidBrowserWindow(handle, "chrome", "chrome");
+        var lookup = TimeSpan.Zero;
+        _mockCdpService
+            .Setup(c => c.FindTargetByIdAsync(
+                It.IsAny<int>(), It.IsAny<int>(), It.IsAny<string>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .Returns(async () =>
+            {
+                var watch = System.Diagnostics.Stopwatch.StartNew();
+                await Task.Delay(300);
+                lookup = watch.Elapsed;
+                return CdpResult<CdpTarget>.Ok(OtherTab);
+            });
+        SetupCdpSnapshot(CdpResult<CdpPageSnapshot>.Ok(new CdpPageSnapshot("Other", "https://example.com/other", "other text")));
+        var sut = CreateSut();
+
+        var result = await sut.GetBrowserContentAsync(
+            handle, cdp: new CdpOptions(Port: CdpPort, TimeoutMs: CdpOptions.MaxTimeoutMs, TargetId: OtherTabId));
+
+        result.Success.Should().BeTrue();
+        result.Content.Should().Be("other text");
+        result.TargetId.Should().Be(OtherTabId);
+        lookup.Should().BeGreaterThan(TimeSpan.FromMilliseconds(250));
+        _mockCdpService.Verify(c => c.GetPageSnapshotAsync(
+            OtherTab, true, null,
+            It.Is<TimeSpan>(t => t > TimeSpan.Zero && t <= TimeSpan.FromMilliseconds(CdpOptions.MaxTimeoutMs) - lookup),
+            It.IsAny<CancellationToken>()), Times.Once);
+        _mockCdpService.Verify(c => c.FindTargetForWindowAsync(
+            It.IsAny<int>(), It.IsAny<int>(), It.IsAny<string>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task GetBrowserContent_WithTargetId_ReturnsTheCdpError_AndNeverReadsThroughUia()
+    {
+        var handle = new nint(12345);
+        SetupValidBrowserWindow(handle, "chrome", "chrome");
+        SetupCdpTargetById(CdpResult<CdpTarget>.Ok(OtherTab));
+        SetupCdpSnapshot(CdpResult<CdpPageSnapshot>.Fail(BrowserErrorCode.CdpTargetClosed, "The tab closed"));
+        ShowPage(handle, "https://example.com", "UIA text");
+        var sut = CreateSut();
+
+        var result = await sut.GetBrowserContentAsync(handle, cdp: new CdpOptions(Port: CdpPort, TargetId: OtherTabId));
+
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(BrowserErrorCode.CdpTargetClosed);
+        result.TargetId.Should().Be(OtherTabId);
+        _worker.Calls.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task GetBrowserContent_WithTargetIdButNoPort_ReturnsCdpUnavailable_WithoutReading()
+    {
+        var handle = new nint(12345);
+        SetupValidBrowserWindow(handle, "chrome", "chrome");
+        var sut = CreateSut();
+
+        var result = await sut.GetBrowserContentAsync(handle, cdp: new CdpOptions(Port: null, TargetId: OtherTabId));
+
+        result.ErrorCode.Should().Be(BrowserErrorCode.CdpUnavailable);
+        _worker.Calls.Should().Be(0);
+        _mockCdpService.VerifyNoOtherCalls();
+    }
+
     #endregion
 
     #region UI Automation path on the seam (roadmap M3.F24)
@@ -1019,7 +1394,7 @@ public class BrowserReadingServiceTests
     [Fact]
     public async Task GetBrowserUrl_StillReadsTheAddressBar_WhenTheWindowsNameCannotBeRead()
     {
-        // Arrange - the name search starts at the window, so only the edit box lookup can find the bar
+        // Arrange - the window's name is unreadable; the address bar below it is still found (the first edit box in a toolbar)
         var handle = new nint(12345);
         SetupValidBrowserWindow(handle, "chrome", "chrome");
         var window = new FakeUiaNode("Window", "Example - Google Chrome") { ReadException = FakeUiaTree.Vanished("window's name") }
@@ -1097,16 +1472,48 @@ public class BrowserReadingServiceTests
     }
 
     [Fact]
-    public async Task GetBrowserUrl_DoesNotWarmUpThePage()
+    public async Task GetBrowserUrl_WarmsUpThePage_BeforeFindingTheShownPages()
     {
-        // The address bar is the browser's own UI, which Chromium serves without the page's tree
+        // Arrange - the warm-up builds the page's Document, and gives the render widgets shown now, not the ones an
+        // earlier read's warm-up left behind
         var handle = new nint(12345);
         SetupValidBrowserWindow(handle, "chrome", "chrome");
-        ShowPage(handle, "https://example.com");
+        var browser = new FakeBrowserWindow(BrowserNames.ChromeEnglish);
+        ShowBrowser(handle, browser);
+        var calls = new List<string>();
+        _warmup.Setup(w => w.WarmUp(handle, It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .Callback(() => calls.Add("WarmUp")).Returns(Warmed);
+        _warmup.Setup(w => w.FindPages(handle, It.IsAny<CancellationToken>()))
+            .Callback(() => calls.Add("FindPages"))
+            .Returns(browser.Pages.Select(page => new RenderWidgetPage(new nint(700), handle, page)).ToList());
 
-        await CreateSut().GetBrowserUrlAsync(handle);
+        // Act
+        var result = await CreateSut().GetBrowserUrlAsync(handle, new CdpOptions(TimeoutMs: 3000));
 
-        _warmup.Verify(w => w.WarmUp(It.IsAny<nint>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()), Times.Never);
+        // Assert
+        result.Url.Should().Be(FakeBrowserWindow.CommittedUrl);
+        calls.Should().Equal("WarmUp", "FindPages");
+        _warmup.Verify(w => w.WarmUp(handle, AccessibilityWarmup.BudgetFor(TimeSpan.FromMilliseconds(3000)), _worker.LastToken), Times.Once);
+    }
+
+    [Fact]
+    public async Task GetBrowserContent_ReturnsOperationTimedOut_WhenTheSearchForThePageTimesOut()
+    {
+        // Arrange - a browser whose page does not answer, which is not a window without a page
+        var handle = new nint(12345);
+        SetupValidBrowserWindow(handle, "firefox", "firefox");
+        var window = new FakeUiaNode("Window", "Example - Mozilla Firefox").With(
+            new FakeUiaNode("Document", "Example").WithPattern<IUiaTextPattern>(new FakeTextPattern("text")));
+        window.FindAllException = new TimeoutException("The provider did not answer.");
+        _tree.WithWindow(handle, window);
+
+        // Act
+        var result = await CreateSut().GetBrowserContentAsync(handle);
+
+        // Assert
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(BrowserErrorCode.OperationTimedOut);
+        result.Error.Should().Contain("did not answer");
     }
 
     [Fact]
@@ -1143,8 +1550,7 @@ public class BrowserReadingServiceTests
 
         var result = await CreateSut().GetBrowserContentAsync(handle);
 
-        result.ErrorCode.Should().Be(BrowserErrorCode.ContentExtractionFailed);
-        result.Url.Should().Be("https://example.com");
+        result.ErrorCode.Should().Be(BrowserErrorCode.ContentAreaNotFound);
         result.AccessibilityWarmup.Should().Be(notReady);
     }
 
@@ -1205,6 +1611,7 @@ public class BrowserReadingServiceTests
         _mockNativeWrapper.Setup(n => n.GetWindowThreadProcessId(handle)).Returns(1000u);
         _mockNativeWrapper.Setup(n => n.GetProcessName(1000u)).Returns(processName);
         _mockNativeWrapper.Setup(n => n.GetWindowText(handle)).Returns($"Test Page - {processName}");
+        _mockNativeWrapper.Setup(n => n.GetForegroundWindow()).Returns(handle);
         _mockBrowserDetection.Setup(b => b.IsBrowser(It.IsAny<string>())).Returns(true);
     }
 

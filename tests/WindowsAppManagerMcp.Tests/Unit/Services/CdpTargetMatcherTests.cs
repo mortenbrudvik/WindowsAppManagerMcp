@@ -7,7 +7,7 @@ namespace WindowsAppManagerMcp.Tests.Unit.Services;
 public class CdpTargetMatcherTests
 {
     private static CdpTarget Page(string id, string title, string url) =>
-        new(Id: id, Type: "page", Title: title, Url: url, WebSocketDebuggerUrl: $"ws://127.0.0.1:9222/devtools/page/{id}");
+        new(Id: id, Type: "page", Title: title, Url: url, WebSocketDebuggerUrl: $"ws://127.0.0.1:9222/devtools/page/{id}", Port: 9222);
 
     [Fact]
     public void Match_ReturnsTabWhoseTitleIsShownByWindow()
@@ -111,6 +111,22 @@ public class CdpTargetMatcherTests
         result.Success.Should().BeFalse();
         result.ErrorCode.Should().Be(BrowserErrorCode.CdpTargetAmbiguous);
         result.Error.Should().Contain("A").And.Contain("B");
+    }
+
+    [Fact]
+    public void Match_Ambiguous_SaysToPassOneOfTheTabsAsTargetId()
+    {
+        // Roadmap M5.2: the listed ids are what get_browser_url and get_browser_content take as targetId
+        var targets = new[]
+        {
+            Page("A", "Inbox", "https://mail.example/a"),
+            Page("B", "Inbox", "https://mail.example/b")
+        };
+
+        var result = CdpTargetMatcher.Match("Inbox - Google Chrome", targets);
+
+        result.Error.Should().Contain("targetId A (https://mail.example/a)")
+            .And.Contain("pass one as targetId to get_browser_url or get_browser_content, with the same window and cdpPort");
     }
 
     [Fact]

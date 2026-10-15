@@ -461,13 +461,22 @@ public enum BrowserErrorCode
     /// <summary>The window is not a recognized browser.</summary>
     NotABrowser = 2,
 
-    /// <summary>Failed to find the URL bar element in the browser.</summary>
+    /// <summary>
+    /// UI Automation found neither the page's address in its Document nor the browser's address bar (roadmap M5.7: looked
+    /// up by class, AutomationId and structure, never by name).
+    /// </summary>
     UrlBarNotFound = 3,
 
-    /// <summary>Failed to get the URL value from the browser.</summary>
+    /// <summary>
+    /// UI Automation found the address bar but not the page's address: the address bar has the keyboard focus, or whether
+    /// it has cannot be told (the browser is not the foreground window, or its focus cannot be read), so its text may be
+    /// typed, not the page's; or it holds text that is not a URL (roadmap M5.7).
+    /// </summary>
     UrlExtractionFailed = 4,
 
-    /// <summary>Failed to find the content area in the browser.</summary>
+    /// <summary>
+    /// The page shown has no Document UI Automation can read: no shown, onscreen Document of a tab (roadmap M5.7).
+    /// </summary>
     ContentAreaNotFound = 5,
 
     /// <summary>Failed to extract content from the browser.</summary>
@@ -514,6 +523,12 @@ public enum BrowserErrorCode
     /// </summary>
     OperationTimedOut = 16,
 
+    /// <summary>
+    /// The tab shows the browser's new tab page (roadmap M5.7): its Document is the new tab page, or the address bar is
+    /// empty. It has no address of a site.
+    /// </summary>
+    NewTabPage = 17,
+
     // CDP (Chrome DevTools Protocol) errors are numbered from 30 so that other
     // browser error codes can be added above without renumbering.
 
@@ -542,7 +557,19 @@ public enum BrowserErrorCode
     CdpProtocolError = 37,
 
     /// <summary>HTML content (textOnly=false) was requested, but it is only available via CDP.</summary>
-    HtmlRequiresCdp = 38
+    HtmlRequiresCdp = 38,
+
+    /// <summary>
+    /// The tab's DevTools connection ended during the call: the browser closed it, the tab detached or crashed, or the
+    /// connection was reset (roadmap M5.2). The tab does not come back; read the window again without targetId.
+    /// </summary>
+    CdpTargetClosed = 39,
+
+    /// <summary>
+    /// The browser's answer was larger than the server reads: a /json page over 16 MB or a DevTools message over 64 MB
+    /// (roadmap M5.2). Nothing of it was returned.
+    /// </summary>
+    CdpResponseTooLarge = 40
 }
 
 /// <summary>
