@@ -18,10 +18,14 @@ namespace WindowsAppManagerMcp.Services;
 /// </para>
 /// <para>
 /// Navigation registers the load event (Page.loadEventFired or Page.domContentEventFired) before it sends Page.navigate,
-/// so an event that comes at once is not missed; the event only wakes the wait up. Page.navigate answers when the browser
-/// sends the new document to the page, which may still be showing the old one, so the old document's state never counts:
-/// the wait first sees the new document in Page.getFrameTree (its loaderId is the navigation's), then reads its
-/// document.readyState, every <see cref="PollInterval"/> or when the event comes.
+/// so an event that comes at once is not missed; the event only wakes the wait up. Chromium answers Page.navigate once the
+/// server has answered (the reply's errorText and isDownload need the response), so a slow server keeps the reply back: a
+/// reply that does not come in time is a navigation still loading when the tab answers a check, and CdpTimeout when it does
+/// not (waitUntil none does not wait for the reply past the gate's hold). The reply comes when the browser sends the new
+/// document to the page, which may still be showing the old one, so the old document's state never counts: the wait first
+/// sees a new document in Page.getFrameTree (the navigation's loaderId, or any other than the one read before
+/// Page.navigate, as when the new page replaced itself at once), then reads its document.readyState, every
+/// <see cref="PollInterval"/> or when the event comes.
 /// </para>
 /// </remarks>
 public sealed class CdpTabService : ICdpTabService
@@ -37,8 +41,29 @@ public sealed class CdpTabService : ICdpTabService
     /// </summary>
     public static readonly TimeSpan GateHold = TimeSpan.FromSeconds(1);
 
+    /// <summary>The loadState of a navigation that became a download: the tab keeps its page (NavigationFailed).</summary>
+    public const string DownloadState = "download";
+
+    /// <summary>
+    /// Page.navigate's errorText for a 4xx/5xx answer without a body: the server answered, and the tab shows the browser's
+    /// "HTTP ERROR" page, so it is loaded as a 404 page with a body is, not failed.
+    /// </summary>
+    private const string HttpResponseCodeFailure = "net::ERR_HTTP_RESPONSE_CODE_FAILURE";
+
+    /// <summary>What a page that answers nothing probably has, and what to do, as the reads say it.</summary>
+    private const string UnansweredAdvice =
+        "It probably has a JavaScript dialog (alert/confirm/prompt/beforeunload) open, is paused in the debugger, or is busy. " +
+        "If a dialog is open, inspect it (capture_window) and decide deliberately how to close it, or ask the user, before " +
+        "you retry; do not press Enter blindly, since Enter accepts a confirm or beforeunload dialog.";
+
     /// <summary>The longest one check of a wait (one command) may take before the wait goes on to the next.</summary>
     private static readonly TimeSpan MaxCheckTime = TimeSpan.FromSeconds(5);
+
+    /// <summary>The longest the main frame's document may be read for before a navigation.</summary>
+    private static readonly TimeSpan MaxPreNavigationLookup = TimeSpan.FromSeconds(1);
+
+    /// <summary>The most of a navigation's time kept to ask the tab why Page.navigate got no answer.</summary>
+    private static readonly TimeSpan MaxUnansweredProbeTime = TimeSpan.FromMilliseconds(500);
 
     /// <summary>The longest the browser-window lookup of list_tabs may take.</summary>
     private static readonly TimeSpan MaxWindowLookupTime = TimeSpan.FromSeconds(5);
@@ -204,36 +229,68 @@ public sealed class CdpTabService : ICdpTabService
         var enable = connection.SendAsync("Page.enable", null, timeout, cancellationToken);
         _ = enable.ContinueWith(static t => _ = t.Exception, TaskScheduler.Default);
 
-        // Registered before Page.navigate, so an event that comes at once is not missed
-        using var loaded = waitUntil switch
-        {
-            BrowserWaitUntil.Load => connection.ExpectEvent("Page.loadEventFired"),
-            BrowserWaitUntil.DomContentLoaded => connection.ExpectEvent("Page.domContentEventFired"),
-            _ => null
-        };
+        if (waitUntil == BrowserWaitUntil.None)
+            return await NavigateWithoutWaitingAsync(connection, url, gate, timeout - stopwatch.Elapsed, cancellationToken).ConfigureAwait(false);
 
-        var reply = await SendGatedAsync(connection, gate, "Page.navigate", new { url }, timeout - stopwatch.Elapsed, cancellationToken)
+        // Network.enable reports the document's response, whose status a 4xx/5xx answer without a body has nowhere else
+        // (net::ERR_HTTP_RESPONSE_CODE_FAILURE); not awaited either
+        var network = connection.SendAsync("Network.enable", null, timeout, cancellationToken);
+        _ = network.ContinueWith(static t => _ = t.Exception, TaskScheduler.Default);
+
+        // The document before the navigation: any other one in the main frame is past the navigation's commit, also one
+        // the new page replaced at once (location.replace, a meta refresh), whose loaderId is not the navigation's
+        var before = await connection.SendAsync("Page.getFrameTree", null, PreNavigationLookup(timeout - stopwatch.Elapsed), cancellationToken)
+            .ConfigureAwait(false);
+        if (!before.Success && IsFinal(before.ErrorCode))
+            return before.FailAs<CdpNavigation>();
+
+        var oldFrame = before.Success && before.Value!.Error == null ? MainFrame(before.Value.Result) : null;
+
+        // Registered before Page.navigate, so an event that comes at once is not missed
+        using var loaded = waitUntil == BrowserWaitUntil.Load
+            ? connection.ExpectEvent("Page.loadEventFired")
+            : connection.ExpectEvent("Page.domContentEventFired");
+        using var response = connection.ExpectEvent("Network.responseReceived", p =>
+            CdpReplies.GetString(p, "type") == "Document" &&
+            (oldFrame is not { } frame || CdpReplies.GetString(p, "frameId") == frame.FrameId));
+
+        // Chromium answers Page.navigate once the server has answered (its errorText and isDownload need the response), so a
+        // slow server keeps the reply back: a part of the time is kept to ask the tab why when it does not come
+        var left = timeout - stopwatch.Elapsed;
+        if (left <= TimeSpan.Zero)
+        {
+            return CdpResult<CdpNavigation>.Fail(
+                BrowserErrorCode.CdpTimeout, "The time limit was used up before Page.navigate could be sent. Nothing was changed.");
+        }
+
+        var reply = await SendGatedAsync(connection, gate, "Page.navigate", new { url }, left - UnansweredProbeTime(left), cancellationToken)
             .ConfigureAwait(false);
         if (!reply.Success)
         {
-            return reply.ErrorCode == BrowserErrorCode.CdpTimeout
-                ? CdpResult<CdpNavigation>.Fail(
+            if (reply.ErrorCode != BrowserErrorCode.CdpTimeout)
+                return reply.FailAs<CdpNavigation>();
+
+            // The tab answers while its old page waits for a slow server: the navigation goes on loading. A tab that does not
+            // answer either is blocked (a dialog the browser did not report to this connection) or busy
+            var waiting = await ProbeAsync(connection, Bounded(timeout - stopwatch.Elapsed), cancellationToken).ConfigureAwait(false);
+            if (waiting.Failure is { } blocked)
+                return blocked.FailAs<CdpNavigation>();
+
+            return waiting.ReadyState != null
+                ? CdpResult<CdpNavigation>.Ok(new CdpNavigation(null, null, null, "loading", true))
+                : CdpResult<CdpNavigation>.Fail(
                     BrowserErrorCode.CdpTimeout,
-                    $"Tab {target.Id} did not answer Page.navigate within {FormatMs(timeout)}: the page may be busy or have a " +
-                    "dialog open, or the server is slow to answer. The navigation may still go on; check it with get_browser_url " +
-                    "before you retry.")
-                : reply.FailAs<CdpNavigation>();
+                    $"Tab {target.Id} answered neither Page.navigate nor a check within {FormatMs(timeout)}. {UnansweredAdvice} " +
+                    "The navigation may still go on; check it with get_browser_url before you retry.");
         }
 
         if (reply.Value!.Error is { } fault)
             return CdpReplies.ToFailure<CdpNavigation>("Page.navigate", fault);
 
         var errorText = CdpReplies.GetString(reply.Value.Result, "errorText");
-        if (errorText.Length > 0)
-            return CdpResult<CdpNavigation>.Ok(new CdpNavigation(null, null, null, "failed", false, errorText));
-
-        if (waitUntil == BrowserWaitUntil.None)
-            return CdpResult<CdpNavigation>.Ok(new CdpNavigation(null, null, null, "notWaited", false));
+        var httpError = errorText == HttpResponseCodeFailure;
+        if (errorText.Length > 0 && !httpError)
+            return CdpResult<CdpNavigation>.Ok(Failed(reply.Value.Result, errorText));
 
         var loaderId = CdpReplies.GetString(reply.Value.Result, "loaderId");
         if (loaderId.Length == 0)
@@ -245,7 +302,7 @@ public sealed class CdpTabService : ICdpTabService
                 : CdpResult<CdpNavigation>.Ok(new CdpNavigation(page.Url, page.Title, page.Status, "sameDocument", false));
         }
 
-        var wakeUp = loaded?.WaitAsync(timeout - stopwatch.Elapsed, cancellationToken);
+        var wakeUp = loaded.WaitAsync(timeout - stopwatch.Elapsed, cancellationToken);
         var committed = false;
         PageProbe? last = null;
         while (true)
@@ -260,7 +317,8 @@ public sealed class CdpTabService : ICdpTabService
                 if (!tree.Success && IsFinal(tree.ErrorCode))
                     return tree.FailAs<CdpNavigation>();
 
-                committed = tree.Success && tree.Value!.Error == null && MainFrameLoaderId(tree.Value.Result) == loaderId;
+                var now = tree.Success && tree.Value!.Error == null ? MainFrame(tree.Value.Result)?.LoaderId : null;
+                committed = now is { Length: > 0 } && (now == loaderId || (oldFrame != null && now != oldFrame.LoaderId));
             }
 
             if (committed)
@@ -271,11 +329,11 @@ public sealed class CdpTabService : ICdpTabService
 
                 if (page.ReadyState != null)
                 {
-                    last = page;
+                    last = httpError ? await AsServerErrorAsync(page, url, response, cancellationToken).ConfigureAwait(false) : page;
                     if (IsReady(page.ReadyState, waitUntil))
                     {
                         return CdpResult<CdpNavigation>.Ok(new CdpNavigation(
-                            page.Url, page.Title, page.Status, waitUntil == BrowserWaitUntil.Load ? "load" : "domcontentloaded", false));
+                            last.Url, last.Title, last.Status, waitUntil == BrowserWaitUntil.Load ? "load" : "domcontentloaded", false));
                     }
                 }
             }
@@ -296,6 +354,72 @@ public sealed class CdpTabService : ICdpTabService
         }
 
         return CdpResult<CdpNavigation>.Ok(new CdpNavigation(last?.Url, last?.Title, last?.Status, "loading", true));
+    }
+
+    /// <summary>
+    /// waitUntil none: Page.navigate is sent inside the gate, which is held until the browser answers or
+    /// <see cref="GateHold"/> has passed, and the call returns then. A reply that came by then is read (a refused URL, an
+    /// address that does not load, a download); one that has not (the server has not answered yet) is not waited for.
+    /// </summary>
+    private static async Task<CdpResult<CdpNavigation>> NavigateWithoutWaitingAsync(
+        ICdpConnection connection, string url, CdpGate gate, TimeSpan timeout, CancellationToken cancellationToken)
+    {
+        var notWaited = CdpResult<CdpNavigation>.Ok(new CdpNavigation(null, null, null, "notWaited", false));
+        if (timeout <= TimeSpan.Zero)
+        {
+            return CdpResult<CdpNavigation>.Fail(
+                BrowserErrorCode.CdpTimeout, "The time limit was used up before Page.navigate could be sent. Nothing was changed.");
+        }
+
+        var sent = await StartGatedAsync(connection, gate, "Page.navigate", new { url }, timeout, cancellationToken).ConfigureAwait(false);
+        if (!sent.IsCompleted)
+        {
+            _ = sent.ContinueWith(static t => _ = t.Exception, TaskScheduler.Default);
+            return notWaited;
+        }
+
+        var reply = await sent.ConfigureAwait(false);
+        if (!reply.Success)
+            return reply.ErrorCode == BrowserErrorCode.CdpTimeout ? notWaited : reply.FailAs<CdpNavigation>();
+
+        if (reply.Value!.Error is { } fault)
+            return CdpReplies.ToFailure<CdpNavigation>("Page.navigate", fault);
+
+        var errorText = CdpReplies.GetString(reply.Value.Result, "errorText");
+        return errorText.Length > 0 && errorText != HttpResponseCodeFailure
+            ? CdpResult<CdpNavigation>.Ok(Failed(reply.Value.Result, errorText))
+            : notWaited;
+    }
+
+    /// <summary>
+    /// A navigation Page.navigate answered with an errorText: a download (isDownload; Chromium reports net::ERR_ABORTED and
+    /// the tab keeps its page), or a page the browser could not load (it shows its error page).
+    /// </summary>
+    private static CdpNavigation Failed(JsonElement reply, string errorText) =>
+        new(null, null, null, IsTrue(reply, "isDownload") ? DownloadState : "failed", false, errorText);
+
+    /// <summary>
+    /// The browser's error page for a 4xx/5xx answer without a body, read as that answer: the address asked for (the error
+    /// page's own is an internal chrome-error: one) and the status of the document's response, which the page does not know.
+    /// </summary>
+    private static async Task<PageProbe> AsServerErrorAsync(
+        PageProbe page, string url, ICdpEventWaiter response, CancellationToken cancellationToken)
+    {
+        var status = page.Status;
+        if (status == null)
+        {
+            // The response came before the commit, so the event is in already when there is one
+            var received = await response.WaitAsync(TimeSpan.FromMilliseconds(1), cancellationToken).ConfigureAwait(false);
+            if (received.Success && received.Value.TryGetProperty("response", out var answer) && answer.ValueKind == JsonValueKind.Object &&
+                answer.TryGetProperty("status", out var s) && s.ValueKind == JsonValueKind.Number && s.TryGetInt32(out var code) &&
+                code is >= 100 and <= 999)
+            {
+                status = code;
+            }
+        }
+
+        var shown = page.Url is { } at && at.StartsWith("chrome-error:", StringComparison.OrdinalIgnoreCase) ? url : page.Url;
+        return page with { Url = shown, Status = status };
     }
 
     /// <inheritdoc />
@@ -320,6 +444,7 @@ public sealed class CdpTabService : ICdpTabService
         var expression = BuildWaitExpression(condition);
         CdpWaitOutcome? last = null;
         var first = true;
+        var answered = false;
         while (true)
         {
             var budget = first ? firstBudget - stopwatch.Elapsed : timeout - stopwatch.Elapsed;
@@ -328,10 +453,12 @@ public sealed class CdpTabService : ICdpTabService
 
             var check = await CheckAsync(connection, expression, condition, Bounded(budget > TimeSpan.Zero ? budget : TimeSpan.FromMilliseconds(1)),
                 cancellationToken).ConfigureAwait(false);
-            if (!check.Success)
+            if (!check.Success && IsFinal(check.ErrorCode))
                 return check;
 
-            if (check.Value is { } seen)
+            // A check the page did not answer in time is skipped; one it answered, even between two documents, is not
+            answered |= check.Success;
+            if (check is { Success: true, Value: { } seen })
             {
                 last = seen;
                 if (seen.Satisfied)
@@ -346,13 +473,24 @@ public sealed class CdpTabService : ICdpTabService
             await Task.Delay(remaining < PollInterval ? remaining : PollInterval, cancellationToken).ConfigureAwait(false);
         }
 
+        // No check answered at all: the page is blocked, by a dialog the browser does not report to a new connection (Edge
+        // does not report one that was open before), the debugger or a script; waiting longer does not help
+        if (!answered)
+        {
+            return CdpResult<CdpWaitOutcome>.Fail(
+                BrowserErrorCode.CdpTimeout,
+                $"The page in tab {target.Id} answered no check within {stopwatch.ElapsedMilliseconds} ms. {UnansweredAdvice} " +
+                "Or read the window with UI Automation (useCdp=false).");
+        }
+
         return CdpResult<CdpWaitOutcome>.Ok(last ?? new CdpWaitOutcome(false, null, null,
-            "the page did not answer a check in time (it may be busy or loading)"));
+            "the page could not be checked: it was between two documents or busy at every check"));
     }
 
     /// <summary>
-    /// One check of a wait: the condition's result, or null when the page could not be checked this time (it was busy or
-    /// between two documents); a failure that ends the wait (a dialog, a closed tab, a selector that is not valid CSS).
+    /// One check of a wait: the condition's result, or null when the page answered but could not be checked this time (it
+    /// was between two documents); CdpTimeout when it did not answer in time (busy, or blocked); a failure that ends the
+    /// wait (a dialog, a closed tab, a selector that is not valid CSS).
     /// </summary>
     private static async Task<CdpResult<CdpWaitOutcome>> CheckAsync(
         ICdpConnection connection, string expression, BrowserWaitCondition condition, TimeSpan timeout, CancellationToken cancellationToken)
@@ -365,7 +503,7 @@ public sealed class CdpTabService : ICdpTabService
         }, timeout, cancellationToken).ConfigureAwait(false);
 
         if (!evaluated.Success)
-            return IsFinal(evaluated.ErrorCode) ? evaluated.FailAs<CdpWaitOutcome>() : CdpResult<CdpWaitOutcome>.Ok(null!);
+            return evaluated.FailAs<CdpWaitOutcome>();
 
         // An error reply or an exception: the page is between two documents (its context was destroyed); check again
         if (evaluated.Value!.Error != null || ValueOf(evaluated.Value.Result) is not { } value)
@@ -465,13 +603,24 @@ public sealed class CdpTabService : ICdpTabService
     private static bool IsTrue(JsonElement value, string name) =>
         value.TryGetProperty(name, out var property) && property.ValueKind == JsonValueKind.True;
 
-    /// <summary>Page.getFrameTree's main frame's loaderId: the document the tab has now.</summary>
-    private static string MainFrameLoaderId(JsonElement result) =>
+    /// <summary>Page.getFrameTree's main frame: its id, and its loaderId, the document the tab has now; null when not read.</summary>
+    private static FrameDocument? MainFrame(JsonElement result) =>
         result.ValueKind == JsonValueKind.Object &&
         result.TryGetProperty("frameTree", out var tree) && tree.ValueKind == JsonValueKind.Object &&
-        tree.TryGetProperty("frame", out var frame)
-            ? CdpReplies.GetString(frame, "loaderId")
-            : "";
+        tree.TryGetProperty("frame", out var frame) && CdpReplies.GetString(frame, "loaderId") is { Length: > 0 } loaderId
+            ? new FrameDocument(CdpReplies.GetString(frame, "id"), loaderId)
+            : null;
+
+    /// <summary>A frame and the document it has (its loaderId).</summary>
+    private sealed record FrameDocument(string FrameId, string LoaderId);
+
+    /// <summary>How long the main frame's document may be read for before the navigation: at most a second or a quarter of the time.</summary>
+    private static TimeSpan PreNavigationLookup(TimeSpan remaining) =>
+        Bounded(remaining / 4 < MaxPreNavigationLookup ? remaining / 4 : MaxPreNavigationLookup);
+
+    /// <summary>The part of a navigation's time kept to ask the tab why Page.navigate got no answer: at most half a second or a quarter.</summary>
+    private static TimeSpan UnansweredProbeTime(TimeSpan remaining) =>
+        remaining / 4 < MaxUnansweredProbeTime ? remaining / 4 : MaxUnansweredProbeTime;
 
     /// <summary>
     /// Whether a failed command ends a wait: a dialog, a closed connection, an answer too large or unreadable. A timeout
@@ -496,6 +645,17 @@ public sealed class CdpTabService : ICdpTabService
                 BrowserErrorCode.CdpTimeout, $"The time limit was used up before {method} could be sent. Nothing was changed.");
         }
 
+        var sent = await StartGatedAsync(connection, gate, method, parameters, timeout, cancellationToken).ConfigureAwait(false);
+        return await sent.ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Sends a command inside the gate as <see cref="SendGatedAsync"/> does, and returns once the gate is let go, with the
+    /// reply still to come when the browser has not answered within <see cref="GateHold"/>.
+    /// </summary>
+    private static async Task<Task<CdpResult<CdpReply>>> StartGatedAsync(
+        ICdpConnection connection, CdpGate gate, string method, object parameters, TimeSpan timeout, CancellationToken cancellationToken)
+    {
         Task<CdpResult<CdpReply>> sent;
         using (await gate(cancellationToken).ConfigureAwait(false))
         {
@@ -506,7 +666,7 @@ public sealed class CdpTabService : ICdpTabService
             hold.Cancel();
         }
 
-        return await sent.ConfigureAwait(false);
+        return sent;
     }
 
     /// <summary>The browser-level DevTools connection (/json/version's webSocketDebuggerUrl).</summary>

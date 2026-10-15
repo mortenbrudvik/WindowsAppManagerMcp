@@ -35,6 +35,8 @@ public class BrowserTabToolsTests
     [InlineData("https://example.com/")]
     [InlineData("http://127.0.0.1:8080/page.html?q=1#top")]
     [InlineData("HTTPS://Example.com")]
+    [InlineData("https://example.com/json/list")]
+    [InlineData("http://127.0.0.1:8080/jsonp/data")]
     [InlineData("about:blank")]
     public async Task BrowserNavigate_OpensWebPagesAndAboutBlank(string url)
     {
@@ -65,6 +67,15 @@ public class BrowserTabToolsTests
     [InlineData("https://")]
     [InlineData("https://example.com/a b")]
     [InlineData("https://example.com/\nX")]
+    [InlineData("http://127.0.0.1:9222/json/list")]
+    [InlineData("http://localhost:9222/json/close/ABC")]
+    [InlineData("http://LOCALHOST:9222/JSON/activate/ABC")]
+    [InlineData("http://127.1:9222/json/version")]
+    [InlineData("http://0x7f000001:9222/json")]
+    [InlineData("http://[::1]:9222/devtools/page/ABC")]
+    [InlineData("http://tabs.localhost:9222/json/new?https://example.com")]
+    [InlineData("http://0.0.0.0:9222/json/list")]
+    [InlineData("http://127.0.0.1:9222/./json/list")]
     [InlineData("")]
     [InlineData("   ")]
     public async Task BrowserNavigate_RefusesEveryOtherUrl_AndDoesNothing(string url)

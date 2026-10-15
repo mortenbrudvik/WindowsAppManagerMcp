@@ -79,6 +79,24 @@ public class AuditLogContractTests
         line.GetProperty("target").GetProperty("handle").GetInt64().Should().Be(TypicalDesktop.BrowserHandle);
     }
 
+    [Theory]
+    [InlineData("file:///C:/Users/me/Documents/Taxes/2025-return.pdf")]
+    [InlineData(@"C:\Users\me\Documents\Taxes\2025-return.pdf")]
+    [InlineData(@"\\fileserver\Taxes\2025-return.pdf")]
+    public async Task BrowserNavigate_ARefusedLocalPath_IsRecordedAsItsSchemeOnly(string url)
+    {
+        // The call is refused (InvalidArguments) but still audited: a file's name can say what the user works on
+        var (_, lines) = await CallAsync("browser_navigate", new Dictionary<string, object?>
+        {
+            ["handle"] = TypicalDesktop.BrowserHandle,
+            ["url"] = url
+        });
+
+        var line = lines.Single();
+        line.GetProperty("args").GetProperty("url").GetString().Should().Be("file:");
+        line.GetRawText().Should().NotContain("Taxes").And.NotContain("2025-return");
+    }
+
     [Fact]
     public void EveryInputTool_IsAudited()
     {

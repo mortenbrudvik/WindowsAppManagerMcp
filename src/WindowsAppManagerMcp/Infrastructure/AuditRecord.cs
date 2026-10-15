@@ -58,8 +58,8 @@ public static class AuditRecord
     };
 
     /// <summary>
-    /// The tool whose <c>url</c> argument is kept as its scheme, host and port, as a launched URL is
-    /// (<see cref="RedactExecutable"/>): the page's path and query can hold a secret (a reset or share link).
+    /// The tool whose <c>url</c> argument is kept as a web page's scheme, host and port, and otherwise as its scheme alone
+    /// (<see cref="RedactNavigatedUrl"/>): the page's path and query can hold a secret (a reset or share link).
     /// </summary>
     private const string NavigatedUrlTool = "browser_navigate";
 
@@ -152,7 +152,7 @@ public static class AuditRecord
     /// <item>A number or boolean is kept where the tool declares the parameter as one; where it does not (a PIN sent as
     /// a number for a text), or with no schema, it is recorded as the length of its JSON text.</item>
     /// <item>A string in <see cref="NamedStringArguments"/> is kept (<c>executable</c>, and browser_navigate's <c>url</c>,
-    /// redacted, with <c>executableLength</c> or <c>urlLength</c> when something was cut), unless it is content for <paramref name="tool"/>
+    /// redacted, with <c>executableLength</c> when something was cut, and always with <c>urlLength</c>), unless it is content for <paramref name="tool"/>
     /// (<see cref="ContentArguments"/>); any other string is recorded as <c>&lt;name&gt;Length</c>.</item>
     /// <item>An array is recorded as <c>&lt;name&gt;Count</c>; objects and nulls are left out.</item>
     /// </list>
@@ -189,7 +189,12 @@ public static class AuditRecord
                 case JsonValueKind.Number or JsonValueKind.True or JsonValueKind.False:
                     summary[name + "Length"] = value.GetRawText().Length;
                     break;
-                case JsonValueKind.String when name == ExecutableArgument || (name == "url" && tool == NavigatedUrlTool):
+                case JsonValueKind.String when name == "url" && tool == NavigatedUrlTool:
+                    var url = value.GetString()!;
+                    summary[name] = RedactNavigatedUrl(url);
+                    summary[name + "Length"] = url.Length;
+                    break;
+                case JsonValueKind.String when name == ExecutableArgument:
                     var executable = value.GetString()!;
                     var redacted = RedactExecutable(executable);
                     summary[name] = redacted;
@@ -353,6 +358,33 @@ public static class AuditRecord
         var host = end < 0 ? executable : executable[..end];
         var at = host.LastIndexOf('@');
         return Cut(at < 0 ? host : host[(at + 1)..], MaxTitleLength);
+    }
+
+    /// <summary>
+    /// browser_navigate's url as it is recorded (roadmap M5.5): a web page's scheme, host and port
+    /// (<c>https://accounts.example.com</c>), about:blank as it is, and any other URL as its scheme alone (<c>file:</c>,
+    /// <c>javascript:</c>), or <c>invalid</c> without one. The tool refuses those, but the call is recorded all the same, and
+    /// unlike a launched program's path, a local file's path or name can say what the user works on.
+    /// </summary>
+    public static string RedactNavigatedUrl(string url)
+    {
+        ArgumentNullException.ThrowIfNull(url);
+
+        if (string.Equals(url, "about:blank", StringComparison.OrdinalIgnoreCase))
+            return "about:blank";
+
+        if (Uri.TryCreate(url, UriKind.Absolute, out var uri))
+        {
+            return uri.Scheme is "http" or "https" && !uri.IsFile && !uri.IsUnc
+                ? Cut(uri.GetComponents(UriComponents.SchemeAndServer, UriFormat.UriEscaped), MaxTitleLength)
+                : Cut(uri.Scheme.ToLowerInvariant() + ":", MaxTitleLength);
+        }
+
+        var colon = url.IndexOf(':');
+        var scheme = colon > 0 ? url[..colon] : "";
+        return scheme.Length > 0 && char.IsAsciiLetter(scheme[0]) && scheme.All(c => char.IsAsciiLetterOrDigit(c) || c is '+' or '-' or '.')
+            ? Cut(scheme.ToLowerInvariant() + ":", MaxTitleLength)
+            : "invalid";
     }
 
     private static AuditTarget? Target(AuditCall call, JsonObject? body)

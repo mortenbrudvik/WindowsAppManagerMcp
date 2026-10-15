@@ -375,6 +375,82 @@ public class BrowserTabServiceTests
     }
 
     [Fact]
+    public async Task Navigate_NewTab_WhenTheGateRefusesTheNavigation_ReportsTheTabItOpened()
+    {
+        // The tab is opened inside the gate, which is let go; the user pauses before Page.navigate takes it again
+        var opened = Other with { Id = "NEW1" };
+        _tabs.Setup(t => t.OpenTabAsync(Port, (int)BrowserPid, It.IsAny<CdpGate>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .Returns(async (int _, int _, CdpGate gate, TimeSpan _, CancellationToken token) =>
+            {
+                using (await gate(token))
+                {
+                }
+
+                _session.Pause(InputControlSources.Hotkey);
+                return CdpResult<CdpTarget>.Ok(opened);
+            });
+        _tabs.Setup(t => t.NavigateAsync(opened, It.IsAny<string>(), It.IsAny<BrowserWaitUntil>(), It.IsAny<CdpGate>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .Returns(async (CdpTarget _, string _, BrowserWaitUntil _, CdpGate gate, TimeSpan _, CancellationToken token) =>
+            {
+                using (await gate(token))
+                {
+                    return CdpResult<CdpNavigation>.Ok(new CdpNavigation(null, null, null, "load", false));
+                }
+            });
+
+        var result = await CreateSut().NavigateAsync(ByWindow(), new BrowserNavigateOptions("https://example.com/", true, BrowserWaitUntil.Load, 15_000));
+
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(nameof(WindowErrorCode.PausedByUser));
+        result.TargetId.Should().Be("NEW1");
+        result.NewTab.Should().BeTrue();
+        result.Error.Should().Contain("NEW1").And.Contain("about:blank").And.NotContain("Nothing was done");
+    }
+
+    [Fact]
+    public async Task Navigate_ADownload_IsNavigationFailed_SayingTheTabKeptItsPage()
+    {
+        _tabs.Setup(t => t.NavigateAsync(It.IsAny<CdpTarget>(), It.IsAny<string>(), It.IsAny<BrowserWaitUntil>(), It.IsAny<CdpGate>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(CdpResult<CdpNavigation>.Ok(new CdpNavigation(null, null, null, "download", false, "net::ERR_ABORTED")));
+
+        var result = await CreateSut().NavigateAsync(ByWindow(), new BrowserNavigateOptions("https://example.com/report.pdf", false, BrowserWaitUntil.Load, 15_000));
+
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(nameof(BrowserErrorCode.NavigationFailed));
+        result.LoadState.Should().Be("download");
+        result.Error.Should().Contain("download").And.NotContain("error page");
+    }
+
+    [Theory]
+    [InlineData("http://127.0.0.1:9222/")]
+    [InlineData("http://localhost:9222/anything")]
+    [InlineData("http://127.1:9222/")]
+    [InlineData("http://[::1]:9222/")]
+    public async Task Navigate_ToTheDevToolsPortOfABrowserOnThisComputer_IsRefused(string url)
+    {
+        // /json/close, /json/activate and /json/list answer a plain navigation: another browser's tabs could be read or
+        // closed past the target policy, and the debug browser's own closed without close_tab
+        var result = await CreateSut().NavigateAsync(ByWindow(), new BrowserNavigateOptions(url, false, BrowserWaitUntil.Load, 15_000));
+
+        result.ErrorCode.Should().Be(ToolErrorReporting.InvalidArgumentsErrorCode);
+        result.Error.Should().Contain("DevTools").And.Contain("Nothing was done");
+        _tabs.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task Navigate_ToALoopbackPageOfAProgramThatIsNoBrowser_IsOpened()
+    {
+        _owners = new FakePortOwnerResolver(owner: 777);
+        _windows.Setup(w => w.GetProcessName(777u)).Returns("dotnet");
+        _tabs.Setup(t => t.NavigateAsync(Shown, "http://127.0.0.1:8080/a", BrowserWaitUntil.Load, It.IsAny<CdpGate>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(CdpResult<CdpNavigation>.Ok(new CdpNavigation("http://127.0.0.1:8080/a", "A", 200, "load", false)));
+
+        var result = await CreateSut().NavigateAsync(ByWindow(), new BrowserNavigateOptions("http://127.0.0.1:8080/a", false, BrowserWaitUntil.Load, 15_000));
+
+        result.Success.Should().BeTrue(result.Error);
+    }
+
+    [Fact]
     public async Task Wait_NotSatisfied_IsWaitTimedOut_WithWhatWasMissing()
     {
         _tabs.Setup(t => t.WaitAsync(Shown, It.IsAny<BrowserWaitCondition>(), TimeSpan.FromMilliseconds(5000), BrowserTabService.MinimumCheckTime, It.IsAny<CancellationToken>()))

@@ -173,6 +173,28 @@ public class AuditRecordTests
         entry.Args!["executableLength"]!.GetValue<int>().Should().Be(executable.Length);
     }
 
+    [Theory]
+    [InlineData("https://accounts.example.com/reset?token=SECRET", "https://accounts.example.com")]
+    [InlineData("http://user:SECRET@127.0.0.1:8080/SECRET#SECRET", "http://127.0.0.1:8080")]
+    [InlineData("about:blank", "about:blank")]
+    [InlineData("file:///C:/Users/me/Documents/SECRET/2025-return.pdf", "file:")] // refused, but recorded: never its path
+    [InlineData(@"C:\Users\me\SECRET.txt", "file:")]
+    [InlineData(@"\\server\share\SECRET.txt", "file:")]
+    [InlineData("javascript:alert('SECRET')", "javascript:")]
+    [InlineData("data:text/html,SECRET", "data:")]
+    [InlineData("Chrome://settings/SECRET", "chrome:")]
+    [InlineData("example.com/SECRET", "invalid")]
+    [InlineData("SECRET", "invalid")]
+    public void BrowserNavigatesUrl_KeepsOnlyAWebPagesSchemeAndHost_AndOtherwiseItsSchemeAlone(string url, string recorded)
+    {
+        AuditRecord.RedactNavigatedUrl(url).Should().Be(recorded);
+
+        var entry = Build(Call("browser_navigate", new { url }), null);
+        AuditRecord.ToJsonLine(entry).Should().NotContain("SECRET");
+        entry.Args!["url"]!.GetValue<string>().Should().Be(recorded);
+        entry.Args["urlLength"]!.GetValue<int>().Should().Be(url.Length);
+    }
+
     [Fact]
     public void ANumberOrBooleanForAStringParameter_IsRecordedAsItsLength()
     {

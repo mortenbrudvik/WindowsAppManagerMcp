@@ -531,7 +531,8 @@ public enum BrowserErrorCode
 
     /// <summary>
     /// The browser could not load the page browser_navigate asked for (roadmap M5.5): Page.navigate answered with an
-    /// errorText such as net::ERR_NAME_NOT_RESOLVED, which the result carries.
+    /// errorText such as net::ERR_NAME_NOT_RESOLVED, which the result carries (loadState failed), or the address answered
+    /// with a file, which the browser downloads while the tab keeps its page (loadState download).
     /// </summary>
     NavigationFailed = 18,
 

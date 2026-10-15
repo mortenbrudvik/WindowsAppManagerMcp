@@ -128,6 +128,9 @@ public sealed class BrowserTabService : IBrowserTabService
         BrowserTabTarget target, BrowserNavigateOptions options, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(options);
+        if (DevToolsPortRefusal(options.Url) is { } devTools)
+            return BrowserNavigateResult.Failed(ToolErrorReporting.InvalidArgumentsErrorCode, devTools, targetId: target.TargetId);
+
         var browser = Resolve(target);
         if (browser.Refusal is { } refusal)
             return BrowserNavigateResult.Failed(refusal.Code, refusal.Error, targetId: target.TargetId);
@@ -143,8 +146,27 @@ public sealed class BrowserTabService : IBrowserTabService
         var targetId = tab.Value!.Id;
         var newTab = options.NewTab ? true : (bool?)null;
         var remaining = timeout - stopwatch.Elapsed;
-        var navigated = await _tabs.NavigateAsync(tab.Value, options.Url, options.WaitUntil, EnterGateAsync,
-            remaining > TimeSpan.Zero ? remaining : TimeSpan.FromMilliseconds(1), cancellationToken).ConfigureAwait(false);
+        CdpResult<CdpNavigation> navigated;
+        try
+        {
+            navigated = await _tabs.NavigateAsync(tab.Value, options.Url, options.WaitUntil, EnterGateAsync,
+                remaining > TimeSpan.Zero ? remaining : TimeSpan.FromMilliseconds(1), cancellationToken).ConfigureAwait(false);
+        }
+        catch (ToolErrorException refused) when (options.NewTab)
+        {
+            // The gate was let go once the tab was opened, and the pause or a busy gate came before Page.navigate took it
+            // again: the tab is there, so the result names it instead of the gate's "nothing was done"
+            var why = refused.ErrorCode == nameof(WindowErrorCode.PausedByUser)
+                ? "the user paused input"
+                : "another input or window call held the input gate";
+            return BrowserNavigateResult.Failed(refused.ErrorCode,
+                $"A new tab {targetId} was opened on about:blank, but it was not navigated: {why}. " +
+                (refused.ErrorCode == nameof(WindowErrorCode.PausedByUser)
+                    ? "Stop and ask the user how to continue; do not try to resume input yourself."
+                    : $"Navigate it with targetId {targetId} when your other calls have finished."),
+                browser.Port, targetId) with { NewTab = true, ElapsedMs = stopwatch.ElapsedMilliseconds };
+        }
+
         var elapsed = stopwatch.ElapsedMilliseconds;
         if (!navigated.Success)
         {
@@ -160,8 +182,11 @@ public sealed class BrowserTabService : IBrowserTabService
         {
             return new BrowserNavigateResult(false, targetId, LoadState: page.LoadState, ElapsedMs: elapsed, NewTab: newTab,
                 CdpPort: browser.Port, ErrorText: page.ErrorText,
-                Error: $"The browser could not load the page: {page.ErrorText}. The tab shows the browser's error page. Check the " +
-                       "address and that the site can be reached from this computer.",
+                Error: page.LoadState == CdpTabService.DownloadState
+                    ? $"The address answered with a file, which the browser downloads ({page.ErrorText}); the tab still shows the " +
+                      "page it had. Do not navigate to it again to read it: that downloads it again."
+                    : $"The browser could not load the page: {page.ErrorText}. The tab shows the browser's error page. Check the " +
+                      "address and that the site can be reached from this computer.",
                 ErrorCode: nameof(BrowserErrorCode.NavigationFailed));
         }
 
@@ -211,6 +236,40 @@ public sealed class BrowserTabService : IBrowserTabService
                 Error = $"The page did not meet the condition within {timeoutMs} ms: {outcome.Detail}. Nothing was changed: wait again " +
                         "with a longer timeoutMs, or read the page (get_browser_content with this targetId)."
             };
+    }
+
+    /// <summary>
+    /// Why <paramref name="url"/> is not opened as a loopback address a browser listens on, or null: a browser listens on
+    /// this computer only for DevTools, whose /json pages list, show and close tabs when opened (a check of the URL's
+    /// path alone is <see cref="BrowserNavigationUrls.Refusal"/>'s). Fails closed when the port's owner cannot be read; a
+    /// port nothing listens on is opened, and fails as the browser reports it. A page that redirects to such an address
+    /// is not stopped by this check.
+    /// </summary>
+    private string? DevToolsPortRefusal(string url)
+    {
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri) || uri.Scheme is not ("http" or "https") ||
+            !BrowserNavigationUrls.IsLoopback(uri))
+        {
+            return null;
+        }
+
+        if (!_portOwners.TryGetListeningProcessId(uri.Port, out var owner))
+        {
+            return $"url is on this computer, and which program listens on port {uri.Port} could not be read, so it cannot be " +
+                   "told from a browser's DevTools endpoint. Nothing was done.";
+        }
+
+        if (owner is not int processId)
+            return null;
+
+        var processName = _windows.GetProcessName((uint)processId);
+        if (processName != null && !_detection.IsBrowser(processName))
+            return null;
+
+        var listener = processName == null ? $"process {processId}, whose name could not be read," : $"the browser '{processName}'";
+        return $"url is port {uri.Port} on this computer, where {listener} listens. A browser listens on this computer only for " +
+               "DevTools, whose /json pages list, show and close tabs when opened, past the target policy and the tab tools' " +
+               "checks. Use list_tabs and activate_tab instead. Nothing was done.";
     }
 
     /// <summary>The tab with <paramref name="targetId"/>, or the one the window shows.</summary>

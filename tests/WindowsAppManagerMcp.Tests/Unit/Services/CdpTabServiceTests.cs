@@ -330,7 +330,52 @@ public class CdpTabServiceTests
 
         result.Success.Should().BeTrue();
         result.Value!.ErrorText.Should().Be("net::ERR_NAME_NOT_RESOLVED");
-        tab.Methods.Should().NotContain("Page.getFrameTree");
+        result.Value.LoadState.Should().Be("failed");
+        tab.MethodsAfterNavigate.Should().NotContain("Page.getFrameTree");
+    }
+
+    [Fact]
+    public async Task NavigateAsync_AUrlThatAnswersWithAFile_IsADownload_NotAnErrorPage()
+    {
+        // Chromium answers a navigation that becomes a download with isDownload and net::ERR_ABORTED; the tab keeps its page
+        var tab = new FakeTab { NavigateReply = new { frameId = "F1", loaderId = "NEW", errorText = "net::ERR_ABORTED", isDownload = true } };
+        var sut = CreateSut(tab);
+
+        var result = await sut.NavigateAsync(Tab, "https://example.com/report.pdf", BrowserWaitUntil.Load, new RecordingGate().EnterAsync, LongTimeout);
+
+        result.Success.Should().BeTrue(result.Error);
+        result.Value!.LoadState.Should().Be("download");
+        result.Value.ErrorText.Should().Be("net::ERR_ABORTED");
+        tab.MethodsAfterNavigate.Should().NotContain("Page.getFrameTree");
+    }
+
+    [Fact]
+    public async Task NavigateAsync_AnHttpErrorWithAnEmptyBody_LoadsTheBrowsersErrorPage_WithTheServersStatus()
+    {
+        // A 4xx/5xx answer without a body is net::ERR_HTTP_RESPONSE_CODE_FAILURE, but the server did answer, as a 404 with a
+        // body does: the call waits for the browser's error page and reports the status of the document's response
+        var tab = new FakeTab
+        {
+            NavigateReply = new { frameId = "F1", loaderId = "NEW", errorText = "net::ERR_HTTP_RESPONSE_CODE_FAILURE" },
+            BeforeNavigateReply = socket => socket.EnqueueEvent("Network.responseReceived", new
+            {
+                requestId = "NEW", loaderId = "NEW", frameId = "F1", type = "Document",
+                response = new { url = "https://example.com/gone", status = 500 }
+            }),
+            ProbeUrl = "chrome-error://chromewebdata/",
+            ProbeStatus = null,
+            CommitAfterFrameTrees = 1
+        };
+        tab.ReadyStates.Enqueue("complete");
+        var sut = CreateSut(tab);
+
+        var result = await sut.NavigateAsync(Tab, "https://example.com/gone", BrowserWaitUntil.Load, new RecordingGate().EnterAsync, LongTimeout);
+
+        result.Success.Should().BeTrue(result.Error);
+        result.Value!.LoadState.Should().Be("load");
+        result.Value.ErrorText.Should().BeNull();
+        result.Value.HttpStatus.Should().Be(500);
+        result.Value.Url.Should().Be("https://example.com/gone", "the error page's own address is internal; the tab shows the one asked for");
     }
 
     [Fact]
@@ -343,7 +388,7 @@ public class CdpTabServiceTests
         var result = await sut.NavigateAsync(Tab, "https://example.com/#part", BrowserWaitUntil.Load, new RecordingGate().EnterAsync, LongTimeout);
 
         result.Value!.LoadState.Should().Be("sameDocument");
-        tab.Methods.Should().NotContain("Page.getFrameTree");
+        tab.MethodsAfterNavigate.Should().NotContain("Page.getFrameTree");
     }
 
     [Fact]
@@ -357,6 +402,79 @@ public class CdpTabServiceTests
         result.Value!.LoadState.Should().Be("notWaited");
         result.Value.Url.Should().BeNull();
         tab.Methods.Should().NotContain(["Page.getFrameTree", "Runtime.evaluate"]);
+    }
+
+    [Fact]
+    public async Task NavigateAsync_WaitUntilNone_DoesNotWaitForTheServersAnswer()
+    {
+        // Chromium answers Page.navigate only once the server has answered; none returns once the command is on its way
+        var tab = new FakeTab { NavigateNeverAnswers = true };
+        var sut = CreateSut(tab);
+        var stopwatch = Stopwatch.StartNew();
+
+        var result = await sut.NavigateAsync(Tab, "https://example.com/slow", BrowserWaitUntil.None, new RecordingGate().EnterAsync, LongTimeout);
+
+        result.Success.Should().BeTrue(result.Error);
+        result.Value!.LoadState.Should().Be("notWaited");
+        stopwatch.Elapsed.Should().BeLessThan(CdpTabService.GateHold + TimeSpan.FromSeconds(2));
+        tab.NavigatedTo.Should().Equal("https://example.com/slow");
+    }
+
+    [Fact]
+    public async Task NavigateAsync_AServerThatIsSlowToAnswer_TimesOut_AsStillLoading_NotAsCdpTimeout()
+    {
+        // No Page.navigate reply in time, but the tab answers: the navigation is under way and the server is slow
+        var tab = new FakeTab { NavigateNeverAnswers = true };
+        var sut = CreateSut(tab);
+        var stopwatch = Stopwatch.StartNew();
+
+        var result = await sut.NavigateAsync(Tab, "https://example.com/slow", BrowserWaitUntil.Load, new RecordingGate().EnterAsync,
+            TimeSpan.FromMilliseconds(1500));
+
+        result.Success.Should().BeTrue(result.Error);
+        result.Value!.TimedOut.Should().BeTrue();
+        result.Value.LoadState.Should().Be("loading");
+        result.Value.Url.Should().BeNull("the tab still shows the old page, which is not the one asked for");
+        stopwatch.Elapsed.Should().BeLessThan(TimeSpan.FromSeconds(4));
+    }
+
+    [Fact]
+    public async Task NavigateAsync_ATabThatAnswersNothing_IsCdpTimeout_WithTheDialogGuidance()
+    {
+        // Edge does not report a dialog that was already open to a new DevTools connection: nothing answers at all
+        var tab = new FakeTab { NavigateNeverAnswers = true, Unresponsive = true };
+        var sut = CreateSut(tab);
+        var stopwatch = Stopwatch.StartNew();
+
+        var result = await sut.NavigateAsync(Tab, "https://example.com/", BrowserWaitUntil.Load, new RecordingGate().EnterAsync,
+            TimeSpan.FromMilliseconds(1500));
+
+        result.ErrorCode.Should().Be(BrowserErrorCode.CdpTimeout);
+        result.Error.Should().Contain("dialog");
+        stopwatch.Elapsed.Should().BeLessThan(HangBound);
+    }
+
+    [Fact]
+    public async Task NavigateAsync_APageThatRedirectsItselfRightAfterItCommits_IsLoaded_AsTheFinalPage()
+    {
+        // location.replace in the head or a meta refresh 0: the navigation's own document (NEW) is replaced by a third
+        // before the wait sees it; any document other than the one before the navigation is past the commit
+        var tab = new FakeTab { ProbeUrl = "https://example.com/final" };
+        tab.FrameLoaders.Enqueue("OLD"); // read before Page.navigate
+        tab.FrameLoaders.Enqueue("OLD");
+        tab.FrameLoaders.Enqueue("THIRD");
+        tab.ReadyStates.Enqueue("complete");
+        var sut = CreateSut(tab);
+        var stopwatch = Stopwatch.StartNew();
+
+        var result = await sut.NavigateAsync(Tab, "https://example.com/r", BrowserWaitUntil.Load, new RecordingGate().EnterAsync, LongTimeout);
+
+        result.Success.Should().BeTrue(result.Error);
+        result.Value!.LoadState.Should().Be("load");
+        result.Value.TimedOut.Should().BeFalse();
+        result.Value.Url.Should().Be("https://example.com/final");
+        stopwatch.Elapsed.Should().BeLessThan(HangBound);
+        tab.Methods.Should().ContainInOrder("Page.getFrameTree", "Page.navigate");
     }
 
     [Fact]
@@ -517,6 +635,23 @@ public class CdpTabServiceTests
     }
 
     [Fact]
+    public async Task WaitAsync_APageThatAnswersNoCheck_IsCdpTimeout_WithTheDialogGuidance_NotWaitTimedOut()
+    {
+        // A dialog that was already open is not reported to a new DevTools connection (Edge): no check is ever answered,
+        // and waiting longer cannot help
+        var tab = new FakeTab { Wait = _ => FakeTab.NoAnswer };
+        var sut = CreateSut(tab);
+        var stopwatch = Stopwatch.StartNew();
+
+        var result = await sut.WaitAsync(Tab, new BrowserWaitCondition("x", null, null, null), TimeSpan.FromMilliseconds(600),
+            TimeSpan.FromMilliseconds(300));
+
+        result.ErrorCode.Should().Be(BrowserErrorCode.CdpTimeout);
+        result.Error.Should().Contain("dialog").And.NotContain("longer timeoutMs");
+        stopwatch.Elapsed.Should().BeLessThan(HangBound);
+    }
+
+    [Fact]
     public void BuildWaitExpression_PutsTheTextAndSelectorInAsJsonStrings()
     {
         var expression = CdpTabService.BuildWaitExpression(
@@ -560,9 +695,13 @@ public class CdpTabServiceTests
         /// <summary>What <see cref="Wait"/> returns to have the page open a JavaScript dialog instead of answering.</summary>
         public static readonly object OpenDialog = new();
 
+        /// <summary>What <see cref="Wait"/> returns to have the page not answer the check at all.</summary>
+        public static readonly object NoAnswer = new();
+
         private readonly object _lock = new();
         private int _frameTrees;
         private string _readyState = "complete";
+        private string? _lastLoader;
 
         public FakeTab()
         {
@@ -581,13 +720,29 @@ public class CdpTabServiceTests
 
         public Action<FakeCdpWebSocket>? OnNavigate { get; init; }
 
+        /// <summary>Sent before Page.navigate's reply, such as the document's Network.responseReceived.</summary>
+        public Action<FakeCdpWebSocket>? BeforeNavigateReply { get; init; }
+
+        /// <summary>Page.navigate is never answered, as Chromium does not answer it until the server has answered.</summary>
+        public bool NavigateNeverAnswers { get; init; }
+
+        /// <summary>The page answers no Runtime.evaluate, as a page blocked by a dialog nobody reported.</summary>
+        public bool Unresponsive { get; init; }
+
+        /// <summary>The main frame's loaderId for each Page.getFrameTree in turn (the last repeats), instead of OLD then NEW.</summary>
+        public Queue<string> FrameLoaders { get; } = new();
+
         public Func<bool>? GateHeld { get; init; }
 
         public Func<JsonElement, object?>? Wait { get; init; }
 
         public Queue<string> ReadyStates { get; } = new();
 
-        public string Url { get; } = "https://example.com/docs/";
+        public string Url => ProbeUrl;
+
+        public string ProbeUrl { get; init; } = "https://example.com/docs/";
+
+        public int? ProbeStatus { get; init; } = 200;
 
         public string Title { get; } = "Docs - Example";
 
@@ -602,6 +757,8 @@ public class CdpTabServiceTests
         public int Evaluates { get; private set; }
 
         public IReadOnlyList<string> Methods => Socket.SentCommands.Select(c => c.GetProperty("method").GetString()!).ToList();
+
+        public IReadOnlyList<string> MethodsAfterNavigate => Methods.SkipWhile(m => m != "Page.navigate").Skip(1).ToList();
 
         private void Respond(FakeCdpWebSocket socket, JsonElement command)
         {
@@ -623,6 +780,9 @@ public class CdpTabServiceTests
                             break;
                         }
 
+                        if (NavigateNeverAnswers)
+                            break;
+
                         if (NavigateError != null)
                         {
                             socket.ReplyError(command, -32000, NavigateError);
@@ -632,14 +792,21 @@ public class CdpTabServiceTests
                         if (FireLoadEventBeforeReply)
                             socket.EnqueueEvent("Page.loadEventFired", new { timestamp = 1.5 });
 
+                        BeforeNavigateReply?.Invoke(socket);
+
                         socket.Enqueue(JsonSerializer.Serialize(new { id, result = NavigateReply }));
                         break;
 
                     case "Page.getFrameTree":
                         GateHeldAtFrameTree ??= GateHeld?.Invoke();
                         _frameTrees++;
-                        var loader = _frameTrees > CommitAfterFrameTrees ? "NEW" : "OLD";
+                        if (FrameLoaders.Count > 0)
+                            _lastLoader = FrameLoaders.Count > 1 ? FrameLoaders.Dequeue() : FrameLoaders.Peek();
+                        var loader = _lastLoader ?? (_frameTrees > CommitAfterFrameTrees ? "NEW" : "OLD");
                         socket.Enqueue(JsonSerializer.Serialize(new { id, result = new { frameTree = new { frame = new { id = "F1", loaderId = loader } } } }));
+                        break;
+
+                    case "Runtime.evaluate" when Unresponsive:
                         break;
 
                     case "Runtime.evaluate":
@@ -653,11 +820,14 @@ public class CdpTabServiceTests
                             if (ReadyStates.Count > 0)
                                 _readyState = ReadyStates.Dequeue();
 
-                            socket.ReplyWithValue(command, new { readyState = _readyState, url = Url, title = Title, status = 200 });
+                            socket.ReplyWithValue(command, new { readyState = _readyState, url = Url, title = Title, status = ProbeStatus });
                             break;
                         }
 
                         var value = Wait?.Invoke(command);
+                        if (ReferenceEquals(value, NoAnswer))
+                            break;
+
                         if (ReferenceEquals(value, OpenDialog))
                         {
                             socket.EnqueueEvent("Page.javascriptDialogOpening",

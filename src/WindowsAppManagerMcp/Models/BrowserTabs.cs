@@ -87,9 +87,11 @@ public sealed record BrowserNavigateOptions(string Url, bool NewTab, BrowserWait
 
 /// <summary>
 /// browser_navigate's result (roadmap M5.5). LoadState is load or domcontentloaded (reached), sameDocument (a jump within
-/// the page, which loads nothing), notWaited (waitUntil none) or loading (the time ran out: WaitTimedOut, the page goes on
-/// loading). Url and Title are the page's once it loaded (after redirects); HttpStatus the main document's status when the
-/// browser reports it. ErrorText is the browser's own reason when it could not load the page (NavigationFailed).
+/// the page, which loads nothing), notWaited (waitUntil none), loading (the time ran out: WaitTimedOut, the page goes on
+/// loading), failed (NavigationFailed: the tab shows the browser's error page) or download (NavigationFailed: the address
+/// answered with a file, and the tab keeps its page). Url and Title are the page's once it loaded (after redirects);
+/// HttpStatus the main document's status when the browser reports it. ErrorText is the browser's own reason when it could
+/// not load the page (NavigationFailed).
 /// </summary>
 public sealed record BrowserNavigateResult(
     bool Success,
