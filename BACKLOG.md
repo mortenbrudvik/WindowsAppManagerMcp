@@ -676,6 +676,8 @@ M3 is complete on the integration branch `m3-semantic-find-act-wait` (PR #6) and
 
 ### M4: Input vocabulary
 
+*Released in 2.0.0 on 2026-10-15, with the M3 follow-ups (M3.F2 to M3.F43).*
+
 *Keyboard and mouse produce exactly what was asked, on any keyboard layout and button configuration. The tools cover the chords, drags, multi-clicks, modifier-clicks and long text that real tasks need, and nothing can stay held down after a call returns.*
 
 | # | Task | Status | Priority | Effort | Notes |

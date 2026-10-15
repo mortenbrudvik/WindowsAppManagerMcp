@@ -1905,6 +1905,15 @@ Rules for new tests:
   `DesktopTestGateTests` fails if a test carries that trait without a gate attribute.
 - A desktop test that needs a real app uses the fixture app through the E2E harness, never an app
   of the developer's (Notepad, a browser, a terminal).
+- One exception, approved by the repository owner on 2026-10-15 for the M5 browser bridge: a desktop
+  check of the CDP tools may start a separate debug instance of Edge or Chrome (launch_browser_with_debug)
+  with a throwaway `--user-data-dir` under `%TEMP%`, on an explicit free port. Before it starts, record
+  every top-level window and every msedge, chrome and brave process; if the launch hands off to a browser
+  that was already running, stop and close nothing. Open only `data:` URLs, `file://` pages the check
+  wrote itself, or a `127.0.0.1` listener (no network), act only on that process's windows and targets,
+  and close it by its process tree, never by window title. Then check that the developer's own browser
+  processes are unchanged and delete the profile. The developer's browser windows, tabs and profile are
+  never read, acted on or closed.
 - `NativeCallGuardTests` scans the server assembly and fails if anything other than
   `NativeInputWrapper` calls the `SendInput`/`SetCursorPos` APIs, anything other than
   `NativeWindowWrapper` calls the window-changing user32 APIs, or anything other than
