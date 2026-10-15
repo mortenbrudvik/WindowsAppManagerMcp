@@ -101,14 +101,15 @@ public class CdpServiceTests
     }
 
     [Fact]
-    public async Task GetPageTargetsAsync_ReturnsCdpUnavailable_OnHttpError()
+    public async Task GetPageTargetsAsync_ReturnsCdpProtocolError_OnHttpError()
     {
+        // A program answered (a web server that has no /json/list, say), so the port is not empty: not CdpUnavailable
         var sut = CreateSut(FakeCdpHttpHandler.Json("not found", HttpStatusCode.NotFound));
 
         var result = await sut.GetPageTargetsAsync(Port, LongTimeout);
 
-        result.ErrorCode.Should().Be(BrowserErrorCode.CdpUnavailable);
-        result.Error.Should().Contain("404");
+        result.ErrorCode.Should().Be(BrowserErrorCode.CdpProtocolError);
+        result.Error.Should().Contain("HTTP 404").And.Contain("not like a DevTools endpoint");
     }
 
     [Fact]
@@ -414,6 +415,23 @@ public class CdpServiceTests
     }
 
     [Fact]
+    public async Task GetPageSnapshotAsync_ReturnsProtocolError_WhenExceptionDetailsIsNotAnObject()
+    {
+        // Only a program that is not a real DevTools endpoint sends this; it must not throw out of ICdpService
+        var socket = new FakeCdpWebSocket((s, command) =>
+        {
+            if (command.GetProperty("method").GetString() == "Runtime.evaluate")
+                s.Enqueue("{\"id\":" + command.GetProperty("id").GetInt32() + ",\"result\":{\"exceptionDetails\":\"x\"}}");
+        });
+        var sut = CreateSut(sockets: new FakeCdpWebSocketFactory(socket));
+
+        var result = await sut.GetPageSnapshotAsync(Tab, textOnly: true, maxLength: null, LongTimeout);
+
+        result.ErrorCode.Should().Be(BrowserErrorCode.CdpProtocolError);
+        result.Error.Should().Contain("exceptionDetails");
+    }
+
+    [Fact]
     public async Task GetPageSnapshotAsync_ReturnsEvaluationFailed_WhenBrowserRejectsCommand()
     {
         var socket = new FakeCdpWebSocket((s, command) =>
@@ -630,6 +648,23 @@ public class CdpServiceTests
 
         result.ErrorCode.Should().Be(BrowserErrorCode.CdpPortOwnerMismatch);
         result.Error.Should().Contain("Could not read which process owns CDP port 9222");
+        http.Requests.Should().BeEmpty();
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    [InlineData(70000)]
+    public async Task FindTargetByIdAsync_ReturnsCdpUnavailable_ForAnInvalidPort_BeforeTheOwnerCheck(int port)
+    {
+        // The real resolver reads no owner for such a port; the typo is the port, not a browser that is gone
+        var http = FakeCdpHttpHandler.Targets(("A", "Inbox", "https://mail.example/"));
+        var sut = CreateSut(http, portOwner: null);
+
+        var result = await sut.FindTargetByIdAsync(port, BrowserPid, "A", LongTimeout);
+
+        result.ErrorCode.Should().Be(BrowserErrorCode.CdpUnavailable);
+        result.Error.Should().Contain($"Invalid CDP port {port}");
         http.Requests.Should().BeEmpty();
     }
 

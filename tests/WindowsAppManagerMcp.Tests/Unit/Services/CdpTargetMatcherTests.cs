@@ -125,7 +125,8 @@ public class CdpTargetMatcherTests
 
         var result = CdpTargetMatcher.Match("Inbox - Google Chrome", targets);
 
-        result.Error.Should().Contain("targetId A (https://mail.example/a)").And.Contain("pass one as targetId");
+        result.Error.Should().Contain("targetId A (https://mail.example/a)")
+            .And.Contain("pass one as targetId to get_browser_url or get_browser_content, with the same window and cdpPort");
     }
 
     [Fact]

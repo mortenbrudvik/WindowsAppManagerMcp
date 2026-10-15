@@ -24,7 +24,8 @@ public sealed class CdpLoopbackIntegrationTests : IAsyncLifetime
 
     public Task InitializeAsync()
     {
-        _transport = new CdpTransport(new SocketsHttpHandler { UseProxy = false }, new ClientWebSocketFactory());
+        // The constructor the server registers, with the HTTP handler it builds
+        _transport = new CdpTransport(new ClientWebSocketFactory());
         _sut = new CdpService(_transport, new TcpPortOwnerResolver());
         return Task.CompletedTask;
     }
@@ -87,6 +88,29 @@ public sealed class CdpLoopbackIntegrationTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task ARedirectFromTheListIsNotFollowed()
+    {
+        // A second endpoint the redirect points at; it must never be asked anything
+        var other = new TcpListener(IPAddress.Loopback, 0);
+        other.Start();
+        try
+        {
+            var otherPort = ((IPEndPoint)other.LocalEndpoint).Port;
+            _server.RedirectListTo = $"http://127.0.0.1:{otherPort}/json/list";
+
+            var targets = await _sut.GetPageTargetsAsync(_server.Port, CallTimeout);
+
+            targets.ErrorCode.Should().Be(BrowserErrorCode.CdpProtocolError, targets.Error);
+            targets.Error.Should().Contain("HTTP 302");
+            other.Pending().Should().BeFalse("the transport must not leave 127.0.0.1:cdpPort");
+        }
+        finally
+        {
+            other.Stop();
+        }
+    }
+
+    [Fact]
     public async Task APortNothingListensOn_IsCdpUnavailable()
     {
         // A port this test held a moment ago and released
@@ -124,6 +148,9 @@ public sealed class CdpLoopbackIntegrationTests : IAsyncLifetime
         public bool ResetOnEvaluate { get; set; }
 
         public bool EndListEarly { get; set; }
+
+        /// <summary>When set, /json/list answers 302 with this Location.</summary>
+        public string? RedirectListTo { get; set; }
 
         /// <summary>The WebSocket handshake's headers, by lower-case name.</summary>
         public Dictionary<string, string>? Handshake { get; private set; }
@@ -194,6 +221,13 @@ public sealed class CdpLoopbackIntegrationTests : IAsyncLifetime
 
         private async Task ServeListAsync(NetworkStream stream)
         {
+            if (RedirectListTo != null)
+            {
+                await WriteAsync(stream,
+                    $"HTTP/1.1 302 Found\r\nLocation: {RedirectListTo}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+                return;
+            }
+
             if (EndListEarly)
             {
                 // A status line and then nothing: a program that answers, but not with HTTP a client can read

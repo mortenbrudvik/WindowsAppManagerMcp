@@ -2287,7 +2287,7 @@
             "default": null
           },
           "requireCdp": {
-            "description": "If true, return the CDP error (for example CdpTimeout, CdpDialogOpen, CdpTargetNotFound) instead of falling back to UI Automation. Requires cdpPort; implied by targetId. Default: false.",
+            "description": "If true, return the CDP error (for example CdpTimeout, CdpDialogOpen, CdpTargetNotFound) instead of falling back to UI Automation. Requires cdpPort. Default: false.",
             "type": "boolean",
             "default": false
           },

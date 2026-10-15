@@ -1,3 +1,5 @@
+using System.ComponentModel;
+using System.Reflection;
 using WindowsAppManagerMcp.Infrastructure;
 using WindowsAppManagerMcp.Tools;
 
@@ -471,6 +473,16 @@ public class BrowserReadingToolsTests
         // The foreground window defines its tab
         typeof(BrowserReadingTools).GetMethod(nameof(BrowserReadingTools.GetActiveBrowserUrl))!
             .GetParameters().Select(p => p.Name).Should().NotContain("targetId");
+    }
+
+    [Fact]
+    public void GetActiveBrowserUrl_DescribesNoTargetId()
+    {
+        // Its schema must not mention an argument the server would refuse as undeclared (M3.F42)
+        var parameters = typeof(BrowserReadingTools).GetMethod(nameof(BrowserReadingTools.GetActiveBrowserUrl))!.GetParameters();
+
+        parameters.Select(p => p.GetCustomAttribute<DescriptionAttribute>()?.Description ?? "")
+            .Should().AllSatisfy(d => d.Should().NotContain("targetId"));
     }
 
     [Fact]

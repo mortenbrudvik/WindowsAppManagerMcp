@@ -12,9 +12,23 @@ public static class CdpEndpointValidator
     private static readonly Regex TargetIdPattern = new(
         @"^[A-Za-z0-9._-]{1,128}\z", RegexOptions.CultureInvariant);
 
+    /// <summary>The address every DevTools request goes to; the port-owner check reads the listener on it.</summary>
+    public const string Host = "127.0.0.1";
+
     /// <summary>
-    /// The WebSocket URL to connect to for <paramref name="what"/>, if it is ws:// on the loopback address and on the
-    /// DevTools port it was listed by. A listed URL on another host or port could be a different program's endpoint.
+    /// The port, if it is a TCP port (1-65535); otherwise CdpUnavailable, before anything is looked up or requested.
+    /// </summary>
+    public static CdpResult<int> ValidatePort(int port) =>
+        port is >= 1 and <= 65535
+            ? CdpResult<int>.Ok(port)
+            : CdpResult<int>.Fail(
+                BrowserErrorCode.CdpUnavailable,
+                $"Invalid CDP port {port}. Use the port the browser was started with (--remote-debugging-port).");
+
+    /// <summary>
+    /// The WebSocket URL to connect to for <paramref name="what"/>, if it is ws:// on 127.0.0.1 and on the DevTools port
+    /// it was listed by. A listed URL on another host or port could be a different program's endpoint: even localhost or
+    /// [::1] can be another listener than the one on 127.0.0.1 that the port-owner check read.
     /// </summary>
     /// <param name="url">The webSocketDebuggerUrl the endpoint listed.</param>
     /// <param name="expectedPort">The DevTools port the URL was listed by.</param>
@@ -29,11 +43,11 @@ public static class CdpEndpointValidator
                 $"There is no WebSocket debugger URL for {what}. Another DevTools client may be attached to it.");
         }
 
-        if (uri.Scheme != "ws" || !uri.IsLoopback)
+        if (uri.Scheme != "ws" || uri.HostNameType != UriHostNameType.IPv4 || uri.Host != Host)
         {
             return CdpResult<Uri>.Fail(
                 BrowserErrorCode.CdpProtocolError,
-                $"Refusing to connect to non-loopback WebSocket URL '{uri}' for {what}.");
+                $"Refusing to connect to WebSocket URL '{uri}' for {what}: only ws:// on {Host} is used.");
         }
 
         if (uri.Port != expectedPort)

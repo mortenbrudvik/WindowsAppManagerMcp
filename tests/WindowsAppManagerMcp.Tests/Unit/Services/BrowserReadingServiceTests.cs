@@ -711,6 +711,28 @@ public class BrowserReadingServiceTests
     }
 
     [Fact]
+    public async Task GetActiveBrowserUrl_Ambiguous_DoesNotTellTheCallerToPassTargetIdToItself()
+    {
+        // get_active_browser_url takes no targetId (an undeclared argument is refused), so the hint names the tools that do
+        var handle = new nint(12345);
+        _mockNativeWrapper.Setup(n => n.GetForegroundWindow()).Returns(handle);
+        SetupValidBrowserWindow(handle, "chrome", "chrome");
+        var cdp = new CdpService(
+            new CdpTransport(
+                FakeCdpHttpHandler.Targets(("A", "Test Page", "https://example.com/a"), ("B", "Test Page", "https://example.com/b")),
+                FakeCdpWebSocketFactory.NeverConnects()),
+            new FakePortOwnerResolver(1000));
+        var sut = new BrowserReadingService(
+            _mockNativeWrapper.Object, _mockBrowserDetection.Object, cdp, _tree, _worker, _warmup.Object, _policy);
+
+        var result = await sut.GetActiveBrowserUrlAsync(new CdpOptions(Port: CdpPort, Required: true));
+
+        result.ErrorCode.Should().Be(BrowserErrorCode.CdpTargetAmbiguous);
+        result.Error.Should().Contain("targetId to get_browser_url or get_browser_content")
+            .And.NotContain("pass one as targetId (");
+    }
+
+    [Fact]
     public async Task GetBrowserContent_ReturnsCdpSnapshot_AndReportsCdpSource()
     {
         var handle = new nint(12345);

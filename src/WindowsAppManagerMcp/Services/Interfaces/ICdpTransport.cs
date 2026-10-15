@@ -8,7 +8,8 @@ namespace WindowsAppManagerMcp.Services.Interfaces;
 /// GETs of its /json pages and WebSocket connections that carry CDP commands.
 /// </summary>
 /// <remarks>
-/// Every request goes to 127.0.0.1 and is bounded by its timeout. Failures come back as a failed <see cref="CdpResult{T}"/>
+/// Every request goes to 127.0.0.1 and is bounded by its timeout: the /json GETs follow no redirect, and a WebSocket URL
+/// must be on 127.0.0.1 too. Failures come back as a failed <see cref="CdpResult{T}"/>
 /// with a specific <see cref="BrowserErrorCode"/>; only cancellation of the caller's token throws
 /// (<see cref="OperationCanceledException"/>). Nothing outlives the tool call that made it: a connection is opened for one
 /// call and disposed at its end, so there is no pool or cache that could hand one call's tab to another.
@@ -28,7 +29,7 @@ public interface ICdpTransport
 
     /// <summary>
     /// Opens a DevTools WebSocket connection: a tab's webSocketDebuggerUrl, or the browser's from /json/version. The URL
-    /// must be ws:// on the loopback address and on <paramref name="expectedPort"/>
+    /// must be ws:// on 127.0.0.1 and on <paramref name="expectedPort"/>
     /// (<see cref="Services.CdpEndpointValidator"/>), or nothing is connected.
     /// </summary>
     /// <param name="webSocketUrl">The DevTools WebSocket URL.</param>

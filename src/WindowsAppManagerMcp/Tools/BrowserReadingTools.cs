@@ -36,6 +36,10 @@ public class BrowserReadingTools
     private const string RequireCdpDescription =
         "If true, return the CDP error (for example CdpTimeout, CdpDialogOpen, CdpTargetNotFound) instead of falling back to UI Automation. Requires cdpPort; implied by targetId. Default: false.";
 
+    // get_active_browser_url takes no targetId, so its description does not mention one
+    private const string ActiveRequireCdpDescription =
+        "If true, return the CDP error (for example CdpTimeout, CdpDialogOpen, CdpTargetNotFound) instead of falling back to UI Automation. Requires cdpPort. Default: false.";
+
     private const string CdpPortDescription =
         "Optional DevTools port of the browser that owns the window (launch_browser_with_debug returns it); enables CDP reads.";
 
@@ -111,7 +115,7 @@ public class BrowserReadingTools
     public async Task<BrowserUrlResultDto> GetActiveBrowserUrl(
         [Description(CdpPortDescription)]
         int? cdpPort = null,
-        [Description(RequireCdpDescription)]
+        [Description(ActiveRequireCdpDescription)]
         bool requireCdp = false,
         [Description(TimeoutDescription)]
         int timeoutMs = CdpOptions.DefaultTimeoutMs,

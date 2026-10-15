@@ -18,7 +18,7 @@ namespace WindowsAppManagerMcp.Services;
 /// </remarks>
 public class CdpService : ICdpService
 {
-    private const string Host = "127.0.0.1";
+    private const string Host = CdpEndpointValidator.Host;
 
     private readonly ICdpTransport _transport;
     private readonly ITcpPortOwnerResolver _portOwnerResolver;
@@ -94,6 +94,11 @@ public class CdpService : ICdpService
         TimeSpan timeout,
         CancellationToken cancellationToken = default)
     {
+        // A port outside 1-65535 has no owner to read; say the port is wrong, not that the browser may be gone
+        var checkedPort = CdpEndpointValidator.ValidatePort(port);
+        if (!checkedPort.Success)
+            return checkedPort.FailAs<CdpTarget>();
+
         var portOwner = _portOwnerResolver.GetListeningProcessId(port);
         if (portOwner is not int owner)
         {
@@ -211,6 +216,15 @@ public class CdpService : ICdpService
 
         if (result.TryGetProperty("exceptionDetails", out var exceptionDetails))
         {
+            // Only a program that is not a real DevTools endpoint sends another kind; reading it as an object would throw
+            if (exceptionDetails.ValueKind != JsonValueKind.Object)
+            {
+                return CdpResult<CdpPageSnapshot>.Fail(
+                    BrowserErrorCode.CdpProtocolError,
+                    "The Runtime.evaluate response could not be read: its exceptionDetails is a JSON " +
+                    $"{exceptionDetails.ValueKind}, not an object.");
+            }
+
             return CdpResult<CdpPageSnapshot>.Fail(
                 BrowserErrorCode.CdpEvaluationFailed,
                 $"The page threw while its content was read: {DescribeException(exceptionDetails)}");

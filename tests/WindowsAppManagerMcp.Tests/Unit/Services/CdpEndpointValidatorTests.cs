@@ -8,9 +8,8 @@ public class CdpEndpointValidatorTests
 {
     [Theory]
     [InlineData("ws://127.0.0.1:9222/devtools/page/TAB1")]
-    [InlineData("ws://localhost:9222/devtools/browser/abc")]
-    [InlineData("ws://[::1]:9222/devtools/page/TAB1")]
-    public void ValidateWebSocketUrl_AcceptsLoopbackWsOnTheSamePort(string url)
+    [InlineData("ws://127.0.0.1:9222/devtools/browser/abc")]
+    public void ValidateWebSocketUrl_Accepts127001WsOnTheSamePort(string url)
     {
         var result = CdpEndpointValidator.ValidateWebSocketUrl(url, 9222, "tab TAB1");
 
@@ -41,6 +40,37 @@ public class CdpEndpointValidatorTests
 
         result.ErrorCode.Should().Be(BrowserErrorCode.CdpProtocolError);
         result.Error.Should().StartWith("Refusing");
+    }
+
+    [Theory]
+    [InlineData("ws://localhost:9222/devtools/page/TAB1")]
+    [InlineData("ws://[::1]:9222/devtools/page/TAB1")]
+    [InlineData("ws://127.0.0.2:9222/devtools/page/TAB1")]
+    public void ValidateWebSocketUrl_RefusesAnotherLoopbackAddress_Than127001(string url)
+    {
+        // The port-owner check reads the listener on 127.0.0.1; [::1] or localhost could be another program's socket
+        var result = CdpEndpointValidator.ValidateWebSocketUrl(url, 9222, "tab TAB1");
+
+        result.ErrorCode.Should().Be(BrowserErrorCode.CdpProtocolError);
+        result.Error.Should().StartWith("Refusing").And.Contain("127.0.0.1");
+    }
+
+    [Theory]
+    [InlineData(1, true)]
+    [InlineData(65535, true)]
+    [InlineData(0, false)]
+    [InlineData(-1, false)]
+    [InlineData(65536, false)]
+    public void ValidatePort_AcceptsOnlyATcpPort(int port, bool valid)
+    {
+        var result = CdpEndpointValidator.ValidatePort(port);
+
+        result.Success.Should().Be(valid);
+        if (!valid)
+        {
+            result.ErrorCode.Should().Be(BrowserErrorCode.CdpUnavailable);
+            result.Error.Should().Contain($"Invalid CDP port {port}");
+        }
     }
 
     [Theory]

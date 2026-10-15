@@ -135,6 +135,48 @@ public class CdpTransportTests
         result.ErrorCode.Should().Be(BrowserErrorCode.CdpProtocolError);
     }
 
+    [Theory]
+    [InlineData(HttpStatusCode.NotFound)]
+    [InlineData(HttpStatusCode.Found)]
+    [InlineData(HttpStatusCode.InternalServerError)]
+    public async Task GetJsonAsync_ReturnsCdpProtocolError_ForAnHttpErrorOrRedirectStatus(HttpStatusCode status)
+    {
+        using var sut = CreateSut(FakeCdpHttpHandler.Json("{}", status));
+
+        var result = await sut.GetJsonAsync(Port, "/json/list", LongTimeout, CancellationToken.None);
+
+        result.ErrorCode.Should().Be(BrowserErrorCode.CdpProtocolError);
+        result.Error.Should().Contain($"HTTP {(int)status}").And.Contain("not like a DevTools endpoint");
+    }
+
+    [Fact]
+    public async Task GetJsonAsync_RefusesAnAnswerFromAnotherAddressThanTheOneItAsked()
+    {
+        // A handler that followed a redirect reports the final request; that answer is not 127.0.0.1:port's
+        var http = new FakeCdpHttpHandler((_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("[]", Encoding.UTF8, "application/json"),
+            RequestMessage = new HttpRequestMessage(HttpMethod.Get, "http://127.0.0.1:9333/json/list")
+        }));
+        using var sut = CreateSut(http);
+
+        var result = await sut.GetJsonAsync(Port, "/json/list", LongTimeout, CancellationToken.None);
+
+        result.ErrorCode.Should().Be(BrowserErrorCode.CdpProtocolError);
+        result.Error.Should().Contain("127.0.0.1:9333");
+    }
+
+    [Fact]
+    public void CreateHttpHandler_FollowsNoRedirect_AndUsesNoProxyOrCookies()
+    {
+        // The server's own transport (ServiceRegistration) is built with this handler
+        using var handler = CdpTransport.CreateHttpHandler();
+
+        handler.AllowAutoRedirect.Should().BeFalse();
+        handler.UseProxy.Should().BeFalse();
+        handler.UseCookies.Should().BeFalse();
+    }
+
     [Fact]
     public void Dispose_DisposesTheHttpHandler()
     {

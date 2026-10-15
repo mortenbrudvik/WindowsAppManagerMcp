@@ -22,13 +22,21 @@ public sealed class CdpTransport : ICdpTransport, IDisposable
 {
     // Chrome's DevTools HTTP server listens on 127.0.0.1. Using the IP avoids a failed ::1
     // attempt for "localhost" and makes the endpoint match the port-owner check.
-    private const string Host = "127.0.0.1";
+    private const string Host = CdpEndpointValidator.Host;
 
     private const int CopyChunkBytes = 64 * 1024;
 
     private readonly HttpClient _httpClient;
     private readonly ICdpWebSocketFactory _webSocketFactory;
     private readonly CdpTransportLimits _limits;
+
+    /// <summary>The transport the server uses: its HTTP handler is <see cref="CreateHttpHandler"/>.</summary>
+    /// <param name="webSocketFactory">Opens the DevTools WebSockets.</param>
+    /// <param name="limits">The size limits, or null for 16 MB per /json body and 64 MB per WebSocket message.</param>
+    public CdpTransport(ICdpWebSocketFactory webSocketFactory, CdpTransportLimits? limits = null)
+        : this(CreateHttpHandler(), webSocketFactory, limits)
+    {
+    }
 
     /// <param name="httpHandler">Sends the /json requests; the transport owns and disposes it.</param>
     /// <param name="webSocketFactory">Opens the DevTools WebSockets.</param>
@@ -51,12 +59,9 @@ public sealed class CdpTransport : ICdpTransport, IDisposable
         if (!path.StartsWith("/json", StringComparison.Ordinal))
             throw new ArgumentException($"Only the DevTools /json pages are requested, not '{path}'.", nameof(path));
 
-        if (port is < 1 or > 65535)
-        {
-            return CdpResult<JsonDocument>.Fail(
-                BrowserErrorCode.CdpUnavailable,
-                $"Invalid CDP port {port}. Use the port the browser was started with (--remote-debugging-port).");
-        }
+        var checkedPort = CdpEndpointValidator.ValidatePort(port);
+        if (!checkedPort.Success)
+            return checkedPort.FailAs<JsonDocument>();
 
         using var timeoutSource = CreateTimeoutSource(timeout, cancellationToken);
         var token = timeoutSource.Token;
@@ -167,16 +172,37 @@ public sealed class CdpTransport : ICdpTransport, IDisposable
     /// <inheritdoc />
     public void Dispose() => _httpClient.Dispose();
 
+    /// <summary>
+    /// The HTTP handler for the /json requests: no proxy, no cookies, and no redirects, which could send a request off
+    /// 127.0.0.1:port to wherever the program on the port points it.
+    /// </summary>
+    public static SocketsHttpHandler CreateHttpHandler() =>
+        new() { UseProxy = false, UseCookies = false, AllowAutoRedirect = false };
+
     private async Task<CdpResult<JsonDocument>> FetchJsonAsync(int port, string path, CancellationToken token)
     {
+        var requested = new Uri($"http://{Host}:{port}{path}");
         using var response = await _httpClient
-            .GetAsync($"http://{Host}:{port}{path}", HttpCompletionOption.ResponseHeadersRead, token)
+            .GetAsync(requested, HttpCompletionOption.ResponseHeadersRead, token)
             .ConfigureAwait(false);
+
+        // A handler that followed a redirect reports where the answer came from; only 127.0.0.1:port's answer is read
+        if (response.RequestMessage?.RequestUri is { } answered &&
+            (answered.Host != requested.Host || answered.Port != requested.Port))
+        {
+            return CdpResult<JsonDocument>.Fail(
+                BrowserErrorCode.CdpProtocolError,
+                $"GET {path} on {Host}:{port} was answered from {answered.Host}:{answered.Port}, so it was not read. " +
+                "Is this a browser debug port?");
+        }
+
+        // A program answered, so the port is not empty: an error or a redirect means it is not a DevTools endpoint
         if (!response.IsSuccessStatusCode)
         {
             return CdpResult<JsonDocument>.Fail(
-                BrowserErrorCode.CdpUnavailable,
-                $"GET {path} on {Host}:{port} returned HTTP {(int)response.StatusCode}. Is this a browser debug port?");
+                BrowserErrorCode.CdpProtocolError,
+                $"GET {path} on {Host}:{port} answered HTTP {(int)response.StatusCode}, not like a DevTools endpoint. " +
+                "Is this a browser debug port?");
         }
 
         if (response.Content.Headers.ContentLength is long declared && declared > _limits.MaxHttpBodyBytes)
