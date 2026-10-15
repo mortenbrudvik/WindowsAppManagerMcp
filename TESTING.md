@@ -1907,7 +1907,8 @@ Rules for new tests:
   of the developer's (Notepad, a browser, a terminal).
 - One exception, approved by the repository owner on 2026-10-15 for the M5 browser bridge: a desktop
   check of the CDP tools may start a separate debug instance of Edge or Chrome (launch_browser_with_debug)
-  with a throwaway `--user-data-dir` under `%TEMP%`, on an explicit free port. Before it starts, record
+  with a throwaway `--user-data-dir` under `%TEMP%`, on an explicit free port or port 0 (the browser picks a free
+  port, roadmap M5.1). Before it starts, record
   every top-level window and every msedge, chrome and brave process; if the launch hands off to a browser
   that was already running, stop and close nothing. Open only `data:` URLs, `file://` pages the check
   wrote itself, or a `127.0.0.1` listener (no network), act only on that process's windows and targets,
@@ -2302,7 +2303,7 @@ Every run keeps these rules, for every debug instance it starts:
 
 1. Before starting, record every top-level window handle and every `msedge`, `chrome` and `brave` process ID.
 2. Start the browser only with launch_browser_with_debug (`edge`), with no `userDataDir` or a new
-   `%TEMP%\WamM5Check-<guid>` folder, on an explicit free port. Its `processId` must be new and its command line must
+   `%TEMP%\WamM5Check-<guid>` folder, on an explicit free port or port 0. Its `processId` must be new and its command line must
    carry that `--user-data-dir`; if the process or the window was already there, the launch was handed to the user's
    browser: stop and close nothing.
 3. Open only `data:` URLs, `file:///` pages the check wrote under `%TEMP%`, or a 127.0.0.1 HttpListener. No network.
