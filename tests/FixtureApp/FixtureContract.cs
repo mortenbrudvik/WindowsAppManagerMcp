@@ -104,15 +104,16 @@ public static class FixtureContract
     /// <summary>
     /// The lines the canvas window draws (roadmap M6.3), top to bottom, in Segoe UI: pixels only, which UI Automation cannot
     /// read (the canvas's automation peer has no name, value or text, and no children). Every word appears once, and in no
-    /// title or control, so an OCR hit can only come from the canvas. The <c>canvasOpened</c> event reports where each line
-    /// and word landed on the screen.
+    /// title or control, so an OCR hit can only come from the canvas. Every word also has a character that is not a hex
+    /// digit (the numbers carry a unit), so it cannot turn up in a title's instance token either, which the harness makes of
+    /// random hex digits. The <c>canvasOpened</c> event reports where each line and word landed on the screen.
     /// </summary>
     public static readonly IReadOnlyList<CanvasLine> CanvasLines =
     [
-        new("Glyph quartz 4711", 28, LightOnDark: false),
-        new("Harbor lantern 2938", 20, LightOnDark: false),
-        new("Inverted meadow 0815", 20, LightOnDark: true),
-        new("Small print 3141", 12, LightOnDark: false)
+        new("Glyph quartz 4711km", 28, LightOnDark: false),
+        new("Harbor lantern 2938kg", 20, LightOnDark: false),
+        new("Inverted meadow 0815mm", 20, LightOnDark: true),
+        new("Small print 3141pt", 12, LightOnDark: false)
     ];
 
     /// <summary>
@@ -398,8 +399,10 @@ public static class FixtureContract
 
         /// <summary>
         /// The canvas window has rendered (roadmap M6.3). Fields: <c>hwnd</c>, <c>title</c>, <c>dpi</c> (GetDpiForWindow) and
-        /// <c>lines</c>: one object per line of <see cref="CanvasLines"/>, with <c>text</c>, <c>rect</c> (the line's ink box,
-        /// a rectangle as in the ready event) and <c>words</c> (objects with <c>text</c> and <c>rect</c>).
+        /// <c>lines</c>: one object per line of <see cref="CanvasLines"/>, with <c>text</c>, <c>rect</c> and <c>words</c>
+        /// (objects with <c>text</c> and <c>rect</c>). Each rect is a rectangle as in the ready event, and is the text's cell
+        /// box, as a selection would highlight it (the line's full height), not its ink: an OCR line's or word's box lies
+        /// inside it and is smaller, so check that it is contained, not that the two are equal.
         /// </summary>
         public const string CanvasOpened = "canvasOpened";
 

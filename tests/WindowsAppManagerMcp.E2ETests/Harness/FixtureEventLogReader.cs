@@ -91,7 +91,10 @@ public sealed record FixtureReady(
             : throw new KeyNotFoundException($"The ready event reports no element '{id}'.");
 }
 
-/// <summary>One line the canvas window drew, and its words, with their rectangles in the fixture's screen coordinates.</summary>
+/// <summary>
+/// One line the canvas window drew, and its words, with their rectangles in the fixture's screen coordinates: cell boxes (the
+/// line's full height), not ink, so an OCR box lies inside one rather than equal to it.
+/// </summary>
 public sealed record FixtureCanvasLine(string Text, ScreenRect Rect, IReadOnlyList<FixtureCanvasWord> Words);
 
 /// <summary>One word of a canvas line and its rectangle.</summary>

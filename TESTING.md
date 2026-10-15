@@ -2144,14 +2144,19 @@ on such a machine; the requirement is only checked once the tier is opted in.
 **Fixture surfaces for M6.** Four more launch options, none of which changes the fixture unless a scenario asks for it.
 `OpenCanvas` (`--open-canvas`, M6.3) opens the window `WAM Fixture Canvas <instance>`, which draws
 `FixtureContract.CanvasLines` (dark and light text, down to 9 pt) in OnRender. UI Automation finds only its
-`canvasSurface` pane there, with no name, text or children. Its `canvasOpened` event gives each line's and word's screen
-rectangle, which `FixtureCanvas.From` reads, and `canvasMouseDown` logs the word under a press. The canvas follows
-`--other-scale-monitor`. `ChangeAfter` (`--change-after-ms N`, M6.4) adds the 40x40 `changePanel` right of the swatches
+`canvasSurface` pane there, with no name, text or children. Every canvas word has a character that is not a hex digit, so
+it cannot turn up in a title's random instance token. Its `canvasOpened` event gives each line's and word's screen
+rectangle, which `FixtureCanvas.From` reads, and `canvasMouseDown` logs the word under a press. Those rectangles are cell
+boxes (the line's full height, as a selection highlights it), not ink, so an OCR box lies inside one: check containment,
+not equality. The canvas follows `--other-scale-monitor`. `ChangeAfter` (`--change-after-ms N`, M6.4) adds the 40x40 `changePanel` right of the swatches
 and recolors and relabels it once, N ms after the ready event (`panelChanged`). `AnimateFor` (`--animate-for-ms N`)
 adds the `spinner` there and turns it every 50 ms for N ms, then leaves it still (`animationStarted`,
-`animationStopped`). Neither touches the status text, so the panel or spinner is the only region that changes.
+`animationStopped`). Neither touches the status text, which already reads Ready in the first frame, so after the ready
+event the panel or spinner is the only region of the main window that changes. That holds while the fixture is not
+activated (the default for a no-input test): an activated fixture focuses the edit box, whose caret blinks.
 `OpenOverlay` (`--open-overlay`, M6.7) opens `WAM Fixture Overlay <instance>`, an unowned WS_EX_TOPMOST tool window
-centred over the main window. Its `overlayOpened` event reports `topmost`, `toolWindow` and `ownerHwnd`.
+centred on the primary monitor. That is over the main window's middle unless `--other-scale-monitor` moved the main
+window to another monitor: the overlay does not follow it. Its `overlayOpened` event reports `topmost`, `toolWindow` and `ownerHwnd`.
 `ExtraArguments` (M6.6) plants arguments after `--`, where the fixture ignores them and logs only how many
 (`argumentsIgnored`). Before `--` an unknown option is still refused, so a misspelt option fails the start instead of
 being ignored.

@@ -178,6 +178,54 @@ public class FixtureOptionsTests
         act.Should().Throw<ArgumentException>();
     }
 
+    [Theory]
+    [InlineData("--change-after-ms", "300000")]
+    [InlineData("--animate-for-ms", "300001")]
+    [InlineData("--max-lifetime-seconds", "10", "--change-after-ms", "10000")]
+    [InlineData("--change-after-ms", "20000", "--max-lifetime-seconds", "10")]
+    public void Parse_RejectsATimedChange_TheFixtureWouldNotLiveToMake(params string[] args)
+    {
+        // Arrange - the watchdog ends the fixture at its lifetime (5 min unless given), so a change due then or later
+        // would never be logged and a test would only time out waiting for it; the order of the options does not matter
+        var act = () => FixtureOptions.Parse(args);
+
+        // Assert
+        act.Should().Throw<ArgumentException>().WithMessage("*lifetime*");
+    }
+
+    [Fact]
+    public void Parse_AcceptsATimedChange_WithinALongerLifetime()
+    {
+        var options = FixtureOptions.Parse(["--change-after-ms", "400000", "--max-lifetime-seconds", "600"]);
+
+        options.ChangeAfter.Should().Be(TimeSpan.FromMilliseconds(400000));
+    }
+
+    public static TheoryData<TimeSpan?, TimeSpan?> TimedChangesTheFixtureWouldRefuse => new()
+    {
+        { TimeSpan.Zero, null },
+        { TimeSpan.FromMilliseconds(-5), null },
+        { TimeSpan.FromMinutes(6), null },
+        { null, TimeSpan.Zero },
+        { null, TimeSpan.FromMinutes(5) },
+        { null, TimeSpan.FromDays(30) }
+    };
+
+    [Theory]
+    [MemberData(nameof(TimedChangesTheFixtureWouldRefuse))]
+    public void ToArguments_RejectsATimedChangeTheFixtureWouldRefuseOrNotLiveToMake(TimeSpan? changeAfter, TimeSpan? animateFor)
+    {
+        // Arrange - the default lifetime is 5 min; refusing here names the mistake, where the fixture could only exit with
+        // code 2 or end before the change
+        var options = new FixtureOptions("abc", ChangeAfter: changeAfter, AnimateFor: animateFor);
+
+        // Act
+        var act = () => options.ToArguments();
+
+        // Assert
+        act.Should().Throw<ArgumentException>().WithMessage(changeAfter != null ? "*ChangeAfter*" : "*AnimateFor*");
+    }
+
     [Fact]
     public void ToArguments_RejectsAnInstanceTheFixtureWouldRefuse()
     {
@@ -221,6 +269,7 @@ public class FixtureOptionsTests
         var words = FixtureContract.CanvasLines.SelectMany(l => FixtureContract.CanvasWords(l.Text)).ToList();
         var uiaTexts = new[] { FixtureContract.CanvasTitle("abc"), FixtureContract.MainTitle("abc") }
             .Concat(FixtureContract.ComboBoxItems);
+        var hexDigits = "0123456789abcdef";
 
         // Assert
         FixtureContract.CanvasLines.Should().HaveCountGreaterThanOrEqualTo(3);
@@ -231,12 +280,18 @@ public class FixtureOptionsTests
         {
             words.Should().NotContain(w => text.Contains(w, StringComparison.OrdinalIgnoreCase));
         }
+
+        // The titles carry the harness's instance token, 12 random hex digits, which no fixed instance stands for: a word
+        // of hex digits alone (such as "4711") would turn up in some instance's title bar, and OCR ignores case
+        words.Should().OnlyContain(
+            w => w.Any(c => !hexDigits.Contains(char.ToLowerInvariant(c))),
+            "a word made only of hex digits can appear in the random instance token of a title");
     }
 
     [Fact]
     public void CanvasWords_SplitsALineAtSpaces_WithTheirOffsets()
     {
-        FixtureContract.CanvasWordSpans("Glyph quartz  4711").Should().Equal((0, 5), (6, 6), (14, 4));
+        FixtureContract.CanvasWordSpans("Glyph quartz  4711km").Should().Equal((0, 5), (6, 6), (14, 6));
     }
 
     [Fact]

@@ -134,7 +134,7 @@ public class FixtureEventLogReaderTests : IDisposable
         var opened = FixtureEvent.Parse(
             """
             {"seq":5,"event":"canvasOpened","hwnd":8192,"title":"WAM Fixture Canvas abc","dpi":96,
-             "lines":[{"text":"Glyph quartz 4711","rect":{"x":-500,"y":40,"width":300,"height":38},
+             "lines":[{"text":"Glyph quartz 4711km","rect":{"x":-500,"y":40,"width":300,"height":38},
                        "words":[{"text":"Glyph","rect":{"x":-500,"y":40,"width":80,"height":38}},
                                 {"text":"quartz","rect":{"x":-410,"y":40,"width":90,"height":38}}]}]}
             """);
@@ -146,7 +146,7 @@ public class FixtureEventLogReaderTests : IDisposable
         canvas.WindowHandle.Should().Be((nint)8192);
         canvas.Title.Should().Be("WAM Fixture Canvas abc");
         canvas.Dpi.Should().Be(96);
-        canvas.Lines.Should().ContainSingle().Which.Text.Should().Be("Glyph quartz 4711");
+        canvas.Lines.Should().ContainSingle().Which.Text.Should().Be("Glyph quartz 4711km");
         canvas.Lines[0].Rect.Should().Be(new ScreenRect(-500, 40, 300, 38));
         canvas.Word("quartz").Should().Be(new ScreenRect(-410, 40, 90, 38));
     }

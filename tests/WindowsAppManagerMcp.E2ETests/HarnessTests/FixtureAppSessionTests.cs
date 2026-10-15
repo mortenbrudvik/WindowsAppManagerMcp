@@ -148,6 +148,31 @@ public class FixtureAppSessionTests
         options.NoActivate.Should().BeTrue("the overlay and the canvas open without taking the foreground too");
     }
 
+    [Theory]
+    [InlineData(0, null, 300)]
+    [InlineData(-1, null, 300)]
+    [InlineData(360_000, null, 300)]
+    [InlineData(null, 0, 300)]
+    [InlineData(null, 30_000, 30)]
+    public void BuildOptions_RejectsATimedChangeTheFixtureWouldRefuseOrNotLiveToMake(
+        int? changeAfterMs, int? animateForMs, int maxLifetimeSeconds)
+    {
+        // Arrange - "change at once" (0) is refused by the fixture with exit code 2, and a change due at or after the
+        // fixture's lifetime never happens; both must fail here, in the test, not as an exit code or a timed-out wait
+        var launch = new FixtureLaunchOptions
+        {
+            ChangeAfter = changeAfterMs is { } change ? TimeSpan.FromMilliseconds(change) : null,
+            AnimateFor = animateForMs is { } animate ? TimeSpan.FromMilliseconds(animate) : null,
+            MaxLifetime = TimeSpan.FromSeconds(maxLifetimeSeconds)
+        };
+
+        // Act
+        var act = () => FixtureAppSession.BuildOptions(DesktopTier.NoInput, launch, "abc", "events.jsonl", 1);
+
+        // Assert
+        act.Should().Throw<ArgumentException>().WithMessage(changeAfterMs != null ? "*ChangeAfter*" : "*AnimateFor*");
+    }
+
     [Fact]
     public void CommandLine_WithoutExtraArguments_IsTheOptionsAlone()
     {

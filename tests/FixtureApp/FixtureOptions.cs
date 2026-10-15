@@ -36,11 +36,12 @@ public enum FixtureDpiAwareness
 /// <param name="OpenCanvas">Open the canvas window (roadmap M6.3) right after the main window is ready: known text drawn as
 /// pixels only, which UI Automation cannot read. See <see cref="FixtureContract.CanvasLines"/>.</param>
 /// <param name="ChangeAfter">Add the change panel to the main window and recolor and relabel it once, this long after the
-/// ready event (roadmap M6.4); null for no panel.</param>
+/// ready event (roadmap M6.4); null for no panel. Positive and shorter than <see cref="EffectiveMaxLifetime"/>.</param>
 /// <param name="AnimateFor">Add the spinner to the main window and turn it for this long after the ready event, then stop it
-/// (roadmap M6.4); null for no spinner.</param>
+/// (roadmap M6.4); null for no spinner. Positive and shorter than <see cref="EffectiveMaxLifetime"/>.</param>
 /// <param name="OpenOverlay">Open the overlay (roadmap M6.7) right after the main window is ready: a small unowned
-/// WS_EX_TOPMOST tool window of the fixture itself.</param>
+/// WS_EX_TOPMOST tool window of the fixture itself, centred on the primary monitor. Unlike the canvas it does not follow
+/// <paramref name="OtherScaleMonitor"/>.</param>
 /// <remarks>
 /// Every argument after <see cref="EndOfOptions"/> is ignored, so a test can plant arguments that only a reader of the
 /// fixture's command line sees (roadmap M6.6: a secret-looking switch the server must redact). Before it, an unknown option
@@ -183,7 +184,41 @@ public sealed record FixtureOptions(
             }
         }
 
+        // After the loop: the lifetime may come after the timed changes on the command line
+        options.ThrowIfATimedChangeIsInvalid();
         return options;
+    }
+
+    /// <summary>
+    /// Throws when <see cref="ChangeAfter"/> or <see cref="AnimateFor"/> is not positive (the fixture refuses it) or is not
+    /// shorter than <see cref="EffectiveMaxLifetime"/>: the watchdog ends the fixture first, so the change would never be
+    /// logged and a test waiting for it would only time out. The harness calls this when it builds the options, so the
+    /// mistake fails the test where it is made.
+    /// </summary>
+    /// <exception cref="ArgumentException">A timed change is not positive or does not end within the lifetime.</exception>
+    public void ThrowIfATimedChangeIsInvalid()
+    {
+        CheckTimedChange(nameof(ChangeAfter), ChangeAfterOption, ChangeAfter);
+        CheckTimedChange(nameof(AnimateFor), AnimateForOption, AnimateFor);
+    }
+
+    private void CheckTimedChange(string property, string option, TimeSpan? duration)
+    {
+        if (duration is not { } value)
+        {
+            return;
+        }
+        if (value <= TimeSpan.Zero)
+        {
+            throw new ArgumentException($"{property} ({option}) must be positive, got {value.TotalMilliseconds} ms.");
+        }
+        // In the whole milliseconds the command line carries, so what passes here the fixture reads back as valid
+        if (Math.Ceiling(value.TotalMilliseconds) >= EffectiveMaxLifetime.TotalMilliseconds)
+        {
+            throw new ArgumentException(
+                $"{property} ({option}) must be shorter than the fixture's lifetime of {EffectiveMaxLifetime.TotalSeconds:0} s, " +
+                $"got {value.TotalMilliseconds:0} ms: the fixture would end before it.");
+        }
     }
 
     /// <summary>How many arguments <see cref="Parse"/> ignores: those after <see cref="EndOfOptions"/>.</summary>
@@ -205,8 +240,11 @@ public sealed record FixtureOptions(
     }
 
     /// <summary>The command line that <see cref="Parse"/> reads back into these options.</summary>
+    /// <exception cref="ArgumentException">The instance or a timed change is one the fixture would refuse, or a timed change
+    /// does not end within the lifetime (see <see cref="ThrowIfATimedChangeIsInvalid"/>).</exception>
     public IReadOnlyList<string> ToArguments()
     {
+        ThrowIfATimedChangeIsInvalid();
         var args = new List<string> { InstanceOption, ValidInstance(Instance) };
         if (EventLogPath != null)
         {
@@ -307,17 +345,13 @@ public sealed record FixtureOptions(
             ? number
             : throw new ArgumentException($"{name} must be a positive whole number, got '{value}'.");
 
-    /// <summary>A positive number of milliseconds, at most <see cref="LongestMaxLifetime"/>: no change outlives the fixture.</summary>
-    private static TimeSpan Milliseconds(string name, string value)
-    {
-        var milliseconds = PositiveInt(name, value);
-        var duration = TimeSpan.FromMilliseconds(milliseconds);
-        return duration <= LongestMaxLifetime
-            ? duration
-            : throw new ArgumentException(
-                $"{name} must be at most {LongestMaxLifetime.TotalMilliseconds:0} milliseconds, got {milliseconds}.");
-    }
+    /// <summary>
+    /// A positive number of milliseconds. <see cref="Parse"/> then holds it to the lifetime, which a later option may set
+    /// (<see cref="ThrowIfATimedChangeIsInvalid"/>).
+    /// </summary>
+    private static TimeSpan Milliseconds(string name, string value) => TimeSpan.FromMilliseconds(PositiveInt(name, value));
 
+    /// <summary>Whole milliseconds, rounded up, as <see cref="ThrowIfATimedChangeIsInvalid"/> checks them.</summary>
     private static string FormatMilliseconds(TimeSpan duration) =>
         ((int)Math.Ceiling(duration.TotalMilliseconds)).ToString(CultureInfo.InvariantCulture);
 

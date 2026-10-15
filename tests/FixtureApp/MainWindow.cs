@@ -29,7 +29,10 @@ internal sealed class MainWindow : Window
     private readonly string _dpiAwareness;
     private readonly List<(string Id, FrameworkElement Element)> _reportedElements = [];
     private readonly TextBox _editBox = new() { Width = 320, Margin = new Thickness(0, 4, 0, 12) };
-    private readonly TextBlock _statusText = new() { Margin = new Thickness(0, 12, 0, 0), Text = "Starting" };
+    // "Ready" from the first frame, not set when the ready event is written: that change would only reach the screen a
+    // frame after the event, so a test's pixel baseline taken at once could still catch it (roadmap M6.4: after the ready
+    // event the change panel or spinner must be the only region that changes)
+    private readonly TextBlock _statusText = new() { Margin = new Thickness(0, 12, 0, 0), Text = "Ready" };
     private DocumentWindow? _document;
     private TableWindow? _table;
     private MenuWindow? _menuWindow;
@@ -370,7 +373,6 @@ internal sealed class MainWindow : Window
             elements[id] = ScreenRect(element);
         }
 
-        _statusText.Text = "Ready";
         _events.Write(
             Events.Ready,
             ("pid", Environment.ProcessId),

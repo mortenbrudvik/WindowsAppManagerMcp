@@ -7,8 +7,10 @@ using static WindowsAppManagerMcp.FixtureApp.FixtureContract;
 namespace WindowsAppManagerMcp.FixtureApp;
 
 /// <summary>
-/// A small WS_EX_TOPMOST tool window of the fixture itself (roadmap M6.7), centred on the primary monitor over the main
-/// window's middle, so z-order checks have a topmost window to compare with that is not the user's. It is unowned: an owned
+/// A small WS_EX_TOPMOST tool window of the fixture itself (roadmap M6.7), always centred on the primary monitor, so z-order
+/// checks have a topmost window to compare with that is not the user's. That is over the main window's middle only while the
+/// main window is on the primary too: with --other-scale-monitor the main window may open on another monitor, and the
+/// overlay does not follow it. It is unowned: an owned
 /// window always stays above its owner, which would tie its z-order to the main window's. It stays in the taskbar's
 /// default (ShowInTaskbar), because WPF gives a window that is kept out of the taskbar a hidden owner window.
 /// </summary>

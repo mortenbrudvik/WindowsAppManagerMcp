@@ -57,7 +57,8 @@ public sealed record FixtureLaunchOptions
 
     /// <summary>
     /// Open the overlay (roadmap M6.7) right after the main window is ready: a small unowned WS_EX_TOPMOST tool window of the
-    /// fixture, for z-order checks that must not touch any other window.
+    /// fixture, for z-order checks that must not touch any other window. It is centred on the primary monitor, so it covers
+    /// the main window's middle only without <see cref="OtherScaleMonitor"/>, which it does not follow.
     /// </summary>
     public bool OpenOverlay { get; init; }
 
@@ -145,8 +146,8 @@ public sealed class FixtureAppSession : IDisposable
 
         var instance = Guid.NewGuid().ToString("N")[..12];
         var workDirectory = Path.Combine(Path.GetTempPath(), "WamE2E", instance);
-        Directory.CreateDirectory(workDirectory);
         var options = BuildOptions(tier, launch, instance, Path.Combine(workDirectory, "events.jsonl"), Environment.ProcessId);
+        Directory.CreateDirectory(workDirectory);
 
         var startInfo = new ProcessStartInfo(exePath)
         {
@@ -194,8 +195,8 @@ public sealed class FixtureAppSession : IDisposable
 
     /// <summary>
     /// The fixture's command line for a test of <paramref name="tier"/>. Pure, so the rules can be tested:
-    /// the fixture always watches the test host and has a maximum lifetime, and a no-input test never
-    /// activates it.
+    /// the fixture always watches the test host and has a maximum lifetime, a no-input test never
+    /// activates it, and a timed change is positive and due within that lifetime.
     /// </summary>
     public static FixtureOptions BuildOptions(
         DesktopTier tier,
@@ -212,7 +213,7 @@ public sealed class FixtureAppSession : IDisposable
                 nameof(launch));
         }
 
-        return new FixtureOptions(
+        var options = new FixtureOptions(
             Instance: instance,
             EventLogPath: eventLogPath,
             ParentProcessId: parentProcessId,
@@ -229,6 +230,10 @@ public sealed class FixtureAppSession : IDisposable
             ChangeAfter: launch.ChangeAfter,
             AnimateFor: launch.AnimateFor,
             OpenOverlay: launch.OpenOverlay);
+
+        // Here, not as the fixture's exit code 2 or a wait that times out after the watchdog ended it
+        options.ThrowIfATimedChangeIsInvalid();
+        return options;
     }
 
     /// <summary>
