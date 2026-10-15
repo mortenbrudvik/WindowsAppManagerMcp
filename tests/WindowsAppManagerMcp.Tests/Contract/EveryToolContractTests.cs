@@ -71,6 +71,7 @@ public class EveryToolContractTests
             ["get_active_browser_url"] = Args("{}"),
             ["get_browser_content"] = Args("""{ "handle": 2821181 }"""),
             ["launch_browser_with_debug"] = Args("""{ "url": "https://example.com/" }"""),
+            ["close_debug_browser"] = Args("""{ "processId": 31337, "confirm": true }"""),
             ["list_tabs"] = Args("""{ "handle": 2821181 }"""),
             ["activate_tab"] = Args("""{ "handle": 2821181, "targetId": "2B7E4F1A9C3D5E6F7A8B9C0D1E2F3A4B" }"""),
             ["browser_navigate"] = Args("""{ "handle": 2821181, "url": "https://example.com/docs/?session=abc123" }"""),

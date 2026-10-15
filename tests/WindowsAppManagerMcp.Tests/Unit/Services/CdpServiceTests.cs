@@ -162,6 +162,81 @@ public class CdpServiceTests
 
     #endregion
 
+    #region CloseBrowserAsync (roadmap M5.4)
+
+    [Theory]
+    [InlineData(FakeBrowserClose.ReplyThenClose)]
+    [InlineData(FakeBrowserClose.CloseWithoutReply)]
+    public async Task CloseBrowserAsync_SendsBrowserClose_OverTheBrowsersOwnConnection(FakeBrowserClose answer)
+    {
+        // Arrange
+        var browser = new FakeCdpBrowser { CloseAnswer = answer };
+
+        // Act
+        var result = await CreateSut(browser).CloseBrowserAsync(Port, BrowserPid, LongTimeout);
+
+        // Assert
+        result.Success.Should().BeTrue(result.Error);
+        browser.CloseCommands.Should().Be(1);
+        browser.Socket.WasDisposed.Should().BeTrue("nothing outlives the call");
+    }
+
+    [Fact]
+    public async Task CloseBrowserAsync_ARefusal_IsCdpProtocolError()
+    {
+        var browser = new FakeCdpBrowser { CloseAnswer = FakeBrowserClose.Refuse };
+
+        var result = await CreateSut(browser).CloseBrowserAsync(Port, BrowserPid, LongTimeout);
+
+        result.ErrorCode.Should().Be(BrowserErrorCode.CdpProtocolError);
+        result.Error.Should().Contain("Browser.close is not allowed");
+    }
+
+    [Fact]
+    public async Task CloseBrowserAsync_ABrowserThatNeverAnswers_WasSent_ButNotAnswered()
+    {
+        // Browser.close is on the socket: the browser may be closing, so the caller still waits for its exit
+        var browser = new FakeCdpBrowser { CloseAnswer = FakeBrowserClose.Never };
+
+        var result = await CreateSut(browser).CloseBrowserAsync(Port, BrowserPid, ShortTimeout);
+
+        result.Success.Should().BeTrue(result.Error);
+        result.Value.Should().BeFalse("no answer came");
+        browser.CloseCommands.Should().Be(1);
+    }
+
+    [Theory]
+    [InlineData(999, true)]
+    [InlineData(null, false)]
+    public async Task CloseBrowserAsync_APortThatIsNotTheBrowsersOwn_SendsNothing(int? owner, bool tableReadable)
+    {
+        // Arrange - another process listens on the port, or which one cannot be read: a browser-level connection controls
+        // a whole browser, so only the browser's own port is used
+        var browser = new FakeCdpBrowser();
+
+        // Act
+        var result = await CreateSut(browser.Http, browser.Sockets, owner, listenerTableReadable: tableReadable)
+            .CloseBrowserAsync(Port, BrowserPid, LongTimeout);
+
+        // Assert
+        result.ErrorCode.Should().Be(BrowserErrorCode.CdpPortOwnerMismatch);
+        result.Error.Should().Contain("nothing was sent");
+        browser.CloseCommands.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task CloseBrowserAsync_APortNothingListensOn_IsCdpUnavailable()
+    {
+        var browser = new FakeCdpBrowser();
+
+        var result = await CreateSut(browser.Http, browser.Sockets, portOwner: null).CloseBrowserAsync(Port, BrowserPid, LongTimeout);
+
+        result.ErrorCode.Should().Be(BrowserErrorCode.CdpUnavailable);
+        browser.CloseCommands.Should().Be(0);
+    }
+
+    #endregion
+
     #region FindTargetForWindowAsync
 
     private static CdpWindow TitleOnly(string title) => new(BrowserPid, title);

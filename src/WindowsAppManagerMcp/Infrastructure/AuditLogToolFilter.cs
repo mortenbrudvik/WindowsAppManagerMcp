@@ -43,7 +43,7 @@ public static class AuditLogToolFilter
         // Dialogs answered and file dialogs completed through element_action (roadmap M3.5, M3.14)
         "respond_to_dialog", "file_dialog",
         // Close and kill
-        "close_window", "close_windows_batch", "close_application", "kill_process",
+        "close_window", "close_windows_batch", "close_application", "kill_process", "close_debug_browser",
         // Launch
         "launch_application", "launch_applications_batch", "launch_browser_with_debug",
         // Layouts: arrange (and launch) windows, replace or delete a preset

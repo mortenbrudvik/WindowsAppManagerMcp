@@ -87,6 +87,8 @@ public class ToolAnnotationContractTests
             // respond_to_dialog presses a dialog's button (Don't Save loses work); file_dialog can replace a file (roadmap M3.5, M3.14)
             "respond_to_dialog", "file_dialog",
             "launch_application", "launch_applications_batch", "launch_browser_with_debug",
+            // It closes a whole browser, every page open in it, and can delete a named profile's sign-ins (roadmap M5.4)
+            "close_debug_browser",
             "take_screenshot", "capture_region", "capture_window", "capture_with_elements",
             "set_clipboard",
             // browser_navigate replaces the tab's page, and what was typed into it (roadmap M5.5)

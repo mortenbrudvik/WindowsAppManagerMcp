@@ -132,8 +132,8 @@ public static class Toolsets
                 "Save, apply and manage window layout presets.",
                 ["list_layouts", "get_layout", "save_layout", "apply_layout", "delete_layout"]),
             new("browser", OnByDefault: true,
-                "Read the URL and text of browser pages, list a debug browser's tabs and wait for a page; start a browser with a DevTools port.",
-                ["get_browser_url", "get_active_browser_url", "get_browser_content", "launch_browser_with_debug", "list_tabs", "wait_for_browser"]),
+                "Read the URL and text of browser pages, list a debug browser's tabs and wait for a page; start and close a browser with a DevTools port.",
+                ["get_browser_url", "get_active_browser_url", "get_browser_content", "launch_browser_with_debug", "close_debug_browser", "list_tabs", "wait_for_browser"]),
             // Off by default (roadmap M2.14, M5.5): they change what a browser shows, through its DevTools port
             new("browser-actions", OnByDefault: false,
                 "Show a debug browser's tab and navigate a tab to a URL with a load wait, through CDP.",

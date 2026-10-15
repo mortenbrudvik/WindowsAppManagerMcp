@@ -530,11 +530,19 @@ public enum BrowserErrorCode
     NewTabPage = 17,
 
     /// <summary>
+    /// close_debug_browser (roadmap M5.4): the process is not a debug browser the server may close. It was not started by
+    /// this server, and its command line does not show a DevTools port with a profile in the server's own folders; or it
+    /// is a helper process, or its command line cannot be read or no longer names the profile it was started with.
+    /// Nothing was closed: it may be the user's own browser.
+    /// </summary>
+    NotADebugBrowser = 18,
+
+    /// <summary>
     /// The browser could not load the page browser_navigate asked for (roadmap M5.5): Page.navigate answered with an
     /// errorText such as net::ERR_NAME_NOT_RESOLVED, which the result carries (loadState failed), or the address answered
     /// with a file, which the browser downloads while the tab keeps its page (loadState download).
     /// </summary>
-    NavigationFailed = 18,
+    NavigationFailed = 19,
 
     // CDP (Chrome DevTools Protocol) errors are numbered from 30 so that other
     // browser error codes can be added above without renumbering.

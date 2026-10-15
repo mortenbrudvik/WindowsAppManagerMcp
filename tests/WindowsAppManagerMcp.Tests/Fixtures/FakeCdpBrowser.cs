@@ -41,6 +41,12 @@ public sealed class FakeCdpBrowser
     /// </summary>
     public HashSet<string>? Unanswered { get; set; } = new(StringComparer.Ordinal);
 
+    /// <summary>How the browser answers Browser.close (roadmap M5.4).</summary>
+    public FakeBrowserClose CloseAnswer { get; set; } = FakeBrowserClose.ReplyThenClose;
+
+    /// <summary>The Browser.close commands sent so far.</summary>
+    public int CloseCommands => Socket.SentCommands.Count(c => c.GetProperty("method").GetString() == "Browser.close");
+
     /// <summary>The browser WebSocket URL /json/version lists.</summary>
     public string BrowserUrl => $"ws://127.0.0.1:{_port}/devtools/browser/B1";
 
@@ -105,6 +111,25 @@ public sealed class FakeCdpBrowser
     private void Respond(FakeCdpWebSocket socket, JsonElement command)
     {
         var method = command.GetProperty("method").GetString();
+        if (method == "Browser.close")
+        {
+            switch (CloseAnswer)
+            {
+                case FakeBrowserClose.ReplyThenClose:
+                    socket.ReplyEmpty(command);
+                    socket.EnqueueClose();
+                    break;
+                case FakeBrowserClose.CloseWithoutReply:
+                    socket.EnqueueClose();
+                    break;
+                case FakeBrowserClose.Refuse:
+                    socket.ReplyError(command, -32000, "Browser.close is not allowed");
+                    break;
+            }
+
+            return;
+        }
+
         if (method == "Target.activateTarget")
         {
             var id = command.GetProperty("params").GetProperty("targetId").GetString()!;
@@ -160,4 +185,20 @@ public sealed class FakeCdpBrowser
             }
         }));
     }
+}
+
+/// <summary>How <see cref="FakeCdpBrowser"/> answers Browser.close.</summary>
+public enum FakeBrowserClose
+{
+    /// <summary>Answers, then ends the connection as it closes.</summary>
+    ReplyThenClose,
+
+    /// <summary>Ends the connection before it answers, as a browser that closes at once may.</summary>
+    CloseWithoutReply,
+
+    /// <summary>Answers with a CDP error.</summary>
+    Refuse,
+
+    /// <summary>Never answers.</summary>
+    Never
 }

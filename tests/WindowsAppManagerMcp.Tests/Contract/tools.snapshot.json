@@ -1079,6 +1079,54 @@
       }
     },
     {
+      "name": "close_debug_browser",
+      "title": "Close Debug Browser",
+      "description": "Close a debug browser launch_browser_with_debug started (processId or cdpPort) and delete its temporary profile. Only a browser this server started, or whose command line shows a DevTools port and a profile in the server's own folders, is closed; any other is NotADebugBrowser, so the user's own browser is never closed. The user confirms when the client can ask (ConfirmationDeclined); otherwise confirm=true is required (ConfirmationRequired). Sends Browser.close, waits up to timeoutMs, then ends what is left. A named profile is kept unless deleteProfile=true; a userDataDir is never deleted.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "processId": {
+            "description": "The processId launch_browser_with_debug returned.",
+            "type": [
+              "integer",
+              "null"
+            ],
+            "default": null
+          },
+          "cdpPort": {
+            "description": "Or the cdpPort it returned.",
+            "type": [
+              "integer",
+              "null"
+            ],
+            "default": null
+          },
+          "deleteProfile": {
+            "description": "Also delete a named profile (its sign-ins). Default false.",
+            "type": "boolean",
+            "default": false
+          },
+          "confirm": {
+            "description": "Required when the client cannot ask the user.",
+            "type": "boolean",
+            "default": false
+          },
+          "timeoutMs": {
+            "description": "Wait for the exit after Browser.close before ending it (1000-30000 ms, default 5000).",
+            "type": "integer",
+            "default": 5000
+          }
+        }
+      },
+      "annotations": {
+        "title": "Close Debug Browser",
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      }
+    },
+    {
       "name": "close_window",
       "title": "Close Window",
       "description": "Close a window gracefully by sending WM_CLOSE, then wait up to waitMs and report what happened. status: closed; hidden (the app hid the window it showed instead of closing it, for example into the notification area; it still runs: use close_application or kill_process to end it); stillOpen (errorCode StillOpen: the app is busy or ignores the request, or the window was already hidden or on another virtual desktop); promptShown (errorCode PromptShown: a prompt such as 'Save changes?' waits; prompt gives its handle, title, className, text, buttons and kind (inWindowDialog: drawn inside the window). Nothing was answered. Do not answer it yourself: show the user the prompt's text and buttons and ask which to choose (No or Don't Save discards their unsaved work), then answer it as they say with respond_to_dialog, handle: prompt.handle (inWindowDialog, which has no window of its own: element_action on its button).); requested (waitMs 0: sent, not checked). success is true for closed, hidden and requested. Refuses the desktop shell and the agent's own host window (terminal, editor or chat app; errorCode ProtectedWindow) unless force is true; then, when the client can ask the user, the user is asked first (ConfirmationDeclined, or HandleMismatch when the window changed hands meanwhile), and when it cannot, confirm must be true too (ConfirmationRequired). It refuses an app the user's policy denies (TargetDeniedByPolicy; force does not override it), and reports AccessDenied when Windows blocks the message (the window belongs to an app running as administrator) and NotResponding when the app's message queue is full (it is hung). InvalidArguments: waitMs is outside 0-30000. To close every window of an app, use close_application.",
@@ -4102,7 +4150,7 @@
     {
       "name": "launch_browser_with_debug",
       "title": "Launch Browser with Debug Port",
-      "description": "Launch a browser with CDP (Chrome DevTools Protocol) debug port enabled. The reading tools then read its windows through CDP, without cdpPort. Uses a separate user data directory by default to avoid conflicts with existing browser sessions. The debug port has no authentication: any program on this computer can control that browser until it exits. Launch it only when CDP is needed, and close every window of that browser when done (find_windows with its processId and includeCloaked=true, so windows on other virtual desktops are found too), then confirm with list_processes and includeWindowless=true that it has exited. It returns once the DevTools endpoint answers (cdpReady, cdpEndpoint, browserVersion); if it does not within 10 seconds, DebugLaunchFailed, and the browser keeps running (processId). DebugLaunchFailed when a browser is already running with that userDataDir (nothing is launched). InvalidArguments: a url that starts with '-' or '/' (the browser would read it as a command-line switch), a userDataDir that is not a full path or is inside a browser's own 'User Data' folder (the user's real profile), or an executablePath that is not the browser's own .exe.",
+      "description": "Launch a browser with CDP (Chrome DevTools Protocol) debug port enabled. The reading tools then read its windows through CDP, without cdpPort. Uses a new temporary profile by default, separate from the user's browser. The debug port has no authentication: any program on this computer can control that browser until it exits. Launch it only when CDP is needed, and close it with close_debug_browser when done. It returns once the DevTools endpoint answers (cdpReady, cdpEndpoint, browserVersion); if it does not within 10 seconds, DebugLaunchFailed, and the browser keeps running (processId). DebugLaunchFailed when a browser already runs with that profile (nothing is launched), unless reuseIfRunning returns it (launchStatus alreadyRunning). InvalidArguments: a url that starts with '-' or '/' (the browser would read it as a command-line switch), a userDataDir that is not a full path or is inside a browser's own 'User Data' folder (the user's real profile), or an executablePath that is not the browser's own .exe.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -4143,6 +4191,112 @@
               "string",
               "null"
             ],
+            "default": null
+          },
+          "profile": {
+            "description": "Named profile kept between launches (sign-ins persist), in the server's folder: letters, digits, '-', '_'. Not with userDataDir.",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "reuseIfRunning": {
+            "description": "With profile or userDataDir: return the debug browser already running with it (launchStatus alreadyRunning) instead of failing.",
+            "type": "boolean",
+            "default": false
+          },
+          "placement": {
+            "description": "Where to put its window, as launch_application's placement; checked before anything is launched",
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "snap": {
+                "description": "Snap position, as snap_window takes it; not together with bounds",
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "default": null,
+                "enum": [
+                  "left_half",
+                  "right_half",
+                  "top_half",
+                  "bottom_half",
+                  "top_left_quarter",
+                  "top_right_quarter",
+                  "bottom_left_quarter",
+                  "bottom_right_quarter",
+                  "left_third",
+                  "center_third",
+                  "right_third",
+                  "left_two_thirds",
+                  "right_two_thirds",
+                  "fullscreen",
+                  null
+                ]
+              },
+              "monitorIndex": {
+                "description": "Monitor (0-based, see get_monitors): where snap places the window; without snap and bounds the window is centred on it (with state 'maximized', maximized there). Not together with bounds",
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "default": null
+              },
+              "bounds": {
+                "description": "The visible frame to place the window at: x, y, width and height in physical virtual-screen pixels, as set_window_bounds takes them; not together with snap",
+                "type": [
+                  "object",
+                  "null"
+                ],
+                "properties": {
+                  "x": {
+                    "type": "integer"
+                  },
+                  "y": {
+                    "type": "integer"
+                  },
+                  "width": {
+                    "type": "integer"
+                  },
+                  "height": {
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "x",
+                  "y",
+                  "width",
+                  "height"
+                ],
+                "default": null
+              },
+              "state": {
+                "description": "normal, maximized (not with snap or bounds; activates the window) or minimized (after it is placed; not with focus)",
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "default": null,
+                "enum": [
+                  "normal",
+                  "maximized",
+                  "minimized",
+                  null
+                ]
+              },
+              "focus": {
+                "description": "Bring the window to the front afterwards, as focus_window does (default false)",
+                "type": [
+                  "boolean",
+                  "null"
+                ],
+                "default": null
+              }
+            },
             "default": null
           }
         }

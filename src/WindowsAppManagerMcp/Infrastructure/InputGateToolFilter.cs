@@ -42,7 +42,10 @@ namespace WindowsAppManagerMcp.Infrastructure;
 /// HTTP, but unlike the close tools' waits they cannot be moved outside the gate: a browser whose window wait timed out
 /// is still starting, and its first window can take the foreground at any moment, in the middle of an input call. So a
 /// slow launch can hold the gate about 30 seconds, and an input or window call queued at its start can get InputBusy
-/// (and sends nothing). A browser that exits ends the readiness wait at once.
+/// (and sends nothing). A browser that exits ends the readiness wait at once. A launch that fails, or is cancelled, after
+/// the start also ends the browser it started and deletes its temporary profile inside the gate (ProcessService.AbandonTimeout
+/// and DebugBrowserLifecycle.AbandonTimeout: up to about 5 seconds for the exit and 5 for the delete), and a launch with a
+/// new temporary profile first deletes the ones earlier browsers left; so the longest hold is about 40 seconds.
 /// </para>
 /// </remarks>
 public static class InputGateToolFilter
@@ -77,14 +80,16 @@ public static class InputGateToolFilter
     /// element before it takes the gate, acts on it inside the gate, and releases the gate before its mouse or keyboard path,
     /// which takes it again through the input service, and before it waits for the state after the action. respond_to_dialog
     /// and file_dialog (roadmap M3.5, M3.14) read the dialog without the gate and act only through element_action's service,
-    /// which takes it for each action; they wait for the dialog to close without it. activate_tab and browser_navigate
-    /// (roadmap M5.5) find the browser and the tab without it, take it to send the command that shows the tab (the browser
-    /// may bring its window to the front) or navigates it, and release it once the browser answers, at most a second
-    /// later: a page's load wait never holds it. They refuse at once while input is paused.
+    /// which takes it for each action; they wait for the dialog to close without it. close_debug_browser (roadmap M5.4) asks
+    /// the user first like kill_process, then takes the gate for its Browser.close and again for the end of a browser that
+    /// did not exit, and waits for the browser to exit without it. activate_tab and browser_navigate (roadmap M5.5) find the
+    /// browser and the tab without it, take it to send the command that shows the tab (the browser may bring its window to
+    /// the front) or navigates it, and release it once the browser answers, at most a second later: a page's load wait never
+    /// holds it. They refuse at once while input is paused.
     /// </summary>
     public static IReadOnlySet<string> SelfGatedTools { get; } = new HashSet<string>(StringComparer.Ordinal)
     {
-        "kill_process", "close_window", "close_windows_batch", "close_application",
+        "kill_process", "close_window", "close_windows_batch", "close_application", "close_debug_browser",
         "move_window", "resize_window", "set_window_bounds", "set_window_state", "focus_window",
         "snap_window", "move_window_to_monitor", "set_windows_bounds_batch", "snap_windows_batch", "set_windows_state_batch",
         "element_action", "respond_to_dialog", "file_dialog",

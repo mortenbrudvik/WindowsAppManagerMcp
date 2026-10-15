@@ -6,7 +6,7 @@ using WindowsAppManagerMcp.Infrastructure;
 namespace WindowsAppManagerMcp.Tests.Contract;
 
 /// <summary>
-/// Contract: kill_process, close_windows_batch and close_application ask the user, not the model, to confirm (roadmap M2.10, M2.5) when the MCP
+/// Contract: kill_process, close_windows_batch, close_application and close_debug_browser (roadmap M5.4) ask the user, not the model, to confirm (roadmap M2.10, M2.5) when the MCP
 /// client can ask (elicitation), with the names, PIDs and titles of what would be closed, and fall back to their confirm
 /// argument when it cannot. The question is asked before the input gate is taken: a user who takes minutes to answer must
 /// not hold up every input and window call (the wave-A review's hazard). Both protocol paths are covered: the SDK
@@ -197,6 +197,80 @@ public sealed class UserConfirmationContractTests : IDisposable
         result.IsError.Should().BeTrue();
         Payload(result).GetProperty("errorCode").GetString().Should().Be(nameof(WindowErrorCode.PausedByUser));
         _questions.Should().BeEmpty();
+    }
+
+    #endregion
+
+    #region close_debug_browser (roadmap M5.4)
+
+    private static IReadOnlyDictionary<string, object?> CloseDebugBrowserArguments(bool confirm) =>
+        new Dictionary<string, object?> { ["processId"] = ContractServices.TypicalDebugBrowser.ProcessId, ["confirm"] = confirm };
+
+    [Theory]
+    [MemberData(nameof(Revisions))]
+    public async Task CloseDebugBrowser_AsksTheUser_OutsideTheGate_AndClosesOnlyAfterTheirYes(string? revision)
+    {
+        // Arrange - Browser.close and an end run inside the gate (each through the gate entry the tool hands the lifecycle)
+        bool? gateHeldDuringTheClose = null;
+        _services.Windows.Setup(w => w.FindWindows(It.Is<WindowQuery>(q => q.ProcessId == ContractServices.TypicalDebugBrowser.ProcessId)))
+            .Returns([TypicalDesktop.Notepad with { Title = "Example Domain - Google Chrome", ProcessName = "chrome" }]);
+        _services.DebugBrowsers.Setup(d => d.CloseAsync(It.IsAny<DebugBrowserCloseTarget>(), It.IsAny<TimeSpan>(),
+                It.IsAny<Func<CancellationToken, Task<IDisposable>>>(), It.IsAny<CancellationToken>()))
+            .Returns<DebugBrowserCloseTarget, TimeSpan, Func<CancellationToken, Task<IDisposable>>, CancellationToken>(async (target, _, enterGate, token) =>
+            {
+                using (await enterGate(token))
+                {
+                    gateHeldDuringTheClose = InputGate.IsHeldBy(_flow);
+                }
+
+                return new DebugBrowserCloseResult(true, target.ProcessId, ProfileKind: "temporary", Exited: true, ProfileDeleted: true);
+            });
+        await using var server = await StartAsync(revision, _ => Answer("accept", confirm: true));
+
+        // Act - the model did not set confirm: the user's answer decides
+        var result = await server.CallToolAsync("close_debug_browser", CloseDebugBrowserArguments(confirm: false));
+
+        // Assert
+        result.IsError.Should().NotBe(true, Payload(result).ToString());
+        _questions.Should().ContainSingle().Which.Should()
+            .Contain("close the debug browser it started: 'chrome' (PID 31337)").And.Contain("'Example Domain - Google Chrome'")
+            .And.Contain("temporary profile is deleted");
+        _gateWasFreeDuringTheQuestion.Should().BeTrue("a question must never hold the input gate");
+        gateHeldDuringTheClose.Should().BeTrue();
+    }
+
+    [Theory]
+    [InlineData("decline", null)]
+    [InlineData("accept", false)]
+    public async Task CloseDebugBrowser_TheUserDoesNotConfirm_IsConfirmationDeclined_AndNothingIsClosed(string action, bool? confirm)
+    {
+        // Arrange
+        await using var server = await StartAsync(null, _ => Answer(action, confirm));
+
+        // Act - even with the model's confirm=true
+        var result = await server.CallToolAsync("close_debug_browser", CloseDebugBrowserArguments(confirm: true));
+
+        // Assert
+        result.IsError.Should().BeTrue();
+        Payload(result).GetProperty("errorCode").GetString().Should().Be(nameof(ProcessErrorCode.ConfirmationDeclined));
+        _services.DebugBrowsers.Verify(d => d.CloseAsync(It.IsAny<DebugBrowserCloseTarget>(), It.IsAny<TimeSpan>(),
+            It.IsAny<Func<CancellationToken, Task<IDisposable>>>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task CloseDebugBrowser_ABrowserThatIsNotADebugBrowser_IsRefusedWithoutAskingTheUser()
+    {
+        // Arrange - the user's own browser
+        _services.DebugBrowsers.Setup(d => d.CheckClose(777, null, false)).Returns(DebugBrowserCloseCheck.Refused(
+            new DebugBrowserCloseResult(false, 777, "chrome (processId 777) was not started with a DevTools port.", nameof(BrowserErrorCode.NotADebugBrowser))));
+        await using var server = await StartAsync(null, _ => Answer("accept", confirm: true));
+
+        // Act
+        var result = await server.CallToolAsync("close_debug_browser", new Dictionary<string, object?> { ["processId"] = 777, ["confirm"] = true });
+
+        // Assert
+        Payload(result).GetProperty("errorCode").GetString().Should().Be(nameof(BrowserErrorCode.NotADebugBrowser));
+        _questions.Should().BeEmpty("the user is not asked about something that is refused anyway");
     }
 
     #endregion

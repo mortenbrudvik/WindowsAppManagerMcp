@@ -39,6 +39,21 @@ public sealed record LaunchRequest(
     /// tool parameter sets it.
     /// </summary>
     public bool OnlyStartedProcess { get; init; }
+
+    /// <summary>
+    /// Called with the started process's ID as soon as the start returns one, before the window wait. launch_browser_with_debug
+    /// sets it (roadmap M5.4), so that a call cancelled during the wait can still close the browser it started: its debug
+    /// port has no authentication, and nobody else learns its process ID. No tool parameter sets it.
+    /// </summary>
+    public Action<int>? OnStarted { get; init; }
+
+    /// <summary>
+    /// Called when the call is cancelled while the start itself still runs (CreateProcess or ShellExecute has not
+    /// returned), with that start: the receiver owns the process handle it brings. launch_browser_with_debug sets it
+    /// (roadmap M5.4), so that the browser a late start brings is ended too, and its profile deleted only after that.
+    /// Without it, the handle is released when it comes. No tool parameter sets it.
+    /// </summary>
+    public Action<Task<Services.Interfaces.IProcessHandle?>>? OnStartAbandoned { get; init; }
 }
 
 /// <summary>
@@ -100,7 +115,13 @@ public enum LaunchStatus
     /// reuseExisting found a window of the app already open (showing what the launch opens), so nothing was started
     /// (roadmap M3.13).
     /// </summary>
-    AlreadyOpen
+    AlreadyOpen,
+
+    /// <summary>
+    /// launch_browser_with_debug's reuseIfRunning found the debug browser already running with the profile, its DevTools
+    /// port its own, so nothing was started (roadmap M5.4).
+    /// </summary>
+    AlreadyRunning
 }
 
 public static class LaunchStatusNames
@@ -117,6 +138,7 @@ public static class LaunchStatusNames
         LaunchStatus.TimedOut => "timedOut",
         LaunchStatus.AwaitingUserConsent => "awaitingUserConsent",
         LaunchStatus.AlreadyOpen => "alreadyOpen",
+        LaunchStatus.AlreadyRunning => "alreadyRunning",
         _ => throw new ArgumentOutOfRangeException(nameof(status), status, null)
     };
 }

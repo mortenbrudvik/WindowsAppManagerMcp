@@ -179,6 +179,20 @@ public sealed record DebugBrowserLaunchRequest(
 
     /// <summary>Whether <paramref name="port"/> is 0 or an explicit port from 1024 to 65535.</summary>
     public static bool IsValidPort(int port) => port == EphemeralPort || port is >= MinExplicitPort and <= MaxPort;
+
+    /// <summary>
+    /// A named profile kept between launches (roadmap M5.4) in the server's own folder
+    /// (<see cref="Services.DebugBrowserProfiles"/>), instead of <see cref="UserDataDir"/>; null for none.
+    /// <see cref="Services.Interfaces.IDebugBrowserLifecycle"/> turns it into the folder before the launch.
+    /// </summary>
+    public string? ProfileName { get; init; }
+
+    /// <summary>
+    /// Return the debug browser already running with the profile (launchStatus alreadyRunning) instead of failing
+    /// (roadmap M5.4). It needs <see cref="ProfileName"/> or <see cref="UserDataDir"/>: a new temporary profile has no
+    /// running browser.
+    /// </summary>
+    public bool ReuseIfRunning { get; init; }
 }
 
 /// <summary>
@@ -210,7 +224,15 @@ public record DebugBrowserLaunchResult(
     string? BrowserVersion = null,
     string? CdpEndpoint = null,
     string? BrowserWsEndpoint = null
-);
+)
+{
+    /// <summary>
+    /// The browser process's start time, read right after the start (roadmap M5.4), so that the server can tell the
+    /// browser it started from a later process that got its PID; null when nothing was started or it could not be read.
+    /// Not part of the tool's result.
+    /// </summary>
+    public DateTime? StartTime { get; init; }
+}
 
 /// <summary>
 /// A debug browser that has started and reported its DevTools port, for <see cref="Services.Interfaces.IDebugBrowserReadiness"/>.

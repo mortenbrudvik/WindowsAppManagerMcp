@@ -8,20 +8,49 @@ using WindowsAppManagerMcp.Services.Interfaces;
 namespace WindowsAppManagerMcp.Tools;
 
 [McpServerToolType]
-public class BrowserReadingTools
+public partial class BrowserReadingTools
 {
     private readonly IBrowserReadingService _browserReadingService;
     private readonly IProcessService _processService;
     private readonly IWindowService? _windowService;
+    private readonly IDebugBrowserLifecycle? _debugBrowsers;
+    private readonly ILaunchPlacementService? _placementService;
+    private readonly IMonitorService? _monitorService;
+    private readonly IInputSession? _session;
+    private readonly TimeSpan _answerTimeout;
+    private readonly TimeSpan? _gateWaitTimeout;
 
     /// <param name="browserReadingService">The browser reads.</param>
-    /// <param name="processService">Starts the debug browser.</param>
-    /// <param name="windowService">Resolves the window selector (roadmap M2.4); the server always passes it.</param>
-    public BrowserReadingTools(IBrowserReadingService browserReadingService, IProcessService processService, IWindowService? windowService = null)
+    /// <param name="processService">Starts the debug browser when there is no <paramref name="debugBrowsers"/>.</param>
+    /// <param name="windowService">Resolves the window selector (roadmap M2.4) and names a browser's windows in
+    /// close_debug_browser's question; the server always passes it.</param>
+    /// <param name="debugBrowsers">The debug browsers' lifecycle (roadmap M5.4): launches with profiles and reuse, and
+    /// close_debug_browser. The server always passes it; without it the launch goes straight to <paramref name="processService"/>.</param>
+    /// <param name="placementService">Places the debug browser's window (placement, roadmap M5.4); the server always passes it.</param>
+    /// <param name="monitorService">Checks a placement's monitorIndex before anything is launched.</param>
+    /// <param name="session">The input session, whose pause close_debug_browser respects (it takes the input gate itself).</param>
+    /// <param name="answerTimeout">How long close_debug_browser waits for the user's answer; default <see cref="UserConfirmation.DefaultAnswerTimeout"/>.</param>
+    /// <param name="gateWaitTimeout">How long close_debug_browser waits for the input gate; default <see cref="InputGateToolFilter.GateWaitTimeout"/>.</param>
+    public BrowserReadingTools(
+        IBrowserReadingService browserReadingService,
+        IProcessService processService,
+        IWindowService? windowService = null,
+        IDebugBrowserLifecycle? debugBrowsers = null,
+        ILaunchPlacementService? placementService = null,
+        IMonitorService? monitorService = null,
+        IInputSession? session = null,
+        TimeSpan? answerTimeout = null,
+        TimeSpan? gateWaitTimeout = null)
     {
         _browserReadingService = browserReadingService;
         _processService = processService;
         _windowService = windowService;
+        _debugBrowsers = debugBrowsers;
+        _placementService = placementService;
+        _monitorService = monitorService;
+        _session = session;
+        _answerTimeout = answerTimeout ?? UserConfirmation.DefaultAnswerTimeout;
+        _gateWaitTimeout = gateWaitTimeout;
     }
 
     private const string BrowserWindowDescription =
@@ -157,11 +186,10 @@ public class BrowserReadingTools
     }
 
     [McpServerTool(Name = "launch_browser_with_debug", Title = "Launch Browser with Debug Port", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = true)]
-    [Description("Launch a browser with CDP (Chrome DevTools Protocol) debug port enabled. The reading tools then read its windows through CDP, without cdpPort. Uses a separate user data directory by default to avoid conflicts with existing browser sessions." +
-                 " The debug port has no authentication: any program on this computer can control that browser until it exits. Launch it only when CDP is needed, and close every window of that browser when done" +
-                 " (find_windows with its processId and includeCloaked=true, so windows on other virtual desktops are found too), then confirm with list_processes and includeWindowless=true that it has exited." +
+    [Description("Launch a browser with CDP (Chrome DevTools Protocol) debug port enabled. The reading tools then read its windows through CDP, without cdpPort. Uses a new temporary profile by default, separate from the user's browser." +
+                 " The debug port has no authentication: any program on this computer can control that browser until it exits. Launch it only when CDP is needed, and close it with close_debug_browser when done." +
                  " It returns once the DevTools endpoint answers (cdpReady, cdpEndpoint, browserVersion); if it does not within 10 seconds, DebugLaunchFailed, and the browser keeps running (processId)." +
-                 " DebugLaunchFailed when a browser is already running with that userDataDir (nothing is launched)." +
+                 " DebugLaunchFailed when a browser already runs with that profile (nothing is launched), unless reuseIfRunning returns it (launchStatus alreadyRunning)." +
                  " InvalidArguments: a url that starts with '-' or '/' (the browser would read it as a command-line switch), a userDataDir that is not a full path or is inside a browser's own 'User Data' folder (the user's real profile), or an executablePath that is not the browser's own .exe.")]
     public async Task<DebugBrowserLaunchResultDto> LaunchBrowserWithDebug(
         [Description("Browser to launch: chrome (default), edge or brave. Any other value fails with UnsupportedBrowser.")]
@@ -174,6 +202,12 @@ public class BrowserReadingTools
         string? userDataDir = null,
         [Description("Full path of the browser's chrome.exe, msedge.exe or brave.exe (matching browser), when the server does not find it.")]
         string? executablePath = null,
+        [Description("Named profile kept between launches (sign-ins persist), in the server's folder: letters, digits, '-', '_'. Not with userDataDir.")]
+        string? profile = null,
+        [Description("With profile or userDataDir: return the debug browser already running with it (launchStatus alreadyRunning) instead of failing.")]
+        bool reuseIfRunning = false,
+        [Description(DebugPlacementDescription)]
+        LaunchPlacement? placement = null,
         CancellationToken cancellationToken = default)
     {
         if (!DebugBrowserLaunchRequest.IsValidPort(port))
@@ -203,9 +237,34 @@ public class BrowserReadingTools
             throw new ToolErrorException(ToolErrorReporting.InvalidArgumentsErrorCode, badExecutable);
         }
 
-        var result = await _processService.LaunchBrowserWithDebugAsync(
-            new DebugBrowserLaunchRequest(browserName, url, port, userDataDir, executablePath), cancellationToken).ConfigureAwait(false);
-        return ToDto(result);
+        var plan = CheckDebugLaunch(profile, userDataDir, reuseIfRunning, placement);
+        var request = new DebugBrowserLaunchRequest(browserName, url, port, userDataDir, executablePath)
+        {
+            ProfileName = profile,
+            ReuseIfRunning = reuseIfRunning
+        };
+        var result = _debugBrowsers != null
+            ? await _debugBrowsers.LaunchAsync(request, cancellationToken).ConfigureAwait(false)
+            : await _processService.LaunchBrowserWithDebugAsync(request, cancellationToken).ConfigureAwait(false);
+
+        LaunchPlacementResultDto? placed = null;
+        try
+        {
+            if (plan != null)
+            {
+                placed = (await LaunchPlacing.PlaceAsync(_placementService,
+                    [new LaunchToPlace(result.Success, result.WindowHandle, result.LaunchStatus, plan)], cancellationToken).ConfigureAwait(false))[0];
+            }
+        }
+        catch (OperationCanceledException) when (_debugBrowsers != null && result.Success && result.LaunchStatus != LaunchStatus.AlreadyRunning)
+        {
+            // Cancelled during the placement: the call sends no result, so nobody learns the PID or the unauthenticated port
+            // of the browser it started (roadmap M5.4). A browser it reused is left alone
+            await _debugBrowsers.AbandonAsync(result).ConfigureAwait(false);
+            throw;
+        }
+
+        return ToDto(result) with { Placement = placed };
     }
 
     /// <summary>
@@ -454,7 +513,8 @@ public record BrowserContentResultDto(
 /// DTO for debug browser launch result returned by MCP tools. LaunchStatus is launch_application's launchStatus
 /// (roadmap M5.1), and Warning what the window wait found when it was not a window. CdpReady is true once the DevTools
 /// endpoint answered /json/version, with BrowserVersion, CdpEndpoint (http://127.0.0.1:port) and BrowserWsEndpoint (the
-/// browser-level WebSocket URL); false when a started browser failed before it did.
+/// browser-level WebSocket URL); false when a started browser failed before it did. Placement is the window's placement,
+/// when one was asked for (roadmap M5.4).
 /// </summary>
 public record DebugBrowserLaunchResultDto(
     bool Success,
@@ -469,5 +529,6 @@ public record DebugBrowserLaunchResultDto(
     bool? CdpReady = null,
     string? BrowserVersion = null,
     string? CdpEndpoint = null,
-    string? BrowserWsEndpoint = null
+    string? BrowserWsEndpoint = null,
+    LaunchPlacementResultDto? Placement = null
 );

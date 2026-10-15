@@ -2309,7 +2309,8 @@ Every run keeps these rules, for every debug instance it starts:
 3. Open only `data:` URLs, `file:///` pages the check wrote under `%TEMP%`, or a 127.0.0.1 HttpListener. No network.
 4. Act only on windows and targets of those processes. No window of the user's browser is passed to any call.
 5. Clean up by process ID only, never by window title: check that the process tree has exited and that the user's
-   browser process IDs are unchanged, then delete the profile folder.
+   browser process IDs are unchanged, then delete the profile folder. After roadmap M5.4, close_debug_browser with the
+   launch's `processId` does both; the checks after it stay.
 
 Roadmap M5.2 (after its merge, on a real Edge):
 
@@ -2374,6 +2375,41 @@ never with keystrokes; windows are moved only with move_window on the check's ow
 - **Port that is not the window's** (another process listening on the switch's port, an unreadable owner, port 0
   without a port file) and **a browser without the switch** are covered by the fakes (`DebugPortLocatorTests`,
   `BrowserReadingServiceTests`); the user's own browser is not passed to any call (rule 4).
+
+Roadmap M5.4 (on a real Edge, then on a real Chrome with `browser: "chrome"` as in the M5.1 block; every other rule is
+unchanged). Pages are `data:` URLs or a 127.0.0.1 HttpListener page under 1 MB. A named profile is only
+`wam-m54-check-<8 hex digits>`, made by this check and deleted at its end. No call is given a process ID, port or window
+of the user's browser: the refusals of the user's browser are covered by the fakes (`DebugBrowserLifecycleTests`):
+
+- **Close a temporary-profile browser.** Launch without `profile` or `userDataDir`: `userDataDir` is under
+  `%TEMP%\WindowsAppManagerMcp\browser-debug\` with a 32-hex-digit name. close_debug_browser with its `processId`
+  (answer the question when the client asks; otherwise `confirm: true`) returns `success: true`, `closedGracefully: true`,
+  `forced: false`, `exited: true` and `profileDeleted: true`; list_processes with `includeWindowless: true` lists none of
+  the processes of that tree, the folder is gone, and the user's browser process IDs are unchanged. Record how long the
+  call took. Repeat with only `cdpPort`.
+- **Refusals on the check's own processes.** close_debug_browser with the process ID of a renderer of the check's debug
+  browser (a child `msedge.exe` whose command line has `--type=renderer`) returns `NotADebugBrowser` and the browser
+  keeps running; so does the process ID of the check's own HttpListener process. Without `confirm` on a client that
+  cannot ask: `ConfirmationRequired`, nothing closed.
+- **Named profile and reuse.** Launch with `profile` and a 127.0.0.1 page that stores a value in `localStorage`. A second
+  launch with the same `profile` returns `DebugLaunchFailed` with nothing started; with `reuseIfRunning: true` it returns
+  `launchStatus: "alreadyRunning"` with the same `processId` and `cdpPort`, `cdpReady: true`, and a `warning` that the
+  url was not opened, within about a second. close_debug_browser without `deleteProfile` keeps the folder
+  (`profileDeleted` absent); a new launch with the same `profile` reads the stored value back. close_debug_browser with
+  `deleteProfile: true` deletes the folder.
+- **Placement.** Launch with `placement: {"snap": "left_half"}`: `placement.finalBounds` is the left half of the monitor's
+  work area and the window is there. A `reuseIfRunning` launch with `placement: {"snap": "right_half"}` moves the reused
+  window to the right half.
+- **Cancelled launch.** With a client that can cancel a call (`notifications/cancelled` about 1 second after
+  launch_browser_with_debug starts), record the process IDs before; after the cancellation, list_processes with
+  `includeWindowless: true` lists no new `msedge` process with the launch's profile, and no folder was left under
+  `%TEMP%\WindowsAppManagerMcp\browser-debug\`. If the client cannot cancel a call, skip it and record that.
+- **Leftover sweep.** A folder with a 32-hex-digit name that the check creates under
+  `%TEMP%\WindowsAppManagerMcp\browser-debug\`, with its creation time set an hour back, is deleted by the next launch
+  with a temporary profile; the folder of a debug browser that is still running is kept.
+- **A browser that does not close**, a port that is not the browser's, a PID reused while the user was asked, and the
+  user's own browser (with or without a debug port) are covered by the fakes (`DebugBrowserLifecycleTests`,
+  `CdpServiceTests`, `DebugBrowserLaunchTests`).
 
 Roadmap M5.5 (on a real Edge, then on a real Chrome with `browser: "chrome"` as in the M5.1 block; every other rule is
 unchanged). browser_navigate refuses `data:` and `file:` URLs, so the pages come from a 127.0.0.1 HttpListener the check
@@ -2550,7 +2586,7 @@ typical result over 300 tokens, and tools/list itself, measured in October 2026:
 | `read_table` | Task Manager's first 50 processes, 5 columns with headers | 643 | 1,000 |
 | `get_server_info` | The default deny list, five host processes, two monitors | 634 | 850 |
 | `get_layout` | A preset of 6 placements, each with the captured window identity | 529 | 800 |
-| tools/list | Every tool's name, title, description, schemas and annotations: 71 tools, 238,709 bytes (`ToolList_StaysWithinItsBudget`) | 59,678 | 59,714 |
+| tools/list | Every tool's name, title, description, schemas and annotations: 72 tools, 242,016 bytes (`ToolList_StaysWithinItsBudget`) | 60,504 | 60,540 |
 
 Every other typical result is at most 300 tokens. When a change makes a result larger on purpose, raise its
 budget in the same change (the failure message gives the new size); when a change shrinks one a lot, lower it.

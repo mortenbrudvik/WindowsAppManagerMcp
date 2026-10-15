@@ -115,7 +115,7 @@ public class AppLauncherTools
         if (placement != null)
         {
             var monitorCount = MonitorCount();
-            if (!TryPlan(placement, monitorCount, out plan, out var errorCode, out var error))
+            if (!LaunchPlacing.TryPlan(placement, monitorCount, out plan, out var errorCode, out var error))
             {
                 throw new ToolErrorException(errorCode!, $"{error} Nothing was launched.");
             }
@@ -148,100 +148,15 @@ public class AppLauncherTools
     private int? MonitorCount() => _monitorService?.GetAllMonitors().Count;
 
     /// <summary>
-    /// Checks a placement (<see cref="LaunchPlacementPlan.TryCreate"/>), and its monitorIndex against the monitors there are
-    /// when <paramref name="monitorCount"/> is known.
+    /// Places the windows of the launches that have a plan (roadmap M3.13) through <see cref="LaunchPlacing.PlaceAsync"/>,
+    /// and returns each launch's placement result, in order.
     /// </summary>
-    private static bool TryPlan(LaunchPlacement placement, int? monitorCount, out LaunchPlacementPlan? plan, out string? errorCode, out string? error)
-    {
-        if (!LaunchPlacementPlan.TryCreate(placement, out plan, out errorCode, out error))
-        {
-            return false;
-        }
-
-        if (plan!.MonitorIndex is { } index && monitorCount is { } count && index >= count)
-        {
-            plan = null;
-            errorCode = nameof(WindowErrorCode.InvalidMonitorIndex);
-            error = $"placement.monitorIndex: {WindowService.MonitorIndexMessage(index, count)}";
-            return false;
-        }
-
-        return true;
-    }
-
-    /// <summary>
-    /// Places the windows of the launches that have a plan (roadmap M3.13), all in one go (<see cref="ILaunchPlacementService"/>),
-    /// and returns each launch's placement result, in order: null without a plan or for a launch that failed, WindowNotFound
-    /// for a launch that found no window.
-    /// </summary>
-    private async Task<IReadOnlyList<LaunchPlacementResultDto?>> PlaceAsync(
-        IReadOnlyList<(LaunchResult Result, LaunchPlacementPlan? Plan)> launches, CancellationToken cancellationToken)
-    {
-        var placed = new LaunchPlacementResultDto?[launches.Count];
-        var placements = new List<(nint Handle, LaunchPlacementPlan Plan)>();
-        var positions = new List<int>();
-        for (var i = 0; i < launches.Count; i++)
-        {
-            var (result, plan) = launches[i];
-            if (plan == null || !result.Success)
-                continue;
-
-            if (result.Window is { } window)
-            {
-                placements.Add((window.Handle, plan));
-                positions.Add(i);
-            }
-            else
-            {
-                placed[i] = new LaunchPlacementResultDto(null, null, null, Focused: false, Reapplied: false,
-                    ErrorCode: nameof(WindowErrorCode.WindowNotFound),
-                    Error: $"The launch succeeded (launchStatus {result.Status?.ToWireName()}) but found no window, so nothing was placed. " +
-                           "Look for its window with find_windows and arrange it with snap_window, set_window_bounds or focus_window; " +
-                           "do not launch it again.");
-            }
-        }
-
-        if (placements.Count > 0)
-        {
-            try
-            {
-                var service = _placementService ?? throw new InvalidOperationException("No launch placement service is registered.");
-                var outcomes = await service.PlaceAsync(placements, cancellationToken).ConfigureAwait(false);
-                for (var k = 0; k < outcomes.Count; k++)
-                {
-                    placed[positions[k]] = ToDto(outcomes[k]);
-                }
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                // A placement failure never hides a successful launch: the launch result stays, the placement reports it
-                foreach (var position in positions)
-                {
-                    placed[position] = new LaunchPlacementResultDto(null, null, null, Focused: false, Reapplied: false,
-                        ErrorCode: nameof(WindowErrorCode.MoveFailed),
-                        Error: $"The launch succeeded, but placing its window failed: {ex.Message} Arrange it with snap_window, " +
-                               "set_window_bounds or focus_window; do not launch it again.");
-                }
-            }
-        }
-
-        return placed;
-    }
-
-    private static LaunchPlacementResultDto ToDto(LaunchPlacementOutcome outcome)
-    {
-        var window = outcome.Window;
-        var visible = window is null || window.State == WindowState.Minimized ? null : window.VisibleBounds ?? window.Bounds;
-        return new LaunchPlacementResultDto(
-            FinalBounds: visible is null ? null : new BoundsDto(visible.X, visible.Y, visible.Width, visible.Height),
-            FinalState: window?.State.ToString().ToLowerInvariant(),
-            MonitorIndex: window?.MonitorIndex,
-            Focused: outcome.Focused,
-            Reapplied: outcome.Reapplied,
-            ErrorCode: outcome.Success ? null : outcome.ErrorCode.ToString(),
-            Error: outcome.Error,
-            Warning: outcome.Warning);
-    }
+    private Task<IReadOnlyList<LaunchPlacementResultDto?>> PlaceAsync(
+        IReadOnlyList<(LaunchResult Result, LaunchPlacementPlan? Plan)> launches, CancellationToken cancellationToken) =>
+        LaunchPlacing.PlaceAsync(
+            _placementService,
+            launches.Select(l => new LaunchToPlace(l.Result.Success, l.Result.Window?.Handle, l.Result.Status, l.Plan)).ToList(),
+            cancellationToken);
 
     [McpServerTool(Name = "list_processes", Title = "List Processes", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
     [Description("List currently running processes with optional filtering by name. Returns process info including ID, name, window count, and memory usage. " +
@@ -428,7 +343,7 @@ public class AppLauncherTools
                     ErrorCode: ToolErrorReporting.InvalidArgumentsErrorCode);
             }
             else if (application.Placement != null &&
-                     !TryPlan(application.Placement, monitorCount, out plans[i], out var errorCode, out var error))
+                     !LaunchPlacing.TryPlan(application.Placement, monitorCount, out plans[i], out var errorCode, out var error))
             {
                 refusals[i] = new LaunchResultItem(application.Executable, false,
                     Error: $"Item {i}: {error} Nothing was launched for it.", ErrorCode: errorCode);

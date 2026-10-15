@@ -96,7 +96,8 @@ public static class ToolDocCatalog
             new("get_browser_url", "URL of a browser window", "handle", "cdpPort", "requireCdp"),
             new("get_active_browser_url", "URL of the foreground browser window", "cdpPort", "requireCdp"),
             new("get_browser_content", "Text of the page (or HTML through CDP), a page at a time", "handle", "maxLength", "offset", "textOnly", "cdpPort", "requireCdp"),
-            new("launch_browser_with_debug", "Start Chrome, Edge or Brave with a DevTools port", "browser", "url", "port", "userDataDir"),
+            new("launch_browser_with_debug", "Start Chrome, Edge or Brave with a DevTools port", "browser", "url", "port", "userDataDir", "profile", "reuseIfRunning"),
+            new("close_debug_browser", "Close a debug browser this server started, and delete its temporary profile", "processId", "cdpPort", "deleteProfile", "confirm"),
         ]),
         new("Browser Tabs and Navigation",
         [

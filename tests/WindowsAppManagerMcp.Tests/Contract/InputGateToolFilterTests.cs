@@ -50,6 +50,7 @@ public class InputGateToolFilterTests
     [InlineData("kill_process")]
     [InlineData("close_windows_batch")]
     [InlineData("close_application")]
+    [InlineData("close_debug_browser")] // asks the user, then takes the gate for Browser.close and an end (roadmap M5.4)
     [InlineData("close_window")] // sends inside the gate it takes itself, and waits for the window outside it (roadmap M2.5)
     [InlineData("focus_window")] // resolves its window selector before it takes the gate itself (roadmap M2.4)
     [InlineData("move_window")]
