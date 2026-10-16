@@ -947,9 +947,10 @@ public class ProcessService : IProcessService
 
     public IReadOnlyList<ProcessInfo> GetRunningProcesses(string? nameFilter = null, bool includeWindowless = false)
     {
-        var processes = _processWrapper.ListRunningProcesses();
-        if (processes == null)
-            return [];
+        // An empty list would read as "no such process is running" and let a "has it exited?" check pass when nothing
+        // was read, so an unreadable list is an error, as it was before the process seam
+        var processes = _processWrapper.ListRunningProcesses()
+            ?? throw new InvalidOperationException("The process list could not be read.");
 
         // Built in both modes, so that windowCount is real with includeWindowless as well (D-PAL-20)
         var windowsByProcess = MapWindowsToProcesses();

@@ -1007,17 +1007,18 @@ public class ProcessServiceTests
     }
 
     [Fact]
-    public void GetRunningProcesses_WhenTheProcessListCannotBeRead_ReturnsEmpty()
+    public void GetRunningProcesses_WhenTheProcessListCannotBeRead_Throws()
     {
-        // Arrange
+        // Arrange - an empty list would read as "no such process is running", so a "has it exited?" check made with
+        // list_processes would pass when nothing was read; the tool reports an error instead, as it did before
         UseProcessTable();
         _mockProcessWrapper.Setup(w => w.ListRunningProcesses()).Returns((IReadOnlyList<RunningProcess>?)null);
 
         // Act
-        var result = CreateSut().GetRunningProcesses(includeWindowless: true);
+        var act = () => CreateSut().GetRunningProcesses(nameFilter: "notepad", includeWindowless: true);
 
         // Assert
-        result.Should().BeEmpty();
+        act.Should().Throw<InvalidOperationException>().WithMessage("*process list could not be read*");
     }
 
     [Fact]

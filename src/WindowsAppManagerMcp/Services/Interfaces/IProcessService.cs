@@ -52,9 +52,11 @@ public interface IProcessService
     /// <see cref="INativeProcessWrapper.ListRunningProcesses"/>; each listed process is opened once, for its path and start
     /// time (<see cref="INativeProcessWrapper.ReadProcessDetails"/>), and its parent is taken from one process snapshot
     /// with the PID-reuse rule of <see cref="Native.NativeProcessWrapper.FindParent"/> (named only when both start times
-    /// are known). Empty when the process list cannot be read. Never throws for a process that exits or cannot be
-    /// opened: its unreadable fields are null.
+    /// are known). Never throws for a process that exits or cannot be opened: its unreadable fields are null.
     /// </summary>
+    /// <exception cref="InvalidOperationException">
+    /// The process list cannot be read: an empty list would look like "no such process is running".
+    /// </exception>
     /// <param name="nameFilter">Part of the process name, case-insensitive.</param>
     /// <param name="includeWindowless">
     /// False (default): only processes that have a visible, titled top-level window, wherever it is:
