@@ -2386,7 +2386,7 @@ only the check's own debug instances):
 Roadmap M5.3 (on a real Edge, then on a real Chrome with `browser: "chrome"` as in the M5.1 block; every other rule is
 unchanged). A second window of a debug instance is opened through that instance's own DevTools endpoint
 (`Target.createTarget` with `newWindow: true`, from a script the check runs against the launch's `browserWsEndpoint`),
-never with keystrokes; windows are moved only with move_window on the check's own windows:
+never with keystrokes; windows are moved only with set_window_bounds (`x` and `y`; move_window before 2.2.0) on the check's own windows:
 
 - **No cdpPort.** On instance A, launched with port 0, get_browser_url and get_browser_content on the launch's
   `windowHandle` without `cdpPort` return `source: "cdp"` and `cdpPort` equal to the launch's `cdpPort`;
@@ -2469,7 +2469,7 @@ instance, named by the launch's `windowHandle`:
   loads; `/a#part` returns `loadState: "sameDocument"`; `waitUntil: "none"` returns `loadState: "notWaited"` at once, also
   to `/slow`; `/jsredirect` returns `loadState: "load"` with `url` ending in `/a` well within the time limit; `/empty500`
   returns success with `httpStatus: 500` (record the `url` and `title`).
-  During the slow load, move_window on the debug window returns at once (the load does not hold the input gate).
+  During the slow load, set_window_bounds with `x` and `y` (move_window before 2.2.0) on the debug window returns at once (the load does not hold the input gate).
 - **Refused URLs.** `file:///C:/Windows/win.ini`, `data:text/html,x`, `javascript:alert(1)`, `chrome://settings` and
   `edge://settings` each return `InvalidArguments`, and so do `http://127.0.0.1:<cdpPort>/json/list` and
   `http://localhost:<cdpPort>/` (the debug browser's own DevTools endpoint); get_browser_url shows the tab did not change.
@@ -2505,7 +2505,7 @@ around `#q` whose submit goes to `/done`), `/dialogs` (buttons that open `alert(
   `role: "button"`, `name: "Save draft"` returns `anchor: "document"` and `devicePixelRatio: 1.5`; get_element_at_point
   at its `clickPoint` returns that button (UI Automation), and capture_region of its `screenRect` shows the button.
   Record the anchor's distance from the window's client area.
-- **Rect on the 100 % monitor at negative x.** move_window the debug window to the secondary monitor (100 %, left of
+- **Rect on the 100 % monitor at negative x.** Move the debug window with set_window_bounds (`x` and `y`) to the secondary monitor (100 %, left of
   the primary): the same call returns `devicePixelRatio: 1`, a negative `screenRect.x`, and get_element_at_point at the
   new `clickPoint` returns the button. Browser zoom other than 100 % is not provoked (it needs keyboard input to the
   browser or an edited profile); its scaling is covered by the fakes (`BrowserPageServiceTests`).
@@ -2571,13 +2571,19 @@ desktop; before the release that carries it, the owner checks:
    the agent's host stays in front); `x` and `y` alone onto the monitor with the other scale go through the second
    placement, as move_window does (skip with one monitor); half a pair is `InvalidArguments` and the window does not
    move. The harness closes only the fixture windows it opened.
-2. **get_monitors' `virtualScreen`** (no input, no window, no pixels): equal to list_screens' `virtualScreen`, and to
+2. **get_monitors' `virtualScreen`** (no input, no window, no pixels): equal to the deprecated list_screens' `virtualScreen` (with `WAM_TOOLSETS=+deprecated`), and to
    take_screenshot's `capturedRegion` with `monitorIndex: -1` and `output: "metadata"`. Always pass `output: "metadata"`:
    the default output returns a picture of every monitor, with whatever the owner has open, to read four integers.
 3. **get_browser_url with `window: {"foreground": true}`** (optional, as in "Desktop check: M5 browser bridge"): with the
    agent's terminal in front the result is `NoBrowserInForeground`. With a throwaway debug browser from
    launch_browser_with_debug, focused by its handle, it returns that browser's URL; close it with close_debug_browser by
    its processId. Never focus or close a browser by its title.
+4. **The deprecations in a real client** (M6.1b; no window, no input): with the built exe in Claude Code, `/mcp` lists 58
+   tools without toolset variables, and none of click, right_click, double_click, move_window, resize_window,
+   get_all_windows, get_primary_monitor, list_screens, get_active_browser_url or the three geometry batches;
+   `WAM_TOOLSETS=+deprecated` adds the nine with their one-line descriptions; `WAM_EXCLUDE_TOOLS=click` still lists the
+   58 (it does not fail closed); and get_server_info's `toolsets.moved` names the deprecated and windows-batch toolsets.
+   The in-process contract tests (`DeprecatedToolsContractTests`) cover all of it except the client's own rendering.
 
 ### Tool surface snapshot
 
@@ -2711,8 +2717,8 @@ typical result over 300 tokens, and tools/list itself, measured in October 2026:
 | `read_table` | Task Manager's first 50 processes, 5 columns with headers | 643 | 1,000 |
 | `get_server_info` | The default deny list, five host processes, two monitors | 634 | 850 |
 | `get_layout` | A preset of 6 placements, each with the captured window identity | 529 | 800 |
-| tools/list | Every tool's name, title, description, schemas and annotations: 78 tools, 256,309 bytes (`ToolList_StaysWithinItsBudget`; M5.8's six DOM bridge tools added 2,970, 936 of them their window selectors; M5.8's dialog option and the UI Automation browser_handle_dialog 199 more; M6.1a's additive consolidations 405 more: mouse_click's own click checks 249, set_window_bounds' optional pairs 87, get_browser_url's foreground sentence 41, get_monitors' virtualScreen 28) | 64,078 | 64,114 |
-| Default tools/list | The 70 tools a server serves without WAM_TOOLSETS, WAM_EXCLUDE_TOOLS and WAM_READ_ONLY, 240,125 bytes (`DefaultToolList_StaysWithinItsBudget`, roadmap M6.1; 59,627 before M6.1a) | 60,032 | 60,070 |
+| tools/list | Every tool's name, title, description, schemas and annotations: 78 tools, 247,825 bytes (`ToolList_StaysWithinItsBudget`; M5.8's six DOM bridge tools added 2,970, 936 of them their window selectors; M5.8's dialog option and the UI Automation browser_handle_dialog 199 more; M6.1a's additive consolidations 405 more: mouse_click's own click checks 249, set_window_bounds' optional pairs 87, get_browser_url's foreground sentence 41, get_monitors' virtualScreen 28; M6.1b's one-line descriptions of the nine deprecated tools and the descriptions that no longer send the agent to them 2,121 fewer) | 61,957 | 61,993 |
+| Default tools/list | The 58 tools a server serves without WAM_TOOLSETS, WAM_EXCLUDE_TOOLS and WAM_READ_ONLY, 204,020 bytes (`DefaultToolList_StaysWithinItsBudget`, roadmap M6.1; 59,627 before M6.1a, 60,032 after it with 70 tools, 9,027 fewer once M6.1b moved the nine deprecated tools and the three geometry batches to opt-in toolsets) | 51,005 | 51,041 |
 
 Every other typical result is at most 300 tokens. When a change makes a result larger on purpose, raise its
 budget in the same change (the failure message gives the new size); when a change shrinks one a lot, lower it.
@@ -2733,19 +2739,25 @@ were capture_with_elements at 2,396 and element_action at 2,386, so they have ab
 
 | Toolset | Default | Tools | Tokens | Budget |
 |---------|---------|------:|-------:|-------:|
-| `server` | always on | 4 | 1,028 | 1,050 |
-| `windows` | on | 18 | 13,724 | 13,750 |
-| `monitors` | on | 3 | 314 | 350 |
-| `capture` | on | 4 | 5,865 | 5,900 |
-| `elements` | on | 9 | 8,271 | 8,300 |
-| `input` | on | 13 | 19,415 | 19,450 |
+| `server` | always on | 4 | 1,038 | 1,050 |
+| `windows` | on | 12 | 9,921 | 9,950 |
+| `monitors` | on | 1 | 118 | 150 |
+| `capture` | on | 4 | 5,856 | 5,900 |
+| `elements` | on | 9 | 8,262 | 8,300 |
+| `input` | on | 10 | 14,758 | 14,800 |
 | `clipboard` | on | 2 | 734 | 750 |
 | `launch` | on | 2 | 2,890 | 2,900 |
 | `process` | on | 3 | 1,921 | 1,950 |
 | `layouts` | on | 5 | 1,181 | 1,200 |
-| `browser` | on | 7 | 4,674 | 4,700 |
+| `browser` | on | 6 | 4,315 | 4,350 |
 | `browser-actions` | off | 7 | 3,577 | 3,600 |
 | `browser-script` | off | 1 | 468 | 500 |
+| `windows-batch` | off | 3 | 1,978 | 2,000 |
+| `deprecated` | off | 9 | 4,925 | 4,950 |
+
+The rows are measured after M6.1b (October 2026), which moved six tools out of `windows`, two out of `monitors`, three
+out of `input` and one out of `browser` into the opt-in `windows-batch` and `deprecated` toolsets. The deprecated tools'
+one-line descriptions keep their full parameters, which are most of the `deprecated` row.
 
 A change states its default, per-toolset and all-tools deltas, and raises only the ratchets it moves: a new opt-in
 toolset moves the all-tools figure and its own row, never the default figure.
@@ -2801,14 +2813,26 @@ cancellation tests check the wire with `server.AssertNoResponseSentAsync(id)` (n
 fixture catalog that has an opt-in toolset: `WAM_TOOLSETS`, `WAM_EXCLUDE_TOOLS` and `WAM_READ_ONLY` decide what
 tools/list lists, and a call to a tool that is not served is an unknown tool. Against the production catalog it
 checks that every served tool is in exactly one toolset, that the default serves every toolset except the opt-in
-`browser-actions` and `browser-script`, that browser_evaluate is served only with `browser-script` (turning on
+`browser-actions`, `browser-script`, `windows-batch` and `deprecated`, that browser_evaluate is served only with `browser-script` (turning on
 `browser-actions` does not serve it, and `browser-script` alone serves none of the other DOM bridge tools), that read-only
 mode serves exactly the tools annotated `readOnlyHint: true` (browser_element_rect only once `browser-actions` is on,
 browser_evaluate never), and that each of those is a read-only tool of the input
-gate. `Unit/Infrastructure/ToolsetSelectionTests` covers the parsing. `Contract/ServerInfoToolContractTests` calls
+gate. `Unit/Infrastructure/ToolsetSelectionTests` covers the parsing, and over a fixture catalog with moved tools the
+rules of roadmap M6.1: a moved tool is served only while the toolset it came from is on too, a toolset's name in
+`WAM_EXCLUDE_TOOLS` also excludes the tools that moved out of it, excluding a tool that is not served is no error (no
+fail-closed), `moved` says where a tool that is out of reach went, and the warnings name a moved tool its toolset cannot
+serve and the replaced tools that are served. `Contract/DeprecatedToolsContractTests` checks the production catalog: the
+nine tools of `deprecated` and the three of `windows-batch`, both off by default, every deprecated tool's one-line
+description with its replacement and "removed in 3.0.0", a call to a moved tool on a default server being an unknown
+tool (never forwarded), `all,-input` serving no click, `WAM_EXCLUDE_TOOLS=click` on a default server serving the whole
+default, the deprecated tools staying on the input gate's and the audit log's lists, and get_server_info's `moved` and
+warnings. `Contract/ServerInfoToolContractTests` calls
 `get_server_info` over MCP (a real `ServerInfoService` over the contract services' mocked sources),
 `Unit/Services/ServerInfoServiceTests` checks the report and its warnings, and `Contract/ServerInstructionsTests`
-keeps the server instructions at 15 to 20 lines and under 3,000 characters, naming only served tools.
+keeps the server instructions at 15 to 20 lines and under 3,000 characters, naming only tools the default serves; its
+Act rule names every input tool the default serves and lists exactly those (click, right_click and double_click stay on
+the input gate's list while the opt-in `deprecated` toolset serves them, but the instructions send the agent to
+mouse_click).
 
 ### Audit log and clipboard in tests
 

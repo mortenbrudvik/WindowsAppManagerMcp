@@ -20,7 +20,7 @@ An MCP (Model Context Protocol) server that enables AI assistants like Claude to
 - **Multi-Monitor Support** - Move windows between monitors, get display information
 - **Screenshot Capture** - Capture screens, regions, windows or one element of a window; Set-of-Marks captures box each control with its ref and list it in a legend; captures come back as images the model sees, sized for vision, with a `captureId` that the mouse tools take to click a point seen in the image
 - **UI Automation** - Retrieve UI element trees with bounding boxes and refs, list a window's open menus, dropdowns and dialogs, and check which element has keyboard focus or sits at a screen point; read through the UI Automation 3 COM client with per-call timeouts by default (`WAM_UIA_ENGINE`); the first read of a page in a Chromium browser or an Electron app waits briefly for its accessibility tree (`launch_application` `forceAccessibility` builds it from the start)
-- **Input Simulation** - Click, right-click, double-click, click any button with modifier keys (Ctrl+click, middle and triple clicks), drag and drop, move the mouse cursor, scroll, type text, send key combinations and press key chords by name (`ctrl+shift+t`), aimed at a named window and kept off the agent's own terminal, elevated windows and denied apps
+- **Input Simulation** - Click any mouse button one to three times, with modifier keys (Ctrl+click, middle and triple clicks), drag and drop, move the mouse cursor, scroll, type text, send key combinations and press key chords by name (`ctrl+shift+t`), aimed at a named window and kept off the agent's own terminal, elevated windows and denied apps
 - **Clipboard** - Read what the agent copied and put text on the clipboard to paste it; the user's own clipboard is read, and pasted, only with the user's consent, and content password managers mark as private never
 - **Browser Reading** - Read the URL and page text of browser windows through UI Automation or the Chrome DevTools Protocol
 - **Browser Tabs and Navigation** - List a debug browser's tabs, wait for a page's URL, text or element, and (opt-in `browser-actions` toolset) show a tab or open a URL with a load wait, through CDP only
@@ -29,7 +29,7 @@ An MCP (Model Context Protocol) server that enables AI assistants like Claude to
 - **Process Management** - List running processes, close a whole application gracefully, terminate processes safely
 - **Layout Presets** - Save and restore window arrangements
 - **Server Info and Instructions** - `get_server_info` reports the build, the DPI awareness, the desktop state, the agent's host windows, the pause and the toolsets in force, with warnings; every MCP client gets usage instructions in the handshake, with or without the plugin skill
-- **Toolsets** - Serve only the tools you want (`WAM_TOOLSETS`, `WAM_EXCLUDE_TOOLS`), or only tools that read (`WAM_READ_ONLY=1`); see [Toolsets](docs/TOOLS.md#toolsets)
+- **Toolsets** - Serve only the tools you want (`WAM_TOOLSETS`, `WAM_EXCLUDE_TOOLS`), or only tools that read (`WAM_READ_ONLY=1`); see [Toolsets](docs/TOOLS.md#toolsets). The default serves 58 of the 78 tools: the browser actions and scripts, the window batches and the nine deprecated tools are opt-in
 - **Audit Log** - Every input, element action, dialog answer, close, kill, launch, layout-write (apply, save, delete), clipboard and browser tab or navigation call is recorded, without typed text, values or clipboard content, so you can see afterwards what was sent where; see [Audit log](docs/TOOLS.md#audit-log)
 
 ## Installation
@@ -128,6 +128,14 @@ so `serverInfo.version` shows a different commit SHA (`X.Y.Z+<tag commit>` for t
 | Server Info | `get_server_info` |
 <!-- tools:end tool-table -->
 
+The table lists every tool. Twelve of them are off by default since 2.2.0 (roadmap M6.1): `set_windows_bounds_batch`,
+`snap_windows_batch` and `set_windows_state_batch` are in the opt-in `windows-batch` toolset, and nine tools that another
+tool replaced are in the opt-in `deprecated` toolset until 3.0.0 removes them. Use `mouse_click` instead of `click`,
+`right_click` and `double_click`, `set_window_bounds` instead of `move_window` and `resize_window`, `find_windows` instead
+of `get_all_windows`, `get_monitors` instead of `get_primary_monitor` and `list_screens`, and `get_browser_url` with
+`window: {"foreground": true}` instead of `get_active_browser_url`. `WAM_TOOLSETS=+deprecated` (or `all`) serves the
+deprecated tools, unchanged, until then; see [Moved and deprecated tools](docs/TOOLS.md#moved-and-deprecated-tools).
+
 See [docs/TOOLS.md](docs/TOOLS.md) for complete documentation with examples.
 
 ## Configuration
@@ -143,8 +151,8 @@ server configuration). No tool argument can change them.
 | `WAM_DESTRUCTIVE_CHORDS` | `%{F4} ^w ^q ^{F4} ^+{ESC} #l` | `send_keys` chords that need `windowHandle` (`DestructiveChordNeedsTarget`) |
 | `WAM_LAYOUTS_PATH` | `%LOCALAPPDATA%\WindowsAppManagerMcp\layouts` | Folder of the [layout presets](docs/TOOLS.md#layout-presets) |
 | `WAM_AUDIT_PATH` | `%LOCALAPPDATA%\WindowsAppManagerMcp\audit` | Folder of the [audit log](docs/TOOLS.md#audit-log): one JSON line per input, element action, dialog answer, file dialog, close, kill, launch, layout-write (apply, save, delete), browser tab activation or navigation call (the URL as its scheme and host only), browser page click, typing, dialog answer, script or capture (a script, a text or a selector as its length only, never a script's value) and per clipboard read or write, one file per day, kept 7 days |
-| `WAM_TOOLSETS` | the default toolsets (all but `browser-actions` and `browser-script`) | The [toolsets](docs/TOOLS.md#toolsets) to serve, such as `windows,monitors,layouts`; `all`, `default`, `+name` and `-name` (`-browser`) also work. The `server` toolset is always served. A name that is not a toolset never serves more than you asked for: an unknown `-name`, or unknown plain names with no valid one, serve only the `server` toolset (an unknown `+name` is just ignored) |
-| `WAM_EXCLUDE_TOOLS` | not set | Tools to leave out by name, such as `kill_process`, or every tool of a toolset by the toolset's name (`process`). `get_server_info` is always served. A name that is neither a tool nor a toolset serves only the `server` toolset, so a typo never leaves on a tool you meant to turn off |
+| `WAM_TOOLSETS` | the default toolsets (all but `browser-actions`, `browser-script`, `windows-batch` and `deprecated`) | The [toolsets](docs/TOOLS.md#toolsets) to serve, such as `windows,monitors,layouts`; `all` (every toolset, `deprecated` included), `default`, `+name` and `-name` (`-browser`) also work. The `server` toolset is always served. A moved or deprecated tool is served only while the toolset it came from is on too. A name that is not a toolset never serves more than you asked for: an unknown `-name`, or unknown plain names with no valid one, serve only the `server` toolset (an unknown `+name` is just ignored) |
+| `WAM_EXCLUDE_TOOLS` | not set | Tools to leave out by name, such as `kill_process`, or every tool of a toolset by the toolset's name (`process`, which also leaves out the tools that moved out of it). Naming a tool that is not served anyway, such as the deprecated `click`, is no error. `get_server_info` is always served. A name that is neither a tool nor a toolset serves only the `server` toolset, so a typo never leaves on a tool you meant to turn off |
 | `WAM_READ_ONLY` | not set | `1` serves only the tools annotated read-only (an observer profile: no input, element actions, dialog answers, window changes, captures, layout writes, clipboard writes or process control) |
 | `WAM_ALLOWED_PROTOCOLS` | not set | More URI schemes `launch_application` may open, such as `vscode,ms-teams,spotify` (built in: `http`, `https`, `mailto`, `tel`, `ms-settings` and `shell:AppsFolder\<AppUserModelID>`). Listing a scheme trusts its app with whatever the agent puts in the URI. `javascript`, `vbscript`, `data`, `mshta`, the shells, `shell:`, `ms-appinstaller`, `ms-officecmd` and the help schemes stay blocked. See [launch_application](docs/TOOLS.md#launch_application) |
 | `WAM_ALLOW_USER_CLIPBOARD` | not set (off) | `1` lets `get_clipboard` return what you copied, without asking you each time. Off, it returns only what the agent copied or set, and asks you (when the client can) before reading your clipboard; content password managers mark as private is never returned. See [Clipboard](docs/TOOLS.md#clipboard) |
