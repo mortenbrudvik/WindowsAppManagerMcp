@@ -2,20 +2,25 @@ using System.Collections.Concurrent;
 using System.IO.Pipelines;
 using System.Text;
 using System.Text.Json;
+using FluentAssertions;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
+using Xunit;
 
-namespace WindowsAppManagerMcp.Tests.Fixtures;
+namespace WindowsAppManagerMcp.Tests.Infrastructure;
 
 /// <summary>
 /// Hosts an MCP server and a connected MCP client in the test process, linked by in-memory pipes.
 /// Requests go through the real SDK pipeline (argument binding, filters, result serialization),
 /// but only the tools passed in are registered, so no native or desktop calls happen.
 /// Every step has a timeout, so a broken pipeline fails the test instead of hanging the run.
+/// The contract tests (WindowsAppManagerMcp.Tests) and the end-to-end tests (WindowsAppManagerMcp.E2ETests) share it.
+/// An end-to-end test that registers the server's own tools must pass them the harness's guarded services through
+/// <c>configureServices</c>, so every native call still goes through the E2E guard.
 /// </summary>
 public sealed class InProcessMcpServer : IAsyncDisposable
 {

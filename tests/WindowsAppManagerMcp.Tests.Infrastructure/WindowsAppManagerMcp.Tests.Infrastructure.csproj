@@ -2,9 +2,11 @@
 
   <!--
     Test infrastructure shared by the test projects: the deny-by-default desktop test gate
-    ([DesktopFact], [DesktopTheory], [DesktopNoInputFact], [DesktopNoInputTheory]).
+    ([DesktopFact], [DesktopTheory], [DesktopNoInputFact], [DesktopNoInputTheory]) and the in-process
+    MCP test host (InProcessMcpServer), which runs the real MCP SDK pipeline over in-memory pipes.
     WindowsAppManagerMcp.Tests and WindowsAppManagerMcp.E2ETests both reference it, so there is one
-    gate and one set of opt-in variables. It is a plain library, not a test project.
+    gate, one set of opt-in variables and one MCP test host. It is a plain library, not a test project,
+    and it references no test project, so neither test project can form a cycle through it.
   -->
   <PropertyGroup>
     <TargetFramework>net8.0-windows</TargetFramework>
@@ -17,6 +19,16 @@
   <ItemGroup>
     <!-- The same xunit version as the test projects (xunit 2.8.1) -->
     <PackageReference Include="xunit.extensibility.core" Version="2.8.1" />
+    <!-- The same FluentAssertions version as the test projects; InProcessMcpServer asserts what the server wrote -->
+    <PackageReference Include="FluentAssertions" Version="6.12.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--
+      The server project, for its ModelContextProtocol and Microsoft.Extensions.Hosting packages: InProcessMcpServer
+      hosts the same SDK version the server ships with, and a package bump in the server moves the host with it.
+    -->
+    <ProjectReference Include="..\..\src\WindowsAppManagerMcp\WindowsAppManagerMcp.csproj" />
   </ItemGroup>
 
 </Project>

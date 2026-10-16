@@ -283,16 +283,17 @@ WindowsAppManagerMcp/
     │   ├── WindowsAppManagerMcp.Tests.csproj
     │   ├── GlobalUsings.cs
     │   ├── Contract/              # Tool contract: serialization, error reporting, descriptions, docs
-    │   ├── Fixtures/              # TestDataFactory, RepositoryFiles, InProcessMcpServer, FakeCdp, ...
+    │   ├── Fixtures/              # TestDataFactory, RepositoryFiles, RawMcpConnection, FakeCdp, ...
     │   ├── Integration/           # DI, file persistence, layout service, screen capture (read-only)
     │   └── Unit/
     │       ├── Architecture/      # NativeCallGuardTests (IL scan for native calls)
-    │       ├── Infrastructure/    # DesktopTestGateTests
+    │       ├── Infrastructure/    # DesktopTestGateTests, InProcessMcpServerTests
     │       ├── Models/
     │       ├── Native/
     │       ├── Services/
     │       └── Tools/
     ├── WindowsAppManagerMcp.Tests.Infrastructure/  # Shared desktop test gate ([DesktopFact], [DesktopNoInputFact], ...)
+    │                                               # and the in-process MCP test host (InProcessMcpServer)
     ├── FixtureApp/                # WamFixtureApp: the WPF app the end-to-end tests drive
     └── WindowsAppManagerMcp.E2ETests/
         ├── Harness/               # Starts the fixture, guarded server services, event log reader
@@ -2098,6 +2099,13 @@ fails until a new kind is named in this list).
   debug port over the network, outside the native wrappers, and the fixture's WebView2 window opens no debug
   port. `ServerHarnessTests.EveryRegisteredCdpService_IsRefused` fails when a registered `ICdp*` service is not
   in `ServerHarness.RefusedServices`. The CDP port-owner check (`ITcpPortOwnerResolver`) is a guarded read.
+
+**The MCP pipeline.** The scenarios call the server's services directly. The in-process MCP test host the contract
+tests use (`InProcessMcpServer`) lives in `WindowsAppManagerMcp.Tests.Infrastructure`, so this tier can run the real
+MCP pipeline (argument binding, filters, result serialization) too; `HarnessTests/InProcessMcpServerTests` runs it with
+a fake tool. A scenario that hosts the server's own tools through it (roadmap M6.2) must pass them the harness's guarded
+services (`configureServices`), never the defaults of `AddWindowsAppManagerServices`, which would put unguarded native
+wrappers behind the tools.
 
 UI Automation elements come back from the wrapper as objects that services only read: NativeCallGuardTests
 forbids acting pattern calls outside the Native wrappers and the two UI Automation engine adapters, and the
