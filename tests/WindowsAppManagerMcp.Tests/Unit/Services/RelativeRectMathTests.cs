@@ -94,8 +94,14 @@ public class RelativeRectMathTests
     {
         foreach (var area in WorkAreas)
         {
-            RelativeRectMath.FromPercent(area, x, y, width, height)
-                .Should().Be(SnapMath.Calculate(area, position), "the percentages of {0} on {1}", position, area);
+            var snapRect = SnapMath.Calculate(area, position);
+
+            // On the 1x1 and 2x3 areas a half or a third is 0 px, which is not a window: refused, not returned
+            if (snapRect.Width == 0 || snapRect.Height == 0)
+                UnlessUnderOnePixel(() => RelativeRectMath.FromPercent(area, x, y, width, height)).Should().BeNull();
+            else
+                RelativeRectMath.FromPercent(area, x, y, width, height)
+                    .Should().Be(snapRect, "the percentages of {0} on {1}", position, area);
         }
     }
 
@@ -132,7 +138,8 @@ public class RelativeRectMathTests
     [Fact]
     public void FromPercent_RectsThatShareAnEdgeInPercent_ShareItInPixels()
     {
-        // Arrange - cuts an agent might type, including ones that are not whole pixels anywhere
+        // Arrange - cuts an agent might type, including ones that are not whole pixels anywhere, and ones less than a
+        // pixel apart (33.33 and 33.333 are 0.0576 px apart on 1920), whose tile is refused rather than 0 px wide
         double[] cuts = [0, 12.5, 33.33, 33.333, 41.7, 50, 66.666, 66.67, 87.49, 100];
         foreach (var area in WorkAreas)
         {
@@ -140,11 +147,13 @@ public class RelativeRectMathTests
             for (var i = 0; i + 1 < cuts.Length; i++)
             {
                 // Act
-                var rect = RelativeRectMath.FromPercent(area, cuts[i], 0, cuts[i + 1] - cuts[i], 100);
+                var rect = UnlessUnderOnePixel(() => RelativeRectMath.FromPercent(area, cuts[i], 0, cuts[i + 1] - cuts[i], 100));
 
                 // Assert - no gap, no overlap, and the last one ends at the area's right edge
+                if (rect is null)
+                    continue;
                 rect.X.Should().Be(previousRight, "rect {0} on {1} starts where the one before it ends", i, area);
-                rect.Width.Should().BeGreaterThanOrEqualTo(0);
+                rect.Width.Should().BeGreaterThanOrEqualTo(1);
                 previousRight = rect.X + rect.Width;
             }
 
@@ -249,6 +258,24 @@ public class RelativeRectMathTests
         act.Should().Throw<ArgumentOutOfRangeException>().WithMessage("x + width *");
     }
 
+    [Theory]
+    // Valid percentages whose edges floor to the same pixel: 99.99 % and 99.995 % of 1920 are both 1919
+    [InlineData(99.99, 0, 0.005, 100, "width")]
+    [InlineData(0, 99.99, 100, 0.005, "height")]
+    // Smaller than one pixel at the start of the area: 0.01 % of 1920 floors to 0
+    [InlineData(0, 0, 0.01, 100, "width")]
+    public void FromPercent_ASizeThatRoundsToZeroPixels_Throws_RatherThanReturningAZeroSizedWindow(
+        double x, double y, double width, double height, string named)
+    {
+        RelativeRectMath.CheckPercent(x, y, width, height).Should().BeNull("the percentages themselves are valid");
+
+        var act = () => RelativeRectMath.FromPercent(new MonitorRect(0, 0, 1920, 1920), x, y, width, height);
+
+        act.Should().Throw<ArgumentOutOfRangeException>()
+            .WithMessage($"The {named} is less than one pixel on this area*")
+            .Which.ParamName.Should().Be(named);
+    }
+
     #endregion
 
     #region FromFractions
@@ -303,6 +330,10 @@ public class RelativeRectMathTests
     [InlineData(0, 0.5, 1, -0.25)]
     [InlineData(0, 0, 0, 1)]
     [InlineData(0, 0, 1, 0)]
+    // Above 0 as a fraction but 0 px once the edges floor: 1e-4 of 1920 and of 1040 is less than one pixel
+    [InlineData(0, 0, 1e-4, 1)]
+    [InlineData(0, 0, 1, 1e-4)]
+    [InlineData(0.5, 0.5, 1e-4, 1e-4)]
     public void FromFractions_AValueThatIsNotARealPositionOnScreen_Throws(double x, double y, double width, double height)
     {
         var act = () => RelativeRectMath.FromFractions(new MonitorRect(0, 0, 1920, 1040), x, y, width, height);
@@ -311,14 +342,46 @@ public class RelativeRectMathTests
     }
 
     [Fact]
+    public void FromFractions_ASizeOfOnePixel_IsStillAWindow()
+    {
+        // 1 / 1920 of 1920 is exactly one pixel: the smallest size that is accepted
+        RelativeRectMath.FromFractions(new MonitorRect(0, 0, 1920, 1040), 0, 0, 1 / 1920.0, 1)
+            .Should().Be(new MonitorRect(0, 0, 1, 1040));
+    }
+
+    [Fact]
+    public void FromFractions_ASizeThatRoundsToZeroPixels_SaysSo()
+    {
+        var act = () => RelativeRectMath.FromFractions(new MonitorRect(0, 0, 1920, 1040), 0, 0, 1e-4, 1);
+
+        act.Should().Throw<ArgumentOutOfRangeException>()
+            .WithMessage("The width is less than one pixel on this area*")
+            .Which.ParamName.Should().Be("width");
+    }
+
+    [Fact]
     public void FromFractions_AgreesWithFromPercent()
     {
         foreach (var area in WorkAreas)
         {
-            RelativeRectMath.FromFractions(area, 0.125, 1 / 3.0, 0.5, 1 / 3.0)
-                .Should().Be(RelativeRectMath.FromPercent(area, 12.5, 100 / 3.0, 50, 100 / 3.0));
+            // Including on the 1x1 area, where both refuse the 0-px height
+            UnlessUnderOnePixel(() => RelativeRectMath.FromFractions(area, 0.125, 1 / 3.0, 0.5, 1 / 3.0))
+                .Should().Be(UnlessUnderOnePixel(() => RelativeRectMath.FromPercent(area, 12.5, 100 / 3.0, 50, 100 / 3.0)), "on {0}", area);
         }
     }
 
     #endregion
+
+    /// <summary>The rectangle, or null when it is refused for being less than one pixel wide or high.</summary>
+    private static MonitorRect? UnlessUnderOnePixel(Func<MonitorRect> rect)
+    {
+        try
+        {
+            return rect();
+        }
+        catch (ArgumentOutOfRangeException e) when (e.Message.Contains("less than one pixel", StringComparison.Ordinal))
+        {
+            return null;
+        }
+    }
 }
