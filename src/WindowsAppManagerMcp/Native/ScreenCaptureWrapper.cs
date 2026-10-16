@@ -5,9 +5,10 @@ namespace WindowsAppManagerMcp.Native;
 
 /// <summary>
 /// Reads pixels from the screen or a window into a DIB section of the server (roadmap M2.9): BitBlt or PrintWindow
-/// draws straight into the section's memory, and the pixels are copied out of it once. The section is a top-down
-/// 32-bit bitmap, so its memory already has the layout of <see cref="CaptureResult.Bgra"/>; nothing calls GetDIBits on a
-/// bitmap that is still selected into a device context.
+/// draws straight into the section's memory, and the Capture members copy the pixels out of it once, while
+/// <see cref="WithPixels{T}"/> lends the section's memory itself (roadmap M6). The section is a top-down 32-bit bitmap,
+/// so its memory already has the layout of <see cref="CaptureResult.Bgra"/>; nothing calls GetDIBits on a bitmap that is
+/// still selected into a device context.
 /// </summary>
 public class ScreenCaptureWrapper : IScreenCaptureWrapper
 {
@@ -29,7 +30,32 @@ public class ScreenCaptureWrapper : IScreenCaptureWrapper
     /// <summary>The window refused PrintWindow, so its device context was copied: covering windows can show.</summary>
     internal const string BitBltFallbackMethod = "BitBltFallback";
 
-    public CaptureResult CaptureScreenRegion(int x, int y, int width, int height)
+    /// <summary>The Capture members' reader: one copy of the lent pixels.</summary>
+    private static readonly PixelReader<CaptureResult> Copy = static pixels => pixels.ToCaptureResult();
+
+    public CaptureResult CaptureScreenRegion(int x, int y, int width, int height) =>
+        WithScreenPixels(x, y, width, height, Copy);
+
+    public CaptureResult CaptureWindow(nint windowHandle, bool includeFrame) =>
+        WithWindowPixels(windowHandle, includeFrame, Copy);
+
+    public CaptureResult CaptureWindowFromScreen(nint windowHandle, bool includeFrame) =>
+        WithWindowPixelsFromScreen(windowHandle, includeFrame, Copy);
+
+    public T WithPixels<T>(PixelSource source, PixelReader<T> read)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        ArgumentNullException.ThrowIfNull(read);
+        return source switch
+        {
+            PixelSource.Screen screen => WithScreenPixels(screen.X, screen.Y, screen.Width, screen.Height, read),
+            PixelSource.Window window => WithWindowPixels(window.Handle, window.IncludeFrame, read),
+            PixelSource.WindowFromScreen window => WithWindowPixelsFromScreen(window.Handle, window.IncludeFrame, read),
+            _ => throw new ArgumentException($"Unknown pixel source {source.GetType().Name}", nameof(source))
+        };
+    }
+
+    private static T WithScreenPixels<T>(int x, int y, int width, int height, PixelReader<T> read)
     {
         ValidateDimensions(width, height);
 
@@ -50,7 +76,10 @@ public class ScreenCaptureWrapper : IScreenCaptureWrapper
                 throw new InvalidOperationException("BitBlt failed");
             }
 
-            return new CaptureResult(section.CopyPixels(), width, height, x, y, ScreenBitBltMethod);
+            // The pixels are in the section now: the screen's device context is not held while the reader runs
+            NativeMethods.User32.ReleaseDC(nint.Zero, screenDc);
+            screenDc = nint.Zero;
+            return read(section.View(x, y, ScreenBitBltMethod));
         }
         finally
         {
@@ -59,7 +88,7 @@ public class ScreenCaptureWrapper : IScreenCaptureWrapper
         }
     }
 
-    public CaptureResult CaptureWindow(nint windowHandle, bool includeFrame)
+    private T WithWindowPixels<T>(nint windowHandle, bool includeFrame, PixelReader<T> read)
     {
         var (originX, originY, width, height) = WindowCaptureRectangle(windowHandle, includeFrame);
 
@@ -93,7 +122,11 @@ public class ScreenCaptureWrapper : IScreenCaptureWrapper
                 }
             }
 
-            return new CaptureResult(section.CopyPixels(), width, height, originX, originY, method);
+            // The pixels are in the section now: the window's device context is not held while the reader runs, so a
+            // slow reader (OCR) does not count against a deadline the caller sets for the window's own answer
+            NativeMethods.User32.ReleaseDC(windowHandle, windowDc);
+            windowDc = nint.Zero;
+            return read(section.View(originX, originY, method));
         }
         finally
         {
@@ -102,11 +135,11 @@ public class ScreenCaptureWrapper : IScreenCaptureWrapper
         }
     }
 
-    public CaptureResult CaptureWindowFromScreen(nint windowHandle, bool includeFrame)
+    private T WithWindowPixelsFromScreen<T>(nint windowHandle, bool includeFrame, PixelReader<T> read)
     {
         // Only rectangle reads, which Windows answers without the window's thread, then a copy of the screen
         var (originX, originY, width, height) = WindowCaptureRectangle(windowHandle, includeFrame);
-        return CaptureScreenRegion(originX, originY, width, height);
+        return WithScreenPixels(originX, originY, width, height, read);
     }
 
     public (int X, int Y, int Width, int Height) GetVirtualScreenBounds()
@@ -194,8 +227,8 @@ public class ScreenCaptureWrapper : IScreenCaptureWrapper
 
     /// <summary>
     /// A top-down 32-bit DIB section selected into a memory device context of the server. BitBlt and PrintWindow draw
-    /// into its memory; <see cref="CopyPixels"/> copies that memory out once. Dispose selects the old bitmap back
-    /// before the section is deleted.
+    /// into its memory; <see cref="View"/> lends that memory as it is, and the Capture members copy it out once. Dispose
+    /// selects the old bitmap back before the section is deleted, so a view must not outlive the section.
     /// </summary>
     private sealed class DibSection : IDisposable
     {
@@ -203,10 +236,14 @@ public class ScreenCaptureWrapper : IScreenCaptureWrapper
         private readonly nint _oldBitmap;
         private readonly nint _bits;
         private readonly int _byteCount;
+        private readonly int _width;
+        private readonly int _height;
 
         public DibSection(nint compatibleWith, int width, int height)
         {
             _byteCount = checked(width * height * 4);
+            _width = width;
+            _height = height;
 
             Dc = NativeMethods.Gdi32.CreateCompatibleDC(compatibleWith);
             if (Dc == nint.Zero)
@@ -228,14 +265,16 @@ public class ScreenCaptureWrapper : IScreenCaptureWrapper
         /// <summary>The memory device context to draw into.</summary>
         public nint Dc { get; }
 
-        /// <summary>The pixels drawn so far: top-down rows of 4 bytes per pixel (blue, green, red, undefined).</summary>
-        public byte[] CopyPixels()
+        /// <summary>
+        /// The pixels drawn so far, in the section's own memory: top-down rows of 4 bytes per pixel (blue, green, red,
+        /// undefined), with no padding between rows.
+        /// </summary>
+        public unsafe PixelView View(int screenOriginX, int screenOriginY, string method)
         {
             // BitBlt and PrintWindow can be batched; the bits are only complete once the batch has run
             NativeMethods.Gdi32.GdiFlush();
-            var pixels = GC.AllocateUninitializedArray<byte>(_byteCount);
-            Marshal.Copy(_bits, pixels, 0, _byteCount);
-            return pixels;
+            return new PixelView(new ReadOnlySpan<byte>((void*)_bits, _byteCount), _width, _height, _width * 4,
+                screenOriginX, screenOriginY, method);
         }
 
         public void Dispose()

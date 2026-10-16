@@ -83,9 +83,9 @@ public class ScreenshotTools
     private readonly IScreenshotService _screenshotService;
     private readonly IUIElementService _uiElementService;
     private readonly IWindowService _windowService;
-    private readonly ITargetPolicy _targetPolicy;
     private readonly IInputSession? _session;
     private readonly IElementRegistry? _elementRegistry;
+    private readonly ICaptureTargetPolicy _capturePolicy;
 
     /// <param name="screenshotService">The captures.</param>
     /// <param name="uiElementService">The UI Automation walk of capture_with_elements.</param>
@@ -98,20 +98,26 @@ public class ScreenshotTools
     /// The element refs (roadmap M3.4): capture_window's ref is resolved through it to the element it crops to (roadmap
     /// M3.11). The server always passes it; without it capture_window refuses a ref.
     /// </param>
+    /// <param name="capturePolicy">
+    /// The target policy's check of a captured window, shared with the raw pixel reads (roadmap M6); default a
+    /// <see cref="CaptureTargetPolicy"/> over <paramref name="windowService"/> and <paramref name="targetPolicy"/>.
+    /// </param>
     public ScreenshotTools(
         IScreenshotService screenshotService,
         IUIElementService uiElementService,
         IWindowService windowService,
         ITargetPolicy targetPolicy,
         IInputSession? session = null,
-        IElementRegistry? elementRegistry = null)
+        IElementRegistry? elementRegistry = null,
+        ICaptureTargetPolicy? capturePolicy = null)
     {
         _screenshotService = screenshotService;
         _uiElementService = uiElementService;
         _windowService = windowService;
-        _targetPolicy = targetPolicy ?? throw new ArgumentNullException(nameof(targetPolicy));
+        ArgumentNullException.ThrowIfNull(targetPolicy);
         _session = session;
         _elementRegistry = elementRegistry;
+        _capturePolicy = capturePolicy ?? new CaptureTargetPolicy(windowService, targetPolicy);
     }
 
     [McpServerTool(Name = "list_screens", Title = "List Screens", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
@@ -236,9 +242,9 @@ public class ScreenshotTools
         }
 
         var windowHandle = WindowForCapture(handle, window, element);
-        if (PolicyRefusal(windowHandle) is { } refusal)
+        if (_capturePolicy.Check(windowHandle) is { } refusal)
         {
-            return WindowFailure(nameof(ScreenshotErrorCode.TargetDeniedByPolicy), refusal);
+            return WindowFailure(refusal.Code.ToString(), refusal.Message);
         }
 
         var options = Options(format, quality, maxDimension, output, outputPath, overwrite, saveToFile, maxWidth);
@@ -391,9 +397,10 @@ public class ScreenshotTools
         }
 
         // Neither the pixels nor the element texts of a window the user's policy denies, or that it cannot check
-        if (CaptureVerdict(windowInfo) is { Allowed: false } verdict)
+        if (_capturePolicy.Verdict(windowInfo) is { Allowed: false } verdict)
         {
-            return AnnotatedFailure(reported, windowTitle, nameof(ScreenshotErrorCode.TargetDeniedByPolicy), PolicyMessage(verdict));
+            return AnnotatedFailure(reported, windowTitle, nameof(ScreenshotErrorCode.TargetDeniedByPolicy),
+                CaptureTargetPolicy.Message(verdict));
         }
 
         var restore = await RestoreIfMinimizedAsync(windowHandle, includeFrame, restoreIfMinimized, options, cancellationToken)
@@ -693,35 +700,6 @@ public class ScreenshotTools
 
     private static IReadOnlyList<string> Merge(IReadOnlyList<string> first, IReadOnlyList<string>? second) =>
         second == null ? first : [.. first, .. second];
-
-    /// <summary>
-    /// Why the target policy refuses capturing the window, or null. A handle that is no window is left to the capture,
-    /// which reports InvalidHandle.
-    /// </summary>
-    private string? PolicyRefusal(nint handle)
-    {
-        var window = _windowService.GetWindowInfo(handle);
-        if (window == null && !_windowService.IsValidWindow(handle))
-        {
-            return null;
-        }
-
-        return CaptureVerdict(window) is { Allowed: false } verdict ? PolicyMessage(verdict) : null;
-    }
-
-    /// <summary>
-    /// The target policy's verdict on capturing a window. It fails closed as the UI Automation reads do
-    /// (<see cref="UiaTargets.ReadVerdict"/>): a window whose process cannot be named, or that the window service cannot read
-    /// at all (<paramref name="window"/> null), is refused while the policy denies anything.
-    /// </summary>
-    private TargetPolicyVerdict CaptureVerdict(WindowInfo? window) =>
-        window != null ? _targetPolicy.EvaluateFailClosed(window)
-        : _targetPolicy.DeniesAnything() ? TargetPolicyVerdict.Unreadable
-        : TargetPolicyVerdict.Allow;
-
-    private static string PolicyMessage(TargetPolicyVerdict verdict) =>
-        $"The window is refused by the server's target policy: {verdict.Reason}. Nothing was captured. The policy is set by " +
-        "the user in the server's environment; no tool argument changes it.";
 
     private static CaptureOptions Options(
         CaptureFormat format,

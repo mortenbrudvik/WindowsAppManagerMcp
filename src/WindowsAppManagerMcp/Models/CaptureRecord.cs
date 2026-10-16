@@ -49,6 +49,15 @@ public sealed record CaptureGeometry(
 /// <summary>A monitor as a screen capture saw it: its device name and its bounds on the virtual screen.</summary>
 public sealed record CapturedMonitor(string DeviceName, MonitorRect Bounds);
 
+/// <summary>
+/// The screen layout a screen capture's pixels were read in (roadmap M3.11): the virtual screen and the monitors, read
+/// right after the pixels, which its registration keeps (<see cref="CaptureGeometry.VirtualScreen"/>,
+/// <see cref="CaptureGeometry.Monitors"/>) however long after the pixels it is registered.
+/// </summary>
+/// <param name="VirtualScreen">The virtual screen (all monitors).</param>
+/// <param name="Monitors">Each monitor (<see cref="CapturedMonitors.Of"/>); null when they could not be read.</param>
+public sealed record CapturedScreen(VirtualScreenBounds VirtualScreen, IReadOnlyList<CapturedMonitor>? Monitors);
+
 /// <summary>The monitors a screen capture registers (roadmap M3.11).</summary>
 public static class CapturedMonitors
 {

@@ -214,4 +214,58 @@ public class ScreenCaptureWrapperIntegrationTests
     }
 
     #endregion
+
+    #region WithPixels (roadmap M6: the capture members without the copy)
+
+    [Theory]
+    [InlineData(0, 100)]
+    [InlineData(100, -1)]
+    [InlineData(20000, 100)]
+    [InlineData(9000, 9000)]
+    public void WithPixels_OfARegionTheCaptureRefuses_IsRefusedBeforeAnythingIsRead(int width, int height)
+    {
+        // Arrange
+        var read = false;
+
+        // Act
+        var act = () => _sut.WithPixels(new PixelSource.Screen(0, 0, width, height), _ => read = true);
+
+        // Assert
+        act.Should().Throw<ArgumentException>();
+        read.Should().BeFalse();
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void WithPixels_OfAHandleThatIsNoWindow_IsRefusedAsCaptureWindowIs(bool fromScreen)
+    {
+        // Arrange
+        PixelSource source = fromScreen
+            ? new PixelSource.WindowFromScreen(new nint(0x12345678), IncludeFrame: true)
+            : new PixelSource.Window(new nint(0x12345678), IncludeFrame: true);
+
+        // Act
+        var act = () => _sut.WithPixels(source, pixels => pixels.Width);
+
+        // Assert
+        act.Should().Throw<ArgumentException>().WithMessage("*Invalid window handle*");
+    }
+
+    // Reads real screen pixels (no input); new desktop reads are opt-in, like every other desktop test.
+    [DesktopFact]
+    public void WithPixels_OfAScreenRegion_LendsWhatCaptureScreenRegionCopies()
+    {
+        // Act
+        var lent = _sut.WithPixels(new PixelSource.Screen(3, 7, 40, 30),
+            pixels => (pixels.Width, pixels.Height, pixels.Stride, pixels.ScreenOriginX, pixels.ScreenOriginY, pixels.Method, pixels.Bgra.Length));
+        var copied = _sut.CaptureScreenRegion(3, 7, 40, 30);
+
+        // Assert
+        lent.Should().Be((40, 30, 160, 3, 7, "ScreenBitBlt", 40 * 30 * 4));
+        (copied.Width, copied.Height, copied.ScreenOriginX, copied.ScreenOriginY, copied.Method, copied.Bgra.Length)
+            .Should().Be((lent.Width, lent.Height, lent.ScreenOriginX, lent.ScreenOriginY, lent.Method, lent.Length));
+    }
+
+    #endregion
 }
