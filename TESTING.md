@@ -2141,7 +2141,9 @@ something the machine may lack names it with its gate attribute's `Requires` (an
 `IDesktopTestRequirement`, such as `WebView2Runtime`), and is then skipped with the requirement's reason
 on such a machine; the requirement is only checked once the tier is opted in.
 
-**Fixture surfaces for M6.** Four more launch options, none of which changes the fixture unless a scenario asks for it.
+**Fixture surfaces for M6.** Five more launch options, none of which changes the fixture unless a scenario asks for it.
+The one change to every start is that the main window's status text now reads Ready from its first frame, instead of
+reading Starting until the ready event.
 `OpenCanvas` (`--open-canvas`, M6.3) opens the window `WAM Fixture Canvas <instance>`, which draws
 `FixtureContract.CanvasLines` (dark and light text, down to 9 pt) in OnRender. UI Automation finds only its
 `canvasSurface` pane there, with no name, text or children. Every canvas word has a character that is not a hex digit, so
@@ -2151,7 +2153,10 @@ boxes (the line's full height, as a selection highlights it), not ink, so an OCR
 not equality. The canvas follows `--other-scale-monitor`. `ChangeAfter` (`--change-after-ms N`, M6.4) adds the 40x40 `changePanel` right of the swatches
 and recolors and relabels it once, N ms after the ready event (`panelChanged`). `AnimateFor` (`--animate-for-ms N`)
 adds the `spinner` there and turns it every 50 ms for N ms, then leaves it still (`animationStarted`,
-`animationStopped`). Neither touches the status text, which already reads Ready in the first frame, so after the ready
+`animationStopped`). Both count from the ready event but the lifetime counts from the start, so each must be due at least
+`FixtureOptions.TimedChangeMargin` (30 s for the wait for ready, plus a spinner tick) before the end of `MaxLifetime`;
+the harness refuses a later one when it builds the options, where the test would otherwise only time out waiting for an
+event the watchdog cut off. Neither touches the status text, which already reads Ready in the first frame, so after the ready
 event the panel or spinner is the only region of the main window that changes. That holds while the fixture is not
 activated (the default for a no-input test): an activated fixture focuses the edit box, whose caret blinks.
 `OpenOverlay` (`--open-overlay`, M6.7) opens `WAM Fixture Overlay <instance>`, an unowned WS_EX_TOPMOST tool window

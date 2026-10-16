@@ -1,4 +1,6 @@
 using System.Globalization;
+using System.Reflection;
+using System.Text.RegularExpressions;
 
 namespace WindowsAppManagerMcp.E2ETests.HarnessTests;
 
@@ -183,10 +185,14 @@ public class FixtureOptionsTests
     [InlineData("--animate-for-ms", "300001")]
     [InlineData("--max-lifetime-seconds", "10", "--change-after-ms", "10000")]
     [InlineData("--change-after-ms", "20000", "--max-lifetime-seconds", "10")]
+    [InlineData("--max-lifetime-seconds", "10", "--animate-for-ms", "9990")]
+    [InlineData("--max-lifetime-seconds", "60", "--change-after-ms", "45000")]
     public void Parse_RejectsATimedChange_TheFixtureWouldNotLiveToMake(params string[] args)
     {
-        // Arrange - the watchdog ends the fixture at its lifetime (5 min unless given), so a change due then or later
-        // would never be logged and a test would only time out waiting for it; the order of the options does not matter
+        // Arrange - the watchdog ends the fixture at its lifetime (5 min unless given), counted from the start, while the
+        // change is counted from the ready event, which can come seconds later; a change due within the margin of the
+        // lifetime might never be logged and a test would only time out waiting for it. The order of the options does not
+        // matter
         var act = () => FixtureOptions.Parse(args);
 
         // Assert
@@ -201,6 +207,34 @@ public class FixtureOptionsTests
         options.ChangeAfter.Should().Be(TimeSpan.FromMilliseconds(400000));
     }
 
+    [Theory]
+    [InlineData(FixtureOptions.ChangeAfterOption)]
+    [InlineData(FixtureOptions.AnimateForOption)]
+    public void Parse_HoldsATimedChange_ToTheLifetimeLessTheMargin(string option)
+    {
+        // Arrange - a 60 s lifetime leaves room for a change due up to the margin before it, and not a millisecond later
+        var latest = (int)(TimeSpan.FromSeconds(60) - FixtureOptions.TimedChangeMargin).TotalMilliseconds;
+        string[] Args(int milliseconds) =>
+            ["--max-lifetime-seconds", "60", option, milliseconds.ToString(CultureInfo.InvariantCulture)];
+
+        // Act
+        var accept = () => FixtureOptions.Parse(Args(latest));
+        var reject = () => FixtureOptions.Parse(Args(latest + 1));
+
+        // Assert
+        accept.Should().NotThrow();
+        reject.Should().Throw<ArgumentException>().WithMessage("*lifetime*");
+    }
+
+    [Fact]
+    public void TimedChangeMargin_CoversTheWaitForTheReadyEvent_AndTheSpinnersLastTick()
+    {
+        // Assert - the lifetime runs from the start and the change from the ready event, which the harness waits up to
+        // ReadyTimeout for; the spinner stops on the first tick at or after AnimateFor
+        FixtureOptions.TimedChangeMargin.Should().BeGreaterThanOrEqualTo(
+            new FixtureLaunchOptions().ReadyTimeout + TimeSpan.FromMilliseconds(FixtureContract.SpinnerIntervalMs));
+    }
+
     public static TheoryData<TimeSpan?, TimeSpan?> TimedChangesTheFixtureWouldRefuse => new()
     {
         { TimeSpan.Zero, null },
@@ -208,6 +242,7 @@ public class FixtureOptionsTests
         { TimeSpan.FromMinutes(6), null },
         { null, TimeSpan.Zero },
         { null, TimeSpan.FromMinutes(5) },
+        { TimeSpan.FromSeconds(290), null },
         { null, TimeSpan.FromDays(30) }
     };
 
@@ -265,10 +300,14 @@ public class FixtureOptionsTests
     public void CanvasLines_HaveWordsFoundOnlyOnce_AndNoTextAnyTitleOrControlCarries()
     {
         // Arrange - an OCR check finds a word by its text and expects one hit; the canvas text must also be nowhere that
-        // UI Automation could read it, so a hit cannot come from a title or a control
+        // UI Automation could read it or another window could show it, so a hit cannot come from a title or a control.
+        // That is every title, every text the contract names, and every string the fixture's code holds (captions,
+        // labels, the overlay's text, the web page), apart from the canvas lines themselves
         var words = FixtureContract.CanvasLines.SelectMany(l => FixtureContract.CanvasWords(l.Text)).ToList();
-        var uiaTexts = new[] { FixtureContract.CanvasTitle("abc"), FixtureContract.MainTitle("abc") }
-            .Concat(FixtureContract.ComboBoxItems);
+        var uiaTexts = FixtureTitles("abc")
+            .Concat(ContractTexts())
+            .Concat(FixtureSourceStrings().Except(FixtureContract.CanvasLines.Select(l => l.Text)))
+            .ToList();
         var hexDigits = "0123456789abcdef";
 
         // Assert
@@ -286,6 +325,99 @@ public class FixtureOptionsTests
         words.Should().OnlyContain(
             w => w.Any(c => !hexDigits.Contains(char.ToLowerInvariant(c))),
             "a word made only of hex digits can appear in the random instance token of a title");
+    }
+
+    [Fact]
+    public void FixtureSourceStrings_FindTheCaptionsTheContractDoesNotName()
+    {
+        // Assert - the canvas-word check above sees the fixture's own captions, not just the contract's texts
+        var strings = FixtureSourceStrings();
+
+        strings.Should().Contain("Topmost overlay").And.Contain("Check box").And.Contain("Right-click here for a context menu");
+        strings.Should().Contain(FixtureContract.CanvasLines[0].Text, "the canvas lines are literals too, which the check leaves out");
+    }
+
+    private static IEnumerable<string> FixtureTitles(string instance) =>
+    [
+        FixtureContract.MainTitle(instance),
+        FixtureContract.ModalTitle(instance),
+        FixtureContract.DocumentTitle(instance, dirty: true),
+        FixtureContract.DocumentTitle(instance, dirty: false),
+        FixtureContract.SavePromptTitle(instance),
+        FixtureContract.SaveAsTitle(instance),
+        FixtureContract.TaskDialogTitle(instance),
+        FixtureContract.TableTitle(instance),
+        FixtureContract.MenuTitle(instance),
+        FixtureContract.WebTitle(instance),
+        FixtureContract.CanvasTitle(instance),
+        FixtureContract.OverlayTitle(instance)
+    ];
+
+    /// <summary>
+    /// Every text the contract names: its string constants and string lists, in it and its nested classes, and samples of
+    /// the generated list items, table cells and row headers.
+    /// </summary>
+    private static IEnumerable<string> ContractTexts()
+    {
+        var types = new[] { typeof(FixtureContract) }.Concat(typeof(FixtureContract).GetNestedTypes());
+        foreach (var field in types.SelectMany(t => t.GetFields(BindingFlags.Public | BindingFlags.Static)))
+        {
+            switch (field.GetValue(null))
+            {
+                case string text:
+                    yield return text;
+                    break;
+                case IEnumerable<string> texts:
+                    foreach (var text in texts)
+                    {
+                        yield return text;
+                    }
+                    break;
+            }
+        }
+
+        foreach (var index in new[] { 0, 1, 815, 2938, 3141, 4711, FixtureContract.VirtualListItemCount - 1 })
+        {
+            yield return FixtureContract.VirtualListItem(index);
+        }
+        foreach (var index in new[] { 0, 1, 815, FixtureContract.TableRowCount - 1 })
+        {
+            foreach (var cell in FixtureContract.TableRow(index))
+            {
+                yield return cell;
+            }
+            yield return FixtureContract.TableRowHeader(index);
+        }
+    }
+
+    /// <summary>
+    /// Every string literal in the fixture app's code (comments left out): the captions, labels and page text its windows
+    /// show, which the contract does not all name.
+    /// </summary>
+    private static IReadOnlyList<string> FixtureSourceStrings()
+    {
+        var folder = Path.Combine(RepositoryRoot(), "tests", "FixtureApp");
+        var literal = new Regex(@"""(?:[^""\\]|\\.)*""");
+        return Directory.EnumerateFiles(folder, "*.cs", SearchOption.TopDirectoryOnly)
+            .SelectMany(File.ReadLines)
+            .Where(line => !line.TrimStart().StartsWith("//", StringComparison.Ordinal))
+            .SelectMany(line => literal.Matches(line).Select(m => m.Value[1..^1]))
+            .Where(text => text.Length > 0)
+            .Distinct()
+            .ToList();
+    }
+
+    private static string RepositoryRoot()
+    {
+        for (var folder = new DirectoryInfo(AppContext.BaseDirectory); folder != null; folder = folder.Parent)
+        {
+            if (File.Exists(Path.Combine(folder.FullName, "WindowsAppManagerMcp.sln")))
+            {
+                return folder.FullName;
+            }
+        }
+
+        throw new InvalidOperationException($"No WindowsAppManagerMcp.sln above {AppContext.BaseDirectory}.");
     }
 
     [Fact]

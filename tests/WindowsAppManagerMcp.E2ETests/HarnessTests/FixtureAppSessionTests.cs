@@ -154,11 +154,14 @@ public class FixtureAppSessionTests
     [InlineData(360_000, null, 300)]
     [InlineData(null, 0, 300)]
     [InlineData(null, 30_000, 30)]
+    [InlineData(null, 9_990, 10)]
+    [InlineData(280_000, null, 300)]
     public void BuildOptions_RejectsATimedChangeTheFixtureWouldRefuseOrNotLiveToMake(
         int? changeAfterMs, int? animateForMs, int maxLifetimeSeconds)
     {
-        // Arrange - "change at once" (0) is refused by the fixture with exit code 2, and a change due at or after the
-        // fixture's lifetime never happens; both must fail here, in the test, not as an exit code or a timed-out wait
+        // Arrange - "change at once" (0) is refused by the fixture with exit code 2, and a change due near or after the
+        // fixture's lifetime may never happen (the lifetime runs from the start, the change from the ready event); both
+        // must fail here, in the test, not as an exit code or a timed-out wait
         var launch = new FixtureLaunchOptions
         {
             ChangeAfter = changeAfterMs is { } change ? TimeSpan.FromMilliseconds(change) : null,

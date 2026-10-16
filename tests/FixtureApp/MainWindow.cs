@@ -20,7 +20,8 @@ namespace WindowsAppManagerMcp.FixtureApp;
 /// context menu, solid color swatches and a virtualized list of <see cref="VirtualListItemCount"/> items. Every element the tests use has a fixed
 /// AutomationId (<see cref="Ids"/>), and every change is written to the event log, except the password box's content.
 /// Only when asked (roadmap M6.4) does it also show, right of the swatches, a change panel that changes once after a delay
-/// and a spinner that turns for a while; without those options the window is exactly as before.
+/// and a spinner that turns for a while; without those options the window looks as before, except that its status text
+/// reads Ready from the first frame instead of changing to it at the ready event.
 /// </summary>
 internal sealed class MainWindow : Window
 {

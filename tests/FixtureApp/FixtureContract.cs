@@ -104,7 +104,8 @@ public static class FixtureContract
     /// <summary>
     /// The lines the canvas window draws (roadmap M6.3), top to bottom, in Segoe UI: pixels only, which UI Automation cannot
     /// read (the canvas's automation peer has no name, value or text, and no children). Every word appears once, and in no
-    /// title or control, so an OCR hit can only come from the canvas. Every word also has a character that is not a hex
+    /// title, no text this contract names and no other string of the fixture's code (its captions, labels and web page), so
+    /// an OCR hit can only come from the canvas. Every word also has a character that is not a hex
     /// digit (the numbers carry a unit), so it cannot turn up in a title's instance token either, which the harness makes of
     /// random hex digits. The <c>canvasOpened</c> event reports where each line and word landed on the screen.
     /// </summary>

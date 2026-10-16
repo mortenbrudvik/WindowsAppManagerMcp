@@ -45,13 +45,15 @@ public sealed record FixtureLaunchOptions
 
     /// <summary>
     /// Add the change panel (<see cref="FixtureContract.Ids.ChangePanel"/>) to the main window, and recolor and relabel it
-    /// once, this long after the ready event (roadmap M6.4, <c>--change-after-ms</c>). Null for no panel.
+    /// once, this long after the ready event (roadmap M6.4, <c>--change-after-ms</c>). Null for no panel. It must be due at
+    /// least <see cref="FixtureOptions.TimedChangeMargin"/> before the end of <see cref="MaxLifetime"/>.
     /// </summary>
     public TimeSpan? ChangeAfter { get; init; }
 
     /// <summary>
     /// Add the spinner (<see cref="FixtureContract.Ids.Spinner"/>) to the main window and turn it for this long after the
-    /// ready event, then stop it (roadmap M6.4, <c>--animate-for-ms</c>). Null for no spinner.
+    /// ready event, then stop it (roadmap M6.4, <c>--animate-for-ms</c>). Null for no spinner. It must end at least
+    /// <see cref="FixtureOptions.TimedChangeMargin"/> before the end of <see cref="MaxLifetime"/>.
     /// </summary>
     public TimeSpan? AnimateFor { get; init; }
 
@@ -196,7 +198,8 @@ public sealed class FixtureAppSession : IDisposable
     /// <summary>
     /// The fixture's command line for a test of <paramref name="tier"/>. Pure, so the rules can be tested:
     /// the fixture always watches the test host and has a maximum lifetime, a no-input test never
-    /// activates it, and a timed change is positive and due within that lifetime.
+    /// activates it, and a timed change is positive and due at least <see cref="FixtureOptions.TimedChangeMargin"/>
+    /// before the end of that lifetime.
     /// </summary>
     public static FixtureOptions BuildOptions(
         DesktopTier tier,

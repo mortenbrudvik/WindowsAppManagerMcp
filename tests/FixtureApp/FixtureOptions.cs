@@ -36,9 +36,11 @@ public enum FixtureDpiAwareness
 /// <param name="OpenCanvas">Open the canvas window (roadmap M6.3) right after the main window is ready: known text drawn as
 /// pixels only, which UI Automation cannot read. See <see cref="FixtureContract.CanvasLines"/>.</param>
 /// <param name="ChangeAfter">Add the change panel to the main window and recolor and relabel it once, this long after the
-/// ready event (roadmap M6.4); null for no panel. Positive and shorter than <see cref="EffectiveMaxLifetime"/>.</param>
+/// ready event (roadmap M6.4); null for no panel. Positive, and due at least <see cref="TimedChangeMargin"/> before the end of
+/// <see cref="EffectiveMaxLifetime"/>.</param>
 /// <param name="AnimateFor">Add the spinner to the main window and turn it for this long after the ready event, then stop it
-/// (roadmap M6.4); null for no spinner. Positive and shorter than <see cref="EffectiveMaxLifetime"/>.</param>
+/// (roadmap M6.4); null for no spinner. Positive, and due at least <see cref="TimedChangeMargin"/> before the end of
+/// <see cref="EffectiveMaxLifetime"/>.</param>
 /// <param name="OpenOverlay">Open the overlay (roadmap M6.7) right after the main window is ready: a small unowned
 /// WS_EX_TOPMOST tool window of the fixture itself, centred on the primary monitor. Unlike the canvas it does not follow
 /// <paramref name="OtherScaleMonitor"/>.</param>
@@ -93,6 +95,15 @@ public sealed record FixtureOptions(
 
     /// <summary>The longest lifetime the fixture accepts.</summary>
     public static readonly TimeSpan LongestMaxLifetime = TimeSpan.FromHours(1);
+
+    /// <summary>
+    /// How long before the end of the lifetime a timed change must be due. The watchdog counts the lifetime from the start,
+    /// but <see cref="ChangeAfter"/> and <see cref="AnimateFor"/> count from the ready event, which the harness waits up to
+    /// 30 s for (a cold WPF start, or WebView2); and the spinner stops on the first tick at or after
+    /// <see cref="AnimateFor"/>, up to <see cref="FixtureContract.SpinnerIntervalMs"/> later.
+    /// </summary>
+    public static readonly TimeSpan TimedChangeMargin =
+        TimeSpan.FromSeconds(30) + TimeSpan.FromMilliseconds(FixtureContract.SpinnerIntervalMs);
 
     private static readonly Regex InstancePattern = new("^[A-Za-z0-9-]{1,32}$");
 
@@ -190,12 +201,14 @@ public sealed record FixtureOptions(
     }
 
     /// <summary>
-    /// Throws when <see cref="ChangeAfter"/> or <see cref="AnimateFor"/> is not positive (the fixture refuses it) or is not
-    /// shorter than <see cref="EffectiveMaxLifetime"/>: the watchdog ends the fixture first, so the change would never be
-    /// logged and a test waiting for it would only time out. The harness calls this when it builds the options, so the
-    /// mistake fails the test where it is made.
+    /// Throws when <see cref="ChangeAfter"/> or <see cref="AnimateFor"/> is not positive (the fixture refuses it) or is due
+    /// later than <see cref="TimedChangeMargin"/> before the end of <see cref="EffectiveMaxLifetime"/>: the lifetime runs
+    /// from the start and the change from the ready event, so the watchdog could end the fixture first, the change would
+    /// never be logged and a test waiting for it would only time out. The harness calls this when it builds the options,
+    /// so the mistake fails the test where it is made.
     /// </summary>
-    /// <exception cref="ArgumentException">A timed change is not positive or does not end within the lifetime.</exception>
+    /// <exception cref="ArgumentException">A timed change is not positive or is not due within the lifetime less the
+    /// margin.</exception>
     public void ThrowIfATimedChangeIsInvalid()
     {
         CheckTimedChange(nameof(ChangeAfter), ChangeAfterOption, ChangeAfter);
@@ -213,11 +226,14 @@ public sealed record FixtureOptions(
             throw new ArgumentException($"{property} ({option}) must be positive, got {value.TotalMilliseconds} ms.");
         }
         // In the whole milliseconds the command line carries, so what passes here the fixture reads back as valid
-        if (Math.Ceiling(value.TotalMilliseconds) >= EffectiveMaxLifetime.TotalMilliseconds)
+        var latest = EffectiveMaxLifetime - TimedChangeMargin;
+        if (Math.Ceiling(value.TotalMilliseconds) > latest.TotalMilliseconds)
         {
             throw new ArgumentException(
-                $"{property} ({option}) must be shorter than the fixture's lifetime of {EffectiveMaxLifetime.TotalSeconds:0} s, " +
-                $"got {value.TotalMilliseconds:0} ms: the fixture would end before it.");
+                $"{property} ({option}) must be at most {Math.Max(0, latest.TotalMilliseconds):0} ms, " +
+                $"{TimedChangeMargin.TotalSeconds:0.##} s before the end of the fixture's lifetime of " +
+                $"{EffectiveMaxLifetime.TotalSeconds:0} s, got {value.TotalMilliseconds:0} ms: the lifetime runs from the start " +
+                "and the change from the ready event, so the fixture could end before it.");
         }
     }
 
@@ -241,7 +257,7 @@ public sealed record FixtureOptions(
 
     /// <summary>The command line that <see cref="Parse"/> reads back into these options.</summary>
     /// <exception cref="ArgumentException">The instance or a timed change is one the fixture would refuse, or a timed change
-    /// does not end within the lifetime (see <see cref="ThrowIfATimedChangeIsInvalid"/>).</exception>
+    /// is not due within the lifetime less <see cref="TimedChangeMargin"/> (see <see cref="ThrowIfATimedChangeIsInvalid"/>).</exception>
     public IReadOnlyList<string> ToArguments()
     {
         ThrowIfATimedChangeIsInvalid();
