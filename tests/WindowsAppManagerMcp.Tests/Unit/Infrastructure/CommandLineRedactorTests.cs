@@ -65,6 +65,10 @@ public class CommandLineRedactorTests
     [InlineData(@"app.exe https://example.com/cb?access_token=abc#frag", @"app.exe https://example.com/cb?access_token=***#frag")]
     [InlineData(@"app.exe ""https://s3.example.com/o?X-Amz-Signature=ff00&X-Amz-Date=1""", @"app.exe ""https://s3.example.com/o?X-Amz-Signature=***&X-Amz-Date=1""")]
     [InlineData(@"app.exe https://maps.example.com/api?key=AIza123&q=oslo", @"app.exe https://maps.example.com/api?key=***&q=oslo")]
+    // Parameters in a URL fragment: an OAuth implicit-flow or hybrid-flow redirect, first parameter included
+    [InlineData(@"app.exe https://app/cb#access_token=eyJabc&token_type=Bearer", @"app.exe https://app/cb#access_token=***&token_type=Bearer")]
+    [InlineData(@"app.exe myapp://cb#id_token=eyJabc&state=x", @"app.exe myapp://cb#id_token=***&state=x")]
+    [InlineData(@"app.exe https://app/cb?code=c#access_token=abc", @"app.exe https://app/cb?code=c#access_token=***")]
     // Connection strings and assignments
     [InlineData(@"app.exe ""Server=db;User Id=sa;Password=hunter 2;Encrypt=true""", @"app.exe ""Server=db;User Id=sa;Password=***;Encrypt=true""")]
     [InlineData(@"app.exe ""Server=db;Pwd=hunter2""", @"app.exe ""Server=db;Pwd=***""")]
@@ -90,6 +94,28 @@ public class CommandLineRedactorTests
     // A user:password pair given to -u or --user (curl)
     [InlineData(@"curl -u alice:pw123 https://example.com", @"curl -u alice:*** https://example.com")]
     [InlineData(@"curl --user=alice:pw123 https://example.com", @"curl --user=alice:*** https://example.com")]
+    // curl's proxy credentials, and a user:password attached to curl's -u or -U
+    [InlineData(@"curl.exe -U alice:hunter2 http://x", @"curl.exe -U alice:*** http://x")]
+    [InlineData(@"curl.exe --proxy-user alice:hunter2 http://x", @"curl.exe --proxy-user alice:*** http://x")]
+    [InlineData(@"curl.exe --proxy-user=alice:hunter2 http://x", @"curl.exe --proxy-user=alice:*** http://x")]
+    [InlineData(@"curl.exe -ualice:hunter2 http://x", @"curl.exe -ualice:*** http://x")]
+    [InlineData(@"""C:\Windows\System32\curl.exe"" -Ualice:hunter2 http://x", @"""C:\Windows\System32\curl.exe"" -Ualice:*** http://x")]
+    // An inner command line quoted into one argument (cmd /c, npm's cmd /d /s /c, powershell -Command) is redacted as a
+    // command line of its own, its program included
+    [InlineData(@"cmd.exe /c ""app.exe --password hunter2""", @"cmd.exe /c ""app.exe --password ***""")]
+    [InlineData(@"cmd.exe /c ""app.exe /password:hunter2""", @"cmd.exe /c ""app.exe /password:***""")]
+    [InlineData(@"cmd.exe /c ""app.exe --password=hunter2""", @"cmd.exe /c ""app.exe --password=***""")]
+    [InlineData(@"cmd.exe /d /s /c ""node app.js --token abc --port 80""", @"cmd.exe /d /s /c ""node app.js --token *** --port 80""")]
+    [InlineData(@"cmd.exe /d /s /c ""node app.js /token:abc""", @"cmd.exe /d /s /c ""node app.js /token:***""")]
+    [InlineData(@"cmd.exe /d /s /c ""node app.js --token=abc""", @"cmd.exe /d /s /c ""node app.js --token=***""")]
+    [InlineData(@"powershell.exe -Command ""Connect-X -Password hunter2""", @"powershell.exe -Command ""Connect-X -Password ***""")]
+    [InlineData(@"powershell.exe -Command ""Connect-X -Password:hunter2""", @"powershell.exe -Command ""Connect-X -Password:***""")]
+    [InlineData(@"pwsh.exe -c ""Connect-X -Token=abc""", @"pwsh.exe -c ""Connect-X -Token=***""")]
+    [InlineData(@"cmd /c ""mysql -u root -phunter2 shop""", @"cmd /c ""mysql -u root -p*** shop""")]
+    [InlineData(@"cmd /c ""curl -ualice:pw http://x""", @"cmd /c ""curl -ualice:*** http://x""")]
+    // A quoted value inside the inner command line (\"), and an inner line nested once more
+    [InlineData(@"cmd /c ""app.exe --password \""hun ter2\"" --verbose""", @"cmd /c ""app.exe --password \""***\"" --verbose""")]
+    [InlineData(@"cmd /c ""cmd /c \""app.exe --password hunter2\""""", @"cmd /c ""cmd /c \""app.exe --password ***\""""")]
     // Several at once
     [InlineData(@"app.exe --token=a --password b https://u:p@h/?sig=c", @"app.exe --token=*** --password *** https://u:***@h/?sig=***")]
     public void ASecret_IsMasked(string commandLine, string expected)
@@ -142,6 +168,14 @@ public class CommandLineRedactorTests
     [InlineData(@"chrome.exe --remote-debugging-port=9222 --user-data-dir=C:\tmp\p https://example.com/path?q=1&lang=en")]
     [InlineData(@"git clone https://github.com/o/r.git")]
     [InlineData(@"curl -u alice https://example.com")]
+    // -u and -U take a user name elsewhere, and a drive path has a colon but no password
+    [InlineData(@"docker.exe run -u1000:1000 image")]
+    [InlineData(@"psql.exe -U postgres -d shop")]
+    [InlineData(@"pip.exe install -U C:\wheels\pkg.whl")]
+    // An ordinary URL fragment, and an inner command line with nothing secret
+    [InlineData(@"app.exe https://example.com/docs#section=2")]
+    [InlineData(@"cmd.exe /d /s /c ""node app.js --port 80 --verbose""")]
+    [InlineData(@"powershell.exe -Command ""Get-Process -Name notepad""")]
     [InlineData(@"app.exe --mode Basic")]
     [InlineData(@"app.exe C:\data\file.txt D:")]
     public void AnOrdinaryArgument_IsKept(string commandLine)

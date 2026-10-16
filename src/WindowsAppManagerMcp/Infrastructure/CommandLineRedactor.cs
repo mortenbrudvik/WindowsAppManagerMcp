@@ -26,9 +26,11 @@ public sealed record RedactedCommandLine(string Text, bool Redacted);
 /// <item>the user info of a URL: the password of <c>scheme://user:password@</c>, or all of it when it has no colon (a
 /// token in the user name's place); the user info runs to the last <c>@</c> before the host, as git and curl read it,
 /// so an unencoded <c>@</c> in a password is masked too;</item>
-/// <item>URL query parameters with a secret name (<c>?sig=</c> of an Azure SAS, <c>X-Amz-Signature</c>,
-/// <c>access_token</c>, <c>key</c>);</item>
-/// <item>the password of a <c>user:password</c> pair given to <c>-u</c> or <c>--user</c> (curl);</item>
+/// <item>URL query and fragment parameters with a secret name (<c>?sig=</c> of an Azure SAS, <c>X-Amz-Signature</c>,
+/// <c>access_token</c>, <c>key</c>, and the <c>#access_token=</c> of an OAuth implicit-flow redirect);</item>
+/// <item>the password of a <c>user:password</c> pair given to <c>-u</c>, <c>--user</c>, <c>-U</c> or
+/// <c>--proxy-user</c> (curl), apart or after <c>=</c>, and attached to curl's own <c>-u</c> or <c>-U</c>
+/// (<c>-ualice:pw</c>); a drive path (<c>-U C:\x</c>) is no pair;</item>
 /// <item><c>-pVALUE</c> of the MySQL and MariaDB tools (elsewhere <c>-p</c> is usually a port);</item>
 /// <item><c>-P value</c> and <c>-Pvalue</c> of the SQL Server tools sqlcmd, bcp and osql (also <c>/P value</c>).</item>
 /// </list>
@@ -43,7 +45,10 @@ public sealed record RedactedCommandLine(string Text, bool Redacted);
 /// </para>
 /// <para>
 /// Arguments are split as Windows splits them (CommandLineToArgvW: spaces and tabs outside double quotes, <c>\"</c> a
-/// literal quote); single quotes do not group.
+/// literal quote); single quotes do not group. An argument that holds a space or a tab is also redacted as a command
+/// line of its own, its first word naming its tool, so that an inner command line quoted into one argument is covered
+/// (<c>cmd /c "app --password x"</c>, npm's <c>cmd /d /s /c "..."</c>, <c>powershell -Command "..."</c>), down to
+/// <see cref="MaxNesting"/> levels.
 /// </para>
 /// <para>
 /// A process sets its own command line (up to 32,767 characters), so the patterns run on the non-backtracking engine,
@@ -55,6 +60,12 @@ public static class CommandLineRedactor
 {
     /// <summary>What a masked value is replaced with.</summary>
     public const string Mask = "***";
+
+    /// <summary>
+    /// How many inner command lines deep an argument is redacted again. Each level escapes its quotes once more, so real
+    /// command lines stay well inside it; it bounds the work a crafted line can cause.
+    /// </summary>
+    private const int MaxNesting = 4;
 
     private static readonly HashSet<string> SecretWords = new(StringComparer.Ordinal)
     {
@@ -101,18 +112,25 @@ public static class CommandLineRedactor
     // The user info runs to the last @ before the host: an @ may be in it, a / ? # or space may not
     private static readonly Regex UrlUserInfo = Linear(@"\b[A-Za-z][A-Za-z0-9+.\-]*://(?<userinfo>[^/\s?#]+)@");
 
-    private static readonly Regex QueryParameter = Linear(@"[?&](?<name>[^=&#\s]+)=(?<value>[^&#\s]*)");
+    // A URL query parameter, or a fragment parameter (#access_token= of an OAuth implicit-flow redirect)
+    private static readonly Regex QueryParameter = Linear(@"[?&#](?<name>[^=&#\s]+)=(?<value>[^&#\s]*)");
 
     private static readonly Regex MySqlPassword = Linear(@"^-p(?<value>.+)$", RegexOptions.Singleline);
 
     private static readonly Regex SqlServerPassword = Linear(@"^-P(?<value>.+)$", RegexOptions.Singleline);
+
+    // curl's -uUSER:PASS and -UUSER:PASS (proxy), the pair attached
+    private static readonly Regex CurlUserPassword = Linear(@"^-[uU][^:\s]+:(?<value>.+)$", RegexOptions.Singleline);
+
+    private static readonly Regex DrivePath = Linear(@"^[A-Za-z]:[\\/]");
 
     /// <summary>The tools whose one-letter switches carry a password.</summary>
     private enum Tool
     {
         Other,
         MySql,
-        SqlServer
+        SqlServer,
+        Curl
     }
 
     private static Regex Linear(string pattern, RegexOptions options = RegexOptions.None) =>
@@ -123,7 +141,19 @@ public static class CommandLineRedactor
     {
         ArgumentNullException.ThrowIfNull(commandLine);
 
-        var arguments = Split(commandLine);
+        var spans = SpansIn(commandLine, 0);
+        return spans.Count == 0
+            ? new RedactedCommandLine(commandLine, false)
+            : new RedactedCommandLine(Replace(commandLine, spans), true);
+    }
+
+    /// <summary>
+    /// The secret values of a command line, as (start, end) in it. <paramref name="nesting"/> is how many command lines
+    /// <paramref name="line"/> is quoted inside.
+    /// </summary>
+    private static List<(int Start, int End)> SpansIn(string line, int nesting)
+    {
+        var arguments = Split(line);
         var spans = new List<(int Start, int End)>();
         var tool = arguments.Count > 0 ? ToolOf(arguments[0].Text) : Tool.Other;
 
@@ -137,6 +167,17 @@ public static class CommandLineRedactor
                 if (length > 0)
                 {
                     spans.Add(argument.ToRaw(start, length));
+                }
+            }
+
+            // An inner command line quoted into one argument (cmd /c "app --password x"): its switches are seen only
+            // when it is split again. Its spans are in the argument's text, and map back through the argument's
+            // positions in this line.
+            if (nesting < MaxNesting && argument.Text.AsSpan().IndexOfAny(' ', '\t') >= 0)
+            {
+                foreach (var (start, end) in SpansIn(argument.Text, nesting + 1))
+                {
+                    spans.Add(argument.ToRaw(start, end - start));
                 }
             }
 
@@ -172,9 +213,7 @@ public static class CommandLineRedactor
             }
         }
 
-        return spans.Count == 0
-            ? new RedactedCommandLine(commandLine, false)
-            : new RedactedCommandLine(Replace(commandLine, spans), true);
+        return spans;
     }
 
     /// <summary>
@@ -324,11 +363,12 @@ public static class CommandLineRedactor
             : null;
     }
 
-    /// <summary>The attached password switch of a tool's arguments (-pVALUE, -PVALUE), or null.</summary>
+    /// <summary>The attached password switch of a tool's arguments (-pVALUE, -PVALUE, curl's -uUSER:PASS), or null.</summary>
     private static Regex? AttachedPassword(Tool tool) => tool switch
     {
         Tool.MySql => MySqlPassword,
         Tool.SqlServer => SqlServerPassword,
+        Tool.Curl => CurlUserPassword,
         _ => null
     };
 
@@ -354,7 +394,7 @@ public static class CommandLineRedactor
 
             if (IsUserSwitch(name))
             {
-                return next => next.IndexOf(':') is var at and >= 0 && !LooksLikeASwitch(next)
+                return next => next.IndexOf(':') is var at and >= 0 && !LooksLikeASwitch(next) && !DrivePath.IsMatch(next)
                     ? [(at + 1, next.Length - at - 1)]
                     : [];
             }
@@ -401,9 +441,11 @@ public static class CommandLineRedactor
             SecretWordEndings.Any(ending => word.Length > ending.Length && word.EndsWith(ending, StringComparison.Ordinal)));
     }
 
-    /// <summary>-u and --user, whose value may be user:password (curl).</summary>
+    /// <summary>-u, --user, -U and --proxy-user, whose value may be user:password (curl).</summary>
     private static bool IsUserSwitch(string name) =>
-        name == "u" || string.Equals(name, "user", StringComparison.OrdinalIgnoreCase);
+        name is "u" or "U" ||
+        string.Equals(name, "user", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(name, "proxy-user", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>The lower-case words of a name, split at anything but letters and digits and at camelCase.</summary>
     private static List<string> Words(string name)
@@ -465,11 +507,14 @@ public static class CommandLineRedactor
             return Tool.MySql;
         }
 
-        return name.Equals("sqlcmd", StringComparison.OrdinalIgnoreCase) ||
-               name.Equals("bcp", StringComparison.OrdinalIgnoreCase) ||
-               name.Equals("osql", StringComparison.OrdinalIgnoreCase)
-            ? Tool.SqlServer
-            : Tool.Other;
+        if (name.Equals("sqlcmd", StringComparison.OrdinalIgnoreCase) ||
+            name.Equals("bcp", StringComparison.OrdinalIgnoreCase) ||
+            name.Equals("osql", StringComparison.OrdinalIgnoreCase))
+        {
+            return Tool.SqlServer;
+        }
+
+        return name.Equals("curl", StringComparison.OrdinalIgnoreCase) ? Tool.Curl : Tool.Other;
     }
 
     private static string Replace(string commandLine, List<(int Start, int End)> spans)
