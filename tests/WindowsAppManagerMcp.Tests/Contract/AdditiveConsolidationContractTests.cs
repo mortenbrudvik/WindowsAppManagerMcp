@@ -39,6 +39,23 @@ public class AdditiveConsolidationContractTests
     }
 
     [Fact]
+    public async Task GetMonitors_ReportsTheVirtualScreen_ListScreensReports()
+    {
+        // Arrange - one server, so both tools read the virtual screen of the same desktop
+        var services = new ContractServices(ContractMode.Typical);
+        using var _ = services;
+        await using var server = await InProcessMcpServer.StartAsync(
+            [], builder => builder.AddWindowsAppManagerTools(), configureServices: services.Register);
+
+        // Act
+        var monitors = Payload(await server.CallToolAsync("get_monitors", new Dictionary<string, object?>()));
+        var screens = Payload(await server.CallToolAsync("list_screens", new Dictionary<string, object?>()));
+
+        // Assert - docs/TOOLS.md promises the same rectangle
+        monitors.GetProperty("virtualScreen").GetRawText().Should().Be(screens.GetProperty("virtualScreen").GetRawText());
+    }
+
+    [Fact]
     public async Task SetWindowBounds_SizeOnly_IsAResize()
     {
         // Act
