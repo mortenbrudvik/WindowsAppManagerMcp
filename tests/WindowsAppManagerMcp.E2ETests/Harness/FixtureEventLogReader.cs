@@ -92,6 +92,48 @@ public sealed record FixtureReady(
 }
 
 /// <summary>
+/// One line the canvas window drew, and its words, with their rectangles in the fixture's screen coordinates: cell boxes (the
+/// line's full height), not ink, so an OCR box lies inside one rather than equal to it.
+/// </summary>
+public sealed record FixtureCanvasLine(string Text, ScreenRect Rect, IReadOnlyList<FixtureCanvasWord> Words);
+
+/// <summary>One word of a canvas line and its rectangle.</summary>
+public sealed record FixtureCanvasWord(string Text, ScreenRect Rect);
+
+/// <summary>
+/// The canvas window's <see cref="FixtureContract.Events.CanvasOpened"/> event (roadmap M6.3): where the fixture drew
+/// <see cref="FixtureContract.CanvasLines"/>, as ground truth for what OCR reads there.
+/// </summary>
+public sealed record FixtureCanvas(nint WindowHandle, string Title, int Dpi, IReadOnlyList<FixtureCanvasLine> Lines)
+{
+    public static FixtureCanvas From(FixtureEvent opened)
+    {
+        if (opened.Name != FixtureContract.Events.CanvasOpened)
+        {
+            throw new ArgumentException(
+                $"Expected a '{FixtureContract.Events.CanvasOpened}' event, got '{opened.Name}'.", nameof(opened));
+        }
+
+        var data = opened.Data;
+        return new FixtureCanvas(
+            (nint)data.GetProperty("hwnd").GetInt64(),
+            data.GetProperty("title").GetString() ?? "",
+            data.GetProperty("dpi").GetInt32(),
+            data.GetProperty("lines").EnumerateArray().Select(line => new FixtureCanvasLine(
+                line.GetProperty("text").GetString() ?? "",
+                ScreenRect.From(line.GetProperty("rect")),
+                line.GetProperty("words").EnumerateArray().Select(word => new FixtureCanvasWord(
+                    word.GetProperty("text").GetString() ?? "",
+                    ScreenRect.From(word.GetProperty("rect")))).ToList())).ToList());
+    }
+
+    /// <summary>The screen rectangle of the canvas word <paramref name="text"/> (each word appears once).</summary>
+    public ScreenRect Word(string text) =>
+        Lines.SelectMany(l => l.Words).FirstOrDefault(w => w.Text == text)?.Rect
+            ?? throw new KeyNotFoundException($"The canvas reports no word '{text}'.");
+}
+
+/// <summary>
 /// Reads the fixture's event log while the fixture writes it. Only complete lines are parsed, so a line
 /// the fixture is still writing is picked up on a later read.
 /// </summary>

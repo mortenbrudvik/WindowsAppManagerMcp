@@ -36,6 +36,40 @@ public sealed record FixtureLaunchOptions
     /// </summary>
     public bool OtherScaleMonitor { get; init; }
 
+    /// <summary>
+    /// Open the canvas window (roadmap M6.3) right after the main window is ready: <see cref="FixtureContract.CanvasLines"/>
+    /// drawn as pixels only. Wait for its <see cref="FixtureContract.Events.CanvasOpened"/> event and read it with
+    /// <see cref="FixtureCanvas.From"/>.
+    /// </summary>
+    public bool OpenCanvas { get; init; }
+
+    /// <summary>
+    /// Add the change panel (<see cref="FixtureContract.Ids.ChangePanel"/>) to the main window, and recolor and relabel it
+    /// once, this long after the ready event (roadmap M6.4, <c>--change-after-ms</c>). Null for no panel. It must be due at
+    /// least <see cref="FixtureOptions.TimedChangeMargin"/> before the end of <see cref="MaxLifetime"/>.
+    /// </summary>
+    public TimeSpan? ChangeAfter { get; init; }
+
+    /// <summary>
+    /// Add the spinner (<see cref="FixtureContract.Ids.Spinner"/>) to the main window and turn it for this long after the
+    /// ready event, then stop it (roadmap M6.4, <c>--animate-for-ms</c>). Null for no spinner. It must end at least
+    /// <see cref="FixtureOptions.TimedChangeMargin"/> before the end of <see cref="MaxLifetime"/>.
+    /// </summary>
+    public TimeSpan? AnimateFor { get; init; }
+
+    /// <summary>
+    /// Open the overlay (roadmap M6.7) right after the main window is ready: a small unowned WS_EX_TOPMOST tool window of the
+    /// fixture, for z-order checks that must not touch any other window. It is centred on the primary monitor, so it covers
+    /// the main window's middle only without <see cref="OtherScaleMonitor"/>, which it does not follow.
+    /// </summary>
+    public bool OpenOverlay { get; init; }
+
+    /// <summary>
+    /// Arguments the harness plants on the fixture's command line after <see cref="FixtureOptions.EndOfOptions"/>, where
+    /// the fixture ignores them (roadmap M6.6: a secret-looking switch only a reader of the command line sees).
+    /// </summary>
+    public IReadOnlyList<string> ExtraArguments { get; init; } = [];
+
     /// <summary>The fixture's process DPI awareness.</summary>
     public FixtureDpiAwareness DpiAwareness { get; init; } = FixtureDpiAwareness.PerMonitorV2;
 
@@ -114,15 +148,15 @@ public sealed class FixtureAppSession : IDisposable
 
         var instance = Guid.NewGuid().ToString("N")[..12];
         var workDirectory = Path.Combine(Path.GetTempPath(), "WamE2E", instance);
-        Directory.CreateDirectory(workDirectory);
         var options = BuildOptions(tier, launch, instance, Path.Combine(workDirectory, "events.jsonl"), Environment.ProcessId);
+        Directory.CreateDirectory(workDirectory);
 
         var startInfo = new ProcessStartInfo(exePath)
         {
             UseShellExecute = false,
             WorkingDirectory = workDirectory
         };
-        foreach (var argument in options.ToArguments())
+        foreach (var argument in CommandLine(options, launch.ExtraArguments))
         {
             startInfo.ArgumentList.Add(argument);
         }
@@ -163,8 +197,9 @@ public sealed class FixtureAppSession : IDisposable
 
     /// <summary>
     /// The fixture's command line for a test of <paramref name="tier"/>. Pure, so the rules can be tested:
-    /// the fixture always watches the test host and has a maximum lifetime, and a no-input test never
-    /// activates it.
+    /// the fixture always watches the test host and has a maximum lifetime, a no-input test never
+    /// activates it, and a timed change is positive and due at least <see cref="FixtureOptions.TimedChangeMargin"/>
+    /// before the end of that lifetime.
     /// </summary>
     public static FixtureOptions BuildOptions(
         DesktopTier tier,
@@ -181,7 +216,7 @@ public sealed class FixtureAppSession : IDisposable
                 nameof(launch));
         }
 
-        return new FixtureOptions(
+        var options = new FixtureOptions(
             Instance: instance,
             EventLogPath: eventLogPath,
             ParentProcessId: parentProcessId,
@@ -193,7 +228,38 @@ public sealed class FixtureAppSession : IDisposable
             OpenTable: launch.OpenTable,
             OpenMenuWindow: launch.OpenMenuWindow,
             OpenWebView: launch.OpenWebView,
-            OtherScaleMonitor: launch.OtherScaleMonitor);
+            OtherScaleMonitor: launch.OtherScaleMonitor,
+            OpenCanvas: launch.OpenCanvas,
+            ChangeAfter: launch.ChangeAfter,
+            AnimateFor: launch.AnimateFor,
+            OpenOverlay: launch.OpenOverlay);
+
+        // Here, not as the fixture's exit code 2 or a wait that times out after the watchdog ended it
+        options.ThrowIfATimedChangeIsInvalid();
+        return options;
+    }
+
+    /// <summary>
+    /// The fixture's whole command line: <paramref name="options"/>, then, when there are any,
+    /// <see cref="FixtureOptions.EndOfOptions"/> and <paramref name="extraArguments"/>, which the fixture ignores.
+    /// </summary>
+    public static IReadOnlyList<string> CommandLine(FixtureOptions options, IReadOnlyList<string> extraArguments)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        ArgumentNullException.ThrowIfNull(extraArguments);
+        if (extraArguments.Any(a => a is null))
+        {
+            throw new ArgumentException("An extra argument is null.", nameof(extraArguments));
+        }
+
+        var args = options.ToArguments().ToList();
+        if (extraArguments.Count > 0)
+        {
+            args.Add(FixtureOptions.EndOfOptions);
+            args.AddRange(extraArguments);
+        }
+
+        return args;
     }
 
     /// <summary>

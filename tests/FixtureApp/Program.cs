@@ -40,6 +40,13 @@ internal static class Program
         using var events = FixtureEventLog.Open(options.EventLogPath);
         StartWatchdog(options, events);
 
+        // Planted for a reader of the command line (roadmap M6.6); only their number is logged
+        var ignored = FixtureOptions.IgnoredArgumentCount(args);
+        if (ignored > 0)
+        {
+            events.Write(FixtureContract.Events.ArgumentsIgnored, ("count", ignored));
+        }
+
         var exitCode = Run(options, events, dpiAwareness);
         events.Write(FixtureContract.Events.Exiting, ("reason", "closed"));
         return exitCode;

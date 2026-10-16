@@ -55,6 +55,12 @@ public static class FixtureContract
     /// <summary>The text of the button on the WebView2 pane's page (its HTML id is <see cref="Ids.WebButton"/>).</summary>
     public const string WebButtonName = "Web button";
 
+    /// <summary>Start of the canvas window's title (roadmap M6.3).</summary>
+    public const string CanvasTitlePrefix = "WAM Fixture Canvas";
+
+    /// <summary>Start of the overlay's title (roadmap M6.7).</summary>
+    public const string OverlayTitlePrefix = "WAM Fixture Overlay";
+
     /// <summary>Number of items in the virtualized list.</summary>
     public const int VirtualListItemCount = 10_000;
 
@@ -88,6 +94,76 @@ public static class FixtureContract
 
     /// <summary>Title of the WebView2 window of fixture instance <paramref name="instance"/>.</summary>
     public static string WebTitle(string instance) => $"{WebTitlePrefix} {instance}";
+
+    /// <summary>Title of the canvas window of fixture instance <paramref name="instance"/>.</summary>
+    public static string CanvasTitle(string instance) => $"{CanvasTitlePrefix} {instance}";
+
+    /// <summary>Title of the overlay of fixture instance <paramref name="instance"/>.</summary>
+    public static string OverlayTitle(string instance) => $"{OverlayTitlePrefix} {instance}";
+
+    /// <summary>
+    /// The lines the canvas window draws (roadmap M6.3), top to bottom, in Segoe UI: pixels only, which UI Automation cannot
+    /// read (the canvas's automation peer has no name, value or text, and no children). Every word appears once, and in no
+    /// title, no text this contract names and no other string of the fixture's code (its captions, labels and web page), so
+    /// an OCR hit can only come from the canvas. Every word also has a character that is not a hex
+    /// digit (the numbers carry a unit), so it cannot turn up in a title's instance token either, which the harness makes of
+    /// random hex digits. The <c>canvasOpened</c> event reports where each line and word landed on the screen.
+    /// </summary>
+    public static readonly IReadOnlyList<CanvasLine> CanvasLines =
+    [
+        new("Glyph quartz 4711km", 28, LightOnDark: false),
+        new("Harbor lantern 2938kg", 20, LightOnDark: false),
+        new("Inverted meadow 0815mm", 20, LightOnDark: true),
+        new("Small print 3141pt", 12, LightOnDark: false)
+    ];
+
+    /// <summary>
+    /// One line of the canvas: its text, its font size in device-independent units (12 is 9 pt) and whether it is light
+    /// text on a dark band instead of dark text on the white canvas.
+    /// </summary>
+    public sealed record CanvasLine(string Text, double FontSize, bool LightOnDark);
+
+    /// <summary>The words of a canvas line, as the canvas reports them: the runs between spaces.</summary>
+    public static IReadOnlyList<string> CanvasWords(string line) =>
+        CanvasWordSpans(line).Select(span => line.Substring(span.Start, span.Length)).ToList();
+
+    /// <summary>Where each word of <paramref name="line"/> starts, and its length.</summary>
+    public static IReadOnlyList<(int Start, int Length)> CanvasWordSpans(string line)
+    {
+        var spans = new List<(int, int)>();
+        var start = -1;
+        for (var i = 0; i <= line.Length; i++)
+        {
+            var isSpace = i == line.Length || line[i] == ' ';
+            if (!isSpace && start < 0)
+            {
+                start = i;
+            }
+            else if (isSpace && start >= 0)
+            {
+                spans.Add((start, i - start));
+                start = -1;
+            }
+        }
+
+        return spans;
+    }
+
+    /// <summary>The change panel's color and label before its one change (roadmap M6.4, <c>--change-after-ms</c>).</summary>
+    public static readonly Swatch ChangePanelBefore = new(Ids.ChangePanel, 0xF0, 0xC0, 0x20);
+
+    /// <summary>The change panel's color and label after it.</summary>
+    public static readonly Swatch ChangePanelAfter = new(Ids.ChangePanel, 0x60, 0x20, 0xA0);
+
+    public const string ChangePanelBeforeText = "Old";
+
+    public const string ChangePanelAfterText = "New";
+
+    /// <summary>The size of the change panel and of the spinner, in device-independent units.</summary>
+    public const int TimedPanelSize = 40;
+
+    /// <summary>How often the spinner turns while it animates.</summary>
+    public const int SpinnerIntervalMs = 50;
 
     /// <summary>Text of item <paramref name="index"/> of the virtualized list.</summary>
     public static string VirtualListItem(int index) => $"Item {index:D5}";
@@ -185,6 +261,13 @@ public static class FixtureContract
         public const string SwatchRed = "swatchRed";
         public const string SwatchGreen = "swatchGreen";
         public const string SwatchBlue = "swatchBlue";
+
+        // Main window, only with --change-after-ms and --animate-for-ms (roadmap M6.4), right of the swatches
+        public const string ChangePanel = "changePanel";
+        public const string Spinner = "spinner";
+
+        // Canvas window (roadmap M6.3): the element that draws the text, with no text of its own
+        public const string CanvasSurface = "canvasSurface";
 
         // Modal dialog
         public const string ModalTextBox = "modalTextBox";
@@ -314,6 +397,49 @@ public static class FixtureContract
         /// <c>clickCount</c>.
         /// </summary>
         public const string MouseUp = "mouseUp";
+
+        /// <summary>
+        /// The canvas window has rendered (roadmap M6.3). Fields: <c>hwnd</c>, <c>title</c>, <c>dpi</c> (GetDpiForWindow) and
+        /// <c>lines</c>: one object per line of <see cref="CanvasLines"/>, with <c>text</c>, <c>rect</c> and <c>words</c>
+        /// (objects with <c>text</c> and <c>rect</c>). Each rect is a rectangle as in the ready event, and is the text's cell
+        /// box, as a selection would highlight it (the line's full height), not its ink: an OCR line's or word's box lies
+        /// inside it and is smaller, so check that it is contained, not that the two are equal.
+        /// </summary>
+        public const string CanvasOpened = "canvasOpened";
+
+        /// <summary>
+        /// A mouse button went down on the canvas (roadmap M6.3: a click on a word OCR found). Fields: <c>button</c>, <c>x</c>
+        /// and <c>y</c> as in <see cref="MouseDown"/>, and <c>word</c> (the canvas word under the press; empty when none is).
+        /// </summary>
+        public const string CanvasMouseDown = "canvasMouseDown";
+
+        /// <summary>
+        /// The overlay has rendered (roadmap M6.7). Fields: <c>hwnd</c>, <c>topmost</c> and <c>toolWindow</c> (whether its
+        /// extended style has WS_EX_TOPMOST and WS_EX_TOOLWINDOW), and <c>ownerHwnd</c> (GetWindow GW_OWNER: 0, it is
+        /// unowned, so the z-order of the main window and of the overlay are independent).
+        /// </summary>
+        public const string OverlayOpened = "overlayOpened";
+
+        /// <summary>
+        /// The change panel changed color and label, once, <c>--change-after-ms</c> after the ready event (roadmap M6.4).
+        /// Fields: <c>id</c> (<see cref="Ids.ChangePanel"/>) and <c>rect</c> (where it is on the screen).
+        /// </summary>
+        public const string PanelChanged = "panelChanged";
+
+        /// <summary>
+        /// The spinner started turning, right after the ready event (roadmap M6.4). Fields: <c>id</c>
+        /// (<see cref="Ids.Spinner"/>), <c>rect</c> and <c>durationMs</c>.
+        /// </summary>
+        public const string AnimationStarted = "animationStarted";
+
+        /// <summary>The spinner stopped, <c>--animate-for-ms</c> after it started, and stays still. Fields: <c>id</c>.</summary>
+        public const string AnimationStopped = "animationStopped";
+
+        /// <summary>
+        /// The command line had arguments after <see cref="FixtureOptions.EndOfOptions"/>, which the fixture ignored (roadmap
+        /// M6.6). Fields: <c>count</c>. Their text is not logged.
+        /// </summary>
+        public const string ArgumentsIgnored = "argumentsIgnored";
 
         /// <summary>The fixture is exiting. Fields: <c>reason</c> (closed, parentExited or maxLifetime).</summary>
         public const string Exiting = "exiting";
