@@ -335,6 +335,67 @@ public class BrowserReadingToolsTests
 
     #endregion
 
+    #region get_browser_url with a bare foreground selector (roadmap M6.1)
+
+    [Fact]
+    public async Task GetBrowserUrl_WithABareForegroundSelector_ReadsTheActiveBrowser_AsGetActiveBrowserUrlDoes()
+    {
+        // Arrange
+        CdpOptions? passed = null;
+        _mockBrowserReadingService.Setup(s => s.GetActiveBrowserUrlAsync(It.IsAny<CdpOptions?>(), It.IsAny<CancellationToken>()))
+            .Callback((CdpOptions? cdp, CancellationToken _) => passed = cdp)
+            .ReturnsAsync(new BrowserUrlResult(true, "https://example.com", "chrome", "Example", null, BrowserErrorCode.None));
+        var windows = new Mock<IWindowService>(MockBehavior.Strict);
+        var sut = new BrowserReadingTools(_mockBrowserReadingService.Object, _mockProcessService.Object, windows.Object);
+
+        // Act
+        var result = await sut.GetBrowserUrl(window: new WindowSelector { Foreground = true }, cdpPort: 9222, requireCdp: true, timeoutMs: 4000);
+
+        // Assert - the same service call get_active_browser_url makes, with the same CDP options; no selector resolution
+        result.Success.Should().BeTrue();
+        result.Url.Should().Be("https://example.com");
+        passed.Should().Be(new CdpOptions(9222, true, 4000, null, true));
+        _mockBrowserReadingService.Verify(s => s.GetBrowserUrlAsync(It.IsAny<nint>(), It.IsAny<CdpOptions?>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task GetBrowserUrl_WithABareForegroundSelector_WhenTheWindowInFrontIsNoBrowser_IsNoBrowserInForeground()
+    {
+        // Arrange - the agent's terminal is in front
+        _mockBrowserReadingService.Setup(s => s.GetActiveBrowserUrlAsync(It.IsAny<CdpOptions?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new BrowserUrlResult(false, null, null, null, "Foreground window 'WindowsTerminal' is not a browser",
+                BrowserErrorCode.NoBrowserInForeground));
+
+        // Act
+        var result = await CreateSut().GetBrowserUrl(window: new WindowSelector { Foreground = true });
+
+        // Assert - not NotABrowser, which names a window the agent chose
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be("NoBrowserInForeground");
+    }
+
+    [Fact]
+    public async Task GetBrowserUrl_WithAForegroundSelectorAndAFilter_ResolvesTheWindowAsBefore()
+    {
+        // Arrange - foreground plus processName checks the window in front, through the selector
+        var browser = new nint(0x5150);
+        var windows = new Mock<IWindowService>();
+        windows.Setup(w => w.ResolveWindow(It.IsAny<WindowSelector>()))
+            .Returns(WindowResolution.Found(TestDataFactory.CreateWindowInfo(handleValue: 0x5150, processName: "chrome")));
+        _mockBrowserReadingService.Setup(s => s.GetBrowserUrlAsync(browser, It.IsAny<CdpOptions?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new BrowserUrlResult(true, "https://example.com", "chrome", "Example", null, BrowserErrorCode.None));
+        var sut = new BrowserReadingTools(_mockBrowserReadingService.Object, _mockProcessService.Object, windows.Object);
+
+        // Act
+        var result = await sut.GetBrowserUrl(window: new WindowSelector { Foreground = true, ProcessName = "chrome" });
+
+        // Assert
+        result.Success.Should().BeTrue();
+        _mockBrowserReadingService.Verify(s => s.GetActiveBrowserUrlAsync(It.IsAny<CdpOptions?>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    #endregion
+
     #region GetActiveBrowserUrl Tests
 
     [Fact]

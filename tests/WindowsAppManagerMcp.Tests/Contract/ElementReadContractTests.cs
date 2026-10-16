@@ -32,8 +32,7 @@ public class ElementReadContractTests
 
     private static JsonElement Json(CallToolResult result) => JsonDocument.Parse(Text(result)).RootElement.Clone();
 
-    private static int Tokens(CallToolResult result) =>
-        (Encoding.UTF8.GetByteCount(Text(result)) + ToolPayloadBudgetTests.BytesPerToken - 1) / ToolPayloadBudgetTests.BytesPerToken;
+    private static int Tokens(CallToolResult result) => ToolSurface.EstimatedTokens(Encoding.UTF8.GetByteCount(Text(result)));
 
     /// <summary>
     /// The real read service over <paramref name="element"/> in a fake window, wired into the contract services, and the ref

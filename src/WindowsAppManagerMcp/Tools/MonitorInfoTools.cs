@@ -9,18 +9,24 @@ namespace WindowsAppManagerMcp.Tools;
 public class MonitorInfoTools
 {
     private readonly IMonitorService _monitorService;
+    private readonly IScreenCaptureWrapper _screen;
 
-    public MonitorInfoTools(IMonitorService monitorService)
+    /// <param name="monitorService">The monitors.</param>
+    /// <param name="screen">The virtual screen's bounds, read as list_screens and the captures read them (roadmap M6.1).</param>
+    public MonitorInfoTools(IMonitorService monitorService, IScreenCaptureWrapper screen)
     {
         _monitorService = monitorService;
+        _screen = screen ?? throw new ArgumentNullException(nameof(screen));
     }
 
     [McpServerTool(Name = "get_monitors", Title = "List Monitors", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
-    [Description("Get information about all connected displays/monitors including bounds, work area (excluding taskbar), and scale factor.")]
+    [Description("Get information about all connected displays/monitors including bounds, work area (excluding taskbar), and scale factor, " +
+                 "and virtualScreen: the bounds of all monitors together, which take_screenshot captures with monitorIndex -1.")]
     public MonitorsResult GetMonitors()
     {
         var monitors = _monitorService.GetAllMonitors();
         var primaryIndex = monitors.FirstOrDefault(m => m.IsPrimary)?.Index ?? 0;
+        var (x, y, width, height) = _screen.GetVirtualScreenBounds();
 
         return new MonitorsResult(
             Monitors: monitors.Select(m => new MonitorInfoDto(
@@ -31,7 +37,8 @@ public class MonitorInfoTools
                 WorkArea: new BoundsDto(m.WorkArea.X, m.WorkArea.Y, m.WorkArea.Width, m.WorkArea.Height),
                 ScaleFactor: m.ScaleFactor
             )).ToList(),
-            PrimaryIndex: primaryIndex
+            PrimaryIndex: primaryIndex,
+            VirtualScreen: new VirtualScreenBounds(x, y, width, height)
         );
     }
 
@@ -53,7 +60,8 @@ public class MonitorInfoTools
 
 public record MonitorsResult(
     IReadOnlyList<MonitorInfoDto> Monitors,
-    int PrimaryIndex
+    int PrimaryIndex,
+    VirtualScreenBounds VirtualScreen
 );
 
 public record MonitorInfoDto(

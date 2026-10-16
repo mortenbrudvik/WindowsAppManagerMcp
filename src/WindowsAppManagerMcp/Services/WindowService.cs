@@ -405,9 +405,12 @@ public class WindowService : IWindowService
         bringToFront ? NativeEnums.SWP_NOACTIVATE : NativeEnums.SWP_NOZORDER | NativeEnums.SWP_NOACTIVATE;
 
     public WindowChangeResult ResizeWindow(nint handle, int width, int height) =>
+        ResizeWindow(handle, width, height, bringToFront: false);
+
+    public WindowChangeResult ResizeWindow(nint handle, int width, int height, bool bringToFront) =>
         ChangeRefusal(handle) ??
         Place(handle, new PlacementTarget(Width: width, Height: height), BoundsFrame.Visible,
-            NativeEnums.SWP_NOZORDER | NativeEnums.SWP_NOACTIVATE, WindowErrorCode.ResizeFailed);
+            PlacementFlags(bringToFront), WindowErrorCode.ResizeFailed);
 
     public WindowChangeResult SetWindowBounds(nint handle, int x, int y, int width, int height, bool bringToFront = true) =>
         ChangeRefusal(handle) ??

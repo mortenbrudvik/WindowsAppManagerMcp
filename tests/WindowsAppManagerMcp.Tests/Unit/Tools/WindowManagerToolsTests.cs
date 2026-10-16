@@ -159,6 +159,132 @@ public class WindowManagerToolsTests
         result.Bounds.Height.Should().Be(800);
     }
 
+    // Roadmap M6.1: set_window_bounds takes either pair alone, and each goes to the service call move_window or
+    // resize_window makes, so the window keeps its size or corner exactly, with that call's error code and DPI handling
+
+    [Fact]
+    public async Task SetWindowBounds_PositionOnly_KeepsSize()
+    {
+        // Arrange
+        var handle = new nint(12345);
+        _mockWindowService.Setup(w => w.IsValidWindow(handle)).Returns(true);
+        _mockWindowService.Setup(w => w.MoveWindow(handle, 100, 200, true)).Returns(WindowChangeResult.Done(handle));
+
+        // Act
+        var result = await CreateSut().SetWindowBounds(x: 100, y: 200, handle: 12345);
+
+        // Assert - move_window's move (SWP_NOSIZE), raised as move_window raises by default; nothing re-read and re-sent as a size
+        result.Success.Should().BeTrue();
+        _mockWindowService.Verify(w => w.MoveWindow(handle, 100, 200, true), Times.Once);
+        _mockWindowService.Verify(w => w.SetWindowFrame(It.IsAny<nint>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(),
+            It.IsAny<bool>()), Times.Never);
+        _mockWindowService.Verify(w => w.ResizeWindow(It.IsAny<nint>(), It.IsAny<int>(), It.IsAny<int>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task SetWindowBounds_PositionOnly_WithBringToFrontFalse_DoesNotRaise()
+    {
+        // Arrange
+        var handle = new nint(12345);
+        _mockWindowService.Setup(w => w.IsValidWindow(handle)).Returns(true);
+        _mockWindowService.Setup(w => w.MoveWindow(handle, 100, 200, false)).Returns(WindowChangeResult.Done(handle));
+
+        // Act
+        (await CreateSut().SetWindowBounds(x: 100, y: 200, handle: 12345, bringToFront: false)).Success.Should().BeTrue();
+
+        // Assert
+        _mockWindowService.Verify(w => w.MoveWindow(handle, 100, 200, false), Times.Once);
+    }
+
+    [Fact]
+    public async Task SetWindowBounds_SizeOnly_KeepsPosition_AndDoesNotRaise()
+    {
+        // Arrange
+        var handle = new nint(12345);
+        _mockWindowService.Setup(w => w.IsValidWindow(handle)).Returns(true);
+        _mockWindowService.Setup(w => w.ResizeWindow(handle, 1024, 768)).Returns(WindowChangeResult.Done(handle));
+
+        // Act
+        var result = await CreateSut().SetWindowBounds(width: 1024, height: 768, handle: 12345);
+
+        // Assert - resize_window's resize (SWP_NOMOVE, SWP_NOZORDER)
+        result.Success.Should().BeTrue();
+        _mockWindowService.Verify(w => w.ResizeWindow(handle, 1024, 768), Times.Once);
+        _mockWindowService.Verify(w => w.ResizeWindow(It.IsAny<nint>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>()), Times.Never);
+        _mockWindowService.Verify(w => w.MoveWindow(It.IsAny<nint>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>()), Times.Never);
+        _mockWindowService.Verify(w => w.SetWindowFrame(It.IsAny<nint>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(),
+            It.IsAny<bool>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task SetWindowBounds_SizeOnly_WithBringToFront_RaisesIt()
+    {
+        // Arrange
+        var handle = new nint(12345);
+        _mockWindowService.Setup(w => w.IsValidWindow(handle)).Returns(true);
+        _mockWindowService.Setup(w => w.ResizeWindow(handle, 1024, 768, true)).Returns(WindowChangeResult.Done(handle));
+
+        // Act
+        (await CreateSut().SetWindowBounds(width: 1024, height: 768, handle: 12345, bringToFront: true)).Success.Should().BeTrue();
+
+        // Assert
+        _mockWindowService.Verify(w => w.ResizeWindow(handle, 1024, 768, true), Times.Once);
+        _mockWindowService.Verify(w => w.ResizeWindow(It.IsAny<nint>(), It.IsAny<int>(), It.IsAny<int>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task SetWindowBounds_SizeOnly_ReportsResizeFailed()
+    {
+        // Arrange - the resize's own error code, as resize_window reports it
+        var handle = new nint(12345);
+        _mockWindowService.Setup(w => w.IsValidWindow(handle)).Returns(true);
+        _mockWindowService.Setup(w => w.ResizeWindow(handle, 1024, 768))
+            .Returns(WindowChangeResult.Failed(handle, WindowErrorCode.ResizeFailed, "SetWindowPos failed"));
+
+        // Act
+        var result = await CreateSut().SetWindowBounds(width: 1024, height: 768, handle: 12345);
+
+        // Assert
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be("ResizeFailed");
+    }
+
+    [Fact]
+    public async Task SetWindowBounds_AllFour_WithBringToFrontNull_PlacesTheFrame_AndRaises()
+    {
+        // Arrange - the call every client made before the pairs became optional
+        var handle = new nint(12345);
+        _mockWindowService.Setup(w => w.IsValidWindow(handle)).Returns(true);
+        _mockWindowService.Setup(w => w.SetWindowFrame(handle, 10, 20, 800, 600, true)).Returns(WindowChangeResult.Done(handle));
+
+        // Act
+        (await CreateSut().SetWindowBounds(10, 20, 800, 600, handle: 12345)).Success.Should().BeTrue();
+
+        // Assert
+        _mockWindowService.Verify(w => w.SetWindowFrame(handle, 10, 20, 800, 600, true), Times.Once);
+    }
+
+    [Theory]
+    [InlineData(100, null, null, null, "only x")]
+    [InlineData(null, 200, null, null, "only y")]
+    [InlineData(null, null, 800, null, "only width")]
+    [InlineData(null, null, null, 600, "only height")]
+    [InlineData(100, 200, 800, null, "only width")]
+    [InlineData(null, null, null, null, "Pass x and y")]
+    [InlineData(100, 200, 0, 600, "at least 1 pixel")]
+    [InlineData(null, null, 800, -1, "at least 1 pixel")]
+    public async Task SetWindowBounds_HalfAPair_IsInvalidArguments(int? x, int? y, int? width, int? height, string message)
+    {
+        // Act
+        var result = await CreateSut().SetWindowBounds(x, y, width, height, handle: 12345);
+
+        // Assert - refused before the window is looked at: nothing is moved or resized
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be("InvalidArguments");
+        result.Error.Should().Contain(message).And.Contain("Nothing was changed");
+        _mockWindowService.VerifyNoOtherCalls();
+    }
+
     #endregion
 
     #region SetWindowState Tests

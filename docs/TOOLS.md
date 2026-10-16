@@ -295,22 +295,26 @@ Every tool the server serves sits in the agent's context on every turn, and a lo
 | `WAM_READ_ONLY` | not set (off) | `1` (or `true`, `yes`, `on`) serves only the tools annotated read-only: `readOnlyHint: true` in tools/list, from `ReadOnly = true` on the tool's `[McpServerTool]`, within the toolsets above. `0`, `false`, `no`, `off` or empty: off. Any other value turns it on, to be safe, and is logged |
 
 <!-- tools:begin toolsets (generated from Toolsets.Server: run the tests with UPDATE_SNAPSHOTS=1, see TESTING.md) -->
-| Toolset | Default | What it covers | Tools |
-|---------|---------|----------------|-------|
-| `server` | always on | The server's build, environment and toolsets, and the user's control over its input: whether input is paused, resuming it with the user's consent, releasing stuck keys. | [get_server_info](#get_server_info), [get_control_status](#get_control_status), [resume_input](#resume_input), [release_all_input](#release_all_input) |
-| `windows` | on | Find, wait for, focus, move, resize, snap, minimize, maximize and close windows, one at a time or in batches. | [find_windows](#find_windows), [get_all_windows](#get_all_windows), [get_foreground_window](#get_foreground_window), [focus_window](#focus_window), [move_window](#move_window), [resize_window](#resize_window), [set_window_bounds](#set_window_bounds), [set_window_state](#set_window_state), [snap_window](#snap_window), [move_window_to_monitor](#move_window_to_monitor), [close_window](#close_window), [set_windows_bounds_batch](#set_windows_bounds_batch), [snap_windows_batch](#snap_windows_batch), [set_windows_state_batch](#set_windows_state_batch), [close_windows_batch](#close_windows_batch), [get_owned_windows](#get_owned_windows), [get_window_info](#get_window_info), [wait_for_window](#wait_for_window) |
-| `monitors` | on | The monitors: bounds, work areas, scale factors. | [get_monitors](#get_monitors), [get_primary_monitor](#get_primary_monitor), [list_screens](#list_screens) |
-| `capture` | on | Screenshots of monitors, regions and windows, as image content. | [take_screenshot](#take_screenshot), [capture_region](#capture_region), [capture_window](#capture_window), [capture_with_elements](#capture_with_elements) |
-| `elements` | on | UI Automation: one-call desktop observations, element trees, searches that return element refs (also in menus, dropdowns and dialogs), waits for elements, the focused element, the element at a point, an app's open popups, an element's text and a table's cells. | [get_desktop_state](#get_desktop_state), [get_ui_elements](#get_ui_elements), [find_ui_elements](#find_ui_elements), [get_focused_element](#get_focused_element), [get_element_at_point](#get_element_at_point), [get_active_popups](#get_active_popups), [read_element_text](#read_element_text), [read_table](#read_table), [wait_for_element](#wait_for_element) |
-| `input` | on | Guarded mouse and keyboard input to a named window (clicks of any button with modifiers, drags, key chords), and actions on UI elements through UI Automation patterns: menu paths, answering dialogs, completing Open and Save As dialogs. | [click](#click), [right_click](#right_click), [double_click](#double_click), [mouse_click](#mouse_click), [drag](#drag), [mouse_move](#mouse_move), [scroll](#scroll), [type_text](#type_text), [send_keys](#send_keys), [press_keys](#press_keys), [element_action](#element_action), [respond_to_dialog](#respond_to_dialog), [file_dialog](#file_dialog) |
-| `clipboard` | on | Read what the agent copied, put text on the clipboard to paste it; the user's own clipboard only with their consent. | [get_clipboard](#get_clipboard), [set_clipboard](#set_clipboard) |
-| `launch` | on | Start applications, optionally waiting for their window. | [launch_application](#launch_application), [launch_applications_batch](#launch_applications_batch) |
-| `process` | on | List processes and close or end one, or close an application's windows gracefully. | [list_processes](#list_processes), [kill_process](#kill_process), [close_application](#close_application) |
-| `layouts` | on | Save, apply and manage window layout presets. | [list_layouts](#list_layouts), [get_layout](#get_layout), [save_layout](#save_layout), [apply_layout](#apply_layout), [delete_layout](#delete_layout) |
-| `browser` | on | Read the URL and text of browser pages, list a debug browser's tabs and wait for a page; start and close a browser with a DevTools port. | [get_browser_url](#get_browser_url), [get_active_browser_url](#get_active_browser_url), [get_browser_content](#get_browser_content), [launch_browser_with_debug](#launch_browser_with_debug), [close_debug_browser](#close_debug_browser), [list_tabs](#list_tabs), [wait_for_browser](#wait_for_browser) |
-| `browser-actions` | off | Act on a debug browser's pages through CDP: show and navigate tabs (with a load wait), click and type in a page without the real mouse or keyboard, answer its JavaScript dialogs, place its elements on the screen, capture it. | [activate_tab](#activate_tab), [browser_navigate](#browser_navigate), [browser_element_rect](#browser_element_rect), [browser_click](#browser_click), [browser_type](#browser_type), [browser_handle_dialog](#browser_handle_dialog), [browser_screenshot](#browser_screenshot) |
-| `browser-script` | off | Run JavaScript in a debug browser's page through CDP, with the page's rights. | [browser_evaluate](#browser_evaluate) |
+| Toolset | Default | Tokens | What it covers | Tools |
+|---------|---------|--------|----------------|-------|
+| `server` | always on | about 1,000 | The server's build, environment and toolsets, and the user's control over its input: whether input is paused, resuming it with the user's consent, releasing stuck keys. | [get_server_info](#get_server_info), [get_control_status](#get_control_status), [resume_input](#resume_input), [release_all_input](#release_all_input) |
+| `windows` | on | about 13,700 | Find, wait for, focus, move, resize, snap, minimize, maximize and close windows, one at a time or in batches. | [find_windows](#find_windows), [get_all_windows](#get_all_windows), [get_foreground_window](#get_foreground_window), [focus_window](#focus_window), [move_window](#move_window), [resize_window](#resize_window), [set_window_bounds](#set_window_bounds), [set_window_state](#set_window_state), [snap_window](#snap_window), [move_window_to_monitor](#move_window_to_monitor), [close_window](#close_window), [set_windows_bounds_batch](#set_windows_bounds_batch), [snap_windows_batch](#snap_windows_batch), [set_windows_state_batch](#set_windows_state_batch), [close_windows_batch](#close_windows_batch), [get_owned_windows](#get_owned_windows), [get_window_info](#get_window_info), [wait_for_window](#wait_for_window) |
+| `monitors` | on | about 300 | The monitors: bounds, work areas, scale factors. | [get_monitors](#get_monitors), [get_primary_monitor](#get_primary_monitor), [list_screens](#list_screens) |
+| `capture` | on | about 5,900 | Screenshots of monitors, regions and windows, as image content. | [take_screenshot](#take_screenshot), [capture_region](#capture_region), [capture_window](#capture_window), [capture_with_elements](#capture_with_elements) |
+| `elements` | on | about 8,300 | UI Automation: one-call desktop observations, element trees, searches that return element refs (also in menus, dropdowns and dialogs), waits for elements, the focused element, the element at a point, an app's open popups, an element's text and a table's cells. | [get_desktop_state](#get_desktop_state), [get_ui_elements](#get_ui_elements), [find_ui_elements](#find_ui_elements), [get_focused_element](#get_focused_element), [get_element_at_point](#get_element_at_point), [get_active_popups](#get_active_popups), [read_element_text](#read_element_text), [read_table](#read_table), [wait_for_element](#wait_for_element) |
+| `input` | on | about 19,400 | Guarded mouse and keyboard input to a named window (clicks of any button with modifiers, drags, key chords), and actions on UI elements through UI Automation patterns: menu paths, answering dialogs, completing Open and Save As dialogs. | [click](#click), [right_click](#right_click), [double_click](#double_click), [mouse_click](#mouse_click), [drag](#drag), [mouse_move](#mouse_move), [scroll](#scroll), [type_text](#type_text), [send_keys](#send_keys), [press_keys](#press_keys), [element_action](#element_action), [respond_to_dialog](#respond_to_dialog), [file_dialog](#file_dialog) |
+| `clipboard` | on | about 700 | Read what the agent copied, put text on the clipboard to paste it; the user's own clipboard only with their consent. | [get_clipboard](#get_clipboard), [set_clipboard](#set_clipboard) |
+| `launch` | on | about 2,900 | Start applications, optionally waiting for their window. | [launch_application](#launch_application), [launch_applications_batch](#launch_applications_batch) |
+| `process` | on | about 1,900 | List processes and close or end one, or close an application's windows gracefully. | [list_processes](#list_processes), [kill_process](#kill_process), [close_application](#close_application) |
+| `layouts` | on | about 1,200 | Save, apply and manage window layout presets. | [list_layouts](#list_layouts), [get_layout](#get_layout), [save_layout](#save_layout), [apply_layout](#apply_layout), [delete_layout](#delete_layout) |
+| `browser` | on | about 4,700 | Read the URL and text of browser pages, list a debug browser's tabs and wait for a page; start and close a browser with a DevTools port. | [get_browser_url](#get_browser_url), [get_active_browser_url](#get_active_browser_url), [get_browser_content](#get_browser_content), [launch_browser_with_debug](#launch_browser_with_debug), [close_debug_browser](#close_debug_browser), [list_tabs](#list_tabs), [wait_for_browser](#wait_for_browser) |
+| `browser-actions` | off | about 3,600 | Act on a debug browser's pages through CDP: show and navigate tabs (with a load wait), click and type in a page without the real mouse or keyboard, answer its JavaScript dialogs, place its elements on the screen, capture it. | [activate_tab](#activate_tab), [browser_navigate](#browser_navigate), [browser_element_rect](#browser_element_rect), [browser_click](#browser_click), [browser_type](#browser_type), [browser_handle_dialog](#browser_handle_dialog), [browser_screenshot](#browser_screenshot) |
+| `browser-script` | off | about 500 | Run JavaScript in a debug browser's page through CDP, with the page's rights. | [browser_evaluate](#browser_evaluate) |
+
+The default surface (the toolsets that are on) is about 60,000 tokens, and every tool together about 64,100.
 <!-- tools:end toolsets -->
+
+**Tokens** is what the toolset's tools cost in tools/list, to the nearest 100: their names, titles, descriptions, input schemas and annotations as the server sends them, estimated at 4 bytes of JSON per token (roadmap M6.1). It is what turning the toolset on adds to the context a client loads up front, and what turning it off saves. The two totals under the table are measured the same way and generated with it. Contract tests hold each toolset, the default surface, the whole list and every single tool (at most 2,500 tokens) to a budget, so a change that makes them larger is a decision; see TESTING.md.
 
 **The default.** Every toolset is on by default except `browser-actions` (activate_tab and browser_navigate, roadmap M5.5, and the DOM bridge's browser_element_rect, browser_click, browser_type, browser_handle_dialog and browser_screenshot, roadmap M5.8) and `browser-script` (browser_evaluate, roadmap M5.8), so a server without these variables serves every tool but those eight; `WAM_TOOLSETS=+browser-actions` adds the first seven, and `+browser-script` adds browser_evaluate, which runs any script with a page's rights (cookies scripts can read, storage, requests with the user's sign-in) and leaves no trace on the screen, so it is kept apart: turning on clicks and typing does not turn it on. The tools that later milestones add for OCR, visual change detection, layouts v2 and workspaces come in toolsets that are off by default too (`ocr`, `visual`, `layouts-v2`, `workspace`), so the default stays a core of finding, acting, waiting, windows, captures, guarded input, launching, reading browsers and the server's state; `WAM_TOOLSETS=all` serves everything.
 
@@ -960,19 +964,21 @@ Resize a window's visible frame. Its top-left corner stays where it is (`SWP_NOM
 
 ### set_window_bounds
 
-Move and resize a window in a single operation: `x`, `y`, `width` and `height` are its visible frame (see [Window Control](#window-control)).
+Move, resize, or move and resize a window in a single operation: `x`, `y`, `width` and `height` are its visible frame (see [Window Control](#window-control)).
+
+**Either pair alone** (roadmap M6.1). `x` and `y` alone move the window and keep its size, exactly as [move_window](#move_window) does; `width` and `height` alone resize it and keep its top-left corner, exactly as [resize_window](#resize_window) does (`ResizeFailed` is then the error code, not `MoveFailed`); all four place the frame in one step, as before. `x` without `y`, `width` without `height`, no pair at all, or a width or height below 1 is `InvalidArguments`, and nothing is changed. `bringToFront` left out raises the window when it is moved (`x` and `y` given) and leaves the z-order alone for a size only, as move_window and resize_window do; pass `true` or `false` to choose. A move to a monitor with another scale is placed again once the application has applied its DPI change, with a position alone too.
 
 <!-- tools:begin params:set_window_bounds -->
 **Parameters:**
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| x | integer | Yes | - | X of the visible frame's left edge |
-| y | integer | Yes | - | Y of the visible frame's top edge |
-| width | integer | Yes | - | Width of the visible frame in pixels |
-| height | integer | Yes | - | Height of the visible frame in pixels |
+| x | integer | No | - | X of the visible frame's left edge, with `y`; leave both out to keep the position |
+| y | integer | No | - | Y of the visible frame's top edge, with `x` |
+| width | integer | No | - | Width of the visible frame in pixels (at least 1), with `height`; leave both out to keep the size |
+| height | integer | No | - | Height of the visible frame in pixels (at least 1), with `width` |
 | handle | integer | No | - | Window handle |
 | window | object | No | - | Alternative to handle: the window as a selector, resolved to exactly one window or refused (WindowNotFound; AmbiguousWindow with candidates). Filters as in find_windows (processName is the whole name); index picks a match in z-order; foreground is the window in front; handle plus filters must still match (HandleMismatch). |
-| bringToFront | boolean | No | true | Raise the window to the top of the z-order without activating it (see [Window Control](#window-control)) |
+| bringToFront | boolean | No | true with `x` and `y`, false for a size only | Raise the window to the top of the z-order without activating it (see [Window Control](#window-control)) |
 | settleMs | integer | No | 0 | Wait up to this many milliseconds (clamped to 0-5000) for the window to stop moving before it is read: until two reads 20 ms apart agree |
 <!-- tools:end params:set_window_bounds -->
 
@@ -1000,6 +1006,20 @@ Move and resize a window in a single operation: `x`, `y`, `width` and `height` a
   "outerBounds": { "x": 43, "y": 50, "width": 1014, "height": 707 },
   "state": "normal",
   "monitorIndex": 0
+}
+```
+
+**Example, a size only:**
+> "Make Notepad 1200 x 800 where it is"
+
+```json
+{
+  "name": "set_window_bounds",
+  "arguments": {
+    "window": { "processName": "notepad" },
+    "width": 1200,
+    "height": 800
+  }
 }
 ```
 
@@ -1709,7 +1729,7 @@ Tools for getting information about connected displays.
 
 ### get_monitors
 
-Get information about all connected monitors. The server reuses monitor information for up to 250 ms, so a display change can take that long to appear.
+Get information about all connected monitors, and `virtualScreen`: the bounds of all monitors together (the area [take_screenshot](#take_screenshot) captures with `monitorIndex: -1`), the same rectangle [list_screens](#list_screens) reports (roadmap M6.1). The server reuses monitor information for up to 250 ms, so a display change can take that long to appear.
 
 <!-- tools:begin params:get_monitors -->
 **Parameters:** None
@@ -1746,7 +1766,8 @@ Get information about all connected monitors. The server reuses monitor informat
       "scaleFactor": 1.5
     }
   ],
-  "primaryIndex": 1
+  "primaryIndex": 1,
+  "virtualScreen": { "x": -2560, "y": 0, "width": 6400, "height": 2160 }
 }
 ```
 
@@ -3497,6 +3518,8 @@ For clicking, typing and answering dialogs in a debug browser's page without the
 
 Get the current URL from a browser window: from the shown tab's page or its address bar with UI Automation, or from the matched tab with CDP.
 
+**The browser in front.** `window: {"foreground": true}` with no other filter reads the foreground browser exactly as [get_active_browser_url](#get_active_browser_url) does, and returns `NoBrowserInForeground` when the window in front is not a browser (or there is none), instead of `NotABrowser` (roadmap M6.1). With a filter beside it (`{"foreground": true, "processName": "chrome"}`) the selector is resolved as usual, so a window in front that does not match is `WindowNotFound`. There is no implicit default: without `handle` or `window` the call is `InvalidArguments`, so a forgotten handle never reads whatever browser happens to be in front.
+
 With UI Automation the result says where the URL came from (`urlSource`: `document`, the address the tab committed, or `addressBar`, the text the address bar shows, which can lack the scheme; a file page's path is returned as its `file:///` URL), what the address bar shows (`displayUrl`, when it is URL-like) and whether it has the keyboard focus (`isEditing`). A new tab page returns `NewTabPage` (with `url` when the page gave its address, such as `chrome://new-tab-page/`), not `UrlBarNotFound`. When the page gives no address and the address bar is being edited, or may be (the browser is not the foreground window, or its focus cannot be read; `isEditing` is then left out), holds text that is not a URL or cannot be read, the result is `UrlExtractionFailed`: such an address bar may hold what someone is typing, which is never returned as the URL.
 
 <!-- tools:begin params:get_browser_url -->
@@ -3585,7 +3608,7 @@ With UI Automation the result says where the URL came from (`urlSource`: `docume
 
 ### get_active_browser_url
 
-Get the URL from the foreground browser window. This combines get_foreground_window and get_browser_url, with the same CDP behavior and response fields.
+Get the URL from the foreground browser window. This combines get_foreground_window and get_browser_url, with the same CDP behavior and response fields. [get_browser_url](#get_browser_url) with `window: {"foreground": true}` does the same (roadmap M6.1).
 
 <!-- tools:begin params:get_active_browser_url -->
 **Parameters:**
@@ -3723,7 +3746,7 @@ An open dialog is not something to clear out of the way. On a confirm, prompt or
 |------|-------------|
 | `InvalidHandle` | Window handle is invalid |
 | `NotABrowser` | The window's process is not a recognized browser |
-| `NoBrowserInForeground` | The foreground window is not a browser (get_active_browser_url) |
+| `NoBrowserInForeground` | The foreground window is not a browser (get_active_browser_url, and get_browser_url with `window: {"foreground": true}` alone) |
 | `UrlBarNotFound` | UI Automation found neither the page's address nor the address bar (for example an app or kiosk window whose page holds no address) |
 | `UrlExtractionFailed` | The page gave no address, and the address bar has the keyboard focus (`isEditing`: its text may be typed) or may have it (the browser is not the foreground window), holds text that is not a URL, or cannot be read |
 | `NewTabPage` | The tab shows the browser's new tab page, which has no site address (get_browser_url, get_active_browser_url) |
@@ -4636,7 +4659,7 @@ Perform a double left (primary) click at the specified screen coordinates, or at
 
 ### mouse_click
 
-Click any mouse button one to three times at a point, with modifier keys held around the clicks (roadmap M4.3): a Ctrl+click or Shift+click that adds to a selection, a middle click that opens a link in a new tab, a triple click that selects a line or a paragraph, `x1` or `x2` for Back and Forward. The point (`space`, `captureId`), the target and every [Input guard](#input-guard) check are [click](#click)'s. [click](#click), [right_click](#right_click) and [double_click](#double_click) are mouse_click with the primary or secondary button and no modifiers; they stay as they are.
+Click any mouse button one to three times at a point, with modifier keys held around the clicks (roadmap M4.3): a Ctrl+click or Shift+click that adds to a selection, a middle click that opens a link in a new tab, a triple click that selects a line or a paragraph, `x1` or `x2` for Back and Forward. The point (`space`, `captureId`), the target and every [Input guard](#input-guard) check are [click](#click)'s. [click](#click), [right_click](#right_click) and [double_click](#double_click) are mouse_click with the primary or secondary button and no modifiers; they stay as they are. Its tool description names every one of those checks itself (`TargetOccluded`, `BlockedByModal`, `TargetIsAgentHost`, `CursorNotAtPoint`, `CursorClamped`, `MouseInUse`, the guard's codes and the terminal paste rule) instead of pointing to click's (roadmap M6.1), so an agent that loads only mouse_click has the whole contract.
 
 The modifier key-downs, the absolute move to the point, the clicks and the modifier key-ups go in one SendInput batch, so no other input comes between them, a double or triple click is one whatever the double-click time, and no key stays down whatever happens to the call. When SendInput inserts only part of the batch, what went down is sent up at once, and `SendInputFailed` says how many clicks went in. The modifiers are sent as the left-hand keys (left Ctrl, Shift, Alt or Windows), with the scan codes of the target window's keyboard layout as [send_keys](#send_keys)' keys are (drag's too), and a modifier named twice goes down once. When Alt or Windows is among them, an unassigned key (VK 0xE8) goes down and up right before they are released, so their release opens neither the menu bar nor the Start menu. A modifier the user holds is still refused before anything is sent (`ModifiersHeld`), and so is a mouse button the user holds, X1 and X2 included (`MouseInUse`). `primary` and `secondary` are the user's buttons, as for click (the right and the left one when the user swapped them in Windows' mouse settings); `left` and `right` are accepted for them. `middle`, `x1` and `x2` are never swapped. A right or a middle click in a terminal pastes (mintty and PuTTY paste on the middle button), so there it follows the paste rule (`PasteNotAllowed`, see [Clipboard](#clipboard)).
 
@@ -7549,6 +7572,18 @@ the new tools; their sections have the rest.
   has `windowHandle`, `accepted` and `dialogClosed` instead of `targetId` and `cdpPort`. A confirm or prompt is accepted
   only once its text was read (new error code `DialogNotRead`). The `CdpDialogOpen` and `CdpTimeout` messages and docs
   point to browser_handle_dialog instead of respond_to_dialog.
+- **Token budgets and additive consolidations (roadmap M6.1, budgets and additive consolidations).** Nothing is removed
+  or deprecated, and every call that worked still works the same way. [get_monitors](#get_monitors) always returns
+  `virtualScreen` (`x`, `y`, `width`, `height`: the bounds of all monitors together, as [list_screens](#list_screens)
+  reports them). [set_window_bounds](#set_window_bounds)' `x`, `y`, `width` and `height` are no longer required: `x` and
+  `y` alone move the window as move_window does, `width` and `height` alone resize it as resize_window does
+  (`ResizeFailed`), and half a pair or no pair is `InvalidArguments` with nothing changed; its `bringToFront` is now
+  optional (`["boolean", "null"]`), and left out it raises the window only when it is moved, so a call with all four
+  still raises it. [get_browser_url](#get_browser_url) with `window: {"foreground": true}` and no other filter reads the
+  browser in front as get_active_browser_url does, and returns `NoBrowserInForeground` (it returned `NotABrowser` when
+  the window in front was not a browser). mouse_click's description now names every check a click gets instead of
+  referring to click's. The toolsets table above has a Tokens column, and contract tests hold the default tools/list,
+  each toolset and every single tool (at most 2,500 tokens) to a budget.
 
 ## Error Codes
 
@@ -7726,10 +7761,10 @@ table, it gives more detail.
 | `LaunchFailed` | [apply_layout](#apply_layout) | A missing app could not be launched, its window did not appear, or the window it brought up was already given to another placement (a single-instance app) |
 | `ModifiersHeld` | [Input Simulation](#input-simulation) tools, [element_action](#element_action) (mouse and keyboard paths), [release_all_input](#release_all_input) (`releaseHeldModifiers`) | Shift, Ctrl, Alt or Windows is down (`heldModifiers`), held by the user or stuck, or keys the server pressed earlier could not be released; nothing (more) was sent. Wait and retry; for a stuck key pass `releaseHeldModifiers: true` or call [release_all_input](#release_all_input) (element_action has no `releaseHeldModifiers`: call release_all_input). While any modifier of the [pause hotkey](#pause-hotkey) is down, no modifier is released for the agent: ask the user |
 | `MouseInUse` | [click](#click), right_click, double_click, [mouse_click](#mouse_click), [drag](#drag), mouse_move, [scroll](#scroll), [element_action](#element_action) (mouse paths) | A mouse button is held down (the user is dragging or selecting), or another window has captured the mouse, so the input would go to that window instead of the one at the point, or the capture could not be read; nothing (more) was sent |
-| `MoveFailed` | move_window, set_window_bounds, snap_window, move_window_to_monitor (see [Window Control](#window-control)), their batches (per window) | Windows did not move the window (`error` gives the Win32 error); a minimized or maximized window did not return to normal, or is hidden, so it was not placed; or move_window_to_monitor did not get the window onto the monitor asked for (with `positioning: "maximize"` it is then not maximized) |
+| `MoveFailed` | move_window, set_window_bounds (with `x` and `y`), snap_window, move_window_to_monitor (see [Window Control](#window-control)), their batches (per window) | Windows did not move the window (`error` gives the Win32 error); a minimized or maximized window did not return to normal, or is hidden, so it was not placed; or move_window_to_monitor did not get the window onto the monitor asked for (with `positioning: "maximize"` it is then not maximized) |
 | `NavigationFailed` | [browser_navigate](#browser_navigate) | The browser could not load the page: `errorText` is its reason (such as `net::ERR_NAME_NOT_RESOLVED`, `net::ERR_CONNECTION_REFUSED` or `net::ERR_ABORTED`), and the tab shows the browser's error page (`loadState: "failed"`); check the address and that the site can be reached from this computer. With `loadState: "download"` the address answered with a file, which the browser downloads, and the tab keeps its page; do not navigate there again to read it (roadmap M5.5) |
 | `NewTabPage` | [get_browser_url](#get_browser_url), [get_active_browser_url](#get_active_browser_url) | The tab shows the browser's new tab page, which has no site address; `url` is the new tab page's when the page gave it (roadmap M5.7) |
-| `NoBrowserInForeground` | [get_active_browser_url](#get_active_browser_url) | The foreground window is not a browser |
+| `NoBrowserInForeground` | [get_active_browser_url](#get_active_browser_url), [get_browser_url](#get_browser_url) with `window: {"foreground": true}` alone (roadmap M6.1) | The foreground window is not a browser, or no window is in front |
 | `NoClosableWindow` | [kill_process](#kill_process), [close_application](#close_application) | Graceful mode: the process has no closable main window and was left running (when the client can ask the user, a process without a main window is refused before the question). close_application: the application has no window in the Alt+Tab set of the current virtual desktop; nothing was sent |
 | `NoForegroundWindow` | [get_foreground_window](#get_foreground_window) (tool error), [get_desktop_state](#get_desktop_state) (in `errors`, section `target`, when no window was named; the rest is returned) | No window is in the foreground right now (windows are switching, or a UAC prompt or the lock screen is shown); call again shortly |
 | `NoMatchCriterion` | [apply_layout](#apply_layout) (per placement) | The placement has no criterion the `matchBy` used can match on (`title_only` without `titleContains`, as in every layout save_layout made; `process_only` without a process name; or neither), so it was skipped and no window was moved for it. Apply with `process_and_title` |
@@ -7756,7 +7791,7 @@ table, it gives more detail.
 | `ProtectedProcess` | [kill_process](#kill_process) | Protected system or shell process |
 | `ProtectedWindow` | [close_window](#close_window), close_windows_batch (per window), [close_application](#close_application), the `placement` of [launch_application](#launch_application) and launch_applications_batch | The window is part of the desktop shell or of the agent's own host, and `force` was not true (close_application has no `force`, and refuses the whole application); nothing was sent. A launch placement: the launch's window belongs to the agent's own host, so it was not moved or focused (the launch still succeeded) |
 | `RegionOffScreen` | [capture_region](#capture_region) | No part of the region is on the virtual screen (the area of all monitors); nothing was captured. Coordinates are physical virtual-screen pixels: check them against [list_screens](#list_screens) |
-| `ResizeFailed` | [resize_window](#resize_window) | Windows did not resize the window (`error` gives the Win32 error), or a minimized or maximized window did not return to normal, or is hidden, so it was not resized |
+| `ResizeFailed` | [resize_window](#resize_window), [set_window_bounds](#set_window_bounds) with `width` and `height` alone (roadmap M6.1) | Windows did not resize the window (`error` gives the Win32 error), or a minimized or maximized window did not return to normal, or is hidden, so it was not resized |
 | `ResumeDeclined` | [resume_input](#resume_input) | The user declined or dismissed the question, or did not answer in time, or paused again while it was open; or another `resume_input` is already waiting for the answer. Input stays paused |
 | `ResumeNeedsUser` | [resume_input](#resume_input) | The MCP client cannot ask the user (no elicitation support), so only the user can resume, with the pause hotkey |
 | `SaveFailed` | [save_layout](#save_layout) | The preset file could not be written |

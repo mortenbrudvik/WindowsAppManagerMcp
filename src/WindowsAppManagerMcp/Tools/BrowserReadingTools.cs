@@ -82,7 +82,8 @@ public partial class BrowserReadingTools
         "Time limit in ms for the CDP requests, and again for the UI Automation read (default: 10000, range: 1000-30000). A page with an open JavaScript dialog (alert/confirm/prompt/beforeunload) never answers CDP, so the call returns CdpTimeout or CdpDialogOpen instead of hanging.";
 
     [McpServerTool(Name = "get_browser_url", Title = "Get Browser URL", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
-    [Description("Get the current URL from a browser window. Uses Windows UI Automation to read the address of the shown tab's page, else the address bar (urlSource says which), or CDP (Chrome DevTools Protocol) for a debug browser." + CdpBehaviorDescription + " Supports Chrome, Edge, Firefox, Brave, Opera, Vivaldi, and other Chromium/Firefox-based browsers.")]
+    [Description("Get the current URL from a browser window. Uses Windows UI Automation to read the address of the shown tab's page, else the address bar (urlSource says which), or CDP (Chrome DevTools Protocol) for a debug browser." + CdpBehaviorDescription + " Supports Chrome, Edge, Firefox, Brave, Opera, Vivaldi, and other Chromium/Firefox-based browsers." +
+                 " window {\"foreground\": true} reads the browser in front, as get_active_browser_url does (NoBrowserInForeground when the window in front is not a browser).")]
     public async Task<BrowserUrlResultDto> GetBrowserUrl(
         [Description("Window handle of the browser (as integer). Get this from find_windows or get_foreground_window. Pass handle or window, not both.")]
         long? handle = null,
@@ -102,9 +103,16 @@ public partial class BrowserReadingTools
     {
         RefuseBadTargetId(targetId);
         RefuseCdpWithoutCdp(useCdp, cdpPort, targetId, requireCdp);
+        var cdp = new CdpOptions(cdpPort, requireCdp, timeoutMs, targetId, useCdp);
+        if (handle == null && WindowTargeting.IsBareForeground(window))
+        {
+            // Roadmap M6.1: the selector that only says "the window in front" is get_active_browser_url, with its
+            // NoBrowserInForeground when that window is not a browser (or there is none)
+            return ToDto(await _browserReadingService.GetActiveBrowserUrlAsync(cdp, cancellationToken));
+        }
+
         var windowHandle = WindowTargeting.Require(_windowService, handle, window);
-        var result = await _browserReadingService.GetBrowserUrlAsync(
-            windowHandle, new CdpOptions(cdpPort, requireCdp, timeoutMs, targetId, useCdp), cancellationToken);
+        var result = await _browserReadingService.GetBrowserUrlAsync(windowHandle, cdp, cancellationToken);
         return ToDto(result);
     }
 

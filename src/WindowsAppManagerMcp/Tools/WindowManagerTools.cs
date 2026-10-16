@@ -140,31 +140,34 @@ public class WindowManagerTools
     }
 
     [McpServerTool(Name = "set_window_bounds", Title = "Set Window Bounds", ReadOnly = false, Destructive = false, Idempotent = true, OpenWorld = false)]
-    [Description("Move and resize a window in a single operation: x, y, width and height are its visible frame." + PlacementRules +
+    [Description("Move, resize, or move and resize a window in a single operation: x, y, width and height are its visible frame. " +
+                 "Pass x and y to move it (it keeps its size), width and height to resize it (its top-left corner stays), or all four." +
+                 PlacementRules +
                  " A window moved to a monitor with another scale is placed again once the app has rescaled itself." +
                  GeometryResult + WindowChangeErrors +
-                 " MoveFailed: Windows did not place it, or it did not return to normal from minimized or maximized (error has the reason). " +
-                 "InvalidArguments: width or height is not positive.")]
+                 " MoveFailed (ResizeFailed for a size only): Windows did not place it, or it did not return to normal from minimized or maximized (error has the reason). " +
+                 "InvalidArguments (nothing changed): half a pair, no pair, or a width or height below 1.")]
     public async Task<WindowOperationResult> SetWindowBounds(
-        [Description("X coordinate of the visible frame's left edge")]
-        int x,
-        [Description("Y coordinate of the visible frame's top edge")]
-        int y,
-        [Description("New width of the visible frame in pixels (at least 1)")]
-        int width,
-        [Description("New height of the visible frame in pixels (at least 1)")]
-        int height,
+        [Description("X coordinate of the visible frame's left edge (with y)")]
+        int? x = null,
+        [Description("Y coordinate of the visible frame's top edge (with x)")]
+        int? y = null,
+        [Description("New width of the visible frame in pixels, at least 1 (with height)")]
+        int? width = null,
+        [Description("New height of the visible frame in pixels, at least 1 (with width)")]
+        int? height = null,
         [Description(HandleDescription)]
         long? handle = null,
         [Description(WindowTargeting.WindowDescription)]
         WindowSelector? window = null,
-        [Description(BringToFrontDescription)]
-        bool bringToFront = true,
+        [Description("Raise the window to the top of the z-order without activating it: keyboard input does not move to it (use " +
+                     "focus_window for that). Default: true with x and y, false for a size only")]
+        bool? bringToFront = null,
         [Description(SettleDescription)]
         int settleMs = 0,
         CancellationToken cancellationToken = default)
     {
-        if (SizeRefusal(width, height) is { } invalid)
+        if (BoundsRefusal(x, y, width, height) is { } invalid)
         {
             return invalid;
         }
@@ -173,9 +176,24 @@ public class WindowManagerTools
         using (await EnterGateAsync(cancellationToken).ConfigureAwait(false))
         {
             WindowTargeting.ThrowIfChanged(_windowService, window, hwnd);
-            return Precheck(hwnd) ?? Change(hwnd, () => _windowService.SetWindowFrame(hwnd, x, y, width, height, bringToFront), settleMs);
+            return Precheck(hwnd) ?? Change(hwnd, BoundsChange(hwnd, x, y, width, height, bringToFront), settleMs);
         }
     }
+
+    /// <summary>
+    /// set_window_bounds' change (roadmap M6.1): both pairs place the visible frame in one SetWindowPos; a position alone is
+    /// move_window's move (it keeps the size) and a size alone resize_window's resize (it keeps the corner and, unless asked,
+    /// the z-order), so each keeps its own error code and the second placement after a DPI change.
+    /// </summary>
+    private Func<WindowChangeResult> BoundsChange(nint hwnd, int? x, int? y, int? width, int? height, bool? bringToFront) =>
+        (x, y, width, height) switch
+        {
+            ({ } left, { } top, { } w, { } h) => () => _windowService.SetWindowFrame(hwnd, left, top, w, h, bringToFront ?? true),
+            ({ } left, { } top, _, _) => () => _windowService.MoveWindow(hwnd, left, top, bringToFront ?? true),
+            (_, _, { } w, { } h) when bringToFront == true => () => _windowService.ResizeWindow(hwnd, w, h, bringToFront: true),
+            (_, _, { } w, { } h) => () => _windowService.ResizeWindow(hwnd, w, h),
+            _ => throw new InvalidOperationException("BoundsRefusal lets only a whole pair through.")
+        };
 
     [McpServerTool(Name = "set_window_state", Title = "Minimize, Maximize or Restore Window", ReadOnly = false, Destructive = false, Idempotent = false, OpenWorld = false)]
     [Description("Set the window state (minimize, maximize, restore). success is true only when the window was seen in that state " +
@@ -1323,6 +1341,34 @@ public class WindowManagerTools
         width >= 1 && height >= 1
             ? null
             : new WindowResultItem(handle, false, Error: SizeMessage(width, height), ErrorCode: ToolErrorReporting.InvalidArgumentsErrorCode);
+
+    /// <summary>
+    /// InvalidArguments for set_window_bounds' optional pairs (roadmap M6.1): x goes with y and width with height, at least one
+    /// pair is given, and a size is positive. Nothing is sent.
+    /// </summary>
+    private static WindowOperationResult? BoundsRefusal(int? x, int? y, int? width, int? height)
+    {
+        string? message = null;
+        if (x.HasValue != y.HasValue)
+        {
+            message = $"x and y go together, but only {(x.HasValue ? "x" : "y")} was given. Pass both to move the window, or neither to keep its position. Nothing was changed.";
+        }
+        else if (width.HasValue != height.HasValue)
+        {
+            message = $"width and height go together, but only {(width.HasValue ? "width" : "height")} was given. Pass both to resize the window, or neither to keep its size. Nothing was changed.";
+        }
+        else if (!x.HasValue && !width.HasValue)
+        {
+            message = "Pass x and y to move the window, width and height to resize it, or all four. Nothing was changed.";
+        }
+
+        if (message != null)
+        {
+            return new WindowOperationResult(false, Error: message, ErrorCode: ToolErrorReporting.InvalidArgumentsErrorCode);
+        }
+
+        return width is { } w && height is { } h ? SizeRefusal(w, h) : null;
+    }
 
     private static string SizeMessage(int width, int height) =>
         $"width and height must be at least 1 pixel, but they are {width} x {height}. Nothing was changed.";

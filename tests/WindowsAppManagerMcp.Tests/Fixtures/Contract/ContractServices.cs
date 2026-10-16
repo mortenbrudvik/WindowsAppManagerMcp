@@ -50,6 +50,14 @@ public sealed class ContractServices : IDisposable
     public Mock<IWindowService> Windows { get; } = new();
     public Mock<IForegroundService> Foreground { get; } = new();
     public Mock<IMonitorService> Monitors { get; } = new();
+
+    /// <summary>
+    /// The capture wrapper behind get_monitors, list_screens, the captures and the coordinate resolver, one instance so they
+    /// read one virtual screen (roadmap M6.1): the bounds of <see cref="TypicalDesktop.Monitors"/> together, or none; blank
+    /// pixels for a 1600 x 900 window at (0, 100).
+    /// </summary>
+    public Mock<IScreenCaptureWrapper> Screen { get; } =
+        TestDataFactory.CreateMockScreenCaptureWrapper(captureWidth: 1600, captureHeight: 900, windowOriginX: 0, windowOriginY: 100);
     public Mock<IProcessService> Processes { get; } = new();
     public Mock<IBrowserReadingService> Browser { get; } = new();
 
@@ -169,6 +177,7 @@ public sealed class ContractServices : IDisposable
         services.AddSingleton(DebugBrowsers.Object);
         services.AddSingleton(Foreground.Object);
         services.AddSingleton(Monitors.Object);
+        services.AddSingleton(Screen.Object);
         services.AddSingleton(Processes.Object);
         services.AddSingleton(Browser.Object);
         services.AddSingleton(BrowserTabs.Object);
@@ -192,8 +201,7 @@ public sealed class ContractServices : IDisposable
         services.AddSingleton(Screenshots);
         services.AddSingleton<ICaptureRegistry>(Captures);
         services.AddSingleton<ICoordinateSpaceResolver>(new CoordinateSpaceResolver(
-            Captures, _capturedWindows.Object, Mock.Of<INativeHitTestWrapper>(),
-            TestDataFactory.CreateMockScreenCaptureWrapper(captureWidth: 1600, captureHeight: 900, windowOriginX: 0, windowOriginY: 100).Object));
+            Captures, _capturedWindows.Object, Mock.Of<INativeHitTestWrapper>(), Screen.Object));
         services.AddSingleton<ITargetPolicy>(new TargetPolicy(TargetPolicySettings.Default));
         services.AddSingleton(Audit);
         // get_server_info: the real report over mocked sources, with the toolsets the server was registered with
@@ -288,6 +296,8 @@ public sealed class ContractServices : IDisposable
             .Returns((nint handle, int _, int _, bool _) => WindowChangeResult.Done(handle));
         Windows.Setup(w => w.ResizeWindow(It.IsAny<nint>(), It.IsAny<int>(), It.IsAny<int>()))
             .Returns((nint handle, int _, int _) => WindowChangeResult.Done(handle));
+        Windows.Setup(w => w.ResizeWindow(It.IsAny<nint>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>()))
+            .Returns((nint handle, int _, int _, bool _) => WindowChangeResult.Done(handle));
         Windows.Setup(w => w.SetWindowBounds(It.IsAny<nint>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>()))
             .Returns((nint handle, int _, int _, int _, int _, bool _) => WindowChangeResult.Done(handle));
         Windows.Setup(w => w.SetWindowFrame(It.IsAny<nint>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>()))
@@ -360,6 +370,7 @@ public sealed class ContractServices : IDisposable
         Monitors.Setup(m => m.GetAllMonitors()).Returns(TypicalDesktop.Monitors);
         Monitors.Setup(m => m.GetPrimaryMonitor()).Returns(TypicalDesktop.Monitors[0]);
         Monitors.Setup(m => m.GetMonitorIndex(It.IsAny<nint>())).Returns(0);
+        Screen.Setup(s => s.GetVirtualScreenBounds()).Returns((-1920, 0, 4480, 1440));
 
         Processes.Setup(p => p.LaunchApplicationAsync(It.IsAny<string>(), It.IsAny<string[]?>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new LaunchResult(true, ProcessId: TypicalDesktop.NotepadProcessId, WindowHandle: (nint)TypicalDesktop.NotepadHandle));
@@ -554,7 +565,7 @@ public sealed class ContractServices : IDisposable
         _capturedWindows.Setup(w => w.GetWindowRect(It.IsAny<nint>())).Returns((0, 100, 1600, 1000));
         _capturedWindows.Setup(w => w.GetWindowThreadProcessId(It.IsAny<nint>())).Returns(4242u);
         Screenshots = new ScreenshotService(
-            TestDataFactory.CreateMockScreenCaptureWrapper(captureWidth: 1600, captureHeight: 900, windowOriginX: 0, windowOriginY: 100).Object,
+            Screen.Object,
             monitors.Object,
             _capturedWindows.Object,
             captureRegistry: Captures);
@@ -616,6 +627,7 @@ public sealed class ContractServices : IDisposable
 
         Monitors.Setup(m => m.GetAllMonitors()).Returns([]);
         Monitors.Setup(m => m.GetPrimaryMonitor()).Throws(new InvalidOperationException("No monitors found"));
+        Screen.Setup(s => s.GetVirtualScreenBounds()).Returns((0, 0, 0, 0));
 
         Processes.Setup(p => p.LaunchApplicationAsync(It.IsAny<string>(), It.IsAny<string[]?>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new LaunchResult(false, ErrorMessage: "The executable was not found", ErrorCode: "ExecutableNotFound"));

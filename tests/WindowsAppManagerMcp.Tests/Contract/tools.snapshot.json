@@ -3764,7 +3764,7 @@
     {
       "name": "get_browser_url",
       "title": "Get Browser URL",
-      "description": "Get the current URL from a browser window. Uses Windows UI Automation to read the address of the shown tab's page, else the address bar (urlSource says which), or CDP (Chrome DevTools Protocol) for a debug browser. CDP is used when the window's browser process has a debug port (found from its command line, or cdpPort); the window is matched to the tab of its browser window whose exact title it shows; if no single tab matches, CDP is not used rather than guessing. If CDP cannot be used, the tool falls back to UI Automation and explains why in cdpError, unless requireCdp is true. The result's source field says which method produced the data ('cdp' or 'uia'); targetId identifies the CDP tab. Supports Chrome, Edge, Firefox, Brave, Opera, Vivaldi, and other Chromium/Firefox-based browsers.",
+      "description": "Get the current URL from a browser window. Uses Windows UI Automation to read the address of the shown tab's page, else the address bar (urlSource says which), or CDP (Chrome DevTools Protocol) for a debug browser. CDP is used when the window's browser process has a debug port (found from its command line, or cdpPort); the window is matched to the tab of its browser window whose exact title it shows; if no single tab matches, CDP is not used rather than guessing. If CDP cannot be used, the tool falls back to UI Automation and explains why in cdpError, unless requireCdp is true. The result's source field says which method produced the data ('cdp' or 'uia'); targetId identifies the CDP tab. Supports Chrome, Edge, Firefox, Brave, Opera, Vivaldi, and other Chromium/Firefox-based browsers. window {\"foreground\": true} reads the browser in front, as get_active_browser_url does (NoBrowserInForeground when the window in front is not a browser).",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -4197,7 +4197,7 @@
     {
       "name": "get_monitors",
       "title": "List Monitors",
-      "description": "Get information about all connected displays/monitors including bounds, work area (excluding taskbar), and scale factor.",
+      "description": "Get information about all connected displays/monitors including bounds, work area (excluding taskbar), and scale factor, and virtualScreen: the bounds of all monitors together, which take_screenshot captures with monitorIndex -1.",
       "inputSchema": {
         "type": "object",
         "properties": {}
@@ -5357,7 +5357,7 @@
     {
       "name": "mouse_click",
       "title": "Mouse Click",
-      "description": "Click any mouse button 1-3 times at a point, with modifier keys held if asked: ctrl+click, shift+click, a middle click, a triple click (selects a line), x1/x2 (Back/Forward). The modifier key-downs, the move, the clicks and the key-ups go in one batch, so nothing stays held. A right or middle click in a terminal pastes, so there it follows send_keys' paste rule (PasteNotAllowed). To act on an element, element_action with its ref needs no point; pass a point seen on a capture with its captureId. Pass windowHandle with the window you mean (without it the click goes to whatever window is at the point: check it with get_foreground_window); the same checks as for click apply (TargetOccluded, BlockedByModal, TargetIsAgentHost, CursorNotAtPoint, CursorClamped, MouseInUse). Refused, with nothing sent, for windows of apps running as administrator (TargetElevated), apps the user's policy denies (TargetDeniedByPolicy), a locked session (SessionLocked) or a UAC prompt (DesktopUnavailable). The result reports receivingWindow (where the input went) and foregroundAfter. While the user has paused input with the pause hotkey, nothing is sent (PausedByUser): stop and ask the user, and never try to resume. Refused while a modifier key is held down (ModifiersHeld) unless releaseHeldModifiers is true, and after waiting 30 s for another call (InputBusy).",
+      "description": "Click any mouse button 1-3 times at a point, or at a point of a capture's image (space), with modifier keys held if asked: ctrl+click, shift+click, a right or middle click, a double click, a triple click (selects a line), x1/x2 (Back/Forward). The modifier key-downs, the move, the clicks and the key-ups go in one batch, so nothing stays held. A right or middle click in a terminal (console, Windows Terminal, PuTTY, and anywhere in VS Code) pastes, so there it follows send_keys' paste rule (PasteNotAllowed). Pass windowHandle with the window you mean. Without it the click goes to whatever window is at that point (check it with get_foreground_window and get_element_at_point first), and is refused when that is the agent's own host (terminal, editor or chat app; TargetIsAgentHost), or in the cases below. To act on an element, element_action with its ref needs no point; to click one, take find_ui_elements' clickPoint, the centre of its get_ui_elements bounds, or its capture_with_elements legend centre with that capture's captureId (any point you see on a capture works so: the server converts it). The button is pressed exactly at the checked point; if the pointer does not stay there (it is confined to a window, or the user is moving the mouse), nothing is clicked (CursorNotAtPoint). If it is elsewhere right after, the click was sent but may have landed there (CursorClamped). Refused while a mouse button is held down or another window has captured the mouse (MouseInUse): the press would go there. MouseInUse also when the capture cannot be read (a window just closed): retry. Refused, with nothing sent, for windows of apps running as administrator (TargetElevated), apps the user's policy denies (TargetDeniedByPolicy), a locked session (SessionLocked) or a UAC prompt (DesktopUnavailable). The result reports receivingWindow (where the input went) and foregroundAfter. While the user has paused input with the pause hotkey, nothing is sent (PausedByUser): stop and ask the user, and never try to resume. Refused while a modifier key is held down (ModifiersHeld) unless releaseHeldModifiers is true, and after waiting 30 s for another call (InputBusy). With windowHandle the point must be on that window or a popup or dialog of it (TargetOccluded), and the window not disabled by a modal dialog (BlockedByModal).",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -7064,25 +7064,41 @@
     {
       "name": "set_window_bounds",
       "title": "Set Window Bounds",
-      "description": "Move and resize a window in a single operation: x, y, width and height are its visible frame. Coordinates are physical virtual-screen pixels (negative left of or above the primary monitor) of the visible frame (find_windows' visibleBounds, not its bounds). A minimized or maximized window is restored to normal first, without activating it; one its app hid (in the notification area) is not shown, and the change fails. A window moved to a monitor with another scale is placed again once the app has rescaled itself. Returns success and the window as it is afterwards, also when the change failed: bounds (its visible frame), outerBounds (its window rect with the invisible resize borders, about 7 px left, right and bottom at 100%; find_windows reports this rect as bounds, and the visible frame as visibleBounds), state (normal, minimized or maximized; a minimized window has no bounds) and monitorIndex. errorCode: InvalidHandle; TargetDeniedByPolicy (the user's policy denies the app: nothing is changed, ask the user); AccessDenied (Windows blocked the change: the window belongs to an app running as administrator; ask the user); NotResponding (the window's app is hung or did not answer within 5 s, or an earlier call to it, or 8 calls to apps that do not answer, are still blocked; a minimized window may already have been restored, and a call that timed out can still take effect once the app answers, so check the window before acting on it). MoveFailed: Windows did not place it, or it did not return to normal from minimized or maximized (error has the reason). InvalidArguments: width or height is not positive.",
+      "description": "Move, resize, or move and resize a window in a single operation: x, y, width and height are its visible frame. Pass x and y to move it (it keeps its size), width and height to resize it (its top-left corner stays), or all four. Coordinates are physical virtual-screen pixels (negative left of or above the primary monitor) of the visible frame (find_windows' visibleBounds, not its bounds). A minimized or maximized window is restored to normal first, without activating it; one its app hid (in the notification area) is not shown, and the change fails. A window moved to a monitor with another scale is placed again once the app has rescaled itself. Returns success and the window as it is afterwards, also when the change failed: bounds (its visible frame), outerBounds (its window rect with the invisible resize borders, about 7 px left, right and bottom at 100%; find_windows reports this rect as bounds, and the visible frame as visibleBounds), state (normal, minimized or maximized; a minimized window has no bounds) and monitorIndex. errorCode: InvalidHandle; TargetDeniedByPolicy (the user's policy denies the app: nothing is changed, ask the user); AccessDenied (Windows blocked the change: the window belongs to an app running as administrator; ask the user); NotResponding (the window's app is hung or did not answer within 5 s, or an earlier call to it, or 8 calls to apps that do not answer, are still blocked; a minimized window may already have been restored, and a call that timed out can still take effect once the app answers, so check the window before acting on it). MoveFailed (ResizeFailed for a size only): Windows did not place it, or it did not return to normal from minimized or maximized (error has the reason). InvalidArguments (nothing changed): half a pair, no pair, or a width or height below 1.",
       "inputSchema": {
         "type": "object",
         "properties": {
           "x": {
-            "description": "X coordinate of the visible frame's left edge",
-            "type": "integer"
+            "description": "X coordinate of the visible frame's left edge (with y)",
+            "type": [
+              "integer",
+              "null"
+            ],
+            "default": null
           },
           "y": {
-            "description": "Y coordinate of the visible frame's top edge",
-            "type": "integer"
+            "description": "Y coordinate of the visible frame's top edge (with x)",
+            "type": [
+              "integer",
+              "null"
+            ],
+            "default": null
           },
           "width": {
-            "description": "New width of the visible frame in pixels (at least 1)",
-            "type": "integer"
+            "description": "New width of the visible frame in pixels, at least 1 (with height)",
+            "type": [
+              "integer",
+              "null"
+            ],
+            "default": null
           },
           "height": {
-            "description": "New height of the visible frame in pixels (at least 1)",
-            "type": "integer"
+            "description": "New height of the visible frame in pixels, at least 1 (with width)",
+            "type": [
+              "integer",
+              "null"
+            ],
+            "default": null
           },
           "handle": {
             "description": "Window handle (as integer) from find_windows. Pass handle or window, not both.",
@@ -7164,22 +7180,19 @@
             "default": null
           },
           "bringToFront": {
-            "description": "Raise the window to the top of the z-order without activating it: keyboard input does not move to it (use focus_window for that). Default: true",
-            "type": "boolean",
-            "default": true
+            "description": "Raise the window to the top of the z-order without activating it: keyboard input does not move to it (use focus_window for that). Default: true with x and y, false for a size only",
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "default": null
           },
           "settleMs": {
             "description": "Wait up to this many milliseconds (0-5000, default 0) for the window to stop moving before it is read: until two reads 20 ms apart agree. Use it for an app that animates or re-applies its own size after the change.",
             "type": "integer",
             "default": 0
           }
-        },
-        "required": [
-          "x",
-          "y",
-          "width",
-          "height"
-        ]
+        }
       },
       "annotations": {
         "title": "Set Window Bounds",

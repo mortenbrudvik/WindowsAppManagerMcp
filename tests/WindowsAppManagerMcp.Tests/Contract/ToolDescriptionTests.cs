@@ -139,6 +139,27 @@ public class ToolDescriptionTests
     }
 
     [Fact]
+    public void MouseClickDescription_StandsAlone_WithEveryCheckOfAClick()
+    {
+        // Roadmap M6.1: mouse_click replaces click, right_click and double_click, so it cannot send the agent to their text
+        var description = ServerToolCatalog.Description("mouse_click");
+
+        description.Should().NotContain("as for click").And.NotContain("as click");
+        foreach (var code in new[]
+                 {
+                     "TargetIsAgentHost", "TargetOccluded", "BlockedByModal", "CursorNotAtPoint", "CursorClamped", "MouseInUse",
+                     "PasteNotAllowed", "TargetElevated", "TargetDeniedByPolicy", "SessionLocked", "DesktopUnavailable", "PausedByUser",
+                     "ModifiersHeld", "InputBusy"
+                 })
+        {
+            description.Should().Contain(code);
+        }
+
+        description.Should().Contain("get_element_at_point").And.Contain("clickPoint")
+            .And.Contain("PuTTY", "a right click pastes in a terminal, as right_click says");
+    }
+
+    [Fact]
     public void FocusWindowDescription_SaysToConfirmWithGetForegroundWindow()
     {
         ServerToolCatalog.Description("focus_window").Should().Contain("get_foreground_window",
