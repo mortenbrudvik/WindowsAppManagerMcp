@@ -141,6 +141,12 @@ public readonly ref struct PixelView
     /// <summary>A copy of the pixels with rows <see cref="Width"/> * 4 bytes apart, as <see cref="CaptureResult.Bgra"/>.</summary>
     public byte[] ToArray()
     {
+        // An empty crop keeps its parent's stride over no memory, so its rows cannot be read
+        if (Width == 0 || Height == 0)
+        {
+            return [];
+        }
+
         var rowBytes = Width * 4;
         var pixels = GC.AllocateUninitializedArray<byte>(rowBytes * Height);
         if (Stride == rowBytes)

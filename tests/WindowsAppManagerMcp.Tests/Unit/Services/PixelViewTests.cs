@@ -77,6 +77,21 @@ public class PixelViewTests
         crop.Bgra.Length.Should().Be(16 + 8, "the last row ends at the crop's right edge");
     }
 
+    [Theory]
+    [InlineData(0, 3)]
+    [InlineData(2, 0)]
+    [InlineData(0, 0)]
+    public void ToArray_OfAnEmptyCrop_IsEmpty(int width, int height)
+    {
+        // A crop to an element whose clipped width or height is 0 keeps the parent's stride over no memory
+        var crop = PixelView.Of(Capture()).Crop(11, 20, width, height);
+
+        var copy = crop.ToArray();
+
+        copy.Should().BeEmpty();
+        crop.ToCaptureResult().Bgra.Should().BeEmpty();
+    }
+
     [Fact]
     public void ToArray_OfACrop_PacksItsRows()
     {

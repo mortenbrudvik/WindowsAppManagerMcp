@@ -4,9 +4,12 @@ namespace WindowsAppManagerMcp.Services.Interfaces;
 
 /// <summary>
 /// The target policy's check for reading a window's pixels (roadmap M1.12): capture_window, capture_with_elements and
-/// <see cref="IScreenshotService.CapturePixels"/> ask it before any pixel of a window is read, so that every way of
-/// reading a window's pixels refuses a window the user's policy denies with TargetDeniedByPolicy (roadmap M6: OCR and
-/// visual change detection read pixels without the capture tools). It fails closed as the UI Automation reads do.
+/// <see cref="IScreenshotService.CapturePixels"/> ask it before any pixel of a window target is read, so that a window
+/// the user's policy denies is refused with TargetDeniedByPolicy whichever tool names it (roadmap M6: OCR and visual
+/// change detection read pixels without the capture tools). It fails closed as the UI Automation reads do. It covers
+/// window targets only: a monitor or region read, and the screen copy a hung window falls back to, show whatever is on
+/// the screen there, a denied window included, as take_screenshot and capture_region do; masking denied windows in
+/// such reads is the reader's job (M6 decision D8).
 /// </summary>
 public interface ICaptureTargetPolicy
 {

@@ -76,6 +76,9 @@ public class ScreenCaptureWrapper : IScreenCaptureWrapper
                 throw new InvalidOperationException("BitBlt failed");
             }
 
+            // The pixels are in the section now: the screen's device context is not held while the reader runs
+            NativeMethods.User32.ReleaseDC(nint.Zero, screenDc);
+            screenDc = nint.Zero;
             return read(section.View(x, y, ScreenBitBltMethod));
         }
         finally
@@ -119,6 +122,10 @@ public class ScreenCaptureWrapper : IScreenCaptureWrapper
                 }
             }
 
+            // The pixels are in the section now: the window's device context is not held while the reader runs, so a
+            // slow reader (OCR) does not count against a deadline the caller sets for the window's own answer
+            NativeMethods.User32.ReleaseDC(windowHandle, windowDc);
+            windowDc = nint.Zero;
             return read(section.View(originX, originY, method));
         }
         finally
