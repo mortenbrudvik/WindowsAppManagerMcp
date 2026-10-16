@@ -146,10 +146,15 @@ public sealed record ServerPathsInfo(string Layouts, string? AuditLog = null);
 /// <param name="ReadOnly">True when only tools annotated read-only are served.</param>
 /// <param name="ExcludedTools">Tools WAM_EXCLUDE_TOOLS leaves out.</param>
 /// <param name="ServedTools">How many tools tools/list lists.</param>
+/// <param name="Moved">
+/// Where the tools that moved out of a toolset in force went (roadmap M6.1), one sentence per toolset that is off: for
+/// example click, which the deprecated toolset holds and mouse_click replaces. Null when none is out of reach.
+/// </param>
 public sealed record ToolsetInfo(
     IReadOnlyList<string> Enabled,
     IReadOnlyList<string> Disabled,
     string Source,
     bool ReadOnly,
     IReadOnlyList<string> ExcludedTools,
-    int ServedTools);
+    int ServedTools,
+    IReadOnlyList<string>? Moved = null);

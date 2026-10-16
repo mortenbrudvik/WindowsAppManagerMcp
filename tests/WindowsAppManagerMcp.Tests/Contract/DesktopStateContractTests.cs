@@ -218,7 +218,7 @@ public class DesktopStateContractTests
     [Theory]
     [InlineData("get_desktop_state", "include")]
     [InlineData("element_action", "observe")]
-    [InlineData("click", "observe")]
+    [InlineData("mouse_click", "observe")] // click is in the opt-in deprecated toolset since roadmap M6.1
     [InlineData("send_keys", "observe")]
     public async Task AScreenshot_IsRefusedBeforeAnythingIsReadOrDone_WhenTheUserTurnedCapturesOff(string tool, string argument)
     {

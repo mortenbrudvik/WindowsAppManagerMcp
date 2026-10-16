@@ -85,7 +85,8 @@ public sealed class ServerInfoService(
                 clipboardSetting.AllowUserClipboard,
                 protocolSetting.AllowedSchemes.ToList()),
             new ServerPathsInfo(layouts.LayoutsPath, auditLog?.Folder),
-            new ToolsetInfo(selection.Enabled, selection.Disabled, selection.Source, selection.ReadOnly, selection.ExcludedTools, servedTools),
+            new ToolsetInfo(selection.Enabled, selection.Disabled, selection.Source, selection.ReadOnly, selection.ExcludedTools, servedTools,
+                selection.Moved),
             warnings.Count == 0 ? null : warnings,
             new UiAutomationInfo(
                 engine.Engine,

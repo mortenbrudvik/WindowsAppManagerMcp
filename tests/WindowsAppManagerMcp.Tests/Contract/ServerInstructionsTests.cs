@@ -69,17 +69,37 @@ public partial class ServerInstructionsTests
     }
 
     [Fact]
-    public void TheActRule_NamesEveryInputTool_AndTheWindowSelector()
+    public void TheActRule_NamesEveryInputToolServedByDefault_AndTheWindowSelector()
     {
-        // Review MCP-S-4: the rule must not read as a closed list that leaves out an input tool such as scroll
+        // Review MCP-S-4: the rule must not read as a closed list that leaves out an input tool such as scroll. Only the input
+        // tools the default serves: click, right_click and double_click stay input tools of the gate while the opt-in
+        // deprecated toolset serves them (roadmap M6.1), but the instructions name only tools every client sees, and send
+        // the agent to mouse_click
         var act = Lines.Single(line => line.StartsWith("- Act:", StringComparison.Ordinal));
+        var servedByDefault = ToolsetSelection.FromEnvironment(_ => null, Toolsets.Server);
+        var inputTools = InputGateToolFilter.InputTools.Where(tool => servedByDefault.Serves(tool, false)).ToList();
 
-        foreach (var tool in InputGateToolFilter.InputTools)
+        inputTools.Should().Contain(["mouse_click", "drag", "mouse_move", "scroll", "type_text", "send_keys", "press_keys"]);
+        foreach (var tool in inputTools)
         {
             act.Should().MatchRegex($@"\b{tool}\b", "the windowHandle rule covers {0} too", tool);
         }
 
         act.Should().Contain("window selector");
+    }
+
+    [Fact]
+    public void TheActRule_ListsExactlyTheInputToolsServedByDefault()
+    {
+        // The parenthesised list is what the agent reads as "the input tools": a deprecated tool in it would send the agent
+        // to a tool the default does not serve, and one missing from it would escape the windowHandle rule
+        var act = Lines.Single(line => line.StartsWith("- Act:", StringComparison.Ordinal));
+        var servedByDefault = ToolsetSelection.FromEnvironment(_ => null, Toolsets.Server);
+        var start = act.IndexOf("Input tools (", StringComparison.Ordinal) + "Input tools (".Length;
+        var listed = act[start..act.IndexOf(')', start)].Split(", ");
+
+        listed.Should().BeEquivalentTo(InputGateToolFilter.InputTools.Where(tool => servedByDefault.Serves(tool, false)));
+        listed.Should().NotContain(["click", "right_click", "double_click"]);
     }
 
     [Fact]

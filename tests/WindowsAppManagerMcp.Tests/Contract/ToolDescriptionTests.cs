@@ -4,7 +4,9 @@ namespace WindowsAppManagerMcp.Tests.Contract;
 /// Contract: the [Description] text that tools/list sends to every MCP client, including clients
 /// that never load the plugin skill, does not teach destructive key chords, and the input tools
 /// tell the agent to confirm the target window first.
-/// These tests only reflect over the server assembly.
+/// These tests only reflect over the server assembly. The tools roadmap M6.1 deprecated (click, right_click, double_click,
+/// move_window, resize_window and the others of the deprecated toolset) carry a one-line description that sends the agent
+/// to their replacement instead (DeprecatedToolsContractTests), so the rules here hold for the replacements.
 /// </summary>
 public class ToolDescriptionTests
 {
@@ -13,7 +15,7 @@ public class ToolDescriptionTests
     {
         // Guards against the checks below silently running over an empty set.
         ServerToolCatalog.Tools.Keys.Should().Contain(
-            new[] { "click", "right_click", "double_click", "mouse_move", "type_text", "send_keys" });
+            new[] { "mouse_click", "drag", "mouse_move", "type_text", "send_keys" });
     }
 
     [Fact]
@@ -51,9 +53,6 @@ public class ToolDescriptionTests
     }
 
     [Theory]
-    [InlineData("click")]
-    [InlineData("right_click")]
-    [InlineData("double_click")]
     [InlineData("mouse_click")]
     [InlineData("mouse_move")]
     public void MouseToolDescription_PointsToRefsAndImagePoints_NotToScreenBoundsTheLegendLeavesOut(string toolName)
@@ -76,9 +75,6 @@ public class ToolDescriptionTests
     }
 
     [Theory]
-    [InlineData("click")]
-    [InlineData("right_click")]
-    [InlineData("double_click")]
     [InlineData("mouse_click")]
     public void ClickToolDescription_SaysToConfirmTheTargetWindowFirst(string toolName)
     {
@@ -87,9 +83,6 @@ public class ToolDescriptionTests
     }
 
     [Theory]
-    [InlineData("click")]
-    [InlineData("right_click")]
-    [InlineData("double_click")]
     [InlineData("mouse_click")]
     [InlineData("drag")]
     [InlineData("mouse_move")]
@@ -129,9 +122,6 @@ public class ToolDescriptionTests
     }
 
     [Theory]
-    [InlineData("click")]
-    [InlineData("right_click")]
-    [InlineData("double_click")]
     [InlineData("mouse_click")]
     public void ClickDescription_NamesCursorNotAtPoint(string toolName)
     {
@@ -156,7 +146,7 @@ public class ToolDescriptionTests
         }
 
         description.Should().Contain("get_element_at_point").And.Contain("clickPoint")
-            .And.Contain("PuTTY", "a right click pastes in a terminal, as right_click says");
+            .And.Contain("PuTTY", "a right click pastes in a terminal, as right_click said");
     }
 
     [Fact]
@@ -294,8 +284,6 @@ public class ToolDescriptionTests
     /// The descriptions must say so, and no longer warn that restoring activates.
     /// </summary>
     [Theory]
-    [InlineData("move_window")]
-    [InlineData("resize_window")]
     [InlineData("set_window_bounds")]
     [InlineData("snap_window")]
     [InlineData("move_window_to_monitor")]
@@ -327,8 +315,6 @@ public class ToolDescriptionTests
     }
 
     [Theory]
-    [InlineData("move_window")]
-    [InlineData("resize_window")]
     [InlineData("set_window_bounds")]
     [InlineData("set_window_state")]
     [InlineData("snap_window")]

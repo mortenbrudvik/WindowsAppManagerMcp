@@ -36,7 +36,8 @@ public static class AuditLogToolFilter
     /// WAM_ALLOW_USER_CLIPBOARD), recorded with its format, origin and length, never its content. Other read-only tools are
     /// never audited. The captures are left out: they are destructive only through overwrite:true of an image file, and
     /// are observation, called too often for their lines to help. A contract test checks that every other destructive
-    /// tool, and every input tool, is here.
+    /// tool, and every input tool, is here. click, right_click and double_click stay here while the opt-in deprecated toolset
+    /// serves them (roadmap M6.1): a line names the tool the agent called, never its replacement.
     /// </summary>
     public static IReadOnlySet<string> AuditedTools { get; } = new HashSet<string>(StringComparer.Ordinal)
     {

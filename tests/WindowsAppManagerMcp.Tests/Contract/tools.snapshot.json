@@ -1277,7 +1277,7 @@
         "type": "object",
         "properties": {
           "handle": {
-            "description": "Window handle (as integer) from find_windows or get_all_windows. Pass handle or window, not both; with ref both may be left out.",
+            "description": "Window handle (as integer) from find_windows. Pass handle or window, not both; with ref both may be left out.",
             "type": [
               "integer",
               "null"
@@ -1460,7 +1460,7 @@
         "type": "object",
         "properties": {
           "handle": {
-            "description": "Window handle (as integer) from find_windows or get_all_windows. Pass handle or window, not both.",
+            "description": "Window handle (as integer) from find_windows. Pass handle or window, not both.",
             "type": [
               "integer",
               "null"
@@ -1687,7 +1687,7 @@
     {
       "name": "click",
       "title": "Click",
-      "description": "Perform a left (primary) mouse click at the specified screen coordinates, or at a point of a capture's image (space). Pass windowHandle with the window you mean. Without it the click goes to whatever window is at that point (check it with get_foreground_window and get_element_at_point first), and is refused when that is the agent's own host (terminal, editor or chat app; TargetIsAgentHost), or in the cases below. To act on an element, element_action with its ref needs no point; to click one, take find_ui_elements' clickPoint, the centre of its get_ui_elements bounds, or its capture_with_elements legend centre with that capture's captureId (any point you see on a capture works so: the server converts it). The button is pressed exactly at the checked point; if the pointer does not stay there (it is confined to a window, or the user is moving the mouse), nothing is clicked (CursorNotAtPoint). If it is elsewhere right after, the click was sent but may have landed there (CursorClamped). Refused while a mouse button is held down or another window has captured the mouse (MouseInUse): the press would go there. MouseInUse also when the capture cannot be read (a window just closed): retry. Refused, with nothing sent, for windows of apps running as administrator (TargetElevated), apps the user's policy denies (TargetDeniedByPolicy), a locked session (SessionLocked) or a UAC prompt (DesktopUnavailable). The result reports receivingWindow (where the input went) and foregroundAfter. While the user has paused input with the pause hotkey, nothing is sent (PausedByUser): stop and ask the user, and never try to resume. Refused while a modifier key is held down (ModifiersHeld) unless releaseHeldModifiers is true, and after waiting 30 s for another call (InputBusy). Mouse results also report actualX and actualY, the cursor position afterwards.",
+      "description": "Deprecated, removed in 3.0.0: use mouse_click instead. Clicks the primary (left) button once at x, y, with mouse_click's checks.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -2269,7 +2269,7 @@
     {
       "name": "double_click",
       "title": "Double-Click",
-      "description": "Perform a double left click at the specified screen coordinates, or at a point of a capture's image (space). Useful for opening files, selecting words, or other double-click actions. Pass windowHandle with the window you mean. Without it the click goes to whatever window is at that point (check it with get_foreground_window and get_element_at_point first), and is refused when that is the agent's own host (terminal, editor or chat app; TargetIsAgentHost), or in the cases below. To act on an element, element_action with its ref needs no point; to click one, take find_ui_elements' clickPoint, the centre of its get_ui_elements bounds, or its capture_with_elements legend centre with that capture's captureId (any point you see on a capture works so: the server converts it). The button is pressed exactly at the checked point; if the pointer does not stay there (it is confined to a window, or the user is moving the mouse), nothing is clicked (CursorNotAtPoint). If it is elsewhere right after, the click was sent but may have landed there (CursorClamped). Refused while a mouse button is held down or another window has captured the mouse (MouseInUse): the press would go there. MouseInUse also when the capture cannot be read (a window just closed): retry. Refused, with nothing sent, for windows of apps running as administrator (TargetElevated), apps the user's policy denies (TargetDeniedByPolicy), a locked session (SessionLocked) or a UAC prompt (DesktopUnavailable). The result reports receivingWindow (where the input went) and foregroundAfter. While the user has paused input with the pause hotkey, nothing is sent (PausedByUser): stop and ask the user, and never try to resume. Refused while a modifier key is held down (ModifiersHeld) unless releaseHeldModifiers is true, and after waiting 30 s for another call (InputBusy).",
+      "description": "Deprecated, removed in 3.0.0: use mouse_click with clickCount 2 instead. Double-clicks the primary button at x, y, with mouse_click's checks.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -2425,12 +2425,12 @@
     {
       "name": "drag",
       "title": "Drag",
-      "description": "Press a mouse button at one point, move to another and release it there: drag and drop (files, list items, text), sliders, selections. The button goes down at from, waits holdBeforeMoveMs, moves in steps (the first beyond Windows' drag threshold) with stepDelayMs after each, and comes up at to; modifiers stay held throughout (ctrl+drag copies in Explorer). Both points take space and captureId as click's x and y. Pass windowHandle: from must be on it, and to as well unless toWindowHandle names the drop's window; both are checked as a click's point before the press (TargetOccluded, BlockedByModal, TargetIsAgentHost, MouseInUse), and to again right before the drop. A drag stopped after the press (to refused then, the pointer kept off it, a cancelled request) goes back to from and releases there; the user's pause releases where the pointer is. pressed says whether anything was sent; nothing stays held after the call. Refused, with nothing sent, for windows of apps running as administrator (TargetElevated), apps the user's policy denies (TargetDeniedByPolicy), a locked session (SessionLocked) or a UAC prompt (DesktopUnavailable). The result reports receivingWindow (where the input went) and foregroundAfter. While the user has paused input with the pause hotkey, nothing is sent (PausedByUser): stop and ask the user, and never try to resume. Refused while a modifier key is held down (ModifiersHeld) unless releaseHeldModifiers is true, and after waiting 30 s for another call (InputBusy).",
+      "description": "Press a mouse button at one point, move to another and release it there: drag and drop (files, list items, text), sliders, selections. The button goes down at from, waits holdBeforeMoveMs, moves in steps (the first beyond Windows' drag threshold) with stepDelayMs after each, and comes up at to; modifiers stay held throughout (ctrl+drag copies in Explorer). Both points take space and captureId as mouse_click's x and y. Pass windowHandle: from must be on it, and to as well unless toWindowHandle names the drop's window; both are checked as a click's point before the press (TargetOccluded, BlockedByModal, TargetIsAgentHost, MouseInUse), and to again right before the drop. A drag stopped after the press (to refused then, the pointer kept off it, a cancelled request) goes back to from and releases there; the user's pause releases where the pointer is. pressed says whether anything was sent; nothing stays held after the call. Refused, with nothing sent, for windows of apps running as administrator (TargetElevated), apps the user's policy denies (TargetDeniedByPolicy), a locked session (SessionLocked) or a UAC prompt (DesktopUnavailable). The result reports receivingWindow (where the input went) and foregroundAfter. While the user has paused input with the pause hotkey, nothing is sent (PausedByUser): stop and ask the user, and never try to resume. Refused while a modifier key is held down (ModifiersHeld) unless releaseHeldModifiers is true, and after waiting 30 s for another call (InputBusy).",
       "inputSchema": {
         "type": "object",
         "properties": {
           "fromX": {
-            "description": "Where the button goes down: x as click's (screen pixels, or as space says)",
+            "description": "Where the button goes down: x as mouse_click's (screen pixels, or as space says)",
             "type": "integer"
           },
           "fromY": {
@@ -3044,7 +3044,7 @@
         "type": "object",
         "properties": {
           "handle": {
-            "description": "Window handle (as integer) from find_windows or get_all_windows. Pass handle, window or withinRef.",
+            "description": "Window handle (as integer) from find_windows. Pass handle, window or withinRef.",
             "type": [
               "integer",
               "null"
@@ -3234,7 +3234,7 @@
     {
       "name": "find_windows",
       "title": "Find Windows",
-      "description": "Find windows matching the specified criteria. By default only user-facing app windows are returned: no cloaked windows (other virtual desktops, suspended apps), tool windows, untitled windows or shell windows (desktop, taskbar). A handle or className, or includeShell=true, skips that filter. Returns each window's handle, title, process, className, bounds (the window rect, with the invisible resize borders), visibleBounds (the visible frame, which set_window_bounds and move_window take) and state, front to back unless sort says otherwise; a UWP app's window reports the app's own process, with hostProcessName 'ApplicationFrameHost'. isAgentHost: true marks the agent's own terminal, editor or chat window: input tools refuse it unless it is passed as windowHandle with allowHostTarget=true, and close tools refuse it unless force=true (with confirm=true when the client cannot ask the user); use either only when the user explicitly asked. The same filters make up the window selector that every tool taking a window accepts as window (beside handle): it must name exactly one window, or the call does nothing and fails with WindowNotFound or AmbiguousWindow (with up to 5 candidates; pick one by handle, narrow the filters, or add index, which picks a match front to back); foreground: true is the window in front (alone, input tools take it as no windowHandle and close tools refuse it); handle plus processId or a title refuses a reused handle (HandleMismatch). Titles are compared ignoring case, invisible characters (the zero-width space in 'Microsoft Edge') and Edge's ' and N more pages'. An invalid titleRegex or limit fails with InvalidArguments.",
+      "description": "Find windows matching the specified criteria. By default only user-facing app windows are returned: no cloaked windows (other virtual desktops, suspended apps), tool windows, untitled windows or shell windows (desktop, taskbar). A handle or className, or includeShell=true, skips that filter. Returns each window's handle, title, process, className, bounds (the window rect, with the invisible resize borders), visibleBounds (the visible frame, which set_window_bounds takes) and state, front to back unless sort says otherwise; a UWP app's window reports the app's own process, with hostProcessName 'ApplicationFrameHost'. isAgentHost: true marks the agent's own terminal, editor or chat window: input tools refuse it unless it is passed as windowHandle with allowHostTarget=true, and close tools refuse it unless force=true (with confirm=true when the client cannot ask the user); use either only when the user explicitly asked. The same filters make up the window selector that every tool taking a window accepts as window (beside handle): it must name exactly one window, or the call does nothing and fails with WindowNotFound or AmbiguousWindow (with up to 5 candidates; pick one by handle, narrow the filters, or add index, which picks a match front to back); foreground: true is the window in front (alone, input tools take it as no windowHandle and close tools refuse it); handle plus processId or a title refuses a reused handle (HandleMismatch). Titles are compared ignoring case, invisible characters (the zero-width space in 'Microsoft Edge') and Edge's ' and N more pages'. An invalid titleRegex or limit fails with InvalidArguments.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -3451,7 +3451,7 @@
     {
       "name": "get_active_browser_url",
       "title": "Get Active Browser URL",
-      "description": "Get the URL from the currently active (foreground) browser window. Convenience method that combines get_foreground_window and get_browser_url, with the same CDP behavior and result fields. Returns an error if the foreground window is not a browser.",
+      "description": "Deprecated, removed in 3.0.0: use get_browser_url with window {\"foreground\": true} instead. Reads the URL of the browser in front.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -3592,7 +3592,7 @@
     {
       "name": "get_all_windows",
       "title": "List All Windows",
-      "description": "List the visible user-facing app windows on the system: no cloaked, tool, untitled or shell windows (use find_windows with className, includeCloaked, includeToolWindows or includeShell for those). Returns window information including handle, title, process, className, bounds, and state.",
+      "description": "Deprecated, removed in 3.0.0: use find_windows instead. Lists the visible user-facing app windows, as find_windows with no filter does.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -3764,7 +3764,7 @@
     {
       "name": "get_browser_url",
       "title": "Get Browser URL",
-      "description": "Get the current URL from a browser window. Uses Windows UI Automation to read the address of the shown tab's page, else the address bar (urlSource says which), or CDP (Chrome DevTools Protocol) for a debug browser. CDP is used when the window's browser process has a debug port (found from its command line, or cdpPort); the window is matched to the tab of its browser window whose exact title it shows; if no single tab matches, CDP is not used rather than guessing. If CDP cannot be used, the tool falls back to UI Automation and explains why in cdpError, unless requireCdp is true. The result's source field says which method produced the data ('cdp' or 'uia'); targetId identifies the CDP tab. Supports Chrome, Edge, Firefox, Brave, Opera, Vivaldi, and other Chromium/Firefox-based browsers. window {\"foreground\": true} reads the browser in front, as get_active_browser_url does (NoBrowserInForeground when the window in front is not a browser).",
+      "description": "Get the current URL from a browser window. Uses Windows UI Automation to read the address of the shown tab's page, else the address bar (urlSource says which), or CDP (Chrome DevTools Protocol) for a debug browser. CDP is used when the window's browser process has a debug port (found from its command line, or cdpPort); the window is matched to the tab of its browser window whose exact title it shows; if no single tab matches, CDP is not used rather than guessing. If CDP cannot be used, the tool falls back to UI Automation and explains why in cdpError, unless requireCdp is true. The result's source field says which method produced the data ('cdp' or 'uia'); targetId identifies the CDP tab. Supports Chrome, Edge, Firefox, Brave, Opera, Vivaldi, and other Chromium/Firefox-based browsers. window {\"foreground\": true} reads the browser in front (NoBrowserInForeground when the window in front is not a browser).",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -3923,7 +3923,7 @@
     {
       "name": "get_control_status",
       "title": "Get Input Control Status",
-      "description": "Whether the user has paused the server's input with the pause hotkey (and how and since when), whether the pause hotkey is registered, and which keys or mouse buttons are held down. Reads only. While paused is true, every input tool (click, type_text, send_keys, ...) and every tool that changes windows or starts or stops processes return PausedByUser: stop, tell the user, and wait for them. Never try to resume input yourself.",
+      "description": "Whether the user has paused the server's input with the pause hotkey (and how and since when), whether the pause hotkey is registered, and which keys or mouse buttons are held down. Reads only. While paused is true, every input tool (mouse_click, type_text, send_keys, ...) and every tool that changes windows or starts or stops processes return PausedByUser: stop, tell the user, and wait for them. Never try to resume input yourself.",
       "inputSchema": {
         "type": "object",
         "properties": {}
@@ -4314,7 +4314,7 @@
     {
       "name": "get_primary_monitor",
       "title": "Get Primary Monitor",
-      "description": "Get information about the primary display. Convenience method that returns the main monitor's details.",
+      "description": "Deprecated, removed in 3.0.0: use get_monitors instead (the monitor with isPrimary). Returns the primary monitor.",
       "inputSchema": {
         "type": "object",
         "properties": {}
@@ -4330,7 +4330,7 @@
     {
       "name": "get_server_info",
       "title": "Server info",
-      "description": "The server's build and environment in one read-only call: version and commit, MCP SDK and protocol version, integrity level and elevation (Windows drops input to windows above it: TargetElevated), the DPI awareness in force (PerMonitorV2, or PerMonitor on old Windows, means every coordinate is a physical pixel), whether input can reach the desktop (locked session, UAC prompt), the foreground lock timeout, the monitors with their DPI, the agent host windows and processes input never reaches (TargetIsAgentHost), whether the user paused input and the pause hotkey, the target policy, destructive chords, clipboard setting and URI schemes launch_application opens, the layouts folder and the audit log folder, the toolsets, excluded tools and read-only mode in force (a tool you do not see may be turned off there), and the UI Automation engine. warnings lists what will make tools fail or coordinates wrong. Call it once at the start, and whenever tools behave unexpectedly. Changes nothing.",
+      "description": "The server's build and environment in one read-only call: version and commit, MCP SDK and protocol version, integrity level and elevation (Windows drops input to windows above it: TargetElevated), the DPI awareness in force (PerMonitorV2, or PerMonitor on old Windows, means every coordinate is a physical pixel), whether input can reach the desktop (locked session, UAC prompt), the foreground lock timeout, the monitors with their DPI, the agent host windows and processes input never reaches (TargetIsAgentHost), whether the user paused input and the pause hotkey, the target policy, destructive chords, clipboard setting and URI schemes launch_application opens, the layouts folder and the audit log folder, the toolsets, excluded tools and read-only mode in force (a tool you do not see may be turned off there; moved says where a moved tool went), and the UI Automation engine. warnings lists what will make tools fail or coordinates wrong. Call it once at the start, and whenever tools behave unexpectedly. Changes nothing.",
       "inputSchema": {
         "type": "object",
         "properties": {}
@@ -4351,7 +4351,7 @@
         "type": "object",
         "properties": {
           "handle": {
-            "description": "Window handle (as integer) from find_windows or get_all_windows. Pass handle or window, not both.",
+            "description": "Window handle (as integer) from find_windows. Pass handle or window, not both.",
             "type": [
               "integer",
               "null"
@@ -5237,7 +5237,7 @@
     {
       "name": "list_screens",
       "title": "List Screens",
-      "description": "List all available screens/monitors for capture. Returns screen information including bounds, work area, scale factor, and virtual screen bounds (the combined area of all monitors).",
+      "description": "Deprecated, removed in 3.0.0: use get_monitors instead (its virtualScreen too). Lists the monitors and the virtual screen's bounds.",
       "inputSchema": {
         "type": "object",
         "properties": {}
@@ -5683,7 +5683,7 @@
     {
       "name": "move_window",
       "title": "Move Window",
-      "description": "Move a window so that its visible frame's top-left corner is at x, y; it keeps its size. Coordinates are physical virtual-screen pixels (negative left of or above the primary monitor) of the visible frame (find_windows' visibleBounds, not its bounds). A minimized or maximized window is restored to normal first, without activating it; one its app hid (in the notification area) is not shown, and the change fails. Returns success and the window as it is afterwards, also when the change failed: bounds (its visible frame), outerBounds (its window rect with the invisible resize borders, about 7 px left, right and bottom at 100%; find_windows reports this rect as bounds, and the visible frame as visibleBounds), state (normal, minimized or maximized; a minimized window has no bounds) and monitorIndex. errorCode: InvalidHandle; TargetDeniedByPolicy (the user's policy denies the app: nothing is changed, ask the user); AccessDenied (Windows blocked the change: the window belongs to an app running as administrator; ask the user); NotResponding (the window's app is hung or did not answer within 5 s, or an earlier call to it, or 8 calls to apps that do not answer, are still blocked; a minimized window may already have been restored, and a call that timed out can still take effect once the app answers, so check the window before acting on it). MoveFailed: Windows did not move it, or it did not return to normal from minimized or maximized (error has the reason).",
+      "description": "Deprecated, removed in 3.0.0: use set_window_bounds with x and y instead. Moves a window's visible frame to x, y and keeps its size.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -6305,7 +6305,7 @@
     {
       "name": "resize_window",
       "title": "Resize Window",
-      "description": "Resize a window's visible frame; its top-left corner stays where it is and it is not raised. Coordinates are physical virtual-screen pixels (negative left of or above the primary monitor) of the visible frame (find_windows' visibleBounds, not its bounds). A minimized or maximized window is restored to normal first, without activating it; one its app hid (in the notification area) is not shown, and the change fails. Returns success and the window as it is afterwards, also when the change failed: bounds (its visible frame), outerBounds (its window rect with the invisible resize borders, about 7 px left, right and bottom at 100%; find_windows reports this rect as bounds, and the visible frame as visibleBounds), state (normal, minimized or maximized; a minimized window has no bounds) and monitorIndex. errorCode: InvalidHandle; TargetDeniedByPolicy (the user's policy denies the app: nothing is changed, ask the user); AccessDenied (Windows blocked the change: the window belongs to an app running as administrator; ask the user); NotResponding (the window's app is hung or did not answer within 5 s, or an earlier call to it, or 8 calls to apps that do not answer, are still blocked; a minimized window may already have been restored, and a call that timed out can still take effect once the app answers, so check the window before acting on it). ResizeFailed: Windows did not resize it, or it did not return to normal from minimized or maximized (error has the reason). InvalidArguments: width or height is not positive. An app can keep a minimum or maximum size: compare bounds with what you asked for.",
+      "description": "Deprecated, removed in 3.0.0: use set_window_bounds with width and height instead. Resizes a window's visible frame and keeps its top-left corner.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -6558,7 +6558,7 @@
     {
       "name": "right_click",
       "title": "Right-Click",
-      "description": "Perform a right (secondary) mouse click at the specified screen coordinates, or at a point of a capture's image (space). In a terminal (console, Windows Terminal, PuTTY, and anywhere in VS Code) a right click pastes the clipboard, so there it follows send_keys' paste rule (PasteNotAllowed). Pass windowHandle with the window you mean. Without it the click goes to whatever window is at that point (check it with get_foreground_window and get_element_at_point first), and is refused when that is the agent's own host (terminal, editor or chat app; TargetIsAgentHost), or in the cases below. To act on an element, element_action with its ref needs no point; to click one, take find_ui_elements' clickPoint, the centre of its get_ui_elements bounds, or its capture_with_elements legend centre with that capture's captureId (any point you see on a capture works so: the server converts it). The button is pressed exactly at the checked point; if the pointer does not stay there (it is confined to a window, or the user is moving the mouse), nothing is clicked (CursorNotAtPoint). If it is elsewhere right after, the click was sent but may have landed there (CursorClamped). Refused while a mouse button is held down or another window has captured the mouse (MouseInUse): the press would go there. MouseInUse also when the capture cannot be read (a window just closed): retry. Refused, with nothing sent, for windows of apps running as administrator (TargetElevated), apps the user's policy denies (TargetDeniedByPolicy), a locked session (SessionLocked) or a UAC prompt (DesktopUnavailable). The result reports receivingWindow (where the input went) and foregroundAfter. While the user has paused input with the pause hotkey, nothing is sent (PausedByUser): stop and ask the user, and never try to resume. Refused while a modifier key is held down (ModifiersHeld) unless releaseHeldModifiers is true, and after waiting 30 s for another call (InputBusy).",
+      "description": "Deprecated, removed in 3.0.0: use mouse_click with button 'secondary' instead. Clicks the secondary (right) button at x, y, with mouse_click's checks.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -7860,12 +7860,12 @@
     {
       "name": "take_screenshot",
       "title": "Capture Monitor",
-      "description": "Capture a specific monitor, or with monitorIndex -1 every monitor in one image (the virtual screen, at most 64 megapixels). Returns the image as image content you can see, followed by JSON metadata (size, capturedRegion, imageToScreen, filePath, captureId). By default the image is JPEG (PNG when its long edge is at most 512 pixels) scaled to at most 1568 pixels on the long edge. Image pixels are not screen pixels: to click a point (imageX, imageY) seen in the image, pass it to the mouse tools with this captureId (valid 10 minutes; refused with StaleCapture once a captured window moved), or convert it yourself: screenX = imageToScreen.offsetX + imageX * imageToScreen.scaleX and screenY = imageToScreen.offsetY + imageY * imageToScreen.scaleY. scaleFactor is the monitor's DPI scale, for information only; never multiply by it. Use list_screens to get available monitor indices.",
+      "description": "Capture a specific monitor, or with monitorIndex -1 every monitor in one image (the virtual screen, at most 64 megapixels). Returns the image as image content you can see, followed by JSON metadata (size, capturedRegion, imageToScreen, filePath, captureId). By default the image is JPEG (PNG when its long edge is at most 512 pixels) scaled to at most 1568 pixels on the long edge. Image pixels are not screen pixels: to click a point (imageX, imageY) seen in the image, pass it to the mouse tools with this captureId (valid 10 minutes; refused with StaleCapture once a captured window moved), or convert it yourself: screenX = imageToScreen.offsetX + imageX * imageToScreen.scaleX and screenY = imageToScreen.offsetY + imageY * imageToScreen.scaleY. scaleFactor is the monitor's DPI scale, for information only; never multiply by it. Use get_monitors to get available monitor indices.",
       "inputSchema": {
         "type": "object",
         "properties": {
           "monitorIndex": {
-            "description": "Monitor index to capture (0-based), or -1 for the whole virtual screen (all monitors; areas between monitors of different sizes are black). Use list_screens to see available monitors. Defaults to primary monitor.",
+            "description": "Monitor index to capture (0-based), or -1 for the whole virtual screen (all monitors; areas between monitors of different sizes are black). Use get_monitors to see available monitors. Defaults to primary monitor.",
             "type": [
               "integer",
               "null"

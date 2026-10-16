@@ -8,10 +8,15 @@ namespace WindowsAppManagerMcp.Infrastructure;
 /// removes one; with only such entries they change the default (<c>-browser,-process</c>). Not set: the default
 /// toolsets. The always-on toolset is always served.</item>
 /// <item><see cref="ExcludeToolsVariable"/>: tools to leave out, whatever their toolset, by tool name or by toolset name
-/// (every tool of that toolset); the catalog's always-served tool (get_server_info) stays.</item>
+/// (every tool of that toolset, and the tools that moved out of it); the catalog's always-served tool (get_server_info)
+/// stays. A tool that the toolsets in force do not serve can be excluded too (a name written before the tool moved to an
+/// opt-in toolset, roadmap M6.1): it is no error.</item>
 /// <item><see cref="ReadOnlyVariable"/>: <c>1</c> serves only the tools whose [McpServerTool] sets ReadOnly = true (their
 /// tools/list annotation readOnlyHint).</item>
 /// </list>
+/// A tool that moved out of a toolset (<see cref="ToolsetCatalog.MovedTools"/>, roadmap M6.1) is served only while the
+/// toolset it came from is on too, so <c>all</c> or <c>+deprecated</c> never serves a configuration a tool it did not serve
+/// before the move; get_server_info says where each moved tool went while its toolset is off (<see cref="Moved"/>).
 /// A name that is not a toolset or tool is ignored with a warning (logged at start, reported by get_server_info), as long
 /// as ignoring it serves fewer tools, not more. The variables exist to restrict the server, so a value that cannot be
 /// read fails closed: when a <c>-name</c> of <see cref="ToolsetsVariable"/> names no toolset (the user meant to remove
@@ -57,6 +62,7 @@ public sealed class ToolsetSelection
         _excluded = new HashSet<string>(excludedTools, StringComparer.OrdinalIgnoreCase);
         ReadOnly = readOnly;
         Warnings = warnings;
+        Moved = MovedNotes();
     }
 
     /// <summary>The toolsets the selection was made from.</summary>
@@ -84,6 +90,14 @@ public sealed class ToolsetSelection
     public IReadOnlyList<string> Warnings { get; }
 
     /// <summary>
+    /// Where the tools that moved out of a toolset in force went (roadmap M6.1), one sentence per toolset that is off and
+    /// holds such tools: the toolset, how to turn it on, and each tool with its replacement, if any. A tool the user
+    /// excluded, or whose former toolset is off too, is left out. Null when there is none: get_server_info reports it, so an
+    /// agent that looks for click learns that it is in the deprecated toolset and that mouse_click replaces it.
+    /// </summary>
+    public IReadOnlyList<string>? Moved { get; }
+
+    /// <summary>
     /// One line for the end of the server instructions when the user turned off tools that the default serves (a
     /// toolset that is on by default, read-only mode, excluded tools): the instructions name tools of the loop, such as
     /// focus_window and click, and the agent must skip the steps whose tools are missing instead of looking for them or
@@ -105,9 +119,11 @@ public sealed class ToolsetSelection
                 parts.Add("every tool that changes something (read-only mode)");
             }
 
-            if (ExcludedTools.Count > 0)
+            // A tool the toolsets in force do not serve anyway (an opt-in toolset's) was not turned off by excluding it
+            var excluded = ExcludedTools.Where(ServedByToolsets).ToList();
+            if (excluded.Count > 0)
             {
-                parts.Add($"the tool{(ExcludedTools.Count == 1 ? "" : "s")} {string.Join(", ", ExcludedTools)}");
+                parts.Add($"the tool{(excluded.Count == 1 ? "" : "s")} {string.Join(", ", excluded)}");
             }
 
             return parts.Count == 0
@@ -149,7 +165,9 @@ public sealed class ToolsetSelection
         }
 
         var readOnly = ReadReadOnly(environment(ReadOnlyVariable), warnings);
-        return new ToolsetSelection(catalog, enabled, source, excluded, readOnly, warnings);
+        var selection = new ToolsetSelection(catalog, enabled, source, excluded, readOnly, warnings);
+        warnings.AddRange(selection.MovedWarnings());
+        return selection;
     }
 
     /// <summary>
@@ -170,8 +188,68 @@ public sealed class ToolsetSelection
             return false;
         }
 
-        return Catalog.ToolsetOf(toolName) is not { } toolset || _enabled.Contains(toolset.Name);
+        return ServedByToolsets(toolName);
     }
+
+    /// <summary>
+    /// True when the toolsets in force serve the tool, whatever WAM_EXCLUDE_TOOLS and WAM_READ_ONLY say: its toolset is on,
+    /// and so is the toolset it moved out of, if it moved (roadmap M6.1). A tool that no toolset names is served.
+    /// </summary>
+    private bool ServedByToolsets(string toolName)
+    {
+        if (Catalog.ToolsetOf(toolName) is not { } toolset)
+        {
+            return true;
+        }
+
+        return _enabled.Contains(toolset.Name) && (Catalog.MoveOf(toolName) is not { } move || _enabled.Contains(move.FormerToolset));
+    }
+
+    /// <summary>
+    /// One sentence per toolset that is off and holds tools that moved out of a toolset in force, unless the user excluded
+    /// them (<see cref="Moved"/>).
+    /// </summary>
+    private List<string>? MovedNotes()
+    {
+        var notes = Catalog.Toolsets
+            .Where(toolset => !_enabled.Contains(toolset.Name))
+            .Select(toolset => (Toolset: toolset, Tools: Catalog.MovedTools
+                .Where(move => Catalog.ToolsetOf(move.Tool) == toolset && _enabled.Contains(move.FormerToolset) && !_excluded.Contains(move.Tool))
+                .ToList()))
+            .Where(group => group.Tools.Count > 0)
+            .Select(group => $"In the {group.Toolset.Name} toolset, which is off ({ToolsetsVariable}=+{group.Toolset.Name} serves it): " +
+                             $"{string.Join(", ", group.Tools.Select(Describe))}.")
+            .ToList();
+        return notes.Count == 0 ? null : notes;
+    }
+
+    /// <summary>
+    /// The warnings about moved tools (roadmap M6.1): a toolset that is on serves some of its tools only with the toolset they
+    /// moved out of, which is off; and tools that something replaced are turned on, which a later release removes.
+    /// </summary>
+    private IEnumerable<string> MovedWarnings()
+    {
+        var notServed = Catalog.MovedTools
+            .Where(move => _enabled.Contains(Catalog.ToolsetOf(move.Tool)!.Name) && !_enabled.Contains(move.FormerToolset) &&
+                           !_excluded.Contains(move.Tool))
+            .GroupBy(move => (Toolset: Catalog.ToolsetOf(move.Tool)!.Name, move.FormerToolset));
+        foreach (var group in notServed)
+        {
+            yield return $"{ToolsetsVariable}: {string.Join(", ", group.Select(move => move.Tool))} of the '{group.Key.Toolset}' " +
+                         $"toolset {(group.Count() == 1 ? "is" : "are")} served only together with the '{group.Key.FormerToolset}' " +
+                         $"toolset {(group.Count() == 1 ? "it" : "they")} moved out of, which is off.";
+        }
+
+        var replaced = Catalog.MovedTools.Where(move => move.Replacement != null && Serves(move.Tool, readOnlyHint: true)).ToList();
+        if (replaced.Count > 0)
+        {
+            yield return $"{ToolsetsVariable} turns on tools that were replaced and will be removed in the next major release: " +
+                         $"{string.Join(", ", replaced.Select(Describe))}. Use the replacements.";
+        }
+    }
+
+    private static string Describe(MovedTool move) =>
+        move.Replacement is { } replacement ? $"{move.Tool} (use {replacement})" : move.Tool;
 
     private static (IEnumerable<string> Enabled, string Source) ReadToolsets(string? value, ToolsetCatalog catalog, List<string> warnings)
     {
@@ -240,8 +318,9 @@ public sealed class ToolsetSelection
 
     /// <summary>
     /// The tools <see cref="ExcludeToolsVariable"/> leaves out: each entry is a tool name, or a toolset name that stands for
-    /// every tool of that toolset. Also the entries that name neither (<c>Unreadable</c>), which make the selection fail
-    /// closed.
+    /// every tool of that toolset and every tool that moved out of it. A tool the toolsets in force do not serve can be named
+    /// too, so a value written before a tool moved to an opt-in toolset still reads. Also the entries that name neither
+    /// (<c>Unreadable</c>), which make the selection fail closed.
     /// </summary>
     private static (List<string> Excluded, List<string> Unreadable) ReadExcludedTools(string? value, ToolsetCatalog catalog, List<string> warnings)
     {
@@ -250,7 +329,13 @@ public sealed class ToolsetSelection
         foreach (var entry in Split(value))
         {
             var tool = catalog.ToolNames.FirstOrDefault(name => string.Equals(name, entry, StringComparison.OrdinalIgnoreCase));
-            IReadOnlyList<string>? tools = tool != null ? [tool] : catalog.Find(entry)?.Tools;
+            // A toolset's name stands for its tools and the tools that moved out of it (roadmap M6.1): WAM_EXCLUDE_TOOLS=input
+            // written before 2.2.0 meant click too
+            IReadOnlyList<string>? tools = tool != null
+                ? [tool]
+                : catalog.Find(entry) is { } toolset
+                    ? [.. toolset.Tools, .. catalog.MovedTools.Where(move => move.FormerToolset == toolset.Name).Select(move => move.Tool)]
+                    : null;
             if (tools == null)
             {
                 warnings.Add($"{ExcludeToolsVariable}: '{entry}' is not a tool or toolset of this server. The toolsets are " +

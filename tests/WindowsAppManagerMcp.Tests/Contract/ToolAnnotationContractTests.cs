@@ -82,6 +82,7 @@ public class ToolAnnotationContractTests
         string[] destructive =
         [
             "close_window", "close_windows_batch", "close_application", "kill_process", "delete_layout", "save_layout",
+            // click, right_click and double_click are deprecated (roadmap M6.1) but unchanged, annotations included
             "click", "right_click", "double_click", "mouse_click", "drag", "scroll", "type_text", "send_keys", "press_keys",
             "element_action",
             // respond_to_dialog presses a dialog's button (Don't Save loses work); file_dialog can replace a file (roadmap M3.5, M3.14)
@@ -111,7 +112,8 @@ public class ToolAnnotationContractTests
             .Select(t => t!["name"]!.GetValue<string>()).ToList();
 
         // Every find/get/list tool, the browser reads, the control status and the clipboard read (it may ask the user, which
-        // changes nothing)
+        // changes nothing); get_all_windows, get_primary_monitor, list_screens and get_active_browser_url are deprecated
+        // (roadmap M6.1) but keep their annotations
         readOnly.Should().BeEquivalentTo(
         [
             "find_windows", "get_all_windows", "get_foreground_window", "get_monitors", "get_primary_monitor", "list_screens",

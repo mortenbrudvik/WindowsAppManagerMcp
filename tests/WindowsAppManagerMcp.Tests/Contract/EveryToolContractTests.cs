@@ -11,7 +11,8 @@ namespace WindowsAppManagerMcp.Tests.Contract;
 /// JSON content with success true and isError not set, and a capture returns an image block first. A failing call
 /// (the services report invalid handles, errors and empty lists) returns non-empty content and isError = !success
 /// (roadmap M2.1): no tool sends a failure with isError false, and none returns null, which a client receives as
-/// empty content.
+/// empty content. The contract run serves every tool (<see cref="ToolsetSelection.All"/>), so the opt-in toolsets' tools are
+/// called too: the deprecated ones (roadmap M6.1) with the arguments they always took, since their behaviour is unchanged.
 /// </summary>
 public class EveryToolContractTests
 {
@@ -19,8 +20,9 @@ public class EveryToolContractTests
         new Dictionary<string, IReadOnlyDictionary<string, object?>>(StringComparer.Ordinal)
         {
             ["find_windows"] = Args("""{ "processName": "notepad" }"""),
-            ["get_all_windows"] = Args("{}"),
+            ["get_all_windows"] = Args("{}"), // deprecated (roadmap M6.1): find_windows
             ["get_foreground_window"] = Args("{}"),
+            // Deprecated (roadmap M6.1): set_window_bounds with x and y, or with width and height
             ["move_window"] = Args("""{ "handle": 1706796, "x": 100, "y": 80 }"""),
             ["resize_window"] = Args("""{ "handle": 1706796, "width": 1280, "height": 720 }"""),
             ["set_window_bounds"] = Args("""{ "handle": 1706796, "x": 0, "y": 0, "width": 1280, "height": 1392 }"""),
@@ -33,6 +35,7 @@ public class EveryToolContractTests
             ["wait_for_window"] = Args("""{ "window": { "titleEquals": "Save As" }, "excludeHandles": [1706796] }"""),
             ["snap_window"] = Args("""{ "handle": 1706796, "position": "left_half" }"""),
             ["move_window_to_monitor"] = Args("""{ "handle": 1706796, "monitorIndex": 1 }"""),
+            // The windows-batch toolset (roadmap M6.1), off by default
             ["set_windows_bounds_batch"] = Args("""
                 { "placements": [
                     { "handle": 1706796, "x": 0, "y": 0, "width": 1280, "height": 1392 },
@@ -49,8 +52,8 @@ public class EveryToolContractTests
                 { "applications": [ { "executable": "notepad" }, { "executable": "code", "arguments": ["."] } ], "waitForWindows": true }
                 """),
             ["get_monitors"] = Args("{}"),
-            ["get_primary_monitor"] = Args("{}"),
-            ["list_screens"] = Args("{}"),
+            ["get_primary_monitor"] = Args("{}"), // deprecated (roadmap M6.1): get_monitors
+            ["list_screens"] = Args("{}"), // deprecated (roadmap M6.1): get_monitors
             ["take_screenshot"] = Args("{}"),
             ["capture_region"] = Args("""{ "x": 100, "y": 100, "width": 800, "height": 600 }"""),
             ["capture_window"] = Args("""{ "handle": 1706796 }"""),
@@ -68,7 +71,7 @@ public class EveryToolContractTests
             ["get_active_popups"] = Args("""{ "window": { "processName": "notepad" } }"""),
             ["wait_for_element"] = Args("""{ "window": { "processName": "notepad" }, "name": "Save", "condition": "enabled" }"""),
             ["get_browser_url"] = Args("""{ "handle": 2821181 }"""),
-            ["get_active_browser_url"] = Args("{}"),
+            ["get_active_browser_url"] = Args("{}"), // deprecated (roadmap M6.1): get_browser_url with a foreground selector
             ["get_browser_content"] = Args("""{ "handle": 2821181 }"""),
             ["launch_browser_with_debug"] = Args("""{ "url": "https://example.com/" }"""),
             ["close_debug_browser"] = Args("""{ "processId": 31337, "confirm": true }"""),
@@ -82,6 +85,7 @@ public class EveryToolContractTests
             ["browser_click"] = Args("""{ "handle": 2821181, "text": "Save draft" }"""),
             ["browser_type"] = Args("""{ "handle": 2821181, "text": "window layout presets", "selector": "#search" }"""),
             ["browser_screenshot"] = Args("""{ "handle": 2821181 }"""),
+            // Deprecated (roadmap M6.1): mouse_click
             ["click"] = Args("""{ "x": 560, "y": 110, "windowHandle": 1706796 }"""),
             ["right_click"] = Args("""{ "x": 560, "y": 110, "windowHandle": 1706796 }"""),
             ["double_click"] = Args("""{ "x": 560, "y": 110, "windowHandle": 1706796 }"""),

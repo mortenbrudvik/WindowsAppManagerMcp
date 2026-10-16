@@ -121,7 +121,7 @@ public class ScreenshotTools
     }
 
     [McpServerTool(Name = "list_screens", Title = "List Screens", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
-    [Description("List all available screens/monitors for capture. Returns screen information including bounds, work area, scale factor, and virtual screen bounds (the combined area of all monitors).")]
+    [Description("Deprecated, removed in 3.0.0: use get_monitors instead (its virtualScreen too). Lists the monitors and the virtual screen's bounds.")]
     public ScreenListResult ListScreens()
     {
         return _screenshotService.ListScreens();
@@ -129,10 +129,10 @@ public class ScreenshotTools
 
     [McpServerTool(Name = "take_screenshot", Title = "Capture Monitor", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = false)]
     [Description("Capture a specific monitor, or with monitorIndex -1 every monitor in one image (the virtual screen, at most 64 megapixels). " +
-                 ImageResultDescription + ImageToScreenDescription + " Use list_screens to get available monitor indices.")]
+                 ImageResultDescription + ImageToScreenDescription + " Use get_monitors to get available monitor indices.")]
     [ToolResultPayload(typeof(ScreenshotResult))]
     public CallToolResult TakeScreenshot(
-        [Description("Monitor index to capture (0-based), or -1 for the whole virtual screen (all monitors; areas between monitors of different sizes are black). Use list_screens to see available monitors. Defaults to primary monitor.")]
+        [Description("Monitor index to capture (0-based), or -1 for the whole virtual screen (all monitors; areas between monitors of different sizes are black). Use get_monitors to see available monitors. Defaults to primary monitor.")]
         int? monitorIndex = null,
         [Description(FormatDescription)]
         CaptureFormat format = CaptureFormat.Auto,
@@ -202,7 +202,7 @@ public class ScreenshotTools
                  ImageToScreenDescription)]
     [ToolResultPayload(typeof(ScreenshotResult))]
     public async Task<CallToolResult> CaptureWindow(
-        [Description("Window handle (as integer) from find_windows or get_all_windows. Pass handle or window, not both; with ref both may be left out.")]
+        [Description("Window handle (as integer) from find_windows. Pass handle or window, not both; with ref both may be left out.")]
         long? handle = null,
         [Description(WindowTargeting.WindowDescription)]
         WindowSelector? window = null,
@@ -320,7 +320,7 @@ public class ScreenshotTools
                  WarningsDescription + ImageToScreenDescription)]
     [ToolResultPayload(typeof(AnnotatedScreenshotResult))]
     public async Task<CallToolResult> CaptureWithElements(
-        [Description("Window handle (as integer) from find_windows or get_all_windows. Pass handle or window, not both.")]
+        [Description("Window handle (as integer) from find_windows. Pass handle or window, not both.")]
         long? handle = null,
         [Description(WindowTargeting.WindowDescription)]
         WindowSelector? window = null,

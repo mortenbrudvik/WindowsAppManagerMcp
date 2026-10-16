@@ -147,11 +147,14 @@ public class ToolPayloadBudgetTests
     /// <summary>
     /// The token budget of the whole tools/list result (every tool's name, title, description, schemas and annotations), as
     /// clients that load every tool up front pay it for the whole session. A ratchet, not a margin: it sits just above the
-    /// measured size (58,758 tokens, 235,029 bytes for 68 tools, October 2026, after M3.F32's screenshotMarks and observe on six action tools, M3.F8's launch arguments description, M3.F38's markPrefix, M4.2's CursorClamped and mouse buttons, and M4.1's key grammar, send_keys' delayMs and keysSent, and type_text's controlChars, M4.3's mouse_click, drag and press_keys, M4.4's type_text method and paste, and M5.2's targetId on get_browser_url and get_browser_content, +110 after the three cdpPort descriptions were shortened, less after get_active_browser_url's requireCdp stopped naming targetId, M5.7's get_browser_url description, M5.1's launch_browser_with_debug executablePath, port 0 and launch results, and M5.1's readiness sentence (cdpReady, cdpEndpoint, browserVersion, the 10-second wait) in its description, M5.3's useCdp on the three reading tools and their found debug port, and M5.6's paged get_browser_content (offset, selector, the page fields in its description, and offset's 'a uia page continues with useCdp=false'), and M5.4's close_debug_browser and launch_browser_with_debug's profile, reuseIfRunning and placement (launch_application's placement schema, about 420 tokens of the 791), with its cleanup advice shortened to close_debug_browser; then 60,504 tokens, 242,016 bytes for 72 tools after M5.5's list_tabs, activate_tab, browser_navigate and wait_for_browser, each with handle, the window selector and cdpPort; then 63,474 tokens, 253,893 bytes for 78 tools after M5.8's DOM bridge, browser_element_rect, browser_click, browser_type, browser_handle_dialog, browser_screenshot and browser_evaluate, each with handle, the window selector (156 tokens each), cdpPort and targetId; then 63,673 tokens, 254,692 bytes after M5.8's dialog option (dialog and promptText on browser_click, browser_type and browser_navigate) and browser_handle_dialog through UI Automation (window only, accept optional); then 64,078 tokens, 256,309 bytes after M6.1a's virtualScreen on get_monitors (+28), set_window_bounds' optional x/y and width/height pairs and nullable bringToFront (+87), get_browser_url's bare foreground selector (+41) and mouse_click's own click checks instead of 'as for click' (+249); DefaultToolListTokenBudget measures the 70 tools served by default), so every addition to the surface is a decision. When a change
+    /// measured size (58,758 tokens, 235,029 bytes for 68 tools, October 2026, after M3.F32's screenshotMarks and observe on six action tools, M3.F8's launch arguments description, M3.F38's markPrefix, M4.2's CursorClamped and mouse buttons, and M4.1's key grammar, send_keys' delayMs and keysSent, and type_text's controlChars, M4.3's mouse_click, drag and press_keys, M4.4's type_text method and paste, and M5.2's targetId on get_browser_url and get_browser_content, +110 after the three cdpPort descriptions were shortened, less after get_active_browser_url's requireCdp stopped naming targetId, M5.7's get_browser_url description, M5.1's launch_browser_with_debug executablePath, port 0 and launch results, and M5.1's readiness sentence (cdpReady, cdpEndpoint, browserVersion, the 10-second wait) in its description, M5.3's useCdp on the three reading tools and their found debug port, and M5.6's paged get_browser_content (offset, selector, the page fields in its description, and offset's 'a uia page continues with useCdp=false'), and M5.4's close_debug_browser and launch_browser_with_debug's profile, reuseIfRunning and placement (launch_application's placement schema, about 420 tokens of the 791), with its cleanup advice shortened to close_debug_browser; then 60,504 tokens, 242,016 bytes for 72 tools after M5.5's list_tabs, activate_tab, browser_navigate and wait_for_browser, each with handle, the window selector and cdpPort; then 63,474 tokens, 253,893 bytes for 78 tools after M5.8's DOM bridge, browser_element_rect, browser_click, browser_type, browser_handle_dialog, browser_screenshot and browser_evaluate, each with handle, the window selector (156 tokens each), cdpPort and targetId; then 63,673 tokens, 254,692 bytes after M5.8's dialog option (dialog and promptText on browser_click, browser_type and browser_navigate) and browser_handle_dialog through UI Automation (window only, accept optional); then 64,078 tokens, 256,309 bytes after M6.1a's virtualScreen on get_monitors (+28), set_window_bounds' optional x/y and width/height pairs and nullable bringToFront (+87), get_browser_url's bare foreground selector (+41) and mouse_click's own click checks instead of 'as for click' (+249); then 61,957 tokens, 247,825 bytes after M6.1b cut the
+    /// nine deprecated tools' descriptions to one line that names the replacement, sent take_screenshot, the
+    /// handle parameters and drag to get_monitors, find_windows and mouse_click instead of the deprecated tools, and added
+    /// get_server_info's moved field to its description (-2,121 in all); DefaultToolListTokenBudget measures the 58 tools served by default), so every addition to the surface is a decision. When a change
     /// adds to the surface on purpose, raise it in the same change by what the failure message measures; when a change
     /// trims descriptions, lower it.
     /// </summary>
-    public const int ToolListTokenBudget = 64_114;
+    public const int ToolListTokenBudget = 61_993;
 
     /// <summary>
     /// The token budget of the default tools/list (roadmap M6.1): the tools a server started without WAM_TOOLSETS,
@@ -159,10 +162,13 @@ public class ToolPayloadBudgetTests
     /// <see cref="ToolListTokenBudget"/>, just above the measured size: 59,627 tokens (238,508 bytes, 70 tools) before M6.1,
     /// then 60,032 tokens (240,125 bytes) after M6.1a's virtualScreen on get_monitors, set_window_bounds' optional pairs (the
     /// nullable x, y, width and height are most of its 87 tokens), get_browser_url's foreground sentence and mouse_click's own
-    /// click checks (+249), October 2026. A tool in a toolset that is off by default never moves it; a change to the default
+    /// click checks (+249); then 51,005 tokens (204,020 bytes, 58 tools) after M6.1b moved the nine deprecated tools (click,
+    /// right_click, double_click, move_window, resize_window, get_all_windows, get_primary_monitor, list_screens,
+    /// get_active_browser_url) to the opt-in deprecated toolset and the three geometry batches to the opt-in windows-batch
+    /// toolset (-9,027), October 2026. A tool in a toolset that is off by default never moves it; a change to the default
     /// surface raises it by what the failure message measures, in the same change, or lowers it.
     /// </summary>
-    public const int DefaultToolListTokenBudget = 60_070;
+    public const int DefaultToolListTokenBudget = 51_041;
 
     /// <summary>
     /// The most tokens one tool object (name, title, description, input schema, annotations) may cost in tools/list (roadmap
@@ -181,19 +187,21 @@ public class ToolPayloadBudgetTests
     /// </summary>
     private static readonly IReadOnlyDictionary<string, int> ToolsetTokenBudgets = new Dictionary<string, int>(StringComparer.Ordinal)
     {
-        ["server"] = 1_050, // 1,028
-        ["windows"] = 13_750, // 13,724: 18 tools, 15 of them with the window selector
-        ["monitors"] = 350, // 314
-        ["capture"] = 5_900, // 5,865
-        ["elements"] = 8_300, // 8,271
-        ["input"] = 19_450, // 19,415: 13 tools; the click trio is about 4,700 of it
+        ["server"] = 1_050, // 1,038
+        ["windows"] = 9_950, // 9,921: 12 tools, 10 of them with the window selector (13,724 before M6.1b moved six out)
+        ["monitors"] = 150, // 118: get_monitors alone since M6.1b (314 with get_primary_monitor and list_screens)
+        ["capture"] = 5_900, // 5,856
+        ["elements"] = 8_300, // 8,262
+        ["input"] = 14_800, // 14,758: 10 tools (19,415 with the click trio before M6.1b)
         ["clipboard"] = 750, // 734
         ["launch"] = 2_900, // 2,890
         ["process"] = 1_950, // 1,921
         ["layouts"] = 1_200, // 1,181
-        ["browser"] = 4_700, // 4,674
+        ["browser"] = 4_350, // 4,315 (4,674 with get_active_browser_url before M6.1b)
         ["browser-actions"] = 3_600, // 3,577 (off by default)
         ["browser-script"] = 500, // 468 (off by default)
+        ["windows-batch"] = 2_000, // 1,978 (off by default since M6.1b)
+        ["deprecated"] = 4_950, // 4,925 (off by default since M6.1b): nine one-line descriptions, but their full parameters
     };
 
     public static TheoryData<string> ServedTools() => EveryToolContractTests.ServedTools();

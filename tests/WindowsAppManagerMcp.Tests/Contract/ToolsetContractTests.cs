@@ -122,9 +122,9 @@ public class ToolsetContractTests
 
     /// <summary>
     /// The toolsets that are off by default: browser-actions since roadmap M5.5 (and the DOM bridge of M5.8), browser-script
-    /// since M5.8.
+    /// since M5.8, windows-batch and deprecated since M6.1 (owner decisions D4 and D1; DeprecatedToolsContractTests).
     /// </summary>
-    private static readonly string[] OptInToolsets = ["browser-actions", "browser-script"];
+    private static readonly string[] OptInToolsets = ["browser-actions", "browser-script", "windows-batch", "deprecated"];
 
     /// <summary>The DOM bridge's tools (roadmap M5.8) that browser-actions serves: all but browser_evaluate.</summary>
     private static readonly string[] DomBridgeActionTools =
@@ -133,9 +133,10 @@ public class ToolsetContractTests
     [Fact]
     public void TheDefault_ServesEveryToolset_ButTheOptInOnes()
     {
-        // The toolsets M3-M6 add for OCR, visual diffs, browser actions, layouts v2 and workspaces are opt-in; the first,
-        // browser-actions (activate_tab, browser_navigate, roadmap M5.5), changes what a debug browser shows. Turning a
-        // toolset off by default changes what every user sees: change this test, the docs and the release notes with it.
+        // The niche or heavy toolsets M5-M6 add are opt-in (owner decision D2: browser actions and scripts, OCR, visual diffs,
+        // the geometry batches); the first, browser-actions (activate_tab, browser_navigate, roadmap M5.5), changes what a
+        // debug browser shows. The tools M6.1 replaced wait in the opt-in deprecated toolset until 3.0.0. Turning a toolset
+        // off by default changes what every user sees: change this test, the docs and the release notes with it.
         var selection = ToolsetSelection.FromEnvironment(_ => null, Toolsets.Server);
 
         selection.Disabled.Should().BeEquivalentTo(OptInToolsets);
@@ -190,6 +191,7 @@ public class ToolsetContractTests
     [InlineData(null)]
     [InlineData("+browser-actions")]
     [InlineData("+browser-script")]
+    [InlineData("+deprecated")]
     [InlineData("all")]
     public async Task ReadOnlyMode_ServesExactlyTheToolsAnnotatedReadOnly_OfTheToolsetsInForce(string? toolsets)
     {
@@ -303,7 +305,7 @@ public class ToolsetContractTests
     [Fact]
     public async Task TheInstructions_TellTheAgentWhatTheUserTurnedOff()
     {
-        // The fixed instructions name focus_window, click and the other tools of the loop; when the user turned some of
+        // The fixed instructions name focus_window, mouse_click and the other tools of the loop; when the user turned some of
         // them off, a last line says so, so the agent skips those steps instead of looking for the tools
         var selection = ToolsetSelection.FromEnvironment(
             name => name switch
@@ -349,7 +351,7 @@ public class ToolsetContractTests
 
         var tools = await server.Client.ListToolsAsync();
 
-        // The default without kill_process: every tool but the opt-in toolsets' (browser-actions, browser-script) and the one excluded
+        // The default without kill_process: every tool but the opt-in toolsets' (browser-actions, browser-script, windows-batch, deprecated) and the one excluded
         var optIn = Toolsets.Server.Toolsets.Where(t => !t.OnByDefault).Sum(t => t.Tools.Count);
         tools.Select(t => t.Name).Should().NotContain("kill_process")
             .And.HaveCount(ServerToolCatalog.ServedToolNames.Count - optIn - 1);

@@ -82,9 +82,7 @@ public class WindowManagerTools
     }
 
     [McpServerTool(Name = "move_window", Title = "Move Window", ReadOnly = false, Destructive = false, Idempotent = true, OpenWorld = false)]
-    [Description("Move a window so that its visible frame's top-left corner is at x, y; it keeps its size." + PlacementRules +
-                 GeometryResult + WindowChangeErrors +
-                 " MoveFailed: Windows did not move it, or it did not return to normal from minimized or maximized (error has the reason).")]
+    [Description("Deprecated, removed in 3.0.0: use set_window_bounds with x and y instead. Moves a window's visible frame to x, y and keeps its size.")]
     public async Task<WindowOperationResult> MoveWindow(
         [Description("X coordinate of the visible frame's left edge")]
         int x,
@@ -109,10 +107,7 @@ public class WindowManagerTools
     }
 
     [McpServerTool(Name = "resize_window", Title = "Resize Window", ReadOnly = false, Destructive = false, Idempotent = true, OpenWorld = false)]
-    [Description("Resize a window's visible frame; its top-left corner stays where it is and it is not raised." + PlacementRules +
-                 GeometryResult + WindowChangeErrors +
-                 " ResizeFailed: Windows did not resize it, or it did not return to normal from minimized or maximized (error has the reason). " +
-                 "InvalidArguments: width or height is not positive. An app can keep a minimum or maximum size: compare bounds with what you asked for.")]
+    [Description("Deprecated, removed in 3.0.0: use set_window_bounds with width and height instead. Resizes a window's visible frame and keeps its top-left corner.")]
     public async Task<WindowOperationResult> ResizeWindow(
         [Description("New width of the visible frame in pixels (at least 1)")]
         int width,

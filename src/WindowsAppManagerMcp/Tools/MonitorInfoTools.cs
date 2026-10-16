@@ -43,7 +43,7 @@ public class MonitorInfoTools
     }
 
     [McpServerTool(Name = "get_primary_monitor", Title = "Get Primary Monitor", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
-    [Description("Get information about the primary display. Convenience method that returns the main monitor's details.")]
+    [Description("Deprecated, removed in 3.0.0: use get_monitors instead (the monitor with isPrimary). Returns the primary monitor.")]
     public MonitorInfoDto GetPrimaryMonitor()
     {
         var monitor = _monitorService.GetPrimaryMonitor();

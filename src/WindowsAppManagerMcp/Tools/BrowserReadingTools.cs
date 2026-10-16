@@ -83,7 +83,7 @@ public partial class BrowserReadingTools
 
     [McpServerTool(Name = "get_browser_url", Title = "Get Browser URL", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
     [Description("Get the current URL from a browser window. Uses Windows UI Automation to read the address of the shown tab's page, else the address bar (urlSource says which), or CDP (Chrome DevTools Protocol) for a debug browser." + CdpBehaviorDescription + " Supports Chrome, Edge, Firefox, Brave, Opera, Vivaldi, and other Chromium/Firefox-based browsers." +
-                 " window {\"foreground\": true} reads the browser in front, as get_active_browser_url does (NoBrowserInForeground when the window in front is not a browser).")]
+                 " window {\"foreground\": true} reads the browser in front (NoBrowserInForeground when the window in front is not a browser).")]
     public async Task<BrowserUrlResultDto> GetBrowserUrl(
         [Description("Window handle of the browser (as integer). Get this from find_windows or get_foreground_window. Pass handle or window, not both.")]
         long? handle = null,
@@ -175,7 +175,7 @@ public partial class BrowserReadingTools
     }
 
     [McpServerTool(Name = "get_active_browser_url", Title = "Get Active Browser URL", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
-    [Description("Get the URL from the currently active (foreground) browser window. Convenience method that combines get_foreground_window and get_browser_url, with the same CDP behavior and result fields. Returns an error if the foreground window is not a browser.")]
+    [Description("Deprecated, removed in 3.0.0: use get_browser_url with window {\"foreground\": true} instead. Reads the URL of the browser in front.")]
     public async Task<BrowserUrlResultDto> GetActiveBrowserUrl(
         [Description(CdpPortDescription)]
         int? cdpPort = null,

@@ -39,7 +39,7 @@ These tools act on the user's real desktop. Every task follows one loop: **obser
 ## Safety Rules (Read First)
 
 - **`PausedByUser` means stop.** The user pressed the pause hotkey (Ctrl+Alt+Shift+Pause by default) because they want the agent to stop sending input. The pause covers every Windows App Manager server on the desktop, so it may come from another session's agent. Every input tool, `element_action` and the dialog tools that press through it, and every tool that changes windows or starts or stops processes (`focus_window`, `close_window`, `launch_application`, `kill_process`, ...) return `PausedByUser` until the user resumes; tools that only read still work. Stop at once, tell the user what you were doing and what is left, and wait for them. Do not retry, do not look for another way to send input or change windows, and never try to resume input yourself. Call `resume_input` only after the user has told you to continue, and only once; it asks the user to confirm, and only their answer resumes input (`ResumeNeedsUser`: this client cannot ask, so the user presses the hotkey again; `ResumeDeclined`: they said no, or another question is still open). Never send the hotkey's keys: `send_keys` refuses them (`PauseChordNotAllowed`). `get_control_status` shows whether input is paused.
-- **Always pass `windowHandle` to input tools.** `click`, `right_click`, `double_click`, `mouse_click`, `drag`, `mouse_move`, `scroll`, `type_text`, `send_keys` and `press_keys` take the handle of the window you mean (from `find_windows`). For keys the server brings that window to the front first and sends them only while it, or a dialog it owns, is in front. For clicks it sends them only if the point is on that window or a popup of it. Without `windowHandle`, keys go to whatever window is in the foreground and clicks to whatever window is at the point. A child control's handle stands for its top-level window, so click the field first to put the caret in it (`get_focused_element` shows where it is).
+- **Always pass `windowHandle` to input tools.** `mouse_click`, `drag`, `mouse_move`, `scroll`, `type_text`, `send_keys` and `press_keys` take the handle of the window you mean (from `find_windows`). For keys the server brings that window to the front first and sends them only while it, or a dialog it owns, is in front. For clicks it sends them only if the point is on that window or a popup of it. Without `windowHandle`, keys go to whatever window is in the foreground and clicks to whatever window is at the point. A child control's handle stands for its top-level window, so click the field first to put the caret in it (`get_focused_element` shows where it is).
 - **Input never reaches your own terminal, editor or chat window** unless you pass its handle as `windowHandle` together with `allowHostTarget: true`. Do that only when the user explicitly asked for input there. `get_server_info` lists those host windows; listings mark them `isAgentHost: true`.
 - **Read every result.** `success: false` means nothing (more) was sent or changed; read `errorCode` before anything else (see [When Something Fails](#when-something-fails)). `receivingWindow` says where input went, or would have gone; `foregroundAfter` what is in front afterwards; mouse tools also report `actualX`/`actualY`.
 - **`ElementStale` and `AmbiguousElement` mean stop.** The element you meant is gone, or it is no longer the only one that fits. They are never a hint to act on a look-alike (the next row's Delete button, the next page's OK): find the element again from what you know of it (`find_ui_elements`), check what comes back, and act on that ref, or ask the user.
@@ -106,7 +106,7 @@ There is no sleep tool, and you do not need one. Wait on the server with `wait_f
 - `WindowNotFound`: nothing matches. Check with `find_windows`: `processName` is the whole name, and cloaked (other virtual desktop) and untitled windows need `includeCloaked` or `includeUntitled`. With `foreground: true`, the window in front is not the one the filters describe.
 - `HandleMismatch`: the handle now belongs to another window (the one you meant closed), or the window changed while the call waited to run. Find the window again; do not retry the handle.
 
-**Input refusals** (`errorCode` of `click`, `right_click`, `double_click`, `mouse_click`, `drag`, `mouse_move`, `scroll`, `type_text`, `send_keys`, `press_keys`):
+**Input refusals** (`errorCode` of `mouse_click`, `drag`, `mouse_move`, `scroll`, `type_text`, `send_keys`, `press_keys`):
 
 - `TargetIsAgentHost`: the input would have reached your own terminal or chat window. Pass `windowHandle` with the window you mean.
 - `TargetNotForeground`: the target could not be brought to the front (`receivingWindow` is what is in front instead). Call `focus_window` to see why, or ask the user.
@@ -150,7 +150,7 @@ There is no sleep tool, and you do not need one. Wait on the server with `wait_f
 - `notSent` (a batch item's or `close_application` window's `status`): that window got no close message; its `errorCode` says why (`ProtectedWindow`, `TargetDeniedByPolicy`, `AccessDenied`, `HandleMismatch`, ...). The other windows were still closed.
 - `close_application` closes only the windows on the current virtual desktop: `otherDesktopWindows` lists the app's windows on other desktops, which stay open, so `status: "closed"` does not mean the app has ended; `exited` and `runningProcessIds` say whether its processes did.
 
-**Window tool refusals:** `move_window`, `resize_window`, `set_window_bounds`, `set_window_state`, `snap_window` and `move_window_to_monitor` return `NotResponding` when the window's app is hung or does not answer within 5 seconds (the batches say so in the item's `error`, `apply_layout` in `errors`): retry later or ask the user, and check the window first, because a change that timed out can still happen once the app answers. `focus_window` returns `NotResponding`, `Cloaked` (another virtual desktop), `WindowHidden` (a window hidden, for example, in the notification area: show it from the app first, or ask the user), `FocusFailed` (Windows kept another window in front: it protects the window the user last used, see `foregroundLockTimeoutMs` in `get_server_info`) or `TargetDeniedByPolicy`.
+**Window tool refusals:** `set_window_bounds`, `set_window_state`, `snap_window` and `move_window_to_monitor` return `NotResponding` when the window's app is hung or does not answer within 5 seconds (the batches say so in the item's `error`, `apply_layout` in `errors`): retry later or ask the user, and check the window first, because a change that timed out can still happen once the app answers. `focus_window` returns `NotResponding`, `Cloaked` (another virtual desktop), `WindowHidden` (a window hidden, for example, in the notification area: show it from the app first, or ask the user), `FocusFailed` (Windows kept another window in front: it protects the window the user last used, see `foregroundLockTimeoutMs` in `get_server_info`) or `TargetDeniedByPolicy`.
 
 **Other failure modes:**
 
@@ -252,7 +252,7 @@ Use this skill when the user asks to:
 | Tool | Description | Key Parameters |
 |------|-------------|----------------|
 | `find_windows` | Find windows by criteria | titleContains, titleEquals, titleRegex, processName, processId, className, sort, limit |
-| `get_all_windows` | List user-facing app windows | includeMinimized |
+| `get_all_windows` | Deprecated: use find_windows (toolset deprecated, removed in 3.0.0) | includeMinimized |
 | `get_foreground_window` | Get focused window | (none) |
 | `get_owned_windows` | Dialogs and popups a window owns; which one blocks it | handle, includeHidden |
 | `get_window_info` | One window, without listing all; full adds foreground, z-order, topmost, enabled, responding, DPI | window (or handle), detail |
@@ -264,8 +264,8 @@ Every tool that takes a window's `handle` (or `windowHandle`) also takes `window
 
 | Tool | Description | Key Parameters |
 |------|-------------|----------------|
-| `move_window` | Move to x,y position | window (or handle), x, y |
-| `resize_window` | Change dimensions | window (or handle), width, height |
+| `move_window` | Deprecated: use set_window_bounds with x and y (toolset deprecated, removed in 3.0.0) | window (or handle), x, y |
+| `resize_window` | Deprecated: use set_window_bounds with width and height (toolset deprecated, removed in 3.0.0) | window (or handle), width, height |
 | `set_window_bounds` | Move, resize, or both (x and y, width and height, or all four) | window (or handle), x, y, width, height |
 | `set_window_state` | Min/max/restore | window (or handle), state |
 | `focus_window` | Bring to foreground, verified; reports what is in front | window (or handle) |
@@ -277,9 +277,9 @@ Every tool that takes a window's `handle` (or `windowHandle`) also takes `window
 
 | Tool | Description | Key Parameters |
 |------|-------------|----------------|
-| `set_windows_bounds_batch` | Move/resize multiple windows | placements |
-| `snap_windows_batch` | Snap multiple windows | placements |
-| `set_windows_state_batch` | Set state of multiple windows | changes |
+| `set_windows_bounds_batch` | Move/resize multiple windows (toolset windows-batch) | placements |
+| `snap_windows_batch` | Snap multiple windows (toolset windows-batch) | placements |
+| `set_windows_state_batch` | Set state of multiple windows (toolset windows-batch) | changes |
 | `close_windows_batch` | Close multiple windows and verify each | windows, waitMs, confirm (more than 3 windows), force |
 | `launch_applications_batch` | Launch multiple applications | applications, waitForWindows |
 
@@ -288,13 +288,13 @@ Every tool that takes a window's `handle` (or `windowHandle`) also takes `window
 | Tool | Description | Key Parameters |
 |------|-------------|----------------|
 | `get_monitors` | List all displays, and the virtual screen's bounds | (none) |
-| `get_primary_monitor` | Get primary display | (none) |
+| `get_primary_monitor` | Deprecated: use get_monitors, the monitor with isPrimary (toolset deprecated, removed in 3.0.0) | (none) |
 
 ### Screenshot (5 tools)
 
 | Tool | Description | Key Parameters |
 |------|-------------|----------------|
-| `list_screens` | List screens for capture | (none) |
+| `list_screens` | Deprecated: use get_monitors (toolset deprecated, removed in 3.0.0) | (none) |
 | `take_screenshot` | Capture a monitor | monitorIndex, maxDimension, output |
 | `capture_region` | Capture screen region | x, y, width, height, maxDimension, output |
 | `capture_window` | Capture a window, or crop it to one element | handle, ref, padding, includeFrame, maxDimension, output |
@@ -324,7 +324,7 @@ All capture tools also accept `format` (`auto`, `png`, `jpeg`), `quality` (JPEG)
 | Tool | Description | Key Parameters |
 |------|-------------|----------------|
 | `get_browser_url` | URL of a browser window (`window: {"foreground": true}` for the one in front) | handle, window, cdpPort, requireCdp |
-| `get_active_browser_url` | URL of the foreground browser window | cdpPort, requireCdp |
+| `get_active_browser_url` | Deprecated: use get_browser_url with `window: {"foreground": true}` (toolset deprecated, removed in 3.0.0) | cdpPort, requireCdp |
 | `get_browser_content` | Text of the page (or HTML through CDP), a page at a time | handle, maxLength, offset, textOnly, cdpPort, requireCdp |
 | `launch_browser_with_debug` | Start Chrome, Edge or Brave with a DevTools port | browser, url, port, userDataDir, profile, reuseIfRunning |
 | `close_debug_browser` | Close a debug browser this server started, and delete its temporary profile | processId, cdpPort, deleteProfile, confirm |
@@ -357,9 +357,9 @@ CDP only, on a debug browser, no real mouse or keyboard: work on a window behind
 
 | Tool | Description | Key Parameters |
 |------|-------------|----------------|
-| `click` | Left click at coordinates, on the named window | x, y, windowHandle, captureId (x, y on its image) |
-| `right_click` | Right click at coordinates | x, y, windowHandle, captureId |
-| `double_click` | Double left click | x, y, delayMs, windowHandle, captureId |
+| `click` | Deprecated: use mouse_click (toolset deprecated, removed in 3.0.0) | x, y, windowHandle, captureId (x, y on its image) |
+| `right_click` | Deprecated: use mouse_click with button `secondary` (toolset deprecated, removed in 3.0.0) | x, y, windowHandle, captureId |
+| `double_click` | Deprecated: use mouse_click with clickCount 2 (toolset deprecated, removed in 3.0.0) | x, y, delayMs, windowHandle, captureId |
 | `mouse_click` | Any button, 1-3 clicks, with modifier keys held (ctrl+click, middle, triple, x1/x2) | x, y, button, clickCount, modifiers, windowHandle, captureId |
 | `drag` | Press, move and release: drag and drop, sliders, selections; nothing stays held | fromX, fromY, toX, toY, button, modifiers, windowHandle, toWindowHandle |
 | `mouse_move` | Move cursor (no click) | x, y, windowHandle, captureId |
@@ -368,7 +368,7 @@ CDP only, on a debug browser, no real mouse or keyboard: work on a window behind
 | `send_keys` | Send keys to the named window | keys (e.g., `^c`, `{ENTER}`), windowHandle |
 | `press_keys` | Press key chords by name (ctrl+shift+t) or sequences (tab*3 enter); nothing stays held | keys, repeat, holdMs, delayBetweenMs, windowHandle |
 
-All ten also take `allowHostTarget` (default false): only for input to your own host window, named as `windowHandle`, when the user asked for it; and `releaseHeldModifiers` (default false): only for a stuck modifier key (see `ModifiersHeld`).
+Click with mouse_click: click, right_click and double_click are deprecated, served only with `WAM_TOOLSETS=+deprecated` until 3.0.0 removes them. All ten also take `allowHostTarget` (default false): only for input to your own host window, named as `windowHandle`, when the user asked for it; and `releaseHeldModifiers` (default false): only for a stuck modifier key (see `ModifiersHeld`).
 
 ### Input Control (3 tools)
 
@@ -415,8 +415,8 @@ All ten also take `allowHostTarget` (default false): only for input to your own 
 
 - Screen coordinates are physical pixels on the virtual desktop. This covers the `x`/`y` input parameters, window `bounds`, element `bounds`, `clickPoint` and `screenBounds`, and monitor `bounds`. The server is per-monitor DPI aware (its manifest declares PerMonitorV2; `get_server_info` reports the awareness in force), so do not multiply by `scaleFactor`.
 - The primary monitor's top-left corner is (0, 0). Monitors to the left of or above it have negative coordinates.
-- Monitor indices are 0-based, but index 0 is not always the primary monitor. Use `primaryIndex` from `get_monitors` or `list_screens`; `get_monitors`' `virtualScreen` is the area of all monitors together, which `take_screenshot` captures with `monitorIndex: -1`.
-- Image pixels are never screen pixels. A capture image starts at the top-left corner of what was captured and is usually scaled down (to 1568 pixels on the long edge by default). To click a point you see at (ix, iy) in a capture, pass it to `click`, `right_click`, `double_click`, `mouse_click`, `mouse_move` or `scroll` (or as `drag`'s points) with the capture's `captureId`: `{"x": ix, "y": iy, "captureId": "c7-3fa91c"}`. The server converts it through the capture's `imageToScreen`, uses the captured window as `windowHandle` (do not pass another one), refuses with `StaleCapture` when that window moved since, and returns the screen point as `x`/`y` with your point under `requested`. A `captureId` lasts 10 minutes (the last 32 captures). `space: "window"` or `"client"` with `windowHandle` takes points relative to the window's or its client area's top-left corner.
+- Monitor indices are 0-based, but index 0 is not always the primary monitor. Use `primaryIndex` from `get_monitors`; `get_monitors`' `virtualScreen` is the area of all monitors together, which `take_screenshot` captures with `monitorIndex: -1`.
+- Image pixels are never screen pixels. A capture image starts at the top-left corner of what was captured and is usually scaled down (to 1568 pixels on the long edge by default). To click a point you see at (ix, iy) in a capture, pass it to `mouse_click`, `mouse_move` or `scroll` (or as `drag`'s points) with the capture's `captureId`: `{"x": ix, "y": iy, "captureId": "c7-3fa91c"}`. The server converts it through the capture's `imageToScreen`, uses the captured window as `windowHandle` (do not pass another one), refuses with `StaleCapture` when that window moved since, and returns the screen point as `x`/`y` with your point under `requested`. A `captureId` lasts 10 minutes (the last 32 captures). `space: "window"` or `"client"` with `windowHandle` takes points relative to the window's or its client area's top-left corner.
 - To convert by hand instead, use the capture's `imageToScreen`:
   - `x = imageToScreen.offsetX + ix * imageToScreen.scaleX`
   - `y = imageToScreen.offsetY + iy * imageToScreen.scaleY`
@@ -441,7 +441,7 @@ To get a page's URL or text, use these tools instead of screenshots:
 | Need | Use |
 |------|-----|
 | URL of a specific browser window | `get_browser_url` with the window `handle` |
-| URL of the browser in the foreground | `get_active_browser_url`, or `get_browser_url` with `window: {"foreground": true}` (both return `NoBrowserInForeground` when another window, such as your terminal, is in front) |
+| URL of the browser in the foreground | `get_browser_url` with `window: {"foreground": true}` (`NoBrowserInForeground` when another window, such as your terminal, is in front) |
 | Text of a page | `get_browser_content` with `handle`; a long page comes in pages: call again with `offset` set to `nextOffset` while `truncated` is true, with `useCdp: false` when the page's `source` is `uia` |
 | Text of a JavaScript-heavy page, or its HTML | `launch_browser_with_debug`, then `get_browser_content` on its window, which it reads through CDP (and `textOnly: false` for HTML) |
 | A debug browser's tabs, and which one a window shows | `list_tabs` with the window (`targetId`, `inWindow`, `shownTargetId`) |
@@ -470,6 +470,15 @@ To get a page's URL or text, use these tools instead of screenshots:
 
 The user chooses which tools the server serves (`WAM_TOOLSETS`, `WAM_EXCLUDE_TOOLS`, `WAM_READ_ONLY`). A tool that is turned off is missing from your tool list; a call to it fails as an unknown tool. `get_server_info`, which is always served, reports the toolsets in force (`toolsets.enabled`, `disabled`, `readOnly`, `excludedTools`), and its `warnings` name each setting the server could not read and what it did instead (for example, serving only the `server` toolset, ignoring the entry, or turning read-only mode on). When the user turned tools off, the server's instructions end with a line that says which. In read-only mode only the tools that never change anything are served: you can look, but not type, click, move, close, launch, capture or save layouts. Do not try to work around a missing tool (for example by typing a key chord instead of a closing tool): tell the user what you need. See [Toolsets](https://github.com/mortenbrudvik/WindowsAppManagerMcp/blob/main/docs/TOOLS.md#toolsets).
 
+**Use the replacements, not the deprecated tools.** Since 2.2.0 nine tools are deprecated and off by default, and 3.0.0
+removes them: use `mouse_click` instead of `click`, `right_click` (`button: "secondary"`) and `double_click`
+(`clickCount: 2`); `set_window_bounds` with `x` and `y`, or with `width` and `height`, instead of `move_window` and
+`resize_window`; `find_windows` instead of `get_all_windows`; `get_monitors` instead of `get_primary_monitor` and
+`list_screens`; and `get_browser_url` with `window: {"foreground": true}` instead of `get_active_browser_url`. Even when
+the user turned the `deprecated` toolset on, call the replacements. `set_windows_bounds_batch`, `snap_windows_batch` and
+`set_windows_state_batch` are in the opt-in `windows-batch` toolset: without it, place windows one at a time. When a tool
+you expected is missing, `get_server_info`'s `toolsets.moved` says where it went and what replaces it.
+
 ## Snap Positions
 
 The `snap_window` tool supports 14 positions:
@@ -494,7 +503,7 @@ Each workflow is the loop: observe and find, act, wait, verify.
 1. **Find:** `get_desktop_state` with the app `window` (its element lines have refs), or `find_ui_elements` with the button's `name` and `controlType: "Button"`
 2. **Act:** `element_action` `invoke` with the button's `ref` (or with the `window`, `name` and `controlType` in one call)
 3. **Wait and verify:** `success` and `outcomeVerified`; `openedPopup` is a window the press opened (with `status: "InvokedPendingModal"`, a dialog the press waits for): read a dialog with `respond_to_dialog`. Wait for the effect with `wait_for_element` or `wait_for_window`
-4. Only when the button has no pattern (`PatternNotSupported`): `fallback: "mouse"`, or `focus_window`, then `click` at its `clickPoint` with `windowHandle`
+4. Only when the button has no pattern (`PatternNotSupported`): `fallback: "mouse"`, or `focus_window`, then `mouse_click` at its `clickPoint` with `windowHandle`
 
 ### Fill In a Field
 1. **Find:** `find_ui_elements` with the field's `name` or `automationId` and `controlType: "Edit"`
@@ -550,7 +559,7 @@ Common keys: `^c` copy, `^v` paste, `^a` select all, `{ENTER}`, `{TAB}`, `{ESC}`
 
 ## Tips
 
-- `find_windows` and `get_all_windows` list only user-facing app windows: no cloaked windows (other virtual desktops, suspended apps), tool windows, untitled windows or shell windows. Dialogs are listed, with `ownerHandle`. To reach the taskbar, tray or an untitled popup, pass `className` (for example `Shell_TrayWnd`) or a `handle`, or set `includeShell: true`
+- `find_windows` lists only user-facing app windows: no cloaked windows (other virtual desktops, suspended apps), tool windows, untitled windows or shell windows. Dialogs are listed, with `ownerHandle`. To reach the taskbar, tray or an untitled popup, pass `className` (for example `Shell_TrayWnd`) or a `handle`, or set `includeShell: true`
 - UWP apps such as Calculator or Settings are reported under their own process (for example `CalculatorApp`), with `hostProcessName: "ApplicationFrameHost"`
 - `get_foreground_window` reports any window, including untitled menus and popups (empty `title`, check `className`)
 - Layout presets can launch missing applications with `launchMissing: true`, but only with a `launchCommand` added to the preset by hand: `save_layout` records none

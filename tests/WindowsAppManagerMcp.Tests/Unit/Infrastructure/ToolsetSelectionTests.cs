@@ -20,6 +20,24 @@ public class ToolsetSelectionTests
     /// <summary>The same toolsets, with info_tool as the tool that is always served.</summary>
     private static readonly ToolsetCatalog WithInfoTool = new("core", Catalog.Toolsets, alwaysServedTool: "info_tool");
 
+    /// <summary>
+    /// The same toolsets after three tools moved out of basic into toolsets that are off by default, as roadmap M6.1 moved
+    /// tools into windows-batch and deprecated: batch_act without a replacement, old_look and old_act replaced.
+    /// </summary>
+    private static readonly ToolsetCatalog WithMoves = new(
+        "core",
+        [
+            .. Catalog.Toolsets,
+            new Toolset("batch", OnByDefault: false, "Several at once", ["batch_act"]),
+            new Toolset("old", OnByDefault: false, "Replaced tools", ["old_look", "old_act"]),
+        ],
+        moved:
+        [
+            new MovedTool("batch_act", "basic"),
+            new MovedTool("old_look", "basic", "look_tool"),
+            new MovedTool("old_act", "basic", "act_tool with mode 'x'"),
+        ]);
+
     private static ToolsetSelection Select(
         string? toolsets = null, string? exclude = null, string? readOnly = null, ToolsetCatalog? catalog = null) =>
         ToolsetSelection.FromEnvironment(
@@ -274,9 +292,11 @@ public class ToolsetSelectionTests
     [InlineData(null, null, null)]
     [InlineData("all", null, null)]
     [InlineData("default,-extra", null, null)]
+    [InlineData(null, "extra_tool", null)]
     public void TheInstructionsNote_IsNull_WhenNothingTheDefaultServesIsOff(string? toolsets, string? exclude, string? readOnly)
     {
-        // An opt-in toolset that is off is not something the user turned off, and the instructions do not name its tools
+        // An opt-in toolset that is off is not something the user turned off, and the instructions do not name its tools;
+        // nor is a tool the toolsets in force would not serve anyway turned off by excluding it (roadmap M6.1)
         Select(toolsets, exclude, readOnly).InstructionsNote.Should().BeNull();
     }
 
@@ -319,6 +339,112 @@ public class ToolsetSelectionTests
         act.Should().Throw<ArgumentException>();
     }
 
-    private static IEnumerable<string> Served(ToolsetSelection selection) =>
-        Catalog.Toolsets.SelectMany(t => t.Tools).Where(tool => selection.Serves(tool, readOnlyHint: false));
+    #region Tools that moved out of a toolset (roadmap M6.1)
+
+    [Fact]
+    public void AMovedTool_IsOffByDefault_AndTheMovedNotesSayWhereItWent()
+    {
+        var selection = Select(catalog: WithMoves);
+
+        Served(selection, WithMoves).Should().Equal("info_tool", "look_tool", "act_tool");
+        selection.Warnings.Should().BeEmpty();
+        selection.InstructionsNote.Should().BeNull("an opt-in toolset that is off is not something the user turned off");
+        selection.Moved.Should().Equal(
+            "In the batch toolset, which is off (WAM_TOOLSETS=+batch serves it): batch_act.",
+            "In the old toolset, which is off (WAM_TOOLSETS=+old serves it): old_look (use look_tool), old_act (use act_tool with mode 'x').");
+    }
+
+    [Theory]
+    [InlineData("+old")]
+    [InlineData("all")]
+    [InlineData("basic,old")]
+    [InlineData("default,+old,+batch")]
+    public void AMovedTool_IsServed_WithItsToolsetAndTheToolsetItCameFrom(string value)
+    {
+        var selection = Select(value, catalog: WithMoves);
+
+        selection.Serves("old_look", readOnlyHint: true).Should().BeTrue();
+        selection.Serves("old_act", readOnlyHint: false).Should().BeTrue();
+        (selection.Moved ?? []).Should().NotContain(note => note.Contains("old_"));
+    }
+
+    [Theory]
+    [InlineData("old,batch")]
+    [InlineData("core,old,batch")]
+    [InlineData("all,-basic")]
+    [InlineData("-basic,+old,+batch")]
+    public void AMovedTool_IsNotServed_WithoutTheToolsetItCameFrom_SoItsToolsetNeverWidensAConfiguration(string value)
+    {
+        // A list without basic did not serve old_act before it moved, so turning old on must not serve it now: a user who
+        // removed the input toolset never gets the deprecated click back through 'all' or '+deprecated'
+        var selection = Select(value, catalog: WithMoves);
+
+        selection.Serves("old_look", readOnlyHint: true).Should().BeFalse();
+        selection.Serves("old_act", readOnlyHint: false).Should().BeFalse();
+        selection.Serves("batch_act", readOnlyHint: false).Should().BeFalse();
+        selection.Moved.Should().BeNull("the toolset they came from is off, so nothing moved out of the user's reach");
+        selection.Warnings.Should().Contain(w => w.Contains(ToolsetSelection.ToolsetsVariable) && w.Contains("old_look") &&
+                                                 w.Contains("old_act") && w.Contains("'basic'") && w.Contains("'old'"));
+    }
+
+    [Fact]
+    public void ServingAReplacedTool_Warns_AndNamesItsReplacement()
+    {
+        Select("+old", catalog: WithMoves).Warnings.Should().ContainSingle().Which.Should()
+            .Contain("old_look (use look_tool)").And.Contain("old_act (use act_tool with mode 'x')").And.Contain("removed");
+        Select("+batch", catalog: WithMoves).Warnings.Should().BeEmpty("batch_act moved, but nothing replaces it");
+    }
+
+    [Theory]
+    [InlineData("old_look")]
+    [InlineData("OLD_LOOK,batch_act")]
+    [InlineData("old")]
+    public void ExcludingAMovedToolThatIsNotServed_IsNoError_AndTurnsNothingElseOff(string exclude)
+    {
+        // A WAM_EXCLUDE_TOOLS written before the move names a tool the default no longer serves: it must not fail closed
+        var selection = Select(exclude: exclude, catalog: WithMoves);
+
+        selection.Source.Should().Be(ToolsetSelection.DefaultKeyword);
+        selection.Enabled.Should().Equal("core", "basic");
+        selection.Warnings.Should().BeEmpty();
+        selection.InstructionsNote.Should().BeNull("the toolsets in force did not serve it anyway");
+        Served(selection, WithMoves).Should().Equal("info_tool", "look_tool", "act_tool");
+        (selection.Moved ?? []).Should().NotContain(note => note.Contains("old_look"), "the user does not want it back");
+    }
+
+    [Fact]
+    public void ExcludingTheToolsetAToolCameFrom_ExcludesTheMovedToolToo()
+    {
+        // WAM_EXCLUDE_TOOLS=input written before the move meant every input tool, the deprecated click included
+        var selection = Select("+old,+batch", exclude: "basic", catalog: WithMoves);
+
+        selection.ExcludedTools.Should().Equal("look_tool", "act_tool", "batch_act", "old_look", "old_act");
+        Served(selection, WithMoves).Should().Equal("info_tool");
+    }
+
+    [Fact]
+    public void All_ServesTheMovedTools_WithoutAWarning()
+    {
+        var selection = ToolsetSelection.All(WithMoves);
+
+        Served(selection, WithMoves).Should().HaveCount(7);
+        selection.Moved.Should().BeNull();
+        selection.Warnings.Should().BeEmpty();
+    }
+
+    [Theory]
+    [InlineData("nowhere_tool", "basic")]
+    [InlineData("old_look", "nothing")]
+    [InlineData("old_look", "old")]
+    public void TheCatalog_RefusesAMoveItCannotServe(string tool, string from)
+    {
+        var act = () => new ToolsetCatalog("core", WithMoves.Toolsets, moved: [new MovedTool(tool, from)]);
+
+        act.Should().Throw<ArgumentException>().WithMessage($"*'{tool}'*");
+    }
+
+    #endregion
+
+    private static IEnumerable<string> Served(ToolsetSelection selection, ToolsetCatalog? catalog = null) =>
+        (catalog ?? Catalog).Toolsets.SelectMany(t => t.Tools).Where(tool => selection.Serves(tool, readOnlyHint: false));
 }

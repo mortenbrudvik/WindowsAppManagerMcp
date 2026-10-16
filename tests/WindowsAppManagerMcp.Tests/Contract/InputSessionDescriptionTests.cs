@@ -8,9 +8,6 @@ namespace WindowsAppManagerMcp.Tests.Contract;
 public class InputSessionDescriptionTests
 {
     [Theory]
-    [InlineData("click")]
-    [InlineData("right_click")]
-    [InlineData("double_click")]
     [InlineData("mouse_click")]
     [InlineData("drag")]
     [InlineData("mouse_move")]

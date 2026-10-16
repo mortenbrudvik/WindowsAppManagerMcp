@@ -103,8 +103,7 @@ public class InputSimulationTools
     }
 
     [McpServerTool(Name = "click", Title = "Click", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = false)]
-    [Description("Perform a left (primary) mouse click at the specified screen coordinates, or at a point of a capture's image (space)." + ClickTargetNote +
-                 " Mouse results also report actualX and actualY, the cursor position afterwards.")]
+    [Description("Deprecated, removed in 3.0.0: use mouse_click instead. Clicks the primary (left) button once at x, y, with mouse_click's checks.")]
     [ToolResultPayload(typeof(ClickResult))]
     public async Task<CallToolResult> Click(
         [Description(XDescription)]
@@ -140,8 +139,7 @@ public class InputSimulationTools
     }
 
     [McpServerTool(Name = "right_click", Title = "Right-Click", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = false)]
-    [Description("Perform a right (secondary) mouse click at the specified screen coordinates, or at a point of a capture's image (space)." +
-                 " In a terminal (console, Windows Terminal, PuTTY, and anywhere in VS Code) a right click pastes the clipboard, so there it follows send_keys' paste rule (PasteNotAllowed)." + ClickTargetNote)]
+    [Description("Deprecated, removed in 3.0.0: use mouse_click with button 'secondary' instead. Clicks the secondary (right) button at x, y, with mouse_click's checks.")]
     [ToolResultPayload(typeof(ClickResult))]
     public async Task<CallToolResult> RightClick(
         [Description(XDescription)]
@@ -177,7 +175,7 @@ public class InputSimulationTools
     }
 
     [McpServerTool(Name = "double_click", Title = "Double-Click", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = false)]
-    [Description("Perform a double left click at the specified screen coordinates, or at a point of a capture's image (space). Useful for opening files, selecting words, or other double-click actions." + ClickTargetNote)]
+    [Description("Deprecated, removed in 3.0.0: use mouse_click with clickCount 2 instead. Double-clicks the primary button at x, y, with mouse_click's checks.")]
     [ToolResultPayload(typeof(ClickResult))]
     public async Task<CallToolResult> DoubleClick(
         [Description(XDescription)]
@@ -274,7 +272,7 @@ public class InputSimulationTools
     [Description("Press a mouse button at one point, move to another and release it there: drag and drop (files, list items, " +
                  "text), sliders, selections. The button goes down at from, waits holdBeforeMoveMs, moves in steps (the first beyond " +
                  "Windows' drag threshold) with stepDelayMs after each, and comes up at to; modifiers stay held throughout (ctrl+drag " +
-                 "copies in Explorer). Both points take space and captureId as click's x and y. Pass windowHandle: from must be on " +
+                 "copies in Explorer). Both points take space and captureId as mouse_click's x and y. Pass windowHandle: from must be on " +
                  "it, and to as well unless toWindowHandle names the drop's window; both are checked as a click's point before the " +
                  "press (TargetOccluded, BlockedByModal, TargetIsAgentHost, MouseInUse), and to again right before the drop. A drag " +
                  "stopped after the press (to refused then, the pointer kept off it, a cancelled request) goes back to from and " +
@@ -282,7 +280,7 @@ public class InputSimulationTools
                  "stays held after the call." + GuardNote)]
     [ToolResultPayload(typeof(DragResult))]
     public async Task<CallToolResult> Drag(
-        [Description("Where the button goes down: x as click's (screen pixels, or as space says)")]
+        [Description("Where the button goes down: x as mouse_click's (screen pixels, or as space says)")]
         int fromX,
         [Description("Where the button goes down: y")]
         int fromY,

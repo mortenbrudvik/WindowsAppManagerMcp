@@ -308,7 +308,7 @@ public class ScreenshotService : IScreenshotService
             throw new CaptureException(ScreenshotErrorCode.RegionOffScreen,
                 $"No part of the region ({x}, {y}, {width}x{height}) is on the screen: the monitors cover ({virtualScreen.X}, " +
                 $"{virtualScreen.Y}, {virtualScreen.Width}x{virtualScreen.Height}). Nothing was captured. Coordinates are " +
-                "physical pixels of the virtual screen; list_screens shows where each monitor is.");
+                "physical pixels of the virtual screen; get_monitors shows where each monitor is.");
         }
 
         if ((long)region.Width * region.Height > ScreenCaptureWrapper.MaxCapturePixels)

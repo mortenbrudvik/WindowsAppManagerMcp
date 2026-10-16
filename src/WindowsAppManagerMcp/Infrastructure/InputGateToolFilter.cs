@@ -17,7 +17,10 @@ namespace WindowsAppManagerMcp.Infrastructure;
 /// <remarks>
 /// A tool that is in none of <see cref="InputTools"/>, <see cref="ReadOnlyTools"/>, <see cref="ControlTools"/> and
 /// <see cref="SelfGatedTools"/> runs inside the gate, so a new tool is serialized until it is reviewed onto another
-/// list. A contract test checks that every tool the server serves is in exactly one of the five lists. A name the server does not
+/// list. A contract test checks that every tool the server serves is in exactly one of the five lists. The tools roadmap M6.1
+/// deprecated (click, right_click, double_click, move_window, resize_window, get_all_windows, get_primary_monitor,
+/// list_screens, get_active_browser_url) and the geometry batches it moved to windows-batch keep their places on the lists:
+/// toolsets that are off by default serve them, and when they are served they are gated exactly as before. A name the server does not
 /// serve passes straight through, so the SDK reports it as a protocol error at once: a call that runs nothing
 /// cannot change which window is in front.
 /// <para>
@@ -50,7 +53,10 @@ namespace WindowsAppManagerMcp.Infrastructure;
 /// </remarks>
 public static class InputGateToolFilter
 {
-    /// <summary>The input tools. They hold the gate themselves (InputSimulationService), not through this filter.</summary>
+    /// <summary>
+    /// The input tools. They hold the gate themselves (InputSimulationService), not through this filter. click, right_click and
+    /// double_click are in the opt-in deprecated toolset since roadmap M6.1, and the server instructions name only the others.
+    /// </summary>
     public static IReadOnlySet<string> InputTools { get; } = new HashSet<string>(StringComparer.Ordinal)
     {
         "click", "right_click", "double_click", "mouse_click", "drag", "mouse_move", "scroll", "type_text", "send_keys", "press_keys"

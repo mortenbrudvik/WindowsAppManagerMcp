@@ -32,7 +32,7 @@ A comprehensive guide to all 78 MCP tools for managing Windows applications, win
 
 The input tools send real mouse and keyboard input to the user's desktop. Every input call goes through the server's input guard before each batch of input it sends, with or without a target, and is refused with nothing sent when the input would land somewhere it must not. See [Input guard](#input-guard) for the rules and the error codes.
 
-- **Pass `windowHandle`** with the window you mean to every `click`, `right_click`, `double_click`, `mouse_click`, `drag`, `mouse_move`, `scroll`, `type_text`, `send_keys` and `press_keys` call. For keys the server brings that window to the front first and sends them only while it (or a dialog it owns) is in front; for the mouse it sends the input only if the point is on that window or a popup of it. Without `windowHandle`, keys go to whatever window is in the foreground and clicks to whatever window is at the point.
+- **Pass `windowHandle`** with the window you mean to every `mouse_click`, `drag`, `mouse_move`, `scroll`, `type_text`, `send_keys` and `press_keys` call (and `click`, `right_click` and `double_click`, deprecated since roadmap M6.1, while they are served). For keys the server brings that window to the front first and sends them only while it (or a dialog it owns) is in front; for the mouse it sends the input only if the point is on that window or a popup of it. Without `windowHandle`, keys go to whatever window is in the foreground and clicks to whatever window is at the point.
 - Input never reaches the agent's own host (the terminal, editor or chat app the server was started from) unless the call names that window as `windowHandle` and passes `allowHostTarget: true`. Do that only when the user explicitly asked for it. A window of this server's own process (a prompt Windows showed for it, such as a downloaded file's security warning) never gets input, whatever the arguments (`TargetIsAgentHost`; while the deny list includes the default list, the [target policy](#target-policy) refuses "Open File - Security Warning" first, with `TargetDeniedByPolicy`).
 - Key chords that close, quit or open Task Manager (Alt+F4 `%{F4}`, Ctrl+W, Ctrl+Q, Ctrl+F4, Ctrl+Shift+Esc) are refused without `windowHandle` (`DestructiveChordNeedsTarget`). A chord that hands the keyboard to another window (Alt+Tab, Alt+Esc, Ctrl+Esc, the Windows key, Alt+Space, or a closing chord) must be the last key of a `send_keys` call (`KeysAfterFocusChange`). Also be careful with Ctrl+A followed by Delete, and Enter on a confirmation dialog. In a terminal, typed text followed by `{ENTER}` runs as a shell command.
 - To close a window, use [close_window](#close_window) or [close_windows_batch](#close_windows_batch) with the window's handle. Do not use Alt+F4. They refuse the desktop shell and the agent's own terminal or editor (`ProtectedWindow`); pass `force: true` only when the user explicitly asked to close such a window (when the client can ask, the user is asked before `force` closes a protected window; when it cannot, `force` needs `confirm: true` too). Closing more than 3 windows at once ([close_windows_batch](#close_windows_batch), [close_application](#close_application)) needs a confirmation: the user is asked when the client supports it (elicitation), otherwise pass `confirm: true` after checking the list.
@@ -251,7 +251,7 @@ The converted point then goes through the [input guard](#input-guard) exactly as
 **Example:** capture_window of Notepad (handle 12345) returns a 1568 x 882 image with `"captureId": "c7-3fa91c"`. To click the button seen at image point (392, 196):
 
 ```json
-{ "name": "click", "arguments": { "x": 392, "y": 196, "captureId": "c7-3fa91c" } }
+{ "name": "mouse_click", "arguments": { "x": 392, "y": 196, "captureId": "c7-3fa91c" } }
 ```
 
 The server converts the point (here to screen (400, 300)), checks that Notepad has not moved and is at that point, and clicks.
@@ -290,38 +290,47 @@ Every tool the server serves sits in the agent's context on every turn, and a lo
 
 | Variable | Default | Meaning |
 |----------|---------|---------|
-| `WAM_TOOLSETS` | not set: the toolsets that are on by default | The toolsets to serve, separated by commas, semicolons or spaces, in any case. `default` stands for the toolsets that are on by default and `all` for every toolset. `+name` adds a toolset and `-name` removes one; with only such entries they change the default (`-browser,-process`). The `server` toolset is always served. A name that is not a toolset is logged, and the value fails closed: an unknown `-name` (meant to remove a toolset), or an unknown plain name with no valid plain name beside it (meant to replace the default), serves only the `server` toolset, so a typo never serves tools the user meant to turn off; [get_server_info](#get_server_info)'s warnings tell the agent what was wrong. An unknown `+name` is ignored, as it only asked for more |
-| `WAM_EXCLUDE_TOOLS` | not set | Tools to leave out by name, whatever their toolset, for example `kill_process,close_windows_batch`, or every tool of a toolset by the toolset's name (`process`). The value fails closed: a name that is neither a tool nor a toolset is logged and serves only the `server` toolset, so a typo never leaves a tool served that the user meant to turn off; [get_server_info](#get_server_info) then reports `source` `WAM_EXCLUDE_TOOLS` and a warning. get_server_info is always served (it tells the agent which tools are off), so excluding it is ignored and logged |
+| `WAM_TOOLSETS` | not set: the toolsets that are on by default | The toolsets to serve, separated by commas, semicolons or spaces, in any case. `default` stands for the toolsets that are on by default and `all` for every toolset, `deprecated` included. `+name` adds a toolset and `-name` removes one; with only such entries they change the default (`-browser,-process`). The `server` toolset is always served. A tool that moved out of a toolset (into `windows-batch` or `deprecated`, roadmap M6.1) is served only while the toolset it came from is on too: see [Moved and deprecated tools](#moved-and-deprecated-tools). A name that is not a toolset is logged, and the value fails closed: an unknown `-name` (meant to remove a toolset), or an unknown plain name with no valid plain name beside it (meant to replace the default), serves only the `server` toolset, so a typo never serves tools the user meant to turn off; [get_server_info](#get_server_info)'s warnings tell the agent what was wrong. An unknown `+name` is ignored, as it only asked for more |
+| `WAM_EXCLUDE_TOOLS` | not set | Tools to leave out by name, whatever their toolset, for example `kill_process,close_windows_batch`, or every tool of a toolset by the toolset's name (`process`), which also leaves out the tools that moved out of that toolset (`input` leaves out the deprecated `click` too). Naming a tool that the toolsets in force do not serve (`click`, now in the opt-in `deprecated` toolset) is no error: it stays off. The value fails closed: a name that is neither a tool nor a toolset is logged and serves only the `server` toolset, so a typo never leaves a tool served that the user meant to turn off; [get_server_info](#get_server_info) then reports `source` `WAM_EXCLUDE_TOOLS` and a warning. get_server_info is always served (it tells the agent which tools are off), so excluding it is ignored and logged |
 | `WAM_READ_ONLY` | not set (off) | `1` (or `true`, `yes`, `on`) serves only the tools annotated read-only: `readOnlyHint: true` in tools/list, from `ReadOnly = true` on the tool's `[McpServerTool]`, within the toolsets above. `0`, `false`, `no`, `off` or empty: off. Any other value turns it on, to be safe, and is logged |
 
 <!-- tools:begin toolsets (generated from Toolsets.Server: run the tests with UPDATE_SNAPSHOTS=1, see TESTING.md) -->
 | Toolset | Default | Tokens | What it covers | Tools |
 |---------|---------|--------|----------------|-------|
 | `server` | always on | about 1,000 | The server's build, environment and toolsets, and the user's control over its input: whether input is paused, resuming it with the user's consent, releasing stuck keys. | [get_server_info](#get_server_info), [get_control_status](#get_control_status), [resume_input](#resume_input), [release_all_input](#release_all_input) |
-| `windows` | on | about 13,700 | Find, wait for, focus, move, resize, snap, minimize, maximize and close windows, one at a time or in batches. | [find_windows](#find_windows), [get_all_windows](#get_all_windows), [get_foreground_window](#get_foreground_window), [focus_window](#focus_window), [move_window](#move_window), [resize_window](#resize_window), [set_window_bounds](#set_window_bounds), [set_window_state](#set_window_state), [snap_window](#snap_window), [move_window_to_monitor](#move_window_to_monitor), [close_window](#close_window), [set_windows_bounds_batch](#set_windows_bounds_batch), [snap_windows_batch](#snap_windows_batch), [set_windows_state_batch](#set_windows_state_batch), [close_windows_batch](#close_windows_batch), [get_owned_windows](#get_owned_windows), [get_window_info](#get_window_info), [wait_for_window](#wait_for_window) |
-| `monitors` | on | about 300 | The monitors: bounds, work areas, scale factors. | [get_monitors](#get_monitors), [get_primary_monitor](#get_primary_monitor), [list_screens](#list_screens) |
+| `windows` | on | about 9,900 | Find, wait for, focus, move, resize, snap, minimize, maximize and close windows, and close several at once. | [find_windows](#find_windows), [get_foreground_window](#get_foreground_window), [focus_window](#focus_window), [set_window_bounds](#set_window_bounds), [set_window_state](#set_window_state), [snap_window](#snap_window), [move_window_to_monitor](#move_window_to_monitor), [close_window](#close_window), [close_windows_batch](#close_windows_batch), [get_owned_windows](#get_owned_windows), [get_window_info](#get_window_info), [wait_for_window](#wait_for_window) |
+| `monitors` | on | about 100 | The monitors: bounds, work areas, scale factors, and the virtual screen they make up. | [get_monitors](#get_monitors) |
 | `capture` | on | about 5,900 | Screenshots of monitors, regions and windows, as image content. | [take_screenshot](#take_screenshot), [capture_region](#capture_region), [capture_window](#capture_window), [capture_with_elements](#capture_with_elements) |
 | `elements` | on | about 8,300 | UI Automation: one-call desktop observations, element trees, searches that return element refs (also in menus, dropdowns and dialogs), waits for elements, the focused element, the element at a point, an app's open popups, an element's text and a table's cells. | [get_desktop_state](#get_desktop_state), [get_ui_elements](#get_ui_elements), [find_ui_elements](#find_ui_elements), [get_focused_element](#get_focused_element), [get_element_at_point](#get_element_at_point), [get_active_popups](#get_active_popups), [read_element_text](#read_element_text), [read_table](#read_table), [wait_for_element](#wait_for_element) |
-| `input` | on | about 19,400 | Guarded mouse and keyboard input to a named window (clicks of any button with modifiers, drags, key chords), and actions on UI elements through UI Automation patterns: menu paths, answering dialogs, completing Open and Save As dialogs. | [click](#click), [right_click](#right_click), [double_click](#double_click), [mouse_click](#mouse_click), [drag](#drag), [mouse_move](#mouse_move), [scroll](#scroll), [type_text](#type_text), [send_keys](#send_keys), [press_keys](#press_keys), [element_action](#element_action), [respond_to_dialog](#respond_to_dialog), [file_dialog](#file_dialog) |
+| `input` | on | about 14,800 | Guarded mouse and keyboard input to a named window (clicks of any button with modifiers, drags, key chords), and actions on UI elements through UI Automation patterns: menu paths, answering dialogs, completing Open and Save As dialogs. | [mouse_click](#mouse_click), [drag](#drag), [mouse_move](#mouse_move), [scroll](#scroll), [type_text](#type_text), [send_keys](#send_keys), [press_keys](#press_keys), [element_action](#element_action), [respond_to_dialog](#respond_to_dialog), [file_dialog](#file_dialog) |
 | `clipboard` | on | about 700 | Read what the agent copied, put text on the clipboard to paste it; the user's own clipboard only with their consent. | [get_clipboard](#get_clipboard), [set_clipboard](#set_clipboard) |
 | `launch` | on | about 2,900 | Start applications, optionally waiting for their window. | [launch_application](#launch_application), [launch_applications_batch](#launch_applications_batch) |
 | `process` | on | about 1,900 | List processes and close or end one, or close an application's windows gracefully. | [list_processes](#list_processes), [kill_process](#kill_process), [close_application](#close_application) |
 | `layouts` | on | about 1,200 | Save, apply and manage window layout presets. | [list_layouts](#list_layouts), [get_layout](#get_layout), [save_layout](#save_layout), [apply_layout](#apply_layout), [delete_layout](#delete_layout) |
-| `browser` | on | about 4,700 | Read the URL and text of browser pages, list a debug browser's tabs and wait for a page; start and close a browser with a DevTools port. | [get_browser_url](#get_browser_url), [get_active_browser_url](#get_active_browser_url), [get_browser_content](#get_browser_content), [launch_browser_with_debug](#launch_browser_with_debug), [close_debug_browser](#close_debug_browser), [list_tabs](#list_tabs), [wait_for_browser](#wait_for_browser) |
+| `browser` | on | about 4,300 | Read the URL and text of browser pages, list a debug browser's tabs and wait for a page; start and close a browser with a DevTools port. | [get_browser_url](#get_browser_url), [get_browser_content](#get_browser_content), [launch_browser_with_debug](#launch_browser_with_debug), [close_debug_browser](#close_debug_browser), [list_tabs](#list_tabs), [wait_for_browser](#wait_for_browser) |
 | `browser-actions` | off | about 3,600 | Act on a debug browser's pages through CDP: show and navigate tabs (with a load wait), click and type in a page without the real mouse or keyboard, answer its JavaScript dialogs, place its elements on the screen, capture it. | [activate_tab](#activate_tab), [browser_navigate](#browser_navigate), [browser_element_rect](#browser_element_rect), [browser_click](#browser_click), [browser_type](#browser_type), [browser_handle_dialog](#browser_handle_dialog), [browser_screenshot](#browser_screenshot) |
 | `browser-script` | off | about 500 | Run JavaScript in a debug browser's page through CDP, with the page's rights. | [browser_evaluate](#browser_evaluate) |
+| `windows-batch` | off | about 2,000 | Place, snap, or minimize, maximize and restore several windows in one call, each with its own placement or state. | [set_windows_bounds_batch](#set_windows_bounds_batch), [snap_windows_batch](#snap_windows_batch), [set_windows_state_batch](#set_windows_state_batch) |
+| `deprecated` | off | about 4,900 | Tools replaced in 2.2.0 and removed in 3.0.0, unchanged until then and each served only with the toolset it came from: use mouse_click, set_window_bounds, find_windows, get_monitors and get_browser_url instead. | [click](#click), [right_click](#right_click), [double_click](#double_click), [move_window](#move_window), [resize_window](#resize_window), [get_all_windows](#get_all_windows), [get_primary_monitor](#get_primary_monitor), [list_screens](#list_screens), [get_active_browser_url](#get_active_browser_url) |
 
-The default surface (the toolsets that are on) is about 60,000 tokens, and every tool together about 64,100.
+The default surface (the toolsets that are on) is about 51,000 tokens, and every tool together about 62,000.
 <!-- tools:end toolsets -->
 
 **Tokens** is what the toolset's tools cost in tools/list, to the nearest 100: their names, titles, descriptions, input schemas and annotations as the server sends them, estimated at 4 bytes of JSON per token (roadmap M6.1). It is what turning the toolset on adds to the context a client loads up front, and what turning it off saves. The two totals under the table are measured the same way and generated with it. Contract tests hold each toolset, the default surface, the whole list and every single tool (at most 2,500 tokens) to a budget, so a change that makes them larger is a decision; see TESTING.md.
 
-**The default.** Every toolset is on by default except `browser-actions` (activate_tab and browser_navigate, roadmap M5.5, and the DOM bridge's browser_element_rect, browser_click, browser_type, browser_handle_dialog and browser_screenshot, roadmap M5.8) and `browser-script` (browser_evaluate, roadmap M5.8), so a server without these variables serves every tool but those eight; `WAM_TOOLSETS=+browser-actions` adds the first seven, and `+browser-script` adds browser_evaluate, which runs any script with a page's rights (cookies scripts can read, storage, requests with the user's sign-in) and leaves no trace on the screen, so it is kept apart: turning on clicks and typing does not turn it on. The tools that later milestones add for OCR, visual change detection, layouts v2 and workspaces come in toolsets that are off by default too (`ocr`, `visual`, `layouts-v2`, `workspace`), so the default stays a core of finding, acting, waiting, windows, captures, guarded input, launching, reading browsers and the server's state; `WAM_TOOLSETS=all` serves everything.
+**The default.** Every toolset is on by default except four, so a server without these variables serves 58 of the 78 tools:
+
+- `browser-actions` (activate_tab and browser_navigate, roadmap M5.5, and the DOM bridge's browser_element_rect, browser_click, browser_type, browser_handle_dialog and browser_screenshot, roadmap M5.8): `WAM_TOOLSETS=+browser-actions` adds them.
+- `browser-script` (browser_evaluate, roadmap M5.8): `+browser-script` adds it. It runs any script with a page's rights (cookies scripts can read, storage, requests with the user's sign-in) and leaves no trace on the screen, so it is kept apart: turning on clicks and typing does not turn it on.
+- `windows-batch` (set_windows_bounds_batch, snap_windows_batch and set_windows_state_batch, roadmap M6.1): `+windows-batch` adds them. Each item takes its own placement or state, so they stay tools of their own, but most work places one window at a time with [set_window_bounds](#set_window_bounds), [snap_window](#snap_window) and [set_window_state](#set_window_state). [close_windows_batch](#close_windows_batch) and [launch_applications_batch](#launch_applications_batch) stay in the default.
+- `deprecated` (the nine tools that 2.2.0 replaced, roadmap M6.1): `+deprecated` adds them until 3.0.0 removes them; see [Moved and deprecated tools](#moved-and-deprecated-tools).
+
+Of the tools later milestones add, the niche or heavy ones come in toolsets that are off by default (`ocr`, `visual`), and small everyday steps (installed apps, z-order, step sequences) join toolsets that are on, so the default stays a core of finding, acting, waiting, windows, captures, guarded input, launching, reading browsers and the server's state. `WAM_TOOLSETS=all` serves every tool, the deprecated ones included, so `all` keeps meaning everything.
 
 **Read-only mode** serves the tools that only read, of the toolsets in force: windows, monitors, UI elements, browser pages, processes, layouts, the server's own state and get_clipboard (which then returns only what the user allows, since nothing the agent did can have filled the clipboard). The capture tools can write image files (`outputPath`), so they are not read-only, and neither is anything that sends input, changes or closes windows, starts or ends processes, or writes or deletes layouts. Which tool counts as read-only is the tool's own annotation (`readOnlyHint`), and contract tests check that every tool annotated read-only is one the input gate also treats as read-only and is none of the tools that write files (save_layout, delete_layout, the captures). The list below is generated from the annotations:
 
 <!-- tools:begin read-only (generated from the readOnlyHint annotations: run the tests with UPDATE_SNAPSHOTS=1, see TESTING.md) -->
-Read-only mode serves these 29 tools: [find_windows](#find_windows), [get_all_windows](#get_all_windows), [get_foreground_window](#get_foreground_window), [get_owned_windows](#get_owned_windows), [get_window_info](#get_window_info), [wait_for_window](#wait_for_window), [get_monitors](#get_monitors), [get_primary_monitor](#get_primary_monitor), [list_screens](#list_screens), [get_desktop_state](#get_desktop_state), [get_ui_elements](#get_ui_elements), [find_ui_elements](#find_ui_elements), [get_focused_element](#get_focused_element), [get_element_at_point](#get_element_at_point), [get_active_popups](#get_active_popups), [read_element_text](#read_element_text), [read_table](#read_table), [wait_for_element](#wait_for_element), [get_browser_url](#get_browser_url), [get_active_browser_url](#get_active_browser_url), [get_browser_content](#get_browser_content), [list_tabs](#list_tabs), [wait_for_browser](#wait_for_browser), [get_control_status](#get_control_status), [list_processes](#list_processes), [get_clipboard](#get_clipboard), [list_layouts](#list_layouts), [get_layout](#get_layout), [get_server_info](#get_server_info). With their opt-in toolset turned on it also serves [browser_element_rect](#browser_element_rect) (`browser-actions`).
+Read-only mode serves these 25 tools: [find_windows](#find_windows), [get_foreground_window](#get_foreground_window), [get_owned_windows](#get_owned_windows), [get_window_info](#get_window_info), [wait_for_window](#wait_for_window), [get_monitors](#get_monitors), [get_desktop_state](#get_desktop_state), [get_ui_elements](#get_ui_elements), [find_ui_elements](#find_ui_elements), [get_focused_element](#get_focused_element), [get_element_at_point](#get_element_at_point), [get_active_popups](#get_active_popups), [read_element_text](#read_element_text), [read_table](#read_table), [wait_for_element](#wait_for_element), [get_browser_url](#get_browser_url), [get_browser_content](#get_browser_content), [list_tabs](#list_tabs), [wait_for_browser](#wait_for_browser), [get_control_status](#get_control_status), [list_processes](#list_processes), [get_clipboard](#get_clipboard), [list_layouts](#list_layouts), [get_layout](#get_layout), [get_server_info](#get_server_info). With their opt-in toolset turned on it also serves [get_all_windows](#get_all_windows) (`deprecated`), [get_primary_monitor](#get_primary_monitor) (`deprecated`), [list_screens](#list_screens) (`deprecated`), [get_active_browser_url](#get_active_browser_url) (`deprecated`), [browser_element_rect](#browser_element_rect) (`browser-actions`).
 <!-- tools:end read-only -->
 
 **When tools are off**, the server instructions every client gets end with one more line that names the toolsets, the read-only mode and the excluded tools the user turned off, and tells the agent to skip the steps whose tools it does not see and to tell the user instead of working around them.
@@ -342,12 +351,37 @@ Read-only mode serves these 29 tools: [find_windows](#find_windows), [get_all_wi
 | Profile | `env` | What the agent can do |
 |---------|-------|------------------------|
 | Observer | `"WAM_READ_ONLY": "1"` | Look only: list and read windows, monitors, elements, pages, processes and layouts (the read-only tools listed above, without the opt-in toolsets' unless `WAM_TOOLSETS` adds them). No input, no window changes, no captures, no layout writes |
-| Arranger | `"WAM_TOOLSETS": "windows,monitors,layouts,launch"` | Find, arrange, launch and close windows and use layouts; no input, captures, processes or browser |
+| Arranger | `"WAM_TOOLSETS": "windows,windows-batch,monitors,layouts,launch"` | Find, arrange (one window or several at once), launch and close windows and use layouts; no input, captures, processes or browser |
 | No process control | `"WAM_TOOLSETS": "-process"` | Everything except listing processes, ending them and closing whole applications (close_window still closes single windows) |
-| Default | not set | Every toolset that is on by default: every tool but the opt-in `browser-actions` (activate_tab, browser_navigate and the DOM bridge but browser_evaluate) and `browser-script` (browser_evaluate); the opt-in toolsets of later milestones stay off |
+| Default | not set | Every toolset that is on by default: every tool but the opt-in `browser-actions` (activate_tab, browser_navigate and the DOM bridge but browser_evaluate), `browser-script` (browser_evaluate), `windows-batch` (the three geometry batches) and `deprecated` (the nine replaced tools); the opt-in toolsets of later milestones stay off |
 | Browser automation | `"WAM_TOOLSETS": "+browser-actions"` | The default and a debug browser's tabs, navigation, clicks, typing, dialogs, element rects and page captures through CDP; no scripts |
 | Browser automation with scripts | `"WAM_TOOLSETS": "+browser-actions,+browser-script"` | The above and [browser_evaluate](#browser_evaluate), which runs any script with a page's rights |
-| Everything | `"WAM_TOOLSETS": "all"` | Every tool, `browser-script` included, and the opt-in toolsets of later milestones |
+| Everything | `"WAM_TOOLSETS": "all"` | Every tool, `browser-script`, `windows-batch` and `deprecated` included, and the opt-in toolsets of later milestones |
+| 2.1 surface | `"WAM_TOOLSETS": "+windows-batch,+deprecated"` | The default and the twelve tools 2.2.0 took off it, for a client or prompt that still calls click, move_window or get_all_windows; the deprecated ones only until 3.0.0 |
+
+### Moved and deprecated tools
+
+Roadmap M6.1 (release 2.2.0) took twelve tools off the default surface, about 9,000 tokens of tools/list. Nine of them were replaced by a tool that does the same and more, and wait in the `deprecated` toolset until 3.0.0 removes them:
+
+| Deprecated tool | Came from | Use instead |
+|-----------------|-----------|-------------|
+| [click](#click) | `input` | [mouse_click](#mouse_click) |
+| [right_click](#right_click) | `input` | [mouse_click](#mouse_click) with `button: "secondary"` |
+| [double_click](#double_click) | `input` | [mouse_click](#mouse_click) with `clickCount: 2` |
+| [move_window](#move_window) | `windows` | [set_window_bounds](#set_window_bounds) with `x` and `y` |
+| [resize_window](#resize_window) | `windows` | [set_window_bounds](#set_window_bounds) with `width` and `height` |
+| [get_all_windows](#get_all_windows) | `windows` | [find_windows](#find_windows) with no filter |
+| [get_primary_monitor](#get_primary_monitor) | `monitors` | [get_monitors](#get_monitors), the monitor with `isPrimary` |
+| [list_screens](#list_screens) | `monitors` | [get_monitors](#get_monitors), whose `virtualScreen` is list_screens' |
+| [get_active_browser_url](#get_active_browser_url) | `browser` | [get_browser_url](#get_browser_url) with `window: {"foreground": true}` |
+
+The other three, set_windows_bounds_batch, snap_windows_batch and set_windows_state_batch, came from `windows` and are in the `windows-batch` toolset; they are not deprecated.
+
+- **Unchanged while served.** A deprecated tool takes the same arguments and returns the same result as in 2.1.0, and is gated, refused while input is paused and audited as before. Only its tool description changed: one line that names its replacement and the removal, so an agent that still sees it learns what to call instead. The replacements differ in small ways: mouse_click reports `clickType` `primary` or `secondary` where click, right_click and double_click reported `left`, `right` or `double`, and audit log lines name the tool that was called.
+- **Never forwarded.** A call to a tool that is not served is an unknown tool (a protocol error), so nothing runs; the server never sends it to the replacement, whose result differs.
+- **Only with the toolset it came from.** A moved tool is served only while the toolset it came from is on too, so turning its new toolset on never serves a configuration a tool it did not serve before 2.2.0: `WAM_TOOLSETS=all,-input` or `-input,+deprecated` serves no click, and `windows,monitors,deprecated` serves move_window, resize_window, get_all_windows, get_primary_monitor and list_screens but no click. A warning (logged at start, and in get_server_info) names the moved tools that their new toolset holds but this rule leaves out.
+- **Excluding.** `WAM_EXCLUDE_TOOLS` with a toolset's name also leaves out the tools that moved out of it (`input` leaves out click, right_click and double_click), as it did before the move. A `WAM_EXCLUDE_TOOLS` that names a moved tool the toolsets in force do not serve (`click` on a default server) is no error and does not fail closed: the tool is simply off, and the server instructions do not mention it.
+- **Where a tool went.** While a moved tool is out of reach (its new toolset off, the toolset it came from on, and the tool not excluded), [get_server_info](#get_server_info) lists it in `toolsets.moved`, one sentence per toolset: `"In the deprecated toolset, which is off (WAM_TOOLSETS=+deprecated serves it): click (use mouse_click), ..."`. A client with an explicit list such as `WAM_TOOLSETS=windows,input`, which served click and move_window before 2.2.0, sees there where they went; adding `deprecated` (or `+windows-batch`) serves them again. While deprecated tools are served, get_server_info's `warnings` names them with their replacements.
 
 ---
 
@@ -355,7 +389,7 @@ Read-only mode serves these 29 tools: [find_windows](#find_windows), [get_all_wi
 
 Tools for finding and listing windows on the system.
 
-Listings ([find_windows](#find_windows) and [get_all_windows](#get_all_windows)) return only **user-facing app windows**. They leave out:
+Listings ([find_windows](#find_windows), and the deprecated [get_all_windows](#get_all_windows)) return only **user-facing app windows**. They leave out:
 
 - cloaked windows: windows on other virtual desktops and suspended apps, which are not on screen even though Windows calls them visible
 - tool windows (`WS_EX_TOOLWINDOW` without `WS_EX_APPWINDOW`): floating palettes, menus and helper windows that are kept out of the taskbar and Alt+Tab
@@ -517,6 +551,8 @@ The taskbar is an untitled shell window, so listings leave it out. A `className`
 ---
 
 ### get_all_windows
+
+> **Deprecated** (roadmap M6.1): use [find_windows](#find_windows) with no filter instead. This tool is in the `deprecated` toolset, off by default, and 3.0.0 removes it. Until then `WAM_TOOLSETS=+deprecated` serves it unchanged, but only while the `windows` toolset it came from is on too, and a call to it is never forwarded to its replacement.
 
 List the visible user-facing app windows on the system (see [Window Discovery](#window-discovery) for what is left out). Use [find_windows](#find_windows) with `className`, `includeCloaked`, `includeToolWindows` or `includeShell` for other windows.
 
@@ -879,6 +915,8 @@ These tools, focus_window, close_window, the [Batch Operations](#batch-operation
 
 ### move_window
 
+> **Deprecated** (roadmap M6.1): use [set_window_bounds](#set_window_bounds) with `x` and `y` instead. This tool is in the `deprecated` toolset, off by default, and 3.0.0 removes it. Until then `WAM_TOOLSETS=+deprecated` serves it unchanged, but only while the `windows` toolset it came from is on too, and a call to it is never forwarded to its replacement.
+
 Move a window so that its visible frame's top-left corner is at `x`, `y`. It keeps its size (`SWP_NOSIZE`); see [Window Control](#window-control) for the visible frame, the state before placing and other scaling.
 
 <!-- tools:begin params:move_window -->
@@ -921,6 +959,8 @@ Move a window so that its visible frame's top-left corner is at `x`, `y`. It kee
 ---
 
 ### resize_window
+
+> **Deprecated** (roadmap M6.1): use [set_window_bounds](#set_window_bounds) with `width` and `height` instead. This tool is in the `deprecated` toolset, off by default, and 3.0.0 removes it. Until then `WAM_TOOLSETS=+deprecated` serves it unchanged, but only while the `windows` toolset it came from is on too, and a call to it is never forwarded to its replacement.
 
 Resize a window's visible frame. Its top-left corner stays where it is (`SWP_NOMOVE`) and it is not raised.
 
@@ -966,7 +1006,7 @@ Resize a window's visible frame. Its top-left corner stays where it is (`SWP_NOM
 
 Move, resize, or move and resize a window in a single operation: `x`, `y`, `width` and `height` are its visible frame (see [Window Control](#window-control)).
 
-**Either pair alone** (roadmap M6.1). `x` and `y` alone move the window and keep its size, exactly as [move_window](#move_window) does; `width` and `height` alone resize it and keep its top-left corner, exactly as [resize_window](#resize_window) does (`ResizeFailed` is then the error code, not `MoveFailed`); all four place the frame in one step, as before. `x` without `y`, `width` without `height`, no pair at all, or a width or height below 1 is `InvalidArguments`, and nothing is changed. `bringToFront` left out raises the window when it is moved (`x` and `y` given) and leaves the z-order alone for a size only, as move_window and resize_window do; pass `true` or `false` to choose. A move to a monitor with another scale is placed again once the application has applied its DPI change, with a position alone too.
+**Either pair alone** (roadmap M6.1). `x` and `y` alone move the window and keep its size, exactly as the deprecated [move_window](#move_window) does; `width` and `height` alone resize it and keep its top-left corner, exactly as the deprecated [resize_window](#resize_window) does (`ResizeFailed` is then the error code, not `MoveFailed`); all four place the frame in one step, as before. `x` without `y`, `width` without `height`, no pair at all, or a width or height below 1 is `InvalidArguments`, and nothing is changed. `bringToFront` left out raises the window when it is moved (`x` and `y` given) and leaves the z-order alone for a size only, as move_window and resize_window do; pass `true` or `false` to choose. A move to a monitor with another scale is placed again once the application has applied its DPI change, with a position alone too.
 
 <!-- tools:begin params:set_window_bounds -->
 **Parameters:**
@@ -1412,7 +1452,7 @@ Move a window to a specific monitor. The window keeps its normal size, made smal
 
 ## Batch Operations
 
-Tools for performing multiple window operations efficiently in a single call.
+Tools for performing multiple window operations efficiently in a single call. set_windows_bounds_batch, snap_windows_batch and set_windows_state_batch are in the `windows-batch` toolset, off by default since roadmap M6.1 (`WAM_TOOLSETS=+windows-batch`); [close_windows_batch](#close_windows_batch) and [launch_applications_batch](#launch_applications_batch) are served by default.
 
 The window batches handle each window on its own, and a window that fails does not stop the batch. The result counts `succeeded` and `failed`, and each item in `results` has `success`, and `error` and `errorCode` when it failed ([launch_applications_batch](#launch_applications_batch) works the same way per application; see its section). The batch call itself is not an error (`isError` stays unset) even when items failed:
 
@@ -1426,6 +1466,8 @@ The window batches handle each window on its own, and a window that fails does n
 `delayBetweenMs` is the pause between two windows. It is clamped to 0-5000 ms, because a batch holds the input gate the whole time (see [Window Control](#window-control)): a long batch makes input calls wait, and they give up with `InputBusy` after 30 seconds. A batch returns a tool error (`isError: true`) with `InputBusy` or `PausedByUser`, and does nothing, when it could not start.
 
 ### set_windows_bounds_batch
+
+> In the `windows-batch` toolset, off by default since roadmap M6.1: `WAM_TOOLSETS=+windows-batch` serves it, while the `windows` toolset is on too. It is not deprecated.
 
 Move and resize multiple windows in a single batch operation.
 
@@ -1480,6 +1522,8 @@ Each item of `placements` contains:
 
 ### snap_windows_batch
 
+> In the `windows-batch` toolset, off by default since roadmap M6.1: `WAM_TOOLSETS=+windows-batch` serves it, while the `windows` toolset is on too. It is not deprecated.
+
 Snap multiple windows to predefined positions in a single batch operation.
 
 <!-- tools:begin params:snap_windows_batch -->
@@ -1530,6 +1574,8 @@ Each item of `placements` contains:
 ---
 
 ### set_windows_state_batch
+
+> In the `windows-batch` toolset, off by default since roadmap M6.1: `WAM_TOOLSETS=+windows-batch` serves it, while the `windows` toolset is on too. It is not deprecated.
 
 Set the state (minimize, maximize, restore) of multiple windows in a single batch operation.
 
@@ -1729,7 +1775,7 @@ Tools for getting information about connected displays.
 
 ### get_monitors
 
-Get information about all connected monitors, and `virtualScreen`: the bounds of all monitors together (the area [take_screenshot](#take_screenshot) captures with `monitorIndex: -1`), the same rectangle [list_screens](#list_screens) reports (roadmap M6.1). The server reuses monitor information for up to 250 ms, so a display change can take that long to appear.
+Get information about all connected monitors, and `virtualScreen`: the bounds of all monitors together (the area [take_screenshot](#take_screenshot) captures with `monitorIndex: -1`), the same rectangle the deprecated [list_screens](#list_screens) reports (roadmap M6.1). The server reuses monitor information for up to 250 ms, so a display change can take that long to appear.
 
 <!-- tools:begin params:get_monitors -->
 **Parameters:** None
@@ -1774,6 +1820,8 @@ Get information about all connected monitors, and `virtualScreen`: the bounds of
 ---
 
 ### get_primary_monitor
+
+> **Deprecated** (roadmap M6.1): use [get_monitors](#get_monitors), the monitor with `isPrimary` instead. This tool is in the `deprecated` toolset, off by default, and 3.0.0 removes it. Until then `WAM_TOOLSETS=+deprecated` serves it unchanged, but only while the `monitors` toolset it came from is on too, and a call to it is never forwarded to its replacement.
 
 Get information about the primary display.
 
@@ -1836,6 +1884,8 @@ The **Response** examples below show the metadata text, formatted.
 - If you only need element positions, use [get_ui_elements](#get_ui_elements), which returns no image.
 
 ### list_screens
+
+> **Deprecated** (roadmap M6.1): use [get_monitors](#get_monitors), whose `virtualScreen` is list_screens' (the monitors' indices are the same) instead. This tool is in the `deprecated` toolset, off by default, and 3.0.0 removes it. Until then `WAM_TOOLSETS=+deprecated` serves it unchanged, but only while the `monitors` toolset it came from is on too, and a call to it is never forwarded to its replacement.
 
 List all available screens/monitors for capture, including virtual screen bounds.
 
@@ -2046,7 +2096,7 @@ Capture a screenshot of an arbitrary screen region.
 }
 ```
 
-> **Note:** Only the part of the region on the virtual screen (the bounding box of all monitors, see [list_screens](#list_screens)) is captured. A region partly off it is cut to it: `capturedRegion` is the part captured, and a `RegionClipped` warning gives it. A region entirely off it fails with `RegionOffScreen`. Part of a region that lies between monitors of different sizes is black, with a `RegionPartlyOffMonitors` warning. `monitorIndex` and `scaleFactor` are those of the monitor that contains the region's center, and are left out when the center is on no monitor.
+> **Note:** Only the part of the region on the virtual screen (the bounding box of all monitors, [get_monitors](#get_monitors)' `virtualScreen`) is captured. A region partly off it is cut to it: `capturedRegion` is the part captured, and a `RegionClipped` warning gives it. A region entirely off it fails with `RegionOffScreen`. Part of a region that lies between monitors of different sizes is black, with a `RegionPartlyOffMonitors` warning. `monitorIndex` and `scaleFactor` are those of the monitor that contains the region's center, and are left out when the center is on no monitor.
 
 ---
 
@@ -2058,7 +2108,7 @@ Capture a screenshot of a specific window. Works even if the window is partially
 **Parameters:**
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| handle | integer | No | - | Window handle from find_windows or get_all_windows |
+| handle | integer | No | - | Window handle from find_windows |
 | window | object | No | - | Alternative to handle: the window as a selector, resolved to exactly one window or refused (WindowNotFound; AmbiguousWindow with candidates). Filters as in find_windows (processName is the whole name); index picks a match in z-order; foreground is the window in front; handle plus filters must still match (HandleMismatch). |
 | ref | string | No | - | An element's [ref](#ui-automation), such as `w4120035e17`: crop the image to that element (its bounds read now) plus `padding`, clipped to the window. handle and window may be left out (the ref names its window); one that names another window fails with `InvalidArguments` |
 | padding | integer | No | 8 (with ref) | Pixels kept around the ref's element on every side (0-500); only with `ref` (`InvalidArguments` otherwise) |
@@ -2151,7 +2201,7 @@ Capture a window with its UI elements drawn on it as numbered marks (Set-of-Mark
 **Parameters:**
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| handle | integer | No | - | Window handle from find_windows or get_all_windows |
+| handle | integer | No | - | Window handle from find_windows |
 | window | object | No | - | Alternative to handle: the window as a selector, resolved to exactly one window or refused (WindowNotFound; AmbiguousWindow with candidates). Filters as in find_windows (processName is the whole name); index picks a match in z-order; foreground is the window in front; handle plus filters must still match (HandleMismatch). |
 | includeFrame | boolean | No | true | Include window frame/decoration |
 | format | string (one of: `"auto"`, `"png"`, `"jpeg"`, `"jpg"`) | No | "auto" | "auto" (JPEG, or PNG up to a 512-pixel long edge), "png" or "jpeg" |
@@ -2413,7 +2463,7 @@ Get the UI element tree with bounding boxes for a window. Provides a lightweight
 **Parameters:**
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| handle | integer | No | - | Window handle from find_windows or get_all_windows |
+| handle | integer | No | - | Window handle from find_windows |
 | window | object | No | - | Alternative to handle: the window as a selector, resolved to exactly one window or refused (WindowNotFound; AmbiguousWindow with candidates). Filters as in find_windows (processName is the whole name); index picks a match in z-order; foreground is the window in front; handle plus filters must still match (HandleMismatch). |
 | maxDepth | integer | No | 5 | How many levels below the window to read (1-10). 1 returns only the window's direct children |
 | controlTypes | string | No | - | Comma-separated control types to include (e.g., "Button,Edit,ComboBox"). Unknown names fail with `InvalidControlType` |
@@ -2576,7 +2626,7 @@ Find elements in a window by name, automation id, control type and class, in one
 **Parameters:**
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| handle | integer | No | - | Window handle from find_windows or get_all_windows. Pass `handle`, `window` or `withinRef` (or neither with `scope: "desktop"`) |
+| handle | integer | No | - | Window handle from find_windows. Pass `handle`, `window` or `withinRef` (or neither with `scope: "desktop"`) |
 | window | object | No | - | Alternative to handle: the window as a selector, resolved to exactly one window or refused (WindowNotFound; AmbiguousWindow with candidates). Filters as in find_windows (processName is the whole name); index picks a match in z-order; foreground is the window in front; handle plus filters must still match (HandleMismatch). |
 | name | string | No | - | The element's name (its label or text), ignoring case; compared as `nameMatch` says |
 | nameMatch | string (one of: `"exact"`, `"contains"`, `"regex"`) | No | "exact" | `exact`: the whole name, searched by the provider; `contains`: a part of it; `regex`: a .NET regular expression found anywhere in it, at most 100 ms per name. `contains` and `regex` test what the other criteria match |
@@ -3044,8 +3094,8 @@ Get the UI element at a screen point, the elements above it, and the top-level w
 **Parameters:**
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| x | integer | Yes | - | X in physical virtual-screen pixels, as for `click` (can be negative) |
-| y | integer | Yes | - | Y in physical virtual-screen pixels, as for `click` (can be negative) |
+| x | integer | Yes | - | X in physical virtual-screen pixels, as for `mouse_click` (can be negative) |
+| y | integer | Yes | - | Y in physical virtual-screen pixels, as for `mouse_click` (can be negative) |
 | ancestors | integer | No | 3 | How many elements above it to return, nearest first (0-10) |
 | timeoutMs | integer | No | 5000 | How long to wait for UI Automation, in ms (1000-30000) |
 <!-- tools:end params:get_element_at_point -->
@@ -3518,7 +3568,7 @@ For clicking, typing and answering dialogs in a debug browser's page without the
 
 Get the current URL from a browser window: from the shown tab's page or its address bar with UI Automation, or from the matched tab with CDP.
 
-**The browser in front.** `window: {"foreground": true}` with no other filter reads the foreground browser exactly as [get_active_browser_url](#get_active_browser_url) does, and returns `NoBrowserInForeground` when the window in front is not a browser (or there is none), instead of `NotABrowser` (roadmap M6.1). With a filter beside it (`{"foreground": true, "processName": "chrome"}`) the selector is resolved as usual, so a window in front that does not match is `WindowNotFound`. There is no implicit default: without `handle` or `window` the call is `InvalidArguments`, so a forgotten handle never reads whatever browser happens to be in front.
+**The browser in front.** `window: {"foreground": true}` with no other filter reads the foreground browser exactly as the deprecated [get_active_browser_url](#get_active_browser_url) does, and returns `NoBrowserInForeground` when the window in front is not a browser (or there is none), instead of `NotABrowser` (roadmap M6.1). With a filter beside it (`{"foreground": true, "processName": "chrome"}`) the selector is resolved as usual, so a window in front that does not match is `WindowNotFound`. There is no implicit default: without `handle` or `window` the call is `InvalidArguments`, so a forgotten handle never reads whatever browser happens to be in front.
 
 With UI Automation the result says where the URL came from (`urlSource`: `document`, the address the tab committed, or `addressBar`, the text the address bar shows, which can lack the scheme; a file page's path is returned as its `file:///` URL), what the address bar shows (`displayUrl`, when it is URL-like) and whether it has the keyboard focus (`isEditing`). A new tab page returns `NewTabPage` (with `url` when the page gave its address, such as `chrome://new-tab-page/`), not `UrlBarNotFound`. When the page gives no address and the address bar is being edited, or may be (the browser is not the foreground window, or its focus cannot be read; `isEditing` is then left out), holds text that is not a URL or cannot be read, the result is `UrlExtractionFailed`: such an address bar may hold what someone is typing, which is never returned as the URL.
 
@@ -3607,6 +3657,8 @@ With UI Automation the result says where the URL came from (`urlSource`: `docume
 ---
 
 ### get_active_browser_url
+
+> **Deprecated** (roadmap M6.1): use [get_browser_url](#get_browser_url) with `window: {"foreground": true}` instead. This tool is in the `deprecated` toolset, off by default, and 3.0.0 removes it. Until then `WAM_TOOLSETS=+deprecated` serves it unchanged, but only while the `browser` toolset it came from is on too, and a call to it is never forwarded to its replacement.
 
 Get the URL from the foreground browser window. This combines get_foreground_window and get_browser_url, with the same CDP behavior and response fields. [get_browser_url](#get_browser_url) with `window: {"foreground": true}` does the same (roadmap M6.1).
 
@@ -4491,6 +4543,8 @@ Every input result reports:
 
 ### click
 
+> **Deprecated** (roadmap M6.1): use [mouse_click](#mouse_click) instead. This tool is in the `deprecated` toolset, off by default, and 3.0.0 removes it. Until then `WAM_TOOLSETS=+deprecated` serves it unchanged, but only while the `input` toolset it came from is on too, and a call to it is never forwarded to its replacement.
+
 Perform a left (primary) mouse click at the specified screen coordinates, or at a point of a capture's image ([Coordinate spaces for the mouse tools](#coordinate-spaces-for-the-mouse-tools)). With swapped mouse buttons it presses the right button, the user's primary one. To act on an element, [element_action](#element_action) with its ref needs no point. Pass `windowHandle`: the click is sent only if the point is on that window or a popup of it ([Input guard](#input-guard)).
 
 <!-- tools:begin params:click -->
@@ -4556,7 +4610,7 @@ Perform a left (primary) mouse click at the specified screen coordinates, or at 
 **Example: a point seen on a capture.** Pass the capture's `captureId` and the point as measured on its image; the server converts it, uses the captured window as `windowHandle`, and echoes the point under `requested` (see [Coordinate spaces for the mouse tools](#coordinate-spaces-for-the-mouse-tools)):
 
 ```json
-{ "name": "click", "arguments": { "x": 392, "y": 196, "captureId": "c7-3fa91c" } }
+{ "name": "mouse_click", "arguments": { "x": 392, "y": 196, "captureId": "c7-3fa91c" } }
 ```
 
 ```json
@@ -4581,6 +4635,8 @@ Coordinates outside every monitor return `CoordinatesOutOfBounds` without `recei
 ---
 
 ### right_click
+
+> **Deprecated** (roadmap M6.1): use [mouse_click](#mouse_click) with `button: "secondary"` instead. This tool is in the `deprecated` toolset, off by default, and 3.0.0 removes it. Until then `WAM_TOOLSETS=+deprecated` serves it unchanged, but only while the `input` toolset it came from is on too, and a call to it is never forwarded to its replacement.
 
 Perform a right (secondary) mouse click at the specified screen coordinates, or at a point of a capture's image ([Coordinate spaces for the mouse tools](#coordinate-spaces-for-the-mouse-tools)). With swapped mouse buttons it presses the left button, the user's secondary one.
 
@@ -4621,6 +4677,8 @@ In a terminal a right click pastes the clipboard, so there it is sent only when 
 
 ### double_click
 
+> **Deprecated** (roadmap M6.1): use [mouse_click](#mouse_click) with `clickCount: 2` instead. This tool is in the `deprecated` toolset, off by default, and 3.0.0 removes it. Until then `WAM_TOOLSETS=+deprecated` serves it unchanged, but only while the `input` toolset it came from is on too, and a call to it is never forwarded to its replacement.
+
 Perform a double left (primary) click at the specified screen coordinates, or at a point of a capture's image ([Coordinate spaces for the mouse tools](#coordinate-spaces-for-the-mouse-tools)). Useful for opening files, selecting words, or other double-click actions. Both clicks go in one SendInput batch with the move to the point, so they are at the same pixel and well within the user's double-click time: Windows counts them as one double click.
 
 <!-- tools:begin params:double_click -->
@@ -4659,7 +4717,7 @@ Perform a double left (primary) click at the specified screen coordinates, or at
 
 ### mouse_click
 
-Click any mouse button one to three times at a point, with modifier keys held around the clicks (roadmap M4.3): a Ctrl+click or Shift+click that adds to a selection, a middle click that opens a link in a new tab, a triple click that selects a line or a paragraph, `x1` or `x2` for Back and Forward. The point (`space`, `captureId`), the target and every [Input guard](#input-guard) check are [click](#click)'s. [click](#click), [right_click](#right_click) and [double_click](#double_click) are mouse_click with the primary or secondary button and no modifiers; they stay as they are. Its tool description names every one of those checks itself (`TargetOccluded`, `BlockedByModal`, `TargetIsAgentHost`, `CursorNotAtPoint`, `CursorClamped`, `MouseInUse`, the guard's codes and the terminal paste rule) instead of pointing to click's (roadmap M6.1), so an agent that loads only mouse_click has the whole contract.
+Click any mouse button one to three times at a point, with modifier keys held around the clicks (roadmap M4.3): a Ctrl+click or Shift+click that adds to a selection, a middle click that opens a link in a new tab, a triple click that selects a line or a paragraph, `x1` or `x2` for Back and Forward. The point (`space`, `captureId`), the target and every [Input guard](#input-guard) check are those described under [click](#click). mouse_click replaces [click](#click), [right_click](#right_click) and [double_click](#double_click) (roadmap M6.1): they are mouse_click with the primary or secondary button and no modifiers, and are deprecated, served unchanged only with `WAM_TOOLSETS=+deprecated` until 3.0.0. Its tool description names every one of those checks itself (`TargetOccluded`, `BlockedByModal`, `TargetIsAgentHost`, `CursorNotAtPoint`, `CursorClamped`, `MouseInUse`, the guard's codes and the terminal paste rule) instead of pointing to click's (roadmap M6.1), so an agent that loads only mouse_click has the whole contract.
 
 The modifier key-downs, the absolute move to the point, the clicks and the modifier key-ups go in one SendInput batch, so no other input comes between them, a double or triple click is one whatever the double-click time, and no key stays down whatever happens to the call. When SendInput inserts only part of the batch, what went down is sent up at once, and `SendInputFailed` says how many clicks went in. The modifiers are sent as the left-hand keys (left Ctrl, Shift, Alt or Windows), with the scan codes of the target window's keyboard layout as [send_keys](#send_keys)' keys are (drag's too), and a modifier named twice goes down once. When Alt or Windows is among them, an unassigned key (VK 0xE8) goes down and up right before they are released, so their release opens neither the menu bar nor the Start menu. A modifier the user holds is still refused before anything is sent (`ModifiersHeld`), and so is a mouse button the user holds, X1 and X2 included (`MouseInUse`). `primary` and `secondary` are the user's buttons, as for click (the right and the left one when the user swapped them in Windows' mouse settings); `left` and `right` are accepted for them. `middle`, `x1` and `x2` are never swapped. A right or a middle click in a terminal pastes (mintty and PuTTY paste on the middle button), so there it follows the paste rule (`PasteNotAllowed`, see [Clipboard](#clipboard)).
 
@@ -4723,7 +4781,7 @@ mouse_click takes no `ref`: to click an element by its ref, [element_action](#el
 { "name": "mouse_click", "arguments": { "x": 300, "y": 240, "clickCount": 3, "windowHandle": 12345 } }
 ```
 
-`clickType` is the button (`primary`, `secondary`, `middle`, `x1` or `x2`), `clickCount` the number of clicks and `modifiers` the keys held (left out without any). The error codes are click's.
+`clickType` is the button (`primary`, `secondary`, `middle`, `x1` or `x2`; click, right_click and double_click report `left`, `right` and `double`), `clickCount` the number of clicks and `modifiers` the keys held (left out without any). The error codes are those listed under [click](#click).
 
 ---
 
@@ -4733,7 +4791,7 @@ Press a mouse button at one point, move the pointer to another and release it th
 
 How a drag runs:
 
-1. Both points are converted as click's point is: `space` and `captureId` apply to `fromX`, `fromY` and `toX`, `toY` alike (see [Coordinate spaces for the mouse tools](#coordinate-spaces-for-the-mouse-tools)); `window` and `client` points of the to point are measured from `toWindowHandle`'s window when it is given. The result's `fromX`, `fromY`, `toX`, `toY` are the screen points, and `requestedFrom`, `requestedTo` echo points that were not screen points.
+1. Both points are converted as mouse_click's point is: `space` and `captureId` apply to `fromX`, `fromY` and `toX`, `toY` alike (see [Coordinate spaces for the mouse tools](#coordinate-spaces-for-the-mouse-tools)); `window` and `client` points of the to point are measured from `toWindowHandle`'s window when it is given. The result's `fromX`, `fromY`, `toX`, `toY` are the screen points, and `requestedFrom`, `requestedTo` echo points that were not screen points.
 2. Inside the input gate, the guard checks the from point against `windowHandle` and the to point against the drop's window (below), each as a click's point: `TargetOccluded`, `BlockedByModal`, `TargetElevated`, `TargetDeniedByPolicy`, `TargetIsAgentHost`, `MouseInUse`, `StaleCapture`. A refusal sends nothing; its `error` starts with "The from point:" or "The to point:", and `dropWindow` names the window at the to point.
 3. The pointer moves to the from point; 10 ms later the point is checked again, as before a click, and the pointer must stay there (`CursorNotAtPoint`). A modifier key or mouse button the user pressed meanwhile refuses the drag (`ModifiersHeld`, `MouseInUse`).
 4. One batch: the modifier key-downs, an absolute move to the from point and the press. `pressed` is `true` from here on.
@@ -4773,7 +4831,7 @@ There is no `mouse_down` or `key_down` tool: a button or key held across calls c
 | toWindowHandle | integer | No | windowHandle | The window the drop is for, when it is another window (a file from File Explorer into an app): the to point must be on it, with every check `windowHandle` gets (policy, elevation, host, modal); `window` and `client` points of the to point are measured from it |
 | allowHostTarget | boolean | No | false | Allow the agent's own host window, only when it is `windowHandle` (or `window.handle`; refused beside a selector without a handle). Set it only when the user explicitly asked |
 | releaseHeldModifiers | boolean | No | false | Send modifier keys that are down (Shift, Ctrl, Alt, Windows) up first, instead of refusing with `ModifiersHeld`. Only when nobody is pressing them (a stuck key) or the user asked (see [Input guard](#input-guard)) |
-| space | string (one of: `"screen"`, `"window"`, `"client"`, `"image"`) | No | screen (image with `captureId`) | What both points are measured in, as click's `x`/`y` (see [Coordinate spaces for the mouse tools](#coordinate-spaces-for-the-mouse-tools)) |
+| space | string (one of: `"screen"`, `"window"`, `"client"`, `"image"`) | No | screen (image with `captureId`) | What both points are measured in, as mouse_click's `x`/`y` (see [Coordinate spaces for the mouse tools](#coordinate-spaces-for-the-mouse-tools)) |
 | captureId | string | No | - | The `captureId` of a capture result; both points are pixels of its image. `StaleCapture` when the captured window moved, `CaptureNotFound` when unknown or older than 10 minutes |
 | observe | string (one of: `"none"`, `"state"`, `"screenshot"`) | No | "none" | What to return after the action: 'none' (default), 'state' (get_desktop_state's default observation of the window acted on, or of the window in front once that closed, as observed; needs get_desktop_state to be served) or 'screenshot' (as state, plus a capture of that window as image content; needs capture_window too). |
 <!-- tools:end params:drag -->
@@ -5784,7 +5842,7 @@ List running processes with optional filtering.
 | includeWindowless | boolean | No | false | Also list processes without a visible, titled window; `windowCount` is then 0 for every process |
 <!-- tools:end params:list_processes -->
 
-By default only processes with at least one visible, titled top-level window are listed. Unlike [get_all_windows](#get_all_windows), this counts every such window: windows on other virtual desktops (cloaked), tool windows and the desktop shell's windows too, so a process does not disappear from the list only because its window is not on the current desktop. `windowCount` is the number of those windows. A Store (UWP) app's window counts for the app's own process and for its `ApplicationFrameHost` host. To check whether a process has exited, use `includeWindowless: true`, which lists every running process.
+By default only processes with at least one visible, titled top-level window are listed. Unlike [find_windows](#find_windows), this counts every such window: windows on other virtual desktops (cloaked), tool windows and the desktop shell's windows too, so a process does not disappear from the list only because its window is not on the current desktop. `windowCount` is the number of those windows. A Store (UWP) app's window counts for the app's own process and for its `ApplicationFrameHost` host. To check whether a process has exited, use `includeWindowless: true`, which lists every running process.
 
 **Example:**
 > "Show all Chrome processes"
@@ -6389,7 +6447,7 @@ A placement with no criterion the method can use (`title_only` without `titleCon
 
 A placement's process name matches part of the window's process name, case-insensitive; a Store (UWP) app's window also matches `ApplicationFrameHost`, which is what presets saved by earlier versions stored for UWP windows. A process name that [save_layout](#save_layout) recorded (`exactProcessName: true`) must match the whole name instead, so `Code` does not match `Code - Insiders`.
 
-**One window per placement.** apply_layout reads the open windows once, the windows [get_all_windows](#get_all_windows) lists, and gives each placement its own window: a window is never given to two placements, and a placement left without a window is `notFound` (a layout with three Chrome windows and one Chrome window open arranges that window once). Among the windows that pass the method's filter, the one most like what save_layout recorded wins: the same title (or most of its parts, split at ` - ` and ` | `, so a browser window whose tab changed still counts), the same window class, the same program, and then the window closest to the placement's place and the same position among its process's windows. The best pairs are taken first, so a placement that recognizes its window by title gets it even when an earlier placement would take any window of that process; a hand-written placement without these fields takes the matching window closest to its place. A window on another virtual desktop (cloaked) or a tool window is not listed, so its placement counts as not found, and with `launchMissing` a placement that has a launch command starts its application again; if that brings up a window another placement was given (a single-instance app), the placement fails with `LaunchFailed`.
+**One window per placement.** apply_layout reads the open windows once, the windows [find_windows](#find_windows) lists without a filter, and gives each placement its own window: a window is never given to two placements, and a placement left without a window is `notFound` (a layout with three Chrome windows and one Chrome window open arranges that window once). Among the windows that pass the method's filter, the one most like what save_layout recorded wins: the same title (or most of its parts, split at ` - ` and ` | `, so a browser window whose tab changed still counts), the same window class, the same program, and then the window closest to the placement's place and the same position among its process's windows. The best pairs are taken first, so a placement that recognizes its window by title gets it even when an earlier placement would take any window of that process; a hand-written placement without these fields takes the matching window closest to its place. A window on another virtual desktop (cloaked) or a tool window is not listed, so its placement counts as not found, and with `launchMissing` a placement that has a launch command starts its application again; if that brings up a window another placement was given (a single-instance app), the placement fails with `LaunchFailed`.
 
 **Monitors and state.** A placement whose `monitorIndex` is not a monitor now (after undocking, for example) fails with `InvalidMonitorIndex`; it is no longer put on monitor 0. A placement with `state: "maximized"` maximizes its window on its monitor, as [move_window_to_monitor](#move_window_to_monitor) `maximize` does; any other placement restores a minimized or maximized window first without activating it, then gives it the placement's rectangle (a hidden one, such as an app's window in the notification area, is not shown: the placement fails with `ArrangeFailed`), and `state: "minimized"` (hand-written only) minimizes it afterwards; a minimize that the application does not answer leaves the placement `applied`, with `ArrangeFailed` saying it could not be minimized.
 
@@ -6612,11 +6670,15 @@ Reports the server's build and the environment its tools work in, in one read-on
   },
   "toolsets": {
     "enabled": ["server", "windows", "monitors", "capture", "elements", "input", "clipboard", "launch", "process", "layouts", "browser"],
-    "disabled": [],
+    "disabled": ["browser-actions", "browser-script", "windows-batch", "deprecated"],
     "source": "default",
     "readOnly": false,
     "excludedTools": [],
-    "servedTools": 64
+    "servedTools": 58,
+    "moved": [
+      "In the windows-batch toolset, which is off (WAM_TOOLSETS=+windows-batch serves it): set_windows_bounds_batch, snap_windows_batch, set_windows_state_batch.",
+      "In the deprecated toolset, which is off (WAM_TOOLSETS=+deprecated serves it): click (use mouse_click), right_click (use mouse_click with button 'secondary'), double_click (use mouse_click with clickCount 2), move_window (use set_window_bounds with x and y), resize_window (use set_window_bounds with width and height), get_all_windows (use find_windows), get_primary_monitor (use get_monitors), list_screens (use get_monitors), get_active_browser_url (use get_browser_url with window {\"foreground\": true})."
+    ]
   },
   "uiAutomation": { "engine": "Uia3", "source": "default", "connectionTimeoutMs": 1000, "transactionTimeoutMs": 5000 }
 }
@@ -6633,9 +6695,9 @@ Reports the server's build and the environment its tools work in, in one read-on
 | `input` | Whether the user paused input with the pause hotkey (`paused`, `pausedBy`, `pausedAt`), the `hotkey` (as in [get_control_status](#get_control_status)) and `sharedPause` |
 | `safety` | The [target policy](#target-policy) (`deniedProcesses`, `denyListSource`, `allowedProcesses` when the user set an allow list) the `destructiveChords` that need `windowHandle`, `userClipboardAllowed` (`WAM_ALLOW_USER_CLIPBOARD`: whether get_clipboard returns the user's clipboard without asking) and `allowedProtocols` (the URI schemes launch_application opens, the built-in ones first, then those `WAM_ALLOWED_PROTOCOLS` adds; an entry it ignored is named in `warnings`) |
 | `paths` | `layouts`, the [layout presets](#layout-presets) folder, and `auditLog`, the folder of the [audit log](#audit-log) |
-| `toolsets` | The [toolsets](#toolsets) served (`enabled`) and not served (`disabled`), where the choice came from (`source`: `default`, `WAM_TOOLSETS`, `all`, or `WAM_EXCLUDE_TOOLS` when an entry it could not read left only the `server` toolset on), `readOnly` mode, the `excludedTools`, and how many tools are served (`servedTools`) |
+| `toolsets` | The [toolsets](#toolsets) served (`enabled`) and not served (`disabled`), where the choice came from (`source`: `default`, `WAM_TOOLSETS`, `all`, or `WAM_EXCLUDE_TOOLS` when an entry it could not read left only the `server` toolset on), `readOnly` mode, the `excludedTools`, how many tools are served (`servedTools`), and `moved`: where the tools that moved out of a toolset in force went (roadmap M6.1), one sentence per toolset that is off, each tool with its replacement, if any (see [Moved and deprecated tools](#moved-and-deprecated-tools)). A tool the user excluded, or whose former toolset is off too, is left out; `moved` is left out when nothing is out of reach |
 | `uiAutomation` | The [UI Automation](#ui-automation) engine of the element tools: `engine` is `Uia3` (the COM client, the default) or `Uia2` (the managed client, `WAM_UIA_ENGINE=uia2`), `source` is `default` or `WAM_UIA_ENGINE`, and `connectionTimeoutMs` and `transactionTimeoutMs` are the per-call limits of the Uia3 engine (left out for Uia2, which has none) |
-| `warnings` | One sentence for each thing that will make tools fail or coordinates wrong: a DPI awareness that can scale coordinates (anything but `PerMonitorV2` or `PerMonitor`), a locked session or unreachable input desktop, a server below medium integrity, input paused by the user, a pause hotkey that is not registered or does not pause this server, an [audit log](#audit-log) that cannot be written, every `WAM_TOOLSETS`, `WAM_EXCLUDE_TOOLS` or `WAM_READ_ONLY` entry that was ignored, a `WAM_ALLOW_USER_CLIPBOARD` value that was not understood, a `WAM_UIA_ENGINE` value that is not `uia3` or `uia2`, and the `WAM_ALLOWED_PROTOCOLS` entries that were ignored. Left out when there is nothing to warn about |
+| `warnings` | One sentence for each thing that will make tools fail or coordinates wrong: a DPI awareness that can scale coordinates (anything but `PerMonitorV2` or `PerMonitor`), a locked session or unreachable input desktop, a server below medium integrity, input paused by the user, a pause hotkey that is not registered or does not pause this server, an [audit log](#audit-log) that cannot be written, every `WAM_TOOLSETS`, `WAM_EXCLUDE_TOOLS` or `WAM_READ_ONLY` entry that was ignored, moved tools that their toolset holds but does not serve because the toolset they came from is off, the deprecated tools that are served (with their replacements), a `WAM_ALLOW_USER_CLIPBOARD` value that was not understood, a `WAM_UIA_ENGINE` value that is not `uia3` or `uia2`, and the `WAM_ALLOWED_PROTOCOLS` entries that were ignored. Left out when there is nothing to warn about |
 
 A value that cannot be read is `Unknown`, null or left out, and a warning says what that means. If a source the report reads throws instead (the monitor list or the layouts folder, say), the call fails with a tool error, as any tool does.
 
@@ -6743,7 +6805,7 @@ get_element_at_point { "x": 140, "y": 215 }
 
 5. Click the element, naming its window. The click is sent only if the point is on window 12345 or a popup of it; otherwise the result is `TargetOccluded` or `BlockedByModal`, and nothing was clicked:
 ```
-click { "x": 140, "y": 215, "windowHandle": 12345 }
+mouse_click { "x": 140, "y": 215, "windowHandle": 12345 }
 ```
 
 6. Check `success` and `receivingWindow`, then verify the result, for example with `get_ui_elements` or a capture.
@@ -6755,7 +6817,7 @@ Pass `windowHandle` to every input call: the server brings window 12345 to the f
 1. Bring the window to the front and click on a text field (coordinates from get_ui_elements):
 ```
 focus_window { "handle": 12345 }
-click { "x": 500, "y": 300, "windowHandle": 12345 }
+mouse_click { "x": 500, "y": 300, "windowHandle": 12345 }
 ```
 
 2. Check that the caret is in the field (`element` is the field you clicked and `windowHandle` is 12345), then type text into it:
@@ -6783,7 +6845,7 @@ Complete a form with multiple fields. Every call names the window, so nothing is
 ```
 // 1. Bring the window to the front and click the first field
 focus_window { "handle": 12345 }
-click { "x": 500, "y": 100, "windowHandle": 12345 }
+mouse_click { "x": 500, "y": 100, "windowHandle": 12345 }
 
 // 2. Type name
 type_text { "text": "John Doe", "windowHandle": 12345 }
@@ -7584,6 +7646,26 @@ the new tools; their sections have the rest.
   the window in front was not a browser). mouse_click's description now names every check a click gets instead of
   referring to click's. The toolsets table above has a Tokens column, and contract tests hold the default tools/list,
   each toolset and every single tool (at most 2,500 tokens) to a budget.
+- **Deprecated tools and the window batches leave the default (roadmap M6.1, deprecations).** **Changed:** a server
+  without `WAM_TOOLSETS` serves 58 tools instead of 70, about 51,000 tokens of tools/list instead of about 60,000. Nine
+  tools that another tool replaced are in the new `deprecated` toolset, off by default: click, right_click and
+  double_click ([mouse_click](#mouse_click)), move_window and resize_window ([set_window_bounds](#set_window_bounds) with
+  one pair), get_all_windows ([find_windows](#find_windows)), get_primary_monitor and list_screens
+  ([get_monitors](#get_monitors)), and get_active_browser_url ([get_browser_url](#get_browser_url) with
+  `window: {"foreground": true}`). Their tool descriptions are one line that names the replacement; their arguments,
+  results, input gate and audit lines are unchanged. `WAM_TOOLSETS=+deprecated` brings them back until 3.0.0, which
+  removes them; a call to one that is not served is an unknown tool, never forwarded to its replacement.
+  set_windows_bounds_batch, snap_windows_batch and set_windows_state_batch are in the new `windows-batch` toolset, off
+  by default and not deprecated (`+windows-batch`); close_windows_batch and launch_applications_batch stay in the
+  default. A moved tool is served only while the toolset it came from is on too, so `WAM_TOOLSETS=all` (which includes
+  both new toolsets) or `+deprecated` never serves a configuration a tool it did not serve before (`all,-input` serves no
+  click). A `WAM_TOOLSETS` list that names `windows`, `input`, `monitors` or `browser` no longer gets the moved tools from
+  them: add `deprecated` or `windows-batch` to the list, and [get_server_info](#get_server_info)'s new `toolsets.moved`
+  says where each tool that is out of reach went, with its replacement. `WAM_EXCLUDE_TOOLS` that names a moved tool is
+  no error (it does not fail closed); a toolset's name there also excludes the tools that moved out of it. The server
+  instructions name mouse_click instead of click, right_click and double_click, and take_screenshot, the window handle
+  parameters, drag and get_control_status point to get_monitors, find_windows and mouse_click. See
+  [Moved and deprecated tools](#moved-and-deprecated-tools).
 - **Runs on .NET 10.** **Breaking:** the server targets .NET 10 (`net10.0-windows`) instead of .NET 8, which reaches
   end of support on 2026-11-10. The exe is still a framework-dependent single file, so the machine now needs the
   .NET 10 Desktop Runtime (x64): `dotnet --list-runtimes` must list `Microsoft.WindowsDesktop.App 10.x`. With only the

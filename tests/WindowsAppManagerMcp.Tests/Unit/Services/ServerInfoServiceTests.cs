@@ -231,12 +231,30 @@ public sealed class ServerInfoServiceTests : IDisposable
         var info = CreateSut(selection).Read(Connection, servedTools: 43);
 
         info.Toolsets.Enabled.Should().NotContain("browser").And.Contain(Toolsets.ServerToolset);
-        // browser-actions and browser-script are off by default (roadmap M5.5, M5.8), so "-browser" leaves every browser toolset off
-        info.Toolsets.Disabled.Should().Equal("browser", "browser-actions", "browser-script");
+        // browser-actions and browser-script are off by default (roadmap M5.5, M5.8), so "-browser" leaves every browser toolset
+        // off; windows-batch and deprecated are off by default too (roadmap M6.1)
+        info.Toolsets.Disabled.Should().Equal("browser", "browser-actions", "browser-script", "windows-batch", "deprecated");
         info.Toolsets.Source.Should().Be(ToolsetSelection.ToolsetsVariable);
         info.Toolsets.ExcludedTools.Should().Equal("kill_process");
         info.Toolsets.ReadOnly.Should().BeFalse();
         info.Toolsets.ServedTools.Should().Be(43);
+        info.Toolsets.Moved.Should().BeEquivalentTo(selection.Moved);
+        info.Toolsets.Moved.Should().NotContain(note => note.Contains("get_active_browser_url"),
+            "browser is off, so get_active_browser_url did not move out of reach");
+    }
+
+    [Fact]
+    public void Read_SaysWhereTheToolsThatMovedOutOfTheDefaultWent()
+    {
+        // Roadmap M6.1: an agent that looks for click finds it in the deprecated toolset, with what replaces it
+        var info = CreateSut(ToolsetSelection.FromEnvironment(_ => null, Toolsets.Server)).Read(Connection, 66);
+
+        info.Toolsets.Moved.Should().HaveCount(2);
+        info.Toolsets.Moved.Should().Contain(note => note.Contains("deprecated toolset") && note.Contains("click (use mouse_click)") &&
+                                                     note.Contains("get_active_browser_url (use get_browser_url"));
+        info.Toolsets.Moved.Should().Contain(note => note.Contains("windows-batch toolset") && note.Contains("snap_windows_batch"));
+        info.Warnings.Should().BeNull("an opt-in toolset that is off is nothing to warn about");
+        CreateSut().Read(Connection, 78).Toolsets.Moved.Should().BeNull("every tool is served");
     }
 
     [Fact]

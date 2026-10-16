@@ -378,7 +378,7 @@ public class CaptureHealthTests
         // Assert
         metadata.Success.Should().BeFalse();
         metadata.ErrorCode.Should().Be("RegionOffScreen");
-        metadata.Error.Should().Contain("list_screens");
+        metadata.Error.Should().Contain("get_monitors", "list_screens is deprecated (roadmap M6.1)");
         _capture.Verify(c => c.CaptureScreenRegion(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>()), Times.Never);
     }
 
