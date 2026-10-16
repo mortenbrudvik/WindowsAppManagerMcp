@@ -74,9 +74,30 @@ public class MonitorService : IMonitorService
     {
         // Take the timestamp first so the snapshot never looks newer than the data in it
         var timestamp = _timeProvider.GetTimestamp();
-        var snapshot = new MonitorSnapshot(_nativeMonitors.EnumerateMonitors().ToImmutableArray(), timestamp);
+        var snapshot = new MonitorSnapshot(Identify(_nativeMonitors.EnumerateMonitors()), timestamp);
         Volatile.Write(ref _snapshot, snapshot);
         return snapshot;
+    }
+
+    /// <summary>
+    /// Adds each monitor's identity (id, friendly name, internal or not) from the display configuration, read again at every
+    /// snapshot refresh. The refreshes are at most one per <see cref="SnapshotLifetime"/> and a window listing's per-window
+    /// lookups use the snapshot, so the read is not per window. It is not kept across refreshes: in clone mode a projector can
+    /// be added, removed or swapped on a source whose monitor handle, device name and bounds all stay the same, and only the
+    /// display configuration shows it. A failed or partial read leaves the identity of the monitors it misses unknown for
+    /// that snapshot.
+    /// </summary>
+    private ImmutableArray<(nint Handle, MonitorInfo Info)> Identify(IReadOnlyList<(nint Handle, MonitorInfo Info)> monitors)
+    {
+        if (monitors.Count == 0)
+        {
+            return [];
+        }
+
+        var targets = _nativeMonitors.GetDisplayTargets();
+        return targets is null
+            ? monitors.ToImmutableArray()
+            : monitors.Select(m => (m.Handle, MonitorIdentity.Identify(m.Info, targets))).ToImmutableArray();
     }
 
     /// <summary>

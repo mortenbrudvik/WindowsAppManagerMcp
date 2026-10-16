@@ -80,6 +80,14 @@ public class NativeCallGuardTests
         ["User32.MonitorFromWindow"] = "finds the monitor of a window",
         ["Shcore.GetDpiForMonitor"] = "reads the DPI of a monitor",
 
+        // Monitor identity from the display configuration (NativeMonitorWrapper.GetDisplayTargets, roadmap M6.7).
+        // SetDisplayConfig, which changes the topology, is not declared
+        ["DisplayConfig.GetDisplayConfigBufferSizes"] = "reads how many display paths and modes are active",
+        ["DisplayConfig.QueryDisplayConfig"] = "reads the active display paths into arrays of the server",
+        ["DisplayConfig.DisplayConfigGetDeviceInfo"] = "reads a display source's GDI name or a target monitor's name, device " +
+                                                       "path and connector; the wrapper passes only the GET_SOURCE_NAME and " +
+                                                       "GET_TARGET_NAME packets",
+
         // Window hit testing for get_element_at_point (NativeHitTestWrapper)
         ["User32.WindowFromPoint"] = "finds the window at a point",
         ["User32.GetAncestor"] = "finds the top-level window of a window",
@@ -751,6 +759,30 @@ public class NativeCallGuardTests
             .Where(i => processControlPrefixes.Any(prefix => i.EntryPoint.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)))
             .Select(i => $"{i.Name} imports {i.EntryPoint}")
             .Should().BeEmpty("processes must be started and stopped through NativeProcessWrapper, not by direct Win32 calls");
+    }
+
+    [Fact]
+    public void NoPlatformInvoke_ChangesTheDisplayConfiguration()
+    {
+        // Arrange - monitor identity (roadmap M6.7) reads the display configuration; nothing in the server may change the
+        // user's topology, resolution or orientation. The allow-list above only covers callers outside the action wrappers,
+        // so the entry points themselves must not be declared
+        string[] displayChangePrefixes = ["SetDisplayConfig", "ChangeDisplaySettings", "DisplayConfigSetDeviceInfo"];
+
+        // Act
+        var imports = ServerTypes()
+            .SelectMany(t => t.GetMethods(DeclaredMembers))
+            .Select(m => (Method: m, Import: m.GetCustomAttribute<System.Runtime.InteropServices.DllImportAttribute>()))
+            .Where(m => m.Import != null)
+            .Select(m => (Name: $"{m.Method.DeclaringType?.FullName}.{m.Method.Name}", EntryPoint: m.Import!.EntryPoint ?? m.Method.Name))
+            .ToList();
+
+        // Assert
+        imports.Should().Contain(i => i.EntryPoint == "QueryDisplayConfig", "the scan must see the display configuration reads");
+        imports
+            .Where(i => displayChangePrefixes.Any(prefix => i.EntryPoint.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)))
+            .Select(i => $"{i.Name} imports {i.EntryPoint}")
+            .Should().BeEmpty("the server reads the display configuration and never changes it");
     }
 
     /// <summary>
