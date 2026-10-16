@@ -2,7 +2,7 @@ namespace WindowsAppManagerMcp.Tests.Unit.Services;
 
 /// <summary>
 /// Unit tests for how MonitorService adds each monitor's identity from the display configuration (roadmap M6.7, S0d) and
-/// caches it per topology rather than per snapshot. The native reads are faked, so no display is read.
+/// reads it again at every snapshot refresh but not at every lookup. The native reads are faked, so no display is read.
 /// </summary>
 public class MonitorServiceIdentityTests
 {
@@ -127,17 +127,28 @@ public class MonitorServiceIdentityTests
 
     #endregion
 
-    #region Caching By Topology
+    #region Reading At Every Snapshot
+
+    private const string LaptopPath = @"\\?\DISPLAY#BOE0A1C#4&1b2c3d4e&0&UID8388688#{e6f07b5f-ee97-4a90-b076-33f57bf4eaa7}";
+    private const string EpsonPath = @"\\?\DISPLAY#EPS0001#5&99aa88bb&0&UID4354#{e6f07b5f-ee97-4a90-b076-33f57bf4eaa7}";
+    private const string BenqPath = @"\\?\DISPLAY#BNQ7F21#5&99aa88bb&0&UID4354#{e6f07b5f-ee97-4a90-b076-33f57bf4eaa7}";
+
+    /// <summary>A laptop alone: its panel is DISPLAY1 at 1920x1080.</summary>
+    private static readonly IReadOnlyList<(nint Handle, MonitorInfo Info)> Laptop = [Monitor(100, 0, @"\\.\DISPLAY1", 0, isPrimary: true)];
+
+    private static readonly DisplayTarget LaptopPanel = new(@"\\.\DISPLAY1", null, LaptopPath, DisplayOutputTechnology.Internal);
+    private static readonly DisplayTarget EpsonClone = new(@"\\.\DISPLAY1", "EPSON PJ", EpsonPath, DisplayOutputTechnology.Hdmi);
+    private static readonly DisplayTarget BenqClone = new(@"\\.\DISPLAY1", "BENQ PJ", BenqPath, DisplayOutputTechnology.Hdmi);
 
     [Fact]
-    public void TheDisplayConfiguration_IsReadOncePerTopology_NotOncePerSnapshot()
+    public void TheDisplayConfiguration_IsReadOncePerSnapshot_NotOncePerLookup()
     {
         // Arrange
         var wrapper = new FakeMonitorWrapper { Topology = _ => Desk, Targets = _ => DeskTargets, WindowMonitor = 101 };
         var clock = new ManualTimeProvider();
         var sut = new MonitorService(wrapper, clock);
 
-        // Act - several snapshots with the same topology, and a window listing's per-window lookups in between
+        // Act - several snapshots, and a window listing's per-window lookups in between
         for (var i = 0; i < 5; i++)
         {
             sut.GetAllMonitors();
@@ -149,64 +160,65 @@ public class MonitorServiceIdentityTests
             clock.Advance(MonitorService.SnapshotLifetime);
         }
 
-        // Assert
+        // Assert - one read per snapshot refresh, none per lookup
         wrapper.EnumerateCount.Should().Be(5);
-        wrapper.TargetsCount.Should().Be(1);
+        wrapper.TargetsCount.Should().Be(5);
         sut.GetAllMonitors().Select(m => m.Id).Should().Equal(MonitorIdentity.IdOf(DellPath), MonitorIdentity.IdOf(LgPath));
     }
 
     [Theory]
-    [InlineData("bounds")]
-    [InlineData("deviceName")]
-    [InlineData("handle")]
-    [InlineData("count")]
-    public void WhenTheTopologyChanges_TheDisplayConfigurationIsReadAgain(string change)
+    [InlineData("added")]
+    [InlineData("removed")]
+    [InlineData("swapped")]
+    public void WhenACloneTargetChangesOnASourceThatStays_TheIdAndNameFollow(string change)
     {
-        // Arrange
-        IReadOnlyList<(nint Handle, MonitorInfo Info)> changed = change switch
+        // Arrange - a projector duplicating the laptop panel (Win+P Duplicate) at the panel's own resolution is a second
+        // target on DISPLAY1's source: the monitor handle, device name and bounds EnumDisplayMonitors reports all stay
+        var (before, after) = change switch
         {
-            "bounds" => [Desk[0], Monitor(101, 1, @"\\.\DISPLAY2", -1920)],
-            "deviceName" => [Desk[0], Monitor(101, 1, @"\\.\DISPLAY3", 1920)],
-            "handle" => [Desk[0], Monitor(102, 1, @"\\.\DISPLAY2", 1920)],
-            _ => [Desk[0]]
+            "added" => (new[] { LaptopPanel }, new[] { LaptopPanel, EpsonClone }),
+            "removed" => (new[] { LaptopPanel, EpsonClone }, new[] { LaptopPanel }),
+            _ => (new[] { LaptopPanel, EpsonClone }, new[] { LaptopPanel, BenqClone })
         };
-        var wrapper = new FakeMonitorWrapper { Topology = call => call == 1 ? Desk : changed, Targets = _ => DeskTargets };
+        var wrapper = new FakeMonitorWrapper { Topology = _ => Laptop, Targets = call => call == 1 ? before : after };
         var clock = new ManualTimeProvider();
         var sut = new MonitorService(wrapper, clock);
         sut.GetAllMonitors();
 
         // Act
         clock.Advance(MonitorService.SnapshotLifetime);
-        sut.GetAllMonitors();
+        var result = sut.GetAllMonitors().Single();
 
         // Assert
-        wrapper.TargetsCount.Should().Be(2);
+        result.Id.Should().Be(MonitorIdentity.IdOf(after.Select(t => t.DevicePath)));
+        result.FriendlyName.Should().Be(change switch { "added" => "EPSON PJ", "removed" => null, _ => "BENQ PJ" });
+        result.IsInternal.Should().BeTrue();
     }
 
     [Fact]
-    public void AWorkAreaChange_IsNotATopologyChange()
+    public void ARead_ThatMissesAClonedPath_IsReadAgainAtTheNextSnapshot()
     {
-        // Moving or resizing the taskbar changes the work area, not which monitor is which
-        var taskbarMoved = new List<(nint Handle, MonitorInfo Info)>
+        // Arrange - the laptop panel is cloned to a projector, but the first read has only the panel's path
+        var wrapper = new FakeMonitorWrapper
         {
-            (100, Desk[0].Info with { WorkArea = new MonitorRect(0, 40, 1920, 1040) }),
-            Desk[1]
+            Topology = _ => Laptop,
+            Targets = call => call == 1 ? [LaptopPanel] : [LaptopPanel, EpsonClone]
         };
-        var wrapper = new FakeMonitorWrapper { Topology = call => call == 1 ? Desk : taskbarMoved, Targets = _ => DeskTargets };
         var clock = new ManualTimeProvider();
         var sut = new MonitorService(wrapper, clock);
         sut.GetAllMonitors();
 
+        // Act
         clock.Advance(MonitorService.SnapshotLifetime);
-        var result = sut.GetAllMonitors();
+        var result = sut.GetAllMonitors().Single();
 
-        wrapper.TargetsCount.Should().Be(1);
-        result[0].WorkArea.Y.Should().Be(40);
-        result[0].Id.Should().Be(MonitorIdentity.IdOf(DellPath));
+        // Assert - the id is hashed from both cloned paths, not kept from the partial read
+        result.Id.Should().Be(MonitorIdentity.IdOf([LaptopPath, EpsonPath]));
+        result.FriendlyName.Should().Be("EPSON PJ");
     }
 
     [Fact]
-    public void AFailedRead_IsNotCached_SoTheNextSnapshotTriesAgain()
+    public void AFailedRead_IsReadAgainAtTheNextSnapshot()
     {
         // Arrange - the first read fails, the second succeeds
         var wrapper = new FakeMonitorWrapper { Topology = _ => Desk, Targets = call => call == 1 ? null : DeskTargets };
@@ -224,7 +236,7 @@ public class MonitorServiceIdentityTests
     }
 
     [Fact]
-    public void ARead_ThatMissesAMonitor_IsNotCached()
+    public void ARead_ThatMissesAMonitor_IsReadAgainAtTheNextSnapshot()
     {
         // Arrange - the topology changed between EnumDisplayMonitors and QueryDisplayConfig, so DISPLAY2 has no target
         var partial = new List<DisplayTarget> { DeskTargets[0] };
@@ -244,7 +256,7 @@ public class MonitorServiceIdentityTests
     }
 
     [Fact]
-    public void ARead_WhoseTargetNameFailed_IsNotCached()
+    public void ARead_WhoseTargetNameFailed_IsReadAgainAtTheNextSnapshot()
     {
         // Arrange - GET_TARGET_NAME failed for DISPLAY2 (a mode set or a monitor waking up), while its source name was read,
         // so the read names every monitor but has no device path for the LG. The handles, names and bounds stay the same

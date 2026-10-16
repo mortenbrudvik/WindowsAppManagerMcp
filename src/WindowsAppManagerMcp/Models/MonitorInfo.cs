@@ -40,7 +40,7 @@ public record MonitorInfo(
     public string? FriendlyName { get; init; }
 
     /// <summary>
-    /// Whether the monitor is a built-in panel (an internal, embedded DisplayPort or embedded UDI connector); in clone
+    /// Whether the monitor is a built-in panel (an internal, LVDS, embedded DisplayPort or embedded UDI connector); in clone
     /// mode, whether any cloned monitor is. Null when the display configuration could not be read for the monitor.
     /// </summary>
     public bool? IsInternal { get; init; }

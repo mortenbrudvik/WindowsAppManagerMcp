@@ -29,7 +29,7 @@ public interface INativeMonitorWrapper
     /// <summary>
     /// Reads the active display paths (QueryDisplayConfig with QDC_ONLY_ACTIVE_PATHS), with each path's GDI source name
     /// and its monitor's friendly name, device path and connector (DisplayConfigGetDeviceInfo). In clone mode several
-    /// targets share a source. Slower than <see cref="EnumerateMonitors"/>, so callers cache the result per topology.
+    /// targets share a source. MonitorService reads it at every snapshot refresh, not at every monitor lookup.
     /// Never throws: null when the display configuration cannot be read.
     /// </summary>
     IReadOnlyList<DisplayTarget>? GetDisplayTargets();

@@ -6,7 +6,7 @@ namespace WindowsAppManagerMcp.Services;
 
 /// <summary>
 /// Derives a monitor's identity from the display configuration's targets (roadmap M6.7): a short stable id, the EDID
-/// name and whether it is a built-in panel. Pure; MonitorService reads the targets and caches them per topology.
+/// name and whether it is a built-in panel. Pure; MonitorService reads the targets at every snapshot refresh.
 /// </summary>
 /// <remarks>
 /// The GDI device name (\\.\DISPLAYn) is only the join key: it renumbers on docking and on driver or adapter changes. The
@@ -47,15 +47,22 @@ public static class MonitorIdentity
         return IdPrefix + Convert.ToHexString(hash, 0, 4).ToLowerInvariant();
     }
 
-    /// <summary>Whether a connector is a built-in panel's: internal, embedded DisplayPort or embedded UDI.</summary>
+    /// <summary>
+    /// Whether a connector is a built-in panel's: internal, LVDS, embedded DisplayPort or embedded UDI. LVDS is the panel
+    /// link of older laptops and all-in-ones, whose drivers report it for the built-in screen rather than internal; PCs
+    /// have no external LVDS port.
+    /// </summary>
     public static bool IsInternalTechnology(DisplayOutputTechnology technology) =>
         technology is DisplayOutputTechnology.Internal
+            or DisplayOutputTechnology.Lvds
             or DisplayOutputTechnology.DisplayPortEmbedded
             or DisplayOutputTechnology.UdiEmbedded;
 
     /// <summary>
     /// The monitor with its identity from the targets whose GDI source is the monitor's device name (compared ignoring
-    /// case). A monitor no target names is returned unchanged, with its identity unknown (null).
+    /// case). A monitor no target names is returned unchanged, with its identity unknown (null). When any of its targets
+    /// was not read (<see cref="DisplayTarget.TargetRead"/>), its id and name are unknown too, so a cloned monitor never gets
+    /// an id hashed from only some of its paths; whether it is internal still follows the connectors of its paths.
     /// </summary>
     public static MonitorInfo Identify(MonitorInfo monitor, IReadOnlyList<DisplayTarget> targets)
     {
@@ -63,6 +70,12 @@ public static class MonitorIdentity
         if (own.Count == 0)
         {
             return monitor;
+        }
+
+        var isInternal = own.Any(t => IsInternalTechnology(t.OutputTechnology));
+        if (own.Any(t => !t.TargetRead))
+        {
+            return monitor with { IsInternal = isInternal };
         }
 
         var names = own
@@ -75,29 +88,9 @@ public static class MonitorIdentity
         {
             Id = IdOf(own.Select(t => t.DevicePath)),
             FriendlyName = names.Count == 0 ? null : string.Join(CloneNameSeparator, names),
-            IsInternal = own.Any(t => IsInternalTechnology(t.OutputTechnology))
+            IsInternal = isInternal
         };
     }
-
-    /// <summary>
-    /// Whether the targets name every monitor. When they do not, the topology changed between the two reads (or the
-    /// configuration does not list a display), so the targets are used but not kept for the topology.
-    /// </summary>
-    public static bool Covers(IEnumerable<MonitorInfo> monitors, IReadOnlyList<DisplayTarget> targets) =>
-        monitors.All(monitor => targets.Any(t => IsSource(t, monitor)));
-
-    /// <summary>
-    /// Whether the targets fully identify every monitor: they <see cref="Covers"/> every monitor, and every target of a
-    /// monitor had its name and device path read (<see cref="DisplayTarget.TargetRead"/>). Only a complete read is kept for
-    /// the topology; a target whose read failed would otherwise leave its monitor without an id (or, in clone mode, with an
-    /// id hashed from only some of its paths) until the topology changes.
-    /// </summary>
-    public static bool IsComplete(IEnumerable<MonitorInfo> monitors, IReadOnlyList<DisplayTarget> targets) =>
-        monitors.All(monitor =>
-        {
-            var own = targets.Where(t => IsSource(t, monitor)).ToList();
-            return own.Count > 0 && own.All(t => t.TargetRead);
-        });
 
     private static bool IsSource(DisplayTarget target, MonitorInfo monitor) =>
         string.Equals(target.GdiDeviceName, monitor.DeviceName, StringComparison.OrdinalIgnoreCase);

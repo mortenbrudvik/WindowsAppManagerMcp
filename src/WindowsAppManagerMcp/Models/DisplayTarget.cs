@@ -21,8 +21,8 @@ public sealed record DisplayTarget(
 {
     /// <summary>
     /// Whether the target's name and device path were read (DisplayConfigGetDeviceInfo GET_TARGET_NAME succeeded). False
-    /// when that read failed and only the source and connector are known: the monitor's identity is then unknown rather
-    /// than absent, so a read with such a target is used but not cached.
+    /// when that read failed and only the source and connector are known: the monitor's id and name are then unknown rather
+    /// than absent, and in clone mode not hashed from only its other targets.
     /// </summary>
     public bool TargetRead { get; init; } = true;
 }

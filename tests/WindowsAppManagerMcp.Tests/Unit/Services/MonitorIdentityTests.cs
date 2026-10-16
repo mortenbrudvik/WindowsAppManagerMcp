@@ -96,7 +96,7 @@ public class MonitorIdentityTests
     [InlineData(DisplayOutputTechnology.UdiEmbedded, true)]
     [InlineData(DisplayOutputTechnology.DisplayPortExternal, false)]
     [InlineData(DisplayOutputTechnology.Hdmi, false)]
-    [InlineData(DisplayOutputTechnology.Lvds, false)]
+    [InlineData(DisplayOutputTechnology.Lvds, true)]
     [InlineData(DisplayOutputTechnology.IndirectVirtual, false)]
     [InlineData(DisplayOutputTechnology.Other, false)]
     [InlineData((DisplayOutputTechnology)0, false)]
@@ -224,50 +224,39 @@ public class MonitorIdentityTests
         MonitorIdentity.Identify(monitor, [Target()]).Dpi.Should().Be(144);
     }
 
-    #endregion
-
-    #region Covers
-
     [Fact]
-    public void Covers_IsTrueOnlyWhenEveryMonitorHasATarget()
+    public void Identify_WhenATargetWasNotRead_LeavesTheIdAndNameUnknownButKeepsTheConnector()
     {
-        var monitors = new[]
-        {
-            TestDataFactory.CreateMonitorInfo(index: 0, deviceName: @"\\.\DISPLAY1"),
-            TestDataFactory.CreateMonitorInfo(index: 1, deviceName: @"\\.\DISPLAY2", isPrimary: false)
-        };
+        // GET_TARGET_NAME failed for the monitor's only target: no device path or name, but the path's connector is known
+        var monitor = TestDataFactory.CreateMonitorInfo();
+        var unread = Target(friendlyName: null, devicePath: null, technology: DisplayOutputTechnology.Internal) with { TargetRead = false };
 
-        MonitorIdentity.Covers(monitors, [Target(@"\\.\DISPLAY1"), Target(@"\\.\DISPLAY2", devicePath: LaptopPath)]).Should().BeTrue();
-        MonitorIdentity.Covers(monitors, [Target(@"\\.\DISPLAY1")]).Should().BeFalse();
-        MonitorIdentity.Covers(monitors, []).Should().BeFalse();
+        var result = MonitorIdentity.Identify(monitor, [unread]);
+
+        result.Id.Should().BeNull();
+        result.FriendlyName.Should().BeNull();
+        result.IsInternal.Should().BeTrue();
     }
 
     [Fact]
-    public void IsComplete_IsTrueOnlyWhenEveryMonitorHasATarget_AndEveryOneOfThemWasRead()
+    public void Identify_InCloneMode_WhenOneTargetWasNotRead_GivesNoPartialIdOrName()
     {
-        var monitors = new[]
+        // Arrange - the laptop panel cloned to a projector, and GET_TARGET_NAME failed for the projector's path. Hashing the
+        // panel's path alone would give the id the panel has without the projector, a wrong id rather than an unknown one
+        var monitor = TestDataFactory.CreateMonitorInfo();
+        var targets = new[]
         {
-            TestDataFactory.CreateMonitorInfo(index: 0, deviceName: @"\\.\DISPLAY1"),
-            TestDataFactory.CreateMonitorInfo(index: 1, deviceName: @"\\.\DISPLAY2", isPrimary: false)
+            Target(@"\\.\DISPLAY1", null, LaptopPath, DisplayOutputTechnology.Internal),
+            Target(@"\\.\DISPLAY1", null, null, DisplayOutputTechnology.Hdmi) with { TargetRead = false }
         };
-        var unread = new DisplayTarget(@"\\.\DISPLAY2", null, null, DisplayOutputTechnology.Hdmi) { TargetRead = false };
 
-        MonitorIdentity.IsComplete(monitors, [Target(@"\\.\DISPLAY1"), Target(@"\\.\DISPLAY2", devicePath: LaptopPath)]).Should().BeTrue();
-        MonitorIdentity.IsComplete(monitors, [Target(@"\\.\DISPLAY1")]).Should().BeFalse();
-        // DISPLAY2's GET_TARGET_NAME failed: it is covered, but its identity is unknown, not absent
-        MonitorIdentity.IsComplete(monitors, [Target(@"\\.\DISPLAY1"), unread]).Should().BeFalse();
-        // In clone mode one unread target of a monitor is enough to make its id partial
-        MonitorIdentity.IsComplete(monitors,
-            [Target(@"\\.\DISPLAY1"), Target(@"\\.\DISPLAY2", devicePath: LaptopPath), unread]).Should().BeFalse();
-    }
+        // Act
+        var result = MonitorIdentity.Identify(monitor, targets);
 
-    [Fact]
-    public void IsComplete_IgnoresAnUnreadTargetOfASourceNoMonitorHas()
-    {
-        var monitors = new[] { TestDataFactory.CreateMonitorInfo(index: 0, deviceName: @"\\.\DISPLAY1") };
-        var other = new DisplayTarget(@"\\.\DISPLAY9", null, null, DisplayOutputTechnology.Hdmi) { TargetRead = false };
-
-        MonitorIdentity.IsComplete(monitors, [Target(@"\\.\DISPLAY1"), other]).Should().BeTrue();
+        // Assert
+        result.Id.Should().BeNull();
+        result.FriendlyName.Should().BeNull();
+        result.IsInternal.Should().BeTrue("the connectors come from the paths, which were read");
     }
 
     #endregion

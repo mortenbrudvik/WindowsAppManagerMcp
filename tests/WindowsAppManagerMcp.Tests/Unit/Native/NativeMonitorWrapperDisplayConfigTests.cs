@@ -126,6 +126,59 @@ public class NativeMonitorWrapperDisplayConfigTests
 
     #endregion
 
+    #region ReadPathTargets
+
+    /// <summary>A path as the tests see it: its source (adapter and source id) and the device path of its target.</summary>
+    private sealed record FakePath(int Source, string DevicePath);
+
+    private static DisplayTarget? TargetOf(FakePath path, string gdiDeviceName) =>
+        new(gdiDeviceName, null, path.DevicePath, DisplayOutputTechnology.Hdmi);
+
+    [Fact]
+    public void ReadPathTargets_JoinsEachPathWithItsSourcesName_ReadingEachSourceOnce()
+    {
+        // Arrange - source 1 is cloned to two targets, source 2 has one
+        var paths = new[] { new FakePath(1, "A"), new FakePath(1, "B"), new FakePath(2, "C") };
+        var reads = new List<int>();
+
+        // Act
+        var result = NativeMonitorWrapper.ReadPathTargets(paths, p => p.Source,
+            p => { reads.Add(p.Source); return $@"\\.\DISPLAY{p.Source}"; }, TargetOf);
+
+        // Assert
+        result.Select(t => (t.GdiDeviceName, t.DevicePath)).Should().Equal(
+            (@"\\.\DISPLAY1", "A"), (@"\\.\DISPLAY1", "B"), (@"\\.\DISPLAY2", "C"));
+        reads.Should().Equal(1, 2);
+    }
+
+    [Fact]
+    public void ReadPathTargets_WhenASourcesNameCannotBeRead_LeavesOutEveryPathOfIt()
+    {
+        // Arrange - GET_SOURCE_NAME fails for source 1. Its cloned paths are left out together, so its monitor's identity
+        // is unknown; joining only some of them would hash the monitor's id from part of its clone set
+        var paths = new[] { new FakePath(1, "A"), new FakePath(2, "C"), new FakePath(1, "B") };
+
+        // Act
+        var result = NativeMonitorWrapper.ReadPathTargets(paths, p => p.Source,
+            p => p.Source == 1 ? null : $@"\\.\DISPLAY{p.Source}", TargetOf);
+
+        // Assert
+        result.Select(t => t.DevicePath).Should().Equal("C");
+    }
+
+    [Fact]
+    public void ReadPathTargets_SkipsAPathWithNoTarget()
+    {
+        var paths = new[] { new FakePath(1, "A"), new FakePath(2, "C") };
+
+        var result = NativeMonitorWrapper.ReadPathTargets(paths, p => p.Source, p => $@"\\.\DISPLAY{p.Source}",
+            (p, name) => p.Source == 1 ? null : TargetOf(p, name));
+
+        result.Select(t => t.DevicePath).Should().Equal("C");
+    }
+
+    #endregion
+
     #region Native Layouts
 
     /// <summary>The sizes wingdi.h gives these structs on x64; a wrong layout would make Windows read or write past them.</summary>

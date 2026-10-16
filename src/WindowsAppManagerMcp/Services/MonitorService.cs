@@ -21,11 +21,6 @@ public class MonitorService : IMonitorService
     // snapshot and swaps the reference; readers never see a list that is being filled.
     private MonitorSnapshot? _snapshot;
 
-    // The display configuration's targets for one topology (roadmap M6.7). QueryDisplayConfig is slower than
-    // EnumDisplayMonitors, so it is read again only when the topology changes, not every snapshot. Immutable once
-    // published, like the snapshot.
-    private DisplayIdentity? _identity;
-
     public MonitorService()
         : this(new NativeMonitorWrapper())
     {
@@ -36,8 +31,6 @@ public class MonitorService : IMonitorService
         _nativeMonitors = nativeMonitors;
         _timeProvider = timeProvider ?? TimeProvider.System;
     }
-
-    private sealed record DisplayIdentity(string TopologyKey, IReadOnlyList<DisplayTarget> Targets);
 
     private sealed record MonitorSnapshot(ImmutableArray<(nint Handle, MonitorInfo Info)> Monitors, long Timestamp)
     {
@@ -87,9 +80,12 @@ public class MonitorService : IMonitorService
     }
 
     /// <summary>
-    /// Adds each monitor's identity (id, friendly name, internal or not) from the display configuration. The targets are
-    /// kept for the topology they were read for, so a window listing's per-window lookups and the snapshot refreshes in
-    /// between never read the configuration again; a failed read is not kept, so the next snapshot tries again.
+    /// Adds each monitor's identity (id, friendly name, internal or not) from the display configuration, read again at every
+    /// snapshot refresh. The refreshes are at most one per <see cref="SnapshotLifetime"/> and a window listing's per-window
+    /// lookups use the snapshot, so the read is not per window. It is not kept across refreshes: in clone mode a projector can
+    /// be added, removed or swapped on a source whose monitor handle, device name and bounds all stay the same, and only the
+    /// display configuration shows it. A failed or partial read leaves the identity of the monitors it misses unknown for
+    /// that snapshot.
     /// </summary>
     private ImmutableArray<(nint Handle, MonitorInfo Info)> Identify(IReadOnlyList<(nint Handle, MonitorInfo Info)> monitors)
     {
@@ -98,40 +94,11 @@ public class MonitorService : IMonitorService
             return [];
         }
 
-        var targets = GetDisplayTargets(monitors);
+        var targets = _nativeMonitors.GetDisplayTargets();
         return targets is null
             ? monitors.ToImmutableArray()
             : monitors.Select(m => (m.Handle, MonitorIdentity.Identify(m.Info, targets))).ToImmutableArray();
     }
-
-    private IReadOnlyList<DisplayTarget>? GetDisplayTargets(IReadOnlyList<(nint Handle, MonitorInfo Info)> monitors)
-    {
-        var key = TopologyKey(monitors);
-        var cached = Volatile.Read(ref _identity);
-        if (cached?.TopologyKey == key)
-        {
-            return cached.Targets;
-        }
-
-        var targets = _nativeMonitors.GetDisplayTargets();
-        // A failed read, one that misses a monitor, or one whose target name failed for a monitor is used for this
-        // snapshot but not kept, so the next snapshot reads again
-        if (targets is not null && MonitorIdentity.IsComplete(monitors.Select(m => m.Info), targets))
-        {
-            Volatile.Write(ref _identity, new DisplayIdentity(key, targets.ToImmutableArray()));
-        }
-
-        return targets;
-    }
-
-    /// <summary>
-    /// What identifies a topology: each monitor's handle, GDI device name and bounds, in enumeration order. Windows hands
-    /// out new monitor handles when the display configuration changes, and docking renumbers the device names or moves
-    /// the bounds. The work area is left out: moving the taskbar changes it but not which monitor is which.
-    /// </summary>
-    private static string TopologyKey(IReadOnlyList<(nint Handle, MonitorInfo Info)> monitors) =>
-        string.Join(';', monitors.Select(m => FormattableString.Invariant(
-            $"{m.Handle}|{m.Info.DeviceName}|{m.Info.Bounds.X},{m.Info.Bounds.Y},{m.Info.Bounds.Width},{m.Info.Bounds.Height}")));
 
     /// <summary>
     /// Finds the monitor with the handle the native lookup returns. If a cached snapshot does not

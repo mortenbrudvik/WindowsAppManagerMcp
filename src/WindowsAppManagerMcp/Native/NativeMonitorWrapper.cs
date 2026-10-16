@@ -147,7 +147,7 @@ public class NativeMonitorWrapper : INativeMonitorWrapper
 
     /// <summary>
     /// A target for a path whose target name could not be read: the source and the path's connector, no name, no device
-    /// path, and marked as not read so the read is not cached. Null without a source name.
+    /// path, and marked as not read so its monitor gets no id or name rather than a partial one. Null without a source name.
     /// </summary>
     public static DisplayTarget? ToUnreadTarget(string? gdiDeviceName, uint outputTechnology) =>
         ToDisplayTarget(gdiDeviceName, null, null, outputTechnology) is { } target ? target with { TargetRead = false } : null;
@@ -155,9 +155,48 @@ public class NativeMonitorWrapper : INativeMonitorWrapper
     private static string? NullIfEmpty(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
     /// <summary>
-    /// One QueryDisplayConfig of the active paths, and the source and target names of each. A path whose source name cannot
-    /// be read is skipped (it cannot be joined with a monitor); one whose target name cannot be read keeps the connector
-    /// from the path, with no name and no device path, and is marked as not read (<see cref="DisplayTarget.TargetRead"/>).
+    /// The targets of the active paths, each joined with its source's GDI name. Each distinct source (adapter and source
+    /// id) is read once, and its name is used for every path on it. In clone mode several paths share one source, so its
+    /// cloned paths are either all joined or, when the source name cannot be read, all left out: a monitor's identity is
+    /// then unknown, never hashed from only some of its cloned paths. A path with no target is skipped.
+    /// </summary>
+    public static IReadOnlyList<DisplayTarget> ReadPathTargets<TPath, TSource>(
+        IEnumerable<TPath> paths,
+        Func<TPath, TSource> sourceOf,
+        Func<TPath, string?> readSourceName,
+        Func<TPath, string, DisplayTarget?> readTarget)
+        where TSource : notnull
+    {
+        var sourceNames = new Dictionary<TSource, string?>();
+        var targets = new List<DisplayTarget>();
+        foreach (var path in paths)
+        {
+            var source = sourceOf(path);
+            if (!sourceNames.TryGetValue(source, out var gdiDeviceName))
+            {
+                gdiDeviceName = readSourceName(path);
+                sourceNames[source] = gdiDeviceName;
+            }
+
+            if (string.IsNullOrWhiteSpace(gdiDeviceName))
+            {
+                continue;
+            }
+
+            if (readTarget(path, gdiDeviceName) is { } target)
+            {
+                targets.Add(target);
+            }
+        }
+
+        return targets;
+    }
+
+    /// <summary>
+    /// One QueryDisplayConfig of the active paths, and the source and target names of each (<see cref="ReadPathTargets"/>).
+    /// The paths of a source whose name cannot be read are left out (they cannot be joined with a monitor); a path whose
+    /// target name cannot be read keeps the connector from the path, with no name and no device path, and is marked as not
+    /// read (<see cref="DisplayTarget.TargetRead"/>).
     /// </summary>
     private static (int Status, IReadOnlyList<DisplayTarget> Targets) QueryActiveTargets()
     {
@@ -176,43 +215,52 @@ public class NativeMonitorWrapper : INativeMonitorWrapper
             return (status, []);
         }
 
-        var targets = new List<DisplayTarget>((int)pathCount);
-        foreach (var path in paths.AsSpan(0, (int)Math.Min(pathCount, (uint)paths.Length)))
-        {
-            var source = new DISPLAYCONFIG_SOURCE_DEVICE_NAME
-            {
-                header = new DISPLAYCONFIG_DEVICE_INFO_HEADER
-                {
-                    type = NativeMethods.DisplayConfig.DISPLAYCONFIG_DEVICE_INFO_GET_SOURCE_NAME,
-                    size = (uint)Marshal.SizeOf<DISPLAYCONFIG_SOURCE_DEVICE_NAME>(),
-                    adapterId = path.sourceInfo.adapterId,
-                    id = path.sourceInfo.id
-                }
-            };
-            if (NativeMethods.DisplayConfig.DisplayConfigGetDeviceInfo(ref source) != NativeMethods.DisplayConfig.ERROR_SUCCESS)
-            {
-                continue;
-            }
-
-            var target = new DISPLAYCONFIG_TARGET_DEVICE_NAME
-            {
-                header = new DISPLAYCONFIG_DEVICE_INFO_HEADER
-                {
-                    type = NativeMethods.DisplayConfig.DISPLAYCONFIG_DEVICE_INFO_GET_TARGET_NAME,
-                    size = (uint)Marshal.SizeOf<DISPLAYCONFIG_TARGET_DEVICE_NAME>(),
-                    adapterId = path.targetInfo.adapterId,
-                    id = path.targetInfo.id
-                }
-            };
-            var parsed = NativeMethods.DisplayConfig.DisplayConfigGetDeviceInfo(ref target) == NativeMethods.DisplayConfig.ERROR_SUCCESS
-                ? ToDisplayTarget(source.viewGdiDeviceName, target.monitorFriendlyDeviceName, target.monitorDevicePath, target.outputTechnology)
-                : ToUnreadTarget(source.viewGdiDeviceName, path.targetInfo.outputTechnology);
-            if (parsed is not null)
-            {
-                targets.Add(parsed);
-            }
-        }
+        var active = paths.AsSpan(0, (int)Math.Min(pathCount, (uint)paths.Length)).ToArray();
+        var targets = ReadPathTargets(
+            active,
+            path => (path.sourceInfo.adapterId.LowPart, path.sourceInfo.adapterId.HighPart, path.sourceInfo.id),
+            ReadSourceName,
+            ReadTarget);
 
         return (NativeMethods.DisplayConfig.ERROR_SUCCESS, targets);
+    }
+
+    /// <summary>The GDI device name of a path's source (DisplayConfigGetDeviceInfo GET_SOURCE_NAME); null when it cannot be read.</summary>
+    private static string? ReadSourceName(DISPLAYCONFIG_PATH_INFO path)
+    {
+        var source = new DISPLAYCONFIG_SOURCE_DEVICE_NAME
+        {
+            header = new DISPLAYCONFIG_DEVICE_INFO_HEADER
+            {
+                type = NativeMethods.DisplayConfig.DISPLAYCONFIG_DEVICE_INFO_GET_SOURCE_NAME,
+                size = (uint)Marshal.SizeOf<DISPLAYCONFIG_SOURCE_DEVICE_NAME>(),
+                adapterId = path.sourceInfo.adapterId,
+                id = path.sourceInfo.id
+            }
+        };
+        return NativeMethods.DisplayConfig.DisplayConfigGetDeviceInfo(ref source) == NativeMethods.DisplayConfig.ERROR_SUCCESS
+            ? source.viewGdiDeviceName
+            : null;
+    }
+
+    /// <summary>
+    /// The target of a path on the source with this GDI name (DisplayConfigGetDeviceInfo GET_TARGET_NAME); when that read
+    /// fails, an unread target with the path's connector.
+    /// </summary>
+    private static DisplayTarget? ReadTarget(DISPLAYCONFIG_PATH_INFO path, string gdiDeviceName)
+    {
+        var target = new DISPLAYCONFIG_TARGET_DEVICE_NAME
+        {
+            header = new DISPLAYCONFIG_DEVICE_INFO_HEADER
+            {
+                type = NativeMethods.DisplayConfig.DISPLAYCONFIG_DEVICE_INFO_GET_TARGET_NAME,
+                size = (uint)Marshal.SizeOf<DISPLAYCONFIG_TARGET_DEVICE_NAME>(),
+                adapterId = path.targetInfo.adapterId,
+                id = path.targetInfo.id
+            }
+        };
+        return NativeMethods.DisplayConfig.DisplayConfigGetDeviceInfo(ref target) == NativeMethods.DisplayConfig.ERROR_SUCCESS
+            ? ToDisplayTarget(gdiDeviceName, target.monitorFriendlyDeviceName, target.monitorDevicePath, target.outputTechnology)
+            : ToUnreadTarget(gdiDeviceName, path.targetInfo.outputTechnology);
     }
 }
