@@ -167,9 +167,12 @@ public class ToolPayloadBudgetTests
     /// <summary>
     /// The most tokens one tool object (name, title, description, input schema, annotations) may cost in tools/list (roadmap
     /// M6.1). Not a ratchet but a cap: a tool that needs more is doing too much, or repeats what another tool or the server
-    /// instructions say. The largest were capture_with_elements (2,396) and element_action (2,386), October 2026.
+    /// instructions say. It sits about 100 tokens above the largest tool, so an error code or a sentence still fits: the
+    /// plan's 2,400 came from compact estimates (2,337 and 2,279), and measured as the SDK writes them the largest were
+    /// capture_with_elements (2,396, 104 of room) and element_action (2,386, 114 of room), October 2026. Do not raise it
+    /// when a tool reaches it; shorten the tool or split what it does.
     /// </summary>
-    public const int ToolSchemaTokenCap = 2_400;
+    public const int ToolSchemaTokenCap = 2_500;
 
     /// <summary>
     /// The token budget of each toolset's tools in tools/list (roadmap M6.1): what turning the toolset on adds, and what turning

@@ -2693,9 +2693,10 @@ nearly every user pays for: a tool added to a toolset that is off by default lea
 writes them) to a ratchet just above its measured size, and docs/TOOLS.md publishes the sizes, to the nearest 100, in
 the generated Tokens column of its toolsets table, with the default surface's and the whole list's totals under it,
 measured as the two list budgets measure them (`GeneratedToolDocsTests`); `EveryToolset_HasATokenBudget` makes a
-new toolset come with a budget. `EveryTool_SchemaWithinCap` caps every single tool object at 2,400 tokens: a cap, not a
-ratchet, so a tool that needs more is split or trimmed rather than the cap raised. Measured in October 2026 after
-M6.1a (the largest tools were capture_with_elements at 2,396 and element_action at 2,386, so they have no room to grow):
+new toolset come with a budget. `EveryTool_SchemaWithinCap` caps every single tool object at 2,500 tokens: a cap, not a
+ratchet, so a tool that needs more is split or trimmed rather than the cap raised. It sits about 100 tokens above the
+largest tool (the roadmap's 2,400 came from compact estimates). Measured in October 2026 after M6.1a (the largest tools
+were capture_with_elements at 2,396 and element_action at 2,386, so they have about 100 tokens of room left):
 
 | Toolset | Default | Tools | Tokens | Budget |
 |---------|---------|------:|-------:|-------:|

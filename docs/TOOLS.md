@@ -314,7 +314,7 @@ Every tool the server serves sits in the agent's context on every turn, and a lo
 The default surface (the toolsets that are on) is about 60,000 tokens, and every tool together about 64,100.
 <!-- tools:end toolsets -->
 
-**Tokens** is what the toolset's tools cost in tools/list, to the nearest 100: their names, titles, descriptions, input schemas and annotations as the server sends them, estimated at 4 bytes of JSON per token (roadmap M6.1). It is what turning the toolset on adds to the context a client loads up front, and what turning it off saves. The two totals under the table are measured the same way and generated with it. Contract tests hold each toolset, the default surface, the whole list and every single tool (at most 2,400 tokens) to a budget, so a change that makes them larger is a decision; see TESTING.md.
+**Tokens** is what the toolset's tools cost in tools/list, to the nearest 100: their names, titles, descriptions, input schemas and annotations as the server sends them, estimated at 4 bytes of JSON per token (roadmap M6.1). It is what turning the toolset on adds to the context a client loads up front, and what turning it off saves. The two totals under the table are measured the same way and generated with it. Contract tests hold each toolset, the default surface, the whole list and every single tool (at most 2,500 tokens) to a budget, so a change that makes them larger is a decision; see TESTING.md.
 
 **The default.** Every toolset is on by default except `browser-actions` (activate_tab and browser_navigate, roadmap M5.5, and the DOM bridge's browser_element_rect, browser_click, browser_type, browser_handle_dialog and browser_screenshot, roadmap M5.8) and `browser-script` (browser_evaluate, roadmap M5.8), so a server without these variables serves every tool but those eight; `WAM_TOOLSETS=+browser-actions` adds the first seven, and `+browser-script` adds browser_evaluate, which runs any script with a page's rights (cookies scripts can read, storage, requests with the user's sign-in) and leaves no trace on the screen, so it is kept apart: turning on clicks and typing does not turn it on. The tools that later milestones add for OCR, visual change detection, layouts v2 and workspaces come in toolsets that are off by default too (`ocr`, `visual`, `layouts-v2`, `workspace`), so the default stays a core of finding, acting, waiting, windows, captures, guarded input, launching, reading browsers and the server's state; `WAM_TOOLSETS=all` serves everything.
 
@@ -7583,7 +7583,7 @@ the new tools; their sections have the rest.
   browser in front as get_active_browser_url does, and returns `NoBrowserInForeground` (it returned `NotABrowser` when
   the window in front was not a browser). mouse_click's description now names every check a click gets instead of
   referring to click's. The toolsets table above has a Tokens column, and contract tests hold the default tools/list,
-  each toolset and every single tool (at most 2,400 tokens) to a budget.
+  each toolset and every single tool (at most 2,500 tokens) to a budget.
 
 ## Error Codes
 
