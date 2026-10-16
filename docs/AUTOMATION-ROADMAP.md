@@ -1256,7 +1256,7 @@ Run ids such as `r1:WC-1` and `r2:WC-1` trace each entry back to the raw review 
 | D-INP-16 | low | Input | Input error codes are misleading or unused | `src/WindowsAppManagerMcp/Services/InputSimulationService.cs:306` | r2 | partly fixed (M1, M2.2) |
 | D-MCP-90 | low | MCP surface & project | DependencyInjectionTests claimed to mirror Program.cs but had drifted (8 types missing) | `tests/WindowsAppManagerMcp.Tests/Integration/DependencyInjectionTests.cs:27` | later review | fixed (M0) |
 | D-PAL-19 | low | Launch & layouts | Launch/kill error codes are inaccurate: the AccessDenied branch is unreachable and kill success is not confirmed | `src/WindowsAppManagerMcp/Services/ProcessService.cs:342` | both | fixed (M0) |
-| D-PAL-20 | low | Launch & layouts | list_processes(includeWindowless:true) reports WindowCount=0 for every process | `src/WindowsAppManagerMcp/Services/ProcessService.cs:114` | both | open |
+| D-PAL-20 | low | Launch & layouts | list_processes(includeWindowless:true) reports WindowCount=0 for every process | `src/WindowsAppManagerMcp/Services/ProcessService.cs:114` | both | fixed (M6 S0e) |
 | D-PAL-21 | low | Launch & layouts | kill_process acts on a bare PID with no identity check (PID reuse) | `src/WindowsAppManagerMcp/Services/ProcessService.cs:288` | both | fixed (M0) |
 | D-PAL-22 | low | Launch & layouts | kill_process protected list omits shell-infrastructure processes and the agent's own host | `src/WindowsAppManagerMcp/Services/ProcessService.cs:226` | r2 | partly fixed (M0), fixed (M1) |
 | D-PAL-23 | low | Launch & layouts | Launch waits are synchronous Thread.Sleep loops with no timeout cap or cancellation; batch waits run sequentially and drop ErrorCode | `src/WindowsAppManagerMcp/Tools/AppLauncherTools.cs:30` | both | partly fixed (M0, M1), fixed (M2.6) |
@@ -1858,6 +1858,7 @@ Run ids such as `r1:WC-1` and `r2:WC-1` trace each entry back to the raw review 
 
 - Impact: An agent listing all processes to find which owns windows sees zeros and may relaunch an app or kill the wrong PID.
 - Fix: Always build windowCounts and apply the windowless filter only when includeWindowless is false.
+- M6: fixed on `m6-s0e-process-seam` (the M6.6 process seam). ProcessService.GetRunningProcesses always maps windows to processes and applies the windowless filter only when includeWindowless is false. list_processes' includeWindowless description still says windowCount is 0; M6.6 rewrites it with the rest of the tool's surface.
 
 **D-PAL-21: kill_process acts on a bare PID with no identity check (PID reuse)** (low, `src/WindowsAppManagerMcp/Services/ProcessService.cs:288`, r1:pro-m5, r2:PAL-13)
 

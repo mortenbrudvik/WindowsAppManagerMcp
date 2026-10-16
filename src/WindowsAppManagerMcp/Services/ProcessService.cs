@@ -913,83 +913,96 @@ public class ProcessService : IProcessService
     }
 
     /// <summary>
-    /// Counts each process's visible, titled top-level windows. Unlike the user-facing window listings,
-    /// this also counts cloaked windows (on another virtual desktop), tool windows and the desktop
-    /// shell's windows: a process that has such a window is running with a window, and hiding it from
-    /// list_processes would let "has it exited?" checks pass too early. A UWP window counts for the
-    /// app's process and for its ApplicationFrameHost frame host.
+    /// Each process's visible, titled top-level windows, in the order FindWindows returns them. Unlike the user-facing window
+    /// listings, this also takes cloaked windows (on another virtual desktop), tool windows and the desktop shell's
+    /// windows: a process that has such a window is running with a window, and hiding it from list_processes would let
+    /// "has it exited?" checks pass too early. A UWP window is listed for the app's process and for its
+    /// ApplicationFrameHost frame host.
     /// </summary>
-    private Dictionary<int, int> CountWindowsPerProcess()
+    private Dictionary<int, List<WindowInfo>> MapWindowsToProcesses()
     {
-        var counts = new Dictionary<int, int>();
-        void Count(int processId) => counts[processId] = counts.GetValueOrDefault(processId) + 1;
+        var windowsByProcess = new Dictionary<int, List<WindowInfo>>();
+        void Add(int processId, WindowInfo window)
+        {
+            if (!windowsByProcess.TryGetValue(processId, out var windows))
+            {
+                windowsByProcess[processId] = windows = [];
+            }
+
+            windows.Add(window);
+        }
 
         foreach (var window in _windowService.FindWindows(new WindowQuery { IncludeShell = true }))
         {
             if (string.IsNullOrEmpty(window.Title))
                 continue;
 
-            Count(window.ProcessId);
+            Add(window.ProcessId, window);
             if (window.HostProcessId is { } hostProcessId && hostProcessId != window.ProcessId)
-                Count(hostProcessId);
+                Add(hostProcessId, window);
         }
 
-        return counts;
+        return windowsByProcess;
     }
 
     public IReadOnlyList<ProcessInfo> GetRunningProcesses(string? nameFilter = null, bool includeWindowless = false)
     {
-        var result = new List<ProcessInfo>();
-        var processes = Process.GetProcesses();
+        // An empty list would read as "no such process is running" and let a "has it exited?" check pass when nothing
+        // was read, so an unreadable list is an error, as it was before the process seam
+        var processes = _processWrapper.ListRunningProcesses()
+            ?? throw new InvalidOperationException("The process list could not be read.");
 
-        var windowCounts = includeWindowless ? new Dictionary<int, int>() : CountWindowsPerProcess();
+        // Built in both modes, so that windowCount is real with includeWindowless as well (D-PAL-20)
+        var windowsByProcess = MapWindowsToProcesses();
 
+        var listed = new List<(RunningProcess Process, int WindowCount)>();
         foreach (var process in processes)
         {
-            try
+            if (!string.IsNullOrEmpty(nameFilter) && !process.Name.Contains(nameFilter, StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            var windowCount = windowsByProcess.TryGetValue(process.ProcessId, out var windows) ? windows.Count : 0;
+            if (!includeWindowless && windowCount == 0)
+                continue;
+
+            listed.Add((process, windowCount));
+        }
+
+        if (listed.Count == 0)
+            return [];
+
+        // Each process is opened once, and only when it is listed or is the parent of one that is
+        var details = new Dictionary<int, ProcessDetails?>();
+        ProcessDetails? DetailsOf(int processId)
+        {
+            if (!details.TryGetValue(processId, out var read))
             {
-                // Apply name filter
-                if (!string.IsNullOrEmpty(nameFilter))
-                {
-                    if (!process.ProcessName.Contains(nameFilter, StringComparison.OrdinalIgnoreCase))
-                        continue;
-                }
-
-                // Check window count
-                var windowCount = windowCounts.GetValueOrDefault(process.Id, 0);
-                if (!includeWindowless && windowCount == 0)
-                    continue;
-
-                // Get executable path
-                var execPath = GetProcessPath(process.Id);
-
-                // Get memory usage
-                double? memoryMB = null;
-                try
-                {
-                    memoryMB = process.WorkingSet64 / (1024.0 * 1024.0);
-                }
-                catch
-                {
-                    // Access denied for some processes
-                }
-
-                result.Add(new ProcessInfo(
-                    ProcessId: process.Id,
-                    Name: process.ProcessName,
-                    ExecutablePath: execPath,
-                    WindowCount: windowCount,
-                    MemoryUsageMB: memoryMB
-                ));
+                details[processId] = read = _processWrapper.ReadProcessDetails(processId);
             }
-            catch
-            {
-                // Skip processes we can't access
-            }
-            finally
-            {
-                process.Dispose();
-            }
+
+            return read;
+        }
+
+        // The parents come from a second snapshot (Toolhelp), so a process can be in one list and not the other: a
+        // parent that is not in it is not running, and is not reported
+        var parentByProcessId = _processWrapper.GetProcessList()?.ToDictionary(p => p.Key, p => p.Value.ParentProcessId);
+
+        var result = new List<ProcessInfo>(listed.Count);
+        foreach (var (process, windowCount) in listed)
+        {
+            var processDetails = DetailsOf(process.ProcessId);
+            var parent = parentByProcessId == null
+                ? null
+                : NativeProcessWrapper.FindParent(process.ProcessId, parentByProcessId, id => DetailsOf(id)?.StartTime);
+
+            result.Add(new ProcessInfo(
+                ProcessId: process.ProcessId,
+                Name: process.Name,
+                ExecutablePath: processDetails?.ImagePath,
+                WindowCount: windowCount,
+                MemoryUsageMB: process.WorkingSetBytes / (1024.0 * 1024.0),
+                ParentProcessId: parent,
+                StartTime: processDetails?.StartTime));
         }
 
         return result;
@@ -1008,40 +1021,7 @@ public class ProcessService : IProcessService
         }
     }
 
-    public string? GetProcessPath(int processId)
-    {
-        try
-        {
-            var hProcess = NativeMethods.Kernel32.OpenProcess(
-                NativeEnums.PROCESS_QUERY_LIMITED_INFORMATION,
-                false,
-                (uint)processId);
-
-            if (hProcess == nint.Zero)
-                return null;
-
-            try
-            {
-                var buffer = new char[1024];
-                uint size = (uint)buffer.Length;
-
-                if (NativeMethods.Kernel32.QueryFullProcessImageNameW(hProcess, 0, buffer, ref size))
-                {
-                    return new string(buffer, 0, (int)size);
-                }
-            }
-            finally
-            {
-                NativeMethods.Kernel32.CloseHandle(hProcess);
-            }
-        }
-        catch
-        {
-            // Access denied or process terminated
-        }
-
-        return null;
-    }
+    public string? GetProcessPath(int processId) => _processWrapper.GetProcessImagePath(processId);
 
     // Protected system and shell processes that should not be terminated
     private static readonly HashSet<string> ProtectedProcesses = new(StringComparer.OrdinalIgnoreCase)

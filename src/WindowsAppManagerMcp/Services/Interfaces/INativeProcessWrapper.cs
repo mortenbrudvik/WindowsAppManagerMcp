@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using WindowsAppManagerMcp.Models;
 
 namespace WindowsAppManagerMcp.Services.Interfaces;
 
@@ -85,6 +86,24 @@ public interface INativeProcessWrapper
     /// process). Roadmap M5.3 reads a browser's debug port from it. Only reads.
     /// </summary>
     string? GetProcessCommandLine(int processId);
+
+    // Process listing (roadmap M6.6). Both only read.
+
+    /// <summary>
+    /// Every running process with its name, working set and session, from the system's process list
+    /// (Process.GetProcesses; every Process object is disposed). Opens no process, so it lists processes that cannot be
+    /// opened too. Null when the list cannot be read. The list can name a process that exited meanwhile, or miss one
+    /// that started meanwhile.
+    /// </summary>
+    IReadOnlyList<RunningProcess>? ListRunningProcesses();
+
+    /// <summary>
+    /// The image path and start time of a process, read through one PROCESS_QUERY_LIMITED_INFORMATION handle
+    /// (QueryFullProcessImageNameW and GetProcessTimes). Unlike <see cref="GetProcessStartTime"/>, it never falls back
+    /// to a full process enumeration when access is denied, so it stays cheap when called for every process. Null when
+    /// the process is not running or cannot be opened (access denied); a field is null when its own read failed.
+    /// </summary>
+    ProcessDetails? ReadProcessDetails(int processId);
 
     /// <summary>
     /// Waits up to <paramref name="milliseconds"/> for the process to finish starting and wait for user input

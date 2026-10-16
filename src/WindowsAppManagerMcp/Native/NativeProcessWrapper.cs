@@ -1,5 +1,7 @@
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using WindowsAppManagerMcp.Models;
 using WindowsAppManagerMcp.Services.Interfaces;
 
 namespace WindowsAppManagerMcp.Native;
@@ -116,16 +118,99 @@ public class NativeProcessWrapper : INativeProcessWrapper
 
         try
         {
-            var buffer = new char[1024];
-            var size = (uint)buffer.Length;
-            return NativeMethods.Kernel32.QueryFullProcessImageNameW(handle, 0, buffer, ref size)
-                ? new string(buffer, 0, (int)size)
-                : null;
+            return ReadImagePath(handle);
         }
         finally
         {
             NativeMethods.Kernel32.CloseHandle(handle);
         }
+    }
+
+    public IReadOnlyList<RunningProcess>? ListRunningProcesses()
+    {
+        Process[] processes;
+        try
+        {
+            processes = Process.GetProcesses();
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or Win32Exception or NotSupportedException)
+        {
+            // The system's process list could not be read
+            return null;
+        }
+
+        var result = new List<RunningProcess>(processes.Length);
+        foreach (var process in processes)
+        {
+            try
+            {
+                // All of these come from the list itself; none opens the process
+                result.Add(new RunningProcess(
+                    process.Id,
+                    process.ProcessName,
+                    ReadOrNull(() => process.WorkingSet64),
+                    ReadOrNull(() => process.SessionId)));
+            }
+            catch (Exception ex) when (ex is InvalidOperationException or Win32Exception or NotSupportedException)
+            {
+                // Exited between the list and the read
+            }
+            finally
+            {
+                process.Dispose();
+            }
+        }
+
+        return result;
+
+        static T? ReadOrNull<T>(Func<T> read) where T : struct
+        {
+            try
+            {
+                return read();
+            }
+            catch (Exception ex) when (ex is InvalidOperationException or Win32Exception or NotSupportedException)
+            {
+                return null;
+            }
+        }
+    }
+
+    public ProcessDetails? ReadProcessDetails(int processId)
+    {
+        if (processId <= 0)
+        {
+            return null;
+        }
+
+        var handle = NativeMethods.Kernel32.OpenProcess(NativeEnums.PROCESS_QUERY_LIMITED_INFORMATION, false, (uint)processId);
+        if (handle == nint.Zero)
+        {
+            // Not running, or access denied
+            return null;
+        }
+
+        try
+        {
+            var startTime = NativeMethods.Kernel32.GetProcessTimes(handle, out var creation, out _, out _, out _) && creation > 0
+                ? DateTime.FromFileTimeUtc(creation)
+                : (DateTime?)null;
+            return new ProcessDetails(ReadImagePath(handle), startTime);
+        }
+        finally
+        {
+            NativeMethods.Kernel32.CloseHandle(handle);
+        }
+    }
+
+    /// <summary>The image path of the process behind <paramref name="handle"/>, or null when it cannot be read.</summary>
+    private static string? ReadImagePath(nint handle)
+    {
+        var buffer = new char[1024];
+        var size = (uint)buffer.Length;
+        return NativeMethods.Kernel32.QueryFullProcessImageNameW(handle, 0, buffer, ref size)
+            ? new string(buffer, 0, (int)size)
+            : null;
     }
 
     public string? GetProcessCommandLine(int processId)
@@ -205,9 +290,43 @@ public class NativeProcessWrapper : INativeProcessWrapper
     public static IReadOnlyList<int> FindAncestors(
         int processId,
         IReadOnlyDictionary<int, int> parentByProcessId,
+        Func<int, DateTime?> getStartTime) =>
+        WalkAncestors(processId, parentByProcessId, getStartTime).ToList();
+
+    /// <summary>
+    /// The parent of <paramref name="processId"/>, for reporting it: the parent in <paramref name="parentByProcessId"/>
+    /// when it is still running, is not the process itself, and both start times are known and show it started no later
+    /// than its child; null otherwise. Stricter than <see cref="FindAncestors"/>, which trusts a parent whose start time
+    /// (or whose child's) is unknown: a reported parent must never be a later process that reused the real parent's PID,
+    /// and an unknown start time cannot rule that out. Reads only the start times of the process and its parent.
+    /// </summary>
+    public static int? FindParent(
+        int processId,
+        IReadOnlyDictionary<int, int> parentByProcessId,
         Func<int, DateTime?> getStartTime)
     {
-        var ancestors = new List<int>();
+        if (!parentByProcessId.TryGetValue(processId, out var parent) ||
+            parent <= 0 ||
+            parent == processId ||
+            !parentByProcessId.ContainsKey(parent))
+        {
+            return null;
+        }
+
+        if (getStartTime(processId) is not { } childStart)
+        {
+            return null;
+        }
+
+        return getStartTime(parent) is { } parentStart && parentStart <= childStart ? parent : null;
+    }
+
+    /// <summary>The walk of <see cref="FindAncestors"/>, lazily: each step reads only the start time it needs.</summary>
+    private static IEnumerable<int> WalkAncestors(
+        int processId,
+        IReadOnlyDictionary<int, int> parentByProcessId,
+        Func<int, DateTime?> getStartTime)
+    {
         var visited = new HashSet<int> { processId };
         var current = processId;
         var startTimeUpperBound = getStartTime(current);
@@ -223,7 +342,7 @@ public class NativeProcessWrapper : INativeProcessWrapper
                 break;
             }
 
-            ancestors.Add(parent);
+            yield return parent;
             visited.Add(parent);
             current = parent;
 
@@ -231,8 +350,6 @@ public class NativeProcessWrapper : INativeProcessWrapper
             // unknown, the child's start time is still a valid upper bound.
             startTimeUpperBound = parentStart ?? startTimeUpperBound;
         }
-
-        return ancestors;
     }
 
     public IReadOnlyList<(int ProcessId, string ImageName)>? GetDescendantsOf(int processId)
