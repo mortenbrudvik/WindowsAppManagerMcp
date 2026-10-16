@@ -880,6 +880,10 @@ public class ProcessServiceTests
         new(FrameHost, "ApplicationFrameHost", 30L * 1024 * 1024, 1),
     ];
 
+    private static readonly ProcessQuery Everything = new() { IncludeWindowless = true };
+
+    private readonly Mock<IProcessSecurityProbe> _mockSecurityProbe = new();
+
     /// <summary>Lists <paramref name="processes"/> with these windows, details and parents, and records each details read.</summary>
     private List<int> UseProcessTable(
         IReadOnlyList<RunningProcess>? processes = null,
@@ -912,47 +916,200 @@ public class ProcessServiceTests
     private static WindowInfo Window(int handle, string title, int processId) =>
         TestDataFactory.CreateWindowInfo(handle, title, "app", processId);
 
+    /// <summary>A medium-integrity server, and these levels for the processes (Medium for any other).</summary>
+    private void UseIntegrity(IReadOnlyDictionary<int, ProcessIntegrity>? levels = null)
+    {
+        _mockSecurityProbe.Setup(p => p.ServerIntegrity).Returns(Integrity(9_999, IntegrityLevel.Medium));
+        _mockSecurityProbe.Setup(p => p.GetIntegrity(It.IsAny<int>()))
+            .Returns<int>(id => levels?.GetValueOrDefault(id) ?? Integrity(id, IntegrityLevel.Medium));
+    }
+
+    private static ProcessIntegrity Integrity(int processId, IntegrityLevel level) => level switch
+    {
+        IntegrityLevel.Medium => new(processId, level, ProcessIntegrity.MediumRid, false, null),
+        IntegrityLevel.High => new(processId, level, ProcessIntegrity.HighRid, true, null),
+        IntegrityLevel.System => new(processId, level, ProcessIntegrity.SystemRid, false, null),
+        IntegrityLevel.Low => new(processId, level, ProcessIntegrity.LowRid, false, null),
+        _ => new(processId, level, null, null, "access denied")
+    };
+
+    private ProcessService CreateListingSut(ITargetPolicy? targetPolicy = null, bool withProbe = true) => new(
+        _mockWindowService.Object,
+        _mockValidationService.Object,
+        _mockBrowserDetection.Object,
+        _mockResolver.Object,
+        _mockProcessWrapper.Object,
+        targetPolicy: targetPolicy,
+        windowWait: _mockWindowWait.Object,
+        securityProbe: withProbe ? _mockSecurityProbe.Object : null);
+
     [Fact]
-    public void GetRunningProcesses_WithIncludeWindowless_ListsEveryProcessInTheOrderTheSystemListsThem()
+    public void GetRunningProcesses_ByDefault_SortsByNameIgnoringCase_ThenByProcessId()
+    {
+        // Arrange - two Notepads, listed by the system in another order
+        UseIntegrity();
+        UseProcessTable(processes: [.. FakeProcesses, new RunningProcess(150, "notepad", 1L * 1024 * 1024, 1)]);
+
+        // Act
+        var result = CreateListingSut().GetRunningProcesses(Everything);
+
+        // Assert
+        result.Select(p => p.ProcessId).Should().Equal(FrameHost, Explorer, 150, Notepad, Service);
+    }
+
+    [Fact]
+    public void GetRunningProcesses_SortedByMemory_ListsTheLargestFirst_AndAnUnreadableWorkingSetLast()
+    {
+        // Arrange
+        UseIntegrity();
+        UseProcessTable();
+
+        // Act
+        var result = CreateListingSut().GetRunningProcesses(Everything with { Sort = ProcessSort.Memory });
+
+        // Assert
+        result.Select(p => p.ProcessId).Should().Equal(Explorer, FrameHost, Notepad, Service);
+    }
+
+    [Fact]
+    public void GetRunningProcesses_SortedByStartTime_ListsTheNewestFirst_AndAnUnreadableStartTimeLast()
+    {
+        // Arrange - Notepad started last; svchost cannot be opened
+        UseIntegrity();
+        UseProcessTable();
+
+        // Act
+        var result = CreateListingSut().GetRunningProcesses(Everything with { Sort = ProcessSort.StartTime });
+
+        // Assert
+        result.Select(p => p.ProcessId).Should().Equal(Notepad, FrameHost, Explorer, Service);
+    }
+
+    [Fact]
+    public void GetRunningProcesses_WithLimit_ReturnsTheFirstInSortOrder_AndOpensOnlyThoseAndTheirParents()
+    {
+        // Arrange
+        UseIntegrity();
+        var detailsRead = UseProcessTable();
+
+        // Act
+        var result = CreateListingSut().GetRunningProcesses(Everything with { Limit = 2 });
+
+        // Assert - by name: ApplicationFrameHost and explorer; their parents (4 and 50) are not running
+        result.Select(p => p.ProcessId).Should().Equal(FrameHost, Explorer);
+        detailsRead.Should().BeEquivalentTo([FrameHost, Explorer]);
+        _mockSecurityProbe.Verify(p => p.GetIntegrity(It.IsAny<int>()), Times.Exactly(2));
+    }
+
+    [Fact]
+    public void GetRunningProcesses_SortedByStartTimeWithLimit_ReadsEveryCandidatesStartTime_ButProbesOnlyThoseReturned()
+    {
+        // Arrange
+        UseIntegrity();
+        var detailsRead = UseProcessTable();
+
+        // Act
+        var result = CreateListingSut().GetRunningProcesses(Everything with { Sort = ProcessSort.StartTime, Limit = 1 });
+
+        // Assert
+        result.Should().ContainSingle().Which.ProcessId.Should().Be(Notepad);
+        detailsRead.Should().BeEquivalentTo([Explorer, Notepad, Service, FrameHost], "each start time is read once");
+        _mockSecurityProbe.Verify(p => p.GetIntegrity(Notepad), Times.Once);
+        _mockSecurityProbe.Verify(p => p.GetIntegrity(It.Is<int>(id => id != Notepad)), Times.Never);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public void GetRunningProcesses_WithALimitBelowOne_Throws(int limit)
     {
         // Arrange
         UseProcessTable();
 
         // Act
-        var result = CreateSut().GetRunningProcesses(includeWindowless: true);
+        var act = () => CreateListingSut().GetRunningProcesses(Everything with { Limit = limit });
 
         // Assert
-        result.Select(p => p.ProcessId).Should().Equal(Explorer, Notepad, Service, FrameHost);
+        act.Should().Throw<ArgumentOutOfRangeException>();
     }
 
     [Fact]
-    public void GetRunningProcesses_ReportsTheNamePathMemoryParentAndStartTimeOfEachProcess()
+    public void GetRunningProcesses_WithProcessId_ListsOnlyThatProcess()
     {
         // Arrange
-        UseProcessTable(windows: [Window(1, "Untitled - Notepad", Notepad)]);
+        UseIntegrity();
+        var detailsRead = UseProcessTable();
 
         // Act
-        var result = CreateSut().GetRunningProcesses();
+        var result = CreateListingSut().GetRunningProcesses(Everything with { ProcessId = Notepad });
 
         // Assert
-        result.Should().ContainSingle().Which.Should().Be(new ProcessInfo(
+        result.Should().ContainSingle().Which.Name.Should().Be("Notepad");
+        detailsRead.Should().BeEquivalentTo([Notepad, Explorer], "only the process and its parent are opened");
+    }
+
+    [Fact]
+    public void GetRunningProcesses_WithAProcessIdThatIsNotRunning_ReturnsEmpty()
+    {
+        // Arrange - the "has it exited?" check: an empty list means the process is gone
+        UseProcessTable();
+
+        // Act
+        var result = CreateListingSut().GetRunningProcesses(Everything with { ProcessId = 12_345 });
+
+        // Assert
+        result.Should().BeEmpty();
+    }
+
+    [Theory]
+    [InlineData(@"\system32\", new[] { Notepad, FrameHost })]
+    [InlineData("EXPLORER.EXE", new[] { Explorer })]
+    public void GetRunningProcesses_WithPathContains_KeepsTheProcessesWhosePathContainsItIgnoringCase(string pathContains, int[] expected)
+    {
+        // Arrange - svchost's path cannot be read, so it never matches
+        UseIntegrity();
+        UseProcessTable();
+
+        // Act
+        var result = CreateListingSut().GetRunningProcesses(Everything with { PathContains = pathContains });
+
+        // Assert
+        result.Select(p => p.ProcessId).Should().BeEquivalentTo(expected);
+    }
+
+    [Fact]
+    public void GetRunningProcesses_ReportsTheNamePathMemoryParentStartTimeAndWindowsOfEachProcess()
+    {
+        // Arrange
+        UseIntegrity();
+        var window = Window(1, "Untitled - Notepad", Notepad);
+        UseProcessTable(windows: [window]);
+
+        // Act
+        var result = CreateListingSut().GetRunningProcesses(new ProcessQuery());
+
+        // Assert
+        result.Should().ContainSingle().Which.Should().BeEquivalentTo(new ProcessInfo(
             ProcessId: Notepad,
             Name: "Notepad",
             ExecutablePath: @"C:\Windows\System32\notepad.exe",
             WindowCount: 1,
             MemoryUsageMB: 25,
             ParentProcessId: Explorer,
-            StartTime: T0.AddMinutes(5)));
+            StartTime: T0.AddMinutes(5),
+            Windows: [window],
+            Integrity: Integrity(Notepad, IntegrityLevel.Medium)));
     }
 
     [Fact]
     public void GetRunningProcesses_OfAProcessThatCannotBeOpened_ListsItWithoutPathOrStartTime()
     {
         // Arrange
+        UseIntegrity();
         UseProcessTable();
 
         // Act
-        var result = CreateSut().GetRunningProcesses(nameFilter: "svchost", includeWindowless: true);
+        var result = CreateListingSut().GetRunningProcesses(Everything with { NameFilter = "svchost" });
 
         // Assert
         var service = result.Should().ContainSingle().Subject;
@@ -969,10 +1126,11 @@ public class ProcessServiceTests
     public void GetRunningProcesses_WithNameFilter_KeepsTheProcessesWhoseNameContainsItIgnoringCase(string nameFilter)
     {
         // Arrange
+        UseIntegrity();
         UseProcessTable();
 
         // Act
-        var result = CreateSut().GetRunningProcesses(nameFilter, includeWindowless: true);
+        var result = CreateListingSut().GetRunningProcesses(Everything with { NameFilter = nameFilter });
 
         // Assert
         result.Should().ContainSingle().Which.ProcessId.Should().Be(Notepad);
@@ -985,22 +1143,24 @@ public class ProcessServiceTests
         var detailsRead = UseProcessTable();
 
         // Act
-        var result = CreateSut().GetRunningProcesses(nameFilter: "xyznonexistentprocess123", includeWindowless: true);
+        var result = CreateListingSut().GetRunningProcesses(Everything with { NameFilter = "xyznonexistentprocess123" });
 
         // Assert
         result.Should().BeEmpty();
         detailsRead.Should().BeEmpty();
         _mockProcessWrapper.Verify(w => w.GetProcessList(), Times.Never);
+        _mockSecurityProbe.Verify(p => p.GetIntegrity(It.IsAny<int>()), Times.Never);
     }
 
     [Fact]
     public void GetRunningProcesses_OpensOnlyTheListedProcessesAndTheirParents_EachOnce()
     {
         // Arrange - only Notepad has windows; its parent is explorer
+        UseIntegrity();
         var detailsRead = UseProcessTable(windows: [Window(1, "Untitled - Notepad", Notepad), Window(2, "Find", Notepad)]);
 
         // Act
-        CreateSut().GetRunningProcesses();
+        CreateListingSut().GetRunningProcesses(new ProcessQuery());
 
         // Assert
         detailsRead.Should().BeEquivalentTo([Notepad, Explorer]);
@@ -1015,16 +1175,17 @@ public class ProcessServiceTests
         _mockProcessWrapper.Setup(w => w.ListRunningProcesses()).Returns((IReadOnlyList<RunningProcess>?)null);
 
         // Act
-        var act = () => CreateSut().GetRunningProcesses(nameFilter: "notepad", includeWindowless: true);
+        var act = () => CreateListingSut().GetRunningProcesses(Everything with { NameFilter = "notepad" });
 
         // Assert
         act.Should().Throw<InvalidOperationException>().WithMessage("*process list could not be read*");
     }
 
     [Fact]
-    public void GetRunningProcesses_WithIncludeWindowless_StillCountsEachProcesssWindows()
+    public void GetRunningProcesses_WithIncludeWindowless_StillCountsAndListsEachProcesssWindows()
     {
         // Arrange - D-PAL-20: includeWindowless used to skip the window map and report windowCount 0 for every process
+        UseIntegrity();
         UseProcessTable(windows:
         [
             Window(1, "Untitled - Notepad", Notepad),
@@ -1033,13 +1194,31 @@ public class ProcessServiceTests
         ]);
 
         // Act
-        var result = CreateSut().GetRunningProcesses(includeWindowless: true);
+        var result = CreateListingSut().GetRunningProcesses(Everything);
 
         // Assert
         result.ToDictionary(p => p.ProcessId, p => p.WindowCount).Should().Equal(new Dictionary<int, int>
         {
             [Explorer] = 1, [Notepad] = 2, [Service] = 0, [FrameHost] = 0
         });
+        result.Single(p => p.ProcessId == Notepad).Windows!.Select(w => (int)w.Handle).Should().Equal(1, 2);
+        result.Single(p => p.ProcessId == Service).Windows.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void GetRunningProcesses_ListsAtMostTenWindowsFrontToBack_ButCountsThemAll()
+    {
+        // Arrange
+        UseIntegrity();
+        UseProcessTable(windows: [.. Enumerable.Range(1, 12).Select(i => Window(i, $"Document {i} - Notepad", Notepad))]);
+
+        // Act
+        var result = CreateListingSut().GetRunningProcesses(new ProcessQuery { ProcessId = Notepad });
+
+        // Assert
+        var notepad = result.Should().ContainSingle().Subject;
+        notepad.WindowCount.Should().Be(12);
+        notepad.Windows!.Select(w => (int)w.Handle).Should().Equal(Enumerable.Range(1, ProcessInfo.MaxWindows));
     }
 
     [Fact]
@@ -1047,6 +1226,7 @@ public class ProcessServiceTests
     {
         // Arrange - Notepad stands in for a debug browser whose window the user moved to another virtual desktop: the
         // user-facing listings leave that cloaked window out
+        UseIntegrity();
         WindowQuery? query = null;
         UseProcessTable();
         _mockWindowService.Setup(w => w.FindWindows(It.IsAny<WindowQuery>()))
@@ -1059,7 +1239,7 @@ public class ProcessServiceTests
             ]);
 
         // Act
-        var result = CreateSut().GetRunningProcesses(nameFilter: "notepad");
+        var result = CreateListingSut().GetRunningProcesses(new ProcessQuery { NameFilter = "notepad" });
 
         // Assert
         query.Should().NotBeNull();
@@ -1073,25 +1253,25 @@ public class ProcessServiceTests
     {
         // Arrange - a Calculator window, which ApplicationFrameHost owns for the app's process
         const int calculator = 500;
+        UseIntegrity();
+        var window = TestDataFactory.CreateWindowInfo(1, "Calculator", "CalculatorApp", calculator) with
+        {
+            HostProcessName = "ApplicationFrameHost",
+            HostProcessId = FrameHost
+        };
         UseProcessTable(
             processes: [.. FakeProcesses, new RunningProcess(calculator, "CalculatorApp", 40L * 1024 * 1024, 1)],
-            windows:
-            [
-                TestDataFactory.CreateWindowInfo(1, "Calculator", "CalculatorApp", calculator) with
-                {
-                    HostProcessName = "ApplicationFrameHost",
-                    HostProcessId = FrameHost
-                },
-            ]);
+            windows: [window]);
 
         // Act
-        var result = CreateSut().GetRunningProcesses();
+        var result = CreateListingSut().GetRunningProcesses(new ProcessQuery());
 
-        // Assert - the frame window belongs to ApplicationFrameHost, so the host counts it as well
+        // Assert - the frame window belongs to ApplicationFrameHost, so the host counts and lists it as well
         result.ToDictionary(p => p.ProcessId, p => p.WindowCount).Should().Equal(new Dictionary<int, int>
         {
             [FrameHost] = 1, [calculator] = 1
         });
+        result.Should().OnlyContain(p => p.Windows!.Single() == window);
     }
 
     [Fact]
@@ -1101,7 +1281,7 @@ public class ProcessServiceTests
         UseProcessTable(windows: [Window(1, "", Notepad)]);
 
         // Act
-        var result = CreateSut().GetRunningProcesses(nameFilter: "notepad");
+        var result = CreateListingSut().GetRunningProcesses(new ProcessQuery { NameFilter = "notepad" });
 
         // Assert
         result.Should().BeEmpty();
@@ -1111,10 +1291,11 @@ public class ProcessServiceTests
     public void GetRunningProcesses_NamesTheParent_OnlyWhenItIsStillRunning()
     {
         // Arrange
+        UseIntegrity();
         UseProcessTable();
 
         // Act
-        var result = CreateSut().GetRunningProcesses(includeWindowless: true);
+        var result = CreateListingSut().GetRunningProcesses(Everything);
 
         // Assert - the parents of explorer (50) and of svchost and the frame host (4) are not in the snapshot
         result.ToDictionary(p => p.ProcessId, p => p.ParentProcessId).Should().Equal(new Dictionary<int, int?>
@@ -1127,6 +1308,7 @@ public class ProcessServiceTests
     public void GetRunningProcesses_DoesNotNameAParentThatStartedAfterTheChild_BecauseItsPidWasReused()
     {
         // Arrange - Notepad's parent exited, and a later process took its PID
+        UseIntegrity();
         UseProcessTable(details: new Dictionary<int, ProcessDetails?>
         {
             [Explorer] = new(@"C:\Windows\explorer.exe", T0.AddMinutes(10)),
@@ -1134,7 +1316,7 @@ public class ProcessServiceTests
         });
 
         // Act
-        var result = CreateSut().GetRunningProcesses(nameFilter: "notepad", includeWindowless: true);
+        var result = CreateListingSut().GetRunningProcesses(Everything with { NameFilter = "notepad" });
 
         // Assert
         result.Should().ContainSingle().Which.ParentProcessId.Should().BeNull();
@@ -1147,6 +1329,7 @@ public class ProcessServiceTests
     {
         // Arrange - the parent or the child cannot be opened, so its start time is unknown, and a later process that
         // took the parent's PID cannot be ruled out
+        UseIntegrity();
         var details = new Dictionary<int, ProcessDetails?>
         {
             [Explorer] = new(@"C:\Windows\explorer.exe", T0),
@@ -1156,7 +1339,7 @@ public class ProcessServiceTests
         UseProcessTable(details: details);
 
         // Act
-        var result = CreateSut().GetRunningProcesses(nameFilter: "notepad", includeWindowless: true);
+        var result = CreateListingSut().GetRunningProcesses(Everything with { NameFilter = "notepad" });
 
         // Assert
         result.Should().ContainSingle().Which.ParentProcessId.Should().BeNull();
@@ -1166,17 +1349,193 @@ public class ProcessServiceTests
     public void GetRunningProcesses_WhenTheProcessSnapshotCannotBeRead_NamesNoParentButReportsTheRest()
     {
         // Arrange
+        UseIntegrity();
         UseProcessTable();
         _mockProcessWrapper.Setup(w => w.GetProcessList())
             .Returns((IReadOnlyDictionary<int, (int ParentProcessId, string ImageName)>?)null);
 
         // Act
-        var result = CreateSut().GetRunningProcesses(includeWindowless: true);
+        var result = CreateListingSut().GetRunningProcesses(Everything);
 
         // Assert
         result.Should().HaveCount(FakeProcesses.Length);
         result.Should().OnlyContain(p => p.ParentProcessId == null);
         result.Single(p => p.ProcessId == Notepad).ExecutablePath.Should().NotBeNull();
+    }
+
+    [Theory]
+    [InlineData(IntegrityLevel.High, true)]
+    [InlineData(IntegrityLevel.LikelyElevated, true)]
+    [InlineData(IntegrityLevel.System, true)]
+    [InlineData(IntegrityLevel.Medium, false)]
+    [InlineData(IntegrityLevel.Low, false)]
+    [InlineData(IntegrityLevel.Restricted, false)]
+    [InlineData(IntegrityLevel.Unknown, false)]
+    public void GetRunningProcesses_ReportsTheIntegrity_AndAboveServerByTheInputGuardsTest(IntegrityLevel level, bool aboveServer)
+    {
+        // Arrange - a medium-integrity server; Restricted (another account, a hardened DACL) is not known to be above it
+        UseIntegrity(new Dictionary<int, ProcessIntegrity> { [Notepad] = Integrity(Notepad, level) });
+        UseProcessTable();
+
+        // Act
+        var result = CreateListingSut().GetRunningProcesses(Everything with { ProcessId = Notepad });
+
+        // Assert
+        var notepad = result.Should().ContainSingle().Subject;
+        notepad.Integrity!.Level.Should().Be(level);
+        notepad.AboveServer.Should().Be(aboveServer);
+        notepad.AboveServer.Should().Be(notepad.Integrity.IsMorePrivilegedThan(_mockSecurityProbe.Object.ServerIntegrity));
+    }
+
+    [Fact]
+    public void GetRunningProcesses_WithoutASecurityProbe_ReportsNoIntegrity()
+    {
+        // Arrange
+        UseProcessTable();
+
+        // Act
+        var result = CreateListingSut(withProbe: false).GetRunningProcesses(Everything);
+
+        // Assert
+        result.Should().OnlyContain(p => p.Integrity == null && !p.AboveServer);
+    }
+
+    [Fact]
+    public void GetRunningProcesses_ReadsNoCommandLine_UnlessAskedFor()
+    {
+        // Arrange
+        UseIntegrity();
+        UseProcessTable();
+
+        // Act
+        var result = CreateListingSut().GetRunningProcesses(Everything);
+
+        // Assert
+        result.Should().OnlyContain(p => p.CommandLine == null && !p.CommandLineRedacted);
+        _mockProcessWrapper.Verify(w => w.GetProcessCommandLine(It.IsAny<int>()), Times.Never);
+    }
+
+    [Fact]
+    public void GetRunningProcesses_WithIncludeCommandLine_ReadsItForTheReturnedProcessesOnly_AndMasksSecrets()
+    {
+        // Arrange
+        UseIntegrity();
+        UseProcessTable();
+        _mockProcessWrapper.Setup(w => w.GetProcessCommandLine(Notepad))
+            .Returns(@"""C:\Windows\System32\notepad.exe"" --api-token=s3cr3t notes.txt");
+
+        // Act
+        var result = CreateListingSut().GetRunningProcesses(Everything with { NameFilter = "notepad", IncludeCommandLine = true });
+
+        // Assert
+        var notepad = result.Should().ContainSingle().Subject;
+        notepad.CommandLine.Should().Be(@"""C:\Windows\System32\notepad.exe"" --api-token=*** notes.txt");
+        notepad.CommandLineRedacted.Should().BeTrue();
+        _mockProcessWrapper.Verify(w => w.GetProcessCommandLine(It.IsAny<int>()), Times.Once);
+    }
+
+    [Fact]
+    public void GetRunningProcesses_WithIncludeCommandLine_ReportsACommandLineWithoutSecretsAsNotRedacted()
+    {
+        // Arrange
+        UseIntegrity();
+        UseProcessTable();
+        _mockProcessWrapper.Setup(w => w.GetProcessCommandLine(Notepad)).Returns("notepad.exe notes.txt");
+
+        // Act
+        var result = CreateListingSut().GetRunningProcesses(Everything with { ProcessId = Notepad, IncludeCommandLine = true });
+
+        // Assert
+        var notepad = result.Should().ContainSingle().Subject;
+        notepad.CommandLine.Should().Be("notepad.exe notes.txt");
+        notepad.CommandLineRedacted.Should().BeFalse();
+    }
+
+    [Fact]
+    public void GetRunningProcesses_WithIncludeCommandLine_CutsALongCommandLine()
+    {
+        // Arrange
+        UseIntegrity();
+        UseProcessTable();
+        _mockProcessWrapper.Setup(w => w.GetProcessCommandLine(Notepad)).Returns("notepad.exe " + new string('a', 2_000));
+
+        // Act
+        var result = CreateListingSut().GetRunningProcesses(Everything with { ProcessId = Notepad, IncludeCommandLine = true });
+
+        // Assert
+        var commandLine = result.Should().ContainSingle().Subject.CommandLine;
+        commandLine.Should().HaveLength(ProcessInfo.MaxCommandLineLength).And.StartWith("notepad.exe aaa").And.EndWith("\u2026");
+    }
+
+    [Fact]
+    public void GetRunningProcesses_WithIncludeCommandLine_NeverReadsTheCommandLineOfAProcessThePolicyDenies()
+    {
+        // Arrange - KeePass is on the default deny list
+        const int keePass = 600;
+        UseIntegrity();
+        UseProcessTable(
+            processes: [.. FakeProcesses, new RunningProcess(keePass, "KeePass", 80L * 1024 * 1024, 1)],
+            details: new Dictionary<int, ProcessDetails?> { [keePass] = new(@"C:\Program Files\KeePass\KeePass.exe", T0) });
+        _mockProcessWrapper.Setup(w => w.GetProcessCommandLine(It.IsAny<int>())).Returns("KeePass.exe vault.kdbx -pw:hunter2");
+
+        // Act
+        var result = CreateListingSut(new TargetPolicy(TargetPolicySettings.Default))
+            .GetRunningProcesses(Everything with { NameFilter = "keepass", IncludeCommandLine = true });
+
+        // Assert - it is still listed, without its command line
+        result.Should().ContainSingle().Which.CommandLine.Should().BeNull();
+        _mockProcessWrapper.Verify(w => w.GetProcessCommandLine(It.IsAny<int>()), Times.Never);
+    }
+
+    [Fact]
+    public void GetRunningProcesses_WithAnAllowList_ReadsOnlyTheCommandLinesOfAllowedProcesses()
+    {
+        // Arrange
+        UseIntegrity();
+        UseProcessTable();
+        _mockProcessWrapper.Setup(w => w.GetProcessCommandLine(It.IsAny<int>())).Returns("app.exe");
+        var policy = new TargetPolicy(TargetPolicySettings.Default with { AllowedProcesses = ["notepad"] });
+
+        // Act
+        var result = CreateListingSut(policy).GetRunningProcesses(Everything with { NameFilter = "e", IncludeCommandLine = true });
+
+        // Assert - explorer, Notepad and ApplicationFrameHost match the filter; only Notepad is on the allow list
+        result.Where(p => p.CommandLine != null).Select(p => p.ProcessId).Should().Equal(Notepad);
+        _mockProcessWrapper.Verify(w => w.GetProcessCommandLine(It.Is<int>(id => id != Notepad)), Times.Never);
+    }
+
+    [Fact]
+    public void GetRunningProcesses_WithIncludeCommandLine_DropsTheCommandLine_WhenTheProcessIdWasReusedWhileItWasRead()
+    {
+        // Arrange - Notepad exits after it is listed, and another process takes its PID before the command line is read
+        UseIntegrity();
+        UseProcessTable();
+        var reads = 0;
+        _mockProcessWrapper.Setup(w => w.ReadProcessDetails(Notepad))
+            .Returns(() => new ProcessDetails(@"C:\Windows\System32\notepad.exe", ++reads == 1 ? T0.AddMinutes(5) : T0.AddMinutes(30)));
+        _mockProcessWrapper.Setup(w => w.GetProcessCommandLine(Notepad)).Returns("other.exe --flag");
+
+        // Act
+        var result = CreateListingSut().GetRunningProcesses(Everything with { ProcessId = Notepad, IncludeCommandLine = true });
+
+        // Assert
+        result.Should().ContainSingle().Which.CommandLine.Should().BeNull();
+        reads.Should().Be(2, "the start time is read again once the command line is read");
+    }
+
+    [Fact]
+    public void GetRunningProcesses_WithIncludeCommandLine_ReportsNone_WhenTheStartTimeCannotBeRead()
+    {
+        // Arrange - without a start time, a reused PID cannot be ruled out
+        UseIntegrity();
+        UseProcessTable(details: new Dictionary<int, ProcessDetails?> { [Notepad] = new(@"C:\Windows\System32\notepad.exe", null) });
+        _mockProcessWrapper.Setup(w => w.GetProcessCommandLine(Notepad)).Returns("notepad.exe");
+
+        // Act
+        var result = CreateListingSut().GetRunningProcesses(Everything with { ProcessId = Notepad, IncludeCommandLine = true });
+
+        // Assert
+        result.Should().ContainSingle().Which.CommandLine.Should().BeNull();
     }
 
     #endregion

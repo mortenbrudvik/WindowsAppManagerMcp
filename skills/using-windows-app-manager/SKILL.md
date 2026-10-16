@@ -122,7 +122,7 @@ There is no sleep tool, and you do not need one. Wait on the server with `wait_f
 - `TextTooLong`: `type_text` types at most 5,000 characters and pastes at most 1,000,000. Paste long text (`method` `paste` or `auto`), or send it in parts.
 - `ClipboardUnavailable`: `type_text` with `method: "paste"` could not lend the clipboard: it holds formatted text, an image, files or a password manager's private copy, which could not be put back, or another app held it open. Nothing was pasted and the clipboard is unchanged. Type the text (`method: "unicode"`), or ask the user to clear the clipboard.
 - `TargetInMenuMode`: a menu is open, so `type_text` would pick menu items. Close it with `send_keys` `{ESC}` (with `windowHandle`) or click into the field.
-- `TargetElevated`: the window runs as administrator; Windows would drop the input. Ask the user to do the step.
+- `TargetElevated`: the window runs as administrator; Windows would drop the input. Ask the user to do the step. You can tell beforehand: `list_processes` marks such a process `aboveServer: true`, and so does `get_window_info` with `detail: "full"` for its window.
 - `TargetDeniedByPolicy`: the user does not allow the agent to act on or read that app (by default password managers, the Windows credential, elevation and SmartScreen prompts, and Windows Security). No argument changes it, not even `force` or `forceKill`: ask the user to do the step. `element_action`, `respond_to_dialog`, `file_dialog`, `close_window`, `close_windows_batch`, `close_application`, `kill_process`, `capture_window`, `capture_with_elements`, `focus_window` and the other window tools (move, resize, state, snap, the batches, `apply_layout`) refuse such apps the same way, and so do the UI Automation reads (`get_desktop_state`, `get_ui_elements`, `find_ui_elements`, `read_element_text`, `read_table`, `wait_for_element`, `get_active_popups`, `get_focused_element`, `get_element_at_point`), even for a window you name; a `desktop` or `windowAndPopups` search leaves such windows out.
 - `SessionLocked`, `DesktopUnavailable`: the screen is locked or a UAC prompt is shown. Wait for the user.
 - `PausedByUser`: the user paused input with the pause hotkey. Stop and ask the user (see [Safety Rules](#safety-rules-read-first)).
@@ -383,7 +383,7 @@ Click with mouse_click: click, right_click and double_click are deprecated, serv
 | Tool | Description | Key Parameters |
 |------|-------------|----------------|
 | `launch_application` | Launch app by path/name/URI | executable, arguments, workingDirectory, waitForWindow, placement, reuseExisting |
-| `list_processes` | List running processes | nameFilter, includeWindowless |
+| `list_processes` | List processes with their windows, parent, start time and integrity | nameFilter, processId, includeWindowless, sortBy |
 | `kill_process` | Close or terminate a process | processId, confirm, forceKill, expectedProcessName |
 | `close_application` | Close an app's Alt+Tab windows gracefully; reports prompts and what remains | processName, processId, window (or handle), timeoutMs |
 

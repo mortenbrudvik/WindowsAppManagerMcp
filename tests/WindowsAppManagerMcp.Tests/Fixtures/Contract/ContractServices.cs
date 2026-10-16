@@ -197,6 +197,8 @@ public sealed class ContractServices : IDisposable
         services.AddSingleton(Input.Object);
         services.AddSingleton(Clipboard.Object);
         services.AddSingleton(Hotkey.Object);
+        // get_window_info's detail 'full' reads the window's integrity (roadmap M6.6)
+        services.AddSingleton(SecurityProbe.Object);
         services.AddSingleton<IInputSession>(Session);
         services.AddSingleton(Screenshots);
         services.AddSingleton<ICaptureRegistry>(Captures);
@@ -235,6 +237,8 @@ public sealed class ContractServices : IDisposable
         SystemInfo.Setup(s => s.GetForegroundLockTimeout()).Returns(typical ? 200_000 : null);
         SystemInfo.Setup(s => s.GetSessionId()).Returns(1);
         SecurityProbe.Setup(p => p.ServerIntegrity).Returns(new ProcessIntegrity(31_000, IntegrityLevel.Medium, ProcessIntegrity.MediumRid, false, null));
+        SecurityProbe.Setup(p => p.GetIntegrity(It.IsAny<int>()))
+            .Returns((int id) => new ProcessIntegrity(id, IntegrityLevel.Medium, ProcessIntegrity.MediumRid, false, null));
         SecurityProbe.Setup(p => p.IsInputDesktopAvailable()).Returns(typical);
         SecurityProbe.Setup(p => p.IsSessionLocked()).Returns(!typical);
 
@@ -377,7 +381,7 @@ public sealed class ContractServices : IDisposable
         // A launch that waited for its window found it: the launch tools return the whole window
         Processes.Setup(p => p.LaunchApplicationAsync(It.IsAny<LaunchRequest>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((LaunchRequest _, bool wait, int _, CancellationToken _) => TypicalLaunch(wait, notepad, TypicalDesktop.NotepadProcessId));
-        Processes.Setup(p => p.GetRunningProcesses(It.IsAny<string?>(), It.IsAny<bool>())).Returns(TypicalDesktop.Processes);
+        Processes.Setup(p => p.GetRunningProcesses(It.IsAny<ProcessQuery>())).Returns(TypicalDesktop.Processes);
         Processes.Setup(p => p.KillProcessAsync(It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<KillSafeguards?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((int id, bool _, bool _, int _, string? _, KillSafeguards? _, CancellationToken _) =>
                 new KillResult(true, id, ProcessName: "notepad", CloseRequested: true, Exited: true));
@@ -631,7 +635,7 @@ public sealed class ContractServices : IDisposable
 
         Processes.Setup(p => p.LaunchApplicationAsync(It.IsAny<string>(), It.IsAny<string[]?>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new LaunchResult(false, ErrorMessage: "The executable was not found", ErrorCode: "ExecutableNotFound"));
-        Processes.Setup(p => p.GetRunningProcesses(It.IsAny<string?>(), It.IsAny<bool>())).Returns([]);
+        Processes.Setup(p => p.GetRunningProcesses(It.IsAny<ProcessQuery>())).Returns([]);
         Processes.Setup(p => p.KillProcessAsync(It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<KillSafeguards?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((int id, bool _, bool _, int _, string? _, KillSafeguards? _, CancellationToken _) =>
                 new KillResult(false, id, ErrorMessage: "No process with that ID", ErrorCode: nameof(ProcessErrorCode.ProcessNotFound)));

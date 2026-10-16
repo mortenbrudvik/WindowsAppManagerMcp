@@ -14,15 +14,25 @@ public partial class WindowFinderTools
     private readonly IWindowService _windowService;
     private readonly INativeHitTestWrapper? _hitTest;
     private readonly IWindowWaitService? _windowWait;
+    private readonly IProcessSecurityProbe? _securityProbe;
 
     /// <param name="windowService">Window reads and the window selectors.</param>
     /// <param name="hitTest">The client-area read of get_window_info's detail 'full'; without it clientBounds is left out.</param>
     /// <param name="windowWait">wait_for_window's waits (roadmap M3.7); the server always registers it.</param>
-    public WindowFinderTools(IWindowService windowService, INativeHitTestWrapper? hitTest = null, IWindowWaitService? windowWait = null)
+    /// <param name="securityProbe">
+    /// The integrity read of get_window_info's detail 'full' (roadmap M6.6); the server always registers it. Without it
+    /// integrityLevel, elevated and aboveServer are left out.
+    /// </param>
+    public WindowFinderTools(
+        IWindowService windowService,
+        INativeHitTestWrapper? hitTest = null,
+        IWindowWaitService? windowWait = null,
+        IProcessSecurityProbe? securityProbe = null)
     {
         _windowService = windowService;
         _hitTest = hitTest;
         _windowWait = windowWait;
+        _securityProbe = securityProbe;
     }
 
     /// <summary>The window parameters every tool shares with find_windows (roadmap M2.4).</summary>
@@ -116,7 +126,8 @@ public partial class WindowFinderTools
                  "title, process and state; 'standard' (default) what find_windows reports, visibleBounds (the frame you see) included; 'full' adds " +
                  "clientBounds (the client area on screen), isForeground, zOrder (position among all top-level windows, hidden ones " +
                  "included, front to back; not window.index, and isForeground tells what is in front), isTopmost, isEnabled (false: a " +
-                 "modal dialog takes its input), isResponding (false: Windows reports it hung) and dpi (96 is 100%). Untitled, cloaked " +
+                 "modal dialog takes its input), isResponding (false: Windows reports it hung), dpi (96 is 100%), and its process's " +
+                 "integrityLevel and elevated, with aboveServer: true when it runs above this server (TargetElevated). Untitled, cloaked " +
                  "and tool windows are read too when named by handle. errorCode InvalidHandle: the handle is no window; WindowNotFound, " +
                  "AmbiguousWindow (with candidates) or HandleMismatch: the selector named no single window.")]
     public WindowDetailsResult GetWindowInfo(
@@ -130,14 +141,39 @@ public partial class WindowFinderTools
         var hwnd = WindowTargeting.Require(_windowService, handle, window);
         if (detail == WindowDetail.Full)
         {
-            return _windowService.GetWindowDetails(hwnd) is { } details
-                ? WindowDetailsResult.Full(details, _hitTest?.GetClientAreaOnScreen(hwnd))
-                : WindowDetailsResult.InvalidHandle(hwnd);
+            if (_windowService.GetWindowDetails(hwnd) is not { } details)
+            {
+                return WindowDetailsResult.InvalidHandle(hwnd);
+            }
+
+            var (integrity, aboveServer) = ReadIntegrity(details.Window);
+            return WindowDetailsResult.Full(details, _hitTest?.GetClientAreaOnScreen(hwnd), integrity, aboveServer);
         }
 
         return _windowService.GetWindowInfo(hwnd) is { } info
             ? detail == WindowDetail.Compact ? WindowDetailsResult.Compact(info) : WindowDetailsResult.Standard(info)
             : WindowDetailsResult.InvalidHandle(hwnd);
+    }
+
+    /// <summary>
+    /// The integrity of the window's process (for a UWP frame, the app's), and whether it or the frame host runs above the
+    /// server by the input guard's own test (<see cref="ProcessIntegrity.IsMorePrivilegedThan"/>), as get_ui_elements'
+    /// TargetElevated warning tells it. Token reads, cached per process, which no window's thread answers; nothing without a
+    /// probe.
+    /// </summary>
+    private (ProcessIntegrity? Integrity, bool AboveServer) ReadIntegrity(WindowInfo window)
+    {
+        if (_securityProbe == null)
+        {
+            return (null, false);
+        }
+
+        var server = _securityProbe.ServerIntegrity;
+        var integrity = _securityProbe.GetIntegrity(window.ProcessId);
+        var aboveServer = integrity.IsMorePrivilegedThan(server) ||
+                          window.HostProcessId is { } host && host != window.ProcessId &&
+                          _securityProbe.GetIntegrity(host).IsMorePrivilegedThan(server);
+        return (integrity, aboveServer);
     }
 
     [McpServerTool(Name = "get_all_windows", Title = "List All Windows", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
@@ -252,7 +288,8 @@ public record WindowInfoDto(
 /// <summary>
 /// get_window_info's result (roadmap M2.4): one window at the detail asked for. Compact has handle, title, processName,
 /// processId and state; standard adds what find_windows reports (VisibleBounds included); full adds the fields after
-/// VisibleBounds. Fields a detail level does not report are left out.
+/// VisibleBounds, the integrity of the window's process among them (roadmap M6.6; AboveServer only when true). Fields a
+/// detail level does not report are left out.
 /// </summary>
 public sealed record WindowDetailsResult(
     bool Success,
@@ -278,6 +315,9 @@ public sealed record WindowDetailsResult(
     bool? IsEnabled = null,
     bool? IsResponding = null,
     int? Dpi = null,
+    IntegrityLevel? IntegrityLevel = null,
+    bool? Elevated = null,
+    bool? AboveServer = null,
     string? Error = null,
     string? ErrorCode = null)
 {
@@ -292,7 +332,8 @@ public sealed record WindowDetailsResult(
             VisibleBounds: dto.VisibleBounds);
     }
 
-    internal static WindowDetailsResult Full(WindowDetails details, WindowRect? clientArea) => Standard(details.Window) with
+    internal static WindowDetailsResult Full(
+        WindowDetails details, WindowRect? clientArea, ProcessIntegrity? integrity = null, bool aboveServer = false) => Standard(details.Window) with
     {
         VisibleBounds = details.Window.VisibleBounds is { } visible ? new BoundsDto(visible.X, visible.Y, visible.Width, visible.Height) : null,
         ClientBounds = clientArea is { } client ? new BoundsDto(client.X, client.Y, client.Width, client.Height) : null,
@@ -301,7 +342,10 @@ public sealed record WindowDetailsResult(
         IsTopmost = details.IsTopmost,
         IsEnabled = details.IsEnabled,
         IsResponding = details.IsResponding,
-        Dpi = details.Dpi
+        Dpi = details.Dpi,
+        IntegrityLevel = integrity?.Level,
+        Elevated = integrity?.IsElevated,
+        AboveServer = aboveServer ? true : null
     };
 
     internal static WindowDetailsResult InvalidHandle(nint handle) => new(

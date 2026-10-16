@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Globalization;
 using ModelContextProtocol;
 using ModelContextProtocol.Server;
 using WindowsAppManagerMcp.Infrastructure;
@@ -159,23 +160,70 @@ public class AppLauncherTools
             cancellationToken);
 
     [McpServerTool(Name = "list_processes", Title = "List Processes", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
-    [Description("List currently running processes with optional filtering by name. Returns process info including ID, name, window count, and memory usage. " +
-                 "By default only processes with a visible, titled window are listed, including windows on other virtual desktops and tool windows; " +
-                 "pass includeWindowless=true to list every process, for example to confirm that a process has exited.")]
+    [Description("List running processes, by name unless sortBy says otherwise. Each has processId, name, executablePath, memoryUsageMB, " +
+                 "parentProcessId (left out when the parent exited), startTime (UTC), integrityLevel and elevated, aboveServer: true when it " +
+                 "runs above this server (input and UI Automation to its windows are refused: TargetElevated), windowCount and windows " +
+                 "(handle and title of up to 10, front to back). Only processes with a visible, titled window are listed, including windows " +
+                 "on other virtual desktops and tool windows (a UWP app's window also counts for ApplicationFrameHost); includeWindowless=true " +
+                 "lists every process, so processId with includeWindowless=true confirms that a process has exited.")]
     public IReadOnlyList<ProcessInfoDto> ListProcesses(
         [Description("Filter processes by name (partial match, case-insensitive)")]
         string? nameFilter = null,
-        [Description("Also list processes without a visible, titled window (default: false). windowCount is then 0 for every process.")]
-        bool includeWindowless = false)
+        [Description("Also list processes without a visible, titled window (default: false)")]
+        bool includeWindowless = false,
+        [Description("Only the process with this ID")]
+        int? processId = null,
+        [Description("Only processes whose executable path contains this text (case-insensitive); a process whose path cannot be read is left out")]
+        string? pathContains = null,
+        [Description("Order: 'name' (default), 'memory' (largest first) or 'startTime' (newest first)")]
+        ProcessSort sortBy = ProcessSort.Name,
+        [Description("Return at most this many processes, the first in sortBy order (at least 1; default: all)")]
+        int? limit = null,
+        [Description("Also return each process's commandLine, cut to 500 characters (default: false); only with nameFilter or processId. " +
+                     "Values that look secret (password=, --token, Bearer, a URL's password) become *** with commandLineRedacted: true, " +
+                     "but this is a heuristic. Left out when it cannot be read or the user's policy denies the process")]
+        bool includeCommandLine = false)
     {
-        var processes = _processService.GetRunningProcesses(nameFilter, includeWindowless);
+        if (limit is < 1)
+        {
+            throw new ToolErrorException(ToolErrorReporting.InvalidArgumentsErrorCode,
+                $"limit must be at least 1, but it is {limit}. Leave it out for every process.");
+        }
+
+        if (includeCommandLine && string.IsNullOrEmpty(nameFilter) && processId == null)
+        {
+            throw new ToolErrorException(ToolErrorReporting.InvalidArgumentsErrorCode,
+                "includeCommandLine needs nameFilter or processId, so that only the command lines of the processes you are after " +
+                "are read. Nothing was listed.");
+        }
+
+        var processes = _processService.GetRunningProcesses(new ProcessQuery
+        {
+            NameFilter = nameFilter,
+            IncludeWindowless = includeWindowless,
+            ProcessId = processId,
+            PathContains = pathContains,
+            Sort = sortBy,
+            Limit = limit,
+            IncludeCommandLine = includeCommandLine
+        });
 
         return processes.Select(p => new ProcessInfoDto(
             ProcessId: p.ProcessId,
             Name: p.Name,
             ExecutablePath: p.ExecutablePath,
             WindowCount: p.WindowCount,
-            MemoryUsageMB: p.MemoryUsageMB.HasValue ? Math.Round(p.MemoryUsageMB.Value, 1) : null
+            MemoryUsageMB: p.MemoryUsageMB.HasValue ? Math.Round(p.MemoryUsageMB.Value, 1) : null,
+            ParentProcessId: p.ParentProcessId,
+            StartTime: p.StartTime?.ToUniversalTime().ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", CultureInfo.InvariantCulture),
+            IntegrityLevel: p.Integrity?.Level,
+            Elevated: p.Integrity?.IsElevated,
+            AboveServer: p.AboveServer ? true : null,
+            Windows: p.Windows is { Count: > 0 } windows
+                ? windows.Select(w => new ProcessWindowDto(w.Handle.ToInt64(), AppText.Cut(w.Title))).ToList()
+                : null,
+            CommandLine: p.CommandLine,
+            CommandLineRedacted: p.CommandLineRedacted ? true : null
         )).ToList();
     }
 
@@ -461,10 +509,27 @@ public record LaunchPlacementResultDto(
     string? Warning = null
 );
 
+/// <summary>
+/// A process as list_processes returns it. What is unknown or empty is left out: executablePath, memoryUsageMB,
+/// parentProcessId and startTime when they cannot be read, integrityLevel and elevated without a security probe (elevated
+/// also when the token cannot be read), windows when it has none, the command line unless asked for. aboveServer and
+/// commandLineRedacted are only ever true. startTime is UTC, to the second.
+/// </summary>
 public record ProcessInfoDto(
     int ProcessId,
     string Name,
     string? ExecutablePath,
     int WindowCount,
-    double? MemoryUsageMB
+    double? MemoryUsageMB,
+    int? ParentProcessId = null,
+    string? StartTime = null,
+    IntegrityLevel? IntegrityLevel = null,
+    bool? Elevated = null,
+    bool? AboveServer = null,
+    IReadOnlyList<ProcessWindowDto>? Windows = null,
+    string? CommandLine = null,
+    bool? CommandLineRedacted = null
 );
+
+/// <summary>One of a process's windows in list_processes (roadmap M6.6): its handle and its title, cut as the window tools cut it.</summary>
+public record ProcessWindowDto(long Handle, string Title);

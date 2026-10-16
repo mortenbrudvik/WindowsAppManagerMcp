@@ -4501,7 +4501,7 @@
     {
       "name": "get_window_info",
       "title": "Get Window Info",
-      "description": "Read one window, named by handle or by a window selector, without listing every window. detail 'compact' gives handle, title, process and state; 'standard' (default) what find_windows reports, visibleBounds (the frame you see) included; 'full' adds clientBounds (the client area on screen), isForeground, zOrder (position among all top-level windows, hidden ones included, front to back; not window.index, and isForeground tells what is in front), isTopmost, isEnabled (false: a modal dialog takes its input), isResponding (false: Windows reports it hung) and dpi (96 is 100%). Untitled, cloaked and tool windows are read too when named by handle. errorCode InvalidHandle: the handle is no window; WindowNotFound, AmbiguousWindow (with candidates) or HandleMismatch: the selector named no single window.",
+      "description": "Read one window, named by handle or by a window selector, without listing every window. detail 'compact' gives handle, title, process and state; 'standard' (default) what find_windows reports, visibleBounds (the frame you see) included; 'full' adds clientBounds (the client area on screen), isForeground, zOrder (position among all top-level windows, hidden ones included, front to back; not window.index, and isForeground tells what is in front), isTopmost, isEnabled (false: a modal dialog takes its input), isResponding (false: Windows reports it hung), dpi (96 is 100%), and its process's integrityLevel and elevated, with aboveServer: true when it runs above this server (TargetElevated). Untitled, cloaked and tool windows are read too when named by handle. errorCode InvalidHandle: the handle is no window; WindowNotFound, AmbiguousWindow (with candidates) or HandleMismatch: the selector named no single window.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -5207,7 +5207,7 @@
     {
       "name": "list_processes",
       "title": "List Processes",
-      "description": "List currently running processes with optional filtering by name. Returns process info including ID, name, window count, and memory usage. By default only processes with a visible, titled window are listed, including windows on other virtual desktops and tool windows; pass includeWindowless=true to list every process, for example to confirm that a process has exited.",
+      "description": "List running processes, by name unless sortBy says otherwise. Each has processId, name, executablePath, memoryUsageMB, parentProcessId (left out when the parent exited), startTime (UTC), integrityLevel and elevated, aboveServer: true when it runs above this server (input and UI Automation to its windows are refused: TargetElevated), windowCount and windows (handle and title of up to 10, front to back). Only processes with a visible, titled window are listed, including windows on other virtual desktops and tool windows (a UWP app's window also counts for ApplicationFrameHost); includeWindowless=true lists every process, so processId with includeWindowless=true confirms that a process has exited.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -5220,7 +5220,46 @@
             "default": null
           },
           "includeWindowless": {
-            "description": "Also list processes without a visible, titled window (default: false). windowCount is then 0 for every process.",
+            "description": "Also list processes without a visible, titled window (default: false)",
+            "type": "boolean",
+            "default": false
+          },
+          "processId": {
+            "description": "Only the process with this ID",
+            "type": [
+              "integer",
+              "null"
+            ],
+            "default": null
+          },
+          "pathContains": {
+            "description": "Only processes whose executable path contains this text (case-insensitive); a process whose path cannot be read is left out",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "sortBy": {
+            "description": "Order: 'name' (default), 'memory' (largest first) or 'startTime' (newest first)",
+            "default": "name",
+            "type": "string",
+            "enum": [
+              "name",
+              "memory",
+              "startTime"
+            ]
+          },
+          "limit": {
+            "description": "Return at most this many processes, the first in sortBy order (at least 1; default: all)",
+            "type": [
+              "integer",
+              "null"
+            ],
+            "default": null
+          },
+          "includeCommandLine": {
+            "description": "Also return each process's commandLine, cut to 500 characters (default: false); only with nameFilter or processId. Values that look secret (password=, --token, Bearer, a URL's password) become *** with commandLineRedacted: true, but this is a heuristic. Left out when it cannot be read or the user's policy denies the process",
             "type": "boolean",
             "default": false
           }

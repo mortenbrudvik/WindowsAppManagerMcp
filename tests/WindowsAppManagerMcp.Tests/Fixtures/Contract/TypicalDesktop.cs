@@ -35,13 +35,21 @@ public static class TypicalDesktop
 
     public static WindowInfo Notepad => Windows[0];
 
+    /// <summary>
+    /// 40 processes as list_processes reports them since roadmap M6.6: each with its parent, start time and integrity, and
+    /// up to two windows (two thirds of them have one or two).
+    /// </summary>
     public static IReadOnlyList<ProcessInfo> Processes { get; } = Enumerable.Range(0, 40)
         .Select(i => new ProcessInfo(
             ProcessId: 4_000 + i * 37,
             Name: ProcessNames[i % ProcessNames.Length],
             ExecutablePath: $@"C:\Program Files\{ProcessNames[i % ProcessNames.Length]}\{ProcessNames[i % ProcessNames.Length]}.exe",
             WindowCount: i % 3,
-            MemoryUsageMB: 48.5 + i * 11.25))
+            MemoryUsageMB: 48.5 + i * 11.25,
+            ParentProcessId: 5_120,
+            StartTime: new DateTime(2026, 10, 16, 7, 0, 0, DateTimeKind.Utc).AddSeconds(i * 97),
+            Windows: [.. Windows.Skip(i % Windows.Count).Concat(Windows).Take(i % 3)],
+            Integrity: new ProcessIntegrity(4_000 + i * 37, IntegrityLevel.Medium, ProcessIntegrity.MediumRid, false, null)))
         .ToList();
 
     public static string Article { get; } = string.Concat(Enumerable.Repeat(

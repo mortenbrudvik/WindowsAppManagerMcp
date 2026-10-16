@@ -48,25 +48,28 @@ public interface IProcessService
         CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Lists running processes, optionally filtered by name, in the order the system lists them. The list comes from
-    /// <see cref="INativeProcessWrapper.ListRunningProcesses"/>; each listed process is opened once, for its path and start
-    /// time (<see cref="INativeProcessWrapper.ReadProcessDetails"/>), and its parent is taken from one process snapshot
-    /// with the PID-reuse rule of <see cref="Native.NativeProcessWrapper.FindParent"/> (named only when both start times
-    /// are known). Never throws for a process that exits or cannot be opened: its unreadable fields are null.
+    /// Lists running processes (roadmap M6.6). The list comes from <see cref="INativeProcessWrapper.ListRunningProcesses"/>,
+    /// filtered by name, process ID and (by default) a window, then by path, sorted (<see cref="ProcessQuery.Sort"/>: name,
+    /// then process ID, by default) and cut to <see cref="ProcessQuery.Limit"/>. A process is opened only for what is asked:
+    /// for its path and start time (<see cref="INativeProcessWrapper.ReadProcessDetails"/>) when the path filter or the
+    /// start-time order needs them, else only once it is returned, and for its integrity and command line only once it is
+    /// returned. Its parent is taken from one process snapshot with the PID-reuse rule of
+    /// <see cref="Native.NativeProcessWrapper.FindParent"/> (named only when both start times are known). Never throws for a
+    /// process that exits or cannot be opened: its unreadable fields are null.
     /// </summary>
+    /// <remarks>
+    /// Windows: only processes that have a visible, titled top-level window are listed unless
+    /// <see cref="ProcessQuery.IncludeWindowless"/> is set, wherever the window is: windows on other virtual desktops, tool
+    /// windows and the desktop shell's windows count, so a process is never hidden only because its window is not on the
+    /// current desktop. WindowCount counts those windows in both modes (0 for a process without one), and Windows holds the
+    /// first <see cref="ProcessInfo.MaxWindows"/> of them, front to back; a UWP app's window counts for the app's process and
+    /// for its ApplicationFrameHost.
+    /// </remarks>
     /// <exception cref="InvalidOperationException">
     /// The process list cannot be read: an empty list would look like "no such process is running".
     /// </exception>
-    /// <param name="nameFilter">Part of the process name, case-insensitive.</param>
-    /// <param name="includeWindowless">
-    /// False (default): only processes that have a visible, titled top-level window, wherever it is:
-    /// windows on other virtual desktops, tool windows and the desktop shell's windows count, so a
-    /// process is never hidden only because its window is not on the current desktop. WindowCount
-    /// counts those windows; a UWP app's window counts for the app's process and for its
-    /// ApplicationFrameHost. True: every process, with WindowCount counted the same way (0 for a
-    /// process without such a window).
-    /// </param>
-    IReadOnlyList<ProcessInfo> GetRunningProcesses(string? nameFilter = null, bool includeWindowless = false);
+    /// <exception cref="ArgumentOutOfRangeException"><see cref="ProcessQuery.Limit"/> is below 1.</exception>
+    IReadOnlyList<ProcessInfo> GetRunningProcesses(ProcessQuery query);
 
     string? GetProcessName(int processId);
 
@@ -154,10 +157,25 @@ public interface IProcessService
 /// <param name="ParentProcessId">
 /// The process that started it, when that process is still running and both start times can be read and show it
 /// started no later than the child (so a later process that reused the parent's PID is not named); null otherwise:
-/// when either process cannot be opened for its start time, or when the process snapshot cannot be read. Not reported
-/// by list_processes yet (roadmap M6.6).
+/// when either process cannot be opened for its start time, or when the process snapshot cannot be read.
 /// </param>
-/// <param name="StartTime">When the process started (UTC); null when it cannot be read. Not reported by list_processes yet.</param>
+/// <param name="StartTime">When the process started (UTC); null when it cannot be read.</param>
+/// <param name="Windows">
+/// The first <see cref="MaxWindows"/> of the windows <paramref name="WindowCount"/> counts, front to back; empty when it
+/// has none.
+/// </param>
+/// <param name="Integrity">Its integrity level and elevation (IProcessSecurityProbe); null when the service has no probe.</param>
+/// <param name="AboveServer">
+/// True when it is known or likely to run at a higher integrity level than the server
+/// (<see cref="ProcessIntegrity.IsMorePrivilegedThan"/>, the input guard's TargetElevated test): Windows drops the server's
+/// input and UI Automation to its windows.
+/// </param>
+/// <param name="CommandLine">
+/// Its command line, redacted (<see cref="Infrastructure.CommandLineRedactor"/>) and cut to
+/// <see cref="MaxCommandLineLength"/> characters; null unless asked for, and when it cannot be read or the user's target
+/// policy denies the process.
+/// </param>
+/// <param name="CommandLineRedacted">Whether something in <paramref name="CommandLine"/> was masked.</param>
 public record ProcessInfo(
     int ProcessId,
     string Name,
@@ -165,5 +183,17 @@ public record ProcessInfo(
     int WindowCount,
     double? MemoryUsageMB,
     int? ParentProcessId = null,
-    DateTime? StartTime = null
-);
+    DateTime? StartTime = null,
+    IReadOnlyList<WindowInfo>? Windows = null,
+    ProcessIntegrity? Integrity = null,
+    bool AboveServer = false,
+    string? CommandLine = null,
+    bool CommandLineRedacted = false
+)
+{
+    /// <summary>The most windows <see cref="Windows"/> holds; find_windows with the process ID lists the rest.</summary>
+    public const int MaxWindows = 10;
+
+    /// <summary>The longest command line returned, the ellipsis of a cut one included.</summary>
+    public const int MaxCommandLineLength = 500;
+}

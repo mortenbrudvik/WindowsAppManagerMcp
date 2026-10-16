@@ -1,5 +1,6 @@
 namespace WindowsAppManagerMcp.Tests.Unit.Tools;
 
+using WindowsAppManagerMcp.Infrastructure;
 using WindowsAppManagerMcp.Tools;
 
 /// <summary>
@@ -262,48 +263,57 @@ public class AppLauncherToolsTests
 
     #region ListProcesses Tests
 
+    private ProcessQuery? _processQuery;
+
+    /// <summary>The service lists <paramref name="processes"/> for any query, and records the query.</summary>
+    private void ListReturns(params ProcessInfo[] processes) =>
+        _mockProcessService.Setup(p => p.GetRunningProcesses(It.IsAny<ProcessQuery>()))
+            .Callback<ProcessQuery>(q => _processQuery = q)
+            .Returns(processes);
+
     [Fact]
     public void ListProcesses_CallsServiceWithParameters()
     {
         // Arrange
-        _mockProcessService.Setup(p => p.GetRunningProcesses(
-            It.IsAny<string?>(),
-            It.IsAny<bool>()))
-            .Returns(new List<ProcessInfo>());
+        ListReturns();
         var sut = CreateSut();
 
         // Act
-        sut.ListProcesses(nameFilter: "chrome", includeWindowless: true);
+        sut.ListProcesses(nameFilter: "chrome", includeWindowless: true, processId: 42, pathContains: @"\Google\",
+            sortBy: ProcessSort.StartTime, limit: 3, includeCommandLine: true);
 
         // Assert
-        _mockProcessService.Verify(p => p.GetRunningProcesses("chrome", true), Times.Once);
+        _processQuery.Should().Be(new ProcessQuery
+        {
+            NameFilter = "chrome",
+            IncludeWindowless = true,
+            ProcessId = 42,
+            PathContains = @"\Google\",
+            Sort = ProcessSort.StartTime,
+            Limit = 3,
+            IncludeCommandLine = true
+        });
     }
 
     [Fact]
     public void ListProcesses_WithDefaults_UsesDefaultValues()
     {
         // Arrange
-        _mockProcessService.Setup(p => p.GetRunningProcesses(
-            It.IsAny<string?>(),
-            It.IsAny<bool>()))
-            .Returns(new List<ProcessInfo>());
+        ListReturns();
         var sut = CreateSut();
 
         // Act
         sut.ListProcesses();
 
         // Assert
-        _mockProcessService.Verify(p => p.GetRunningProcesses(null, false), Times.Once);
+        _processQuery.Should().Be(new ProcessQuery());
     }
 
     [Fact]
     public void ListProcesses_ReturnsEmptyList_WhenNoProcesses()
     {
         // Arrange
-        _mockProcessService.Setup(p => p.GetRunningProcesses(
-            It.IsAny<string?>(),
-            It.IsAny<bool>()))
-            .Returns(new List<ProcessInfo>());
+        ListReturns();
         var sut = CreateSut();
 
         // Act
@@ -313,49 +323,132 @@ public class AppLauncherToolsTests
         result.Should().BeEmpty();
     }
 
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-5)]
+    public void ListProcesses_WithALimitBelowOne_FailsWithInvalidArguments_AndListsNothing(int limit)
+    {
+        // Arrange
+        ListReturns();
+
+        // Act
+        var act = () => CreateSut().ListProcesses(limit: limit);
+
+        // Assert
+        act.Should().Throw<ToolErrorException>()
+            .Where(e => e.ErrorCode == ToolErrorReporting.InvalidArgumentsErrorCode)
+            .WithMessage("*limit*at least 1*");
+        _mockProcessService.Verify(p => p.GetRunningProcesses(It.IsAny<ProcessQuery>()), Times.Never);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    public void ListProcesses_WithIncludeCommandLineButNoNameFilterOrProcessId_FailsWithInvalidArguments(string? nameFilter)
+    {
+        // Arrange - every process's command line in one call is too much to put in front of the agent
+        ListReturns();
+
+        // Act
+        var act = () => CreateSut().ListProcesses(nameFilter: nameFilter, includeWindowless: true, includeCommandLine: true);
+
+        // Assert
+        act.Should().Throw<ToolErrorException>()
+            .Where(e => e.ErrorCode == ToolErrorReporting.InvalidArgumentsErrorCode)
+            .WithMessage("*includeCommandLine*nameFilter*processId*");
+        _mockProcessService.Verify(p => p.GetRunningProcesses(It.IsAny<ProcessQuery>()), Times.Never);
+    }
+
+    [Fact]
+    public void ListProcesses_WithIncludeCommandLineAndProcessId_ListsTheCommandLine()
+    {
+        // Arrange
+        ListReturns(new ProcessInfo(1234, "app", null, 1, 10, CommandLine: "app.exe --password=***", CommandLineRedacted: true));
+
+        // Act
+        var dto = CreateSut().ListProcesses(processId: 1234, includeCommandLine: true).Single();
+
+        // Assert
+        dto.CommandLine.Should().Be("app.exe --password=***");
+        dto.CommandLineRedacted.Should().BeTrue();
+    }
+
     [Fact]
     public void ListProcesses_MapsProcessInfoToDto()
     {
         // Arrange
-        var processInfo = new ProcessInfo(
+        var window = TestDataFactory.CreateWindowInfo(0x1A2B, "New Tab - Google Chrome", "chrome", 1234);
+        ListReturns(new ProcessInfo(
             ProcessId: 1234,
             Name: "chrome",
             ExecutablePath: @"C:\Program Files\Google\Chrome\chrome.exe",
             WindowCount: 5,
-            MemoryUsageMB: 512.75);
-        _mockProcessService.Setup(p => p.GetRunningProcesses(
-            It.IsAny<string?>(),
-            It.IsAny<bool>()))
-            .Returns(new List<ProcessInfo> { processInfo });
+            MemoryUsageMB: 512.75,
+            ParentProcessId: 880,
+            StartTime: new DateTime(2026, 10, 16, 7, 5, 9, 678, DateTimeKind.Utc),
+            Windows: [window],
+            Integrity: new ProcessIntegrity(1234, IntegrityLevel.Medium, ProcessIntegrity.MediumRid, false, null)));
         var sut = CreateSut();
 
         // Act
         var result = sut.ListProcesses();
 
         // Assert
-        result.Should().HaveCount(1);
-        var dto = result[0];
-        dto.ProcessId.Should().Be(1234);
-        dto.Name.Should().Be("chrome");
-        dto.ExecutablePath.Should().Be(@"C:\Program Files\Google\Chrome\chrome.exe");
-        dto.WindowCount.Should().Be(5);
-        dto.MemoryUsageMB.Should().Be(512.8); // Rounded to 1 decimal
+        result.Should().ContainSingle().Which.Should().Be(new ProcessInfoDto(
+            ProcessId: 1234,
+            Name: "chrome",
+            ExecutablePath: @"C:\Program Files\Google\Chrome\chrome.exe",
+            WindowCount: 5,
+            MemoryUsageMB: 512.8, // Rounded to 1 decimal
+            ParentProcessId: 880,
+            StartTime: "2026-10-16T07:05:09Z",
+            IntegrityLevel: IntegrityLevel.Medium,
+            Elevated: false,
+            AboveServer: null,
+            Windows: result[0].Windows,
+            CommandLine: null,
+            CommandLineRedacted: null));
+        result[0].Windows.Should().Equal(new ProcessWindowDto(0x1A2B, "New Tab - Google Chrome"));
+    }
+
+    [Fact]
+    public void ListProcesses_LeavesOutWhatIsUnknownOrEmpty_AndReportsAboveServerOnlyWhenTrue()
+    {
+        // Arrange
+        ListReturns(
+            new ProcessInfo(1, "svchost", null, 0, null),
+            new ProcessInfo(2, "mmc", null, 1, 30, Integrity: new ProcessIntegrity(2, IntegrityLevel.LikelyElevated, null, null, "denied"),
+                AboveServer: true));
+
+        // Act
+        var result = CreateSut().ListProcesses(includeWindowless: true);
+
+        // Assert
+        result[0].Should().Be(new ProcessInfoDto(1, "svchost", null, 0, null));
+        result[1].IntegrityLevel.Should().Be(IntegrityLevel.LikelyElevated);
+        result[1].Elevated.Should().BeNull("the token could not be read");
+        result[1].AboveServer.Should().BeTrue();
+    }
+
+    [Fact]
+    public void ListProcesses_CutsALongWindowTitle()
+    {
+        // Arrange
+        var title = new string('x', 300);
+        ListReturns(new ProcessInfo(1, "app", null, 1, 10, Windows: [TestDataFactory.CreateWindowInfo(7, title, "app", 1)]));
+
+        // Act
+        var result = CreateSut().ListProcesses();
+
+        // Assert
+        result[0].Windows!.Single().Title.Should().Be(AppText.Cut(title));
     }
 
     [Fact]
     public void ListProcesses_RoundsMemoryUsage()
     {
         // Arrange
-        var processInfo = new ProcessInfo(
-            ProcessId: 1234,
-            Name: "app",
-            ExecutablePath: null,
-            WindowCount: 1,
-            MemoryUsageMB: 123.456789);
-        _mockProcessService.Setup(p => p.GetRunningProcesses(
-            It.IsAny<string?>(),
-            It.IsAny<bool>()))
-            .Returns(new List<ProcessInfo> { processInfo });
+        ListReturns(new ProcessInfo(ProcessId: 1234, Name: "app", ExecutablePath: null, WindowCount: 1, MemoryUsageMB: 123.456789));
         var sut = CreateSut();
 
         // Act
@@ -366,42 +459,10 @@ public class AppLauncherToolsTests
     }
 
     [Fact]
-    public void ListProcesses_HandlesNullMemoryUsage()
-    {
-        // Arrange
-        var processInfo = new ProcessInfo(
-            ProcessId: 1234,
-            Name: "app",
-            ExecutablePath: null,
-            WindowCount: 0,
-            MemoryUsageMB: null);
-        _mockProcessService.Setup(p => p.GetRunningProcesses(
-            It.IsAny<string?>(),
-            It.IsAny<bool>()))
-            .Returns(new List<ProcessInfo> { processInfo });
-        var sut = CreateSut();
-
-        // Act
-        var result = sut.ListProcesses();
-
-        // Assert
-        result[0].MemoryUsageMB.Should().BeNull();
-    }
-
-    [Fact]
     public void ListProcesses_ReturnsMultipleProcesses()
     {
         // Arrange
-        var processes = new List<ProcessInfo>
-        {
-            new(1, "app1", null, 1, 100),
-            new(2, "app2", null, 2, 200),
-            new(3, "app3", null, 3, 300)
-        };
-        _mockProcessService.Setup(p => p.GetRunningProcesses(
-            It.IsAny<string?>(),
-            It.IsAny<bool>()))
-            .Returns(processes);
+        ListReturns(new(1, "app1", null, 1, 100), new(2, "app2", null, 2, 200), new(3, "app3", null, 3, 300));
         var sut = CreateSut();
 
         // Act

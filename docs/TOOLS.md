@@ -298,14 +298,14 @@ Every tool the server serves sits in the agent's context on every turn, and a lo
 | Toolset | Default | Tokens | What it covers | Tools |
 |---------|---------|--------|----------------|-------|
 | `server` | always on | about 1,000 | The server's build, environment and toolsets, and the user's control over its input: whether input is paused, resuming it with the user's consent, releasing stuck keys. | [get_server_info](#get_server_info), [get_control_status](#get_control_status), [resume_input](#resume_input), [release_all_input](#release_all_input) |
-| `windows` | on | about 9,900 | Find, wait for, focus, move, resize, snap, minimize, maximize and close windows, and close several at once. | [find_windows](#find_windows), [get_foreground_window](#get_foreground_window), [focus_window](#focus_window), [set_window_bounds](#set_window_bounds), [set_window_state](#set_window_state), [snap_window](#snap_window), [move_window_to_monitor](#move_window_to_monitor), [close_window](#close_window), [close_windows_batch](#close_windows_batch), [get_owned_windows](#get_owned_windows), [get_window_info](#get_window_info), [wait_for_window](#wait_for_window) |
+| `windows` | on | about 10,000 | Find, wait for, focus, move, resize, snap, minimize, maximize and close windows, and close several at once. | [find_windows](#find_windows), [get_foreground_window](#get_foreground_window), [focus_window](#focus_window), [set_window_bounds](#set_window_bounds), [set_window_state](#set_window_state), [snap_window](#snap_window), [move_window_to_monitor](#move_window_to_monitor), [close_window](#close_window), [close_windows_batch](#close_windows_batch), [get_owned_windows](#get_owned_windows), [get_window_info](#get_window_info), [wait_for_window](#wait_for_window) |
 | `monitors` | on | about 100 | The monitors: bounds, work areas, scale factors, and the virtual screen they make up. | [get_monitors](#get_monitors) |
 | `capture` | on | about 5,900 | Screenshots of monitors, regions and windows, as image content. | [take_screenshot](#take_screenshot), [capture_region](#capture_region), [capture_window](#capture_window), [capture_with_elements](#capture_with_elements) |
 | `elements` | on | about 8,300 | UI Automation: one-call desktop observations, element trees, searches that return element refs (also in menus, dropdowns and dialogs), waits for elements, the focused element, the element at a point, an app's open popups, an element's text and a table's cells. | [get_desktop_state](#get_desktop_state), [get_ui_elements](#get_ui_elements), [find_ui_elements](#find_ui_elements), [get_focused_element](#get_focused_element), [get_element_at_point](#get_element_at_point), [get_active_popups](#get_active_popups), [read_element_text](#read_element_text), [read_table](#read_table), [wait_for_element](#wait_for_element) |
 | `input` | on | about 14,800 | Guarded mouse and keyboard input to a named window (clicks of any button with modifiers, drags, key chords), and actions on UI elements through UI Automation patterns: menu paths, answering dialogs, completing Open and Save As dialogs. | [mouse_click](#mouse_click), [drag](#drag), [mouse_move](#mouse_move), [scroll](#scroll), [type_text](#type_text), [send_keys](#send_keys), [press_keys](#press_keys), [element_action](#element_action), [respond_to_dialog](#respond_to_dialog), [file_dialog](#file_dialog) |
 | `clipboard` | on | about 700 | Read what the agent copied, put text on the clipboard to paste it; the user's own clipboard only with their consent. | [get_clipboard](#get_clipboard), [set_clipboard](#set_clipboard) |
 | `launch` | on | about 2,900 | Start applications, optionally waiting for their window. | [launch_application](#launch_application), [launch_applications_batch](#launch_applications_batch) |
-| `process` | on | about 1,900 | List processes and close or end one, or close an application's windows gracefully. | [list_processes](#list_processes), [kill_process](#kill_process), [close_application](#close_application) |
+| `process` | on | about 2,300 | List processes and close or end one, or close an application's windows gracefully. | [list_processes](#list_processes), [kill_process](#kill_process), [close_application](#close_application) |
 | `layouts` | on | about 1,200 | Save, apply and manage window layout presets. | [list_layouts](#list_layouts), [get_layout](#get_layout), [save_layout](#save_layout), [apply_layout](#apply_layout), [delete_layout](#delete_layout) |
 | `browser` | on | about 4,300 | Read the URL and text of browser pages, list a debug browser's tabs and wait for a page; start and close a browser with a DevTools port. | [get_browser_url](#get_browser_url), [get_browser_content](#get_browser_content), [launch_browser_with_debug](#launch_browser_with_debug), [close_debug_browser](#close_debug_browser), [list_tabs](#list_tabs), [wait_for_browser](#wait_for_browser) |
 | `browser-actions` | off | about 3,600 | Act on a debug browser's pages through CDP: show and navigate tabs (with a load wait), click and type in a page without the real mouse or keyboard, answer its JavaScript dialogs, place its elements on the screen, capture it. | [activate_tab](#activate_tab), [browser_navigate](#browser_navigate), [browser_element_rect](#browser_element_rect), [browser_click](#browser_click), [browser_type](#browser_type), [browser_handle_dialog](#browser_handle_dialog), [browser_screenshot](#browser_screenshot) |
@@ -313,7 +313,7 @@ Every tool the server serves sits in the agent's context on every turn, and a lo
 | `windows-batch` | off | about 2,000 | Place, snap, or minimize, maximize and restore several windows in one call, each with its own placement or state. | [set_windows_bounds_batch](#set_windows_bounds_batch), [snap_windows_batch](#snap_windows_batch), [set_windows_state_batch](#set_windows_state_batch) |
 | `deprecated` | off | about 4,900 | Tools replaced in 2.2.0 and removed in 3.0.0, unchanged until then and each served only with the toolset it came from: use mouse_click, set_window_bounds, find_windows, get_monitors and get_browser_url instead. | [click](#click), [right_click](#right_click), [double_click](#double_click), [move_window](#move_window), [resize_window](#resize_window), [get_all_windows](#get_all_windows), [get_primary_monitor](#get_primary_monitor), [list_screens](#list_screens), [get_active_browser_url](#get_active_browser_url) |
 
-The default surface (the toolsets that are on) is about 51,000 tokens, and every tool together about 62,000.
+The default surface (the toolsets that are on) is about 51,400 tokens, and every tool together about 62,300.
 <!-- tools:end toolsets -->
 
 **Tokens** is what the toolset's tools cost in tools/list, to the nearest 100: their names, titles, descriptions, input schemas and annotations as the server sends them, estimated at 4 bytes of JSON per token (roadmap M6.1). It is what turning the toolset on adds to the context a client loads up front, and what turning it off saves. The two totals under the table are measured the same way and generated with it. Contract tests hold each toolset, the default surface, the whole list and every single tool (at most 2,500 tokens) to a budget, so a change that makes them larger is a decision; see TESTING.md.
@@ -733,7 +733,7 @@ Read one window, named by `handle` or by a [window selector](#window-selectors),
 |--------|--------|
 | `compact` | `handle`, `title`, `processName`, `processId`, `state` |
 | `standard` (default) | What [find_windows](#find_windows) reports for the window: also `bounds` (the window rect), `isVisible`, `monitorIndex`, `className`, `isCloaked`, `visibleBounds` (the visible frame, without the invisible resize borders; see [Window Discovery](#window-discovery)), and `ownerHandle`, `hostProcessName`, `hostProcessId` and `isAgentHost` when they apply |
-| `full` | Standard, plus `clientBounds` (the client area on screen), `isForeground`, `zOrder` (its place among all top-level windows, hidden ones included, front to back from 0; left out for a child window), `isTopmost`, `isEnabled` (false: it is disabled, usually by a modal dialog; [get_owned_windows](#get_owned_windows) names it), `isResponding` (false: Windows reports it hung) and `dpi` (96 is 100%) |
+| `full` | Standard, plus `clientBounds` (the client area on screen), `isForeground`, `zOrder` (its place among all top-level windows, hidden ones included, front to back from 0; left out for a child window), `isTopmost`, `isEnabled` (false: it is disabled, usually by a modal dialog; [get_owned_windows](#get_owned_windows) names it), `isResponding` (false: Windows reports it hung), `dpi` (96 is 100%), and `integrityLevel` and `elevated` of the window's process (for a UWP window the app's), as [list_processes](#list_processes) reports them, with `aboveServer: true` when it or the frame host runs above this server, so input to the window is refused with `TargetElevated` (roadmap M6.6) |
 
 A window named by its handle is read whatever the listing filter would say: untitled, cloaked, tool and child windows too. No value waits for the window's application, so a hung window is read too.
 
@@ -768,7 +768,9 @@ A window named by its handle is read whatever the listing filter would say: unti
   "isTopmost": false,
   "isEnabled": true,
   "isResponding": true,
-  "dpi": 120
+  "dpi": 120,
+  "integrityLevel": "Medium",
+  "elevated": false
 }
 ```
 
@@ -5832,26 +5834,48 @@ The program is recognised by the name asked for and by the file it resolves to (
 
 ### list_processes
 
-List running processes with optional filtering.
+List running processes with optional filtering: which process an app runs as, which windows it owns, who started it and when, and whether this server can drive it (roadmap M6.6).
 
 <!-- tools:begin params:list_processes -->
 **Parameters:**
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| nameFilter | string | No | - | Filter by process name (partial match) |
-| includeWindowless | boolean | No | false | Also list processes without a visible, titled window; `windowCount` is then 0 for every process |
+| nameFilter | string | No | - | Filter by process name (partial match, case-insensitive) |
+| includeWindowless | boolean | No | false | Also list processes without a visible, titled window |
+| processId | integer | No | - | Only the process with this ID |
+| pathContains | string | No | - | Only processes whose executable path contains this text (case-insensitive); a process whose path cannot be read (another account's, a system process) is left out |
+| sortBy | string (one of: `"name"`, `"memory"`, `"startTime"`) | No | "name" | `name` (case-insensitive, then `processId`), `memory` (largest working set first) or `startTime` (newest first, so the process just launched comes first); a value that cannot be read sorts last |
+| limit | integer | No | - | Return at most this many processes, the first in `sortBy` order (at least 1, else `InvalidArguments`); without it every match is returned |
+| includeCommandLine | boolean | No | false | Also return `commandLine`, redacted and cut to 500 characters. Only with `nameFilter` or `processId` (else `InvalidArguments`); see below |
 <!-- tools:end params:list_processes -->
 
-By default only processes with at least one visible, titled top-level window are listed. Unlike [find_windows](#find_windows), this counts every such window: windows on other virtual desktops (cloaked), tool windows and the desktop shell's windows too, so a process does not disappear from the list only because its window is not on the current desktop. `windowCount` is the number of those windows. A Store (UWP) app's window counts for the app's own process and for its `ApplicationFrameHost` host. To check whether a process has exited, use `includeWindowless: true`, which lists every running process.
+By default only processes with at least one visible, titled top-level window are listed. Unlike [find_windows](#find_windows), this counts every such window: windows on other virtual desktops (cloaked), tool windows and the desktop shell's windows too, so a process does not disappear from the list only because its window is not on the current desktop. `windowCount` is the number of those windows, with `includeWindowless: true` too (it used to be 0 there), and `windows` gives the handle and title of the first 10, front to back (left out when there are none; [find_windows](#find_windows) with `processId` lists the rest). A Store (UWP) app's window counts for the app's own process and for its `ApplicationFrameHost` host. To check whether a process has exited, use `processId` with `includeWindowless: true`: an empty list means it is gone. `limit` never hides a process from that check, since the PID names it alone.
+
+Each process has:
+
+| Field | Meaning |
+|-------|---------|
+| `processId`, `name`, `executablePath` | The process; `executablePath` is left out when the process cannot be opened (another account's, a system process) |
+| `windowCount`, `windows` | Its visible, titled windows, as above: `[{handle, title}]`, titles cut to 200 characters |
+| `memoryUsageMB` | The working set, to 0.1 MB; left out when it cannot be read |
+| `parentProcessId` | The process that started it; left out when that process has exited, when either start time cannot be read, or when a later process took the parent's PID (it started after the child) |
+| `startTime` | When it started, UTC, to the second (`"2026-10-16T07:05:09Z"`); left out when it cannot be read |
+| `integrityLevel`, `elevated` | Its integrity level, as [get_server_info](#get_server_info) reports the server's own (`Medium`, `High`, `System`, `Low`, `LikelyElevated`, `Restricted`, `Unknown`), and whether its token is elevated (left out when the token cannot be read) |
+| `aboveServer` | `true` when it runs at a higher integrity level than this server (a `High` or `System` process, or `LikelyElevated`) by the input guard's own test: input to its windows is refused with `TargetElevated` and UI Automation sees little of them. Left out otherwise. `Restricted` (another account's process, or one with a hardened DACL) does not count, since its level is unknown |
+| `commandLine`, `commandLineRedacted` | Only with `includeCommandLine`, below |
+
+**Command lines.** `includeCommandLine: true` reads the command line of each process returned, and only with `nameFilter` or `processId`, so a call never puts every process's arguments in front of the agent. Values that look secret are replaced with `***` and `commandLineRedacted: true` says so: switches named like a password, token, key, secret, signature or credential (`--password=x`, `--api-key x`, `/p:Password=x`), connection-string passwords, `Authorization:`, `Bearer` and `Basic` credentials, a URL's password and secret query parameters (`sig=`), curl's `-u user:password`, and the password switches of the MySQL and SQL Server tools. The masking is a heuristic: a secret in another shape (a positional password, a base64 blob) passes through. The command line is left out of a process the user's target policy denies (it is never read), of one that cannot be read (an elevated or another account's process), and when the process's start time cannot be read or changed while it was read, since the PID may then belong to another process. No command line reaches the audit log: list_processes is not audited.
 
 **Example:**
-> "Show all Chrome processes"
+> "Which Notepad did I just start, and can you type into it?"
 
 ```json
 {
   "name": "list_processes",
   "arguments": {
-    "nameFilter": "chrome"
+    "nameFilter": "notepad",
+    "sortBy": "startTime",
+    "limit": 2
   }
 }
 ```
@@ -5861,20 +5885,32 @@ By default only processes with at least one visible, titled top-level window are
 [
   {
     "processId": 12456,
-    "name": "chrome",
-    "executablePath": "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
-    "windowCount": 5,
-    "memoryUsageMB": 512.8
+    "name": "notepad",
+    "executablePath": "C:\Windows\System32\notepad.exe",
+    "windowCount": 1,
+    "memoryUsageMB": 18.2,
+    "parentProcessId": 9120,
+    "startTime": "2026-10-16T07:05:09Z",
+    "integrityLevel": "Medium",
+    "elevated": false,
+    "windows": [{ "handle": 2558020, "title": "notes.txt - Notepad" }]
   },
   {
     "processId": 12460,
-    "name": "chrome",
-    "executablePath": "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
-    "windowCount": 0,
-    "memoryUsageMB": 128.4
+    "name": "notepad",
+    "executablePath": "C:\Windows\System32\notepad.exe",
+    "windowCount": 1,
+    "memoryUsageMB": 17.9,
+    "parentProcessId": 9120,
+    "startTime": "2026-10-16T07:01:44Z",
+    "integrityLevel": "LikelyElevated",
+    "aboveServer": true,
+    "windows": [{ "handle": 3410090, "title": "hosts - Notepad" }]
   }
 ]
 ```
+
+The second Notepad was started as administrator (its token could not be read, so `elevated` is left out): this server cannot click or type into its window, so ask the user to do that step.
 
 ---
 
@@ -7672,6 +7708,18 @@ the new tools; their sections have the rest.
   .NET 8 Desktop Runtime the exe exits at startup and the client lists none of its tools. The tools, their input
   schemas and their results are unchanged; [get_server_info](#get_server_info)'s `server.runtime` reports
   `.NET 10.0.x`.
+- **list_processes: windows, parent, start time, integrity, filters and order (roadmap M6.6).** Every process now has
+  `parentProcessId`, `startTime` (UTC, to the second), `integrityLevel` and `elevated`, `windows` (the handle and title
+  of up to 10 of its windows, front to back) and, only when true, `aboveServer` (input to it is refused with
+  `TargetElevated`); fields that cannot be read are left out. **Changed:** `windowCount` is the real count with
+  `includeWindowless: true` too (it was 0 for every process), and the list is sorted by name, then `processId` (it came
+  in the system's order). New optional parameters: `processId`, `pathContains`, `sortBy` (`name`, `memory` largest first,
+  `startTime` newest first), `limit` (at least 1, no default, so the result is still the whole array; below 1 is
+  `InvalidArguments`) and `includeCommandLine`, which returns the command line with secret-looking values masked as
+  `***` (`commandLineRedacted: true`), cut to 500 characters, never for a process the user's policy denies, and only
+  with `nameFilter` or `processId` (else `InvalidArguments`). [get_window_info](#get_window_info) with
+  `detail: "full"` reports the window's `integrityLevel`, `elevated` and `aboveServer` too; its other details and
+  find_windows are unchanged.
 
 ## Error Codes
 
