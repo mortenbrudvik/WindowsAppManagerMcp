@@ -485,7 +485,7 @@ public class ProcessKillTests
     }
 
     /// <summary>
-    /// .NET 8's Kill(entireProcessTree: true) catches the failure for the root and for each child,
+    /// .NET's Kill(entireProcessTree: true) catches the failure for the root and for each child,
     /// keeps going, and throws one AggregateException at the end. An elevated child that denies
     /// access therefore arrives as AggregateException(Win32Exception(5)) even though the root
     /// was terminated.

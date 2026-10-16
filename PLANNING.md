@@ -13,7 +13,7 @@ Create a Claude Code MCP (Model Context Protocol) server that enables Claude to:
 
 | Component | Choice | Rationale |
 |-----------|--------|-----------|
-| **Runtime** | C#/.NET 8+ | Native Windows interop via P/Invoke, excellent async handling |
+| **Runtime** | C#/.NET 10 | Native Windows interop via P/Invoke, excellent async handling |
 | **MCP SDK** | ModelContextProtocol NuGet | Official C# SDK for MCP servers |
 | **Windows APIs** | P/Invoke (user32.dll, kernel32.dll) | Direct access to all window management APIs |
 | **Transport** | STDIO | Standard for local MCP servers |

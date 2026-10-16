@@ -37,11 +37,13 @@ An MCP (Model Context Protocol) server that enables AI assistants like Claude to
 ### Prerequisites
 
 - Windows 10/11 (x64)
-- [.NET 8 Desktop Runtime (x64)](https://dotnet.microsoft.com/download/dotnet/8.0) (the "Windows Desktop Runtime" download).
+- [.NET 10 Desktop Runtime (x64)](https://dotnet.microsoft.com/download/dotnet/10.0) (the "Windows Desktop Runtime" download).
   The server exe is framework-dependent and uses WPF's UI Automation client (for browser reading, the close prompts and
   the `uia2` engine), so the base .NET Runtime alone is not enough:
   without the Desktop Runtime the server exits at startup and no windows-app-manager tools appear.
-  Check with `dotnet --list-runtimes`, which should list `Microsoft.WindowsDesktop.App 8.x`.
+  Check with `dotnet --list-runtimes`, which should list `Microsoft.WindowsDesktop.App 10.x`.
+  Releases up to 2.1.0 ran on .NET 8 (end of support 2026-11-10); later releases need .NET 10, and the .NET 8
+  Desktop Runtime alone no longer starts them.
 
 ### Option 1: Claude Code Plugin (Recommended)
 
@@ -58,7 +60,7 @@ Install as a Claude Code plugin:
 Then restart Claude Code. The plugin includes a skill with usage guidance.
 
 The plugin runs the pre-built `bin/WindowsAppManagerMcp.exe` from this repository, so it needs the
-.NET 8 Desktop Runtime too. That exe is rebuilt at each release and can lag behind `main` in between:
+.NET 10 Desktop Runtime too. That exe is rebuilt at each release and can lag behind `main` in between:
 the tools and safety behaviour described here are those of the source on `main`, and the plugin gets
 them with the next release (its version is `serverInfo.version` in the MCP handshake).
 
@@ -88,15 +90,15 @@ dotnet publish src/WindowsAppManagerMcp -c Release -o ./publish
 ```
 
 This produces `publish/WindowsAppManagerMcp.exe`, a framework-dependent single-file exe that needs the
-.NET 8 Desktop Runtime. To bundle the runtime instead, add `--self-contained`; the output is much larger
-(about 160 MB) and includes native WPF DLLs that must stay next to the exe. Do not publish into `./bin`:
+.NET 10 Desktop Runtime. To bundle the runtime instead, add `--self-contained`; the output is much larger
+(about 140 MB) and includes native WPF DLLs that must stay next to the exe. Do not publish into `./bin`:
 that folder holds the committed plugin exe (see [Building](#building)).
 
 ### Option 4: Download Release
 
 Download `WindowsAppManagerMcp-vX.Y.Z-win-x64.zip` from the [Releases](https://github.com/mortenbrudvik/WindowsAppManagerMcp/releases)
 page, extract it, and point your MCP client at `WindowsAppManagerMcp.exe` (see Option 2). It is a
-framework-dependent single-file exe and needs the .NET 8 Desktop Runtime. Releases are created by CI when a `v*` tag
+framework-dependent single-file exe and needs the .NET 10 Desktop Runtime. Releases are created by CI when a `v*` tag
 is pushed; the first one is v1.12.0 (no release was published for earlier tags).
 
 The release zip is built by CI from the tagged sources. It is not a copy of the plugin's committed
@@ -265,7 +267,7 @@ dotnet build
 # Run tests
 dotnet test
 
-# Publish the exe (framework-dependent single file, needs the .NET 8 Desktop Runtime)
+# Publish the exe (framework-dependent single file, needs the .NET 10 Desktop Runtime)
 dotnet publish src/WindowsAppManagerMcp -c Release -o ./publish
 ```
 
@@ -391,7 +393,7 @@ WindowsAppManagerMcp/
 ## Requirements
 
 - Windows 10 version 1607+ or Windows 11
-- .NET 8 Desktop Runtime (x64), not just the base .NET Runtime (see [Prerequisites](#prerequisites))
+- .NET 10 Desktop Runtime (x64), not just the base .NET Runtime (see [Prerequisites](#prerequisites))
 - DPI awareness enabled for accurate positioning on high-DPI displays
 
 ## License

@@ -1,6 +1,6 @@
 # Testing Guide
 
-> **WindowsAppManagerMcp** | .NET 8.0 | xUnit | Moq
+> **WindowsAppManagerMcp** | .NET 10.0 | xUnit | Moq
 
 A comprehensive guide for Test-Driven Development (TDD) using the Red-Green-Refactor methodology.
 
@@ -1732,7 +1732,7 @@ public static class TestDataFactory
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net8.0-windows</TargetFramework>
+    <TargetFramework>net10.0-windows</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>

@@ -155,6 +155,7 @@ There is no sleep tool, and you do not need one. Wait on the server with `wait_f
 **Other failure modes:**
 
 - **A tool is missing:** the user's toolsets, excluded tools or read-only mode leave it out (see [Toolsets](#toolsets)); `get_server_info` says which. Tell the user instead of working around it.
+- **No Windows App Manager tool at all** (not even `get_server_info`): the server did not start. It needs the .NET 10 Desktop Runtime (x64), not just the base .NET Runtime, and the .NET 8 one that releases up to 2.1.0 ran on is no longer enough; `dotnet --list-runtimes` must list `Microsoft.WindowsDesktop.App 10.x`. Tell the user.
 - **Coordinates are off:** check `dpiAwareness` in `get_server_info` (it must be `PerMonitorV2`, or `PerMonitor` on Windows before 10 1703), and pass capture points with their `captureId` (or convert them with `imageToScreen`), never with `scaleFactor`.
 - **A capture shows nothing useful:** a minimized window fails with `WindowMinimized` (pass `restoreIfMinimized: true`, which restores it without activation and minimizes it again), a hidden one with `WindowHidden`, one on another virtual desktop with `Cloaked`. Read the capture's `warnings`: `ImageBlank` (one solid color: GPU or protected content, or not painted yet), `WindowNotResponding` (copied from the screen, so covering windows show) or `DpiScaledWindow`.
 - **A window is not listed:** listings leave out cloaked windows (other virtual desktops), tool windows, untitled windows and shell windows; see the Tips.

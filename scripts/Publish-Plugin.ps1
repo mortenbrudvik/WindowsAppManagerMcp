@@ -22,7 +22,7 @@
        DPI awareness of app.manifest (its bytes are read; the exe is not run).
     6. Copies WindowsAppManagerMcp.exe into -OutputDirectory (default: <repo>/bin).
 
-    The exe is framework-dependent: it needs the .NET 8 Desktop Runtime (x64) on the machine.
+    The exe is framework-dependent: it needs the .NET 10 Desktop Runtime (x64) on the machine.
 
 .PARAMETER OutputDirectory
     Where to put WindowsAppManagerMcp.exe. Defaults to <repo>/bin. /update-plugin passes the

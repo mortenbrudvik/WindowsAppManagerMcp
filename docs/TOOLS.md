@@ -6571,7 +6571,7 @@ Reports the server's build and the environment its tools work in, in one read-on
     "version": "1.15.0+3f9c2a1e5b7d4c6f8a0b1c2d3e4f5a6b7c8d9e0f",
     "gitSha": "3f9c2a1e5b7d4c6f8a0b1c2d3e4f5a6b7c8d9e0f",
     "sdkVersion": "2.2.0",
-    "runtime": ".NET 8.0.21",
+    "runtime": ".NET 10.0.13",
     "os": "Microsoft Windows 10.0.26200"
   },
   "connection": { "protocolVersion": "2025-11-25", "clientName": "claude-code", "clientVersion": "2.1.0" },
@@ -7584,6 +7584,12 @@ the new tools; their sections have the rest.
   the window in front was not a browser). mouse_click's description now names every check a click gets instead of
   referring to click's. The toolsets table above has a Tokens column, and contract tests hold the default tools/list,
   each toolset and every single tool (at most 2,500 tokens) to a budget.
+- **Runs on .NET 10.** **Breaking:** the server targets .NET 10 (`net10.0-windows`) instead of .NET 8, which reaches
+  end of support on 2026-11-10. The exe is still a framework-dependent single file, so the machine now needs the
+  .NET 10 Desktop Runtime (x64): `dotnet --list-runtimes` must list `Microsoft.WindowsDesktop.App 10.x`. With only the
+  .NET 8 Desktop Runtime the exe exits at startup and the client lists none of its tools. The tools, their input
+  schemas and their results are unchanged; [get_server_info](#get_server_info)'s `server.runtime` reports
+  `.NET 10.0.x`.
 
 ## Error Codes
 

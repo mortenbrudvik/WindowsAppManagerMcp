@@ -2,7 +2,7 @@
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <TargetFramework>net8.0-windows</TargetFramework>
+    <TargetFramework>net10.0-windows</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
@@ -17,7 +17,10 @@
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.10" />
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.10" />
     <PackageReference Include="ModelContextProtocol" Version="2.2.0" />
-    <PackageReference Include="System.Drawing.Common" Version="9.0.0" />
+    <!--
+      No System.Drawing.Common package: on .NET 10 the Windows Desktop framework referenced below carries a newer
+      System.Drawing.Common than any 9.x package, so NuGet prunes the package (NU1510) and the exe uses the framework's.
+    -->
     <!--
       The UI Automation 3 (COM) client for the default UI Automation engine (Native/Uia3Tree, roadmap M3.2): a
       prebuilt, MIT-licensed interop assembly of UIAutomationClient.idl, one managed dll with no native code that the
