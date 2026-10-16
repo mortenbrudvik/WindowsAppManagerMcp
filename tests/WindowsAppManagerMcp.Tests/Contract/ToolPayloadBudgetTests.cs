@@ -150,13 +150,13 @@ public class ToolPayloadBudgetTests
     /// measured size (58,758 tokens, 235,029 bytes for 68 tools, October 2026, after M3.F32's screenshotMarks and observe on six action tools, M3.F8's launch arguments description, M3.F38's markPrefix, M4.2's CursorClamped and mouse buttons, and M4.1's key grammar, send_keys' delayMs and keysSent, and type_text's controlChars, M4.3's mouse_click, drag and press_keys, M4.4's type_text method and paste, and M5.2's targetId on get_browser_url and get_browser_content, +110 after the three cdpPort descriptions were shortened, less after get_active_browser_url's requireCdp stopped naming targetId, M5.7's get_browser_url description, M5.1's launch_browser_with_debug executablePath, port 0 and launch results, and M5.1's readiness sentence (cdpReady, cdpEndpoint, browserVersion, the 10-second wait) in its description, M5.3's useCdp on the three reading tools and their found debug port, and M5.6's paged get_browser_content (offset, selector, the page fields in its description, and offset's 'a uia page continues with useCdp=false'), and M5.4's close_debug_browser and launch_browser_with_debug's profile, reuseIfRunning and placement (launch_application's placement schema, about 420 tokens of the 791), with its cleanup advice shortened to close_debug_browser; then 60,504 tokens, 242,016 bytes for 72 tools after M5.5's list_tabs, activate_tab, browser_navigate and wait_for_browser, each with handle, the window selector and cdpPort; then 63,474 tokens, 253,893 bytes for 78 tools after M5.8's DOM bridge, browser_element_rect, browser_click, browser_type, browser_handle_dialog, browser_screenshot and browser_evaluate, each with handle, the window selector (156 tokens each), cdpPort and targetId; then 63,673 tokens, 254,692 bytes after M5.8's dialog option (dialog and promptText on browser_click, browser_type and browser_navigate) and browser_handle_dialog through UI Automation (window only, accept optional); then 64,078 tokens, 256,309 bytes after M6.1a's virtualScreen on get_monitors (+28), set_window_bounds' optional x/y and width/height pairs and nullable bringToFront (+87), get_browser_url's bare foreground selector (+41) and mouse_click's own click checks instead of 'as for click' (+249); then 61,957 tokens, 247,825 bytes after M6.1b cut the
     /// nine deprecated tools' descriptions to one line that names the replacement, sent take_screenshot, the
     /// handle parameters and drag to get_monitors, find_windows and mouse_click instead of the deprecated tools, and added
-    /// get_server_info's moved field to its description (-2,121 in all); then 62,330 tokens, 249,317 bytes after M6.6's
+    /// get_server_info's moved field to its description (-2,121 in all); then 62,348 tokens, 249,390 bytes after M6.6's
     /// list_processes parameters (processId, pathContains, sortBy, limit, includeCommandLine) and result fields in its
-    /// description (+342) and get_window_info's integrity fields (+31); DefaultToolListTokenBudget measures the 58 tools served by default), so every addition to the surface is a decision. When a change
+    /// description (+361) and get_window_info's integrity fields (+31); DefaultToolListTokenBudget measures the 58 tools served by default), so every addition to the surface is a decision. When a change
     /// adds to the surface on purpose, raise it in the same change by what the failure message measures; when a change
     /// trims descriptions, lower it.
     /// </summary>
-    public const int ToolListTokenBudget = 62_366;
+    public const int ToolListTokenBudget = 62_384;
 
     /// <summary>
     /// The token budget of the default tools/list (roadmap M6.1): the tools a server started without WAM_TOOLSETS,
@@ -167,11 +167,11 @@ public class ToolPayloadBudgetTests
     /// click checks (+249); then 51,005 tokens (204,020 bytes, 58 tools) after M6.1b moved the nine deprecated tools (click,
     /// right_click, double_click, move_window, resize_window, get_all_windows, get_primary_monitor, list_screens,
     /// get_active_browser_url) to the opt-in deprecated toolset and the three geometry batches to the opt-in windows-batch
-    /// toolset (-9,027); then 51,378 tokens (205,512 bytes) after M6.6's list_processes parameters and fields (+342) and
+    /// toolset (-9,027); then 51,397 tokens (205,585 bytes) after M6.6's list_processes parameters and fields (+361) and
     /// get_window_info's integrity fields (+31), October 2026. A tool in a toolset that is off by default never moves it; a change to the default
     /// surface raises it by what the failure message measures, in the same change, or lowers it.
     /// </summary>
-    public const int DefaultToolListTokenBudget = 51_414;
+    public const int DefaultToolListTokenBudget = 51_433;
 
     /// <summary>
     /// The most tokens one tool object (name, title, description, input schema, annotations) may cost in tools/list (roadmap
@@ -198,7 +198,7 @@ public class ToolPayloadBudgetTests
         ["input"] = 14_800, // 14,758: 10 tools (19,415 with the click trio before M6.1b)
         ["clipboard"] = 750, // 734
         ["launch"] = 2_900, // 2,890
-        ["process"] = 2_299, // 2,263 (1,921 before M6.6's list_processes parameters and fields)
+        ["process"] = 2_318, // 2,282 (1,921 before M6.6's list_processes parameters and fields)
         ["layouts"] = 1_200, // 1,181
         ["browser"] = 4_350, // 4,315 (4,674 with get_active_browser_url before M6.1b)
         ["browser-actions"] = 3_600, // 3,577 (off by default)

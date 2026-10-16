@@ -1031,7 +1031,7 @@ public class ProcessService : IProcessService
                 ? null
                 : NativeProcessWrapper.FindParent(process.ProcessId, parentByProcessId, id => DetailsOf(id)?.StartTime);
             var integrity = _securityProbe?.GetIntegrity(process.ProcessId);
-            var commandLine = query.IncludeCommandLine ? ReadCommandLine(process, processDetails?.StartTime) : null;
+            var commandLine = query.IncludeCommandLine ? ReadCommandLine(process, processDetails) : null;
 
             result.Add(new ProcessInfo(
                 ProcessId: process.ProcessId,
@@ -1053,13 +1053,20 @@ public class ProcessService : IProcessService
 
     /// <summary>
     /// A listed process's command line, redacted and cut to <see cref="ProcessInfo.MaxCommandLineLength"/>; null when the
-    /// user's target policy denies the process (it is then never read), when it cannot be read, and when the process's
-    /// start time is unknown or has changed by the time it was read: the PID may then belong to a later process, whose
-    /// command line the policy check did not cover.
+    /// user's target policy denies the process (it is then never read) and when it cannot be read. The policy decides by the
+    /// listed name, so the command line is read only when the process <paramref name="details"/> describes still bears it
+    /// (its image file is that name) and is still the one at the PID once the command line is read (same start time): a
+    /// PID reused at any point after the listing gives no command line, rather than one of a process the policy check did
+    /// not cover. Without a start time or a path the PID cannot be pinned, so none is read either.
     /// </summary>
-    private RedactedCommandLine? ReadCommandLine(RunningProcess process, DateTime? startTime)
+    private RedactedCommandLine? ReadCommandLine(RunningProcess process, ProcessDetails? details)
     {
-        if (startTime == null || _targetPolicy?.Evaluate([process.Name]) is { Allowed: false })
+        if (details is not { StartTime: { } startTime, ImagePath: { } imagePath })
+            return null;
+
+        var imageName = Path.GetFileNameWithoutExtension(imagePath);
+        if (!string.Equals(imageName, process.Name, StringComparison.OrdinalIgnoreCase) ||
+            _targetPolicy?.Evaluate([process.Name, imageName]) is { Allowed: false })
             return null;
 
         var commandLine = _processWrapper.GetProcessCommandLine(process.ProcessId);

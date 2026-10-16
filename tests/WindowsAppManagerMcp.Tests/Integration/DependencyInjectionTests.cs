@@ -124,6 +124,24 @@ public class DependencyInjectionTests : IDisposable
     }
 
     [Fact]
+    public void TheProcessListAndTheFullWindowRead_GetTheSecurityProbe_AndTheListGetsThePolicy()
+    {
+        // list_processes reports integrity and aboveServer with the input guard's probe, and never reads the command line of
+        // a process the policy denies; get_window_info's 'full' reports the window's integrity (roadmap M6.6). Built
+        // without them, the fields would silently be left out and a denied process's command line would be read
+        var processes = _serviceProvider.GetRequiredService<IProcessService>();
+        var windowTools = _serviceProvider.GetRequiredService<WindowFinderTools>();
+        var probe = _serviceProvider.GetRequiredService<IProcessSecurityProbe>();
+
+        typeof(ProcessService).GetField("_securityProbe", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(processes)
+            .Should().BeSameAs(probe);
+        typeof(ProcessService).GetField("_targetPolicy", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(processes)
+            .Should().BeSameAs(_serviceProvider.GetRequiredService<ITargetPolicy>());
+        typeof(WindowFinderTools).GetField("_securityProbe", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(windowTools)
+            .Should().BeSameAs(probe);
+    }
+
+    [Fact]
     public void TheDialogAndMenuPathServices_ActOnlyThroughTheOneElementActionService_AndTheirToolsResolve()
     {
         // respond_to_dialog, file_dialog and menu_path (roadmap M3.5, M3.14) press, set and expand through element_action's

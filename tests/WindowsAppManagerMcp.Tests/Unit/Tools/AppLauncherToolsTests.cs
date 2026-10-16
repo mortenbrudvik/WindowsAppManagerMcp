@@ -342,21 +342,41 @@ public class AppLauncherToolsTests
     }
 
     [Theory]
-    [InlineData(null)]
-    [InlineData("")]
-    public void ListProcesses_WithIncludeCommandLineButNoNameFilterOrProcessId_FailsWithInvalidArguments(string? nameFilter)
+    [InlineData(null, 5)]
+    [InlineData("", 5)]
+    [InlineData("e", null)]
+    [InlineData("chrome", null)]
+    [InlineData("chrome", AppLauncherTools.MaxCommandLineProcesses + 1)]
+    public void ListProcesses_WithIncludeCommandLine_WithoutProcessIdOrANameFilterAndASmallLimit_FailsWithInvalidArguments(
+        string? nameFilter, int? limit)
     {
-        // Arrange - every process's command line in one call is too much to put in front of the agent
+        // Arrange - every process's command line in one call is too much to put in front of the agent, and a short name
+        // filter ("e") matches most processes, so it bounds nothing without a limit
         ListReturns();
 
         // Act
-        var act = () => CreateSut().ListProcesses(nameFilter: nameFilter, includeWindowless: true, includeCommandLine: true);
+        var act = () => CreateSut().ListProcesses(nameFilter: nameFilter, includeWindowless: true, limit: limit, includeCommandLine: true);
 
         // Assert
         act.Should().Throw<ToolErrorException>()
             .Where(e => e.ErrorCode == ToolErrorReporting.InvalidArgumentsErrorCode)
-            .WithMessage("*includeCommandLine*nameFilter*processId*");
+            .WithMessage("*includeCommandLine*processId*nameFilter*limit*20*");
         _mockProcessService.Verify(p => p.GetRunningProcesses(It.IsAny<ProcessQuery>()), Times.Never);
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(AppLauncherTools.MaxCommandLineProcesses)]
+    public void ListProcesses_WithIncludeCommandLine_NameFilterAndASmallLimit_ReadsTheCommandLines(int limit)
+    {
+        // Arrange
+        ListReturns();
+
+        // Act
+        CreateSut().ListProcesses(nameFilter: "chrome", limit: limit, includeCommandLine: true);
+
+        // Assert
+        _processQuery.Should().Be(new ProcessQuery { NameFilter = "chrome", Limit = limit, IncludeCommandLine = true });
     }
 
     [Fact]

@@ -45,6 +45,12 @@ public class AppLauncherTools
         "reports it. An app that is already running keeps its mode, and warning says so: end every process of it first (a browser " +
         "may keep one without a window)";
 
+    /// <summary>
+    /// The most processes whose command lines list_processes reads by a name filter (roadmap M6.6): includeCommandLine needs
+    /// processId, or nameFilter with a limit up to this.
+    /// </summary>
+    public const int MaxCommandLineProcesses = 20;
+
     private readonly IProcessService _processService;
     private readonly IWindowService? _windowService;
     private readonly IInputSession? _session;
@@ -161,7 +167,7 @@ public class AppLauncherTools
 
     [McpServerTool(Name = "list_processes", Title = "List Processes", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
     [Description("List running processes, by name unless sortBy says otherwise. Each has processId, name, executablePath, memoryUsageMB, " +
-                 "parentProcessId (left out when the parent exited), startTime (UTC), integrityLevel and elevated, aboveServer: true when it " +
+                 "parentProcessId (left out when unknown: the parent exited, or a start time cannot be read), startTime (UTC), integrityLevel and elevated, aboveServer: true when it " +
                  "runs above this server (input and UI Automation to its windows are refused: TargetElevated), windowCount and windows " +
                  "(handle and title of up to 10, front to back). Only processes with a visible, titled window are listed, including windows " +
                  "on other virtual desktops and tool windows (a UWP app's window also counts for ApplicationFrameHost); includeWindowless=true " +
@@ -179,7 +185,8 @@ public class AppLauncherTools
         ProcessSort sortBy = ProcessSort.Name,
         [Description("Return at most this many processes, the first in sortBy order (at least 1; default: all)")]
         int? limit = null,
-        [Description("Also return each process's commandLine, cut to 500 characters (default: false); only with nameFilter or processId. " +
+        [Description("Also return each process's commandLine, cut to 500 characters (default: false); only with processId, or with " +
+                     "nameFilter and a limit of at most 20. " +
                      "Values that look secret (password=, --token, Bearer, a URL's password) become *** with commandLineRedacted: true, " +
                      "but this is a heuristic. Left out when it cannot be read or the user's policy denies the process")]
         bool includeCommandLine = false)
@@ -190,11 +197,12 @@ public class AppLauncherTools
                 $"limit must be at least 1, but it is {limit}. Leave it out for every process.");
         }
 
-        if (includeCommandLine && string.IsNullOrEmpty(nameFilter) && processId == null)
+        // A name filter as short as "e" matches most processes, so it bounds nothing without a limit
+        if (includeCommandLine && processId == null && (string.IsNullOrEmpty(nameFilter) || limit is not <= MaxCommandLineProcesses))
         {
             throw new ToolErrorException(ToolErrorReporting.InvalidArgumentsErrorCode,
-                "includeCommandLine needs nameFilter or processId, so that only the command lines of the processes you are after " +
-                "are read. Nothing was listed.");
+                $"includeCommandLine needs processId, or nameFilter with a limit of at most {MaxCommandLineProcesses}, so that only " +
+                "the command lines of the processes you are after are read. Nothing was listed.");
         }
 
         var processes = _processService.GetRunningProcesses(new ProcessQuery

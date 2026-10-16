@@ -2717,8 +2717,8 @@ typical result over 300 tokens, and tools/list itself, measured in October 2026:
 | `read_table` | Task Manager's first 50 processes, 5 columns with headers | 643 | 1,000 |
 | `get_server_info` | The default deny list, five host processes, two monitors | 634 | 850 |
 | `get_layout` | A preset of 6 placements, each with the captured window identity | 529 | 800 |
-| tools/list | Every tool's name, title, description, schemas and annotations: 78 tools, 249,317 bytes (`ToolList_StaysWithinItsBudget`; M5.8's six DOM bridge tools added 2,970, 936 of them their window selectors; M5.8's dialog option and the UI Automation browser_handle_dialog 199 more; M6.1a's additive consolidations 405 more: mouse_click's own click checks 249, set_window_bounds' optional pairs 87, get_browser_url's foreground sentence 41, get_monitors' virtualScreen 28; M6.1b's one-line descriptions of the nine deprecated tools and the descriptions that no longer send the agent to them 2,121 fewer; M6.6's list_processes parameters and fields 342 more and get_window_info's integrity fields 31 more) | 62,330 | 62,366 |
-| Default tools/list | The 58 tools a server serves without WAM_TOOLSETS, WAM_EXCLUDE_TOOLS and WAM_READ_ONLY, 205,512 bytes (`DefaultToolList_StaysWithinItsBudget`, roadmap M6.1; 59,627 before M6.1a, 60,032 after it with 70 tools, 9,027 fewer once M6.1b moved the nine deprecated tools and the three geometry batches to opt-in toolsets, 373 more with M6.6's list_processes and get_window_info fields) | 51,378 | 51,414 |
+| tools/list | Every tool's name, title, description, schemas and annotations: 78 tools, 249,390 bytes (`ToolList_StaysWithinItsBudget`; M5.8's six DOM bridge tools added 2,970, 936 of them their window selectors; M5.8's dialog option and the UI Automation browser_handle_dialog 199 more; M6.1a's additive consolidations 405 more: mouse_click's own click checks 249, set_window_bounds' optional pairs 87, get_browser_url's foreground sentence 41, get_monitors' virtualScreen 28; M6.1b's one-line descriptions of the nine deprecated tools and the descriptions that no longer send the agent to them 2,121 fewer; M6.6's list_processes parameters and fields 361 more and get_window_info's integrity fields 31 more) | 62,348 | 62,384 |
+| Default tools/list | The 58 tools a server serves without WAM_TOOLSETS, WAM_EXCLUDE_TOOLS and WAM_READ_ONLY, 205,585 bytes (`DefaultToolList_StaysWithinItsBudget`, roadmap M6.1; 59,627 before M6.1a, 60,032 after it with 70 tools, 9,027 fewer once M6.1b moved the nine deprecated tools and the three geometry batches to opt-in toolsets, 392 more with M6.6's list_processes and get_window_info fields) | 51,397 | 51,433 |
 
 Every other typical result is at most 300 tokens. When a change makes a result larger on purpose, raise its
 budget in the same change (the failure message gives the new size); when a change shrinks one a lot, lower it.
@@ -2747,7 +2747,7 @@ were capture_with_elements at 2,396 and element_action at 2,386, so they have ab
 | `input` | on | 10 | 14,758 | 14,800 |
 | `clipboard` | on | 2 | 734 | 750 |
 | `launch` | on | 2 | 2,890 | 2,900 |
-| `process` | on | 3 | 2,263 | 2,299 |
+| `process` | on | 3 | 2,282 | 2,318 |
 | `layouts` | on | 5 | 1,181 | 1,200 |
 | `browser` | on | 6 | 4,315 | 4,350 |
 | `browser-actions` | off | 7 | 3,577 | 3,600 |
@@ -2758,7 +2758,7 @@ were capture_with_elements at 2,396 and element_action at 2,386, so they have ab
 The rows are measured after M6.1b (October 2026), which moved six tools out of `windows`, two out of `monitors`, three
 out of `input` and one out of `browser` into the opt-in `windows-batch` and `deprecated` toolsets. The deprecated tools'
 one-line descriptions keep their full parameters, which are most of the `deprecated` row. M6.6 (October 2026) raised
-`process` by 342 (list_processes' five parameters and its result fields in the description; 1,921 before) and
+`process` by 361 (list_processes' five parameters and its result fields in the description; 1,921 before) and
 `windows` by 31 (get_window_info's integrity fields in 'full'; 9,921 before), each budget to the measured size plus 36.
 
 A change states its default, per-toolset and all-tools deltas, and raises only the ratchets it moves: a new opt-in

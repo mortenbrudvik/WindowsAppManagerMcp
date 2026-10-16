@@ -1524,6 +1524,43 @@ public class ProcessServiceTests
     }
 
     [Fact]
+    public void GetRunningProcesses_WithIncludeCommandLine_NeverReadsIt_WhenTheProcessIdWasReusedBeforeTheProcessWasOpened()
+    {
+        // Arrange - the list named Notepad, but by the time the PID was opened a denied password manager had taken it: the
+        // policy check of the listed name does not cover that process
+        UseIntegrity();
+        UseProcessTable(details: new Dictionary<int, ProcessDetails?>
+        {
+            [Notepad] = new(@"C:\Program Files\KeePass\KeePass.exe", T0.AddMinutes(30)),
+        });
+        _mockProcessWrapper.Setup(w => w.GetProcessCommandLine(It.IsAny<int>())).Returns("KeePass.exe vault.kdbx -pw:hunter2");
+
+        // Act
+        var result = CreateListingSut(new TargetPolicy(TargetPolicySettings.Default))
+            .GetRunningProcesses(Everything with { ProcessId = Notepad, IncludeCommandLine = true });
+
+        // Assert
+        result.Should().ContainSingle().Which.CommandLine.Should().BeNull();
+        _mockProcessWrapper.Verify(w => w.GetProcessCommandLine(It.IsAny<int>()), Times.Never);
+    }
+
+    [Fact]
+    public void GetRunningProcesses_WithIncludeCommandLine_ReportsNone_WhenThePathCannotBeRead()
+    {
+        // Arrange - without its path, the process at the PID cannot be checked against the listed name
+        UseIntegrity();
+        UseProcessTable(details: new Dictionary<int, ProcessDetails?> { [Notepad] = new(null, T0.AddMinutes(5)) });
+        _mockProcessWrapper.Setup(w => w.GetProcessCommandLine(Notepad)).Returns("notepad.exe");
+
+        // Act
+        var result = CreateListingSut().GetRunningProcesses(Everything with { ProcessId = Notepad, IncludeCommandLine = true });
+
+        // Assert
+        result.Should().ContainSingle().Which.CommandLine.Should().BeNull();
+        _mockProcessWrapper.Verify(w => w.GetProcessCommandLine(It.IsAny<int>()), Times.Never);
+    }
+
+    [Fact]
     public void GetRunningProcesses_WithIncludeCommandLine_ReportsNone_WhenTheStartTimeCannotBeRead()
     {
         // Arrange - without a start time, a reused PID cannot be ruled out
