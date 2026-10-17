@@ -659,7 +659,7 @@ public class ProcessService : IProcessService
             {
                 // Counted until Windows answers: a stuck activation keeps two threads
                 Interlocked.Increment(ref _hungActivations);
-                start.ContinueWith(
+                _ = start.ContinueWith(
                     _ => Interlocked.Decrement(ref _hungActivations),
                     CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
                 return new StartedLaunch(plan, null, null, launchedAt, new LaunchResult(
