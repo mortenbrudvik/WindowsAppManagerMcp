@@ -6,10 +6,11 @@ namespace WindowsAppManagerMcp.Services;
 
 /// <summary>
 /// find_text_on_screen's comparison of its text with a line OCR read (roadmap M6.3). contains and exact ignore case (unless
-/// case-sensitive) and treat every run of whitespace as one space, since OCR spaces words its own way; between two characters
-/// of a script written without spaces (Chinese, Japanese, Thai) they ignore it, since Windows OCR joins those words with
-/// spaces too. exact also needs the match to start at a word's start and end at a word's end. A regex runs on the line as
-/// OCR read it, ignoring case unless case-sensitive, culture-invariant, with the window titles' 100 ms timeout per match and
+/// case-sensitive) and treat every run of whitespace as one space, since OCR spaces words its own way; they ignore it between
+/// two characters of a script written without spaces (Chinese, Japanese, Thai), since Windows OCR joins those words with
+/// spaces too, and inside a number and before its unit, which Windows OCR splits ("471 1 km" for "4711km"). exact also
+/// needs the match to start at a word's start and end at a word's end. A regex runs on the line as OCR read it, ignoring
+/// case unless case-sensitive, culture-invariant, with the window titles' 100 ms timeout per match and
 /// <see cref="RegexBudget"/> for the whole search.
 /// </summary>
 public sealed class OcrTextMatcher
@@ -147,7 +148,7 @@ public sealed class OcrTextMatcher
 
             if (pendingSpace >= 0)
             {
-                if (!(IsWrittenWithoutSpaces(builder[^1]) && IsWrittenWithoutSpaces(text[i])))
+                if (!SpaceIsNoise(builder[^1], text[i]))
                 {
                     builder.Append(' ');
                     map.Add(pendingSpace);
@@ -191,6 +192,16 @@ public sealed class OcrTextMatcher
 
             return index == w.End || index == end;
         });
+
+    /// <summary>
+    /// Whether whitespace OCR read between <paramref name="before"/> and <paramref name="after"/> says nothing: between two
+    /// characters of a script written without spaces, inside a number (Windows OCR reads "4711" as "471 1"), and between a
+    /// number and the letters right after it, its unit ("471 1 km" for "4711km"). Matching ignores it in the text searched
+    /// for as well, so "4711 km" and "4711km" find each other.
+    /// </summary>
+    private static bool SpaceIsNoise(char before, char after) =>
+        (IsWrittenWithoutSpaces(before) && IsWrittenWithoutSpaces(after)) ||
+        (char.IsDigit(before) && char.IsLetterOrDigit(after));
 
     /// <summary>
     /// A character of a script written without spaces between words: CJK ideographs and their punctuation, hiragana,

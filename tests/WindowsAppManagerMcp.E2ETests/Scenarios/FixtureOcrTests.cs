@@ -99,11 +99,13 @@ public class FixtureOcrTests
         using var e2e = E2ESession.Start(DesktopTier.NoInput, _output, new FixtureLaunchOptions { OpenCanvas = true });
         var canvas = OpenedCanvas(e2e);
 
-        var result = await Find(e2e, canvas.WindowHandle, @"\b\d{4}(km|kg|mm|pt)\b", OcrTextMatch.Regex);
+        // A regex runs on the line as OCR read it, and real Windows OCR splits numbers ("471 1 km" for 4711km): the pattern
+        // allows a space between the digits and before the unit, and the matches are compared without their spaces
+        var result = await Find(e2e, canvas.WindowHandle, @"\d(?:\s?\d){3}\s?(?:km|kg|mm|pt)", OcrTextMatch.Regex);
 
         result.Success.Should().BeTrue(result.Error);
         _output.WriteLine(string.Join(", ", result.Matches!.Select(m => m.Text)));
-        result.Matches!.Select(m => m.Text).Should().Contain(["4711km", "2938kg"],
+        result.Matches!.Select(m => Regex.Replace(m.Text, @"\s+", "")).Should().Contain(["4711km", "2938kg"],
             "the two large dark lines are the ones OCR reads most reliably");
     }
 
@@ -129,7 +131,7 @@ public class FixtureOcrTests
         // Assert
         Log(covered);
         covered.Success.Should().BeTrue(covered.Error);
-        covered.Lines!.Select(l => Normalize(l.Text)).Should().Contain(Normalize(FixtureContract.CanvasLines[0].Text));
+        covered.Lines!.Select(l => Squash(l.Text)).Should().Contain(Squash(FixtureContract.CanvasLines[0].Text));
 
         // Act - minimized: refused, and nothing restores it
         e2e.Server.Windows.SetWindowState(canvas.WindowHandle, WindowStateRequest.Minimize).Success.Should().BeTrue();
@@ -232,20 +234,16 @@ public class FixtureOcrTests
     }
 
     /// <summary>
-    /// Each canvas line is an OCR line with the same words, whose box (and each word's) lies in the drawn cell. The large dark
-    /// lines must be read exactly; the 9-point and the light-on-dark lines with look-alike characters folded (O and 0, l, I
-    /// and 1), since OCR has no way to tell those apart and the desktop check records such misreads rather than fails on them.
+    /// Each canvas line is an OCR line with the same text as real Windows OCR reads it (<see cref="Squash"/>: look-alike
+    /// characters folded and its spaces inside numbers ignored, on every line), whose box, and each whole word's, lies in the
+    /// drawn cell. The desktop check records the misreads; the boxes stay strict.
     /// </summary>
     private void AssertEveryCanvasLineIsRead(FixtureCanvas canvas, ScreenTextResult result)
     {
         var problems = new List<string>();
         foreach (var drawn in canvas.Lines)
         {
-            var style = FixtureContract.CanvasLines.Single(l => l.Text == drawn.Text);
-            var exact = style.FontSize >= 20 && !style.LightOnDark;
-            var read = result.Lines!.FirstOrDefault(l => exact
-                ? Normalize(l.Text) == Normalize(drawn.Text)
-                : Fold(Normalize(l.Text)) == Fold(Normalize(drawn.Text)));
+            var read = result.Lines!.FirstOrDefault(l => Squash(l.Text) == Squash(drawn.Text));
             if (read == null)
             {
                 problems.Add($"'{drawn.Text}' was not read as one line");
@@ -275,6 +273,14 @@ public class FixtureOcrTests
         box.X + box.Width <= cell.X + cell.Width + BoxTolerance && box.Y + box.Height <= cell.Y + cell.Height + BoxTolerance;
 
     private static string Normalize(string text) => Regex.Replace(text.Trim(), @"\s+", " ").ToUpperInvariant();
+
+    /// <summary>
+    /// A line as real Windows OCR may read it, for comparison: upper case, look-alike characters folded (<see cref="Fold"/>),
+    /// and no whitespace next to a digit, since OCR splits numbers and their units ("471 1 km" for "4711km", "314 Ipt" for
+    /// "3141pt").
+    /// </summary>
+    private static string Squash(string text) =>
+        Regex.Replace(Fold(Normalize(text)), @"(?<=\d)\s+|\s+(?=\d)", "");
 
     /// <summary>Upper-case text with the characters OCR confuses made one: O as 0, and L and I as 1.</summary>
     private static string Fold(string upper) => upper.Replace('O', '0').Replace('L', '1').Replace('I', '1');

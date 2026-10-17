@@ -2620,10 +2620,11 @@ Not yet run on a real desktop. Before the release that carries it, the owner che
    with an `OcrLanguageFallback` warning); `language: "en-US"` works; a language that is not installed (`ja-JP` when it
    is absent) is `OcrLanguageNotInstalled` with `installedLanguages`.
 2. **The fixture's canvas (E2E).** `FixtureOcrTests` on `WAM Fixture Canvas`, which the harness opens and closes. No-input
-   tier: every canvas line read inside the rectangle the fixture drew it in (the two large dark lines exactly, the 9-point
-   and the light-on-dark lines with O/0 and l/I/1 folded), at the primary monitor's scale and on a
+   tier: every canvas line read inside the rectangle the fixture drew it in (its text compared with O/0 and l/I/1 folded and
+   no spaces next to digits: on the owner's desktop real Windows OCR read `4711km` as `471 1 km` and `3141pt` as `314 Ipt`,
+   which find_text_on_screen's contains and exact now find, October 2026), at the primary monitor's scale and on a
    monitor at another scale (skipped without one), with `ocrScale` 2 below 150%; find_text_on_screen's click point on its
-   word, converting back through the captureId 1:1; a regex finds the numbers with their units. Input tier: the canvas
+   word, converting back through the captureId 1:1; a regex that allows spaces inside the numbers finds them with their units. Input tier: the canvas
    covered by the main window still reads (PrintWindow); minimized it is `WindowMinimized` and stays minimized; a click
    through a find's `captureId` and `imagePoint` lands on the word (the canvas logs it), and once the canvas moved the same
    point is `StaleCapture`; a region over a canvas a policy denies (the scenario's own policy) reads none of its words and
