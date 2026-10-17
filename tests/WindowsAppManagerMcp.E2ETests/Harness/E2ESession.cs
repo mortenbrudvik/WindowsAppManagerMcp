@@ -67,9 +67,11 @@ public sealed class E2ESession : IDisposable
     /// refused, rather than run with the default engine, so a run meant for one engine cannot quietly read with the other.</param>
     /// <param name="allowedActivations">Input tier only: the packaged apps the scenario may activate, without arguments
     /// (roadmap M6.5); the scenario ends each one itself, by the process ID the launch returned.</param>
+    /// <param name="uiaActionProcesses">Input tier only: the processes, by image name, whose elements the scenario may act on
+    /// through UI Automation besides the fixture's (roadmap M7.6): an app it activated and checked was not running before.</param>
     public static E2ESession Start(
         DesktopTier tier, ITestOutputHelper output, FixtureLaunchOptions? launch = null, UiaEngine? uiaEngine = null,
-        IReadOnlyCollection<string>? allowedActivations = null)
+        IReadOnlyCollection<string>? allowedActivations = null, IReadOnlyCollection<string>? uiaActionProcesses = null)
     {
         ArgumentNullException.ThrowIfNull(output);
         DesktopTestGate.ThrowIfNotAllowed(tier);
@@ -87,7 +89,7 @@ public sealed class E2ESession : IDisposable
         var fixture = FixtureAppSession.Launch(tier, launch, output);
         try
         {
-            var server = ServerHarness.Create(tier, fixture.ProcessId, uiaEngine, agentHost, allowedActivations);
+            var server = ServerHarness.Create(tier, fixture.ProcessId, uiaEngine, agentHost, allowedActivations, uiaActionProcesses);
             try
             {
                 output.WriteLine($"UI Automation engine: {server.Get<IUiaTree>().Engine} ({server.Get<UiaEngineOptions>().Source}).");

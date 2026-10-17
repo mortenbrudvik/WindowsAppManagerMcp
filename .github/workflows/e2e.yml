@@ -9,11 +9,12 @@ on:
   workflow_dispatch:
     inputs:
       tier:
-        description: 'no-input: find, UI Automation reads and captures only. all: also focus and type into the fixture.'
+        description: 'no-input: find, UI Automation reads and captures only. all: also focus and type into the fixture. scenarios: the scenario evaluation (roadmap M7.6), measured and compared with the runner''s previous run.'
         type: choice
         options:
           - no-input
           - all
+          - scenarios
         default: no-input
       engine:
         description: 'UI Automation engine the server reads with (WAM_UIA_ENGINE): uia3, the default, or uia2. The release gate runs the no-input tier once with each.'
@@ -118,6 +119,12 @@ jobs:
           if ($env:TIER -eq 'all') {
             $env:WAM_ALLOW_DESKTOP_TESTS = '1'
             $filter = 'Category=Desktop'
+          } elseif ($env:TIER -eq 'scenarios') {
+            # Each run is written beside the runner's earlier ones (its temp folder outlives the job on a self-hosted
+            # runner), so the report compares it with the previous run; the new file is uploaded below
+            $env:WAM_ALLOW_DESKTOP_TESTS = '1'
+            $env:WAM_SCENARIO_RESULTS = Join-Path $env:TEMP 'WamScenarios'
+            $filter = 'FullyQualifiedName~ScenarioEvaluationTests'
           } else {
             $env:WAM_ALLOW_DESKTOP_NOINPUT_TESTS = '1'
             $filter = 'Category=DesktopNoInput'
@@ -147,6 +154,13 @@ jobs:
           if ($passed + $failed -eq 0) {
             throw "No end-to-end test ran for tier '$env:TIER' (filter $filter, engine $env:WAM_UIA_ENGINE): the opt-in did not reach the tests."
           }
+          if ($env:TIER -eq 'scenarios' -and (Test-Path $env:WAM_SCENARIO_RESULTS)) {
+            $newest = Get-ChildItem -LiteralPath $env:WAM_SCENARIO_RESULTS -Filter 'scenarios-*.json' | Sort-Object Name | Select-Object -Last 1
+            if ($newest) {
+              New-Item -ItemType Directory -Force (Join-Path $results 'scenarios') | Out-Null
+              Copy-Item -LiteralPath $newest.FullName -Destination (Join-Path $results 'scenarios')
+            }
+          }
           if ($exitCode -ne 0) {
             throw "dotnet test exited with code $exitCode."
           }
@@ -161,4 +175,5 @@ jobs:
             TestResults/e2e/**/*.trx
             TestResults/e2e/**/*.dmp
             TestResults/e2e/**/Sequence_*.xml
+            TestResults/e2e/scenarios/*.json
           if-no-files-found: ignore

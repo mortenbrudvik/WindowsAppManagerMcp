@@ -327,13 +327,17 @@ public sealed class FixtureOnlyCallPolicy : IWrapperCallPolicy
     private readonly int _fixtureProcessId;
     private readonly string _fixtureProcessName;
     private readonly IReadOnlySet<string> _allowedActivations;
+    private readonly IReadOnlySet<string> _uiaActionProcesses;
 
     /// <param name="allowedActivations">The packaged apps (AppUserModelIDs) a scenario may activate, without arguments
     /// (roadmap M6.5): apps that hold none of the user's data, such as Calculator, which the scenario then ends by the
     /// process ID the activation returned. Empty by default: no process may be started.</param>
+    /// <param name="uiaActionProcesses">The processes, by image name, whose elements a scenario may act on through UI
+    /// Automation (invoke a button) besides the fixture's (roadmap M7.6): the app it activated, which it checked was not
+    /// running before, such as CalculatorApp. Never keyboard or mouse input, and no window changes. Empty by default.</param>
     public FixtureOnlyCallPolicy(
         IDesktopProbe probe, int fixtureProcessId, string fixtureProcessName = FixtureContract.ProcessName,
-        IReadOnlyCollection<string>? allowedActivations = null)
+        IReadOnlyCollection<string>? allowedActivations = null, IReadOnlyCollection<string>? uiaActionProcesses = null)
     {
         ArgumentNullException.ThrowIfNull(probe);
         ArgumentException.ThrowIfNullOrWhiteSpace(fixtureProcessName);
@@ -345,6 +349,7 @@ public sealed class FixtureOnlyCallPolicy : IWrapperCallPolicy
         _fixtureProcessId = fixtureProcessId;
         _fixtureProcessName = fixtureProcessName;
         _allowedActivations = new HashSet<string>(allowedActivations ?? [], StringComparer.OrdinalIgnoreCase);
+        _uiaActionProcesses = new HashSet<string>(uiaActionProcesses ?? [], StringComparer.OrdinalIgnoreCase);
     }
 
     public string? Check(WrapperCall call) => call.Member?.Kind switch
@@ -535,9 +540,31 @@ public sealed class FixtureOnlyCallPolicy : IWrapperCallPolicy
             return $"{call.Name}: the guard cannot tell which process the element belongs to ({ex.GetType().Name}: {ex.Message}).";
         }
 
-        return processId == _fixtureProcessId
-            ? null
-            : $"{call.Name} on an element of process {processId} is not the fixture (process {_fixtureProcessId}).";
+        if (processId == _fixtureProcessId || IsUiaActionProcess(processId))
+        {
+            return null;
+        }
+
+        return $"{call.Name} on an element of process {processId} is not the fixture (process {_fixtureProcessId}).";
+    }
+
+    /// <summary>Whether the scenario lets UI Automation act on <paramref name="processId"/>'s elements, by its image name.</summary>
+    private bool IsUiaActionProcess(int processId)
+    {
+        if (_uiaActionProcesses.Count == 0 || processId <= 0)
+        {
+            return false;
+        }
+
+        try
+        {
+            using var process = System.Diagnostics.Process.GetProcessById(processId);
+            return _uiaActionProcesses.Contains(process.ProcessName);
+        }
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
+        {
+            return false;
+        }
     }
 
     /// <summary>

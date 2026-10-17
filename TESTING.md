@@ -2734,6 +2734,35 @@ owner runs that class and checks:
    compares with that capture (`checks` 1 with `timeoutMs` 0 when nothing changed: `WaitTimedOut` and 0 %); without
    `+visual` the tool is not listed.
 
+### Scenario evaluation (roadmap M7.6)
+
+`ScenarioEvaluationTests` (input tier) do real desktop tasks the way an agent does them, through the in-process MCP server
+(`ServerHarness.StartMcpServerAsync`), and measure each one: whether it reached its goal, how many tool calls it took (and
+how many failed), its wall time, and how much the server sent back (text bytes, estimated tokens at 4 bytes per token, and
+images). The scenarios:
+
+| Scenario | What it does |
+|----------|--------------|
+| `form_fill_direct` | The fixture's form with one call per step: focus_window, element_action set_value and toggle, wait_for_element to verify |
+| `form_fill_run_steps` | The same form in one run_steps call: the round trips run_steps saves |
+| `dialog_notice_and_answer` | get_window_events before an action, the action that opens the fixture's modal, get_window_events to notice it, respond_to_dialog, wait_for_window until it is gone |
+| `layout_round_trip` | save_layout of the fixture (into the harness's own layouts folder), set_window_bounds elsewhere, apply_layout, and get_window_info to check the frame is back |
+| `calculator_add` | launch_application of Calculator, element_action invoke on 1, 2, +, 3, 0, =, read_element_text of the display (42). It refuses to start while a Calculator runs, and ends the one it started by its process ID; the E2E guard lets UI Automation act on CalculatorApp's elements only for this scenario (`uiaActionProcesses`) |
+
+`ScenarioReport` (a class fixture) prints each scenario with its change since the previous run (calls, milliseconds and
+tokens), and writes the run as `scenarios-<UTC time>.json` to `WAM_SCENARIO_RESULTS`, or `%TEMP%\WamScenarios`; the previous
+run is the newest file there. Run them while nobody uses the keyboard or mouse:
+
+```powershell
+$env:WAM_ALLOW_DESKTOP_TESTS = '1'
+dotnet test tests/WindowsAppManagerMcp.E2ETests --filter "FullyQualifiedName~ScenarioEvaluationTests" --logger "console;verbosity=detailed"
+```
+
+On GitHub, the E2E workflow's `scenarios` tier runs them on a self-hosted runner in a logged-on desktop session, compares
+with that runner's previous run (its temp folder outlives the job) and uploads the run's JSON with the test results. The
+roadmap's Notepad save, Settings deep link and debug Chrome scenarios are not in it: Notepad restores the user's own tabs,
+and Settings and a browser are left for a later round.
+
 ### Desktop run: M6 scenarios (2026-10-17)
 
 Run on the owner's desktop (Windows 11 26200, a 150% primary and a second monitor at another scale) while the owner was

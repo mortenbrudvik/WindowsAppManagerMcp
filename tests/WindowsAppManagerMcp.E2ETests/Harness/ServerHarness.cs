@@ -112,10 +112,13 @@ public sealed class ServerHarness : IDisposable
     /// started, which the server then uses as its own; null to let the server record it now, as it does when it starts.</param>
     /// <param name="allowedActivations">Input tier only: the packaged apps the scenario may activate, without arguments
     /// (roadmap M6.5, <see cref="FixtureOnlyCallPolicy"/>).</param>
+    /// <param name="uiaActionProcesses">Input tier only: the processes, by image name, whose elements the scenario may act on
+    /// through UI Automation besides the fixture's (roadmap M7.6, <see cref="FixtureOnlyCallPolicy"/>).</param>
     public static ServerHarness Create(
         DesktopTier tier, int fixtureProcessId, UiaEngine? uiaEngine = null, IHostGuard? agentHost = null,
-        IReadOnlyCollection<string>? allowedActivations = null) =>
-        Create(tier, fixtureProcessId, new Win32DesktopProbe(), Environment.GetEnvironmentVariable, uiaEngine, agentHost, allowedActivations);
+        IReadOnlyCollection<string>? allowedActivations = null, IReadOnlyCollection<string>? uiaActionProcesses = null) =>
+        Create(tier, fixtureProcessId, new Win32DesktopProbe(), Environment.GetEnvironmentVariable, uiaEngine, agentHost, allowedActivations,
+            uiaActionProcesses);
 
     internal static ServerHarness Create(
         DesktopTier tier,
@@ -124,14 +127,15 @@ public sealed class ServerHarness : IDisposable
         Func<string, string?> readVariable,
         UiaEngine? uiaEngine = null,
         IHostGuard? agentHost = null,
-        IReadOnlyCollection<string>? allowedActivations = null)
+        IReadOnlyCollection<string>? allowedActivations = null,
+        IReadOnlyCollection<string>? uiaActionProcesses = null)
     {
         DesktopTestGate.ThrowIfNotAllowed(tier, readVariable);
         E2EProcess.EnsureServerDpiAwareness();
 
         var layoutsPath = Path.Combine(Path.GetTempPath(), "WamE2E", "layouts-" + Guid.NewGuid().ToString("N"));
         var services = CreateServices(tier, fixtureProcessId, probe, layoutsPath, wrapperSubstitute: null, out var guarded, uiaEngine, agentHost,
-            allowedActivations);
+            allowedActivations, uiaActionProcesses);
         var harness = new ServerHarness(services, layoutsPath, guarded);
         try
         {
@@ -213,7 +217,8 @@ public sealed class ServerHarness : IDisposable
         out IReadOnlyList<Type> guardedWrappers,
         UiaEngine? uiaEngine = null,
         IHostGuard? agentHost = null,
-        IReadOnlyCollection<string>? allowedActivations = null)
+        IReadOnlyCollection<string>? allowedActivations = null,
+        IReadOnlyCollection<string>? uiaActionProcesses = null)
     {
         var services = new ServiceCollection();
         services.AddWindowsAppManagerServices(
@@ -246,7 +251,8 @@ public sealed class ServerHarness : IDisposable
         IWrapperCallPolicy policy = tier switch
         {
             DesktopTier.NoInput => new ReadOnlyCallPolicy(),
-            DesktopTier.Input => new FixtureOnlyCallPolicy(probe, fixtureProcessId, allowedActivations: allowedActivations),
+            DesktopTier.Input => new FixtureOnlyCallPolicy(probe, fixtureProcessId, allowedActivations: allowedActivations,
+                uiaActionProcesses: uiaActionProcesses),
             _ => throw new ArgumentOutOfRangeException(nameof(tier), tier, "Unknown desktop tier.")
         };
         guardedWrappers = WrapperGuard.GuardNativeWrappers(services, policy);
