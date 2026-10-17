@@ -187,6 +187,10 @@ public static class ServiceRegistration
         services.AddSingleton<IDialogService, DialogService>();
         services.AddSingleton<IFileDialogService, FileDialogService>();
         services.AddSingleton<IInputSimulationService, InputSimulationService>();
+
+        // Workspaces (roadmap M7.5): File Explorer's folders through the shell's window list, read on a thread of its own
+        services.AddSingleton<INativeShellWindowsWrapper, NativeShellWindowsWrapper>();
+        services.AddSingleton<IWorkspaceService, WorkspaceService>();
         services.AddSingleton<ILayoutService>(sp =>
         {
             var windowService = sp.GetRequiredService<IWindowService>();
@@ -287,6 +291,7 @@ public static class ServiceRegistration
         services.AddSingleton<MonitorInfoTools>();
         services.AddSingleton<AppLauncherTools>();
         services.AddSingleton<LayoutPresetTools>();
+        services.AddSingleton<WorkspaceTools>();
         services.AddSingleton<BrowserReadingTools>();
         services.AddSingleton<BrowserTabTools>();
         services.AddSingleton<BrowserPageTools>();
@@ -370,6 +375,7 @@ public static class ServiceRegistration
             .WithServerTools<MonitorInfoTools>()
             .WithServerTools<AppLauncherTools>()
             .WithServerTools<LayoutPresetTools>()
+            .WithServerTools<WorkspaceTools>()
             .WithServerTools<BrowserReadingTools>()
             .WithServerTools<BrowserTabTools>()
             .WithServerTools<BrowserPageTools>()

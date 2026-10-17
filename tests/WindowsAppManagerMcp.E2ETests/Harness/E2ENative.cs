@@ -31,6 +31,14 @@ internal static class E2ENative
     [DllImport("user32.dll")]
     public static extern nint GetForegroundWindow();
 
+    /// <summary>
+    /// Posts a message to a window. Only for windows a test provably opened itself (WM_CLOSE to the File Explorer window of
+    /// the test's own temp folder, roadmap M7.5); never to a window the user has.
+    /// </summary>
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool PostMessageW(nint hwnd, uint message, nint wParam, nint lParam);
+
     [DllImport("user32.dll")]
     public static extern nint GetAncestor(nint hwnd, uint flags);
 

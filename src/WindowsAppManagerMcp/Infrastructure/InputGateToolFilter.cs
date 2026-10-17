@@ -135,7 +135,9 @@ public static class InputGateToolFilter
         "launch_application",
         // Plans without the gate (a dry run takes none), asks the user before an agent-written layout starts programs, then
         // holds the gate for the arrangement and its launches (roadmap M6.8)
-        "apply_layout"
+        "apply_layout",
+        // A dry run takes no gate; a restore holds it while it opens folders and pages and arranges (roadmap M7.5)
+        "restore_workspace"
     };
 
     /// <summary>
@@ -147,7 +149,7 @@ public static class InputGateToolFilter
     public static IReadOnlySet<string> ReadOnlyTools { get; } = new HashSet<string>(StringComparer.Ordinal)
     {
         "find_windows", "get_all_windows", "get_foreground_window", "get_monitors", "get_primary_monitor",
-        "list_processes", "list_installed_apps", "list_layouts", "get_layout", "save_layout", "delete_layout", "get_browser_url",
+        "list_processes", "list_installed_apps", "list_layouts", "get_layout", "save_layout", "delete_layout", "save_workspace", "get_browser_url",
         "get_browser_content", "get_active_browser_url", "list_screens", "take_screenshot", "capture_region",
         "capture_window", "capture_with_elements", "get_ui_elements", "find_ui_elements", "get_focused_element", "get_element_at_point",
         "get_active_popups",

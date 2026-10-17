@@ -128,6 +128,8 @@ public class EveryToolContractTests
             ["get_layout"] = Args("""{ "name": "layout-1" }"""),
             ["save_layout"] = Args("""{ "name": "layout-1", "description": "Editor left, browser right" }"""),
             ["apply_layout"] = Args("""{ "name": "layout-1" }"""),
+            ["save_workspace"] = Args("""{ "name": "morning", "description": "Reports and mail", "excludeProcesses": ["WindowsTerminal"] }"""),
+            ["restore_workspace"] = Args("""{ "name": "morning" }"""),
             ["delete_layout"] = Args("""{ "name": "layout-1" }"""),
             ["get_server_info"] = Args("{}"),
         };

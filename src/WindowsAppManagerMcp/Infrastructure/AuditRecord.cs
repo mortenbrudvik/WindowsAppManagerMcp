@@ -562,10 +562,11 @@ public static partial class AuditRecord
     }
 
     /// <summary>
-    /// The per-item arrays of the results: a batch's <c>results</c>, close_application's <c>windows</c> and apply_layout's
-    /// <c>placements</c>, in that order of preference.
+    /// The per-item arrays of the results: a batch's <c>results</c>, close_application's <c>windows</c>, apply_layout's
+    /// <c>placements</c> and restore_workspace's <c>opened</c> (each folder or browser window it opened or found, roadmap M7.5),
+    /// in that order of preference.
     /// </summary>
-    private static readonly string[] ItemArrays = ["results", "windows", "placements"];
+    private static readonly string[] ItemArrays = ["results", "windows", "placements", "opened"];
 
     /// <summary>
     /// The items of the result's per-item array (<see cref="ItemArrays"/>): each window or launch with its outcome, and

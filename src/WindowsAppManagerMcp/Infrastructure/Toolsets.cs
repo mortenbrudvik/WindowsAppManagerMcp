@@ -182,6 +182,11 @@ public static class Toolsets
             new("layouts", OnByDefault: true,
                 "Save, apply and manage window layout presets.",
                 ["list_layouts", "get_layout", "save_layout", "apply_layout", "delete_layout"]),
+            // Off by default (roadmap M7.5): a restore opens folders and browser pages and starts programs, and most sessions
+            // arrange windows with a layout
+            new("workspaces", OnByDefault: false,
+                "Save the open windows with what File Explorer and browser windows show, and restore them: open missing folders and pages, then arrange.",
+                ["save_workspace", "restore_workspace"]),
             // Roadmap M6.2: a run's steps call the tools of the toolsets above, and only those the server serves
             new("steps", OnByDefault: true,
                 "Run several steps (element actions, keys, clicks, waits) on one window in one call, under one input gate hold, " +

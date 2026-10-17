@@ -55,6 +55,13 @@ public record WindowPlacement(
 
     /// <summary>What launchMissing starts for a missing window (schema version 2): a program or an installed app, never arguments.</summary>
     public LayoutLaunch? Launch { get; init; }
+
+    /// <summary>
+    /// What the window showed, for a workspace (roadmap M7.5): a File Explorer window's folder or a browser window's pages,
+    /// which restore_workspace opens when no window shows them. Null for a layout, and for windows without such content;
+    /// apply_layout ignores it.
+    /// </summary>
+    public WorkspaceContent? Content { get; init; }
 }
 
 /// <summary>

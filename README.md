@@ -111,7 +111,7 @@ so `serverInfo.version` shows a different commit SHA (`X.Y.Z+<tag commit>` for t
 `X.Y.Z+<commit before the release commit>` for the plugin exe).
 
 <!-- tools:begin tool-table (generated from tools/list: run the tests with UPDATE_SNAPSHOTS=1, see TESTING.md) -->
-## Available Tools (85)
+## Available Tools (87)
 
 | Category | Tools |
 |----------|-------|
@@ -129,7 +129,7 @@ so `serverInfo.version` shows a different commit SHA (`X.Y.Z+<tag commit>` for t
 | Step Sequences | `run_steps` |
 | App Launch | `launch_application`, `list_installed_apps`, `list_processes`, `kill_process`, `close_application` |
 | Clipboard | `get_clipboard`, `set_clipboard` |
-| Layout Presets | `list_layouts`, `get_layout`, `save_layout`, `apply_layout`, `delete_layout` |
+| Layout Presets | `list_layouts`, `get_layout`, `save_layout`, `apply_layout`, `save_workspace`, `restore_workspace`, `delete_layout` |
 | Server Info | `get_server_info` |
 <!-- tools:end tool-table -->
 
