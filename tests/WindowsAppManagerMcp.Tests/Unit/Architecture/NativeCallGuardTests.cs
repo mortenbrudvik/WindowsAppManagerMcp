@@ -167,6 +167,8 @@ public class NativeCallGuardTests
         ["User32.GetShellWindow"] = "reads the handle of the desktop shell's window",
         ["User32.GetWindowLongW"] = "reads a style value of a window (SetWindowLongW, which changes it, is not listed)",
         ["User32.GetWindowLongPtrW"] = "reads a style value of a window",
+        ["User32.GetWindowRgnBox"] = "reads the bounding box of a window's region into a struct of the server (SetWindowRgn, " +
+                                     "which changes it, is not declared)",
         ["User32.GetWindow"] = "reads a related window, such as the owner or the enabled popup",
         ["User32.IsHungAppWindow"] = "reads whether the thread of a window is hung",
         ["User32.SendMessageTimeoutW"] = "sends WM_NULL, which every window ignores, with SMTO_ABORTIFHUNG and a timeout (RespondsWithin): " +

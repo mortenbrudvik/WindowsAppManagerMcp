@@ -49,6 +49,10 @@ internal static partial class NativeMethods
         [return: MarshalAs(UnmanagedType.Bool)]
         public static partial bool GetWindowRect(nint hWnd, out RECT lpRect);
 
+        /// <summary>The bounding box of the window's region (SetWindowRgn): ERROR (0) when it has none.</summary>
+        [LibraryImport("user32.dll")]
+        public static partial int GetWindowRgnBox(nint hWnd, out RECT lprc);
+
         [LibraryImport("user32.dll", SetLastError = true)]
         [return: MarshalAs(UnmanagedType.Bool)]
         public static partial bool SetWindowPos(

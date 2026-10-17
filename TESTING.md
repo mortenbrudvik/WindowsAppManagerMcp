@@ -2772,7 +2772,7 @@ typical result over 300 tokens, and tools/list itself, measured in October 2026:
 | `read_table` | Task Manager's first 50 processes, 5 columns with headers | 643 | 1,000 |
 | `get_server_info` | The default deny list, five host processes, two monitors | 634 | 850 |
 | `get_layout` | A preset of 6 placements, each with the captured window identity | 529 | 800 |
-| tools/list | Every tool's name, title, description, schemas and annotations: 80 tools, 255,775 bytes (`ToolList_StaysWithinItsBudget`; M5.8's six DOM bridge tools added 2,970, 936 of them their window selectors; M5.8's dialog option and the UI Automation browser_handle_dialog 199 more; M6.1a's additive consolidations 405 more: mouse_click's own click checks 249, set_window_bounds' optional pairs 87, get_browser_url's foreground sentence 41, get_monitors' virtualScreen 28; M6.1b's one-line descriptions of the nine deprecated tools and the descriptions that no longer send the agent to them 2,121 fewer; M6.3's read_screen_text and find_text_on_screen in the opt-in `ocr` toolset 1,987 more) | 63,944 | 63,980 |
+| tools/list | Every tool's name, title, description, schemas and annotations: 80 tools, 256,174 bytes (`ToolList_StaysWithinItsBudget`; M5.8's six DOM bridge tools added 2,970, 936 of them their window selectors; M5.8's dialog option and the UI Automation browser_handle_dialog 199 more; M6.1a's additive consolidations 405 more: mouse_click's own click checks 249, set_window_bounds' optional pairs 87, get_browser_url's foreground sentence 41, get_monitors' virtualScreen 28; M6.1b's one-line descriptions of the nine deprecated tools and the descriptions that no longer send the agent to them 2,121 fewer; M6.3's read_screen_text and find_text_on_screen in the opt-in `ocr` toolset 2,087 more) | 64,044 | 64,080 |
 | Default tools/list | The 58 tools a server serves without WAM_TOOLSETS, WAM_EXCLUDE_TOOLS and WAM_READ_ONLY, 204,020 bytes (`DefaultToolList_StaysWithinItsBudget`, roadmap M6.1; 59,627 before M6.1a, 60,032 after it with 70 tools, 9,027 fewer once M6.1b moved the nine deprecated tools and the three geometry batches to opt-in toolsets) | 51,005 | 51,041 |
 
 Every other typical result is at most 300 tokens. When a change makes a result larger on purpose, raise its
@@ -2809,7 +2809,7 @@ were capture_with_elements at 2,396 and element_action at 2,386, so they have ab
 | `browser-script` | off | 1 | 468 | 500 |
 | `windows-batch` | off | 3 | 1,978 | 2,000 |
 | `deprecated` | off | 9 | 4,925 | 4,950 |
-| `ocr` | off | 2 | 1,987 | 2,023 |
+| `ocr` | off | 2 | 2,087 | 2,123 |
 
 The rows are measured after M6.1b (October 2026), which moved six tools out of `windows`, two out of `monitors`, three
 out of `input` and one out of `browser` into the opt-in `windows-batch` and `deprecated` toolsets. The deprecated tools'

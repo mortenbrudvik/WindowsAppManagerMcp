@@ -67,6 +67,22 @@ public class OcrTextMatcherTests
         Find(matcher, "Save Assets").Should().BeEmpty("'Assets' is not the word 'as'");
     }
 
+    [Theory]
+    [InlineData("(OK)", "OK")]
+    [InlineData("OK.", "OK")]
+    [InlineData("Save, then quit", "Save")]
+    [InlineData("\"Save as\" dialog", "Save as")]
+    public void Exact_IgnoresThePunctuationOcrReadsAsPartOfAWord(string line, string expected)
+    {
+        Find(Matcher(expected, OcrTextMatch.Exact), line).Should().Equal(expected);
+    }
+
+    [Fact]
+    public void Exact_StillNeedsAWholeWord_NextToPunctuation()
+    {
+        Find(Matcher("OK", OcrTextMatch.Exact), "(OKAY)").Should().BeEmpty();
+    }
+
     [Fact]
     public void Exact_SkipsAPartialHit_AndFindsTheWholeWordAfterIt()
     {

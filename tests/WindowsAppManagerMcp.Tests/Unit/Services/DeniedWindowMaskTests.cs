@@ -22,7 +22,10 @@ public class DeniedWindowMaskTests
         bool Cloaked = false,
         long ExStyle = 0,
         Rectangle? Frame = null,
-        bool RectUnreadable = false);
+        bool RectUnreadable = false,
+        bool Shaped = false,
+        bool Gone = false,
+        bool PolicyThrows = false);
 
     public static (Mock<INativeWindowWrapper> Native, Mock<IWindowService> Windows) Desktop(params FakeWindow[] windows)
     {
@@ -47,10 +50,13 @@ public class DeniedWindowMaskTests
         native.Setup(n => n.GetExtendedFrameBounds(It.IsAny<nint>())).Returns((nint h) =>
             Of(h).Frame is { } f ? (f.Left, f.Top, f.Right, f.Bottom) : null);
         native.Setup(n => n.GetWindowLongPtr(It.IsAny<nint>(), GwlExStyle)).Returns((nint h, int _) => (nint)Of(h).ExStyle);
+        native.Setup(n => n.HasWindowRegion(It.IsAny<nint>())).Returns((nint h) => Of(h).Shaped);
+        native.Setup(n => n.IsWindow(It.IsAny<nint>())).Returns((nint h) => !Of(h).Gone);
 
         var service = new Mock<IWindowService>();
         service.Setup(s => s.EvaluateTargetPolicy(It.IsAny<nint>())).Returns((nint h) =>
-            Of(h).Denied ? TargetPolicyVerdict.Deny("KeePass", "it is on the deny list") : TargetPolicyVerdict.Allow);
+            Of(h).PolicyThrows ? throw new InvalidOperationException("the window is gone")
+            : Of(h).Denied ? TargetPolicyVerdict.Deny("KeePass", "it is on the deny list") : TargetPolicyVerdict.Allow);
         return (native, service);
     }
 
@@ -91,6 +97,36 @@ public class DeniedWindowMaskTests
             new FakeWindow(1, new Rectangle(0, 0, 400, 100), Denied: true));
 
         areas.Should().ContainSingle().Which.Areas.Should().Equal(new Rectangle(0, 0, 400, 100));
+    }
+
+    [Fact]
+    public void Read_AWindowShapedByARegionAbove_HidesNothing()
+    {
+        // SetWindowRgn (rounded or cut-out windows): what lies outside the region shows through
+        var areas = Read(
+            new FakeWindow(2, new Rectangle(0, 0, 1000, 1000), Shaped: true),
+            new FakeWindow(1, new Rectangle(0, 0, 400, 100), Denied: true));
+
+        areas.Should().ContainSingle().Which.Areas.Should().Equal(new Rectangle(0, 0, 400, 100));
+    }
+
+    [Fact]
+    public void Read_ADeniedWindowThatClosedDuringTheRead_IsGone_NotARefusal()
+    {
+        var areas = Read(
+            new FakeWindow(3, new Rectangle(0, 0, 400, 100), Denied: true, RectUnreadable: true, Gone: true),
+            new FakeWindow(4, new Rectangle(0, 0, 400, 100), PolicyThrows: true, Gone: true),
+            new FakeWindow(1, new Rectangle(500, 0, 100, 100), Denied: true));
+
+        areas.Should().ContainSingle().Which.Window.Should().Be(1);
+    }
+
+    [Fact]
+    public void Read_APolicyCheckThatFailsOnALiveWindow_Propagates()
+    {
+        var act = () => Read(new FakeWindow(4, new Rectangle(0, 0, 400, 100), PolicyThrows: true));
+
+        act.Should().Throw<InvalidOperationException>();
     }
 
     [Fact]

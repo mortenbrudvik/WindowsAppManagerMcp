@@ -188,7 +188,9 @@ public sealed class OcrService : IOcrService
         warnings.InsertRange(0, capture.Warnings);
 
         var pixels = capture.Pixels;
-        var scale = (capture.ScaleFactor ?? 1.0) < UpscaleBelowScale && (long)pixels.Width * pixels.Height <= UpscaleMaxPixels &&
+        // An unknown scale (the virtual screen, a region centred on no monitor) is read as captured: at 150% and above 2x only
+        // costs time and memory
+        var scale = capture.ScaleFactor is < UpscaleBelowScale && (long)pixels.Width * pixels.Height <= UpscaleMaxPixels &&
                     pixels.Width * 2 <= capabilities.MaxImageDimension && pixels.Height * 2 <= capabilities.MaxImageDimension
             ? 2
             : 1;
@@ -229,6 +231,12 @@ public sealed class OcrService : IOcrService
 
         // Registered last: the capture's window or screen is compared with how it was when the pixels were read, so the time
         // OCR took does not hide a change made during it
+        if (tiles.Count > 1)
+        {
+            // Each tile's lines came in its own reading order: put the whole image's back top to bottom, then left to right
+            lines = lines.OrderBy(line => line.Box.Top).ThenBy(line => line.Box.Left).ToList();
+        }
+
         var captureId = _screenshots.RegisterRaw(capture);
         return new Screen(capture, language, scale, textAngle, lines, masked, warnings, captureId);
     }

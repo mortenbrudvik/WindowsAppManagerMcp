@@ -86,14 +86,16 @@ public class OcrServiceTests
     }
 
     [Fact]
-    public async Task ReadText_ACaptureWithoutAScale_CountsAs100Percent()
+    public async Task ReadText_ACaptureWithoutAScale_IsReadAsCaptured()
     {
+        // The virtual screen (or a region whose centre is on no monitor) has no one scale: at 150% and above, 2x would only
+        // cost time and memory
         var target = new CaptureTarget.Monitor(ScreenshotService.VirtualScreenIndex);
         Captures(target, 400, 300, scale: null, method: "ScreenBitBlt");
 
         var result = await CreateSut().ReadTextAsync(Request(target), OcrDetail.Lines, 150, null, CancellationToken.None);
 
-        result.OcrScale.Should().Be(2);
+        result.OcrScale.Should().Be(1);
         result.WindowHandle.Should().BeNull();
     }
 
@@ -368,6 +370,19 @@ public class OcrServiceTests
         result.Warnings.Should().ContainSingle().Which.Should().StartWith(CaptureWarnings.OcrTiled + ":");
         _engine.Recognitions.Should().HaveCount(2).And.OnlyContain(r => r.Width <= 600);
         progress.Reports.Select(p => (p.Completed, p.Total)).Should().Equal((1, 2), (2, 2));
+    }
+
+    [Fact]
+    public async Task ReadText_InSeveralTiles_ReturnsTheLinesTopToBottom_NotTileByTile()
+    {
+        _engine.MaxImageDimension = 600;
+        Captures(WindowTarget, 1000, 100, x: 0, y: 0, scale: 2.0);
+        // The left tile's line is lower than the right tile's
+        PlaceWords((100, 60, "lower"), (800, 10, "upper"));
+
+        var result = await CreateSut().ReadTextAsync(Request(WindowTarget), OcrDetail.Lines, 150, null, CancellationToken.None);
+
+        result.Lines!.Select(l => l.Text).Should().Equal("upper", "lower");
     }
 
     [Fact]

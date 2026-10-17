@@ -9,11 +9,11 @@ namespace WindowsAppManagerMcp.Services;
 /// into text an agent can log and search, so a monitor or region read blacks them out before OCR, as a window target is
 /// refused. Read from the drawn top-level windows (visible, not minimized, not cloaked) in z-order: a denied window's
 /// rectangle, less what opaque windows above it cover. Over-masking is the safe side: a denied window's rectangle includes
-/// its invisible resize borders; only a window that is neither layered, click-through nor drawn through DirectComposition
-/// counts as opaque, and only by its visible frame; a window the policy cannot check is denied, and a denied window that
-/// cannot be placed refuses the read (fail-closed). Masking by rectangle cannot hide denied content another app draws (a
-/// remote desktop, a screen share), a denied process's child window inside an allowed window, or what shows through a
-/// window shaped with a region or with blur-behind, which counts as opaque.
+/// its invisible resize borders; only a window that is neither layered, click-through, drawn through DirectComposition
+/// nor shaped by a region counts as opaque, and only by its visible frame; a window the policy cannot check is denied, and
+/// a denied window that cannot be placed refuses the read (fail-closed). Masking by rectangle cannot hide denied content
+/// another app draws (a remote desktop, a screen share), a denied process's child window inside an allowed window, or
+/// what a DWM blur-behind or acrylic window above shows of it, blurred (it counts as opaque).
 /// </summary>
 public sealed class DeniedWindowMask
 {
@@ -52,8 +52,9 @@ public sealed class DeniedWindowMask
 
             if (_windows.GetWindowRect(handle) is not { } rect)
             {
-                // A window that cannot be placed hides nothing; one the policy denies cannot be blacked out
-                if (!_windowService.EvaluateTargetPolicy(handle).Allowed)
+                // A window that closed meanwhile is gone; one that cannot be placed hides nothing, and if the policy denies
+                // it, it cannot be blacked out
+                if (_windows.IsWindow(handle) && IsDenied(handle) == true)
                 {
                     throw new DeniedWindowUnlocatedException(handle);
                 }
@@ -67,7 +68,10 @@ public sealed class DeniedWindowMask
                 continue;
             }
 
-            var isDenied = !_windowService.EvaluateTargetPolicy(handle).Allowed;
+            if (IsDenied(handle) is not { } isDenied)
+            {
+                continue;
+            }
             if (isDenied && Subtract(bounds, covered) is { Count: > 0 } visible)
             {
                 denied.Add(new DeniedWindowArea(handle, visible));
@@ -155,13 +159,31 @@ public sealed class DeniedWindowMask
     }
 
     /// <summary>
+    /// The policy's verdict on the window, or null when it closed while the policy was asked (a dead handle is gone, not an
+    /// error). A failure on a window that is still there propagates.
+    /// </summary>
+    private bool? IsDenied(nint handle)
+    {
+        try
+        {
+            return !_windowService.EvaluateTargetPolicy(handle).Allowed;
+        }
+        catch (Exception) when (!_windows.IsWindow(handle))
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
     /// Whether the window paints all of its visible frame: a layered window can be partly or wholly transparent, a
     /// click-through (WS_EX_TRANSPARENT) one is usually an overlay, and one drawn through DirectComposition
-    /// (WS_EX_NOREDIRECTIONBITMAP: Windows Terminal, UWP frames) can be translucent, so none of them hides what is below it.
+    /// (WS_EX_NOREDIRECTIONBITMAP: Windows Terminal, UWP frames) can be translucent, and one with a region (SetWindowRgn)
+    /// paints only part of its rectangle, so none of them hides what is below it.
     /// </summary>
     private bool IsOpaque(nint handle) =>
         ((long)_windows.GetWindowLongPtr(handle, NativeEnums.GWL_EXSTYLE) &
-         (NativeEnums.WS_EX_LAYERED | NativeEnums.WS_EX_TRANSPARENT | NativeEnums.WS_EX_NOREDIRECTIONBITMAP)) == 0;
+         (NativeEnums.WS_EX_LAYERED | NativeEnums.WS_EX_TRANSPARENT | NativeEnums.WS_EX_NOREDIRECTIONBITMAP)) == 0 &&
+        !_windows.HasWindowRegion(handle);
 
     /// <summary>The visible frame (without the invisible resize borders), or the window rectangle when DWM has none.</summary>
     private Rectangle VisibleFrame(nint handle, Rectangle bounds) =>

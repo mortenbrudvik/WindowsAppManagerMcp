@@ -109,7 +109,7 @@ public sealed class OcrTextMatcher
         {
             var start = map[index];
             var end = map[index + _text.Length - 1] + 1;
-            if (_match == OcrTextMatch.Contains || (words.Any(w => w.Start == start) && words.Any(w => w.End == end)))
+            if (_match == OcrTextMatch.Contains || (WordStarts(line, words, start) && WordEnds(line, words, end)))
             {
                 matches.Add((start, end));
                 from = index + _text.Length;
@@ -162,6 +162,35 @@ public sealed class OcrTextMatcher
 
         return (builder.ToString(), map.ToArray());
     }
+
+    /// <summary>
+    /// Whether <paramref name="index"/> is where a word starts, or where it starts after the punctuation OCR reads as part of
+    /// it ("(OK)", "[Save").
+    /// </summary>
+    private static bool WordStarts(string line, IReadOnlyList<(int Start, int End)> words, int index) =>
+        words.Any(w =>
+        {
+            var start = w.Start;
+            while (start < w.End && char.IsPunctuation(line[start]))
+            {
+                start++;
+            }
+
+            return index == w.Start || index == start;
+        });
+
+    /// <summary>Whether <paramref name="index"/> is where a word ends, or where it ends before its punctuation ("OK.", "Save,").</summary>
+    private static bool WordEnds(string line, IReadOnlyList<(int Start, int End)> words, int index) =>
+        words.Any(w =>
+        {
+            var end = w.End;
+            while (end > w.Start && char.IsPunctuation(line[end - 1]))
+            {
+                end--;
+            }
+
+            return index == w.End || index == end;
+        });
 
     /// <summary>
     /// A character of a script written without spaces between words: CJK ideographs and their punctuation, hiragana,

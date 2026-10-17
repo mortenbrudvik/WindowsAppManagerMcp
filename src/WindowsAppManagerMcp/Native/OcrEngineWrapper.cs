@@ -21,8 +21,8 @@ public sealed class OcrEngineWrapper : IOcrEngineWrapper, IDisposable
     private readonly ConcurrentDictionary<string, object> _engines = new(StringComparer.OrdinalIgnoreCase);
     private readonly SemaphoreSlim _recognition = new(1, 1);
 
-    // The last capabilities read: the profile language is asked for again only when the installed languages changed, since
-    // asking creates an engine
+    // The last capabilities read: the profile language is asked for again only when the installed languages changed or a
+    // language failed (Forget), since asking creates an engine
     private OcrCapabilities? _capabilities;
 
     /// <inheritdoc />
@@ -111,6 +111,7 @@ public sealed class OcrEngineWrapper : IOcrEngineWrapper, IDisposable
             }
             catch (Exception ex) when (IsWinRtFailure(ex))
             {
+                Forget(languageTag);
                 throw new OcrUnavailableException($"Windows OCR could not read the image: {ex.Message}", ex);
             }
 
@@ -170,7 +171,13 @@ public sealed class OcrEngineWrapper : IOcrEngineWrapper, IDisposable
         // ArgumentException: Windows refuses the tag as a language
         catch (Exception ex) when (IsWinRtFailure(ex) || ex is ArgumentException)
         {
+            Forget(languageTag);
             throw new OcrUnavailableException($"Windows OCR has no engine for '{languageTag}': {ex.Message}", ex);
+        }
+
+        if (engine == null)
+        {
+            Forget(languageTag);
         }
 
         return engine == null
@@ -179,13 +186,22 @@ public sealed class OcrEngineWrapper : IOcrEngineWrapper, IDisposable
     }
 
     /// <summary>
-    /// What a missing or broken Windows OCR throws: a COM error from the API (also access denied), or a projection that cannot
-    /// load its types or entry points. Argument, cast and other errors are the server's own bugs (it checks the image and
-    /// asks only for installed languages), so they pass through as such instead of reading as "OCR is unavailable"; so does
+    /// After a failure with <paramref name="languageTag"/> (a language removed, an engine that broke): drops its engine and
+    /// the cached capabilities, so the next call reads both again.
+    /// </summary>
+    private void Forget(string languageTag)
+    {
+        _engines.TryRemove(languageTag, out _);
+        Volatile.Write(ref _capabilities, null);
+    }
+
+    /// <summary>
+    /// What a missing or broken Windows OCR throws: a COM error from the API, or a projection that cannot load its types or
+    /// entry points. Argument, cast, access and other errors are the server's own bugs (it checks the image and asks only
+    /// for installed languages), so they pass through as server errors instead of reading as "OCR is unavailable"; so does
     /// cancellation.
     /// </summary>
     private static bool IsWinRtFailure(Exception ex) =>
         ex is System.Runtime.InteropServices.COMException or TypeInitializationException or TypeLoadException or
-            DllNotFoundException or EntryPointNotFoundException or UnauthorizedAccessException or
-            System.Runtime.InteropServices.SEHException;
+            DllNotFoundException or EntryPointNotFoundException;
 }
