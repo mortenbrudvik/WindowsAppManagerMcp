@@ -19,6 +19,8 @@ public class WrapperCatalogTests
             typeof(INativeInputWrapper),
             typeof(IUIAutomationWrapper),
             typeof(IScreenCaptureWrapper),
+            // Windows.Graphics.Capture of a window (roadmap M7.1)
+            typeof(IGraphicsCaptureWrapper),
             typeof(INativeMonitorWrapper),
             typeof(INativeProcessWrapper),
             typeof(IProcessHandle),

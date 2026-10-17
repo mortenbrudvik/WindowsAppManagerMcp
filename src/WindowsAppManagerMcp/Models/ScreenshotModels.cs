@@ -266,6 +266,9 @@ public sealed record CaptureOptions
 
     /// <summary>Legacy alias: true turns output "image" or "metadata" into "file".</summary>
     public bool SaveToFile { get; init; }
+
+    /// <summary>How a window capture reads the window's pixels (roadmap M7.1); the other captures ignore it.</summary>
+    public WindowCaptureMethod CaptureMethod { get; init; } = WindowCaptureMethod.Auto;
 }
 
 /// <summary>

@@ -117,6 +117,8 @@ public static class ServiceRegistration
         services.AddSingleton<ICoordinateSpaceResolver, CoordinateSpaceResolver>();
         // The target policy's check of a captured window: the capture tools and the raw pixel reads (roadmap M6) share it
         services.AddSingleton<ICaptureTargetPolicy, CaptureTargetPolicy>();
+        // Windows.Graphics.Capture for window captures (roadmap M7.1): its Direct3D device is made with the first capture
+        services.AddSingleton<IGraphicsCaptureWrapper, NativeGraphicsCaptureWrapper>();
         services.AddSingleton<IScreenshotService, ScreenshotService>();
         // wait_for_visual (roadmap M6.4): frames compared by their signatures, with the capture checks, the policy's mask
         // of region and monitor reads, and the caret left out

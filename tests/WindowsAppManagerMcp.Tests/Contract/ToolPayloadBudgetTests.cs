@@ -161,11 +161,11 @@ public class ToolPayloadBudgetTests
     /// handle parameters and drag to get_monitors, find_windows and mouse_click instead of the deprecated tools, and added
     /// get_server_info's moved field to its description (-2,121 in all); then 62,348 tokens, 249,390 bytes after M6.6's
     /// list_processes parameters (processId, pathContains, sortBy, limit, includeCommandLine) and result fields in its
-    /// description (+361) and get_window_info's integrity fields (+31); then 63,402 tokens, 253,608 bytes for 79 tools after M6.2's run_steps, its description and the step item schema with the tool list; then 64,474 tokens, 257,896 bytes for 80 tools after M6.4's wait_for_visual in the opt-in visual toolset; then 66,562 tokens, 266,245 bytes for 82 tools after M6.3's read_screen_text and find_text_on_screen in the opt-in ocr toolset (+2,088, sharing their target and result descriptions); then 68,076 tokens, 272,301 bytes for 83 tools after M6.7's set_window_zorder (+522), the `monitor` parameter beside the deprecated monitorIndex on snap_window, move_window_to_monitor, snap_windows_batch, take_screenshot, the two OCR tools, wait_for_visual and the launch placement, set_window_bounds' unit, relativeTo and monitor (+233), get_monitors' new fields and get_server_info's pinnedWindows (+1,514 in all); then 68,433 tokens, 273,729 bytes for 84 tools after M6.5's list_installed_apps in the default-on launch toolset (about 200), launch_application's runAsAdmin and installed-app wording (about 115) and the batch item's runAsAdmin (about 40), +357 on top of M6.7; then 69,244 tokens, 276,974 bytes after M6.8's layout schema version 2 (save_layout's placements and includeMinimized, apply_layout's dryRun and placements, +775); then 69,284 tokens, 277,136 bytes after M7.3's isOnOtherDesktop in find_windows' includeCloaked and M7.4's takeover detection in get_control_status' description (+40); then 69,738 tokens, 278,951 bytes for 85 tools after M7.2's get_window_events in the default-on windows toolset (+454); DefaultToolListTokenBudget measures the tools served by default), so every addition to the surface is a decision. When a change
+    /// description (+361) and get_window_info's integrity fields (+31); then 63,402 tokens, 253,608 bytes for 79 tools after M6.2's run_steps, its description and the step item schema with the tool list; then 64,474 tokens, 257,896 bytes for 80 tools after M6.4's wait_for_visual in the opt-in visual toolset; then 66,562 tokens, 266,245 bytes for 82 tools after M6.3's read_screen_text and find_text_on_screen in the opt-in ocr toolset (+2,088, sharing their target and result descriptions); then 68,076 tokens, 272,301 bytes for 83 tools after M6.7's set_window_zorder (+522), the `monitor` parameter beside the deprecated monitorIndex on snap_window, move_window_to_monitor, snap_windows_batch, take_screenshot, the two OCR tools, wait_for_visual and the launch placement, set_window_bounds' unit, relativeTo and monitor (+233), get_monitors' new fields and get_server_info's pinnedWindows (+1,514 in all); then 68,433 tokens, 273,729 bytes for 84 tools after M6.5's list_installed_apps in the default-on launch toolset (about 200), launch_application's runAsAdmin and installed-app wording (about 115) and the batch item's runAsAdmin (about 40), +357 on top of M6.7; then 69,244 tokens, 276,974 bytes after M6.8's layout schema version 2 (save_layout's placements and includeMinimized, apply_layout's dryRun and placements, +775); then 69,284 tokens, 277,136 bytes after M7.3's isOnOtherDesktop in find_windows' includeCloaked and M7.4's takeover detection in get_control_status' description (+40); then 69,738 tokens, 278,951 bytes for 85 tools after M7.2's get_window_events in the default-on windows toolset (+454); then 69,922 tokens, 279,685 bytes after M7.1's captureMethod on capture_window and capture_with_elements (+172); DefaultToolListTokenBudget measures the tools served by default), so every addition to the surface is a decision. When a change
     /// adds to the surface on purpose, raise it in the same change by what the failure message measures; when a change
     /// trims descriptions, lower it.
     /// </summary>
-    public const int ToolListTokenBudget = 69_750;
+    public const int ToolListTokenBudget = 69_930;
 
     /// <summary>
     /// The token budget of the default tools/list (roadmap M6.1): the tools a server started without WAM_TOOLSETS,
@@ -185,10 +185,11 @@ public class ToolPayloadBudgetTests
     /// layout schema version 2 in the default-on layouts toolset: save_layout's placements item schema, includeMinimized and
     /// description, apply_layout's dryRun, placements and description (+775); then 54,847 tokens (219,386 bytes) after M7.3's isOnOtherDesktop and M7.4's
     /// takeover detection in get_control_status' description (+41); then 55,301 tokens (221,201 bytes, 62 tools) after M7.2's
-    /// get_window_events in the windows toolset (+454). A tool in a toolset that is off by default never moves it; a change to the default
+    /// get_window_events in the windows toolset (+454); then 55,484 tokens (221,935 bytes) after M7.1's captureMethod on
+    /// capture_window and capture_with_elements (+174). A tool in a toolset that is off by default never moves it; a change to the default
     /// surface raises it by what the failure message measures, in the same change, or lowers it.
     /// </summary>
-    public const int DefaultToolListTokenBudget = 55_310;
+    public const int DefaultToolListTokenBudget = 55_490;
 
     /// <summary>
     /// The most tokens one tool object (name, title, description, input schema, annotations) may cost in tools/list (roadmap
@@ -210,7 +211,7 @@ public class ToolPayloadBudgetTests
         ["server"] = 1_092, // 1,056 (1,038 before M6.7's pinnedWindows in get_server_info)
         ["windows"] = 11_380, // 11,343: 14 tools after M7.2's get_window_events (+423; 10,884 for 13 tools before it), 11 of them with the window selector (13,724 before M6.1b moved six out; 9,921 before M6.6's get_window_info integrity fields; 9,952 before M6.7's set_window_zorder, monitor and percent placement)
         ["monitors"] = 203, // 167: get_monitors alone since M6.1b (314 with get_primary_monitor and list_screens; 118 before M6.7's identity fields)
-        ["capture"] = 5_950, // 5,914 (5,856 before M6.7's monitor on take_screenshot)
+        ["capture"] = 6_110, // 6,097 after M7.1's captureMethod on capture_window and capture_with_elements (+147); before it: 5,914 (5,856 before M6.7's monitor on take_screenshot)
         ["elements"] = 8_300, // 8,262
         ["input"] = 14_800, // 14,758: 10 tools (19,415 with the click trio before M6.1b)
         ["clipboard"] = 750, // 734
