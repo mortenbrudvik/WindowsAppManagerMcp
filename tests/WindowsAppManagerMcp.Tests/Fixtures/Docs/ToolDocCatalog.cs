@@ -183,6 +183,8 @@ public static class ToolDocCatalog
             new("get_layout", "Get preset details", "name"),
             new("save_layout", "Save the current arrangement, or placements you write", "name", "description", "includeProcesses", "excludeProcesses", "includeMinimized", "placements"),
             new("apply_layout", "Restore saved preset, or preview it", "name", "matchBy", "launchMissing", "dryRun", "placements"),
+            new("save_workspace", "Save the windows with their Explorer folders and browser pages (toolset workspaces)", "name", "includeProcesses", "excludeProcesses"),
+            new("restore_workspace", "Open a workspace's missing folders and pages, then arrange it (toolset workspaces)", "name", "dryRun"),
             new("delete_layout", "Delete a preset", "name"),
         ]),
         new("Server Info",

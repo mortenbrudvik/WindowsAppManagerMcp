@@ -54,6 +54,8 @@ public static class AuditLogToolFilter
         "launch_application", "launch_applications_batch", "launch_browser_with_debug",
         // Layouts: arrange (and launch) windows, replace or delete a preset
         "apply_layout", "save_layout", "delete_layout",
+        // Workspaces (roadmap M7.5): a restore opens folders and pages and starts programs; a save replaces a preset
+        "save_workspace", "restore_workspace",
         // Clipboard: the write, and the read that can return the user's clipboard
         "set_clipboard", "get_clipboard",
         // A debug browser's tab shown or navigated through CDP (roadmap M5.5): the URL's scheme and host only

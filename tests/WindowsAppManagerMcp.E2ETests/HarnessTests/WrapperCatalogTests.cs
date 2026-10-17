@@ -29,6 +29,8 @@ public class WrapperCatalogTests
             typeof(INativeSecurityWrapper),
             typeof(INativeSystemInfoWrapper),
             typeof(INativeVirtualDesktopWrapper),
+            // File Explorer's folders for workspaces (roadmap M7.5)
+            typeof(INativeShellWindowsWrapper),
             typeof(INativeThreadInputWrapper),
             typeof(INativeHotkeyWrapper),
             typeof(IDesktopPauseFlag),

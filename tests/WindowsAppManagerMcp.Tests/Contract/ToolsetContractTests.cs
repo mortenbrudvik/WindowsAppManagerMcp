@@ -125,7 +125,7 @@ public class ToolsetContractTests
     /// since M5.8, windows-batch and deprecated since M6.1 (owner decisions D4 and D1; DeprecatedToolsContractTests), visual
     /// since M6.4 (owner decisions D2 and D10), ocr since M6.3 (owner decision D2).
     /// </summary>
-    private static readonly string[] OptInToolsets = ["browser-actions", "browser-script", "visual", "windows-batch", "deprecated", "ocr"];
+    private static readonly string[] OptInToolsets = ["workspaces", "browser-actions", "browser-script", "visual", "windows-batch", "deprecated", "ocr"];
 
     /// <summary>The DOM bridge's tools (roadmap M5.8) that browser-actions serves: all but browser_evaluate.</summary>
     private static readonly string[] DomBridgeActionTools =

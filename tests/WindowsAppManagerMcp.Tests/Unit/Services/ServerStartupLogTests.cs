@@ -97,7 +97,7 @@ public class ServerStartupLogTests
 
         // Assert
         _logger.Entries.Should().Contain(e => e.Level == LogLevel.Information && e.Message.StartsWith("Serving 1 tools") &&
-                                              e.Message.Contains("from WAM_TOOLSETS") && e.Message.Contains("not served: browser") &&
+                                              e.Message.Contains("from WAM_TOOLSETS") && e.Message.Contains("not served: workspaces, browser") &&
                                               e.Message.Contains("read-only mode on"));
         _logger.Entries.Should().Contain(e => e.Level == LogLevel.Warning && e.Message.Contains("'+widnows'"));
     }

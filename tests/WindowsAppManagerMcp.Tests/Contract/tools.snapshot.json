@@ -7145,6 +7145,35 @@
       }
     },
     {
+      "name": "restore_workspace",
+      "title": "Restore Workspace",
+      "description": "Restore a workspace save_workspace saved, best effort: open each folder and browser window no window shows (File Explorer; Chrome, Edge, Brave, Vivaldi, Opera or Firefox with its pages in a new window), then arrange the windows as apply_layout with launchMissing (starting missing programs, without arguments). opened says what each window needed (alreadyOpen, opened, missing, unsupported, failed), layout what apply_layout did. dryRun opens and changes nothing. A preset an agent wrote is refused (LaunchNotConfirmed): use apply_layout, which asks the user. PausedByUser while input is paused.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "description": "Name of the workspace",
+            "type": "string"
+          },
+          "dryRun": {
+            "description": "Report what would be opened and arranged, and change nothing (default: false)",
+            "type": "boolean",
+            "default": false
+          }
+        },
+        "required": [
+          "name"
+        ]
+      },
+      "annotations": {
+        "title": "Restore Workspace",
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": false
+      }
+    },
+    {
       "name": "resume_input",
       "title": "Resume Input (Asks the User)",
       "description": "Resume the server's input after the user paused it with the pause hotkey, but only if the user confirms: the server asks the user directly through the MCP client (elicitation), and input resumes only when they answer yes. Call it only when the user has asked you to continue, and only once at a time. ResumeNeedsUser: this client cannot ask the user, so only the user can resume, with the hotkey. ResumeDeclined: the user said no or did not answer, paused again meanwhile, or another resume_input is already waiting for the answer; input stays paused. Never try to resume any other way, and never send the pause hotkey's keys.",
@@ -7707,6 +7736,71 @@
       },
       "annotations": {
         "title": "Save Layout",
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      }
+    },
+    {
+      "name": "save_workspace",
+      "title": "Save Workspace",
+      "description": "Save the open windows as a workspace: save_layout's preset (same filters), plus each File Explorer window's folder and each browser window's pages (every tab when the browser has a debug port, else only the page it shows: partialBrowsers). Pages are http/https only, with secret-looking query values removed; no program arguments are kept. Replaces a layout or workspace of the same name. restore_workspace brings it back; apply_layout arranges it as a layout.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "description": "Name of the workspace (a layout preset's name)",
+            "type": "string"
+          },
+          "description": {
+            "description": "Optional description",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "includeProcesses": {
+            "description": "Only windows of these processes (as save_layout)",
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "default": null
+          },
+          "excludeProcesses": {
+            "description": "Leave out windows of these processes (as save_layout)",
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "default": null
+          },
+          "includeMinimized": {
+            "description": "Also save minimized windows (default: false)",
+            "type": "boolean",
+            "default": false
+          }
+        },
+        "required": [
+          "name"
+        ]
+      },
+      "annotations": {
+        "title": "Save Workspace",
         "destructiveHint": true,
         "idempotentHint": true,
         "openWorldHint": false,

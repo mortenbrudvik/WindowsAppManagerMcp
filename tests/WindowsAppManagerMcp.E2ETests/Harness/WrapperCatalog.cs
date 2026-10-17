@@ -261,6 +261,11 @@ public static class WrapperCatalog
                 [nameof(INativeKeyboardLayoutWrapper.ScanCode)] = WrapperMember.Read,
                 [nameof(INativeKeyboardLayoutWrapper.KeyText)] = WrapperMember.Read
             },
+            // The folders File Explorer's windows show (roadmap M7.5): read through the shell's window list, which it never changes
+            [typeof(INativeShellWindowsWrapper)] = new Dictionary<string, WrapperMember>
+            {
+                [nameof(INativeShellWindowsWrapper.GetExplorerFolders)] = WrapperMember.Read
+            },
             [typeof(INativeVirtualDesktopWrapper)] = new Dictionary<string, WrapperMember>
             {
                 // IsWindowOnCurrentVirtualDesktop and GetWindowDesktopId; the wrapper cannot move a window to a desktop

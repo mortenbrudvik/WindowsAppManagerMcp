@@ -58,7 +58,8 @@ public class AuditLogContractTests
             "release_all_input", "element_action", "respond_to_dialog", "file_dialog", "close_window", "close_windows_batch", "close_application", "kill_process", "close_debug_browser",
             "launch_application", "launch_applications_batch", "launch_browser_with_debug",
             "apply_layout", "save_layout", "delete_layout", "set_clipboard", "get_clipboard", "activate_tab", "browser_navigate",
-            "browser_click", "browser_type", "browser_handle_dialog", "browser_evaluate", "browser_screenshot", "run_steps");
+            "browser_click", "browser_type", "browser_handle_dialog", "browser_evaluate", "browser_screenshot", "run_steps",
+            "save_workspace", "restore_workspace");
     }
 
     [Fact]
@@ -413,7 +414,7 @@ public class AuditLogContractTests
     }
 
     /// <summary>The audited tools whose typical call aims at nothing a line can name: no window, process, program or item.</summary>
-    private static readonly string[] Untargeted = ["release_all_input", "save_layout", "delete_layout", "set_clipboard", "get_clipboard"]; // the clipboard tools act on no window; get_clipboard records the origin and length instead
+    private static readonly string[] Untargeted = ["release_all_input", "save_layout", "delete_layout", "save_workspace", "set_clipboard", "get_clipboard"]; // the clipboard tools act on no window; get_clipboard records the origin and length instead
 
     [Theory]
     [MemberData(nameof(ServedAuditedTools))]

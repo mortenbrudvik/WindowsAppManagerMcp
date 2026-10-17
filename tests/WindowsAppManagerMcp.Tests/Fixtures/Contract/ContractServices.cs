@@ -86,6 +86,9 @@ public sealed class ContractServices : IDisposable
         return new EncodedImage(stream.ToArray(), "image/jpeg");
     });
     public Mock<ILayoutService> Layouts { get; } = new();
+
+    /// <summary>Workspaces (roadmap M7.5): a saved morning workspace and its restore (Typical), or no such workspace (Failing).</summary>
+    public Mock<IWorkspaceService> Workspaces { get; } = new();
     public Mock<IUIElementService> UiElements { get; } = new();
     public Mock<IElementInspectionService> Inspection { get; } = new();
     public Mock<IElementSearchService> ElementSearch { get; } = new();
@@ -209,6 +212,7 @@ public sealed class ContractServices : IDisposable
         services.AddSingleton(BrowserPages.Object);
         services.AddSingleton(BrowserDialogs.Object);
         services.AddSingleton(Layouts.Object);
+        services.AddSingleton(Workspaces.Object);
         services.AddSingleton(UiElements.Object);
         services.AddSingleton(Inspection.Object);
         services.AddSingleton(ElementSearch.Object);
@@ -368,6 +372,17 @@ public sealed class ContractServices : IDisposable
                 CaptureId: "c3-3fa91c", CapturedRegion: new CapturedRegion(0, 100, 1600, 900), CaptureMethod: "PrintWindow"));
         // get_window_events (roadmap M7.2): Notepad's Save As dialog came up and took the foreground
         var at = new DateTimeOffset(2026, 10, 17, 12, 0, 0, TimeSpan.Zero);
+        // save_workspace and restore_workspace (roadmap M7.5): five windows, a folder and a browser window's three pages
+        Workspaces.Setup(w => w.SaveAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string[]?>(), It.IsAny<string[]?>(),
+                It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new WorkspaceSaveResult(true, "morning", Windows: 5, Folders: 1, BrowserWindows: 1, Urls: 3));
+        Workspaces.Setup(w => w.RestoreAsync(It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<IProgress<OperationProgress>?>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new WorkspaceRestoreResult(true, "morning", "restored",
+            [
+                new WorkspaceContentOutcome(1, "folder", "alreadyOpen", @"C:\Users\user\Documents\Reports", WindowHandle: 0x2C0E10),
+                new WorkspaceContentOutcome(2, "pages", "opened", @"C:\Program Files\Microsoft\Edge\Application\msedge.exe", 3, 0x2C1F00)
+            ], new LayoutApplyResult(true, "morning", WindowsArranged: 5)));
         WindowEvents.Setup(j => j.Read(It.IsAny<long?>(), It.IsAny<int>(), It.IsAny<Func<WindowEventEntry, bool>?>()))
             .Returns(new WindowEventRead(
             [
@@ -668,6 +683,13 @@ public sealed class ContractServices : IDisposable
                 Error: "Nothing changed within 10000 ms (51 checks).", ErrorCode: nameof(WindowErrorCode.WaitTimedOut)));
         WindowEvents.Setup(j => j.Read(It.IsAny<long?>(), It.IsAny<int>(), It.IsAny<Func<WindowEventEntry, bool>?>()))
             .Throws(new ObjectDisposedException(nameof(WindowEventJournal)));
+        Workspaces.Setup(w => w.SaveAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string[]?>(), It.IsAny<string[]?>(),
+                It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new WorkspaceSaveResult(false, "morning", Error: "No windows to save.", ErrorCode: nameof(LayoutErrorCode.NoWindowsCaptured)));
+        Workspaces.Setup(w => w.RestoreAsync(It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<IProgress<OperationProgress>?>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new WorkspaceRestoreResult(false, "morning", "failed", Error: "No layout or workspace named 'morning'.",
+                ErrorCode: nameof(LayoutErrorCode.PresetNotFound)));
         WindowWait.Setup(w => w.WaitForConditionAsync(It.IsAny<WindowConditionRequest>(), It.IsAny<IProgress<OperationProgress>?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new WindowConditionResult
             {

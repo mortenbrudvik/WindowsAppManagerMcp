@@ -1,7 +1,7 @@
 # Windows App Manager - MCP Tools Reference
 
 <!-- tools:begin summary (generated from tools/list: run the tests with UPDATE_SNAPSHOTS=1, see TESTING.md) -->
-A comprehensive guide to all 85 MCP tools for managing Windows applications, windows, and layouts.
+A comprehensive guide to all 87 MCP tools for managing Windows applications, windows, and layouts.
 
 ## Quick Reference
 
@@ -21,7 +21,7 @@ A comprehensive guide to all 85 MCP tools for managing Windows applications, win
 | [Step Sequences](#step-sequences) | [run_steps](#run_steps) | 1 |
 | [App Launch](#app-launch) | [launch_application](#launch_application), [list_installed_apps](#list_installed_apps), [list_processes](#list_processes), [kill_process](#kill_process), [close_application](#close_application) | 5 |
 | [Clipboard](#clipboard) | [get_clipboard](#get_clipboard), [set_clipboard](#set_clipboard) | 2 |
-| [Layout Presets](#layout-presets) | [list_layouts](#list_layouts), [get_layout](#get_layout), [save_layout](#save_layout), [apply_layout](#apply_layout), [delete_layout](#delete_layout) | 5 |
+| [Layout Presets](#layout-presets) | [list_layouts](#list_layouts), [get_layout](#get_layout), [save_layout](#save_layout), [apply_layout](#apply_layout), [save_workspace](#save_workspace), [restore_workspace](#restore_workspace), [delete_layout](#delete_layout) | 7 |
 | [Server Info](#server-info) | [get_server_info](#get_server_info) | 1 |
 <!-- tools:end summary -->
 
@@ -316,6 +316,7 @@ Every tool the server serves sits in the agent's context on every turn, and a lo
 | `launch` | on | about 3,300 | Start applications, optionally waiting for their window, and list the installed apps. | [launch_application](#launch_application), [launch_applications_batch](#launch_applications_batch), [list_installed_apps](#list_installed_apps) |
 | `process` | on | about 2,300 | List processes and close or end one, or close an application's windows gracefully. | [list_processes](#list_processes), [kill_process](#kill_process), [close_application](#close_application) |
 | `layouts` | on | about 2,000 | Save, apply and manage window layout presets. | [list_layouts](#list_layouts), [get_layout](#get_layout), [save_layout](#save_layout), [apply_layout](#apply_layout), [delete_layout](#delete_layout) |
+| `workspaces` | off | about 600 | Save the open windows with what File Explorer and browser windows show, and restore them: open missing folders and pages, then arrange. | [save_workspace](#save_workspace), [restore_workspace](#restore_workspace) |
 | `steps` | on | about 1,100 | Run several steps (element actions, keys, clicks, waits) on one window in one call, under one input gate hold, stopping at the first failure. | [run_steps](#run_steps) |
 | `browser` | on | about 4,400 | Read the URL and text of browser pages, list a debug browser's tabs and wait for a page; start and close a browser with a DevTools port. | [get_browser_url](#get_browser_url), [get_browser_content](#get_browser_content), [launch_browser_with_debug](#launch_browser_with_debug), [close_debug_browser](#close_debug_browser), [list_tabs](#list_tabs), [wait_for_browser](#wait_for_browser) |
 | `browser-actions` | off | about 3,600 | Act on a debug browser's pages through CDP: show and navigate tabs (with a load wait), click and type in a page without the real mouse or keyboard, answer its JavaScript dialogs, place its elements on the screen, capture it. | [activate_tab](#activate_tab), [browser_navigate](#browser_navigate), [browser_element_rect](#browser_element_rect), [browser_click](#browser_click), [browser_type](#browser_type), [browser_handle_dialog](#browser_handle_dialog), [browser_screenshot](#browser_screenshot) |
@@ -325,7 +326,7 @@ Every tool the server serves sits in the agent's context on every turn, and a lo
 | `ocr` | off | about 2,300 | Read and find text on the screen with Windows OCR where UI Automation exposes none (canvas apps, games, remote desktops, rendered PDFs), with click points for the mouse tools. | [read_screen_text](#read_screen_text), [find_text_on_screen](#find_text_on_screen) |
 | `deprecated` | off | about 4,900 | Tools replaced in 2.2.0 and removed in 3.0.0, unchanged until then and each served only with the toolset it came from: use mouse_click, set_window_bounds, find_windows, get_monitors and get_browser_url instead. | [click](#click), [right_click](#right_click), [double_click](#double_click), [move_window](#move_window), [resize_window](#resize_window), [get_all_windows](#get_all_windows), [get_primary_monitor](#get_primary_monitor), [list_screens](#list_screens), [get_active_browser_url](#get_active_browser_url) |
 
-The default surface (the toolsets that are on) is about 55,800 tokens, and every tool together about 70,200.
+The default surface (the toolsets that are on) is about 55,800 tokens, and every tool together about 70,900.
 <!-- tools:end toolsets -->
 
 **Tokens** is what the toolset's tools cost in tools/list, to the nearest 100: their names, titles, descriptions, input schemas and annotations as the server sends them, estimated at 4 bytes of JSON per token (roadmap M6.1). It is what turning the toolset on adds to the context a client loads up front, and what turning it off saves. The two totals under the table are measured the same way and generated with it. Contract tests hold each toolset, the default surface, the whole list and every single tool (at most 2,500 tokens) to a budget, so a change that makes them larger is a decision; see TESTING.md.
@@ -7388,6 +7389,70 @@ A placement with `focus: true` brings its window to the front with the same veri
 
 ---
 
+### save_workspace
+
+Save the open windows as a workspace (roadmap M7.5, toolset `workspaces`, off by default): the layout preset [save_layout](#save_layout) would save, with the same filters, plus what each window showed. A File Explorer window keeps its folder (a drive or network path; This PC, a search or the Recycle Bin keep none), and a browser window keeps its pages:
+
+- **Every tab** of the window when the browser has a DevTools debug port (as [list_tabs](#list_tabs) reads them).
+- **Only the page it shows** otherwise, read as [get_browser_url](#get_browser_url) reads it; the result counts such windows in `partialBrowsers`, with a warning.
+
+Pages are http and https only (at most 50 per window). A user name and password in an address are removed, and so is every query value whose name looks like a secret, in the query, in a `name=value` fragment and in a hash route's query (`#/callback?token=...`): a name that contains `token`, `secret`, `passw`, `session`, `credential`, `bearer`, `verifier`, `apikey`, `signature`, `jwt`, `saml`, `nonce`, `csrf` or `oauth`, or that is or ends with `code`, `key`, `auth`, `sig`, `sid`, `state`, `ticket`, `pass`, `otp` or `hmac`. A secret in the path itself (`/reset/<token>`) cannot be told from a page's name and stays. A private window (its title names InPrivate, Incognito, Private Browsing or (Private)) keeps no pages, with a warning, and a window of an app the user's [target policy](#target-policy) denies keeps no content. When File Explorer does not answer within 3 seconds, no folder is kept, with a warning. No program's arguments are kept (owner decision D15). The workspace replaces a layout or workspace of the same name; it is a layout preset like any other, so [list_layouts](#list_layouts), [get_layout](#get_layout) and [apply_layout](#apply_layout) work on it, and older servers read it as a layout (they ignore `content`).
+
+<!-- tools:begin params:save_workspace -->
+**Parameters:**
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| name | string | Yes | - | Name of the workspace (a layout preset's name) |
+| description | string | No | - | Optional description |
+| includeProcesses | string[] | No | - | Only windows of these processes (as save_layout) |
+| excludeProcesses | string[] | No | - | Leave out windows of these processes (as save_layout) |
+| includeMinimized | boolean | No | false | Also save minimized windows (default: false) |
+<!-- tools:end params:save_workspace -->
+
+**Response:**
+```json
+{ "success": true, "name": "morning", "windows": 5, "folders": 1, "browserWindows": 1, "urls": 3, "partialBrowsers": 0 }
+```
+
+In the preset file, each window with content has `content`: `{ "folder": "C:\\Users\\user\\Documents\\Reports" }` or `{ "urls": ["https://mail.example.com/inbox", "..."], "urlsPartial": true }`. A save that captures no window fails as save_layout does (`NoWindowsCaptured`).
+
+---
+
+### restore_workspace
+
+Restore a workspace [save_workspace](#save_workspace) saved, best effort (roadmap M7.5, toolset `workspaces`, off by default):
+
+1. **Folders and pages.** For each window with content that no window shows now, File Explorer opens its folder, or the browser opens its pages in a new window (Chrome, Edge, Brave, Vivaldi, Opera and Chromium with `--new-window`, Firefox with `-new-window`), and the call waits up to 15 seconds for that window. A folder is open when a File Explorer window shows it; pages are open when a window of that browser has the title the window had, or shows one of its pages (so a second restore opens no second window). When File Explorer does not answer, no folder is opened (`failed`), since whether it is open is unknown. A folder must be a full path; the program that opens pages must be the browser the window was.
+2. **The layout.** Then the preset is applied as [apply_layout](#apply_layout) with `launchMissing: true` applies it: the windows are arranged, and the programs of windows still missing are started, without arguments.
+
+`opened` says what each window with content needed: `alreadyOpen`, `opened` (with the window), `wouldOpen` (dry run), `missing` (the folder is gone), `unsupported` (pages of a browser it cannot open them in) or `failed` (with `error`). `layout` is apply_layout's result. `status` is `restored` when everything came back, `partial`, `failed`, or `dryRun`. `dryRun: true` reports both steps and opens, starts and moves nothing.
+
+It is best effort: an app that keeps one window, a browser without a debug port when the workspace was saved (only its shown page), and pages that need a sign-in do not come back exactly. Pages from the file are cleaned again before they are opened, so a file edited by hand opens only http and https pages without secret-looking values. A preset an agent wrote ([save_layout](#save_layout) with `placements`) is refused (`LaunchNotConfirmed`): use apply_layout, which asks the user before it starts programs. The call takes the input gate (not for a dry run) and fails with `PausedByUser` while input is paused. Like apply_layout, it is not idempotent: a second call can open a second window when the first one is not matched yet.
+
+<!-- tools:begin params:restore_workspace -->
+**Parameters:**
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| name | string | Yes | - | Name of the workspace |
+| dryRun | boolean | No | false | Report what would be opened and arranged, and change nothing (default: false) |
+<!-- tools:end params:restore_workspace -->
+
+**Response:**
+```json
+{
+  "success": true,
+  "name": "morning",
+  "status": "restored",
+  "opened": [
+    { "placement": 1, "kind": "folder", "status": "alreadyOpen", "target": "C:\\Users\\user\\Documents\\Reports", "windowHandle": 2887184 },
+    { "placement": 2, "kind": "pages", "status": "opened", "target": "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe", "urls": 3, "windowHandle": 2891520 }
+  ],
+  "layout": { "success": true, "presetName": "morning", "windowsArranged": 5 }
+}
+```
+
+---
+
 ### delete_layout
 
 Delete a layout preset. If no preset has that name, the call fails with `PresetNotFound`. A preset defined in a hand-named file is deleted from that file.
@@ -8663,6 +8728,11 @@ the new tools; their sections have the rest.
   `C:app.exe`, or a command line such as `cmd.exe /c x`) with `InvalidPath`, and start nothing. Such a path was found
   from the server's current folder or drive, which the client does not choose, with only a warning. Full paths, network
   paths (`\\server\share\app.exe`, still with a warning), bare names, URIs and AppUserModelIDs are unchanged.
+- **Workspaces (roadmap M7.5).** A new toolset, `workspaces`, off by default, with [save_workspace](#save_workspace)
+  (save_layout's preset plus each File Explorer window's folder and each browser window's pages, cleaned of secret-looking
+  values) and [restore_workspace](#restore_workspace) (opens the missing folders and pages, then applies the preset as
+  apply_layout with launchMissing; `dryRun`). Layout presets gain an optional `content` per placement, which apply_layout
+  and older servers ignore. restore_workspace is audited with what it opened. The default tools/list is unchanged.
 - **Takeover detection (roadmap M7.4), opt-in.** New environment variable `WAM_TAKEOVER_DETECTION` (`off` by default,
   `warn` or `stop`). With `stop`, type_text's typing, drag and run_steps stop with the new error code `UserInterrupted`
   (run_steps: `stoppedBy` `userInterrupted`) when the user uses the keyboard or mouse meanwhile; with `warn` they go on and

@@ -82,6 +82,8 @@ public class ToolAnnotationContractTests
         string[] destructive =
         [
             "close_window", "close_windows_batch", "close_application", "kill_process", "delete_layout", "save_layout",
+            // save_workspace replaces a preset of the same name, as save_layout does (roadmap M7.5)
+            "save_workspace",
             // click, right_click and double_click are deprecated (roadmap M6.1) but unchanged, annotations included
             "click", "right_click", "double_click", "mouse_click", "drag", "scroll", "type_text", "send_keys", "press_keys",
             "element_action",
@@ -157,7 +159,9 @@ public class ToolAnnotationContractTests
             .Should().BeEquivalentTo(
                 ["launch_application", "launch_applications_batch", "launch_browser_with_debug", "apply_layout", "get_browser_content",
                     "browser_navigate", "wait_for_browser", "browser_element_rect", "browser_click", "browser_type", "browser_handle_dialog",
-                    "browser_evaluate"]);
+                    "browser_evaluate",
+                    // It opens folders and web pages and starts the workspace's programs (roadmap M7.5)
+                    "restore_workspace"]);
     }
 
     [Theory]
@@ -165,6 +169,7 @@ public class ToolAnnotationContractTests
     [InlineData("launch_applications_batch")]
     [InlineData("launch_browser_with_debug")]
     [InlineData("apply_layout")]
+    [InlineData("restore_workspace")]
     public async Task TheToolsThatCanStartPrograms_AreNotIdempotent(string name)
     {
         // A second call can start a second instance: apply_layout with launchMissing launches again when the window it
