@@ -573,6 +573,27 @@ public class StepRunnerTests
     }
 
     [Fact]
+    public async Task WhenTheUserTakesTheForeground_RightAfterFocusWindowBroughtTheRunsWindowToTheFront_TheRunStops()
+    {
+        // The user clicks another application before the runner looks at the foreground after focus_window: the window
+        // was in front all the same, since focus_window succeeded
+        _dispatcher.OnCall = call =>
+        {
+            if (call.Number == 1)
+            {
+                _foreground = Stranger;
+            }
+        };
+
+        var run = await RunAsync(Step(StepTool.FocusWindow), Step(StepTool.PressKeys, """{ "keys": "enter" }"""));
+
+        run.Result.StoppedBy.Should().Be(StepStopReason.ForegroundMoved);
+        run.Result.ErrorCode.Should().Be("TargetNotForeground");
+        run.Result.Steps.Select(s => s.Status).Should().Equal(StepStatus.Ok, StepStatus.Skipped);
+        _dispatcher.Calls.Should().HaveCount(1);
+    }
+
+    [Fact]
     public async Task ADialogOfTheRunsWindowInFront_DoesNotStopTheRun()
     {
         _dispatcher.OnCall = call => _foreground = call.Number == 1 ? Window : Dialog;
