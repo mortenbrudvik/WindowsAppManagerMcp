@@ -12,7 +12,7 @@
     bin/WindowsAppManagerMcp.exe was built from the current sources.
   -->
   <PropertyGroup>
-    <Version>2.6.0</Version>
+    <Version>3.0.0</Version>
   </PropertyGroup>
 
 </Project>
