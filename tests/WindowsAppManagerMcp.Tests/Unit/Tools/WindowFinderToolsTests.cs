@@ -576,5 +576,70 @@ public class WindowFinderToolsTests
         _mockVirtualDesktops.Verify(d => d.GetPlacements(It.IsAny<IReadOnlyList<nint>>()), Times.Never);
     }
 
+    // get_window_events (roadmap M7.2)
+
+    private readonly Mock<IWindowEventJournal> _journal = new();
+
+    private static readonly DateTimeOffset EventTime = new(2026, 10, 17, 12, 0, 0, TimeSpan.Zero);
+
+    private static WindowEventEntry Event(long seq, WindowEventType type, long handle, string? process) =>
+        new(seq, EventTime, type, handle, "Save As", "#32770", process, 4_100);
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(201)]
+    public void GetWindowEvents_ALimitOutside1To200_IsInvalidArguments_AndReadsNothing(int limit)
+    {
+        var sut = new WindowFinderTools(_mockWindowService.Object, journal: _journal.Object);
+
+        var act = () => sut.GetWindowEvents(limit: limit);
+
+        act.Should().Throw<ToolErrorException>().Which.ErrorCode.Should().Be(ToolErrorReporting.InvalidArgumentsErrorCode);
+        _journal.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public void GetWindowEvents_PassesSinceSeqAndLimit_AndFiltersByTypeProcessAndHandle()
+    {
+        // Arrange
+        Func<WindowEventEntry, bool>? include = null;
+        _journal.Setup(j => j.Read(41, 20, It.IsAny<Func<WindowEventEntry, bool>?>()))
+            .Callback<long?, int, Func<WindowEventEntry, bool>?>((_, _, filter) => include = filter)
+            .Returns(new WindowEventRead([], 41, EventTime, StartedNow: false, Missed: 0, More: false));
+        var sut = new WindowFinderTools(_mockWindowService.Object, journal: _journal.Object);
+
+        // Act
+        sut.GetWindowEvents(sinceSeq: 41, types: [WindowEventType.Shown], processName: "Notepad.exe", handle: 0x200, limit: 20);
+
+        // Assert - the type, the whole process name with or without .exe, and the window must all match
+        include.Should().NotBeNull();
+        include!(Event(42, WindowEventType.Shown, 0x200, "notepad")).Should().BeTrue();
+        include(Event(43, WindowEventType.Hidden, 0x200, "notepad")).Should().BeFalse();
+        include(Event(44, WindowEventType.Shown, 0x300, "notepad")).Should().BeFalse();
+        include(Event(45, WindowEventType.Shown, 0x200, "notepad++")).Should().BeFalse();
+        include(Event(46, WindowEventType.Shown, 0x200, null)).Should().BeFalse();
+    }
+
+    [Fact]
+    public void GetWindowEvents_WithoutFilters_ReadsEverything_AndReportsOnlyTheFlagsThatApply()
+    {
+        // Arrange
+        var events = new[] { Event(1, WindowEventType.Shown, 0x200, "notepad") };
+        _journal.Setup(j => j.Read(null, 50, null))
+            .Returns(new WindowEventRead(events, 1, EventTime, StartedNow: true, Missed: 0, More: false));
+        var sut = new WindowFinderTools(_mockWindowService.Object, journal: _journal.Object);
+
+        // Act
+        var result = sut.GetWindowEvents();
+
+        // Assert
+        result.Success.Should().BeTrue();
+        result.Events.Should().Equal(events);
+        result.NextSeq.Should().Be(1);
+        result.StartedNow.Should().BeTrue();
+        result.Missed.Should().BeNull();
+        result.More.Should().BeNull();
+    }
+
     #endregion
 }

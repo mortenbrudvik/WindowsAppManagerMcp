@@ -248,6 +248,20 @@ public class DependencyInjectionTests : IDisposable
     }
 
     [Fact]
+    public void TheWindowEventJournal_ListensToTheServersWindowEvents_AndGetWindowEventsReadsIt()
+    {
+        // Roadmap M7.2: one journal over the same window events the waits use; resolving it records nothing yet
+        var journal = _serviceProvider.GetRequiredService<IWindowEventJournal>();
+        static object? Field(object service, string name) =>
+            service.GetType().GetField(name, BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(service);
+
+        journal.Should().BeOfType<WindowEventJournal>().Which.IsRecording.Should().BeFalse();
+        Field(journal, "_source").Should().BeSameAs(_serviceProvider.GetRequiredService<IWindowEventSource>());
+        Field(journal, "_hostGuard").Should().BeSameAs(_serviceProvider.GetRequiredService<IHostGuard>());
+        Field(_serviceProvider.GetRequiredService<WindowFinderTools>(), "_journal").Should().BeSameAs(journal);
+    }
+
+    [Fact]
     public void TheWindowWait_WakesOnTheServersWindowEvents()
     {
         // Roadmap M3.F22: one window event source, over the native hooks; resolving it installs no hook (the first wait

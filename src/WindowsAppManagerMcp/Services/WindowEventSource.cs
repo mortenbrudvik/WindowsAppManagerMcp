@@ -71,7 +71,15 @@ public sealed class WindowEventSource : IWindowEventSource, IDisposable
     public IDisposable Subscribe(Action changed)
     {
         ArgumentNullException.ThrowIfNull(changed);
-        var subscription = new Subscription(this, changed);
+        return Subscribe((_, _) => changed());
+    }
+
+    /// <inheritdoc />
+    /// <exception cref="ObjectDisposedException">The source was disposed (the server is stopping).</exception>
+    public IDisposable Subscribe(WindowEventHandler handler)
+    {
+        ArgumentNullException.ThrowIfNull(handler);
+        var subscription = new Subscription(this, handler);
         uint update;
         lock (_lock)
         {
@@ -251,16 +259,16 @@ public sealed class WindowEventSource : IWindowEventSource, IDisposable
 
         foreach (var listener in Volatile.Read(ref _listeners))
         {
-            listener.Call();
+            listener.Call(eventType, window);
         }
     }
 
     /// <summary>One subscriber; disposing it ends the subscription, once.</summary>
-    private sealed class Subscription(WindowEventSource source, Action changed) : IDisposable
+    private sealed class Subscription(WindowEventSource source, WindowEventHandler handler) : IDisposable
     {
         private int _disposed;
 
-        public void Call()
+        public void Call(uint eventType, nint window)
         {
             if (Volatile.Read(ref _disposed) != 0)
             {
@@ -269,7 +277,7 @@ public sealed class WindowEventSource : IWindowEventSource, IDisposable
 
             try
             {
-                changed();
+                handler(eventType, window);
             }
             catch (Exception)
             {

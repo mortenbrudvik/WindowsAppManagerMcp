@@ -7,7 +7,7 @@ namespace WindowsAppManagerMcp.Tests.Fixtures;
 public sealed class FakeWindowEventSource : IWindowEventSource
 {
     private readonly object _lock = new();
-    private readonly List<Action> _listeners = [];
+    private readonly List<WindowEventHandler> _listeners = [];
     private int _subscriptions;
 
     /// <summary>Thrown by <see cref="Subscribe"/> when set.</summary>
@@ -28,10 +28,10 @@ public sealed class FakeWindowEventSource : IWindowEventSource
         }
     }
 
-    /// <summary>A window event: every subscriber is told.</summary>
-    public void Raise()
+    /// <summary>A window event: every subscriber is told (by default EVENT_OBJECT_SHOW of window 0x500).</summary>
+    public void Raise(uint eventType = 0x8002, nint window = 0x500)
     {
-        List<Action> listeners;
+        List<WindowEventHandler> listeners;
         lock (_lock)
         {
             listeners = [.. _listeners];
@@ -39,11 +39,13 @@ public sealed class FakeWindowEventSource : IWindowEventSource
 
         foreach (var listener in listeners)
         {
-            listener();
+            listener(eventType, window);
         }
     }
 
-    public IDisposable Subscribe(Action changed)
+    public IDisposable Subscribe(Action changed) => Subscribe((_, _) => changed());
+
+    public IDisposable Subscribe(WindowEventHandler changed)
     {
         Interlocked.Increment(ref _subscriptions);
         if (SubscribeFails is { } failure)

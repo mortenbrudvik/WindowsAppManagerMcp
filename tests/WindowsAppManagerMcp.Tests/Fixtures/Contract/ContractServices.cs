@@ -117,6 +117,9 @@ public sealed class ContractServices : IDisposable
     public Mock<INativeWindowWrapper> NativeWindows { get; } = new();
     public Mock<IWindowCloseVerifier> CloseVerifier { get; } = new();
     public Mock<IWindowWaitService> WindowWait { get; } = new();
+
+    /// <summary>get_window_events' journal (roadmap M7.2): Notepad's Save As dialog came up (Typical), or it is stopping (Failing).</summary>
+    public Mock<IWindowEventJournal> WindowEvents { get; } = new();
     public Mock<IElementWaitService> ElementWait { get; } = new();
 
     /// <summary>wait_for_visual's waits (roadmap M6.4): a panel of Notepad's window changed (Typical), or nothing did (Failing).</summary>
@@ -191,6 +194,7 @@ public sealed class ContractServices : IDisposable
         services.AddSingleton(Windows.Object);
         services.AddSingleton(CloseVerifier.Object);
         services.AddSingleton(WindowWait.Object);
+        services.AddSingleton(WindowEvents.Object);
         services.AddSingleton(ElementWait.Object);
         services.AddSingleton(VisualChanges.Object);
         services.AddSingleton(Placement.Object);
@@ -362,6 +366,16 @@ public sealed class ContractServices : IDisposable
                 Reason: "pixels", ChangedPercent: 0.42,
                 ChangedRegions: [new BoundsDto(288, 116, 64, 48), new BoundsDto(1040, 948, 192, 16)],
                 CaptureId: "c3-3fa91c", CapturedRegion: new CapturedRegion(0, 100, 1600, 900), CaptureMethod: "PrintWindow"));
+        // get_window_events (roadmap M7.2): Notepad's Save As dialog came up and took the foreground
+        var at = new DateTimeOffset(2026, 10, 17, 12, 0, 0, TimeSpan.Zero);
+        WindowEvents.Setup(j => j.Read(It.IsAny<long?>(), It.IsAny<int>(), It.IsAny<Func<WindowEventEntry, bool>?>()))
+            .Returns(new WindowEventRead(
+            [
+                new WindowEventEntry(42, at, WindowEventType.Shown, 0x1A0C00, "Save As", "#32770", "notepad", TypicalDesktop.NotepadProcessId,
+                    TypicalDesktop.NotepadHandle),
+                new WindowEventEntry(43, at.AddMilliseconds(16), WindowEventType.Foreground, 0x1A0C00, "Save As", "#32770", "notepad",
+                    TypicalDesktop.NotepadProcessId, TypicalDesktop.NotepadHandle)
+            ], 43, at.AddMinutes(-2), StartedNow: false, Missed: 0, More: false));
         // wait_for_window (roadmap M3.7): Notepad's Save As dialog opened and stayed
         WindowWait.Setup(w => w.WaitForConditionAsync(It.IsAny<WindowConditionRequest>(), It.IsAny<IProgress<OperationProgress>?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new WindowConditionResult
@@ -652,6 +666,8 @@ public sealed class ContractServices : IDisposable
             .ReturnsAsync(new VisualWaitResult(Success: false, Satisfied: false, TimedOut: true, Condition: "changed", ElapsedMs: 10_000, Checks: 51,
                 ChangedPercent: 0, CaptureId: "c4-3fa91c", CapturedRegion: new CapturedRegion(0, 100, 1600, 900), CaptureMethod: "PrintWindow",
                 Error: "Nothing changed within 10000 ms (51 checks).", ErrorCode: nameof(WindowErrorCode.WaitTimedOut)));
+        WindowEvents.Setup(j => j.Read(It.IsAny<long?>(), It.IsAny<int>(), It.IsAny<Func<WindowEventEntry, bool>?>()))
+            .Throws(new ObjectDisposedException(nameof(WindowEventJournal)));
         WindowWait.Setup(w => w.WaitForConditionAsync(It.IsAny<WindowConditionRequest>(), It.IsAny<IProgress<OperationProgress>?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new WindowConditionResult
             {

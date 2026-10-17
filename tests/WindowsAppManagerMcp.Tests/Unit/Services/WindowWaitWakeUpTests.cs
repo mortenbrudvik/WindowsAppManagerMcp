@@ -119,7 +119,7 @@ public class WindowWaitWakeUpTests
         At(110, () => _desktop.Add("Save As", "#32770", processName: "notepad"));
         for (var at = 0; at < 2000; at += 10)
         {
-            At(at, _events.Raise);
+            At(at, () => _events.Raise());
         }
 
         // Act
