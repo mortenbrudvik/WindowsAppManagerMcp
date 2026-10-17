@@ -2620,7 +2620,7 @@ server assembly, and the single-file publish bundles `WinRT.Runtime.dll`. The Wi
 build machine or CI runner needs no Windows SDK. The published exe grew from 7,030,598 to 7,977,432 bytes (+0.9 MB,
 October 2026); `scripts/Publish-Plugin.ps1`'s only-exe check still passes.
 
-Not yet run on a real desktop. Before the release that carries it, the owner checks:
+The E2E scenarios ran on the owner's desktop on 2026-10-17 (see Desktop run: M6 scenarios). By hand, the owner checks:
 
 1. **Languages (read only).** `Get-WindowsCapability -Online -Name 'Language.OCR*' | ? State -eq Installed` lists the
    installed OCR languages (it reads; install nothing). With `WAM_TOOLSETS=+ocr`: read_screen_text with no `language`
@@ -2709,7 +2709,7 @@ capture_with_elements' marks; none for a ref crop; the denied windows over a scr
 for a window restoreIfMinimized restored), the mask in `DeniedWindowMaskTests`, the arguments in
 `WaitForVisualToolTests` (one target; a value out of range refused, never clamped), the signatures kept only while the
 tool is served in `DependencyInjectionTests`, and the tool over MCP in the contract tests. `Scenarios/FixtureVisualWaitTests` (no-input tier, the fixture's `--change-after-ms` and
-`--animate-for-ms`) checks them on a real window. Not yet run on a real desktop; before the release that carries it, the
+`--animate-for-ms`) checks them on a real window. They passed on the owner's desktop on 2026-10-17 (see Desktop run: M6 scenarios); the
 owner runs that class and checks:
 
 1. **The scenarios.** `WAM_ALLOW_DESKTOP_NOINPUT_TESTS=1 dotnet test tests/WindowsAppManagerMcp.E2ETests --filter
@@ -2731,6 +2731,27 @@ owner runs that class and checks:
    wait with `since` set to the `captureId` of a `capture_window` with `output: "metadata"` of a window the check opened
    compares with that capture (`checks` 1 with `timeoutMs` 0 when nothing changed: `WaitTimedOut` and 0 %); without
    `+visual` the tool is not listed.
+
+### Desktop run: M6 scenarios (2026-10-17)
+
+Run on the owner's desktop (Windows 11 26200, a 150% primary and a second monitor at another scale) while the owner was
+away, after release 2.2.0, with both tiers on (`WAM_ALLOW_DESKTOP_TESTS=1 WAM_ALLOW_DESKTOP_NOINPUT_TESTS=1`). The whole
+E2E project passed 486 of 488; the two failures are the AltGr keyboard scenarios, which fail on this machine because
+another program registered Ctrl+Alt+2. Every M6 scenario passed:
+
+- `FixtureOcrTests` (7, both tiers), `FixtureVisualWaitTests` (6, the region scenario included, with the fixture
+  uncovered), `FixtureZOrderTests` (3), `FixturePercentPlacementTests` (2), `FixtureMonitorSelectorTests` (3) and
+  `FixtureLayoutTests` (5: maximized and minimized restore rectangles, the dry run, an agent-written snap, another scale).
+- `PackagedAppLaunchTests` (5), after a fix: the server asked IApplicationActivationManager for option 0x1, which is
+  AO_DESIGNMODE, not AO_NOERRORUI (0x2). Calculator then exited at once and the call returned 0x80040904, so every
+  packaged-app launch by its appId failed in 2.2.0. `NativeAppsWrapperTests` pins the value.
+- `FixtureMonitorSelectorTests`' snap by primary, device name, current and id first failed on its focus check: a snap
+  onto the monitor at another scale left the fixture in front. WPF's own WM_DPICHANGED handler activates the window with
+  a SetWindowPos of its own, whatever flags the server's move had (the fixture's startup works around the same thing,
+  roadmap M3.F30), so the scenario now checks the focus only for snaps at the same scale.
+
+Still for the owner, by hand: layouts after docking and undocking, with the taskbar on the left or top, saving
+Calculator or Terminal in a layout (its appId), and runAsAdmin where Windows shows no UAC prompt.
 
 ### Tool surface snapshot
 
