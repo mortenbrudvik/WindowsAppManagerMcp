@@ -115,6 +115,9 @@ public sealed class ContractServices : IDisposable
     public Mock<IWindowCloseVerifier> CloseVerifier { get; } = new();
     public Mock<IWindowWaitService> WindowWait { get; } = new();
     public Mock<IElementWaitService> ElementWait { get; } = new();
+
+    /// <summary>wait_for_visual's waits (roadmap M6.4): a panel of Notepad's window changed (Typical), or nothing did (Failing).</summary>
+    public Mock<IVisualChangeService> VisualChanges { get; } = new();
     public Mock<ILaunchPlacementService> Placement { get; } = new();
 
     /// <summary>
@@ -173,6 +176,7 @@ public sealed class ContractServices : IDisposable
         services.AddSingleton(CloseVerifier.Object);
         services.AddSingleton(WindowWait.Object);
         services.AddSingleton(ElementWait.Object);
+        services.AddSingleton(VisualChanges.Object);
         services.AddSingleton(Placement.Object);
         services.AddSingleton(DebugBrowsers.Object);
         services.AddSingleton(Foreground.Object);
@@ -329,6 +333,12 @@ public sealed class ContractServices : IDisposable
             }, IsDialog: true, IsBlocking: true)
         ]);
         CloseVerifier.Setup(v => v.ShownWindows(It.IsAny<IReadOnlyList<nint>>())).Returns((IReadOnlyList<nint> handles) => handles.ToHashSet());
+        // wait_for_visual (roadmap M6.4): two spots of Notepad's 1600 x 900 window changed after a click
+        VisualChanges.Setup(v => v.WaitAsync(It.IsAny<VisualWaitRequest>(), It.IsAny<IProgress<OperationProgress>?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new VisualWaitResult(Success: true, Satisfied: true, TimedOut: false, Condition: "changed", ElapsedMs: 412, Checks: 3,
+                Reason: "pixels", ChangedPercent: 0.42,
+                ChangedRegions: [new BoundsDto(288, 116, 64, 48), new BoundsDto(1040, 948, 192, 16)],
+                CaptureId: "c3-3fa91c", CapturedRegion: new CapturedRegion(0, 100, 1600, 900), CaptureMethod: "PrintWindow"));
         // wait_for_window (roadmap M3.7): Notepad's Save As dialog opened and stayed
         WindowWait.Setup(w => w.WaitForConditionAsync(It.IsAny<WindowConditionRequest>(), It.IsAny<IProgress<OperationProgress>?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new WindowConditionResult
@@ -605,6 +615,10 @@ public sealed class ContractServices : IDisposable
             .Returns((nint handle, bool _) => new WindowCloseResult(handle, false, WindowErrorCode.InvalidHandle, invalid));
         Windows.Setup(w => w.GetApplicationWindows()).Returns([]);
         Windows.Setup(w => w.GetOwnedWindows(It.IsAny<nint>(), It.IsAny<bool>())).Returns([]);
+        VisualChanges.Setup(v => v.WaitAsync(It.IsAny<VisualWaitRequest>(), It.IsAny<IProgress<OperationProgress>?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new VisualWaitResult(Success: false, Satisfied: false, TimedOut: true, Condition: "changed", ElapsedMs: 10_000, Checks: 51,
+                ChangedPercent: 0, CaptureId: "c4-3fa91c", CapturedRegion: new CapturedRegion(0, 100, 1600, 900), CaptureMethod: "PrintWindow",
+                Error: "Nothing changed within 10000 ms (51 checks).", ErrorCode: nameof(WindowErrorCode.WaitTimedOut)));
         WindowWait.Setup(w => w.WaitForConditionAsync(It.IsAny<WindowConditionRequest>(), It.IsAny<IProgress<OperationProgress>?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new WindowConditionResult
             {

@@ -69,6 +69,7 @@ public class ToolPayloadBudgetTests
         ["take_screenshot"] = 150, // 131
         ["capture_region"] = 150, // 118
         ["capture_window"] = 150, // 126
+        ["wait_for_visual"] = 150, // 103: two changed regions and the last frame's captureId, no image (roadmap M6.4)
         ["capture_with_elements"] = 2_150, // 1,416: the legend of the typical tree's 120 elements, one line each (roadmap M3.11; was 6,544 with the elements list, now detail full), and markPrefix (roadmap M3.F38)
 
         // UI Automation
@@ -155,11 +156,11 @@ public class ToolPayloadBudgetTests
     /// handle parameters and drag to get_monitors, find_windows and mouse_click instead of the deprecated tools, and added
     /// get_server_info's moved field to its description (-2,121 in all); then 62,348 tokens, 249,390 bytes after M6.6's
     /// list_processes parameters (processId, pathContains, sortBy, limit, includeCommandLine) and result fields in its
-    /// description (+361) and get_window_info's integrity fields (+31); then 63,402 tokens, 253,608 bytes for 79 tools after M6.2's run_steps, its description and the step item schema with the tool list; DefaultToolListTokenBudget measures the tools served by default), so every addition to the surface is a decision. When a change
+    /// description (+361) and get_window_info's integrity fields (+31); then 63,402 tokens, 253,608 bytes for 79 tools after M6.2's run_steps, its description and the step item schema with the tool list; then 64,474 tokens, 257,896 bytes for 80 tools after M6.4's wait_for_visual in the opt-in visual toolset; DefaultToolListTokenBudget measures the tools served by default), so every addition to the surface is a decision. When a change
     /// adds to the surface on purpose, raise it in the same change by what the failure message measures; when a change
     /// trims descriptions, lower it.
     /// </summary>
-    public const int ToolListTokenBudget = 63_438;
+    public const int ToolListTokenBudget = 64_510;
 
     /// <summary>
     /// The token budget of the default tools/list (roadmap M6.1): the tools a server started without WAM_TOOLSETS,
@@ -208,6 +209,7 @@ public class ToolPayloadBudgetTests
         ["browser"] = 4_350, // 4,315 (4,674 with get_active_browser_url before M6.1b)
         ["browser-actions"] = 3_600, // 3,577 (off by default)
         ["browser-script"] = 500, // 468 (off by default)
+        ["visual"] = 1_108, // 1,072 (off by default): wait_for_visual with handle, the window selector, a region, monitorIndex and since (roadmap M6.4)
         ["windows-batch"] = 2_000, // 1,978 (off by default since M6.1b)
         ["deprecated"] = 4_950, // 4,925 (off by default since M6.1b): nine one-line descriptions, but their full parameters
     };

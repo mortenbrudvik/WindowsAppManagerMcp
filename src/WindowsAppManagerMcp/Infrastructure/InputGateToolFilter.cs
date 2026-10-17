@@ -150,7 +150,9 @@ public static class InputGateToolFilter
         // A debug browser's tabs, and a wait on a page of up to a minute (roadmap M5.5)
         "list_tabs", "wait_for_browser",
         // An element's place on the screen: a DOM query and the window's UI Automation tree, read only (roadmap M5.8)
-        "browser_element_rect"
+        "browser_element_rect",
+        // A wait of up to a minute on a window's, region's or monitor's pixels; returns rectangles only (roadmap M6.4)
+        "wait_for_visual"
     };
 
     /// <summary>

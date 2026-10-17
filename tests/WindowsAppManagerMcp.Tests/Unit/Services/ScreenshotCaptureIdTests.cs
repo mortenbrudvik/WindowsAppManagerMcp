@@ -286,4 +286,111 @@ public class ScreenshotCaptureIdTests
     {
         CreateSut().CaptureMonitor(-2, Defaults).Metadata.ErrorCode.Should().Be(nameof(ScreenshotErrorCode.InvalidMonitorIndex));
     }
+
+    #region Visual signatures (roadmap M6.4, owner decision D9: only while wait_for_visual is served)
+
+    [Fact]
+    public void Captures_KeepNoSignature_WhileTheRegistryKeepsNone()
+    {
+        var metadata = CreateSut().CaptureWindow(Window, includeFrame: true, Defaults).Metadata;
+
+        _registry.Find(metadata.CaptureId!)!.Signature.Should().BeNull();
+    }
+
+    [Fact]
+    public void CaptureWindow_WhileSignaturesAreKept_RegistersTheSignatureOfItsFullSizePixels()
+    {
+        // Arrange - 800 x 600 pixels with a mark, scaled to the default size for the image
+        var frame = new VisualFrames(800, 600, 108, 231).Paint(700, 500, 20, 20, (0xC0, 0x10, 0x10));
+        _capture.Setup(c => c.CaptureWindow(Window, false)).Returns(frame.Capture());
+        var registry = new CaptureRegistry(keepSignatures: true);
+
+        // Act
+        var metadata = CreateSut(registry).CaptureWindow(Window, includeFrame: false, Defaults with { MaxDimension = 400 }).Metadata;
+
+        // Assert
+        metadata.Width.Should().Be(400);
+        var signature = registry.Find(metadata.CaptureId!)!.Signature!;
+        signature.Region.Should().Be(new CapturedRegion(108, 231, 800, 600));
+        signature.Hashes.ToArray().Should().Equal(frame.Signature().Hashes.ToArray());
+    }
+
+    [Theory]
+    [InlineData("monitor")]
+    [InlineData("region")]
+    public void ScreenCaptures_WhileSignaturesAreKept_RegisterTheirSignatures(string target)
+    {
+        var registry = new CaptureRegistry(keepSignatures: true);
+        var sut = CreateSut(registry);
+
+        var metadata = (target == "monitor" ? sut.CaptureMonitor(0, Defaults) : sut.CaptureRegion(10, 20, 300, 200, Defaults)).Metadata;
+
+        var signature = registry.Find(metadata.CaptureId!)!.Signature!;
+        signature.Region.Should().Be(metadata.CapturedRegion);
+    }
+
+    [Fact]
+    public void AScreenCapture_WhileSignaturesAreKept_KeepsTheRectanglesOfTheDeniedWindowsOverIt()
+    {
+        // Arrange - a window the policy denies over the region: wait_for_visual's since leaves its rectangle out even after
+        // it closed or moved (owner decision D8)
+        var denied = (nint)0x7070;
+        _windows.Setup(w => w.EnumWindows(It.IsAny<Func<nint, bool>>())).Callback((Func<nint, bool> visit) => visit(denied));
+        _windows.Setup(w => w.GetWindowRect(denied)).Returns((50, 60, 150, 160));
+        var policy = new Mock<ICaptureTargetPolicy>();
+        policy.Setup(p => p.Check(denied)).Returns(new CaptureRefusal(ScreenshotErrorCode.TargetDeniedByPolicy, "denied"));
+        var registry = new CaptureRegistry(keepSignatures: true);
+        var sut = new ScreenshotService(_capture.Object, _monitors.Object, _windows.Object, captureRegistry: registry,
+            capturePolicy: policy.Object, targetPolicy: new TargetPolicy(TargetPolicySettings.Default));
+
+        // Act
+        var metadata = sut.CaptureRegion(10, 20, 300, 200, Defaults).Metadata;
+
+        // Assert
+        registry.Find(metadata.CaptureId!)!.Signature!.Excluded.Should().Equal(new System.Drawing.Rectangle(50, 60, 100, 100));
+    }
+
+    [Fact]
+    public void CaptureWindowArea_ACropToARef_KeepsNoSignature()
+    {
+        var registry = new CaptureRegistry(keepSignatures: true);
+
+        var metadata = CreateSut(registry).CaptureWindowArea(Window, includeFrame: true, new BoundsDto(200, 300, 100, 40), Defaults).Metadata;
+
+        metadata.CaptureId.Should().NotBeNull();
+        registry.Find(metadata.CaptureId!)!.Signature.Should().BeNull("since watches whole windows, regions and monitors");
+    }
+
+    [Fact]
+    public void CaptureWithElements_WhileSignaturesAreKept_RegistersTheSignatureOfThePixelsWithoutTheMarks()
+    {
+        // Arrange - at full size the marks are drawn on the captured pixels themselves
+        var frame = new VisualFrames(800, 600, 108, 231);
+        _capture.Setup(c => c.CaptureWindow(Window, false)).Returns(frame.Capture());
+        var registry = new CaptureRegistry(keepSignatures: true);
+        var button = new UIElementInfo("Save", "Button", "save", new BoundsDto(208, 331, 120, 40), IsEnabled: true, IsOffscreen: false, Ref: "w1234e1");
+
+        // Act
+        var metadata = CreateSut(registry).CaptureWindowWithElements(Window, "App", [button], includeFrame: false,
+            ElementOverlayOptions.Default, Defaults with { MaxDimension = 4000 }).Metadata;
+
+        // Assert
+        metadata.Width.Should().Be(800, "not scaled, so the marks went onto the captured pixels");
+        registry.Find(metadata.CaptureId!)!.Signature!.Hashes.ToArray().Should().Equal(frame.Signature().Hashes.ToArray());
+    }
+
+    [Fact]
+    public void RegisterRaw_WhileSignaturesAreKept_RegistersTheSignatureOfThePixels()
+    {
+        var frame = new VisualFrames(64, 32, 5, 6).Paint(1, 1, 3, 3, (1, 2, 3));
+        var registry = new CaptureRegistry(keepSignatures: true);
+        var raw = new RawCapture(new CaptureTarget.Region(5, 6, 64, 32), frame.Capture("ScreenBitBlt"), 0, 1.0, [], null,
+            new CapturedScreen(new VirtualScreenBounds(0, 0, 1920, 1080), null));
+
+        var captureId = CreateSut(registry).RegisterRaw(raw);
+
+        registry.Find(captureId!)!.Signature!.Hashes.ToArray().Should().Equal(frame.Signature().Hashes.ToArray());
+    }
+
+    #endregion
 }
