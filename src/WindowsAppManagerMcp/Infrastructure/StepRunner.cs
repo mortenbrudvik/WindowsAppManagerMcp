@@ -308,7 +308,10 @@ public sealed partial class StepRunner
                     progress?.Report(new OperationProgress(i + 1, steps.Count,
                         $"step {i + 1} of {steps.Count}: {step.Tool} {(last.Ok ? "ok" : "failed")}"));
 
-                    if (_windows.GetForegroundWindow() is { } now && IsRunWindow(now.Handle, target))
+                    // A focus_window that succeeded brought the window to the front, even if the user took the foreground
+                    // again before this check could see it
+                    if ((last.Ok && step.Tool == "focus_window")
+                        || (_windows.GetForegroundWindow() is { } now && IsRunWindow(now.Handle, target)))
                     {
                         foregroundWasOurs = true;
                     }
