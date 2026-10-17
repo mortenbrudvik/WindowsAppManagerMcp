@@ -122,9 +122,10 @@ public class ToolsetContractTests
 
     /// <summary>
     /// The toolsets that are off by default: browser-actions since roadmap M5.5 (and the DOM bridge of M5.8), browser-script
-    /// since M5.8, windows-batch and deprecated since M6.1 (owner decisions D4 and D1; DeprecatedToolsContractTests).
+    /// since M5.8, windows-batch and deprecated since M6.1 (owner decisions D4 and D1; DeprecatedToolsContractTests), ocr
+    /// since M6.3 (owner decision D2).
     /// </summary>
-    private static readonly string[] OptInToolsets = ["browser-actions", "browser-script", "windows-batch", "deprecated"];
+    private static readonly string[] OptInToolsets = ["browser-actions", "browser-script", "windows-batch", "deprecated", "ocr"];
 
     /// <summary>The DOM bridge's tools (roadmap M5.8) that browser-actions serves: all but browser_evaluate.</summary>
     private static readonly string[] DomBridgeActionTools =
@@ -153,6 +154,24 @@ public class ToolsetContractTests
         // it on (roadmap M5.8)
         Toolsets.Server.Find("browser-script")!.Tools.Should().BeEquivalentTo(["browser_evaluate"])
             .And.OnlyContain(tool => !selection.Serves(tool, false));
+    }
+
+    [Theory]
+    [InlineData(null, false)]
+    [InlineData("+ocr", true)]
+    [InlineData("all", true)]
+    public async Task TheOcrTools_AreServed_OnlyWithTheOcrToolset(string? toolsets, bool servesOcr)
+    {
+        // Roadmap M6.3 (owner decisions D2 and D10): two read-only tools in their own opt-in toolset, and nothing else in it
+        var selection = ToolsetSelection.FromEnvironment(
+            name => name == ToolsetSelection.ToolsetsVariable ? toolsets : null, Toolsets.Server);
+        await using var server = await InProcessMcpServer.StartAsync([], builder => builder.AddWindowsAppManagerTools(selection));
+
+        var tools = (await server.Client.ListToolsAsync()).Select(t => t.Name).ToList();
+
+        Toolsets.Server.Find("ocr")!.Tools.Should().BeEquivalentTo(["read_screen_text", "find_text_on_screen"]);
+        tools.Contains("read_screen_text").Should().Be(servesOcr);
+        tools.Contains("find_text_on_screen").Should().Be(servesOcr);
     }
 
     [Theory]
@@ -192,6 +211,7 @@ public class ToolsetContractTests
     [InlineData("+browser-actions")]
     [InlineData("+browser-script")]
     [InlineData("+deprecated")]
+    [InlineData("+ocr")]
     [InlineData("all")]
     public async Task ReadOnlyMode_ServesExactlyTheToolsAnnotatedReadOnly_OfTheToolsetsInForce(string? toolsets)
     {

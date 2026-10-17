@@ -19,6 +19,7 @@ An MCP (Model Context Protocol) server that enables AI assistants like Claude to
 - **Window Control** - Move, resize, minimize, maximize, snap, and close windows, placing the visible frame and reporting the window as it is afterwards; closes are verified and report a "Save changes?" prompt instead of answering it
 - **Multi-Monitor Support** - Move windows between monitors, get display information
 - **Screenshot Capture** - Capture screens, regions, windows or one element of a window; Set-of-Marks captures box each control with its ref and list it in a legend; captures come back as images the model sees, sized for vision, with a `captureId` that the mouse tools take to click a point seen in the image
+- **Screen Text (OCR)** - (opt-in `ocr` toolset) Read and find text with Windows OCR where UI Automation shows none (canvas apps, games, remote desktops, rendered PDFs): lines and words with screen boxes, and click points the mouse tools take through a `captureId`; a window of an app your policy denies is refused, and such windows are blacked out of a region or monitor before OCR. It uses the OCR languages installed in Windows and never installs one
 - **UI Automation** - Retrieve UI element trees with bounding boxes and refs, list a window's open menus, dropdowns and dialogs, and check which element has keyboard focus or sits at a screen point; read through the UI Automation 3 COM client with per-call timeouts by default (`WAM_UIA_ENGINE`); the first read of a page in a Chromium browser or an Electron app waits briefly for its accessibility tree (`launch_application` `forceAccessibility` builds it from the start)
 - **Input Simulation** - Click any mouse button one to three times, with modifier keys (Ctrl+click, middle and triple clicks), drag and drop, move the mouse cursor, scroll, type text, send key combinations and press key chords by name (`ctrl+shift+t`), aimed at a named window and kept off the agent's own terminal, elevated windows and denied apps
 - **Clipboard** - Read what the agent copied and put text on the clipboard to paste it; the user's own clipboard is read, and pasted, only with the user's consent, and content password managers mark as private never
@@ -29,7 +30,7 @@ An MCP (Model Context Protocol) server that enables AI assistants like Claude to
 - **Process Management** - List running processes, close a whole application gracefully, terminate processes safely
 - **Layout Presets** - Save and restore window arrangements
 - **Server Info and Instructions** - `get_server_info` reports the build, the DPI awareness, the desktop state, the agent's host windows, the pause and the toolsets in force, with warnings; every MCP client gets usage instructions in the handshake, with or without the plugin skill
-- **Toolsets** - Serve only the tools you want (`WAM_TOOLSETS`, `WAM_EXCLUDE_TOOLS`), or only tools that read (`WAM_READ_ONLY=1`); see [Toolsets](docs/TOOLS.md#toolsets). The default serves 58 of the 78 tools: the browser actions and scripts, the window batches and the nine deprecated tools are opt-in
+- **Toolsets** - Serve only the tools you want (`WAM_TOOLSETS`, `WAM_EXCLUDE_TOOLS`), or only tools that read (`WAM_READ_ONLY=1`); see [Toolsets](docs/TOOLS.md#toolsets). The default serves 58 of the 80 tools: the browser actions and scripts, the window batches, OCR and the nine deprecated tools are opt-in
 - **Audit Log** - Every input, element action, dialog answer, close, kill, launch, layout-write (apply, save, delete), clipboard and browser tab or navigation call is recorded, without typed text, values or clipboard content, so you can see afterwards what was sent where; see [Audit log](docs/TOOLS.md#audit-log)
 
 ## Installation
@@ -89,8 +90,10 @@ cd WindowsAppManagerMcp
 dotnet publish src/WindowsAppManagerMcp -c Release -o ./publish
 ```
 
-This produces `publish/WindowsAppManagerMcp.exe`, a framework-dependent single-file exe that needs the
-.NET 10 Desktop Runtime. To bundle the runtime instead, add `--self-contained`; the output is much larger
+This produces `publish/WindowsAppManagerMcp.exe`, a framework-dependent single-file exe of about 8 MB that needs the
+.NET 10 Desktop Runtime. It carries its own projection of only the Windows OCR types (about 0.9 MB, generated at build
+time by CsWinRT from Windows metadata that `dotnet restore` downloads), so neither building nor running it needs the
+Windows SDK. To bundle the runtime instead, add `--self-contained`; the output is much larger
 (about 140 MB) and includes native WPF DLLs that must stay next to the exe. Do not publish into `./bin`:
 that folder holds the committed plugin exe (see [Building](#building)).
 
@@ -107,7 +110,7 @@ so `serverInfo.version` shows a different commit SHA (`X.Y.Z+<tag commit>` for t
 `X.Y.Z+<commit before the release commit>` for the plugin exe).
 
 <!-- tools:begin tool-table (generated from tools/list: run the tests with UPDATE_SNAPSHOTS=1, see TESTING.md) -->
-## Available Tools (78)
+## Available Tools (80)
 
 | Category | Tools |
 |----------|-------|
@@ -115,7 +118,7 @@ so `serverInfo.version` shows a different commit SHA (`X.Y.Z+<tag commit>` for t
 | Window Control | `move_window`, `resize_window`, `set_window_bounds`, `set_window_state`, `focus_window`, `close_window`, `snap_window`, `move_window_to_monitor` |
 | Batch Operations | `set_windows_bounds_batch`, `snap_windows_batch`, `set_windows_state_batch`, `close_windows_batch`, `launch_applications_batch` |
 | Monitor Info | `get_monitors`, `get_primary_monitor` |
-| Screenshot | `list_screens`, `take_screenshot`, `capture_region`, `capture_window`, `capture_with_elements` |
+| Screenshot | `list_screens`, `take_screenshot`, `capture_region`, `capture_window`, `capture_with_elements`, `read_screen_text`, `find_text_on_screen` |
 | UI Automation | `get_desktop_state`, `get_ui_elements`, `find_ui_elements`, `element_action`, `respond_to_dialog`, `file_dialog`, `get_focused_element`, `get_element_at_point`, `get_active_popups`, `read_element_text`, `read_table`, `wait_for_element` |
 | Browser Reading | `get_browser_url`, `get_active_browser_url`, `get_browser_content`, `launch_browser_with_debug`, `close_debug_browser` |
 | Browser Tabs and Navigation | `list_tabs`, `activate_tab`, `browser_navigate`, `wait_for_browser` |
@@ -135,6 +138,7 @@ tool replaced are in the opt-in `deprecated` toolset until 3.0.0 removes them. U
 of `get_all_windows`, `get_monitors` instead of `get_primary_monitor` and `list_screens`, and `get_browser_url` with
 `window: {"foreground": true}` instead of `get_active_browser_url`. `WAM_TOOLSETS=+deprecated` (or `all`) serves the
 deprecated tools, unchanged, until then; see [Moved and deprecated tools](docs/TOOLS.md#moved-and-deprecated-tools).
+`read_screen_text` and `find_text_on_screen` (roadmap M6.3) are new in the opt-in `ocr` toolset: `WAM_TOOLSETS=+ocr`.
 
 See [docs/TOOLS.md](docs/TOOLS.md) for complete documentation with examples.
 
@@ -151,7 +155,7 @@ server configuration). No tool argument can change them.
 | `WAM_DESTRUCTIVE_CHORDS` | `%{F4} ^w ^q ^{F4} ^+{ESC} #l` | `send_keys` chords that need `windowHandle` (`DestructiveChordNeedsTarget`) |
 | `WAM_LAYOUTS_PATH` | `%LOCALAPPDATA%\WindowsAppManagerMcp\layouts` | Folder of the [layout presets](docs/TOOLS.md#layout-presets) |
 | `WAM_AUDIT_PATH` | `%LOCALAPPDATA%\WindowsAppManagerMcp\audit` | Folder of the [audit log](docs/TOOLS.md#audit-log): one JSON line per input, element action, dialog answer, file dialog, close, kill, launch, layout-write (apply, save, delete), browser tab activation or navigation call (the URL as its scheme and host only), browser page click, typing, dialog answer, script or capture (a script, a text or a selector as its length only, never a script's value) and per clipboard read or write, one file per day, kept 7 days |
-| `WAM_TOOLSETS` | the default toolsets (all but `browser-actions`, `browser-script`, `windows-batch` and `deprecated`) | The [toolsets](docs/TOOLS.md#toolsets) to serve, such as `windows,monitors,layouts`; `all` (every toolset, `deprecated` included), `default`, `+name` and `-name` (`-browser`) also work. The `server` toolset is always served. A moved or deprecated tool is served only while the toolset it came from is on too. A name that is not a toolset never serves more than you asked for: an unknown `-name`, or unknown plain names with no valid one, serve only the `server` toolset (an unknown `+name` is just ignored) |
+| `WAM_TOOLSETS` | the default toolsets (all but `browser-actions`, `browser-script`, `windows-batch`, `ocr` and `deprecated`) | The [toolsets](docs/TOOLS.md#toolsets) to serve, such as `windows,monitors,layouts`; `all` (every toolset, `deprecated` included), `default`, `+name` and `-name` (`-browser`) also work. The `server` toolset is always served. A moved or deprecated tool is served only while the toolset it came from is on too. A name that is not a toolset never serves more than you asked for: an unknown `-name`, or unknown plain names with no valid one, serve only the `server` toolset (an unknown `+name` is just ignored) |
 | `WAM_EXCLUDE_TOOLS` | not set | Tools to leave out by name, such as `kill_process`, or every tool of a toolset by the toolset's name (`process`, which also leaves out the tools that moved out of it). Naming a tool that is not served anyway, such as the deprecated `click`, is no error. `get_server_info` is always served. A name that is neither a tool nor a toolset serves only the `server` toolset, so a typo never leaves on a tool you meant to turn off |
 | `WAM_READ_ONLY` | not set | `1` serves only the tools annotated read-only (an observer profile: no input, element actions, dialog answers, window changes, captures, layout writes, clipboard writes or process control) |
 | `WAM_ALLOWED_PROTOCOLS` | not set | More URI schemes `launch_application` may open, such as `vscode,ms-teams,spotify` (built in: `http`, `https`, `mailto`, `tel`, `ms-settings` and `shell:AppsFolder\<AppUserModelID>`). Listing a scheme trusts its app with whatever the agent puts in the URI. `javascript`, `vbscript`, `data`, `mshta`, the shells, `shell:`, `ms-appinstaller`, `ms-officecmd` and the help schemes stay blocked. See [launch_application](docs/TOOLS.md#launch_application) |
@@ -402,6 +406,10 @@ WindowsAppManagerMcp/
 
 - Windows 10 version 1607+ or Windows 11
 - .NET 10 Desktop Runtime (x64), not just the base .NET Runtime (see [Prerequisites](#prerequisites))
+- For the opt-in OCR tools (`WAM_TOOLSETS=+ocr`): at least one Windows OCR language. Windows usually has the one of its
+  display language; add others in Settings > Time & language > Language & region (a language with its optical character
+  recognition feature). Without one, the OCR tools return `OcrUnavailable` and say how to add one; the server never
+  installs a language
 - DPI awareness enabled for accurate positioning on high-DPI displays
 
 ## License

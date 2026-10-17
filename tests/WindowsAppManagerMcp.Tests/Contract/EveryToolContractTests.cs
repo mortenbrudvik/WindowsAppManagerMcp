@@ -58,6 +58,8 @@ public class EveryToolContractTests
             ["capture_region"] = Args("""{ "x": 100, "y": 100, "width": 800, "height": 600 }"""),
             ["capture_window"] = Args("""{ "handle": 1706796 }"""),
             ["capture_with_elements"] = Args("""{ "handle": 1706796 }"""),
+            ["read_screen_text"] = Args("""{ "handle": 1706796 }"""),
+            ["find_text_on_screen"] = Args("""{ "handle": 1706796, "text": "Canvas board" }"""),
             ["get_desktop_state"] = Args("""{ "handle": 1706796 }"""),
             ["get_ui_elements"] = Args("""{ "handle": 1706796 }"""),
             ["find_ui_elements"] = Args("""{ "handle": 1706796, "name": "Save", "controlType": "Button" }"""),

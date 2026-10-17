@@ -444,7 +444,18 @@ public enum ScreenshotErrorCode
     /// window (its client area without the frame), so there is nothing of it to crop to. The same name as element_action's
     /// UIElementErrorCode.ElementOffscreen.
     /// </summary>
-    ElementOffscreen = 17
+    ElementOffscreen = 17,
+
+    // OCR codes (roadmap M6.3): read_screen_text and find_text_on_screen also return the capture codes above
+
+    /// <summary>
+    /// Windows OCR cannot be used: the system has no Windows.Media.Ocr, no OCR language is installed, or the engine failed.
+    /// The error says how the user adds a language; the server never installs one.
+    /// </summary>
+    OcrUnavailable = 18,
+
+    /// <summary>The language given is not an installed OCR language. The result lists the installed ones.</summary>
+    OcrLanguageNotInstalled = 19
 }
 
 /// <summary>

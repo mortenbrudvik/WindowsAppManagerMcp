@@ -197,6 +197,14 @@ public static class WrapperCatalog
                 // the screen or PrintWindow into the server's own memory DC, which changes no window and sends no input
                 [nameof(IScreenCaptureWrapper.WithPixels)] = WrapperMember.Read
             },
+            // Windows OCR (roadmap M6.3): recognizes text in pixels the server already holds, through the WinRT projection of
+            // Windows.Media.Ocr. It reads no window or screen, sends no input and changes nothing; the capture it reads went through
+            // IScreenCaptureWrapper above. NativeCallGuardTests cannot see WinRT calls, so WinRtProjectionGuardTests keeps them here
+            [typeof(IOcrEngineWrapper)] = new Dictionary<string, WrapperMember>
+            {
+                [nameof(IOcrEngineWrapper.GetCapabilities)] = WrapperMember.Read,
+                [nameof(IOcrEngineWrapper.RecognizeAsync)] = WrapperMember.Read
+            },
             [typeof(INativeSystemInfoWrapper)] = new Dictionary<string, WrapperMember>
             {
                 [nameof(INativeSystemInfoWrapper.GetDpiAwareness)] = WrapperMember.Read,

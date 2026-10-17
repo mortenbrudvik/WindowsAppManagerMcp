@@ -1011,6 +1011,7 @@ public void MoveWindow_CallsSetWindowPos_WithCorrectParameters()
 | Models | 70%+ | MEDIUM | Data structures |
 | Tools | 60%+ | LOW | Thin wrappers over services |
 | Native | - | N/A | Mocked in unit tests; not excluded from the measured coverage |
+| WinRT projection | - | N/A | The OCR types CsWinRT generates into the server assembly (`Generated Files/CsWinRT`, roadmap M6.3): not the server's code, so CI's coverage step leaves them out |
 
 ### Configuring Coverlet
 
@@ -2201,6 +2202,7 @@ being ignored.
 | `FixturePlacementTests` | Input | The launch tools' placement of a window (M3.13) |
 | `FixtureMouseTests` | Input | click, right_click, double_click and mouse_move land on the exact pixel aimed at (the corners and centres of the swatches), on the primary and on a monitor at another scale (skipped without one); click presses the user's primary button and right_click the secondary one, as the fixture's `mouseDown` events record them after Windows applied the user's swap; a double click is one press with `clickCount` 1 and one with 2 (M4.2) |
 | `FixtureMouseClickDragTests` | Input | mouse_click: a Ctrl+Shift click reaches the fixture with both modifiers down and neither stays down (a plain click after it sees none); the middle, X1 and X2 buttons arrive as themselves; a triple click is three presses with `clickCount` 1, 2 and 3 at the pixel. drag: a Ctrl+drag presses on one swatch and releases on another, with Ctrl down at both and no other press or release between them, and leaves nothing held; a drop point right of the fixture window is refused before anything is pressed (M4.3). The fixture logs presses and releases with their modifiers (`mouseDown`, `mouseUp`) |
+| `FixtureOcrTests` | Both | read_screen_text and find_text_on_screen on the canvas window (M6.3): every line read inside its drawn rectangle at both scales, a find's click point on its word and back through the captureId, a regex; in the input tier a covered canvas still reads, a minimized one is `WindowMinimized`, a click through the captureId lands on the word and is `StaleCapture` once the canvas moved, and a canvas a policy denies is blacked out of a region read. Skipped without an OCR language |
 
 **Running them.** Locally only with an opt-in, as above. On GitHub, `.github/workflows/e2e.yml`
 runs them on demand (Actions, "E2E", "Run workflow"), with a choice of tier, UI Automation engine (`engine`: uia3,
@@ -2585,6 +2587,57 @@ desktop; before the release that carries it, the owner checks:
    58 (it does not fail closed); and get_server_info's `toolsets.moved` names the deprecated and windows-batch toolsets.
    The in-process contract tests (`DeprecatedToolsContractTests`) cover all of it except the client's own rendering.
 
+### Desktop check: M6.3 OCR
+
+read_screen_text and find_text_on_screen are tested over a fake OCR engine (`FakeOcrEngine`) and a mocked raw pixel seam:
+`OcrServiceTests` (the language, the capture's refusals, the mask of denied windows, the 2x enlargement and its mapping
+back, tiles and their seams, cancellation between tiles, registration after OCR), `OcrTextMatcherTests` (contains,
+exact, regex, whitespace, case, a language written without spaces, the regex timeout), `DeniedWindowMaskTests`,
+`OcrImageTests` and `OcrToolsTests` (the one target, the limits, an invalid regex as `InvalidArguments` before anything
+is read). `OcrEngineWrapperIntegrationTests` runs the real Windows OCR on text drawn into an in-memory bitmap (no screen,
+no window), and skips with the reason on a machine without an OCR language (some CI images). The guards: a WinRT call
+goes through a COM vtable, not P/Invoke, so `NativeCallGuardTests` pins the projected namespaces
+(`WinRtProjection_HoldsOnlyTheOcrNamespaces`) and allows only `OcrEngineWrapper` to call into the projection
+(`WinRtProjection_IsOnlyCalledByOcrEngineWrapper`), and `WrapperCatalog` classifies `IOcrEngineWrapper`'s two members as
+reads. CI's coverage step leaves the generated projection (`obj/.../Generated Files/CsWinRT`) out of the measured lines.
+
+**The binding.** The server stays on `net10.0-windows` (no Windows SDK TFM): the `Microsoft.Windows.CsWinRT` package
+generates a projection of only `Windows.Media.Ocr` and the few types it needs (`CsWinRTIncludes` in the csproj) into the
+server assembly, and the single-file publish bundles `WinRT.Runtime.dll`. The Windows metadata it reads comes from the
+`Microsoft.Windows.SDK.Contracts` package, which `dotnet restore` downloads (`PackageDownload`, never referenced), so a
+build machine or CI runner needs no Windows SDK. The published exe grew from 7,030,598 to 7,977,432 bytes (+0.9 MB,
+October 2026); `scripts/Publish-Plugin.ps1`'s only-exe check still passes.
+
+Not yet run on a real desktop. Before the release that carries it, the owner checks:
+
+1. **Languages (read only).** `Get-WindowsCapability -Online -Name 'Language.OCR*' | ? State -eq Installed` lists the
+   installed OCR languages (it reads; install nothing). With `WAM_TOOLSETS=+ocr`: read_screen_text with no `language`
+   reports the profile language it used (on a Norwegian profile without a Norwegian OCR language, the first installed one
+   with an `OcrLanguageFallback` warning); `language: "en-US"` works; a language that is not installed (`ja-JP` when it
+   is absent) is `OcrLanguageNotInstalled` with `installedLanguages`.
+2. **The fixture's canvas (E2E).** `FixtureOcrTests` on `WAM Fixture Canvas`, which the harness opens and closes. No-input
+   tier: every canvas line read inside the rectangle the fixture drew it in, at the primary monitor's scale and on a
+   monitor at another scale (skipped without one), with `ocrScale` 2 below 150%; find_text_on_screen's click point on its
+   word, converting back through the captureId 1:1; a regex finds the numbers with their units. Input tier: the canvas
+   covered by the main window still reads (PrintWindow); minimized it is `WindowMinimized` and stays minimized; a click
+   through a find's `captureId` and `imagePoint` lands on the word (the canvas logs it), and once the canvas moved the same
+   point is `StaleCapture`; a region over a canvas a policy denies (the scenario's own policy) reads none of its words and
+   reports `maskedWindows`. Record the time per call and which lines OCR misread (the 9-point line, the light-on-dark one),
+   at 100%, 125%, 150% and 175% where you have such a monitor.
+3. **The user's policy.** Start the server with a deny list naming `WamFixtureApp`: read_screen_text on the canvas
+   window is `TargetDeniedByPolicy`; a monitor read with the canvas in front returns none of its words and
+   `maskedWindows` of at least 1.
+4. **Real canvas content, opened by the check.** A debug Edge from launch_browser_with_debug on a throwaway profile,
+   with local pages written to a scratch folder: a canvas `fillText` page and a small PDF in Edge's viewer.
+   find_text_on_screen on that window by its handle finds the words; close only that browser with close_debug_browser by
+   its processId. Never focus or close a browser by its title.
+5. **Performance and tiles.** A full 1080p monitor, and a 4K one if there is one (over 5 megapixels, so read at 1x): record
+   the time per call. `monitorIndex: -1` on a virtual screen wider than OCR's limit (about 10,000 pixels: three 4K
+   monitors side by side) is read in tiles with an `OcrTiled` warning; nothing smaller is.
+
+Not checkable here, and so untested: RDP and Citrix sessions, games, and GPU or protected windows that PrintWindow draws
+black (they come back with `ImageBlank` and no lines).
+
 ### Tool surface snapshot
 
 `Contract/ToolSurfaceSnapshotTests` tests the server the way an agent sees it. It lists the tools of an
@@ -2711,13 +2764,14 @@ typical result over 300 tokens, and tools/list itself, measured in October 2026:
 | `get_browser_content` | A 15,000-character article | 3,815 | 6,000 |
 | `get_desktop_state` | 15 window rows, the focused element, 2 popups and 80 element lines with refs (roadmap M3.12) | 2,129 | 3,200 |
 | `capture_with_elements` | Metadata with the legend of 120 marks, one line each, and the tags' `markPrefix` (the image is budgeted separately; roadmap M3.11, M3.F38) | 1,416 | 2,150 |
+| `read_screen_text` | The 40 lines OCR reads in a window, each with its bounds (roadmap M6.3) | 1,276 | 1,900 |
 | `list_processes` | 40 processes | 1,328 | 2,000 |
 | `find_windows`, `get_all_windows` | 15 windows, each with `visibleBounds` | 1,213 | 1,850 |
 | `read_element_text` | The first page of a 3,000-character e-mail | 802 | 1,200 |
 | `read_table` | Task Manager's first 50 processes, 5 columns with headers | 643 | 1,000 |
 | `get_server_info` | The default deny list, five host processes, two monitors | 634 | 850 |
 | `get_layout` | A preset of 6 placements, each with the captured window identity | 529 | 800 |
-| tools/list | Every tool's name, title, description, schemas and annotations: 78 tools, 247,825 bytes (`ToolList_StaysWithinItsBudget`; M5.8's six DOM bridge tools added 2,970, 936 of them their window selectors; M5.8's dialog option and the UI Automation browser_handle_dialog 199 more; M6.1a's additive consolidations 405 more: mouse_click's own click checks 249, set_window_bounds' optional pairs 87, get_browser_url's foreground sentence 41, get_monitors' virtualScreen 28; M6.1b's one-line descriptions of the nine deprecated tools and the descriptions that no longer send the agent to them 2,121 fewer) | 61,957 | 61,993 |
+| tools/list | Every tool's name, title, description, schemas and annotations: 80 tools, 255,749 bytes (`ToolList_StaysWithinItsBudget`; M5.8's six DOM bridge tools added 2,970, 936 of them their window selectors; M5.8's dialog option and the UI Automation browser_handle_dialog 199 more; M6.1a's additive consolidations 405 more: mouse_click's own click checks 249, set_window_bounds' optional pairs 87, get_browser_url's foreground sentence 41, get_monitors' virtualScreen 28; M6.1b's one-line descriptions of the nine deprecated tools and the descriptions that no longer send the agent to them 2,121 fewer; M6.3's read_screen_text and find_text_on_screen in the opt-in `ocr` toolset 1,981 more) | 63,938 | 63,974 |
 | Default tools/list | The 58 tools a server serves without WAM_TOOLSETS, WAM_EXCLUDE_TOOLS and WAM_READ_ONLY, 204,020 bytes (`DefaultToolList_StaysWithinItsBudget`, roadmap M6.1; 59,627 before M6.1a, 60,032 after it with 70 tools, 9,027 fewer once M6.1b moved the nine deprecated tools and the three geometry batches to opt-in toolsets) | 51,005 | 51,041 |
 
 Every other typical result is at most 300 tokens. When a change makes a result larger on purpose, raise its
@@ -2754,10 +2808,12 @@ were capture_with_elements at 2,396 and element_action at 2,386, so they have ab
 | `browser-script` | off | 1 | 468 | 500 |
 | `windows-batch` | off | 3 | 1,978 | 2,000 |
 | `deprecated` | off | 9 | 4,925 | 4,950 |
+| `ocr` | off | 2 | 1,981 | 2,017 |
 
 The rows are measured after M6.1b (October 2026), which moved six tools out of `windows`, two out of `monitors`, three
 out of `input` and one out of `browser` into the opt-in `windows-batch` and `deprecated` toolsets. The deprecated tools'
-one-line descriptions keep their full parameters, which are most of the `deprecated` row.
+one-line descriptions keep their full parameters, which are most of the `deprecated` row. The `ocr` row is M6.3's two tools
+(October 2026), which share their target and result descriptions.
 
 A change states its default, per-toolset and all-tools deltas, and raises only the ratchets it moves: a new opt-in
 toolset moves the all-tools figure and its own row, never the default figure.

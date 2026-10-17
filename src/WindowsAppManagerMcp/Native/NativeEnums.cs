@@ -58,8 +58,10 @@ internal static class NativeEnums
 
     // Extended window styles (GWL_EXSTYLE)
     public const long WS_EX_TOPMOST = 0x00000008;
+    public const long WS_EX_TRANSPARENT = 0x00000020;
     public const long WS_EX_TOOLWINDOW = 0x00000080;
     public const long WS_EX_APPWINDOW = 0x00040000;
+    public const long WS_EX_LAYERED = 0x00080000;
     public const long WS_EX_NOACTIVATE = 0x08000000;
 
     // DwmGetWindowAttribute attributes

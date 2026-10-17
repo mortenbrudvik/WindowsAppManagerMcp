@@ -138,7 +138,9 @@ public static class InputGateToolFilter
         // A debug browser's tabs, and a wait on a page of up to a minute (roadmap M5.5)
         "list_tabs", "wait_for_browser",
         // An element's place on the screen: a DOM query and the window's UI Automation tree, read only (roadmap M5.8)
-        "browser_element_rect"
+        "browser_element_rect",
+        // Read the screen's text with Windows OCR; a minimized window is refused, never restored (roadmap M6.3)
+        "read_screen_text", "find_text_on_screen"
     };
 
     /// <summary>
