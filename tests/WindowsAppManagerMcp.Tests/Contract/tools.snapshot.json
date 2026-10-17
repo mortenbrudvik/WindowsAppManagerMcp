@@ -3200,7 +3200,7 @@
             "default": 20
           },
           "monitor": {
-            "description": "A monitor: index, 'primary', 'left', 'right', 'current' (the foreground window's), or an id or name from get_monitors. 'all' (or -1): every monitor in one image.",
+            "description": "A monitor: index, 'primary', 'left', 'right', 'current' (the foreground window's, maybe your own terminal's), or an id or name from get_monitors. 'all' (or -1): every monitor in one image.",
             "default": null,
             "type": [
               "integer",
@@ -4996,7 +4996,7 @@
                 "default": null
               },
               "monitor": {
-                "description": "A monitor: index, 'primary', 'left', 'right', 'current' (the foreground window's), or an id or name from get_monitors. Snapped, else centred or maximized, there; not with bounds",
+                "description": "A monitor: index, 'primary', 'left', 'right', 'current' (the foreground window's, maybe your own terminal's), or an id or name from get_monitors. Snapped, else centred or maximized, there; not with bounds",
                 "type": [
                   "integer",
                   "string",
@@ -5178,7 +5178,7 @@
                       "default": null
                     },
                     "monitor": {
-                      "description": "A monitor: index, 'primary', 'left', 'right', 'current' (the foreground window's), or an id or name from get_monitors. Snapped, else centred or maximized, there; not with bounds",
+                      "description": "A monitor: index, 'primary', 'left', 'right', 'current' (the foreground window's, maybe your own terminal's), or an id or name from get_monitors. Snapped, else centred or maximized, there; not with bounds",
                       "type": [
                         "integer",
                         "string",
@@ -5377,7 +5377,7 @@
                 "default": null
               },
               "monitor": {
-                "description": "A monitor: index, 'primary', 'left', 'right', 'current' (the foreground window's), or an id or name from get_monitors. Snapped, else centred or maximized, there; not with bounds",
+                "description": "A monitor: index, 'primary', 'left', 'right', 'current' (the foreground window's, maybe your own terminal's), or an id or name from get_monitors. Snapped, else centred or maximized, there; not with bounds",
                 "type": [
                   "integer",
                   "string",
@@ -6165,7 +6165,7 @@
             "default": 0
           },
           "monitor": {
-            "description": "A monitor: index, 'primary', 'left', 'right', 'current' (the foreground window's), or an id or name from get_monitors.",
+            "description": "A monitor: index, 'primary', 'left', 'right', 'current' (the foreground window's, maybe your own terminal's), or an id or name from get_monitors.",
             "default": null,
             "type": [
               "integer",
@@ -6648,7 +6648,7 @@
             "default": 150
           },
           "monitor": {
-            "description": "A monitor: index, 'primary', 'left', 'right', 'current' (the foreground window's), or an id or name from get_monitors. 'all' (or -1): every monitor in one image.",
+            "description": "A monitor: index, 'primary', 'left', 'right', 'current' (the foreground window's, maybe your own terminal's), or an id or name from get_monitors. 'all' (or -1): every monitor in one image.",
             "default": null,
             "type": [
               "integer",
@@ -7805,7 +7805,7 @@
             ]
           },
           "monitor": {
-            "description": "A monitor: index, 'primary', 'left', 'right', 'current' (the foreground window's), or an id or name from get_monitors. With unit 'percent'; default: the window's own.",
+            "description": "A monitor: index, 'primary', 'left', 'right', 'current' (the foreground window's, maybe your own terminal's), or an id or name from get_monitors. With unit 'percent'; default: the window's own.",
             "default": null,
             "type": [
               "integer",
@@ -8430,7 +8430,7 @@
             "default": null
           },
           "monitor": {
-            "description": "A monitor: index, 'primary', 'left', 'right', 'current' (the foreground window's), or an id or name from get_monitors. Default: the window's own.",
+            "description": "A monitor: index, 'primary', 'left', 'right', 'current' (the foreground window's, maybe your own terminal's), or an id or name from get_monitors. Default: the window's own.",
             "default": null,
             "type": [
               "integer",
@@ -8583,7 +8583,7 @@
                   "default": null
                 },
                 "monitor": {
-                  "description": "A monitor: index, 'primary', 'left', 'right', 'current' (the foreground window's), or an id or name from get_monitors.",
+                  "description": "A monitor: index, 'primary', 'left', 'right', 'current' (the foreground window's, maybe your own terminal's), or an id or name from get_monitors.",
                   "type": [
                     "integer",
                     "string",
@@ -8691,7 +8691,7 @@
             "default": null
           },
           "monitor": {
-            "description": "A monitor: index, 'primary', 'left', 'right', 'current' (the foreground window's), or an id or name from get_monitors. 'all' (or -1): every monitor in one image.",
+            "description": "A monitor: index, 'primary', 'left', 'right', 'current' (the foreground window's, maybe your own terminal's), or an id or name from get_monitors. 'all' (or -1): every monitor in one image.",
             "default": null,
             "type": [
               "integer",
@@ -9379,7 +9379,7 @@
             "default": 0
           },
           "monitor": {
-            "description": "A monitor: index, 'primary', 'left', 'right', 'current' (the foreground window's), or an id or name from get_monitors. 'all' (or -1): every monitor in one image. At most 32 megapixels",
+            "description": "A monitor: index, 'primary', 'left', 'right', 'current' (the foreground window's, maybe your own terminal's), or an id or name from get_monitors. 'all' (or -1): every monitor in one image. At most 32 megapixels",
             "default": null,
             "type": [
               "integer",

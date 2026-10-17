@@ -181,16 +181,27 @@ public class MonitorService : IMonitorService
         return SnapMath.Calculate(snapshot.Infos[monitorIndex].WorkArea, position);
     }
 
+    /// <summary>
+    /// Resolves on one snapshot, so the index and the monitor it returns are of the same topology: for 'current', a foreground
+    /// monitor the cached snapshot does not know means the displays changed, and the selector is resolved on a fresh one.
+    /// </summary>
     public MonitorResolution ResolveMonitor(MonitorSelector selector)
     {
         ArgumentNullException.ThrowIfNull(selector);
-        return MonitorSelection.Resolve(GetSnapshot().Infos, selector, CurrentMonitor);
-    }
+        var snapshot = GetSnapshot(out var refreshed);
+        MonitorInfo? current = null;
+        if (string.Equals(selector.Name, MonitorSelection.Current, StringComparison.OrdinalIgnoreCase) &&
+            (_foregroundWindow?.Invoke() ?? nint.Zero) is var foreground && foreground != nint.Zero)
+        {
+            var hMonitor = _nativeMonitors.MonitorFromWindow(foreground);
+            current = snapshot.FindByHandle(hMonitor);
+            if (current == null && !refreshed && hMonitor != nint.Zero)
+            {
+                snapshot = RefreshSnapshot();
+                current = snapshot.FindByHandle(_nativeMonitors.MonitorFromWindow(foreground));
+            }
+        }
 
-    /// <summary>The monitor of the foreground window, or null when no window is in the foreground.</summary>
-    private MonitorInfo? CurrentMonitor()
-    {
-        var foreground = _foregroundWindow?.Invoke() ?? nint.Zero;
-        return foreground == nint.Zero ? null : GetMonitorForWindow(foreground);
+        return MonitorSelection.Resolve(snapshot.Infos, selector, () => current);
     }
 }

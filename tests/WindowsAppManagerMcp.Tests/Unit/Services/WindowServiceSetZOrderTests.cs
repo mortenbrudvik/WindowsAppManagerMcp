@@ -72,6 +72,7 @@ public class WindowServiceSetZOrderTests
 
         // Assert
         _pins.Windows.Should().BeEmpty();
+        _desktop.ZOrderCalls[^1].InsertAfter.Should().Be(HwndBottom);
         _desktop.ZOrder[^1].Should().Be(window);
     }
 
@@ -189,6 +190,82 @@ public class WindowServiceSetZOrderTests
         _desktop.ZOrderCalls.Select(c => c.InsertAfter).Should().Equal(HwndTopmost, clock);
         _desktop.ZOrder.Should().Equal(clock, editor, overlay);
         _pins.Windows.Should().ContainSingle().Which.Window.Should().Be(editor);
+    }
+
+    [Fact]
+    public void Above_ATopmostOverlay_ThatFailsAfterTheTopmostStep_UndoesIt_AndLeavesNoPin()
+    {
+        // Arrange - the window is made topmost, then Windows refuses to put it behind the clock
+        var clock = _desktop.Add("Clock", extendedStyle: FakeWindowDesktop.WsExTopmost);
+        var overlay = _desktop.Add("Overlay", extendedStyle: FakeWindowDesktop.WsExTopmost);
+        var editor = _desktop.Add("Editor");
+        _desktop.AcceptZOrderChanges();
+        _desktop.Native.Setup(n => n.SetWindowZOrder(editor, clock, It.IsAny<uint>())).Returns(Win32CallResult.Failure(0));
+
+        // Act
+        var result = CreateSut().SetWindowZOrder(editor, ZOrderMode.Above, overlay);
+
+        // Assert - a failed call leaves no new topmost window behind, tracked or not
+        result.Success.Should().BeFalse();
+        _desktop.ZOrderCalls.Select(c => c.InsertAfter).Should().Equal(HwndTopmost, HwndNoTopmost);
+        _desktop.IsTopmost(editor).Should().BeFalse();
+        _pins.Windows.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void Above_ATopmostOverlay_WhoseUndoFailsToo_LeavesTheWindowTopmost_AndPinned()
+    {
+        // Arrange - neither the second step nor the undo goes through: the window stays topmost
+        var clock = _desktop.Add("Clock", extendedStyle: FakeWindowDesktop.WsExTopmost);
+        var overlay = _desktop.Add("Overlay", extendedStyle: FakeWindowDesktop.WsExTopmost);
+        var editor = _desktop.Add("Editor");
+        _desktop.AcceptZOrderChanges();
+        _desktop.Native.Setup(n => n.SetWindowZOrder(editor, clock, It.IsAny<uint>())).Returns(Win32CallResult.Failure(0));
+        _desktop.Native.Setup(n => n.SetWindowZOrder(editor, HwndNoTopmost, It.IsAny<uint>())).Returns(Win32CallResult.Failure(0));
+
+        // Act
+        var result = CreateSut().SetWindowZOrder(editor, ZOrderMode.Above, overlay);
+
+        // Assert - the pin follows what the window is, so get_server_info still shows it
+        result.Success.Should().BeFalse();
+        _desktop.IsTopmost(editor).Should().BeTrue();
+        _pins.Windows.Should().ContainSingle().Which.Window.Should().Be(editor);
+    }
+
+    [Fact]
+    public void Topmost_ThatThrowsAfterTheWindowBecameTopmost_StillPinsIt()
+    {
+        // Arrange - the call times out (the app is hung), but Windows made the window topmost anyway
+        var window = _desktop.Add("Hung");
+        _desktop.Native.Setup(n => n.SetWindowZOrder(window, HwndTopmost, It.IsAny<uint>()))
+            .Callback(() => _desktop.SetTopmost(window, true))
+            .Throws(new WindowNotRespondingException(window, "The app is hung."));
+
+        // Act
+        var act = () => CreateSut().SetWindowZOrder(window, ZOrderMode.Topmost);
+
+        // Assert
+        act.Should().Throw<WindowNotRespondingException>();
+        _pins.Windows.Should().ContainSingle().Which.Window.Should().Be(window);
+    }
+
+    [Fact]
+    public void Above_AWindowThatClosesDuringTheCall_IsInvalidHandle_NotSuccess()
+    {
+        // Arrange - the other window closes while the window is placed
+        var browser = _desktop.Add("Browser");
+        var terminal = _desktop.Add("Terminal");
+        _desktop.Native.Setup(n => n.SetWindowZOrder(terminal, It.IsAny<nint>(), It.IsAny<uint>()))
+            .Callback(() => _desktop.Close(browser))
+            .Returns(Win32CallResult.Ok);
+
+        // Act
+        var result = CreateSut().SetWindowZOrder(terminal, ZOrderMode.Above, browser);
+
+        // Assert
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(WindowErrorCode.InvalidHandle);
+        result.Error.Should().Contain("aboveHandle");
     }
 
     [Fact]

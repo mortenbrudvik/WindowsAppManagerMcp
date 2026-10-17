@@ -159,11 +159,11 @@ public class ToolPayloadBudgetTests
     /// handle parameters and drag to get_monitors, find_windows and mouse_click instead of the deprecated tools, and added
     /// get_server_info's moved field to its description (-2,121 in all); then 62,348 tokens, 249,390 bytes after M6.6's
     /// list_processes parameters (processId, pathContains, sortBy, limit, includeCommandLine) and result fields in its
-    /// description (+361) and get_window_info's integrity fields (+31); then 63,402 tokens, 253,608 bytes for 79 tools after M6.2's run_steps, its description and the step item schema with the tool list; then 64,474 tokens, 257,896 bytes for 80 tools after M6.4's wait_for_visual in the opt-in visual toolset; then 66,562 tokens, 266,245 bytes for 82 tools after M6.3's read_screen_text and find_text_on_screen in the opt-in ocr toolset (+2,088, sharing their target and result descriptions); then 67,988 tokens, 271,949 bytes for 83 tools after M6.7's set_window_zorder (+522), the `monitor` parameter beside the deprecated monitorIndex on snap_window, move_window_to_monitor, snap_windows_batch, take_screenshot, the two OCR tools, wait_for_visual and the launch placement, set_window_bounds' unit, relativeTo and monitor (+233), get_monitors' new fields and get_server_info's pinnedWindows (+1,426 in all); DefaultToolListTokenBudget measures the tools served by default), so every addition to the surface is a decision. When a change
+    /// description (+361) and get_window_info's integrity fields (+31); then 63,402 tokens, 253,608 bytes for 79 tools after M6.2's run_steps, its description and the step item schema with the tool list; then 64,474 tokens, 257,896 bytes for 80 tools after M6.4's wait_for_visual in the opt-in visual toolset; then 66,562 tokens, 266,245 bytes for 82 tools after M6.3's read_screen_text and find_text_on_screen in the opt-in ocr toolset (+2,088, sharing their target and result descriptions); then 68,076 tokens, 272,301 bytes for 83 tools after M6.7's set_window_zorder (+522), the `monitor` parameter beside the deprecated monitorIndex on snap_window, move_window_to_monitor, snap_windows_batch, take_screenshot, the two OCR tools, wait_for_visual and the launch placement, set_window_bounds' unit, relativeTo and monitor (+233), get_monitors' new fields and get_server_info's pinnedWindows (+1,514 in all); DefaultToolListTokenBudget measures the tools served by default), so every addition to the surface is a decision. When a change
     /// adds to the surface on purpose, raise it in the same change by what the failure message measures; when a change
     /// trims descriptions, lower it.
     /// </summary>
-    public const int ToolListTokenBudget = 68_024;
+    public const int ToolListTokenBudget = 68_112;
 
     /// <summary>
     /// The token budget of the default tools/list (roadmap M6.1): the tools a server started without WAM_TOOLSETS,
@@ -176,12 +176,12 @@ public class ToolPayloadBudgetTests
     /// get_active_browser_url) to the opt-in deprecated toolset and the three geometry batches to the opt-in windows-batch
     /// toolset (-9,027); then 51,397 tokens (205,585 bytes) after M6.6's list_processes parameters and fields (+361) and
     /// get_window_info's integrity fields (+31), October 2026; then 52,451 tokens (209,803 bytes, 59 tools) after M6.2's run_steps in the steps
-    /// toolset, on by default; then 53,582 tokens (214,327 bytes, 60 tools) after M6.7's set_window_zorder in windows (+522),
+    /// toolset, on by default; then 53,638 tokens (214,551 bytes, 60 tools) after M6.7's set_window_zorder in windows (+522),
     /// set_window_bounds' percent placement (+233), the `monitor` parameters and get_monitors' and get_server_info's fields
-    /// (+1,131 in all). A tool in a toolset that is off by default never moves it; a change to the default
+    /// (+1,187 in all). A tool in a toolset that is off by default never moves it; a change to the default
     /// surface raises it by what the failure message measures, in the same change, or lowers it.
     /// </summary>
-    public const int DefaultToolListTokenBudget = 53_618;
+    public const int DefaultToolListTokenBudget = 53_674;
 
     /// <summary>
     /// The most tokens one tool object (name, title, description, input schema, annotations) may cost in tools/list (roadmap
@@ -201,23 +201,23 @@ public class ToolPayloadBudgetTests
     private static readonly IReadOnlyDictionary<string, int> ToolsetTokenBudgets = new Dictionary<string, int>(StringComparer.Ordinal)
     {
         ["server"] = 1_092, // 1,056 (1,038 before M6.7's pinnedWindows in get_server_info)
-        ["windows"] = 10_896, // 10,860: 13 tools, 11 of them with the window selector (13,724 before M6.1b moved six out; 9,921 before M6.6's get_window_info integrity fields; 9,952 before M6.7's set_window_zorder, monitor and percent placement)
+        ["windows"] = 10_920, // 10,884: 13 tools, 11 of them with the window selector (13,724 before M6.1b moved six out; 9,921 before M6.6's get_window_info integrity fields; 9,952 before M6.7's set_window_zorder, monitor and percent placement)
         ["monitors"] = 203, // 167: get_monitors alone since M6.1b (314 with get_primary_monitor and list_screens; 118 before M6.7's identity fields)
-        ["capture"] = 5_942, // 5,906 (5,856 before M6.7's monitor on take_screenshot)
+        ["capture"] = 5_950, // 5,914 (5,856 before M6.7's monitor on take_screenshot)
         ["elements"] = 8_300, // 8,262
         ["input"] = 14_800, // 14,758: 10 tools (19,415 with the click trio before M6.1b)
         ["clipboard"] = 750, // 734
-        ["launch"] = 2_999, // 2,963 (2,890 before M6.7's placement monitor beside the deprecated monitorIndex)
+        ["launch"] = 3_015, // 2,979 (2,890 before M6.7's placement monitor beside the deprecated monitorIndex)
         ["process"] = 2_318, // 2,282 (1,921 before M6.6's list_processes parameters and fields)
         ["layouts"] = 1_200, // 1,181
         ["steps"] = 1_091, // 1,055: run_steps alone (roadmap M6.2), its description and the steps' item schema with the tool list
-        ["browser"] = 4_384, // 4,348 (4,674 with get_active_browser_url before M6.1b; 4,315 before M6.7's placement monitor)
+        ["browser"] = 4_392, // 4,356 (4,674 with get_active_browser_url before M6.1b; 4,315 before M6.7's placement monitor)
         ["browser-actions"] = 3_600, // 3,577 (off by default)
         ["browser-script"] = 500, // 468 (off by default)
-        ["visual"] = 1_173, // 1,137 (off by default): wait_for_visual with handle, the window selector, a region, monitor (and the deprecated monitorIndex) and since (roadmap M6.4; 1,072 before M6.7)
-        ["windows-batch"] = 2_094, // 2,058 (off by default since M6.1b; 1,978 before M6.7's monitor on snap_windows_batch's items)
+        ["visual"] = 1_181, // 1,145 (off by default): wait_for_visual with handle, the window selector, a region, monitor (and the deprecated monitorIndex) and since (roadmap M6.4; 1,072 before M6.7)
+        ["windows-batch"] = 2_102, // 2,066 (off by default since M6.1b; 1,978 before M6.7's monitor on snap_windows_batch's items)
         ["deprecated"] = 4_950, // 4,925 (off by default since M6.1b): nine one-line descriptions, but their full parameters
-        ["ocr"] = 2_274, // 2,238 (off by default, roadmap M6.3): read_screen_text and find_text_on_screen (2,087 before M6.7's monitor)
+        ["ocr"] = 2_290, // 2,254 (off by default, roadmap M6.3): read_screen_text and find_text_on_screen (2,087 before M6.7's monitor)
     };
 
     /// <summary>

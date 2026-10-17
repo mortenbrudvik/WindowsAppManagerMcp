@@ -90,8 +90,9 @@ public static class MonitorSelection
     }
 
     /// <summary>
-    /// Where <paramref name="monitor"/> is from <paramref name="primary"/>: 'left' or 'right' when its centre is beyond the
-    /// primary's left or right edge, otherwise 'above' or 'below'; null for the primary itself.
+    /// Where <paramref name="monitor"/> is from <paramref name="primary"/>: 'above' or 'below' when it shares more than half of
+    /// the narrower one's columns with the primary (stacked, as 'left' and 'right' tell them); otherwise 'left' or 'right' when
+    /// its centre is beyond the primary's left or right edge, and 'above' or 'below' when it is not; null for the primary.
     /// </summary>
     public static string? RelationToPrimary(MonitorInfo monitor, MonitorInfo primary)
     {
@@ -104,6 +105,11 @@ public static class MonitorSelection
 
         var (x, y) = Centre(monitor.Bounds);
         var p = primary.Bounds;
+        if (Stacked(monitor.Bounds, p))
+        {
+            return y < Centre(p).Y ? "above" : "below";
+        }
+
         return x < p.X ? Left
             : x >= (long)p.X + p.Width ? Right
             : y < Centre(p).Y ? "above"

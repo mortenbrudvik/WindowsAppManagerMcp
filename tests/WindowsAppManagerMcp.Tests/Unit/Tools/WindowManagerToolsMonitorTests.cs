@@ -15,8 +15,23 @@ public class WindowManagerToolsMonitorTests
     private readonly Mock<IWindowService> _windows = new();
     private readonly Mock<IMonitorService> _monitors = new(MockBehavior.Strict);
 
+    /// <summary>Three monitors with ids, left to right; a test can change them while a call waits.</summary>
+    private static readonly IReadOnlyList<MonitorInfo> Three =
+    [
+        TestDataFactory.CreateMonitorInfo(0) with { Id = "m-0000000a" },
+        TestDataFactory.CreateMonitorInfo(1, @"\\.\DISPLAY2", false, 1920) with { Id = "m-0000000b" },
+        TestDataFactory.CreateMonitorInfo(2, @"\\.\DISPLAY3", false, 3840) with { Id = "m-0000000c" }
+    ];
+
+    /// <summary>What GetAllMonitors lists now.</summary>
+    private IReadOnlyList<MonitorInfo> _listed = Three;
+
     public WindowManagerToolsMonitorTests()
     {
+        _monitors.Setup(m => m.GetAllMonitors()).Returns(() => _listed);
+        _windows.Setup(w => w.SnapWindowsBatchAsync(It.IsAny<IReadOnlyList<(nint, SnapPosition, int?, bool)>>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((IReadOnlyList<(nint Handle, SnapPosition, int?, bool)> p, int _, CancellationToken _) =>
+                p.Select(x => WindowChangeResult.Done(x.Handle)).ToList());
         _windows.Setup(w => w.IsValidWindow(It.IsAny<nint>())).Returns(true);
         _windows.Setup(w => w.GetWindowInfo(It.IsAny<nint>())).Returns(TestDataFactory.CreateWindowInfo(handleValue: 12345));
         _windows.Setup(w => w.SnapWindow(It.IsAny<nint>(), It.IsAny<SnapPosition>(), It.IsAny<int?>(), It.IsAny<bool>()))
@@ -27,9 +42,16 @@ public class WindowManagerToolsMonitorTests
 
     private WindowManagerTools CreateSut() => new(_windows.Object, Mock.Of<IForegroundService>(), monitorService: _monitors.Object);
 
-    private void Resolves(string name, int index) =>
+    private void Resolves(string name, int index, Action? then = null) =>
         _monitors.Setup(m => m.ResolveMonitor(It.Is<MonitorSelector>(s => s.Name == name)))
-            .Returns(MonitorResolution.Found(index, TestDataFactory.CreateMonitorInfo(index)));
+            .Returns(() => MonitorResolution.Found(index, _listed[index]))
+            .Callback(() => then?.Invoke());
+
+    /// <summary>Docking renumbers the monitors after the name was resolved: the right one is enumerated first now.</summary>
+    private void Redock() => _listed = [Three[2] with { Index = 0 }, Three[0] with { Index = 1 }, Three[1] with { Index = 2 }];
+
+    /// <summary>The right monitor is unplugged after the name was resolved.</summary>
+    private void Unplug() => _listed = [Three[0], Three[1]];
 
     #region snap_window
 
@@ -55,6 +77,48 @@ public class WindowManagerToolsMonitorTests
 
         // Assert - an index out of range stays the window service's InvalidMonitorIndex
         _windows.Verify(w => w.SnapWindow(Handle, SnapPosition.RightHalf, 2, true), Times.Once);
+    }
+
+    [Fact]
+    public async Task SnapWindow_WhenTheMonitorsAreRenumberedWhileItWaits_SnapsOnTheMonitorTheNameNamed()
+    {
+        // Arrange - "right" is monitor 2 when the call starts; docking makes it monitor 0 before the call acts
+        Resolves("right", 2, then: Redock);
+
+        // Act
+        await CreateSut().SnapWindow(SnapPosition.LeftHalf, handle: Handle, monitor: MonitorSelector.Of("right"));
+
+        // Assert - found again by its id inside the gate, never by the stale index
+        _windows.Verify(w => w.SnapWindow(Handle, SnapPosition.LeftHalf, 0, true), Times.Once);
+    }
+
+    [Fact]
+    public async Task SnapWindow_WhenTheNamedMonitorIsGoneByTheTimeItActs_IsMonitorNotFound_AndNothingMoves()
+    {
+        // Arrange
+        Resolves("right", 2, then: Unplug);
+
+        // Act
+        var act = () => CreateSut().SnapWindow(SnapPosition.LeftHalf, handle: Handle, monitor: MonitorSelector.Of("right"));
+
+        // Assert
+        var error = (await act.Should().ThrowAsync<ToolErrorException>()).Which;
+        error.ErrorCode.Should().Be(nameof(WindowErrorCode.MonitorNotFound));
+        error.Message.Should().Contain("m-0000000c").And.EndWith("Nothing was changed.");
+        _windows.Verify(w => w.SnapWindow(It.IsAny<nint>(), It.IsAny<SnapPosition>(), It.IsAny<int?>(), It.IsAny<bool>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task MoveWindowToMonitor_WhenTheMonitorsAreRenumberedWhileItWaits_MovesToTheMonitorTheNameNamed()
+    {
+        // Arrange
+        Resolves("right", 2, then: Redock);
+
+        // Act
+        await CreateSut().MoveWindowToMonitor(handle: Handle, monitor: MonitorSelector.Of("right"));
+
+        // Assert
+        _windows.Verify(w => w.MoveWindowToMonitor(Handle, 0, MonitorPositioning.Center, true), Times.Once);
     }
 
     [Fact]
@@ -156,7 +220,7 @@ public class WindowManagerToolsMonitorTests
 
     private void PercentSetup()
     {
-        _monitors.Setup(m => m.GetAllMonitors()).Returns(Desk);
+        _listed = Desk;
         _monitors.Setup(m => m.GetMonitorForWindow(Handle)).Returns(Desk[1]);
         _windows.Setup(w => w.SetWindowFrame(It.IsAny<nint>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>()))
             .Returns((nint h, int _, int _, int _, int _, bool _) => WindowChangeResult.Done(h));
@@ -261,6 +325,21 @@ public class WindowManagerToolsMonitorTests
     }
 
     [Fact]
+    public async Task SetWindowBounds_InPercent_OnANamedMonitorThatIsGoneByTheTimeItActs_IsMonitorNotFound()
+    {
+        // Arrange
+        PercentSetup();
+        Resolves("primary", 0, then: () => _listed = [Desk[1] with { Index = 0 }]);
+
+        // Act
+        var act = () => CreateSut().SetWindowBounds(0, 0, 50, 50, handle: Handle, unit: BoundsUnit.Percent, monitor: MonitorSelector.Of("primary"));
+
+        // Assert
+        (await act.Should().ThrowAsync<ToolErrorException>()).Which.ErrorCode.Should().Be(nameof(WindowErrorCode.MonitorNotFound));
+        _windows.Verify(w => w.SetWindowFrame(It.IsAny<nint>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>()), Times.Never);
+    }
+
+    [Fact]
     public async Task SetWindowBounds_InPercent_OnAMonitorIndexThatIsNoMonitor_IsInvalidMonitorIndex()
     {
         // Arrange
@@ -272,6 +351,46 @@ public class WindowManagerToolsMonitorTests
         // Assert
         result.ErrorCode.Should().Be(nameof(WindowErrorCode.InvalidMonitorIndex));
         result.Error.Should().Contain("valid indexes are 0 to 1");
+    }
+
+    #endregion
+
+    #region -1 where every monitor is not a target
+
+    public static TheoryData<string> OneMonitorTools => new() { "snap_window", "move_window_to_monitor", "set_window_bounds", "snap_windows_batch" };
+
+    [Theory]
+    [MemberData(nameof(OneMonitorTools))]
+    public async Task MonitorMinusOne_WhereATool_TakesOneMonitor_IsInvalidMonitorIndex_AndNothingMoves(string tool)
+    {
+        // Arrange - -1 is every monitor, which only the captures take
+        PercentSetup();
+        var sut = CreateSut();
+        var minusOne = MonitorSelector.OfIndex(-1);
+
+        // Act
+        string? code;
+        if (tool == "snap_windows_batch")
+        {
+            var batch = await sut.SnapWindowsBatch([new WindowSnapPlacement("left_half", Handle: 111, Monitor: minusOne)], delayBetweenMs: 0);
+            code = batch.Results.Single().ErrorCode;
+        }
+        else
+        {
+            Func<Task> act = tool switch
+            {
+                "snap_window" => () => sut.SnapWindow(SnapPosition.LeftHalf, handle: Handle, monitor: minusOne),
+                "move_window_to_monitor" => () => sut.MoveWindowToMonitor(handle: Handle, monitor: minusOne),
+                _ => () => sut.SetWindowBounds(0, 0, 50, 50, handle: Handle, unit: BoundsUnit.Percent, monitor: minusOne)
+            };
+            code = (await act.Should().ThrowAsync<ToolErrorException>()).Which.ErrorCode;
+        }
+
+        // Assert
+        code.Should().Be(nameof(WindowErrorCode.InvalidMonitorIndex));
+        _windows.Verify(w => w.SnapWindow(It.IsAny<nint>(), It.IsAny<SnapPosition>(), It.IsAny<int?>(), It.IsAny<bool>()), Times.Never);
+        _windows.Verify(w => w.MoveWindowToMonitor(It.IsAny<nint>(), It.IsAny<int>(), It.IsAny<MonitorPositioning>(), It.IsAny<bool>()), Times.Never);
+        _windows.Verify(w => w.SetWindowFrame(It.IsAny<nint>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>()), Times.Never);
     }
 
     #endregion
@@ -305,6 +424,31 @@ public class WindowManagerToolsMonitorTests
         result.Results[1].Error.Should().StartWith("Item 1: placements[1].monitor:");
         result.Results[2].ErrorCode.Should().Be(ToolErrorReporting.InvalidArgumentsErrorCode);
         sent!.Should().ContainSingle().Which.Should().Be(((nint)111, SnapPosition.LeftHalf, (int?)2, true));
+    }
+
+    [Fact]
+    public async Task SnapWindowsBatch_AnItemWhoseNamedMonitorIsGoneByTheTimeItActs_FailsAlone()
+    {
+        // Arrange
+        Resolves("right", 2, then: Unplug);
+        Resolves("left", 0);
+        IReadOnlyList<(nint Handle, SnapPosition Position, int? MonitorIndex, bool BringToFront)>? sent = null;
+        _windows.Setup(w => w.SnapWindowsBatchAsync(It.IsAny<IReadOnlyList<(nint, SnapPosition, int?, bool)>>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .Callback((IReadOnlyList<(nint, SnapPosition, int?, bool)> p, int _, CancellationToken _) => sent = p)
+            .ReturnsAsync((IReadOnlyList<(nint Handle, SnapPosition, int?, bool)> p, int _, CancellationToken _) =>
+                p.Select(x => WindowChangeResult.Done(x.Handle)).ToList());
+
+        // Act
+        var result = await CreateSut().SnapWindowsBatch(
+        [
+            new WindowSnapPlacement("left_half", Handle: 111, Monitor: MonitorSelector.Of("right")),
+            new WindowSnapPlacement("left_half", Handle: 222, Monitor: MonitorSelector.Of("left"))
+        ], delayBetweenMs: 0);
+
+        // Assert
+        result.Results.Select(r => r.Success).Should().Equal(false, true);
+        result.Results[0].ErrorCode.Should().Be(nameof(WindowErrorCode.MonitorNotFound));
+        sent!.Should().ContainSingle().Which.Should().Be(((nint)222, SnapPosition.LeftHalf, (int?)0, true));
     }
 
     #endregion

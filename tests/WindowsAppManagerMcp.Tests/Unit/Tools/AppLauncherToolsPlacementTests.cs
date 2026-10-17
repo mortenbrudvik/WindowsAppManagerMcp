@@ -144,6 +144,18 @@ public class AppLauncherToolsPlacementTests
     }
 
     [Fact]
+    public async Task APlacementOnMonitorMinusOne_IsInvalidMonitorIndex_AndNothingIsLaunched()
+    {
+        // Act - -1 is every monitor, which only the captures take
+        var call = async () => await CreateSut().LaunchApplication("code",
+            placement: new LaunchPlacement(Snap: "left_half", Monitor: MonitorSelector.OfIndex(-1)));
+
+        // Assert
+        (await call.Should().ThrowAsync<ToolErrorException>()).Which.ErrorCode.Should().Be(nameof(WindowErrorCode.InvalidMonitorIndex));
+        VerifyNothingLaunched();
+    }
+
+    [Fact]
     public async Task APlacementWithMonitorAndMonitorIndex_IsInvalidArguments()
     {
         // Act

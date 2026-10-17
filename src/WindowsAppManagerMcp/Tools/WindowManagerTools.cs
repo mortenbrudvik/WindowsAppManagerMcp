@@ -192,7 +192,7 @@ public class WindowManagerTools
         }
 
         var hwnd = Target(handle, window);
-        var monitorIndex = percent ? MonitorTargeting.Index(_monitorService, null, monitor, allowAll: false, NothingChanged) : null;
+        var choice = percent ? MonitorTargeting.Choose(_monitorService, null, monitor, allowAll: false, NothingChanged) : default;
         using (await EnterGateAsync(cancellationToken).ConfigureAwait(false))
         {
             WindowTargeting.ThrowIfChanged(_windowService, window, hwnd);
@@ -201,6 +201,9 @@ public class WindowManagerTools
 
             if (!percent)
                 return Change(hwnd, BoundsChange(hwnd, Pixels(x), Pixels(y), Pixels(width), Pixels(height), bringToFront), settleMs);
+
+            // A named monitor is found again now, inside the gate: the displays may have changed while the call waited
+            var monitorIndex = MonitorTargeting.Current(_monitorService, choice, NothingChanged);
 
             // Percentages become pixels once, against the target monitor, before the window moves: the second placement after
             // a DPI change places the same pixels again (RelativeRectMath)
@@ -1001,11 +1004,16 @@ public class WindowManagerTools
         CancellationToken cancellationToken = default)
     {
         var hwnd = Target(handle, window);
-        var index = MonitorTargeting.Index(_monitorService, monitorIndex, monitor, allowAll: false, NothingChanged);
+        var choice = MonitorTargeting.Choose(_monitorService, monitorIndex, monitor, allowAll: false, NothingChanged);
         using (await EnterGateAsync(cancellationToken).ConfigureAwait(false))
         {
             WindowTargeting.ThrowIfChanged(_windowService, window, hwnd);
-            return Precheck(hwnd) ?? Change(hwnd, () => _windowService.SnapWindow(hwnd, position, index, bringToFront), settleMs);
+            if (Precheck(hwnd) is { } refused)
+                return refused;
+
+            // A named monitor is found again now, inside the gate: the displays may have changed while the call waited
+            var index = MonitorTargeting.Current(_monitorService, choice, NothingChanged);
+            return Change(hwnd, () => _windowService.SnapWindow(hwnd, position, index, bringToFront), settleMs);
         }
     }
 
@@ -1035,14 +1043,22 @@ public class WindowManagerTools
         CancellationToken cancellationToken = default)
     {
         var hwnd = Target(handle, window);
-        var index = MonitorTargeting.Index(_monitorService, monitorIndex, monitor, allowAll: false, NothingChanged) ??
-                    throw new ToolErrorException(ToolErrorReporting.InvalidArgumentsErrorCode,
-                        $"Pass monitor, the monitor to move the window to. {NothingChanged}");
+        var choice = MonitorTargeting.Choose(_monitorService, monitorIndex, monitor, allowAll: false, NothingChanged);
+        if (choice.Index == null)
+        {
+            throw new ToolErrorException(ToolErrorReporting.InvalidArgumentsErrorCode,
+                $"Pass monitor, the monitor to move the window to. {NothingChanged}");
+        }
+
         using (await EnterGateAsync(cancellationToken).ConfigureAwait(false))
         {
             WindowTargeting.ThrowIfChanged(_windowService, window, hwnd);
-            return Precheck(hwnd) ??
-                   Change(hwnd, () => _windowService.MoveWindowToMonitor(hwnd, index, positioning, bringToFront), settleMs);
+            if (Precheck(hwnd) is { } refused)
+                return refused;
+
+            // A named monitor is found again now, inside the gate: the displays may have changed while the call waited
+            var index = MonitorTargeting.Current(_monitorService, choice, NothingChanged)!.Value;
+            return Change(hwnd, () => _windowService.MoveWindowToMonitor(hwnd, index, positioning, bringToFront), settleMs);
         }
     }
 
@@ -1160,7 +1176,7 @@ public class WindowManagerTools
         // Each item's window, resolved before the gate, and its position, checked here, so one bad item fails alone
         var items = ResolveItems(placements, nameof(placements), "a position and a handle or window", p => p.Handle, p => p.Window);
         var positions = new SnapPosition[placements.Length];
-        var monitors = new int?[placements.Length];
+        var monitors = new MonitorChoice[placements.Length];
         var invalid = items.Select((t, i) =>
         {
             if (t.Refusal != null)
@@ -1170,7 +1186,7 @@ public class WindowManagerTools
                 return new WindowResultItem(t.Handle.ToInt64(), false, Error: $"Item {i}: {error}", ErrorCode: nameof(InvalidSnapPosition));
 
             // The item's monitor, resolved before the gate (roadmap M6.7); one that names no single monitor fails the item alone
-            return MonitorTargeting.TryIndex(_monitorService, placements[i].MonitorIndex, placements[i].Monitor, allowAll: false,
+            return MonitorTargeting.TryChoose(_monitorService, placements[i].MonitorIndex, placements[i].Monitor, allowAll: false,
                 $"{nameof(placements)}[{i}].", out monitors[i], out var monitorCode, out var monitorError)
                 ? null
                 : new WindowResultItem(t.Handle.ToInt64(), false, Error: $"Item {i}: {monitorError}", ErrorCode: monitorCode);
@@ -1178,14 +1194,20 @@ public class WindowManagerTools
 
         using (await EnterGateAsync(cancellationToken).ConfigureAwait(false))
         {
+            // Each item's named monitor is found again now, inside the gate: the displays may have changed while the call waited
+            var monitorIndexes = new int?[placements.Length];
             var refusals = invalid.Select((r, i) => r ?? ItemRecheck(i, items[i].Handle, placements[i].Window) ??
-                BatchPolicyRefusal(items[i].Handle.ToInt64())).ToList();
+                BatchPolicyRefusal(items[i].Handle.ToInt64()) ??
+                (MonitorTargeting.TryCurrent(_monitorService, monitors[i], $"{nameof(placements)}[{i}].", out monitorIndexes[i], out var gone)
+                    ? null
+                    : new WindowResultItem(items[i].Handle.ToInt64(), false, Error: $"Item {i}: {gone}", ErrorCode: nameof(MonitorNotFound))))
+                .ToList();
             var servicePlacements = new List<(nint, SnapPosition, int?, bool)>();
             for (var i = 0; i < placements.Length; i++)
             {
                 if (refusals[i] == null)
                 {
-                    servicePlacements.Add((items[i].Handle, positions[i], monitors[i], placements[i].BringToFront));
+                    servicePlacements.Add((items[i].Handle, positions[i], monitorIndexes[i], placements[i].BringToFront));
                 }
             }
 

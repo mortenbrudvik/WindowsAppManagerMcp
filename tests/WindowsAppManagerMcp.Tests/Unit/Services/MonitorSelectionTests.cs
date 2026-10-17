@@ -253,6 +253,18 @@ public class MonitorSelectionTests
         MonitorSelection.RelationToPrimary(Monitor(1, 0, 1080), primary).Should().Be("below");
     }
 
+    [Fact]
+    public void Relation_OfAMonitorMostlyAboveThePrimary_ButShiftedLeft_IsAbove()
+    {
+        // Arrange - its centre is left of the primary's left edge, but it shares 1260 of the primary's 1920 columns
+        var primary = Monitor(0, 0, primary: true);
+
+        // Act & Assert
+        MonitorSelection.RelationToPrimary(Monitor(1, -1300, -1440, 2560, 1440), primary).Should().Be("above");
+        MonitorSelection.RelationToPrimary(Monitor(1, -1300, 1080, 2560, 1440), primary).Should().Be("below");
+        MonitorSelection.RelationToPrimary(Monitor(1, -1700, -1440, 2560, 1440), primary).Should().Be("left", "860 shared columns are less than half");
+    }
+
     #endregion
 
     #region MonitorService
@@ -286,6 +298,26 @@ public class MonitorSelectionTests
     }
 
     [Fact]
+    public void ResolveMonitor_Current_AfterTheDisplaysChanged_ResolvesOnOneFreshSnapshot()
+    {
+        // Arrange - the snapshot lists the old topology; then docking adds a monitor that is enumerated first, and the
+        // foreground window is on it
+        var wrapper = new FakeMonitors([(100, ThreeInARow[0])]) { WindowMonitor = 200 };
+        var sut = new MonitorService(wrapper, foregroundWindow: () => 0x4242);
+        sut.GetAllMonitors().Should().HaveCount(1);
+        var docked = Monitor(0, -1920);
+        wrapper.Monitors = [(200, docked), (100, ThreeInARow[0] with { Index = 1 })];
+
+        // Act
+        var resolution = sut.ResolveMonitor(MonitorSelector.Of("current"));
+
+        // Assert - the index and the monitor come from the same snapshot, the one the next call lists
+        resolution.Index.Should().Be(0);
+        resolution.Monitor.Should().Be(docked);
+        sut.GetAllMonitors()[resolution.Index].Should().Be(resolution.Monitor);
+    }
+
+    [Fact]
     public void ResolveMonitor_ResolvesNamesOnTheMonitorsItLists()
     {
         // Arrange
@@ -302,7 +334,10 @@ public class MonitorSelectionTests
 
         public nint? AskedForWindow { get; private set; }
 
-        public IReadOnlyList<(nint Handle, MonitorInfo Info)> EnumerateMonitors() => monitors.ToList();
+        /// <summary>The monitors the next enumeration lists.</summary>
+        public IReadOnlyList<(nint Handle, MonitorInfo Info)> Monitors { get; set; } = monitors;
+
+        public IReadOnlyList<(nint Handle, MonitorInfo Info)> EnumerateMonitors() => Monitors.ToList();
 
         public nint MonitorFromWindow(nint windowHandle)
         {

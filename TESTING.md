@@ -2866,8 +2866,8 @@ typical result over 300 tokens, and tools/list itself, measured in October 2026:
 | `read_table` | Task Manager's first 50 processes, 5 columns with headers | 643 | 1,000 |
 | `get_server_info` | The default deny list, five host processes, two monitors, the resources and prompts (634 before roadmap M6.9) | 707 | 850 |
 | `get_layout` | A preset of 6 placements, each with the captured window identity | 529 | 800 |
-| tools/list | Every tool's name, title, description, schemas and annotations: 82 tools, 266,245 bytes (`ToolList_StaysWithinItsBudget`; M5.8's six DOM bridge tools added 2,970, 936 of them their window selectors; M5.8's dialog option and the UI Automation browser_handle_dialog 199 more; M6.1a's additive consolidations 405 more: mouse_click's own click checks 249, set_window_bounds' optional pairs 87, get_browser_url's foreground sentence 41, get_monitors' virtualScreen 28; M6.1b's one-line descriptions of the nine deprecated tools and the descriptions that no longer send the agent to them 2,121 fewer; M6.6's list_processes parameters and fields 361 more and get_window_info's integrity fields 31 more; M6.2's run_steps 1,054 more; M6.4's wait_for_visual 1,072 more; M6.3's read_screen_text and find_text_on_screen in the opt-in `ocr` toolset 2,088 more; M6.7's set_window_zorder (522), the `monitor` parameters beside the deprecated monitorIndex, set_window_bounds' percent placement (233), get_monitors' identity fields and get_server_info's pinnedWindows 1,426 more) | 67,988 | 68,024 |
-| Default tools/list | The 60 tools a server serves without WAM_TOOLSETS, WAM_EXCLUDE_TOOLS and WAM_READ_ONLY, 214,327 bytes (`DefaultToolList_StaysWithinItsBudget`, roadmap M6.1; 59,627 before M6.1a, 60,032 after it with 70 tools, 9,027 fewer once M6.1b moved the nine deprecated tools and the three geometry batches to opt-in toolsets, 392 more with M6.6's list_processes and get_window_info fields, 1,055 more with M6.2's run_steps in the `steps` toolset, on by default, 1,131 more with M6.7's set_window_zorder in `windows`, the `monitor` parameters, set_window_bounds' percent placement and the get_monitors and get_server_info fields) | 53,582 | 53,618 |
+| tools/list | Every tool's name, title, description, schemas and annotations: 82 tools, 266,245 bytes (`ToolList_StaysWithinItsBudget`; M5.8's six DOM bridge tools added 2,970, 936 of them their window selectors; M5.8's dialog option and the UI Automation browser_handle_dialog 199 more; M6.1a's additive consolidations 405 more: mouse_click's own click checks 249, set_window_bounds' optional pairs 87, get_browser_url's foreground sentence 41, get_monitors' virtualScreen 28; M6.1b's one-line descriptions of the nine deprecated tools and the descriptions that no longer send the agent to them 2,121 fewer; M6.6's list_processes parameters and fields 361 more and get_window_info's integrity fields 31 more; M6.2's run_steps 1,054 more; M6.4's wait_for_visual 1,072 more; M6.3's read_screen_text and find_text_on_screen in the opt-in `ocr` toolset 2,088 more; M6.7's set_window_zorder (522), the `monitor` parameters beside the deprecated monitorIndex, set_window_bounds' percent placement (233), get_monitors' identity fields and get_server_info's pinnedWindows 1,514 more) | 68,076 | 68,112 |
+| Default tools/list | The 60 tools a server serves without WAM_TOOLSETS, WAM_EXCLUDE_TOOLS and WAM_READ_ONLY, 214,551 bytes (`DefaultToolList_StaysWithinItsBudget`, roadmap M6.1; 59,627 before M6.1a, 60,032 after it with 70 tools, 9,027 fewer once M6.1b moved the nine deprecated tools and the three geometry batches to opt-in toolsets, 392 more with M6.6's list_processes and get_window_info fields, 1,055 more with M6.2's run_steps in the `steps` toolset, on by default, 1,187 more with M6.7's set_window_zorder in `windows`, the `monitor` parameters, set_window_bounds' percent placement and the get_monitors and get_server_info fields) | 53,638 | 53,674 |
 
 Every other typical result is at most 300 tokens. When a change makes a result larger on purpose, raise its
 budget in the same change (the failure message gives the new size); when a change shrinks one a lot, lower it.
@@ -2889,23 +2889,23 @@ were capture_with_elements at 2,396 and element_action at 2,386, so they have ab
 | Toolset | Default | Tools | Tokens | Budget |
 |---------|---------|------:|-------:|-------:|
 | `server` | always on | 4 | 1,056 | 1,092 |
-| `windows` | on | 13 | 10,860 | 10,896 |
+| `windows` | on | 13 | 10,884 | 10,920 |
 | `monitors` | on | 1 | 167 | 203 |
-| `capture` | on | 4 | 5,906 | 5,942 |
+| `capture` | on | 4 | 5,914 | 5,950 |
 | `elements` | on | 9 | 8,262 | 8,300 |
 | `input` | on | 10 | 14,758 | 14,800 |
 | `clipboard` | on | 2 | 734 | 750 |
-| `launch` | on | 2 | 2,963 | 2,999 |
+| `launch` | on | 2 | 2,979 | 3,015 |
 | `process` | on | 3 | 2,282 | 2,318 |
 | `layouts` | on | 5 | 1,181 | 1,200 |
 | `steps` | on | 1 | 1,055 | 1,091 |
-| `browser` | on | 6 | 4,348 | 4,384 |
+| `browser` | on | 6 | 4,356 | 4,392 |
 | `browser-actions` | off | 7 | 3,577 | 3,600 |
 | `browser-script` | off | 1 | 468 | 500 |
-| `visual` | off | 1 | 1,137 | 1,173 |
-| `windows-batch` | off | 3 | 2,058 | 2,094 |
+| `visual` | off | 1 | 1,145 | 1,181 |
+| `windows-batch` | off | 3 | 2,066 | 2,102 |
 | `deprecated` | off | 9 | 4,925 | 4,950 |
-| `ocr` | off | 2 | 2,238 | 2,274 |
+| `ocr` | off | 2 | 2,254 | 2,290 |
 
 The rows are measured after M6.1b (October 2026), which moved six tools out of `windows`, two out of `monitors`, three
 out of `input` and one out of `browser` into the opt-in `windows-batch` and `deprecated` toolsets. The deprecated tools'
@@ -2914,10 +2914,10 @@ one-line descriptions keep their full parameters, which are most of the `depreca
 `windows` by 31 (get_window_info's integrity fields in 'full'; 9,921 before), each budget to the measured size plus 36. The `steps` row is measured
 after M6.2 added run_steps (October 2026). M6.4 added the `visual` row
 (wait_for_visual: handle, the window selector, a region, monitorIndex and since). The `ocr` row is M6.3's two tools
-(October 2026), which share their target and result descriptions. M6.7 (October 2026) raised `windows` by 908
+(October 2026), which share their target and result descriptions. M6.7 (October 2026) raised `windows` by 932
 (set_window_zorder, 522; set_window_bounds' unit, relativeTo and monitor; snap_window's and move_window_to_monitor's
 `monitor`), `monitors` by 49 (get_monitors' identity fields in its description), `server` by 18 (pinnedWindows),
-`capture` by 50, `launch` by 73, `browser` by 33, `visual` by 65, `windows-batch` by 80 and `ocr` by 151 (each tool's
+`capture` by 58, `launch` by 89, `browser` by 41, `visual` by 73, `windows-batch` by 88 and `ocr` by 167 (each tool's
 `monitor` beside the deprecated monitorIndex, whose description shrank to one line), each budget to the measured size plus
 36.
 

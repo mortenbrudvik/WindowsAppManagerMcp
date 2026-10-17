@@ -22,6 +22,9 @@ public class MonitorSelectorTests
     [InlineData("\"1\"", 1)]
     [InlineData("\" 3 \"", 3)]
     [InlineData("\"-1\"", -1)]
+    [InlineData("1.0", 1)]
+    [InlineData("1e0", 1)]
+    [InlineData("-1.0", -1)]
     public void AnIndex_IsReadFromANumberOrAStringOfDigits(string json, int index)
     {
         // Act
@@ -49,6 +52,7 @@ public class MonitorSelectorTests
 
     [Theory]
     [InlineData("1.5")]
+    [InlineData("1e10")]
     [InlineData("\"\"")]
     [InlineData("\"   \"")]
     [InlineData("true")]

@@ -51,7 +51,8 @@ public static class MonitorSelectorDescriptions
 {
     /// <summary>The description of every `monitor` parameter.</summary>
     public const string Monitor =
-        "A monitor: index, 'primary', 'left', 'right', 'current' (the foreground window's), or an id or name from get_monitors.";
+        "A monitor: index, 'primary', 'left', 'right', 'current' (the foreground window's, maybe your own terminal's), or an id " +
+        "or name from get_monitors.";
 
     /// <summary>The description of a `monitor` parameter that also takes every monitor in one image.</summary>
     public const string MonitorOrAll = Monitor + " 'all' (or -1): every monitor in one image.";
@@ -72,6 +73,11 @@ public sealed class MonitorSelectorConverter : JsonConverter<MonitorSelector>
         {
             case JsonTokenType.Number when reader.TryGetInt32(out var index):
                 return MonitorSelector.OfIndex(index);
+
+            // 1.0 and 1e0 are the index 1 too: some clients write every number as a double
+            case JsonTokenType.Number when reader.TryGetDouble(out var number) && number == Math.Floor(number) &&
+                                           number is >= int.MinValue and <= int.MaxValue:
+                return MonitorSelector.OfIndex((int)number);
 
             case JsonTokenType.String when reader.GetString() is { } text && !string.IsNullOrWhiteSpace(text):
                 return MonitorSelector.Of(text);

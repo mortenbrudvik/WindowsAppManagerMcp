@@ -803,21 +803,19 @@ public class WindowService : IWindowService
         if (ChangeRefusal(handle) is { } refused)
             return refused;
 
+        if (mode == ZOrderMode.Above && (above is not { } named || !IsValidWindow(named)))
+        {
+            return WindowChangeResult.Failed(handle, WindowErrorCode.InvalidHandle,
+                $"aboveHandle {above ?? 0} is no window (it closed). Nothing was changed. Find it again with find_windows.");
+        }
+
         var window = TopLevel(handle);
         var wasTopmost = IsTopmost(window);
-        WindowChangeResult result;
-        if (mode == ZOrderMode.Above)
+        try
         {
-            if (above is not { } other || !IsValidWindow(other))
-            {
-                return WindowChangeResult.Failed(handle, WindowErrorCode.InvalidHandle,
-                    $"aboveHandle {above ?? 0} is no window (it closed). Nothing was changed. Find it again with find_windows.");
-            }
+            if (mode == ZOrderMode.Above)
+                return PlaceAbove(handle, window, TopLevel(above!.Value));
 
-            result = PlaceAbove(handle, window, TopLevel(other));
-        }
-        else
-        {
             var insertAfter = mode switch
             {
                 ZOrderMode.Top => NativeEnums.HWND_TOP,
@@ -826,19 +824,27 @@ public class WindowService : IWindowService
                 ZOrderMode.NoTopmost => NativeEnums.HWND_NOTOPMOST,
                 _ => throw new ArgumentOutOfRangeException(nameof(mode), mode, "Not a z-order mode.")
             };
-            result = SetZOrder(handle, window, insertAfter);
-            if (result.Success && TopmostRefusal(handle, window, mode) is { } notApplied)
-                result = notApplied;
+            var result = SetZOrder(handle, window, insertAfter);
+            return result.Success && TopmostRefusal(handle, window, mode) is { } notApplied ? notApplied : result;
         }
+        finally
+        {
+            // From what the window is now, whatever the outcome (owner decision D14): a call that failed or did not return in
+            // time can still have made it topmost, and such a window must be listed, not forgotten
+            TrackPin(window, wasTopmost);
+        }
+    }
 
-        if (!result.Success)
-            return result;
-
+    /// <summary>
+    /// Records <paramref name="window"/> as pinned when it is topmost now and was not before the call, and forgets it when it is
+    /// not topmost (or gone). A window that was topmost before keeps whatever it had: the server did not pin it.
+    /// </summary>
+    private void TrackPin(nint window, bool wasTopmost)
+    {
         if (!IsTopmost(window))
             _topmostPins.Unpin(window);
         else if (!wasTopmost)
             _topmostPins.Pin(window, _nativeWrapper.GetWindowThreadId(window));
-        return result;
     }
 
     /// <summary>The top-level window of <paramref name="handle"/>, which has the place in the z-order; itself when it has none.</summary>
@@ -870,9 +876,11 @@ public class WindowService : IWindowService
     /// <summary>
     /// Places <paramref name="window"/> directly above <paramref name="other"/>: behind the window in front of it, in its band.
     /// A window that is topmost is above every window that is not, so nothing is sent for it; one that is not becomes topmost
-    /// first when the other is (it can only be above a topmost window as one). A normal window that would go behind a topmost
-    /// one goes to the top of the normal windows instead (HWND_TOP), which is the same place, so it never becomes topmost by
-    /// the way it is inserted. Read back: ZOrderNotApplied unless it is in front of the other afterwards.
+    /// first when the other is (it can only be above a topmost window as one), and is made not topmost again when the rest of
+    /// the placement fails, so a failed call leaves no new topmost window. A normal window that would go behind a topmost one
+    /// goes to the top of the normal windows instead (HWND_TOP), which is the same place, so it never becomes topmost by the way
+    /// it is inserted. Read back: ZOrderNotApplied unless it is in front of the other afterwards, InvalidHandle when either
+    /// window closed meanwhile.
     /// </summary>
     private WindowChangeResult PlaceAbove(nint handle, nint window, nint other)
     {
@@ -893,10 +901,26 @@ public class WindowService : IWindowService
             // HWND_TOPMOST takes it to the front of the topmost windows; then behind the one in front of the other, if any
             if (SetZOrder(handle, window, NativeEnums.HWND_TOPMOST) is { Success: false } notTopmost)
                 return notTopmost;
-            if (inFront != nint.Zero && SetZOrder(handle, window, inFront) is { Success: false } notBehind)
-                return notBehind;
+
+            WindowChangeResult placed;
+            try
+            {
+                placed = inFront != nint.Zero ? SetZOrder(handle, window, inFront) : WindowChangeResult.Done(handle);
+                if (placed.Success)
+                    placed = ReadBackAbove(handle, window, other);
+            }
+            catch (WindowNotRespondingException)
+            {
+                UndoTopmost(handle, window);
+                throw;
+            }
+
+            if (!placed.Success)
+                UndoTopmost(handle, window);
+            return placed;
         }
-        else if (!already)
+
+        if (!already)
         {
             var insertAfter = inFront == nint.Zero || IsTopmost(inFront) && !otherTopmost
                 ? otherTopmost ? NativeEnums.HWND_TOPMOST : NativeEnums.HWND_TOP
@@ -905,14 +929,44 @@ public class WindowService : IWindowService
                 return notPlaced;
         }
 
+        return ReadBackAbove(handle, window, other);
+    }
+
+    /// <summary>Done when <paramref name="window"/> is in front of <paramref name="other"/> now; InvalidHandle when either closed.</summary>
+    private WindowChangeResult ReadBackAbove(nint handle, nint window, nint other)
+    {
         var after = EnumerateTopLevelWindows(_nativeWrapper);
         var windowAfter = after.IndexOf(window);
         var otherAfter = after.IndexOf(other);
-        return windowAfter >= 0 && (otherAfter < 0 || windowAfter < otherAfter)
+        if (windowAfter < 0)
+            return WindowGone(handle);
+
+        if (otherAfter < 0)
+        {
+            return WindowChangeResult.Failed(handle, WindowErrorCode.InvalidHandle,
+                "aboveHandle closed during the call, so the window is above nothing. Check its place with get_window_info.");
+        }
+
+        return windowAfter < otherAfter
             ? WindowChangeResult.Done(handle)
             : WindowChangeResult.Failed(handle, WindowErrorCode.ZOrderNotApplied,
                 "Windows took the change, but the window is not above the other window when read back: an app changed the z-order " +
                 "again. Check it with get_window_info.");
+    }
+
+    /// <summary>
+    /// Makes a window the failed 'above' made topmost not topmost again. A refusal or a window that does not answer is left as it
+    /// is: the pin then follows what the window is (TrackPin), so get_server_info still lists it.
+    /// </summary>
+    private void UndoTopmost(nint handle, nint window)
+    {
+        try
+        {
+            SetZOrder(handle, window, NativeEnums.HWND_NOTOPMOST);
+        }
+        catch (WindowNotRespondingException)
+        {
+        }
     }
 
     /// <summary>SetWindowZOrder, with a deadline (<see cref="IWindowCallRunner"/>); a refusal as a placement's (AccessDenied).</summary>
