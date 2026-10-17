@@ -1,5 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 using WindowsAppManagerMcp.Infrastructure;
 using WindowsAppManagerMcp.Native;
 using WindowsAppManagerMcp.Services;
@@ -26,16 +27,19 @@ namespace WindowsAppManagerMcp.E2ETests.Harness;
 /// <remarks>
 /// Tests call the services directly. The in-process MCP host (<see cref="InProcessMcpServer"/>, shared with the contract
 /// tests) can run the real MCP pipeline in this tier too; a scenario that hosts the server's tools through it must hand
-/// them this harness's guarded services, not the defaults of <see cref="ServiceRegistration.AddWindowsAppManagerServices"/>.
+/// them this harness's guarded services, not the defaults of <see cref="ServiceRegistration.AddWindowsAppManagerServices"/>:
+/// <see cref="StartMcpServerAsync"/> does (run_steps, roadmap M6.2, whose steps only the pipeline can run).
 /// </remarks>
 public sealed class ServerHarness : IDisposable
 {
     private readonly ServiceProvider _provider;
+    private readonly IReadOnlyList<ServiceDescriptor> _registrations;
     private readonly string _layoutsPath;
 
-    private ServerHarness(ServiceProvider provider, string layoutsPath, IReadOnlyList<Type> guardedWrappers)
+    private ServerHarness(ServiceCollection services, string layoutsPath, IReadOnlyList<Type> guardedWrappers)
     {
-        _provider = provider;
+        _registrations = services.ToList();
+        _provider = services.BuildServiceProvider();
         _layoutsPath = layoutsPath;
         GuardedWrappers = guardedWrappers;
     }
@@ -57,6 +61,46 @@ public sealed class ServerHarness : IDisposable
     public IMonitorService Monitors => Get<IMonitorService>();
 
     public T Get<T>() where T : notnull => _provider.GetRequiredService<T>();
+
+    /// <summary>
+    /// Starts the in-process MCP host with the server's own tools and call filters
+    /// (<see cref="ServiceRegistration.AddWindowsAppManagerTools"/>, every toolset) over this harness's services
+    /// (<see cref="Forward"/>), so a call goes through the real pipeline (binding, the audit log, error reporting, the
+    /// undeclared-argument refusal, the input gate) and acts only through this harness's guard. A scenario that calls
+    /// run_steps (roadmap M6.2) needs it: its steps are tool calls inside the server.
+    /// </summary>
+    public Task<InProcessMcpServer> StartMcpServerAsync() =>
+        InProcessMcpServer.StartAsync(
+            [],
+            builder => builder.AddWindowsAppManagerTools(),
+            configureServices: host => Forward(_registrations, _provider, host));
+
+    /// <summary>
+    /// Registers in <paramref name="host"/> (an MCP host's service collection) every service type of
+    /// <paramref name="registrations"/> that the host does not register itself, resolved from <paramref name="provider"/>:
+    /// the host's tools and filters then get the harness's own instances, behind its guard, and the harness and the host
+    /// share one input session, one element registry and one audit log. Hosted services are left out, as the harness runs
+    /// none (no pause hotkey is registered, no audit file is pruned); so are keyed and open generic registrations.
+    /// </summary>
+    internal static void Forward(IEnumerable<ServiceDescriptor> registrations, IServiceProvider provider, IServiceCollection host)
+    {
+        ArgumentNullException.ThrowIfNull(registrations);
+        ArgumentNullException.ThrowIfNull(provider);
+        ArgumentNullException.ThrowIfNull(host);
+
+        var types = registrations
+            .Where(d => !d.IsKeyedService && !d.ServiceType.IsGenericTypeDefinition && d.ServiceType != typeof(IHostedService))
+            .Select(d => d.ServiceType)
+            .Distinct()
+            .ToList();
+        foreach (var type in types)
+        {
+            if (!host.Any(d => d.ServiceType == type))
+            {
+                host.AddSingleton(type, _ => provider.GetRequiredService(type));
+            }
+        }
+    }
 
     /// <summary>
     /// Builds the server for a test of <paramref name="tier"/> against the fixture process
@@ -82,7 +126,7 @@ public sealed class ServerHarness : IDisposable
 
         var layoutsPath = Path.Combine(Path.GetTempPath(), "WamE2E", "layouts-" + Guid.NewGuid().ToString("N"));
         var services = CreateServices(tier, fixtureProcessId, probe, layoutsPath, wrapperSubstitute: null, out var guarded, uiaEngine, agentHost);
-        var harness = new ServerHarness(services.BuildServiceProvider(), layoutsPath, guarded);
+        var harness = new ServerHarness(services, layoutsPath, guarded);
         try
         {
             // The server records its host when it starts (HostGuardStartup); the harness runs no hosted service, so it

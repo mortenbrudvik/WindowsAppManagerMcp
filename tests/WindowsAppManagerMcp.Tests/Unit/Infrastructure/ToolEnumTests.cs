@@ -35,7 +35,7 @@ public class ToolEnumTests
             typeof(ElementActionKind), typeof(ElementActionFallback), typeof(ElementValueMode), typeof(ElementScrollDirection),
             typeof(ElementScrollAmount), typeof(CaptureElementDetail), typeof(DesktopStateSection), typeof(DesktopStateScope),
             typeof(ObserveMode), typeof(FileDialogAction), typeof(TextControlChars), typeof(MouseButton), typeof(MouseModifier),
-            typeof(TextInputMethod), typeof(BrowserWaitUntil), typeof(BrowserDialogChoice), typeof(ProcessSort)
+            typeof(TextInputMethod), typeof(BrowserWaitUntil), typeof(BrowserDialogChoice), typeof(ProcessSort), typeof(StepTool)
         });
     }
 

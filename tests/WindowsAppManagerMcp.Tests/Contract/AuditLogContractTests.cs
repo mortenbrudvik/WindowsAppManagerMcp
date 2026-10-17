@@ -46,7 +46,8 @@ public class AuditLogContractTests
             result = await server.CallToolAsync(tool, arguments);
         }
 
-        return (result, services.AuditLines());
+        // The call's own line: run_steps' steps write theirs under "<run's id>#<step>" (roadmap M6.2, RunStepsContractTests)
+        return (result, services.AuditLines().Where(l => !(l.TryGetProperty("requestId", out var id) && id.GetString()!.Contains('#'))).ToList());
     }
 
     [Fact]
@@ -57,7 +58,7 @@ public class AuditLogContractTests
             "release_all_input", "element_action", "respond_to_dialog", "file_dialog", "close_window", "close_windows_batch", "close_application", "kill_process", "close_debug_browser",
             "launch_application", "launch_applications_batch", "launch_browser_with_debug",
             "apply_layout", "save_layout", "delete_layout", "set_clipboard", "get_clipboard", "activate_tab", "browser_navigate",
-            "browser_click", "browser_type", "browser_handle_dialog", "browser_evaluate", "browser_screenshot");
+            "browser_click", "browser_type", "browser_handle_dialog", "browser_evaluate", "browser_screenshot", "run_steps");
     }
 
     [Fact]

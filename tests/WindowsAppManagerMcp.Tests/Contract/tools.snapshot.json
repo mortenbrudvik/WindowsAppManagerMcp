@@ -6746,6 +6746,162 @@
       }
     },
     {
+      "name": "run_steps",
+      "title": "Run Steps",
+      "description": "Run up to 50 steps on one window in one call instead of one call each: a form fill (element_action set_value, toggle, select, invoke), a key sequence, a dialog to wait for and answer. A step is a tool of the list with that tool's own args, as a direct call takes them. Every step is checked first: a wrong one refuses the run (InvalidArguments) and nothing is done. A step that names no window gets window; a step may act only on window, its dialogs and its process's windows (get_focused_element and wait_for_window only read, anywhere). The run holds the input gate (no other call's input lands between steps) for at most maxDurationMs, and stops at the first failed step unless it is optional; the rest are skipped, and nothing is undone. It also stops on a pause (PausedByUser), when maxDurationMs runs out (OperationTimedOut), and when another window takes the front after window or its dialog had it (TargetNotForeground: it never takes it back). Check a state with wait_for_window (condition foreground) or wait_for_element, timeoutMs 0. Refused in a step: paste (type_text types, unicode or keys), file output, window_close, scope desktop, allowHostTarget, and keys that close, quit or lock (ctrl+w, ctrl+q); other keys act in window as in a direct call (ctrl+s saves). A whole value \"$steps.<id>.<path>\" takes an earlier step's ref, handle, captureId or clickPoint.x/y, e.g. \"$steps.find.elements[0].ref\". Returns success, ran, total, stoppedBy, and steps (status ok, failed or skipped, errorCode, elapsedMs; result for a failed step, the last step and return: true), with at most 2 images. Each step is audited as its own call.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "window": {
+            "description": "The run's window: a selector with find_windows' filters, or {\"handle\": n}, resolved to exactly one window before the run; not {\"foreground\": true} alone",
+            "type": "object",
+            "properties": {
+              "handle": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "titleContains": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "titleEquals": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "titleRegex": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "processName": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "processNameContains": {
+                "type": "boolean"
+              },
+              "processId": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "className": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "foreground": {
+                "type": "boolean"
+              },
+              "index": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "includeCloaked": {
+                "type": "boolean"
+              },
+              "includeUntitled": {
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": false
+          },
+          "steps": {
+            "description": "The steps, 1-50, run in order",
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "tool": {
+                  "description": "The tool to call",
+                  "type": "string",
+                  "enum": [
+                    "focus_window",
+                    "find_ui_elements",
+                    "element_action",
+                    "type_text",
+                    "send_keys",
+                    "press_keys",
+                    "mouse_click",
+                    "drag",
+                    "mouse_move",
+                    "scroll",
+                    "wait_for_window",
+                    "wait_for_element",
+                    "get_focused_element",
+                    "capture_window"
+                  ]
+                },
+                "args": {
+                  "description": "The tool's own arguments, as a direct call takes them. A string \"$steps.<id>.<path>\" is an earlier step's ref, handle, captureId or clickPoint x/y",
+                  "type": [
+                    "object",
+                    "null"
+                  ],
+                  "default": null
+                },
+                "id": {
+                  "description": "A name for the step ([A-Za-z0-9_-], at most 32), unique in the run: later steps refer to its result by it",
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "default": null
+                },
+                "optional": {
+                  "description": "True: the run goes on when this step fails (a dialog that may not appear). Default false: a failure stops the run",
+                  "type": "boolean",
+                  "default": false
+                },
+                "return": {
+                  "description": "True: the step's whole result (and its image) is returned, not only its status",
+                  "type": "boolean",
+                  "default": false
+                }
+              },
+              "required": [
+                "tool"
+              ]
+            }
+          },
+          "maxDurationMs": {
+            "description": "How long the run may hold the input gate, in milliseconds (default: 30000, min: 1000, max: 60000); a wait step's timeoutMs is cut to what is left",
+            "type": "integer",
+            "default": 30000
+          },
+          "delayBetweenStepsMs": {
+            "description": "The pause between two steps, in milliseconds (default: 50, min: 0, max: 2000)",
+            "type": "integer",
+            "default": 50
+          }
+        },
+        "required": [
+          "window",
+          "steps"
+        ]
+      },
+      "annotations": {
+        "title": "Run Steps",
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      }
+    },
+    {
       "name": "save_layout",
       "title": "Save Layout",
       "description": "Save the current window arrangement as a named preset. Captures positions of visible windows relative to their monitors. Each placement records the window's exact process name, class, title, executable path, z-order ordinal and state (normal or maximized), so apply_layout can tell several windows of one app apart; minimized windows are not saved, and no launch command is recorded. Saving under an existing name replaces that preset (replaced=true). Fails with NoWindowsCaptured, without touching an existing preset, when no window matches the filters.",
