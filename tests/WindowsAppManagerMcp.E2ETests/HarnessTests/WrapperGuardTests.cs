@@ -355,6 +355,36 @@ public class WrapperGuardTests
         tree.Verify(t => t.SetFocus(node), allowed ? Times.Once() : Times.Never());
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void FixtureOnlyGuard_AllowsAUiaAction_OnAProcessTheScenarioNames(bool named)
+    {
+        // Arrange - an element of this test's own process, which a scenario names (as the Calculator scenario names
+        // CalculatorApp, roadmap M7.6) or does not
+        using var self = System.Diagnostics.Process.GetCurrentProcess();
+        var node = new Mock<IUiaNode>().Object;
+        var tree = new Mock<IUiaTree>();
+        tree.Setup(t => t.ReadIdentity(node)).Returns(new UiaNodeIdentity("Button", "UWP", self.Id, 0, false));
+        var guarded = WrapperGuard.Create(tree.Object,
+            new FixtureOnlyCallPolicy(new FakeDesktop(), FixturePid, uiaActionProcesses: named ? [self.ProcessName] : ["CalculatorApp"]));
+
+        // Act
+        var act = () => guarded.SetFocus(node);
+
+        // Assert
+        if (named)
+        {
+            act.Should().NotThrow();
+        }
+        else
+        {
+            act.Should().Throw<E2EGuardException>().WithMessage("*is not the fixture*");
+        }
+
+        tree.Verify(t => t.SetFocus(node), named ? Times.Once() : Times.Never());
+    }
+
     [Fact]
     public void ReadOnlyGuard_RefusesSetFocus()
     {
