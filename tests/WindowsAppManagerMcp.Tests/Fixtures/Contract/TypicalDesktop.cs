@@ -25,10 +25,17 @@ public static class TypicalDesktop
         "devenv", "rider64", "pwsh", "Docker Desktop"
     ];
 
+    /// <summary>A 2560 x 1440 primary at 125% and a 1080p monitor to its left, each with its identity (roadmap M6.7).</summary>
     public static IReadOnlyList<MonitorInfo> Monitors { get; } =
     [
-        new(0, @"\\.\DISPLAY1", true, new MonitorRect(0, 0, 2560, 1440), new MonitorRect(0, 0, 2560, 1392), 1.25),
+        new(0, @"\\.\DISPLAY1", true, new MonitorRect(0, 0, 2560, 1440), new MonitorRect(0, 0, 2560, 1392), 1.25)
+        {
+            Id = "m-3f9a12c4", FriendlyName = "DELL U2720Q", IsInternal = false
+        },
         new(1, @"\\.\DISPLAY2", false, new MonitorRect(-1920, 180, 1920, 1080), new MonitorRect(-1920, 180, 1920, 1040), 1.0)
+        {
+            Id = "m-81c07e5b", FriendlyName = "LG ULTRAFINE", IsInternal = false
+        }
     ];
 
     public static IReadOnlyList<WindowInfo> Windows { get; } = CreateWindows();

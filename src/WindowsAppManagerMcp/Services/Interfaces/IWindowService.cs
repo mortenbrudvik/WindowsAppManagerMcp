@@ -129,6 +129,16 @@ public interface IWindowService
     /// </summary>
     WindowChangeResult MoveWindowToMonitor(nint handle, int monitorIndex, MonitorPositioning positioning = MonitorPositioning.Center, bool bringToFront = true);
 
+    /// <summary>
+    /// set_window_zorder (roadmap M6.7): changes only the window's place in the z-order, without moving, resizing or activating
+    /// it, and reads it back. <paramref name="above"/> is the window <see cref="ZOrderMode.Above"/> places it directly above
+    /// (topmost too when that window is). A child window's handle stands for its top-level window. Refused like any window
+    /// change (InvalidHandle, TargetDeniedByPolicy, AccessDenied); ZOrderNotApplied when the read-back shows the window was not
+    /// made topmost, not unpinned, or not placed above. The windows it makes topmost are recorded in <see cref="TopmostPins"/>.
+    /// </summary>
+    /// <exception cref="WindowNotRespondingException">The window did not answer in time.</exception>
+    WindowChangeResult SetWindowZOrder(nint handle, ZOrderMode mode, nint? above = null);
+
     bool IsValidWindow(nint handle);
 
     /// <summary>

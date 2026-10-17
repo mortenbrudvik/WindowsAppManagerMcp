@@ -52,7 +52,7 @@ public partial class BrowserReadingTools
             return null;
         }
 
-        if (!LaunchPlacing.TryPlan(placement, _monitorService?.GetAllMonitors().Count, out var plan, out var errorCode, out var error))
+        if (!LaunchPlacing.TryPlan(placement, _monitorService, out var plan, out var errorCode, out var error))
         {
             throw new ToolErrorException(errorCode!, $"{error} Nothing was launched.");
         }

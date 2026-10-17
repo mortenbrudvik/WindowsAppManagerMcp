@@ -31,8 +31,8 @@ public class OcrTools
 
     internal const string TargetDescription =
         "One target: a window (handle or window; read even when covered, except one that does not answer, which is copied " +
-        "from the screen with what covers it (WindowNotResponding); minimized is WindowMinimized, nothing is restored), a screen region (x, y, width, height in physical virtual-screen pixels) or a monitor (monitorIndex, -1 " +
-        "for all); none reads the primary monitor. A window of an app the user's policy denies is refused " +
+        "from the screen with what covers it (WindowNotResponding); minimized is WindowMinimized, nothing is restored), a screen region (x, y, width, height in physical virtual-screen pixels) or a monitor (monitor, 'all' " +
+        "for all; MonitorNotFound when it names none); none reads the primary monitor. A window of an app the user's policy denies is refused " +
         "(TargetDeniedByPolicy), and such windows are blacked out of a region or monitor before OCR (maskedWindows). ";
 
     internal const string OcrResultDescription =
@@ -46,7 +46,6 @@ public class OcrTools
 
     private const string RegionDescription = "With x, y, width and height: the region's ";
 
-    private const string MonitorDescription = "Monitor index (0-based, see get_monitors), or -1 for every monitor in one image.";
 
     private const string IncludeFrameDescription = "For a window: read its frame (title bar) too. Default: true";
 
@@ -55,15 +54,18 @@ public class OcrTools
     private readonly IOcrService _ocr;
     private readonly IScreenshotService _screenshots;
     private readonly IWindowService _windowService;
+    private readonly IMonitorService? _monitorService;
 
     /// <param name="ocr">The OCR reads.</param>
     /// <param name="screenshots">The monitors, for the primary monitor when no target is given.</param>
     /// <param name="windowService">Resolves the window selector.</param>
-    public OcrTools(IOcrService ocr, IScreenshotService screenshots, IWindowService windowService)
+    /// <param name="monitorService">Resolves a `monitor` name (roadmap M6.7). The server always passes it; without it a name fails.</param>
+    public OcrTools(IOcrService ocr, IScreenshotService screenshots, IWindowService windowService, IMonitorService? monitorService = null)
     {
         _ocr = ocr;
         _screenshots = screenshots;
         _windowService = windowService;
+        _monitorService = monitorService;
     }
 
     [McpServerTool(Name = "read_screen_text", Title = "Read Screen Text (OCR)", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
@@ -84,7 +86,7 @@ public class OcrTools
         int? width = null,
         [Description(RegionDescription + "height in pixels")]
         int? height = null,
-        [Description(MonitorDescription)]
+        [Description(MonitorSelectorDescriptions.DeprecatedIndex)]
         int? monitorIndex = null,
         [Description(IncludeFrameDescription)]
         bool includeFrame = true,
@@ -94,11 +96,13 @@ public class OcrTools
         OcrDetail detail = OcrDetail.Lines,
         [Description("The most lines to return (default: 150, min: 1, max: 500).")]
         int maxLines = DefaultMaxLines,
+        [Description(MonitorSelectorDescriptions.MonitorOrAll)]
+        MonitorSelector? monitor = null,
         IProgress<ProgressNotificationValue>? progress = null,
         CancellationToken cancellationToken = default)
     {
         CheckRange(nameof(maxLines), maxLines, MaxLinesLimit);
-        var target = Target(handle, window, x, y, width, height, monitorIndex, includeFrame);
+        var target = Target(handle, window, x, y, width, height, monitorIndex, monitor, includeFrame);
         return await _ocr.ReadTextAsync(new OcrRequest(target, language), detail, maxLines, ToolProgress.ForServices(progress), cancellationToken)
             .ConfigureAwait(false);
     }
@@ -128,7 +132,7 @@ public class OcrTools
         int? width = null,
         [Description(RegionDescription + "height in pixels")]
         int? height = null,
-        [Description(MonitorDescription)]
+        [Description(MonitorSelectorDescriptions.DeprecatedIndex)]
         int? monitorIndex = null,
         [Description(IncludeFrameDescription)]
         bool includeFrame = true,
@@ -136,6 +140,8 @@ public class OcrTools
         string? language = null,
         [Description("The most matches to return (default: 20, min: 1, max: 100).")]
         int maxResults = DefaultMaxResults,
+        [Description(MonitorSelectorDescriptions.MonitorOrAll)]
+        MonitorSelector? monitor = null,
         IProgress<ProgressNotificationValue>? progress = null,
         CancellationToken cancellationToken = default)
     {
@@ -143,7 +149,7 @@ public class OcrTools
         var matcher = OcrTextMatcher.TryCreate(text ?? string.Empty, match, caseSensitive, out var invalid) ??
                       throw new ToolErrorException(ToolErrorReporting.InvalidArgumentsErrorCode, invalid + " Nothing was read.");
 
-        var target = Target(handle, window, x, y, width, height, monitorIndex, includeFrame);
+        var target = Target(handle, window, x, y, width, height, monitorIndex, monitor, includeFrame);
         try
         {
             return await _ocr.FindTextAsync(new OcrRequest(target, language), matcher, maxResults, ToolProgress.ForServices(progress),
@@ -164,7 +170,7 @@ public class OcrTools
     /// </summary>
     /// <exception cref="ToolErrorException">Two targets, part of a region, or a window that does not resolve.</exception>
     private CaptureTarget Target(long? handle, WindowSelector? window, int? x, int? y, int? width, int? height, int? monitorIndex,
-        bool includeFrame)
+        MonitorSelector? monitor, bool includeFrame)
     {
         int?[] region = [x, y, width, height];
         var regionParts = region.Count(value => value != null);
@@ -175,11 +181,13 @@ public class OcrTools
         }
 
         var windowNamed = handle != null || window != null;
-        if ((windowNamed ? 1 : 0) + (regionParts == 4 ? 1 : 0) + (monitorIndex != null ? 1 : 0) > 1)
+        if ((windowNamed ? 1 : 0) + (regionParts == 4 ? 1 : 0) + (monitorIndex != null || monitor != null ? 1 : 0) > 1)
         {
             throw new ToolErrorException(ToolErrorReporting.InvalidArgumentsErrorCode,
-                "Pass one target: a window (handle or window), a region (x, y, width, height) or monitorIndex. Nothing was read.");
+                "Pass one target: a window (handle or window), a region (x, y, width, height) or monitor. Nothing was read.");
         }
+
+        var index = MonitorTargeting.Index(_monitorService, monitorIndex, monitor, allowAll: true, "Nothing was read.");
 
         if (windowNamed)
         {
@@ -188,7 +196,7 @@ public class OcrTools
 
         return regionParts == 4
             ? new CaptureTarget.Region(x!.Value, y!.Value, width!.Value, height!.Value)
-            : new CaptureTarget.Monitor(monitorIndex ?? _screenshots.ListScreens().PrimaryIndex);
+            : new CaptureTarget.Monitor(index ?? _screenshots.ListScreens().PrimaryIndex);
     }
 
     private static void CheckRange(string name, int value, int max)

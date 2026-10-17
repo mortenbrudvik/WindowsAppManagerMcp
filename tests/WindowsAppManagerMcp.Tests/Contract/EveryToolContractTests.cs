@@ -34,7 +34,8 @@ public class EveryToolContractTests
             ["get_window_info"] = Args("""{ "window": { "processName": "notepad" }, "detail": "full" }"""),
             ["wait_for_window"] = Args("""{ "window": { "titleEquals": "Save As" }, "excludeHandles": [1706796] }"""),
             ["snap_window"] = Args("""{ "handle": 1706796, "position": "left_half" }"""),
-            ["move_window_to_monitor"] = Args("""{ "handle": 1706796, "monitorIndex": 1 }"""),
+            ["move_window_to_monitor"] = Args("""{ "handle": 1706796, "monitor": "left" }"""),
+            ["set_window_zorder"] = Args("""{ "handle": 1706796, "mode": "topmost" }"""),
             // The windows-batch toolset (roadmap M6.1), off by default
             ["set_windows_bounds_batch"] = Args("""
                 { "placements": [

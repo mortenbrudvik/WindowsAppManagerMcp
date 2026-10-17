@@ -53,12 +53,17 @@ public static class ServiceRegistration
         // launch_browser_with_debug's wait for the DevTools endpoint (roadmap M5.1): /json/version through ICdpService, so
         // the E2E harness's refusal of ICdpService covers it too
         services.AddSingleton<IDebugBrowserReadiness, DebugBrowserReadinessProbe>();
-        services.AddSingleton<IMonitorService, MonitorService>();
+        // The monitor reads are created here unless a test host registered its own; a `monitor` of 'current' is the
+        // foreground window's monitor (roadmap M6.7)
+        services.AddSingleton<IMonitorService>(sp => new MonitorService(
+            sp.GetService<INativeMonitorWrapper>() ?? new NativeMonitorWrapper(), sp.GetRequiredService<INativeWindowWrapper>()));
         // SetWindowPos and ShowWindow wait for the window's thread; this gives up on a hung window at a deadline,
         // so a window tool cannot hold the input gate until the application recovers
         services.AddSingleton<IWindowCallRunner, WindowCallRunner>();
         // Tells windows on other virtual desktops from suspended or prelaunched frames the shell cloaks the same way
         services.AddSingleton<INativeVirtualDesktopWrapper, NativeVirtualDesktopWrapper>();
+        // The windows set_window_zorder made topmost (roadmap M6.7), which get_server_info lists
+        services.AddSingleton<TopmostPins>();
         services.AddSingleton<IWindowService, WindowService>();
         // Verified close (roadmap M2.5): waits for closed windows and reads their prompts through UI Automation
         services.AddSingleton<IWindowCloseVerifier, WindowCloseVerifier>();
@@ -225,7 +230,8 @@ public static class ServiceRegistration
             sp.GetRequiredService<IAuditLog>(),
             sp.GetService<ClipboardOptions>(),
             ProtocolAllowlist.FromEnvironment(),
-            sp.GetService<UiaEngineOptions>()));
+            sp.GetService<UiaEngineOptions>(),
+            sp.GetService<TopmostPins>()));
 
         // The audit log of input and destructive actions (roadmap M2.17), written by AuditLogToolFilter
         services.AddSingleton<IAuditLog>(sp => new AuditLog(

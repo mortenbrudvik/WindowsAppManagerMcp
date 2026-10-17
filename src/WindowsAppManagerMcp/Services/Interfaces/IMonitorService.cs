@@ -15,4 +15,10 @@ public interface IMonitorService
     int GetMonitorIndex(nint windowHandle);
 
     MonitorRect CalculateSnapBounds(int monitorIndex, SnapPosition position);
+
+    /// <summary>
+    /// The monitor a `monitor` argument names (roadmap M6.7), resolved on the current monitors by
+    /// <see cref="MonitorSelection.Resolve"/>; 'current' is the monitor of the foreground window.
+    /// </summary>
+    MonitorResolution ResolveMonitor(MonitorSelector selector);
 }

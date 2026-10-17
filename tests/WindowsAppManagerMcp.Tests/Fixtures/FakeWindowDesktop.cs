@@ -112,4 +112,70 @@ public sealed class FakeWindowDesktop
         Native.Setup(n => n.GetWindowThreadProcessId(hWnd)).Returns(processId);
         Native.Setup(n => n.GetProcessName(processId)).Returns(processName);
     }
+
+    /// <summary>The top-level windows, front to back.</summary>
+    public IReadOnlyList<nint> ZOrder => _topLevel.ToList();
+
+    /// <summary>Every SetWindowZOrder call, in order, since <see cref="AcceptZOrderChanges"/>.</summary>
+    public List<(nint Window, nint InsertAfter, uint Flags)> ZOrderCalls { get; } = [];
+
+    /// <summary>Whether the window has WS_EX_TOPMOST now.</summary>
+    public bool IsTopmost(nint hWnd) => (ExtendedStyle(hWnd) & WsExTopmost) != 0;
+
+    /// <summary>
+    /// SetWindowZOrder (roadmap M6.7) succeeds and moves the window as Windows does: HWND_TOPMOST to the front, topmost;
+    /// HWND_NOTOPMOST to the top of the normal windows, not topmost; HWND_TOP to the top of its band; HWND_BOTTOM to the
+    /// back, not topmost; a window handle directly behind that window, in that window's band. With
+    /// <paramref name="keepsOwnTopmost"/> the app puts its topmost state back at once (WPF Topmost and some games do).
+    /// </summary>
+    public void AcceptZOrderChanges(bool keepsOwnTopmost = false)
+    {
+        Native.Setup(n => n.SetWindowZOrder(It.IsAny<nint>(), It.IsAny<nint>(), It.IsAny<uint>()))
+            .Callback<nint, nint, uint>((hWnd, insertAfter, flags) =>
+            {
+                ZOrderCalls.Add((hWnd, insertAfter, flags));
+                var wasTopmost = IsTopmost(hWnd);
+                Place(hWnd, insertAfter);
+                if (keepsOwnTopmost)
+                    SetTopmost(hWnd, wasTopmost);
+            })
+            .Returns(Win32CallResult.Ok);
+    }
+
+    private void Place(nint hWnd, nint insertAfter)
+    {
+        _topLevel.Remove(hWnd);
+        int TopOfNormalBand() => _topLevel.FindLastIndex(IsTopmost) + 1;
+        switch ((long)insertAfter)
+        {
+            case -1:
+                SetTopmost(hWnd, true);
+                _topLevel.Insert(0, hWnd);
+                break;
+            case -2:
+                SetTopmost(hWnd, false);
+                _topLevel.Insert(TopOfNormalBand(), hWnd);
+                break;
+            case 0:
+                _topLevel.Insert(IsTopmost(hWnd) ? 0 : TopOfNormalBand(), hWnd);
+                break;
+            case 1:
+                SetTopmost(hWnd, false);
+                _topLevel.Add(hWnd);
+                break;
+            default:
+                SetTopmost(hWnd, IsTopmost(insertAfter));
+                _topLevel.Insert(_topLevel.IndexOf(insertAfter) + 1, hWnd);
+                break;
+        }
+    }
+
+    /// <summary>Sets or clears WS_EX_TOPMOST, as the window's app or Windows does.</summary>
+    public void SetTopmost(nint hWnd, bool topmost)
+    {
+        var style = topmost ? ExtendedStyle(hWnd) | WsExTopmost : ExtendedStyle(hWnd) & ~WsExTopmost;
+        Native.Setup(n => n.GetWindowLongPtr(hWnd, GwlExStyle)).Returns(new nint(style));
+    }
+
+    private long ExtendedStyle(nint hWnd) => (long)Native.Object.GetWindowLongPtr(hWnd, GwlExStyle);
 }

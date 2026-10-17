@@ -31,7 +31,7 @@ An MCP (Model Context Protocol) server that enables AI assistants like Claude to
 - **Layout Presets** - Save and restore window arrangements
 - **Server Info and Instructions** - `get_server_info` reports the build, the DPI awareness, the desktop state, the agent's host windows, the pause and the toolsets in force, with warnings; every MCP client gets usage instructions in the handshake, with or without the plugin skill
 - **Resources and Prompts** - Three read-only MCP resources (`wam://monitors`, `wam://windows`, `wam://layouts/{name}`) with the JSON of get_monitors, find_windows and get_layout, and four prompts (`automate_app`, `arrange_workspace`, `fill_form`, `diagnose_click`) that write out the locate, act, verify loop for clients without the plugin skill; they follow the toolsets and add nothing to tools/list. See [Resources and Prompts](docs/TOOLS.md#resources-and-prompts)
-- **Toolsets** - Serve only the tools you want (`WAM_TOOLSETS`, `WAM_EXCLUDE_TOOLS`), or only tools that read (`WAM_READ_ONLY=1`); see [Toolsets](docs/TOOLS.md#toolsets). The default serves 60 of the 83 tools: the browser actions and scripts, the visual waits, the window batches, OCR and the nine deprecated tools are opt-in
+- **Toolsets** - Serve only the tools you want (`WAM_TOOLSETS`, `WAM_EXCLUDE_TOOLS`), or only tools that read (`WAM_READ_ONLY=1`); see [Toolsets](docs/TOOLS.md#toolsets). The default serves 61 of the 84 tools: the browser actions and scripts, the visual waits, the window batches, OCR and the nine deprecated tools are opt-in
 - **Audit Log** - Every input, element action, dialog answer, close, kill, launch, layout-write (apply, save, delete), clipboard and browser tab or navigation call is recorded, without typed text, values or clipboard content, so you can see afterwards what was sent where; see [Audit log](docs/TOOLS.md#audit-log)
 
 ## Installation
@@ -111,12 +111,12 @@ so `serverInfo.version` shows a different commit SHA (`X.Y.Z+<tag commit>` for t
 `X.Y.Z+<commit before the release commit>` for the plugin exe).
 
 <!-- tools:begin tool-table (generated from tools/list: run the tests with UPDATE_SNAPSHOTS=1, see TESTING.md) -->
-## Available Tools (83)
+## Available Tools (84)
 
 | Category | Tools |
 |----------|-------|
 | Window Discovery | `find_windows`, `get_all_windows`, `get_foreground_window`, `get_owned_windows`, `get_window_info`, `wait_for_window` |
-| Window Control | `move_window`, `resize_window`, `set_window_bounds`, `set_window_state`, `focus_window`, `close_window`, `snap_window`, `move_window_to_monitor` |
+| Window Control | `move_window`, `resize_window`, `set_window_bounds`, `set_window_state`, `focus_window`, `close_window`, `snap_window`, `move_window_to_monitor`, `set_window_zorder` |
 | Batch Operations | `set_windows_bounds_batch`, `snap_windows_batch`, `set_windows_state_batch`, `close_windows_batch`, `launch_applications_batch` |
 | Monitor Info | `get_monitors`, `get_primary_monitor` |
 | Screenshot | `list_screens`, `take_screenshot`, `capture_region`, `capture_window`, `capture_with_elements`, `read_screen_text`, `find_text_on_screen`, `wait_for_visual` |

@@ -142,7 +142,28 @@ public enum WindowErrorCode
     /// seen (satisfied false, timedOut true, the window as last seen). wait_for_element (roadmap M3.8) reports it too, with
     /// the element as last seen and lastObservedState.
     /// </summary>
-    WaitTimedOut = 37
+    WaitTimedOut = 37,
+
+    // Monitor selectors and the z-order (roadmap M6.7):
+
+    /// <summary>
+    /// A `monitor` argument names no monitor: an id no monitor has now, a name that is no monitor, 'current' while no window
+    /// is in the foreground, or 'left' or 'right' with one monitor. Nothing was done. An index that is out of range is
+    /// InvalidMonitorIndex.
+    /// </summary>
+    MonitorNotFound = 38,
+
+    /// <summary>
+    /// A `monitor` argument of 'left' or 'right' fits two monitors stacked above each other; the error lists them. Nothing was
+    /// done.
+    /// </summary>
+    AmbiguousMonitor = 39,
+
+    /// <summary>
+    /// set_window_zorder: Windows took the call, but the window was not where it was asked to be when read back (the app
+    /// re-asserted its own topmost state, or a window of a higher band, such as the shell's, stays above it).
+    /// </summary>
+    ZOrderNotApplied = 40
 }
 
 /// <summary>

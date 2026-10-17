@@ -76,6 +76,8 @@ public sealed class ReadOnlyNativeWindowWrapper(INativeWindowWrapper inner) : IN
     public Win32CallResult SetWindowPos(nint hWnd, int x, int y, int width, int height, uint flags) =>
         throw Refused(nameof(SetWindowPos));
 
+    public Win32CallResult SetWindowZOrder(nint hWnd, nint insertAfter, uint flags) => throw Refused(nameof(SetWindowZOrder));
+
     public bool ShowWindow(nint hWnd, int cmdShow) => throw Refused(nameof(ShowWindow));
 
     public bool SetForegroundWindow(nint hWnd) => throw Refused(nameof(SetForegroundWindow));

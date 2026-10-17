@@ -313,6 +313,12 @@ public static partial class ToolDocGenerator
             return $"string or {TypeName(property["items"])}[]";
         }
 
+        // An index or a name (a `monitor`, roadmap M6.7)
+        if (property?["type"] is JsonArray types && types.Select(t => (string?)t).Where(t => t != "null").SequenceEqual(["integer", "string"]))
+        {
+            return "integer or string";
+        }
+
         var type = PrimaryType(property) ?? "any";
 
         if (type == "array")

@@ -330,6 +330,8 @@ public sealed class ContractServices : IDisposable
             .Returns((nint handle, SnapPosition _, int? _, bool _) => WindowChangeResult.Done(handle));
         Windows.Setup(w => w.MoveWindowToMonitor(It.IsAny<nint>(), It.IsAny<int>(), It.IsAny<MonitorPositioning>(), It.IsAny<bool>()))
             .Returns((nint handle, int _, MonitorPositioning _, bool _) => WindowChangeResult.Done(handle));
+        Windows.Setup(w => w.SetWindowZOrder(It.IsAny<nint>(), It.IsAny<ZOrderMode>(), It.IsAny<nint?>()))
+            .Returns((nint handle, ZOrderMode _, nint? _) => WindowChangeResult.Done(handle));
         // A window that was sent WM_CLOSE leaves the Alt-Tab set, and the verifier reports it closed (roadmap M2.5)
         var closed = new System.Collections.Concurrent.ConcurrentDictionary<nint, bool>();
         Windows.Setup(w => w.CloseWindow(It.IsAny<nint>(), It.IsAny<bool>())).Returns((nint handle, bool _) =>
@@ -398,6 +400,9 @@ public sealed class ContractServices : IDisposable
         Monitors.Setup(m => m.GetAllMonitors()).Returns(TypicalDesktop.Monitors);
         Monitors.Setup(m => m.GetPrimaryMonitor()).Returns(TypicalDesktop.Monitors[0]);
         Monitors.Setup(m => m.GetMonitorIndex(It.IsAny<nint>())).Returns(0);
+        // A `monitor` name resolves on the typical monitors; Notepad, in front, is on the primary (roadmap M6.7)
+        Monitors.Setup(m => m.ResolveMonitor(It.IsAny<MonitorSelector>()))
+            .Returns((MonitorSelector selector) => MonitorSelection.Resolve(TypicalDesktop.Monitors, selector, () => TypicalDesktop.Monitors[0]));
         Screen.Setup(s => s.GetVirtualScreenBounds()).Returns((-1920, 0, 4480, 1440));
 
         Processes.Setup(p => p.LaunchApplicationAsync(It.IsAny<string>(), It.IsAny<string[]?>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
@@ -662,6 +667,8 @@ public sealed class ContractServices : IDisposable
 
         Monitors.Setup(m => m.GetAllMonitors()).Returns([]);
         Monitors.Setup(m => m.GetPrimaryMonitor()).Throws(new InvalidOperationException("No monitors found"));
+        Monitors.Setup(m => m.ResolveMonitor(It.IsAny<MonitorSelector>()))
+            .Returns((MonitorSelector selector) => MonitorSelection.Resolve([], selector, () => null));
         Screen.Setup(s => s.GetVirtualScreenBounds()).Returns((0, 0, 0, 0));
 
         Processes.Setup(p => p.LaunchApplicationAsync(It.IsAny<string>(), It.IsAny<string[]?>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))

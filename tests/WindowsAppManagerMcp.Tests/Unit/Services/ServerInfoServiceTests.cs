@@ -66,6 +66,44 @@ public sealed class ServerInfoServiceTests : IDisposable
         toolsets, _audit.Object);
 
     [Fact]
+    public void Read_ListsTheWindowsTheServerPinned_ThatAreStillTopmost()
+    {
+        // Arrange (roadmap M6.7, owner decision D14): one pin still topmost, one unpinned by its app, one closed, and one whose
+        // handle another thread's window got
+        const long Topmost = 0x8;
+        var pins = new TopmostPins();
+        pins.Pin(0x100, 11);
+        pins.Pin(0x200, 22);
+        pins.Pin(0x300, 33);
+        pins.Pin(0x400, 44);
+        foreach (var (window, thread) in new (nint, uint)[] { (0x100, 11), (0x200, 22), (0x400, 45) })
+        {
+            _windows.Setup(w => w.IsWindow(window)).Returns(true);
+            _windows.Setup(w => w.GetWindowThreadId(window)).Returns(thread);
+            _windows.Setup(w => w.GetWindowLongPtr(window, -20)).Returns(new nint(window == 0x200 ? 0 : Topmost));
+        }
+
+        _windows.Setup(w => w.GetWindowText(0x100)).Returns("Reference - Notepad");
+        _windows.Setup(w => w.GetWindowThreadProcessId(0x100)).Returns(600u);
+        _windows.Setup(w => w.GetProcessName(600u)).Returns("notepad");
+        var sut = new ServerInfoService(_system.Object, _probe.Object, _monitors.Object, _safety.Object, _session, _hotkey.Object,
+            _layouts.Object, _windows.Object, topmostPins: pins);
+
+        // Act
+        var info = sut.Read(Connection, 48);
+
+        // Assert - the others are forgotten
+        info.PinnedWindows.Should().Equal(new PinnedWindowInfo(0x100, "Reference - Notepad", "notepad"));
+        pins.Windows.Select(p => p.Window).Should().Equal((nint)0x100);
+    }
+
+    [Fact]
+    public void Read_LeavesPinnedWindowsOut_WhenThereAreNone()
+    {
+        CreateSut().Read(Connection, 48).PinnedWindows.Should().BeNull();
+    }
+
+    [Fact]
     public void Read_ReportsTheBuildAndTheConnection()
     {
         var info = CreateSut().Read(Connection, servedTools: 48);

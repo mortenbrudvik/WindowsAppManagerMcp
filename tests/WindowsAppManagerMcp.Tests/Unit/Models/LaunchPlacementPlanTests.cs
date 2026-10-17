@@ -65,6 +65,7 @@ public class LaunchPlacementPlanTests
     {
         { new LaunchPlacement(Snap: "left_half", Bounds: new BoundsDto(0, 0, 10, 10)), "InvalidArguments", "snap or bounds" },
         { new LaunchPlacement(Bounds: new BoundsDto(0, 0, 10, 10), MonitorIndex: 1), "InvalidArguments", "monitorIndex" },
+        { new LaunchPlacement(Bounds: new BoundsDto(0, 0, 10, 10), Monitor: MonitorSelector.Of("left")), "InvalidArguments", "leave out monitor" },
         { new LaunchPlacement(Bounds: new BoundsDto(0, 0, 0, 10)), "InvalidArguments", "at least 1 pixel" },
         { new LaunchPlacement(Snap: "left_half", State: "maximized"), "InvalidArguments", "maximized" },
         { new LaunchPlacement(Bounds: new BoundsDto(0, 0, 10, 10), State: "maximized"), "InvalidArguments", "maximized" },

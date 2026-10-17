@@ -29,7 +29,8 @@ public class ServerInfoTools
                  "processes input never reaches (TargetIsAgentHost), whether the user paused input and the pause hotkey, the " +
                  "target policy, destructive chords, clipboard setting and URI schemes launch_application opens, the layouts folder and the " +
                  "audit log folder, the toolsets, excluded tools and read-only mode " +
-                 "in force (a tool you do not see may be turned off there; moved says where a moved tool went), and the UI Automation engine. warnings lists what will " +
+                 "in force (a tool you do not see may be turned off there; moved says where a moved tool went), the UI Automation engine, " +
+                 "and pinnedWindows: windows set_window_zorder made topmost that still are. warnings lists what will " +
                  "make tools fail or coordinates wrong. Call it once at the start, and whenever tools behave unexpectedly. Changes nothing.")]
     public ServerInfoResult GetServerInfo(McpServer server)
     {

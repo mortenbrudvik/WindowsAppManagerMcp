@@ -22,9 +22,12 @@ public record WindowBoundsPlacement(
 public record WindowSnapPlacement(
     [ToolValues(typeof(SnapPosition))] string Position,
     long? Handle = null,
+    [property: Description(MonitorSelectorDescriptions.DeprecatedIndex)]
     int? MonitorIndex = null,
     bool BringToFront = true,
-    WindowSelector? Window = null
+    WindowSelector? Window = null,
+    [property: Description(MonitorSelectorDescriptions.Monitor)]
+    MonitorSelector? Monitor = null
 );
 
 /// <summary>

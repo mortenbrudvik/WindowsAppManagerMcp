@@ -13,6 +13,7 @@ public class ReadOnlyNativeWindowWrapperTests
     public static TheoryData<string, Action<INativeWindowWrapper>> WindowChanges() => new()
     {
         { nameof(INativeWindowWrapper.SetWindowPos), w => w.SetWindowPos(Handle, 0, 0, 100, 100, 0) },
+        { nameof(INativeWindowWrapper.SetWindowZOrder), w => w.SetWindowZOrder(Handle, 0, 0) },
         { nameof(INativeWindowWrapper.ShowWindow), w => w.ShowWindow(Handle, 0) },
         { nameof(INativeWindowWrapper.SetForegroundWindow), w => w.SetForegroundWindow(Handle) },
         { nameof(INativeWindowWrapper.BringWindowToTop), w => w.BringWindowToTop(Handle) },

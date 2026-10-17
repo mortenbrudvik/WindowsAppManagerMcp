@@ -118,6 +118,7 @@ public static class InputGateToolFilter
         "kill_process", "close_window", "close_windows_batch", "close_application", "close_debug_browser",
         "move_window", "resize_window", "set_window_bounds", "set_window_state", "focus_window",
         "snap_window", "move_window_to_monitor", "set_windows_bounds_batch", "snap_windows_batch", "set_windows_state_batch",
+        "set_window_zorder",
         "element_action", "respond_to_dialog", "file_dialog",
         // Find the tab without the gate and take it only to send the command that changes the browser, until the browser
         // answers (at most a second): not for the page's load (roadmap M5.5)

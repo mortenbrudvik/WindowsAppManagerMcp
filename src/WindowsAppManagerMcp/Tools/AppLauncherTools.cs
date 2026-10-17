@@ -22,11 +22,11 @@ public class AppLauncherTools
     /// <summary>What the launch tools say about placement (roadmap M3.13).</summary>
     private const string PlacementDescription =
         "Where to put the window once it is found (implies waiting for it): snap (a snap_window position) or bounds (the visible " +
-        "frame, as set_window_bounds), monitorIndex, state (normal, maximized or minimized) and focus (as focus_window). Checked " +
+        "frame, as set_window_bounds), monitor, state (normal, maximized or minimized) and focus (as focus_window). Checked " +
         "before anything is launched: unknown values fail with InvalidSnapPosition or InvalidState, contradictions (snap with " +
-        "bounds, bounds with monitorIndex, maximized with snap or bounds, focus with minimized, or nothing asked) with " +
-        "InvalidArguments, a monitor that does not exist with InvalidMonitorIndex. The window is then watched for up to 3 s and " +
-        "placed again each time the app moves it back, up to 3 times (reapplied: true)";
+        "bounds, bounds with monitor, maximized with snap or bounds, focus with minimized, or nothing asked) with " +
+        "InvalidArguments, a monitor that does not exist with InvalidMonitorIndex, MonitorNotFound or AmbiguousMonitor. The " +
+        "window is then watched for up to 3 s and placed again each time the app moves it back, up to 3 times (reapplied: true)";
 
     private const string ReuseDescription =
         "Use an open window of the app instead of starting another copy (default false): a window on the current desktop, not " +
@@ -147,8 +147,7 @@ public class AppLauncherTools
                     "it. Launch without placement, and ask the user to arrange the window. Nothing was launched.");
             }
 
-            var monitorCount = MonitorCount();
-            if (!LaunchPlacing.TryPlan(placement, monitorCount, out plan, out var errorCode, out var error))
+            if (!LaunchPlacing.TryPlan(placement, _monitorService, out plan, out var errorCode, out var error))
             {
                 throw new ToolErrorException(errorCode!, $"{error} Nothing was launched.");
             }
@@ -288,9 +287,6 @@ public class AppLauncherTools
                       "not resolve an app's name or appId until the next read (30 seconds) reads them all."
                     : null);
     }
-
-    /// <summary>The number of monitors, to check a placement's monitorIndex before the launch; null without a monitor service.</summary>
-    private int? MonitorCount() => _monitorService?.GetAllMonitors().Count;
 
     /// <summary>
     /// Places the windows of the launches that have a plan (roadmap M3.13) through <see cref="LaunchPlacing.PlaceAsync"/>,
@@ -526,7 +522,6 @@ public class AppLauncherTools
         // service, in request order
         var refusals = new LaunchResultItem?[applications.Length];
         var plans = new LaunchPlacementPlan?[applications.Length];
-        var monitorCount = applications.Any(a => a?.Placement?.MonitorIndex != null) ? MonitorCount() : null;
         for (var i = 0; i < applications.Length; i++)
         {
             var application = applications[i];
@@ -544,7 +539,7 @@ public class AppLauncherTools
                     ErrorCode: ToolErrorReporting.InvalidArgumentsErrorCode);
             }
             else if (application.Placement != null &&
-                     !LaunchPlacing.TryPlan(application.Placement, monitorCount, out plans[i], out var errorCode, out var error))
+                     !LaunchPlacing.TryPlan(application.Placement, _monitorService, out plans[i], out var errorCode, out var error))
             {
                 refusals[i] = new LaunchResultItem(application.Executable, false,
                     Error: $"Item {i}: {error} Nothing was launched for it.", ErrorCode: errorCode);

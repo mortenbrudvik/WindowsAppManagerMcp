@@ -126,6 +126,12 @@ public static class WrapperCatalog
                 [nameof(INativeWindowWrapper.RespondsWithin)] = WrapperMember.Read,
                 [nameof(INativeWindowWrapper.GetDpiForWindow)] = WrapperMember.Read,
                 [nameof(INativeWindowWrapper.SetWindowPos)] = WrapperMember.WindowAction("hWnd"),
+                // set_window_zorder (roadmap M6.7): insertAfter is HWND_TOP, HWND_BOTTOM, HWND_TOPMOST, HWND_NOTOPMOST or the
+                // window to go behind; that window only marks the place and is not changed
+                [nameof(INativeWindowWrapper.SetWindowZOrder)] = WrapperMember.WindowAction("hWnd") with
+                {
+                    OtherHandleParameters = ["insertAfter"]
+                },
                 [nameof(INativeWindowWrapper.ShowWindow)] = WrapperMember.WindowAction("hWnd"),
                 [nameof(INativeWindowWrapper.SetForegroundWindow)] = WrapperMember.WindowAction("hWnd"),
                 [nameof(INativeWindowWrapper.BringWindowToTop)] = WrapperMember.WindowAction("hWnd"),

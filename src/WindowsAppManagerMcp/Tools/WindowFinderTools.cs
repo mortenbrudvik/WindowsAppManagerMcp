@@ -254,7 +254,8 @@ public partial class WindowFinderTools
         HostProcessName: info.HostProcessName,
         HostProcessId: info.HostProcessId,
         IsAgentHost: info.IsAgentHost ? true : null,
-        VisibleBounds: info.VisibleBounds is { } visible ? new BoundsDto(visible.X, visible.Y, visible.Width, visible.Height) : null
+        VisibleBounds: info.VisibleBounds is { } visible ? new BoundsDto(visible.X, visible.Y, visible.Width, visible.Height) : null,
+        IsTopmost: info.IsTopmost ? true : null
     );
 }
 
@@ -265,7 +266,8 @@ public partial class WindowFinderTools
 /// for every other window. Bounds is the window rect (GetWindowRect, with the invisible resize borders of about 7 px left,
 /// right and bottom); VisibleBounds is the visible frame, the rect set_window_bounds, move_window and the geometry
 /// results use (omitted when DWM cannot report it). Title is cut to <see cref="AppText.MaxLength"/> characters, the
-/// ellipsis of a cut one included (roadmap M3.F14); the filters compare the whole title.
+/// ellipsis of a cut one included (roadmap M3.F14); the filters compare the whole title. IsTopmost is true for a topmost
+/// window and omitted for every other (roadmap M6.7).
 /// </summary>
 public record WindowInfoDto(
     long Handle,
@@ -282,7 +284,8 @@ public record WindowInfoDto(
     string? HostProcessName = null,
     int? HostProcessId = null,
     bool? IsAgentHost = null,
-    BoundsDto? VisibleBounds = null
+    BoundsDto? VisibleBounds = null,
+    bool? IsTopmost = null
 );
 
 /// <summary>
@@ -329,7 +332,7 @@ public sealed record WindowDetailsResult(
         var dto = WindowFinderTools.ToDto(info);
         return new WindowDetailsResult(true, dto.Handle, dto.Title, dto.ProcessName, dto.ProcessId, dto.State, dto.Bounds, dto.IsVisible,
             dto.MonitorIndex, dto.ClassName, dto.IsCloaked, dto.OwnerHandle, dto.HostProcessName, dto.HostProcessId, dto.IsAgentHost,
-            VisibleBounds: dto.VisibleBounds);
+            VisibleBounds: dto.VisibleBounds, IsTopmost: dto.IsTopmost);
     }
 
     internal static WindowDetailsResult Full(
