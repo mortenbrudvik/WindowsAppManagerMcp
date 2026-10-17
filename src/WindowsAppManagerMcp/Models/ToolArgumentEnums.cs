@@ -30,6 +30,44 @@ public enum WindowStateRequest
     Restore
 }
 
+/// <summary>Where set_window_zorder puts the window in the z-order (roadmap M6.7).</summary>
+[ToolEnum(WindowsAppManagerMcp.Infrastructure.ToolErrorReporting.InvalidArgumentsErrorCode, "z-order mode")]
+public enum ZOrderMode
+{
+    /// <summary>Above the other windows of its band (HWND_TOP): a normal window stays below topmost ones.</summary>
+    [JsonStringEnumMemberName("top")]
+    Top,
+
+    /// <summary>Behind every other window (HWND_BOTTOM); a topmost window loses topmost.</summary>
+    [JsonStringEnumMemberName("bottom")]
+    Bottom,
+
+    /// <summary>Topmost (HWND_TOPMOST): above every window that is not topmost, also while another window is active.</summary>
+    [JsonStringEnumMemberName("topmost")]
+    Topmost,
+
+    /// <summary>No longer topmost (HWND_NOTOPMOST): to the top of the normal windows.</summary>
+    [JsonStringEnumMemberName("notopmost")]
+    NoTopmost,
+
+    /// <summary>Directly above another window; topmost too when that window is topmost.</summary>
+    [JsonStringEnumMemberName("above")]
+    Above
+}
+
+/// <summary>The unit of set_window_bounds' x, y, width and height (roadmap M6.7).</summary>
+[ToolEnum(WindowsAppManagerMcp.Infrastructure.ToolErrorReporting.InvalidArgumentsErrorCode, "unit", NullMeans = "pixels")]
+public enum BoundsUnit
+{
+    /// <summary>Physical virtual-screen pixels.</summary>
+    [JsonStringEnumMemberName("pixels")]
+    Pixels,
+
+    /// <summary>Percent of a monitor's work area or bounds (RelativeArea).</summary>
+    [JsonStringEnumMemberName("percent")]
+    Percent
+}
+
 /// <summary>Where move_window_to_monitor puts the window on the target monitor's work area.</summary>
 [ToolEnum(nameof(WindowErrorCode.InvalidPositioning), "positioning", NullMeans = "center")]
 public enum MonitorPositioning

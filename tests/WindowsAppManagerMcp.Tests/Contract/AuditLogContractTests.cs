@@ -603,6 +603,44 @@ public class AuditLogContractTests
         line.GetProperty("target").GetProperty("placement").GetProperty("snap").GetString().Should().Be("left_half");
     }
 
+    [Theory]
+    [InlineData("Left", "left")]
+    [InlineData("M-81C07E5B", "m-81c07e5b")]
+    [InlineData("display2", "display2")]
+    public async Task APlacementsMonitorName_IsAuditedAsAName(string given, string recorded)
+    {
+        // Roadmap M6.7: a keyword or id in its canonical case; a device name as given
+        var (_, lines) = await CallAsync("launch_application", new Dictionary<string, object?>
+        {
+            ["executable"] = "notepad",
+            ["placement"] = new Dictionary<string, object?> { ["snap"] = "left_half", ["monitor"] = given }
+        }, PlacesAtTheLeftHalf);
+
+        var placement = lines.Single().GetProperty("target").GetProperty("placement");
+        placement.GetProperty("monitor").GetString().Should().Be(recorded);
+        placement.TryGetProperty("monitorIndex", out _).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task APlacementsMonitorIndex_IsAuditedAsMonitorIndex_AndOtherTextIsNotKept()
+    {
+        var (_, byIndex) = await CallAsync("launch_application", new Dictionary<string, object?>
+        {
+            ["executable"] = "notepad",
+            ["placement"] = new Dictionary<string, object?> { ["snap"] = "left_half", ["monitor"] = 1 }
+        }, PlacesAtTheLeftHalf);
+        var (result, byText) = await CallAsync("launch_application", new Dictionary<string, object?>
+        {
+            ["executable"] = "notepad",
+            ["placement"] = new Dictionary<string, object?> { ["snap"] = "left_half", ["monitor"] = "hunter2" }
+        });
+
+        byIndex.Single().GetProperty("target").GetProperty("placement").GetProperty("monitorIndex").GetInt32().Should().Be(1);
+        result.IsError.Should().BeTrue();
+        byText.Single().GetRawText().Should().NotContain("hunter2");
+        byText.Single().GetProperty("errorCode").GetString().Should().Be(nameof(WindowErrorCode.MonitorNotFound));
+    }
+
     [Fact]
     public async Task ACallRefusedWhileInputIsPaused_IsAuditedAsAnError()
     {

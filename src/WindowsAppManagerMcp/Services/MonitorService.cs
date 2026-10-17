@@ -16,6 +16,7 @@ public class MonitorService : IMonitorService
 
     private readonly INativeMonitorWrapper _nativeMonitors;
     private readonly TimeProvider _timeProvider;
+    private readonly Func<nint>? _foregroundWindow;
 
     // Immutable once published. Tool calls can run concurrently, so a refresh builds a new
     // snapshot and swaps the reference; readers never see a list that is being filled.
@@ -26,10 +27,22 @@ public class MonitorService : IMonitorService
     {
     }
 
-    public MonitorService(INativeMonitorWrapper nativeMonitors, TimeProvider? timeProvider = null)
+    /// <param name="nativeMonitors">The monitor reads.</param>
+    /// <param name="timeProvider">The clock of the snapshot's lifetime; default the system's.</param>
+    /// <param name="foregroundWindow">
+    /// The foreground window, for a `monitor` of 'current' (roadmap M6.7). Without it 'current' is MonitorNotFound.
+    /// </param>
+    public MonitorService(INativeMonitorWrapper nativeMonitors, TimeProvider? timeProvider = null, Func<nint>? foregroundWindow = null)
     {
         _nativeMonitors = nativeMonitors;
         _timeProvider = timeProvider ?? TimeProvider.System;
+        _foregroundWindow = foregroundWindow;
+    }
+
+    /// <summary>The server's monitor service: 'current' is the monitor of <paramref name="windows"/>' foreground window.</summary>
+    public MonitorService(INativeMonitorWrapper nativeMonitors, INativeWindowWrapper windows)
+        : this(nativeMonitors, foregroundWindow: (windows ?? throw new ArgumentNullException(nameof(windows))).GetForegroundWindow)
+    {
     }
 
     private sealed record MonitorSnapshot(ImmutableArray<(nint Handle, MonitorInfo Info)> Monitors, long Timestamp)
@@ -166,5 +179,18 @@ public class MonitorService : IMonitorService
 
         // The visible frame the window gets; the parts of a split tile the work area exactly (SnapMath)
         return SnapMath.Calculate(snapshot.Infos[monitorIndex].WorkArea, position);
+    }
+
+    public MonitorResolution ResolveMonitor(MonitorSelector selector)
+    {
+        ArgumentNullException.ThrowIfNull(selector);
+        return MonitorSelection.Resolve(GetSnapshot().Infos, selector, CurrentMonitor);
+    }
+
+    /// <summary>The monitor of the foreground window, or null when no window is in the foreground.</summary>
+    private MonitorInfo? CurrentMonitor()
+    {
+        var foreground = _foregroundWindow?.Invoke() ?? nint.Zero;
+        return foreground == nint.Zero ? null : GetMonitorForWindow(foreground);
     }
 }

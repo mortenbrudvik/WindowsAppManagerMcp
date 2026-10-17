@@ -25,7 +25,8 @@ public sealed class ServerInfoService(
     IAuditLog? auditLog = null,
     ClipboardOptions? clipboard = null,
     ProtocolAllowlist? protocols = null,
-    UiaEngineOptions? uiaEngine = null) : IServerInfoService
+    UiaEngineOptions? uiaEngine = null,
+    TopmostPins? topmostPins = null) : IServerInfoService
 {
     public ServerInfoResult Read(ServerConnectionInfo connection, int servedTools, IReadOnlyList<string>? resources = null,
         IReadOnlyList<string>? prompts = null)
@@ -93,7 +94,37 @@ public sealed class ServerInfoService(
                 engine.Engine,
                 engine.Source,
                 engine.Engine == UiaEngine.Uia3 ? (int)Native.Uia3Tree.ConnectionTimeoutMs : null,
-                engine.Engine == UiaEngine.Uia3 ? (int)Native.Uia3Tree.TransactionTimeoutMs : null));
+                engine.Engine == UiaEngine.Uia3 ? (int)Native.Uia3Tree.TransactionTimeoutMs : null),
+            ReadPinnedWindows());
+    }
+
+    /// <summary>
+    /// The windows set_window_zorder made topmost that still are (roadmap M6.7): a pin whose window closed, whose handle a
+    /// window of another thread got, or that is no longer topmost (unpinned by its app or the user) is forgotten. Null when
+    /// none is left.
+    /// </summary>
+    private List<PinnedWindowInfo>? ReadPinnedWindows()
+    {
+        if (topmostPins == null)
+            return null;
+
+        var pinned = new List<PinnedWindowInfo>();
+        foreach (var pin in topmostPins.Windows.OrderBy(p => p.Window))
+        {
+            var window = pin.Window;
+            var stillPinned = windows.IsWindow(window) && windows.GetWindowThreadId(window) == pin.ThreadId &&
+                              ((long)windows.GetWindowLongPtr(window, Native.NativeEnums.GWL_EXSTYLE) & Native.NativeEnums.WS_EX_TOPMOST) != 0;
+            if (!stillPinned)
+            {
+                topmostPins.Unpin(window);
+                continue;
+            }
+
+            pinned.Add(new PinnedWindowInfo(window.ToInt64(), AppText.Cut(windows.GetWindowText(window)),
+                windows.GetProcessName(windows.GetWindowThreadProcessId(window))));
+        }
+
+        return pinned.Count == 0 ? null : pinned;
     }
 
     private ServerProcessInfo ReadProcess(List<string> warnings)

@@ -120,6 +120,21 @@ public class WindowFinderToolsTests
     }
 
     [Fact]
+    public void FindWindows_ReportsIsTopmost_OnlyForATopmostWindow()
+    {
+        // Roadmap M6.7: true or left out, so a typical listing costs nothing more
+        _mockWindowService.Setup(w => w.FindWindows(It.IsAny<WindowQuery>())).Returns(new List<WindowInfo>
+        {
+            TestDataFactory.CreateWindowInfo(handleValue: 1) with { IsTopmost = true },
+            TestDataFactory.CreateWindowInfo(handleValue: 2)
+        });
+
+        var rows = CreateSut().FindWindows();
+
+        rows.Select(r => r.IsTopmost).Should().Equal(true, null);
+    }
+
+    [Fact]
     public void FindWindows_LeavesOwnerAndHostNull_ForAnOrdinaryWindow()
     {
         _mockWindowService.Setup(w => w.FindWindows(It.IsAny<WindowQuery>()))

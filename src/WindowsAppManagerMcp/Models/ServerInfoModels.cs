@@ -13,6 +13,9 @@ namespace WindowsAppManagerMcp.Models;
 /// <param name="Toolsets">The toolsets, exclusions and read-only mode in force.</param>
 /// <param name="Warnings">What will make tools fail or coordinates wrong, one sentence each; null when nothing does.</param>
 /// <param name="UiAutomation">The UI Automation engine the element tools use (roadmap M3.2).</param>
+/// <param name="PinnedWindows">
+/// The windows set_window_zorder made topmost that still are (roadmap M6.7, owner decision D14); null when there are none.
+/// </param>
 public sealed record ServerInfoResult(
     ServerBuildInfo Server,
     ServerConnectionInfo Connection,
@@ -25,7 +28,14 @@ public sealed record ServerInfoResult(
     ServerPathsInfo Paths,
     ToolsetInfo Toolsets,
     IReadOnlyList<string>? Warnings,
-    UiAutomationInfo? UiAutomation = null);
+    UiAutomationInfo? UiAutomation = null,
+    IReadOnlyList<PinnedWindowInfo>? PinnedWindows = null);
+
+/// <summary>A window this server made topmost (set_window_zorder) that still is: it stays in front until it is unpinned.</summary>
+/// <param name="Handle">The window handle.</param>
+/// <param name="Title">Its title now, cut as find_windows cuts it.</param>
+/// <param name="ProcessName">Its process's name, or null when it cannot be read.</param>
+public sealed record PinnedWindowInfo(long Handle, string? Title, string? ProcessName);
 
 /// <summary>The UI Automation engine behind get_ui_elements, get_focused_element, get_element_at_point and verified close.</summary>
 /// <param name="Engine">Uia3 (the COM client, the default) or Uia2 (the managed client, WAM_UIA_ENGINE=uia2).</param>

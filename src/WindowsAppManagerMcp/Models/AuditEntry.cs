@@ -62,7 +62,8 @@ public sealed record AuditTarget(
 
 /// <summary>
 /// A launch's placement in an <see cref="AuditEntry"/> (roadmap M3.13): what the arguments asked for (snap and state only
-/// as valid canonical names) and what the result reports; what is unknown is left out.
+/// as valid canonical names; a `monitor` as MonitorIndex when it is an index, and as Monitor only when it is a monitor
+/// keyword, an id or a device name, roadmap M6.7) and what the result reports; what is unknown is left out.
 /// </summary>
 public sealed record AuditPlacement(
     string? Snap = null,
@@ -74,7 +75,8 @@ public sealed record AuditPlacement(
     string? FinalState = null,
     bool? Focused = null,
     bool? Reapplied = null,
-    string? ErrorCode = null);
+    string? ErrorCode = null,
+    string? Monitor = null);
 
 /// <summary>
 /// One item in an <see cref="AuditEntry"/>: a window or launch of a batch, a window close_application sent a close to,

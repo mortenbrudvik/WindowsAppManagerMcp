@@ -5,6 +5,7 @@ using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using ModelContextProtocol.Protocol;
 using WindowsAppManagerMcp.Models;
+using WindowsAppManagerMcp.Services;
 using WindowsAppManagerMcp.Services.Interfaces;
 
 namespace WindowsAppManagerMcp.Infrastructure;
@@ -28,7 +29,7 @@ namespace WindowsAppManagerMcp.Infrastructure;
 /// close_application's, or the dialog respond_to_dialog and file_dialog answered, which is their target) is named by the
 /// title and process the tool noted before acting on it (<see cref="AuditScope"/>).
 /// </remarks>
-public static class AuditRecord
+public static partial class AuditRecord
 {
     /// <summary>A window title is cut to this many characters.</summary>
     public const int MaxTitleLength = 200;
@@ -458,8 +459,31 @@ public static class AuditRecord
     private const string PlacementProperty = "placement";
 
     /// <summary>
+    /// A `monitor` name as the audit log keeps it (roadmap M6.7): a keyword or an id in lower case, a device name (DISPLAYn,
+    /// with or without its prefix) as given; any other text, digits included (an index is MonitorIndex), is not kept (null).
+    /// </summary>
+    internal static string? MonitorName(string? name)
+    {
+        var trimmed = name?.Trim();
+        if (string.IsNullOrEmpty(trimmed))
+            return null;
+
+        var lower = trimmed.ToLowerInvariant();
+        if (lower is MonitorSelection.Primary or MonitorSelection.Left or MonitorSelection.Right or MonitorSelection.Current
+            or MonitorSelection.All or "leftmost" or "rightmost")
+            return lower;
+
+        return MonitorNamePattern().IsMatch(trimmed) ? (lower.StartsWith(MonitorIdentity.IdPrefix, StringComparison.Ordinal) ? lower : trimmed) : null;
+    }
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"^(m-[0-9A-Fa-f]{8}|(\\\\\.\\)?DISPLAY\d{1,3})$",
+        System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.CultureInvariant)]
+    private static partial System.Text.RegularExpressions.Regex MonitorNamePattern();
+
+    /// <summary>
     /// A launch's placement (roadmap M3.13), default-deny: of the arguments only snap and state that are valid values (as
-    /// their canonical names), monitorIndex, the bounds' numbers and focus; of the result (<paramref name="owner"/>'s
+    /// their canonical names), monitorIndex, a monitor that is an index, a keyword, an id or a device name (roadmap M6.7,
+    /// <see cref="MonitorName"/>), the bounds' numbers and focus; of the result (<paramref name="owner"/>'s
     /// placement) the final bounds, a valid final state, focused, reapplied and the errorCode, never the error text. Null
     /// when neither has one.
     /// </summary>
@@ -475,6 +499,7 @@ public static class AuditRecord
         string? snap = null;
         string? state = null;
         int? monitorIndex = null;
+        string? monitor = null;
         BoundsDto? bounds = null;
         bool? focus = null;
         if (request is { } r)
@@ -486,6 +511,18 @@ public static class AuditRecord
             monitorIndex = r.TryGetProperty("monitorIndex", out var m) && m.ValueKind == JsonValueKind.Number && m.TryGetInt32(out var index)
                 ? index
                 : null;
+            if (r.TryGetProperty("monitor", out var selector))
+            {
+                if (selector.ValueKind == JsonValueKind.Number && selector.TryGetInt32(out var selectorIndex))
+                    monitorIndex ??= selectorIndex;
+                else if (selector.ValueKind == JsonValueKind.String && int.TryParse(selector.GetString(),
+                             NumberStyles.AllowLeadingSign | NumberStyles.AllowLeadingWhite | NumberStyles.AllowTrailingWhite,
+                             CultureInfo.InvariantCulture, out var digits))
+                    monitorIndex ??= digits;
+                else if (selector.ValueKind == JsonValueKind.String && MonitorName(selector.GetString()) is { } known)
+                    monitor = known;
+            }
+
             bounds = r.TryGetProperty("bounds", out var b) ? BoundsIn(b) : null;
             focus = r.TryGetProperty("focus", out var f) && f.ValueKind is JsonValueKind.True or JsonValueKind.False ? f.GetBoolean() : null;
         }
@@ -497,7 +534,7 @@ public static class AuditRecord
         var finalState = done == null ? null : Identifier(done, "finalState") is { } fs && Enum.TryParse<WindowState>(fs, true, out _) ? fs : null;
         return new AuditPlacement(snap, monitorIndex, bounds, state, focus, finalBounds, finalState,
             done == null ? null : Bool(done, "focused"), done == null ? null : Bool(done, "reapplied"),
-            done == null ? null : Identifier(done, "errorCode"));
+            done == null ? null : Identifier(done, "errorCode"), monitor);
 
         static BoundsDto? BoundsIn(JsonElement value) =>
             value.ValueKind == JsonValueKind.Object && Number(value, "x") is { } x && Number(value, "y") is { } y &&

@@ -34,6 +34,13 @@ public class WindowManagerTools
         "(find_windows' visibleBounds, not its bounds). A minimized or maximized window is restored to normal first, without " +
         "activating it; one its app hid (in the notification area) is not shown, and the change fails.";
 
+    /// <summary>The monitor errors of snap_window and move_window_to_monitor (roadmap M6.7).</summary>
+    private const string MonitorErrors =
+        " InvalidMonitorIndex, MonitorNotFound, AmbiguousMonitor (two stacked monitors): monitor names no single monitor (nothing changed).";
+
+    /// <summary>How the window tools' argument errors end.</summary>
+    private const string NothingChanged = "Nothing was changed.";
+
     private const string SettleDescription =
         "Wait up to this many milliseconds (0-5000, default 0) for the window to stop moving before it is read: until two reads " +
         "20 ms apart agree. Use it for an app that animates or re-applies its own size after the change.";
@@ -55,6 +62,7 @@ public class WindowManagerTools
     private readonly TimeSpan _answerTimeout;
     private readonly TimeSpan? _gateWaitTimeout;
     private readonly IWindowCloseVerifier _closeVerifier;
+    private readonly IMonitorService? _monitorService;
 
     /// <param name="windowService">Reads and changes windows.</param>
     /// <param name="foregroundService">Brings a window to the front (focus_window).</param>
@@ -65,13 +73,18 @@ public class WindowManagerTools
     /// Waits for closed windows and finds their prompts (roadmap M2.5); default a <see cref="WindowCloseVerifier"/> over
     /// <paramref name="windowService"/> alone, which finds Win32 prompts only.
     /// </param>
+    /// <param name="monitorService">
+    /// Resolves a `monitor` name (roadmap M6.7) and the monitor set_window_bounds' percentages are of. The server always
+    /// passes it; without it a monitor name or unit 'percent' fails.
+    /// </param>
     public WindowManagerTools(
         IWindowService windowService,
         IForegroundService foregroundService,
         IInputSession? session = null,
         TimeSpan? answerTimeout = null,
         TimeSpan? gateWaitTimeout = null,
-        IWindowCloseVerifier? closeVerifier = null)
+        IWindowCloseVerifier? closeVerifier = null,
+        IMonitorService? monitorService = null)
     {
         _windowService = windowService;
         _foregroundService = foregroundService;
@@ -79,6 +92,7 @@ public class WindowManagerTools
         _answerTimeout = answerTimeout ?? UserConfirmation.DefaultAnswerTimeout;
         _gateWaitTimeout = gateWaitTimeout;
         _closeVerifier = closeVerifier ?? new WindowCloseVerifier(windowService);
+        _monitorService = monitorService;
     }
 
     [McpServerTool(Name = "move_window", Title = "Move Window", ReadOnly = false, Destructive = false, Idempotent = true, OpenWorld = false)]
@@ -138,19 +152,22 @@ public class WindowManagerTools
     [Description("Move, resize, or move and resize a window in a single operation: x, y, width and height are its visible frame. " +
                  "Pass x and y to move it (it keeps its size), width and height to resize it (its top-left corner stays), or all four." +
                  PlacementRules +
+                 " unit 'percent': percent (decimals allowed) of monitor's work area (relativeTo 'monitor': its bounds; default the " +
+                 "window's monitor); adjoining values tile exactly." +
                  " A window moved to a monitor with another scale is placed again once the app has rescaled itself." +
                  GeometryResult + WindowChangeErrors +
                  " MoveFailed (ResizeFailed for a size only): Windows did not place it, or it did not return to normal from minimized or maximized (error has the reason). " +
-                 "InvalidArguments (nothing changed): half a pair, no pair, or a width or height below 1.")]
+                 "InvalidArguments (nothing changed): half a pair, no pair, a width or height below 1, pixels that are not whole, " +
+                 "percentages outside 0-100, monitor or relativeTo without percent." + MonitorErrors)]
     public async Task<WindowOperationResult> SetWindowBounds(
-        [Description("X coordinate of the visible frame's left edge (with y)")]
-        int? x = null,
-        [Description("Y coordinate of the visible frame's top edge (with x)")]
-        int? y = null,
-        [Description("New width of the visible frame in pixels, at least 1 (with height)")]
-        int? width = null,
-        [Description("New height of the visible frame in pixels, at least 1 (with width)")]
-        int? height = null,
+        [Description("X of the visible frame's left edge (with y)")]
+        double? x = null,
+        [Description("Y of the visible frame's top edge (with x)")]
+        double? y = null,
+        [Description("Width of the visible frame, at least 1 pixel (with height)")]
+        double? width = null,
+        [Description("Height of the visible frame, at least 1 pixel (with width)")]
+        double? height = null,
         [Description(HandleDescription)]
         long? handle = null,
         [Description(WindowTargeting.WindowDescription)]
@@ -160,20 +177,95 @@ public class WindowManagerTools
         bool? bringToFront = null,
         [Description(SettleDescription)]
         int settleMs = 0,
+        [Description("pixels (default) or percent")]
+        BoundsUnit? unit = null,
+        [Description("With unit 'percent': workArea (default) or monitor (its full bounds)")]
+        RelativeArea? relativeTo = null,
+        [Description(MonitorSelectorDescriptions.Monitor + " With unit 'percent'; default: the window's own.")]
+        MonitorSelector? monitor = null,
         CancellationToken cancellationToken = default)
     {
-        if (BoundsRefusal(x, y, width, height) is { } invalid)
+        var percent = unit == BoundsUnit.Percent;
+        if (BoundsRefusal(x, y, width, height, percent, relativeTo, monitor) is { } invalid)
         {
             return invalid;
         }
 
         var hwnd = Target(handle, window);
+        var monitorIndex = percent ? MonitorTargeting.Index(_monitorService, null, monitor, allowAll: false, NothingChanged) : null;
         using (await EnterGateAsync(cancellationToken).ConfigureAwait(false))
         {
             WindowTargeting.ThrowIfChanged(_windowService, window, hwnd);
-            return Precheck(hwnd) ?? Change(hwnd, BoundsChange(hwnd, x, y, width, height, bringToFront), settleMs);
+            if (Precheck(hwnd) is { } refused)
+                return refused;
+
+            if (!percent)
+                return Change(hwnd, BoundsChange(hwnd, Pixels(x), Pixels(y), Pixels(width), Pixels(height), bringToFront), settleMs);
+
+            // Percentages become pixels once, against the target monitor, before the window moves: the second placement after
+            // a DPI change places the same pixels again (RelativeRectMath)
+            if (PercentBounds(hwnd, monitorIndex, relativeTo ?? RelativeArea.WorkArea, x, y, width, height, out var pixels) is { } notPlaced)
+                return notPlaced;
+
+            return Change(hwnd, BoundsChange(hwnd, pixels.X, pixels.Y, pixels.Width, pixels.Height, bringToFront), settleMs);
         }
     }
+
+    private static int? Pixels(double? value) => value is { } v ? (int)v : null;
+
+    /// <summary>
+    /// set_window_bounds' percentages in pixels (roadmap M6.7): of the work area or bounds of monitor
+    /// <paramref name="monitorIndex"/>, or of the window's own monitor; each value given is converted, as a pair. A monitor
+    /// index that is no monitor is InvalidMonitorIndex, a rectangle under one pixel InvalidArguments. Null when converted.
+    /// </summary>
+    private WindowOperationResult? PercentBounds(nint hwnd, int? monitorIndex, RelativeArea relativeTo, double? x, double? y,
+        double? width, double? height, out (int? X, int? Y, int? Width, int? Height) pixels)
+    {
+        pixels = default;
+        var monitors = MonitorService().GetAllMonitors();
+        var target = monitorIndex is { } index
+            ? index >= 0 && index < monitors.Count ? monitors[index] : null
+            : MonitorService().GetMonitorForWindow(hwnd);
+        if (target == null)
+        {
+            return new WindowOperationResult(false, Error: monitorIndex is { } missing
+                    ? WindowService.MonitorIndexMessage(missing, monitors.Count)
+                    : $"The window's monitor could not be read. {NothingChanged} Pass monitor.",
+                ErrorCode: nameof(InvalidMonitorIndex), Handle: hwnd.ToInt64());
+        }
+
+        var area = RelativeRectMath.AreaOf(target, relativeTo);
+        try
+        {
+            if (x is { } left && y is { } top && width is { } w && height is { } h)
+            {
+                var rect = RelativeRectMath.FromPercent(area, left, top, w, h);
+                pixels = (rect.X, rect.Y, rect.Width, rect.Height);
+            }
+            else if (x is { } px && y is { } py)
+            {
+                var (pointX, pointY) = RelativeRectMath.PointFromPercent(area, px, py);
+                pixels = (pointX, pointY, null, null);
+            }
+            else
+            {
+                var (sizeWidth, sizeHeight) = RelativeRectMath.SizeFromPercent(area, width!.Value, height!.Value);
+                pixels = (null, null, sizeWidth, sizeHeight);
+            }
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+            // Checked before, so only a size that floors to 0 px on this monitor is left
+            return new WindowOperationResult(false,
+                Error: $"width and height in percent give less than one pixel on monitor {target.Index}. {NothingChanged}",
+                ErrorCode: ToolErrorReporting.InvalidArgumentsErrorCode, Handle: hwnd.ToInt64());
+        }
+
+        return null;
+    }
+
+    private IMonitorService MonitorService() =>
+        _monitorService ?? throw new InvalidOperationException("No monitor service is registered.");
 
     /// <summary>
     /// set_window_bounds' change (roadmap M6.1): both pairs place the visible frame in one SetWindowPos; a position alone is
@@ -889,7 +981,7 @@ public class WindowManagerTools
     [Description("Snap a window to predefined screen positions (like Windows Snap Assist). Supported positions: left_half, right_half, top_half, bottom_half, top_left_quarter, top_right_quarter, bottom_left_quarter, bottom_right_quarter, left_third, center_third, right_third, left_two_thirds, right_two_thirds, fullscreen; any other position fails with errorCode InvalidSnapPosition. " +
                  "The visible frames of snapped windows tile the work area exactly: no gap from the invisible borders, no pixel lost on odd sizes." +
                  PlacementRules + GeometryResult + WindowChangeErrors +
-                 " InvalidMonitorIndex: monitorIndex is not a monitor (error gives the valid range). MoveFailed: Windows did not place it, " +
+                 MonitorErrors + " MoveFailed: Windows did not place it, " +
                  "or it did not return to normal from minimized or maximized.")]
     public async Task<WindowOperationResult> SnapWindow(
         [Description("Snap position: left_half, right_half, top_half, bottom_half, top_left_quarter, top_right_quarter, bottom_left_quarter, bottom_right_quarter, left_third, center_third, right_third, left_two_thirds, right_two_thirds, fullscreen")]
@@ -898,8 +990,10 @@ public class WindowManagerTools
         long? handle = null,
         [Description(WindowTargeting.WindowDescription)]
         WindowSelector? window = null,
-        [Description("Target monitor index (0-based, see get_monitors). Defaults to the window's current monitor. An index that is not a monitor fails with InvalidMonitorIndex.")]
+        [Description(MonitorSelectorDescriptions.DeprecatedIndex)]
         int? monitorIndex = null,
+        [Description(MonitorSelectorDescriptions.Monitor + " Default: the window's own.")]
+        MonitorSelector? monitor = null,
         [Description(BringToFrontDescription)]
         bool bringToFront = true,
         [Description(SettleDescription)]
@@ -907,10 +1001,11 @@ public class WindowManagerTools
         CancellationToken cancellationToken = default)
     {
         var hwnd = Target(handle, window);
+        var index = MonitorTargeting.Index(_monitorService, monitorIndex, monitor, allowAll: false, NothingChanged);
         using (await EnterGateAsync(cancellationToken).ConfigureAwait(false))
         {
             WindowTargeting.ThrowIfChanged(_windowService, window, hwnd);
-            return Precheck(hwnd) ?? Change(hwnd, () => _windowService.SnapWindow(hwnd, position, monitorIndex, bringToFront), settleMs);
+            return Precheck(hwnd) ?? Change(hwnd, () => _windowService.SnapWindow(hwnd, position, index, bringToFront), settleMs);
         }
     }
 
@@ -918,13 +1013,13 @@ public class WindowManagerTools
     [Description("Move a window to a specific monitor, optionally positioning it. The window keeps its normal size, made smaller when " +
                  "needed so that it fits the monitor's work area. To a monitor with other scaling it is moved first, and sized after " +
                  "the app has rescaled itself. success requires the window to be on that monitor afterwards." + PlacementRules +
-                 GeometryResult + WindowChangeErrors +
-                 " InvalidMonitorIndex: monitorIndex is not a monitor (error gives the valid range). MoveFailed: Windows did not place it, " +
+                 GeometryResult + WindowChangeErrors + MonitorErrors +
+                 " MoveFailed: Windows did not place it, " +
                  "it did not return to normal from minimized or maximized, or it is not on that monitor afterwards (with 'maximize': not " +
                  "maximized there). An unknown positioning fails with InvalidPositioning.")]
     public async Task<WindowOperationResult> MoveWindowToMonitor(
-        [Description("Target monitor index (0-based, see get_monitors)")]
-        int monitorIndex,
+        [Description(MonitorSelectorDescriptions.DeprecatedIndex)]
+        int? monitorIndex = null,
         [Description(HandleDescription)]
         long? handle = null,
         [Description(WindowTargeting.WindowDescription)]
@@ -935,14 +1030,72 @@ public class WindowManagerTools
         bool bringToFront = true,
         [Description(SettleDescription)]
         int settleMs = 0,
+        [Description(MonitorSelectorDescriptions.Monitor)]
+        MonitorSelector? monitor = null,
         CancellationToken cancellationToken = default)
     {
         var hwnd = Target(handle, window);
+        var index = MonitorTargeting.Index(_monitorService, monitorIndex, monitor, allowAll: false, NothingChanged) ??
+                    throw new ToolErrorException(ToolErrorReporting.InvalidArgumentsErrorCode,
+                        $"Pass monitor, the monitor to move the window to. {NothingChanged}");
         using (await EnterGateAsync(cancellationToken).ConfigureAwait(false))
         {
             WindowTargeting.ThrowIfChanged(_windowService, window, hwnd);
             return Precheck(hwnd) ??
-                   Change(hwnd, () => _windowService.MoveWindowToMonitor(hwnd, monitorIndex, positioning, bringToFront), settleMs);
+                   Change(hwnd, () => _windowService.MoveWindowToMonitor(hwnd, index, positioning, bringToFront), settleMs);
+        }
+    }
+
+    [McpServerTool(Name = "set_window_zorder", Title = "Set Window Z-Order", ReadOnly = false, Destructive = false, Idempotent = true, OpenWorld = false)]
+    [Description("Change a window's place in the z-order without moving or activating it (focus stays). mode: 'top' (above the " +
+                 "other normal windows), 'bottom' (behind all), 'topmost' (pinned above all normal windows, also while another is " +
+                 "active), 'notopmost' (unpinned), 'above' (directly above aboveHandle; topmost if that window is). get_server_info " +
+                 "lists the windows this server pinned (pinnedWindows); unpin them when done. Returns isTopmost and zOrder (0 is the " +
+                 "front) read back. errorCode: InvalidHandle, TargetDeniedByPolicy, AccessDenied (an app running as administrator), " +
+                 "NotResponding, ZOrderNotApplied (the app changed it back).")]
+    public async Task<ZOrderResult> SetWindowZOrder(
+        [Description("Where to put the window")]
+        ZOrderMode mode,
+        [Description(HandleDescription)]
+        long? handle = null,
+        [Description(WindowTargeting.WindowDescription)]
+        WindowSelector? window = null,
+        [Description("With mode 'above': the window to place it above (a handle from find_windows)")]
+        long? aboveHandle = null,
+        CancellationToken cancellationToken = default)
+    {
+        if (mode == ZOrderMode.Above && aboveHandle == null || mode != ZOrderMode.Above && aboveHandle != null)
+        {
+            throw new ToolErrorException(ToolErrorReporting.InvalidArgumentsErrorCode, mode == ZOrderMode.Above
+                ? $"mode 'above' needs aboveHandle, the window to place it above. {NothingChanged}"
+                : $"aboveHandle goes only with mode 'above'. {NothingChanged}");
+        }
+
+        var hwnd = Target(handle, window);
+        if (aboveHandle == hwnd.ToInt64())
+        {
+            throw new ToolErrorException(ToolErrorReporting.InvalidArgumentsErrorCode,
+                $"aboveHandle is the window itself. {NothingChanged} Pass another window to place it above.");
+        }
+
+        using (await EnterGateAsync(cancellationToken).ConfigureAwait(false))
+        {
+            WindowTargeting.ThrowIfChanged(_windowService, window, hwnd);
+            if (Precheck(hwnd) is { } refused)
+                return new ZOrderResult(false, hwnd.ToInt64(), Error: refused.Error, ErrorCode: refused.ErrorCode);
+
+            WindowChangeResult result;
+            try
+            {
+                result = _windowService.SetWindowZOrder(hwnd, mode, aboveHandle is { } above ? (nint)above : null);
+            }
+            catch (WindowNotRespondingException ex)
+            {
+                result = WindowChangeResult.Failed(hwnd, NotResponding, ex.Message);
+            }
+
+            var details = result.ErrorCode == InvalidHandle ? null : _windowService.GetWindowDetails(hwnd);
+            return new ZOrderResult(result.Success, hwnd.ToInt64(), details?.IsTopmost, details?.ZOrder, result.Error, result.ErrorCodeName);
         }
     }
 
@@ -989,11 +1142,12 @@ public class WindowManagerTools
 
     [McpServerTool(Name = "snap_windows_batch", Title = "Snap Windows (Batch)", ReadOnly = false, Destructive = false, Idempotent = true, OpenWorld = false)]
     [Description("Snap multiple windows to predefined positions in a single batch operation. More efficient than multiple individual calls." + BatchErrors +
-                 " InvalidSnapPosition: the item's position is missing or unknown (error lists the positions). InvalidMonitorIndex: its monitorIndex is not a monitor. " +
+                 " InvalidSnapPosition: the item's position is missing or unknown (error lists the positions). InvalidMonitorIndex, " +
+                 "MonitorNotFound, AmbiguousMonitor: its monitor names no single monitor. " +
                  "MoveFailed: Windows did not place the window, or it did not return to normal from minimized or maximized.")]
     public async Task<BatchWindowResult> SnapWindowsBatch(
         [Description("Array of snap placements, each with position, the window as handle or window (a selector, as the single-window " +
-                     "tools take it), optional monitorIndex, and optional bringToFront (raises the window without activating it; a " +
+                     "tools take it), optional monitor, and optional bringToFront (raises the window without activating it; a " +
                      "minimized or maximized window is restored first, without activating it)")]
         WindowSnapPlacement[] placements,
         [Description("Delay between operations in milliseconds (0-5000, default: 50)")]
@@ -1006,14 +1160,20 @@ public class WindowManagerTools
         // Each item's window, resolved before the gate, and its position, checked here, so one bad item fails alone
         var items = ResolveItems(placements, nameof(placements), "a position and a handle or window", p => p.Handle, p => p.Window);
         var positions = new SnapPosition[placements.Length];
+        var monitors = new int?[placements.Length];
         var invalid = items.Select((t, i) =>
         {
             if (t.Refusal != null)
                 return t.Refusal;
 
-            return ToolEnum<SnapPosition>.TryParse(placements[i].Position, out positions[i], out var error)
+            if (!ToolEnum<SnapPosition>.TryParse(placements[i].Position, out positions[i], out var error))
+                return new WindowResultItem(t.Handle.ToInt64(), false, Error: $"Item {i}: {error}", ErrorCode: nameof(InvalidSnapPosition));
+
+            // The item's monitor, resolved before the gate (roadmap M6.7); one that names no single monitor fails the item alone
+            return MonitorTargeting.TryIndex(_monitorService, placements[i].MonitorIndex, placements[i].Monitor, allowAll: false,
+                $"{nameof(placements)}[{i}].", out monitors[i], out var monitorCode, out var monitorError)
                 ? null
-                : new WindowResultItem(t.Handle.ToInt64(), false, Error: $"Item {i}: {error}", ErrorCode: nameof(InvalidSnapPosition));
+                : new WindowResultItem(t.Handle.ToInt64(), false, Error: $"Item {i}: {monitorError}", ErrorCode: monitorCode);
         }).ToList();
 
         using (await EnterGateAsync(cancellationToken).ConfigureAwait(false))
@@ -1025,7 +1185,7 @@ public class WindowManagerTools
             {
                 if (refusals[i] == null)
                 {
-                    servicePlacements.Add((items[i].Handle, positions[i], placements[i].MonitorIndex, placements[i].BringToFront));
+                    servicePlacements.Add((items[i].Handle, positions[i], monitors[i], placements[i].BringToFront));
                 }
             }
 
@@ -1339,9 +1499,11 @@ public class WindowManagerTools
 
     /// <summary>
     /// InvalidArguments for set_window_bounds' optional pairs (roadmap M6.1): x goes with y and width with height, at least one
-    /// pair is given, and a size is positive. Nothing is sent.
+    /// pair is given, and a size is positive; and for its unit (roadmap M6.7): pixels are whole numbers in the int range, with
+    /// no relativeTo or monitor, and percentages are 0-100 (sizes above 0) and end inside the area. Nothing is sent.
     /// </summary>
-    private static WindowOperationResult? BoundsRefusal(int? x, int? y, int? width, int? height)
+    private static WindowOperationResult? BoundsRefusal(double? x, double? y, double? width, double? height, bool percent,
+        RelativeArea? relativeTo, MonitorSelector? monitor)
     {
         string? message = null;
         if (x.HasValue != y.HasValue)
@@ -1356,13 +1518,36 @@ public class WindowManagerTools
         {
             message = "Pass x and y to move the window, width and height to resize it, or all four. Nothing was changed.";
         }
+        else if (!percent && (relativeTo != null || monitor != null))
+        {
+            message = $"{(monitor != null ? "monitor" : "relativeTo")} goes with unit 'percent'; pixels are virtual-screen coordinates, " +
+                      $"which already name the monitor. {NothingChanged}";
+        }
+        else if (percent)
+        {
+            message = (x, y, width, height) switch
+            {
+                ({ } left, { } top, { } w, { } h) => RelativeRectMath.CheckPercent(left, top, w, h),
+                ({ } left, { } top, _, _) => RelativeRectMath.CheckPercentPosition(left, top),
+                (_, _, { } w, { } h) => RelativeRectMath.CheckPercentSize(w, h),
+                _ => null
+            };
+            message = message == null ? null : $"{message} {NothingChanged}";
+        }
+        else if (new[] { (x, "x"), (y, "y"), (width, "width"), (height, "height") }
+                     .FirstOrDefault(v => v.Item1 is { } value && (value != Math.Floor(value) || value is < int.MinValue or > int.MaxValue))
+                     is ({ } fraction, { } name))
+        {
+            message = string.Create(CultureInfo.InvariantCulture,
+                $"{name} must be a whole number of pixels, not {fraction}; pass unit 'percent' for a share of a monitor. {NothingChanged}");
+        }
 
         if (message != null)
         {
             return new WindowOperationResult(false, Error: message, ErrorCode: ToolErrorReporting.InvalidArgumentsErrorCode);
         }
 
-        return width is { } w && height is { } h ? SizeRefusal(w, h) : null;
+        return !percent && width is { } pw && height is { } ph ? SizeRefusal((int)pw, (int)ph) : null;
     }
 
     private static string SizeMessage(int width, int height) =>
@@ -1420,6 +1605,18 @@ public class WindowManagerTools
         Failed: items.Count(i => !i.Success),
         Results: items);
 }
+
+/// <summary>
+/// set_window_zorder's result (roadmap M6.7): whether the change was made, and the window's topmost state and place in the
+/// z-order (0 is the front; get_window_info's zOrder) read back afterwards, failed or not (left out when the window is gone).
+/// </summary>
+public sealed record ZOrderResult(
+    bool Success,
+    long? Handle = null,
+    bool? IsTopmost = null,
+    int? ZOrder = null,
+    string? Error = null,
+    string? ErrorCode = null);
 
 /// <summary>
 /// The result of a single-window tool. The geometry tools (roadmap M2.3) report the window as it is afterwards, failed or

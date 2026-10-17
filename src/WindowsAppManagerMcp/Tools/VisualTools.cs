@@ -28,20 +28,25 @@ public class VisualTools
 
     private readonly IVisualChangeService _visual;
     private readonly IWindowService _windows;
+    private readonly IMonitorService? _monitors;
 
     /// <param name="visual">The waits.</param>
     /// <param name="windows">Resolves a window selector.</param>
-    public VisualTools(IVisualChangeService visual, IWindowService windows)
+    /// <param name="visual">The waits.</param>
+    /// <param name="windows">Resolves the window selector.</param>
+    /// <param name="monitors">Resolves a `monitor` name (roadmap M6.7). The server always passes it; without it a name fails.</param>
+    public VisualTools(IVisualChangeService visual, IWindowService windows, IMonitorService? monitors = null)
     {
         _visual = visual;
         _windows = windows;
+        _monitors = monitors;
     }
 
     [McpServerTool(Name = WaitForVisualTool, Title = "Wait for Visual Change", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
     [Description("Wait on the server until a window, screen region or monitor changes on screen, or stops changing, when UI Automation " +
                  "has nothing to wait on (canvas apps, games, remote desktops, rendering). Frames are compared by a hash per 16-pixel " +
                  "tile; the result has rectangles, never an image. One target: handle or window (read as capture_window reads it, " +
-                 "covering windows do not count), x/y/width/height or monitorIndex (copied from the screen; windows the user's policy " +
+                 "covering windows do not count), x/y/width/height or monitor (copied from the screen; windows the user's policy " +
                  "denies are left out and listed in maskedWindows), or since alone. condition changed (default) compares with since's " +
                  "capture, else with the wait's first frame, which misses a change made before it: before you act, capture the target " +
                  "with output 'metadata' and pass its captureId as since. stable waits until no frame differs from the one before for " +
@@ -66,7 +71,7 @@ public class VisualTools
         int? width = null,
         [Description("Region: height in pixels")]
         int? height = null,
-        [Description("A monitor (0-based, as get_monitors lists them), or -1 for all of them (at most 32 megapixels)")]
+        [Description(MonitorSelectorDescriptions.DeprecatedIndex)]
         int? monitorIndex = null,
         [Description("A captureId from a capture taken before you acted (output 'metadata' costs no image): the baseline, and the target " +
                      "(its window, region or monitor). Alone, not with another target")]
@@ -80,6 +85,8 @@ public class VisualTools
         [Description("A frame counts as changed only when more than this share of its tiles changed, in percent (default: 0, any " +
                      "tile; min: 0, below 100): raise it a little to ignore a clock or a spinner")]
         double minChangedPercent = 0,
+        [Description(MonitorSelectorDescriptions.MonitorOrAll + " At most 32 megapixels")]
+        MonitorSelector? monitor = null,
         IProgress<ProgressNotificationValue>? progress = null,
         CancellationToken cancellationToken = default)
     {
@@ -87,7 +94,7 @@ public class VisualTools
         var stable = CheckValues(since != null, condition, timeoutMs, pollMs, stableMs, minChangedPercent);
         var request = new VisualWaitRequest
         {
-            Target = Target(handle, window, includeFrame, x, y, width, height, monitorIndex, since),
+            Target = Target(handle, window, includeFrame, x, y, width, height, monitorIndex, monitor, since),
             Condition = condition,
             TimeoutMs = timeoutMs,
             PollMs = pollMs,
@@ -102,15 +109,16 @@ public class VisualTools
 
     /// <summary>The one target the arguments name, or InvalidArguments; a selector is resolved to its one window.</summary>
     private VisualTarget Target(long? handle, WindowSelector? window, bool? includeFrame, int? x, int? y, int? width, int? height,
-        int? monitorIndex, string? since)
+        int? monitorIndex, MonitorSelector? monitor, string? since)
     {
         var region = x.HasValue || y.HasValue || width.HasValue || height.HasValue;
-        var named = (handle.HasValue || window != null ? 1 : 0) + (region ? 1 : 0) + (monitorIndex.HasValue ? 1 : 0) + (since != null ? 1 : 0);
+        var monitorNamed = monitorIndex.HasValue || monitor != null;
+        var named = (handle.HasValue || window != null ? 1 : 0) + (region ? 1 : 0) + (monitorNamed ? 1 : 0) + (since != null ? 1 : 0);
         if (named != 1)
         {
             throw Invalid(named == 0
-                ? "Pass one target: handle or window, x/y/width/height, monitorIndex, or since (a captureId)."
-                : "Pass one target only: handle or window, x/y/width/height, monitorIndex, or since alone (it names its own target).");
+                ? "Pass one target: handle or window, x/y/width/height, monitor, or since (a captureId)."
+                : "Pass one target only: handle or window, x/y/width/height, monitor, or since alone (it names its own target).");
         }
 
         if (includeFrame.HasValue && !(handle.HasValue || window != null))
@@ -125,9 +133,10 @@ public class VisualTools
                 : new VisualTarget.Since(since.Trim());
         }
 
-        if (monitorIndex is { } index)
+        if (monitorNamed)
         {
-            return new VisualTarget.Monitor(index);
+            return new VisualTarget.Monitor(
+                MonitorTargeting.Index(_monitors, monitorIndex, monitor, allowAll: true, "Nothing was waited for.")!.Value);
         }
 
         if (region)

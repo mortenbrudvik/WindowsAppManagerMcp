@@ -38,6 +38,7 @@ public class WindowService : IWindowService
     private readonly IWindowCallRunner _windowCalls;
     private readonly TimeSpan _stateChangeTimeout;
     private readonly INativeVirtualDesktopWrapper? _virtualDesktops;
+    private readonly TopmostPins _topmostPins;
 
     /// <param name="monitorService">Monitor lookups.</param>
     /// <param name="nativeWrapper">The window calls.</param>
@@ -60,6 +61,10 @@ public class WindowService : IWindowService
     /// that the shell cloaks the same way (<see cref="GetApplicationWindowsOnOtherDesktops"/>). The server always passes it;
     /// without it every window the shell cloaks counts as on another desktop.
     /// </param>
+    /// <param name="topmostPins">
+    /// Where set_window_zorder records the windows it made topmost (roadmap M6.7), which get_server_info lists. The server
+    /// shares one; default a new one.
+    /// </param>
     public WindowService(
         IMonitorService monitorService,
         INativeWindowWrapper nativeWrapper,
@@ -67,7 +72,8 @@ public class WindowService : IWindowService
         ITargetPolicy? targetPolicy = null,
         IWindowCallRunner? windowCalls = null,
         TimeSpan? stateChangeTimeout = null,
-        INativeVirtualDesktopWrapper? virtualDesktops = null)
+        INativeVirtualDesktopWrapper? virtualDesktops = null,
+        TopmostPins? topmostPins = null)
     {
         _monitorService = monitorService;
         _nativeWrapper = nativeWrapper;
@@ -76,6 +82,7 @@ public class WindowService : IWindowService
         _windowCalls = windowCalls ?? new WindowCallRunner(nativeWrapper);
         _stateChangeTimeout = stateChangeTimeout ?? StateChangeTimeout;
         _virtualDesktops = virtualDesktops;
+        _topmostPins = topmostPins ?? new TopmostPins();
     }
 
     /// <summary>The delay a batch sleeps between two windows for <paramref name="delayBetweenMs"/>: 0 to <see cref="MaxDelayBetweenMs"/>.</summary>
@@ -786,6 +793,134 @@ public class WindowService : IWindowService
     public bool IsValidWindow(nint handle)
     {
         return handle != nint.Zero && _nativeWrapper.IsWindow(handle);
+    }
+
+    /// <summary>The flags of every z-order change: it never moves, resizes or activates the window.</summary>
+    private const uint ZOrderFlags = NativeEnums.SWP_NOMOVE | NativeEnums.SWP_NOSIZE | NativeEnums.SWP_NOACTIVATE;
+
+    public WindowChangeResult SetWindowZOrder(nint handle, ZOrderMode mode, nint? above = null)
+    {
+        if (ChangeRefusal(handle) is { } refused)
+            return refused;
+
+        var window = TopLevel(handle);
+        var wasTopmost = IsTopmost(window);
+        WindowChangeResult result;
+        if (mode == ZOrderMode.Above)
+        {
+            if (above is not { } other || !IsValidWindow(other))
+            {
+                return WindowChangeResult.Failed(handle, WindowErrorCode.InvalidHandle,
+                    $"aboveHandle {above ?? 0} is no window (it closed). Nothing was changed. Find it again with find_windows.");
+            }
+
+            result = PlaceAbove(handle, window, TopLevel(other));
+        }
+        else
+        {
+            var insertAfter = mode switch
+            {
+                ZOrderMode.Top => NativeEnums.HWND_TOP,
+                ZOrderMode.Bottom => NativeEnums.HWND_BOTTOM,
+                ZOrderMode.Topmost => NativeEnums.HWND_TOPMOST,
+                ZOrderMode.NoTopmost => NativeEnums.HWND_NOTOPMOST,
+                _ => throw new ArgumentOutOfRangeException(nameof(mode), mode, "Not a z-order mode.")
+            };
+            result = SetZOrder(handle, window, insertAfter);
+            if (result.Success && TopmostRefusal(handle, window, mode) is { } notApplied)
+                result = notApplied;
+        }
+
+        if (!result.Success)
+            return result;
+
+        if (!IsTopmost(window))
+            _topmostPins.Unpin(window);
+        else if (!wasTopmost)
+            _topmostPins.Pin(window, _nativeWrapper.GetWindowThreadId(window));
+        return result;
+    }
+
+    /// <summary>The top-level window of <paramref name="handle"/>, which has the place in the z-order; itself when it has none.</summary>
+    private nint TopLevel(nint handle) =>
+        _nativeWrapper.GetAncestor(handle, WindowAncestor.Root) is var root && root != nint.Zero ? root : handle;
+
+    private bool IsTopmost(nint window) =>
+        ((long)_nativeWrapper.GetWindowLongPtr(window, NativeEnums.GWL_EXSTYLE) & NativeEnums.WS_EX_TOPMOST) != 0;
+
+    /// <summary>ZOrderNotApplied when the window's topmost state is not what <paramref name="mode"/> asked for; otherwise null.</summary>
+    private WindowChangeResult? TopmostRefusal(nint handle, nint window, ZOrderMode mode)
+    {
+        var expected = mode switch
+        {
+            ZOrderMode.Topmost => true,
+            ZOrderMode.NoTopmost or ZOrderMode.Bottom => false,
+            _ => (bool?)null
+        };
+        if (expected is not { } topmost || IsTopmost(window) == topmost)
+            return null;
+
+        return WindowChangeResult.Failed(handle, WindowErrorCode.ZOrderNotApplied, topmost
+            ? "Windows took the change, but the window is not topmost when read back: its app sets its own z-order (some apps and " +
+              "games do). Check it with get_window_info."
+            : "Windows took the change, but the window is still topmost when read back: its app keeps itself topmost. Check it " +
+              "with get_window_info.");
+    }
+
+    /// <summary>
+    /// Places <paramref name="window"/> directly above <paramref name="other"/>: behind the window in front of it, in its band.
+    /// A window that is topmost is above every window that is not, so nothing is sent for it; one that is not becomes topmost
+    /// first when the other is (it can only be above a topmost window as one). A normal window that would go behind a topmost
+    /// one goes to the top of the normal windows instead (HWND_TOP), which is the same place, so it never becomes topmost by
+    /// the way it is inserted. Read back: ZOrderNotApplied unless it is in front of the other afterwards.
+    /// </summary>
+    private WindowChangeResult PlaceAbove(nint handle, nint window, nint other)
+    {
+        if (other == window)
+        {
+            return WindowChangeResult.Failed(handle, WindowErrorCode.InvalidHandle,
+                "aboveHandle is the window itself. Nothing was changed. Pass another window to place it above.");
+        }
+
+        var windowTopmost = IsTopmost(window);
+        var otherTopmost = IsTopmost(other);
+        var zOrder = EnumerateTopLevelWindows(_nativeWrapper);
+        var otherIndex = zOrder.IndexOf(other);
+        var inFront = zOrder.Take(Math.Max(otherIndex, 0)).Where(w => w != window).LastOrDefault();
+        var already = windowTopmost && !otherTopmost || otherIndex > 0 && zOrder[otherIndex - 1] == window;
+        if (!already && otherTopmost && !windowTopmost)
+        {
+            // HWND_TOPMOST takes it to the front of the topmost windows; then behind the one in front of the other, if any
+            if (SetZOrder(handle, window, NativeEnums.HWND_TOPMOST) is { Success: false } notTopmost)
+                return notTopmost;
+            if (inFront != nint.Zero && SetZOrder(handle, window, inFront) is { Success: false } notBehind)
+                return notBehind;
+        }
+        else if (!already)
+        {
+            var insertAfter = inFront == nint.Zero || IsTopmost(inFront) && !otherTopmost
+                ? otherTopmost ? NativeEnums.HWND_TOPMOST : NativeEnums.HWND_TOP
+                : inFront;
+            if (SetZOrder(handle, window, insertAfter) is { Success: false } notPlaced)
+                return notPlaced;
+        }
+
+        var after = EnumerateTopLevelWindows(_nativeWrapper);
+        var windowAfter = after.IndexOf(window);
+        var otherAfter = after.IndexOf(other);
+        return windowAfter >= 0 && (otherAfter < 0 || windowAfter < otherAfter)
+            ? WindowChangeResult.Done(handle)
+            : WindowChangeResult.Failed(handle, WindowErrorCode.ZOrderNotApplied,
+                "Windows took the change, but the window is not above the other window when read back: an app changed the z-order " +
+                "again. Check it with get_window_info.");
+    }
+
+    /// <summary>SetWindowZOrder, with a deadline (<see cref="IWindowCallRunner"/>); a refusal as a placement's (AccessDenied).</summary>
+    /// <exception cref="WindowNotRespondingException">The window did not answer in time.</exception>
+    private WindowChangeResult SetZOrder(nint handle, nint window, nint insertAfter)
+    {
+        var placed = _windowCalls.Run(handle, () => _nativeWrapper.SetWindowZOrder(window, insertAfter, ZOrderFlags));
+        return placed.Succeeded ? WindowChangeResult.Done(handle) : NotPlaced(handle, placed.Win32Error, WindowErrorCode.ZOrderNotApplied);
     }
 
     /// <summary>
@@ -1522,7 +1657,8 @@ public class WindowService : IWindowService
             OwnerHandle = owner == nint.Zero ? null : owner,
             HostProcessName = process.HostProcessId is { } hostId ? session.ProcessName(hostId) : null,
             HostProcessId = process.HostProcessId is { } id ? (int)id : null,
-            IsAgentHost = _hostGuard.IsHostWindow(hWnd)
+            IsAgentHost = _hostGuard.IsHostWindow(hWnd),
+            IsTopmost = IsTopmost(hWnd)
         };
     }
 

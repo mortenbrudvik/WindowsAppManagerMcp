@@ -2203,6 +2203,9 @@ being ignored.
 | `FixtureWebViewTests` | No input | The accessibility warm-up of the WebView2 window's live Chromium content: host WebView2, status Ready, the page read, and no second wait (M3.3, M3.F4); skipped without the WebView2 runtime |
 | `FixtureOtherScaleMonitorTests` | No input | The fixture on a monitor whose scale differs from the primary's (`--other-scale-monitor`): it opens at that monitor's DPI and leaves the agent's host in front, get_ui_elements' bounds and capture_window's client area match what the fixture draws (M3.F30); skipped without such a monitor (`MonitorAtAnotherScale`) |
 | `FixturePlacementTests` | Input | The launch tools' placement of a window (M3.13) |
+| `FixtureMonitorSelectorTests` | Both | The `monitor` parameter (M6.7) through the real MCP pipeline: get_monitors' ids are the same on a second call and every monitor but the primary has a relation (no input); snap_window by `primary`, a device name, an id and `current` lands on that monitor's left half without activating the fixture, and `left` and `right` on the outermost monitors (`TwoMonitors`), or `AmbiguousMonitor` for stacked ones |
+| `FixturePercentPlacementTests` | Input | set_window_bounds with `unit: "percent"` (M6.7): 50/0/50/100 and the three thirds give exactly snap_window's frames on the primary, and a placement on the monitor at another scale (`MonitorAtAnotherScale`) is exact after the app's DPI change |
+| `FixtureZOrderTests` | Input | set_window_zorder (M6.7) with the fixture's topmost overlay (`--open-overlay`): `topmost` puts the main window above the overlay and get_server_info lists it in `pinnedWindows`, `notopmost` puts it back below and drops the pin, `above` the overlay makes it topmost directly above it, `bottom` sends it behind every listed window and `top` raises it above the normal ones; the foreground never moves, and every test unpins the window before the fixture closes |
 | `FixtureMouseTests` | Input | click, right_click, double_click and mouse_move land on the exact pixel aimed at (the corners and centres of the swatches), on the primary and on a monitor at another scale (skipped without one); click presses the user's primary button and right_click the secondary one, as the fixture's `mouseDown` events record them after Windows applied the user's swap; a double click is one press with `clickCount` 1 and one with 2 (M4.2) |
 | `FixtureMouseClickDragTests` | Input | mouse_click: a Ctrl+Shift click reaches the fixture with both modifiers down and neither stays down (a plain click after it sees none); the middle, X1 and X2 buttons arrive as themselves; a triple click is three presses with `clickCount` 1, 2 and 3 at the pixel. drag: a Ctrl+drag presses on one swatch and releases on another, with Ctrl down at both and no other press or release between them, and leaves nothing held; a drop point right of the fixture window is refused before anything is pressed (M4.3). The fixture logs presses and releases with their modifiers (`mouseDown`, `mouseUp`) |
 | `FixtureRunStepsTests` | Input | run_steps through the real MCP pipeline (`ServerHarness.StartMcpServerAsync`, M6.2): a form fill (focus, a click at a found element's clickPoint by `$steps` reference, ctrl+a, typing, a toggle, a wait that verifies the text) in one call, the fixture's events in step order, one audit line per audited step under `<run's id>#<step>`, no modifier left down; a failed step stops the run and the step after it does nothing; a direct element_action made during the run waits for the gate and lands after the run's last step; a pause between steps stops the run with `PausedByUser`; a wait longer than `maxDurationMs` stops it with `OperationTimedOut`; a second fixture, a process of its own, taking the foreground stops it with `TargetNotForeground` and keeps the foreground (the terminal is never touched) |
@@ -2861,10 +2864,10 @@ typical result over 300 tokens, and tools/list itself, measured in October 2026:
 | `find_windows`, `get_all_windows` | 15 windows, each with `visibleBounds` | 1,213 | 1,850 |
 | `read_element_text` | The first page of a 3,000-character e-mail | 802 | 1,200 |
 | `read_table` | Task Manager's first 50 processes, 5 columns with headers | 643 | 1,000 |
-| `get_server_info` | The default deny list, five host processes, two monitors, the resources and prompts (634 before roadmap M6.9) | 702 | 850 |
+| `get_server_info` | The default deny list, five host processes, two monitors, the resources and prompts (634 before roadmap M6.9) | 707 | 850 |
 | `get_layout` | A preset of 6 placements, each with the captured window identity | 529 | 800 |
-| tools/list | Every tool's name, title, description, schemas and annotations: 82 tools, 266,245 bytes (`ToolList_StaysWithinItsBudget`; M5.8's six DOM bridge tools added 2,970, 936 of them their window selectors; M5.8's dialog option and the UI Automation browser_handle_dialog 199 more; M6.1a's additive consolidations 405 more: mouse_click's own click checks 249, set_window_bounds' optional pairs 87, get_browser_url's foreground sentence 41, get_monitors' virtualScreen 28; M6.1b's one-line descriptions of the nine deprecated tools and the descriptions that no longer send the agent to them 2,121 fewer; M6.6's list_processes parameters and fields 361 more and get_window_info's integrity fields 31 more; M6.2's run_steps 1,054 more; M6.4's wait_for_visual 1,072 more; M6.3's read_screen_text and find_text_on_screen in the opt-in `ocr` toolset 2,088 more) | 66,562 | 66,598 |
-| Default tools/list | The 59 tools a server serves without WAM_TOOLSETS, WAM_EXCLUDE_TOOLS and WAM_READ_ONLY, 209,803 bytes (`DefaultToolList_StaysWithinItsBudget`, roadmap M6.1; 59,627 before M6.1a, 60,032 after it with 70 tools, 9,027 fewer once M6.1b moved the nine deprecated tools and the three geometry batches to opt-in toolsets, 392 more with M6.6's list_processes and get_window_info fields, 1,055 more with M6.2's run_steps in the `steps` toolset, on by default) | 52,451 | 52,487 |
+| tools/list | Every tool's name, title, description, schemas and annotations: 82 tools, 266,245 bytes (`ToolList_StaysWithinItsBudget`; M5.8's six DOM bridge tools added 2,970, 936 of them their window selectors; M5.8's dialog option and the UI Automation browser_handle_dialog 199 more; M6.1a's additive consolidations 405 more: mouse_click's own click checks 249, set_window_bounds' optional pairs 87, get_browser_url's foreground sentence 41, get_monitors' virtualScreen 28; M6.1b's one-line descriptions of the nine deprecated tools and the descriptions that no longer send the agent to them 2,121 fewer; M6.6's list_processes parameters and fields 361 more and get_window_info's integrity fields 31 more; M6.2's run_steps 1,054 more; M6.4's wait_for_visual 1,072 more; M6.3's read_screen_text and find_text_on_screen in the opt-in `ocr` toolset 2,088 more; M6.7's set_window_zorder (522), the `monitor` parameters beside the deprecated monitorIndex, set_window_bounds' percent placement (233), get_monitors' identity fields and get_server_info's pinnedWindows 1,426 more) | 67,988 | 68,024 |
+| Default tools/list | The 60 tools a server serves without WAM_TOOLSETS, WAM_EXCLUDE_TOOLS and WAM_READ_ONLY, 214,327 bytes (`DefaultToolList_StaysWithinItsBudget`, roadmap M6.1; 59,627 before M6.1a, 60,032 after it with 70 tools, 9,027 fewer once M6.1b moved the nine deprecated tools and the three geometry batches to opt-in toolsets, 392 more with M6.6's list_processes and get_window_info fields, 1,055 more with M6.2's run_steps in the `steps` toolset, on by default, 1,131 more with M6.7's set_window_zorder in `windows`, the `monitor` parameters, set_window_bounds' percent placement and the get_monitors and get_server_info fields) | 53,582 | 53,618 |
 
 Every other typical result is at most 300 tokens. When a change makes a result larger on purpose, raise its
 budget in the same change (the failure message gives the new size); when a change shrinks one a lot, lower it.
@@ -2885,24 +2888,24 @@ were capture_with_elements at 2,396 and element_action at 2,386, so they have ab
 
 | Toolset | Default | Tools | Tokens | Budget |
 |---------|---------|------:|-------:|-------:|
-| `server` | always on | 4 | 1,038 | 1,050 |
-| `windows` | on | 12 | 9,952 | 9,988 |
-| `monitors` | on | 1 | 118 | 150 |
-| `capture` | on | 4 | 5,856 | 5,900 |
+| `server` | always on | 4 | 1,056 | 1,092 |
+| `windows` | on | 13 | 10,860 | 10,896 |
+| `monitors` | on | 1 | 167 | 203 |
+| `capture` | on | 4 | 5,906 | 5,942 |
 | `elements` | on | 9 | 8,262 | 8,300 |
 | `input` | on | 10 | 14,758 | 14,800 |
 | `clipboard` | on | 2 | 734 | 750 |
-| `launch` | on | 2 | 2,890 | 2,900 |
+| `launch` | on | 2 | 2,963 | 2,999 |
 | `process` | on | 3 | 2,282 | 2,318 |
 | `layouts` | on | 5 | 1,181 | 1,200 |
 | `steps` | on | 1 | 1,055 | 1,091 |
-| `browser` | on | 6 | 4,315 | 4,350 |
+| `browser` | on | 6 | 4,348 | 4,384 |
 | `browser-actions` | off | 7 | 3,577 | 3,600 |
 | `browser-script` | off | 1 | 468 | 500 |
-| `visual` | off | 1 | 1,072 | 1,108 |
-| `windows-batch` | off | 3 | 1,978 | 2,000 |
+| `visual` | off | 1 | 1,137 | 1,173 |
+| `windows-batch` | off | 3 | 2,058 | 2,094 |
 | `deprecated` | off | 9 | 4,925 | 4,950 |
-| `ocr` | off | 2 | 2,087 | 2,123 |
+| `ocr` | off | 2 | 2,238 | 2,274 |
 
 The rows are measured after M6.1b (October 2026), which moved six tools out of `windows`, two out of `monitors`, three
 out of `input` and one out of `browser` into the opt-in `windows-batch` and `deprecated` toolsets. The deprecated tools'
@@ -2911,7 +2914,12 @@ one-line descriptions keep their full parameters, which are most of the `depreca
 `windows` by 31 (get_window_info's integrity fields in 'full'; 9,921 before), each budget to the measured size plus 36. The `steps` row is measured
 after M6.2 added run_steps (October 2026). M6.4 added the `visual` row
 (wait_for_visual: handle, the window selector, a region, monitorIndex and since). The `ocr` row is M6.3's two tools
-(October 2026), which share their target and result descriptions.
+(October 2026), which share their target and result descriptions. M6.7 (October 2026) raised `windows` by 908
+(set_window_zorder, 522; set_window_bounds' unit, relativeTo and monitor; snap_window's and move_window_to_monitor's
+`monitor`), `monitors` by 49 (get_monitors' identity fields in its description), `server` by 18 (pinnedWindows),
+`capture` by 50, `launch` by 73, `browser` by 33, `visual` by 65, `windows-batch` by 80 and `ocr` by 151 (each tool's
+`monitor` beside the deprecated monitorIndex, whose description shrank to one line), each budget to the measured size plus
+36.
 
 A change states its default, per-toolset and all-tools deltas, and raises only the ratchets it moves: a new opt-in
 toolset moves the all-tools figure and its own row, never the default figure.

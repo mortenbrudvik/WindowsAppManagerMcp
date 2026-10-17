@@ -46,25 +46,71 @@ public static class RelativeRectMath
     /// </summary>
     public static string? CheckPercent(double x, double y, double width, double height)
     {
-        return Position(x, nameof(x)) ?? Position(y, nameof(y)) ?? Size(width, nameof(width)) ?? Size(height, nameof(height))
+        return CheckPercentPosition(x, y) ?? CheckPercentSize(width, height)
             ?? End(x, width, "x + width") ?? End(y, height, "y + height");
-
-        static string? Position(double value, string name) =>
-            !double.IsFinite(value) ? $"{name} must be a number from 0 to 100, not {Format(value)}."
-            : value is < 0 or > 100 ? $"{name} must be from 0 to 100 (percent of the area), not {Format(value)}."
-            : null;
-
-        static string? Size(double value, string name) =>
-            !double.IsFinite(value) ? $"{name} must be a number above 0 and at most 100, not {Format(value)}."
-            : value is <= 0 or > 100 ? $"{name} must be above 0 and at most 100 (percent of the area), not {Format(value)}."
-            : null;
 
         static string? End(double start, double size, string name) =>
             start + size > 100 + PercentTolerance
                 ? $"{name} must be at most 100, so the rectangle ends inside the area, not {Format(start + size)}."
                 : null;
+    }
 
-        static string Format(double value) => value.ToString("R", CultureInfo.InvariantCulture);
+    /// <summary>
+    /// <see cref="CheckPercent"/> for a position alone (set_window_bounds with x and y only): each a finite number from 0 to
+    /// 100. Null when they are.
+    /// </summary>
+    public static string? CheckPercentPosition(double x, double y) => Position(x, nameof(x)) ?? Position(y, nameof(y));
+
+    /// <summary>
+    /// <see cref="CheckPercent"/> for a size alone (set_window_bounds with width and height only): each a finite number above 0
+    /// and at most 100. Null when they are.
+    /// </summary>
+    public static string? CheckPercentSize(double width, double height) => Size(width, nameof(width)) ?? Size(height, nameof(height));
+
+    private static string? Position(double value, string name) =>
+        !double.IsFinite(value) ? $"{name} must be a number from 0 to 100, not {Format(value)}."
+        : value is < 0 or > 100 ? $"{name} must be from 0 to 100 (percent of the area), not {Format(value)}."
+        : null;
+
+    private static string? Size(double value, string name) =>
+        !double.IsFinite(value) ? $"{name} must be a number above 0 and at most 100, not {Format(value)}."
+        : value is <= 0 or > 100 ? $"{name} must be above 0 and at most 100 (percent of the area), not {Format(value)}."
+        : null;
+
+    private static string Format(double value) => value.ToString("R", CultureInfo.InvariantCulture);
+
+    /// <summary>
+    /// The point at <paramref name="x"/>, <paramref name="y"/> percent of <paramref name="area"/>: the top-left corner
+    /// <see cref="FromPercent(MonitorRect, double, double, double, double)"/> gives for them, for a window moved without
+    /// resizing it.
+    /// </summary>
+    /// <exception cref="ArgumentOutOfRangeException">The percentages fail <see cref="CheckPercentPosition"/> (the message is its message).</exception>
+    public static (int X, int Y) PointFromPercent(MonitorRect area, double x, double y)
+    {
+        ArgumentNullException.ThrowIfNull(area);
+        if (CheckPercentPosition(x, y) is { } error)
+            throw new ArgumentOutOfRangeException(error, (Exception?)null);
+
+        return (SnapMath.Edge(area.X, area.Width, x / 100), SnapMath.Edge(area.Y, area.Height, y / 100));
+    }
+
+    /// <summary>
+    /// The size of <paramref name="width"/> x <paramref name="height"/> percent of <paramref name="area"/>, as
+    /// <see cref="FromPercent(MonitorRect, double, double, double, double)"/> gives it from the area's corner, for a window
+    /// resized without moving it.
+    /// </summary>
+    /// <exception cref="ArgumentOutOfRangeException">
+    /// The percentages fail <see cref="CheckPercentSize"/> (the message is its message), or the width or height is less than
+    /// one pixel on <paramref name="area"/>.
+    /// </exception>
+    public static (int Width, int Height) SizeFromPercent(MonitorRect area, double width, double height)
+    {
+        ArgumentNullException.ThrowIfNull(area);
+        if (CheckPercentSize(width, height) is { } error)
+            throw new ArgumentOutOfRangeException(error, (Exception?)null);
+
+        var rect = Rect(area, 0, 0, width / 100, height / 100);
+        return (rect.Width, rect.Height);
     }
 
     /// <summary>

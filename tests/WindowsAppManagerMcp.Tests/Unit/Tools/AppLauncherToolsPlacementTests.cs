@@ -110,6 +110,71 @@ public class AppLauncherToolsPlacementTests
     }
 
     [Fact]
+    public async Task APlacementsMonitorName_IsResolvedBeforeTheLaunch_AndPlacesOnThatMonitor()
+    {
+        // Arrange (roadmap M6.7)
+        _monitors.Setup(m => m.ResolveMonitor(It.Is<MonitorSelector>(s => s.Name == "right")))
+            .Returns(MonitorResolution.Found(1, null));
+        LaunchReturns(new LaunchResult(true, 600, CodeWindow.Handle, Status: LaunchStatus.WindowObserved, Window: CodeWindow));
+
+        // Act
+        await CreateSut().LaunchApplication("code", placement: new LaunchPlacement(Snap: "left_half", Monitor: MonitorSelector.Of("right")));
+
+        // Assert
+        _placed.Single().Single().Plan.MonitorIndex.Should().Be(1);
+    }
+
+    [Theory]
+    [InlineData(nameof(WindowErrorCode.MonitorNotFound))]
+    [InlineData(nameof(WindowErrorCode.AmbiguousMonitor))]
+    public async Task APlacementsMonitorNameThatNamesNoSingleMonitor_IsAToolError_AndNothingIsLaunched(string code)
+    {
+        // Arrange
+        _monitors.Setup(m => m.ResolveMonitor(It.IsAny<MonitorSelector>()))
+            .Returns(MonitorResolution.Failed(code, "monitor 'left' names none. Nothing was done."));
+
+        // Act
+        var call = async () => await CreateSut().LaunchApplication("code", placement: new LaunchPlacement(Monitor: MonitorSelector.Of("left")));
+
+        // Assert
+        var error = (await call.Should().ThrowAsync<ToolErrorException>()).Which;
+        error.ErrorCode.Should().Be(code);
+        error.Message.Should().StartWith("placement.monitor:").And.EndWith("Nothing was launched.");
+        VerifyNothingLaunched();
+    }
+
+    [Fact]
+    public async Task APlacementWithMonitorAndMonitorIndex_IsInvalidArguments()
+    {
+        // Act
+        var call = async () => await CreateSut().LaunchApplication("code",
+            placement: new LaunchPlacement(MonitorIndex: 0, Monitor: MonitorSelector.OfIndex(1)));
+
+        // Assert
+        (await call.Should().ThrowAsync<ToolErrorException>()).Which.ErrorCode.Should().Be(ToolErrorReporting.InvalidArgumentsErrorCode);
+        VerifyNothingLaunched();
+    }
+
+    [Fact]
+    public async Task ABatchItemsMonitorThatIsNoMonitor_FailsThatItemAlone()
+    {
+        // Arrange
+        BatchReturns(new LaunchResult(true, 600, CodeWindow.Handle, Status: LaunchStatus.WindowObserved, Window: CodeWindow));
+
+        // Act
+        var result = await CreateSut().LaunchApplicationsBatch(
+        [
+            new ApplicationLaunchRequest("code", Placement: new LaunchPlacement(Monitor: MonitorSelector.OfIndex(1))),
+            new ApplicationLaunchRequest("notepad", Placement: new LaunchPlacement(Monitor: MonitorSelector.OfIndex(7)))
+        ]);
+
+        // Assert
+        result.Results[1].Success.Should().BeFalse();
+        result.Results[1].ErrorCode.Should().Be(nameof(WindowErrorCode.InvalidMonitorIndex));
+        _placed.Single().Single().Plan.MonitorIndex.Should().Be(1);
+    }
+
+    [Fact]
     public async Task ALaunchThatFoundNoWindow_StillSucceeds_AndThePlacementSaysWindowNotFound()
     {
         LaunchReturns(new LaunchResult(true, 600, Status: LaunchStatus.TimedOut, LauncherExited: false));
