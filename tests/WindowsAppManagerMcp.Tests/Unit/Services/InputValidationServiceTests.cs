@@ -372,6 +372,40 @@ public class InputValidationServiceTests
 
     #endregion
 
+    #region ValidateExecutable - Partial Paths
+
+    // A path with a folder but without a drive and root would be found from the server's own current folder (or drive),
+    // which the client does not choose: the same planted-program risk bare names avoid by never searching it
+    [Theory]
+    [InlineData(@"sub\app.exe")]
+    [InlineData("tools/app.exe")]
+    [InlineData(@".\app.exe")]
+    [InlineData("cmd.exe /c x")]
+    [InlineData(@"\server\share\app.exe")]
+    [InlineData("/tools/app.exe")]
+    [InlineData(@"C:app.exe")]
+    [InlineData(@"C:tools\app.exe")]
+    public void ValidateExecutable_PartialPath_IsInvalidPath_AndAsksForTheFullPath(string path)
+    {
+        var result = _sut.ValidateExecutable(path);
+
+        result.IsValid.Should().BeFalse();
+        result.ErrorCode.Should().Be(nameof(LaunchErrorCode.InvalidPath));
+        result.Error.Should().Contain("full path");
+    }
+
+    [Theory]
+    [InlineData(@"C:\Tools\app.exe")]
+    [InlineData(@"\\server\share\app.exe")]
+    [InlineData("notepad")]
+    [InlineData("notepad.exe")]
+    public void ValidateExecutable_FullPathsAndBareNames_StayValid(string path)
+    {
+        _sut.ValidateExecutable(path).IsValid.Should().BeTrue();
+    }
+
+    #endregion
+
     #region ValidateExecutable - Edge Cases
 
     [Theory]

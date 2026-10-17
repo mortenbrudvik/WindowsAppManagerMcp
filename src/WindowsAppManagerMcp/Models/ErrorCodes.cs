@@ -198,7 +198,10 @@ public enum LaunchErrorCode
     /// <summary>Working directory contains invalid characters.</summary>
     InvalidWorkingDirectory = 7,
 
-    /// <summary>Invalid path format.</summary>
+    /// <summary>
+    /// Invalid path format, or a partial executable path (a folder without a drive and root, such as tools\app.exe or
+    /// C:app.exe), which would be found from the server's current folder or drive.
+    /// </summary>
     InvalidPath = 8,
 
     /// <summary>

@@ -280,10 +280,23 @@ public partial class InputValidationService : IInputValidationService
             return new ExecutableValidationResult(false, Error: traversalResult.Error, ErrorCode: traversalResult.ErrorCode);
         }
 
-        var normalizedPath = traversalResult.NormalizedPath ?? path;
+        // A simple executable name is resolved by the resolver (PATH, App Paths), never from the current folder
+        var isSimpleName = !path.Contains('\\') && !path.Contains('/') && !path.Contains(':');
 
-        // Check if it's a simple executable name (will be resolved by PATH)
-        var isSimpleName = !path.Contains('\\') && !path.Contains('/');
+        // A path with a folder but without a drive and root (tools\app.exe, \tools\app.exe, C:app.exe) would be found
+        // from the server's own current folder or drive, which the client does not choose: the planted-program risk that
+        // bare names avoid by never searching it
+        if (!isSimpleName && !Path.IsPathFullyQualified(path))
+        {
+            return new ExecutableValidationResult(
+                false,
+                Error: $"'{path}' is a partial path: it would be found from the server's current folder, which you do not " +
+                       @"choose. Pass the program's full path (C:\...\app.exe or \\server\share\app.exe) or a bare name such " +
+                       "as notepad.exe, and put arguments in arguments, not in executable.",
+                ErrorCode: nameof(LaunchErrorCode.InvalidPath));
+        }
+
+        var normalizedPath = traversalResult.NormalizedPath ?? path;
 
         // Interpreters and scripts are checked once the target is resolved (InterpreterGuard, roadmap M3.F8)
 
@@ -291,12 +304,6 @@ public partial class InputValidationService : IInputValidationService
         if (IsNetworkPath(path))
         {
             warning = "Executable is on a network path - ensure you trust the source";
-        }
-
-        // Warn about relative paths (non-simple names)
-        if (!isSimpleName && !Path.IsPathRooted(path))
-        {
-            warning = CombineWarnings(warning, "Using relative path - executable location depends on working directory");
         }
 
         return new ExecutableValidationResult(
