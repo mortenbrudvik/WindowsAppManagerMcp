@@ -52,7 +52,6 @@ public class FixtureMonitorSelectorTests
         var primary = monitors.Single(m => m.IsPrimary);
         var other = monitors.FirstOrDefault(m => !m.IsPrimary) ?? primary;
         var current = e2e.Server.Monitors.GetMonitorForWindow(E2ENative.GetForegroundWindow())!;
-        var foreground = ForegroundRoot();
         var cases = new List<(object Monitor, MonitorInfo Expected)>
         {
             ("primary", primary),
@@ -66,6 +65,9 @@ public class FixtureMonitorSelectorTests
 
         foreach (var (monitor, expected) in cases)
         {
+            var scaleBefore = e2e.Server.Monitors.GetMonitorForWindow(main)!.ScaleFactor;
+            var foregroundBefore = ForegroundRoot();
+
             // Act
             var result = await CallAsync(server, _output, "snap_window",
                 new() { ["handle"] = (long)main, ["position"] = "left_half", ["monitor"] = monitor });
@@ -74,9 +76,16 @@ public class FixtureMonitorSelectorTests
             Int(result["monitorIndex"]).Should().Be(expected.Index, "monitor '{0}' names monitor {1}", monitor, expected.Index);
             var tile = SnapMath.Calculate(expected.WorkArea, SnapPosition.LeftHalf);
             Frame(result).Should().Be(new WindowRect(tile.X, tile.Y, tile.Width, tile.Height));
+
+            // Onto a monitor at another scale, WPF's own WM_DPICHANGED handler activates the fixture with a SetWindowPos of
+            // its own, whatever flags the server's move had (the fixture works around it at startup, roadmap M3.F30), so the
+            // focus is only checked for a move at the same scale
+            if (expected.ScaleFactor == scaleBefore)
+            {
+                ForegroundRoot().Should().Be(foregroundBefore, "snapping to monitor '{0}' raises the window without activating it", monitor);
+            }
         }
 
-        ForegroundRoot().Should().Be(foreground, "snapping raises the window without activating it");
     }
 
     [DesktopFact(Requires = typeof(TwoMonitors))]

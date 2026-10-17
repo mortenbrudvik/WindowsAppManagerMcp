@@ -25,8 +25,11 @@ public sealed class NativeAppsWrapper : INativeAppsWrapper
     private static readonly NativeMethods.PropertyKey PackageFamilyNameKey = new(AppUserModelProperties, 17);
     private static readonly NativeMethods.PropertyKey LinkTargetParsingPath = new(new Guid("b9b4b3fc-2b51-4a42-b5d8-324146afcf25"), 2);
 
-    /// <summary>AO_NOERRORUI: Windows shows no error dialog of its own when the activation fails.</summary>
-    private const int NoErrorUi = 0x1;
+    /// <summary>
+    /// AO_NOERRORUI (0x2): Windows shows no error dialog of its own when the activation fails. 0x1 is AO_DESIGNMODE, which
+    /// starts the app for a designer: Calculator then exits at once and the call returns 0x80040904.
+    /// </summary>
+    public const int NoErrorUi = 0x2;
 
     private const uint SigdnNormalDisplay = 0x00000000;
     private const uint SigdnParentRelativeParsing = 0x80018001;
