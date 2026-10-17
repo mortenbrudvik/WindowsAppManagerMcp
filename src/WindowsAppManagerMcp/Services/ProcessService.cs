@@ -125,12 +125,16 @@ public class ProcessService : IProcessService
 
     /// <summary>
     /// The HRESULTs with which Windows refuses to activate a packaged app from this server's process, though the shell
-    /// can start it (roadmap M6.5): E_ELEVATED_ACTIVATION_NOT_SUPPORTED, E_UAC_DISABLED and E_FULL_ADMIN_NOT_SUPPORTED.
+    /// can start it (roadmap M6.5), as winerror.h defines them (Windows SDK 10.0.22621): E_ELEVATED_ACTIVATION_NOT_SUPPORTED
+    /// 0x80270251 ("This app can't be activated from an elevated context"), E_UAC_DISABLED 0x80270252 ("... when UAC is
+    /// disabled") and E_FULL_ADMIN_NOT_SUPPORTED 0x80270253 ("... by the Built-in Administrator").
     /// </summary>
     private static readonly HashSet<int> ActivationRefusedForElevation =
         [unchecked((int)0x80270251), unchecked((int)0x80270252), unchecked((int)0x80270253)];
 
-    /// <summary>E_APPLICATION_NOT_REGISTERED: no app with this AppUserModelID is installed for the user.</summary>
+    /// <summary>
+    /// E_APPLICATION_NOT_REGISTERED (winerror.h): "This app does not support the contract specified or is not installed".
+    /// </summary>
     private const int ApplicationNotRegistered = unchecked((int)0x80270254);
 
     public bool ElevationNeedsConfirmation() =>
@@ -648,7 +652,7 @@ public class ProcessService : IProcessService
     private static string ActivationFailureMessage(PackagedAppId app, int hresult)
     {
         var reason = hresult == ApplicationNotRegistered
-            ? "no app with this AppUserModelID is installed for the user: check the appId with list_installed_apps"
+            ? "the app is not installed for the user, or cannot be launched this way: check the appId with list_installed_apps"
             : "the app may not be installed for this user (check the appId with list_installed_apps), its package may be " +
               "being updated, or it failed to start";
         return $"Windows could not activate the app '{app.AppUserModelId}' (HRESULT 0x{hresult:X8}): {reason}. Nothing was started.";
