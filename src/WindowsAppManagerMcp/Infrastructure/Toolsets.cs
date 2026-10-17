@@ -150,7 +150,7 @@ public static class Toolsets
                 [
                     "find_windows", "get_foreground_window", "focus_window", "set_window_bounds", "set_window_state", "snap_window",
                     "move_window_to_monitor", "set_window_zorder", "close_window", "close_windows_batch", "get_owned_windows",
-                    "get_window_info", "wait_for_window"
+                    "get_window_info", "wait_for_window", "get_window_events"
                 ]),
             new("monitors", OnByDefault: true,
                 "The monitors: bounds, work areas, scale factors, and the virtual screen they make up.",

@@ -16,6 +16,7 @@ public partial class WindowFinderTools
     private readonly IWindowWaitService? _windowWait;
     private readonly IProcessSecurityProbe? _securityProbe;
     private readonly INativeVirtualDesktopWrapper? _virtualDesktops;
+    private readonly IWindowEventJournal? _journal;
 
     /// <param name="windowService">Window reads and the window selectors.</param>
     /// <param name="hitTest">The client-area read of get_window_info's detail 'full'; without it clientBounds is left out.</param>
@@ -28,14 +29,17 @@ public partial class WindowFinderTools
     /// The shell's virtual desktop manager, which marks a cloaked window on another virtual desktop with isOnOtherDesktop
     /// (roadmap M7.3); the server always registers it. Without it isOnOtherDesktop is left out.
     /// </param>
+    /// <param name="journal">get_window_events' journal (roadmap M7.2); the server always registers it.</param>
     public WindowFinderTools(
         IWindowService windowService,
         INativeHitTestWrapper? hitTest = null,
         IWindowWaitService? windowWait = null,
         IProcessSecurityProbe? securityProbe = null,
-        INativeVirtualDesktopWrapper? virtualDesktops = null)
+        INativeVirtualDesktopWrapper? virtualDesktops = null,
+        IWindowEventJournal? journal = null)
     {
         _virtualDesktops = virtualDesktops;
+        _journal = journal;
         _windowService = windowService;
         _hitTest = hitTest;
         _windowWait = windowWait;
@@ -126,6 +130,56 @@ public partial class WindowFinderTools
                 $"titleRegex '{titleRegex}' took longer than {WindowTitles.RegexTimeout.TotalMilliseconds:0} ms on a window title, so it was " +
                 "given up. Use a simpler pattern, or titleContains or titleEquals.");
         }
+    }
+
+    /// <summary>The most events get_window_events returns at once.</summary>
+    public const int MaxWindowEvents = 200;
+
+    [McpServerTool(Name = "get_window_events", Title = "Get Window Events", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
+    [Description("What happened to the desktop's windows since an earlier call, oldest first: windows shown (a dialog, popup, menu " +
+                 "or new window), hidden, destroyed, retitled, minimized and restored, and which came to the front. Each event has " +
+                 "seq, at, type, handle, title, className ('#32770' is a dialog), processName, processId and ownerHandle (a dialog's " +
+                 "window). Recording starts with the first call (startedNow: true; nothing earlier was recorded) and stops after 10 " +
+                 "minutes without one: call it before an action, then after it with nextSeq as sinceSeq to see what came up, a popup " +
+                 "already gone included. The last 1,024 events are kept (missed: how many after sinceSeq were lost). Only top-level " +
+                 "windows of other processes; your own terminal's title changes are left out.")]
+    public WindowEventsResult GetWindowEvents(
+        [Description("nextSeq of an earlier call: only the events after it. Leave out for the latest events")]
+        long? sinceSeq = null,
+        [Description("Only these event types (default: all)")]
+        WindowEventType[]? types = null,
+        [Description("Only events of this process: the whole name, case-insensitive, with or without .exe")]
+        string? processName = null,
+        [Description("Only events of this window (handle as integer)")]
+        long? handle = null,
+        [Description("At most this many events, 1-200 (default 50); more: true when there are more")]
+        int limit = 50)
+    {
+        if (limit is < 1 or > MaxWindowEvents)
+        {
+            throw new ToolErrorException(ToolErrorReporting.InvalidArgumentsErrorCode,
+                $"limit must be 1-{MaxWindowEvents}, but it is {limit}.");
+        }
+
+        if (_journal == null)
+        {
+            throw new ToolErrorException(ToolErrorReporting.ToolErrorCode, "This server has no window event journal.");
+        }
+
+        var wanted = types is { Length: > 0 } ? types.ToHashSet() : null;
+        var process = string.IsNullOrWhiteSpace(processName) ? null : TargetPolicySettings.NormalizeProcessName(processName);
+        Func<WindowEventEntry, bool>? include = wanted == null && process == null && handle == null
+            ? null
+            : entry => (wanted == null || wanted.Contains(entry.Type)) &&
+                       (handle == null || entry.Handle == handle) &&
+                       (process == null || (entry.ProcessName != null &&
+                                            string.Equals(TargetPolicySettings.NormalizeProcessName(entry.ProcessName), process,
+                                                StringComparison.OrdinalIgnoreCase)));
+        var read = _journal.Read(sinceSeq, limit, include);
+        return new WindowEventsResult(true, read.Events, read.NextSeq, read.RecordingSince,
+            StartedNow: read.StartedNow ? true : null,
+            Missed: read.Missed > 0 ? read.Missed : null,
+            More: read.More ? true : null);
     }
 
     [McpServerTool(Name = "get_window_info", Title = "Get Window Info", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]

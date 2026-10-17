@@ -17,4 +17,13 @@ public interface IWindowEventSource
     /// the event thread. A source that cannot listen (its hooks fail) still subscribes; it calls nothing.
     /// </summary>
     IDisposable Subscribe(Action changed);
+
+    /// <summary>
+    /// As <see cref="Subscribe(Action)"/>, but <paramref name="handler"/> is told the event (its WinEvent constant) and the
+    /// window, for the window event journal (roadmap M7.2). It is called on the event thread, so it must only queue the event.
+    /// </summary>
+    IDisposable Subscribe(WindowEventHandler handler);
 }
+
+/// <summary>A window event: its WinEvent constant (EVENT_OBJECT_SHOW, EVENT_SYSTEM_FOREGROUND, ...) and the window.</summary>
+public delegate void WindowEventHandler(uint eventType, nint window);

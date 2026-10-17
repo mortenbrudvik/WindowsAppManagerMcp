@@ -1,13 +1,13 @@
 # Windows App Manager - MCP Tools Reference
 
 <!-- tools:begin summary (generated from tools/list: run the tests with UPDATE_SNAPSHOTS=1, see TESTING.md) -->
-A comprehensive guide to all 84 MCP tools for managing Windows applications, windows, and layouts.
+A comprehensive guide to all 85 MCP tools for managing Windows applications, windows, and layouts.
 
 ## Quick Reference
 
 | Category | Tools | Count |
 |----------|-------|-------|
-| [Window Discovery](#window-discovery) | [find_windows](#find_windows), [get_all_windows](#get_all_windows), [get_foreground_window](#get_foreground_window), [get_owned_windows](#get_owned_windows), [get_window_info](#get_window_info), [wait_for_window](#wait_for_window) | 6 |
+| [Window Discovery](#window-discovery) | [find_windows](#find_windows), [get_all_windows](#get_all_windows), [get_foreground_window](#get_foreground_window), [get_owned_windows](#get_owned_windows), [get_window_info](#get_window_info), [wait_for_window](#wait_for_window), [get_window_events](#get_window_events) | 7 |
 | [Window Control](#window-control) | [move_window](#move_window), [resize_window](#resize_window), [set_window_bounds](#set_window_bounds), [set_window_state](#set_window_state), [focus_window](#focus_window), [close_window](#close_window), [snap_window](#snap_window), [move_window_to_monitor](#move_window_to_monitor), [set_window_zorder](#set_window_zorder) | 9 |
 | [Batch Operations](#batch-operations) | [set_windows_bounds_batch](#set_windows_bounds_batch), [snap_windows_batch](#snap_windows_batch), [set_windows_state_batch](#set_windows_state_batch), [close_windows_batch](#close_windows_batch), [launch_applications_batch](#launch_applications_batch) | 5 |
 | [Monitor Info](#monitor-info) | [get_monitors](#get_monitors), [get_primary_monitor](#get_primary_monitor) | 2 |
@@ -307,7 +307,7 @@ Every tool the server serves sits in the agent's context on every turn, and a lo
 | Toolset | Default | Tokens | What it covers | Tools |
 |---------|---------|--------|----------------|-------|
 | `server` | always on | about 1,100 | The server's build, environment and toolsets, and the user's control over its input: whether input is paused, resuming it with the user's consent, releasing stuck keys. | [get_server_info](#get_server_info), [get_control_status](#get_control_status), [resume_input](#resume_input), [release_all_input](#release_all_input) |
-| `windows` | on | about 10,900 | Find, wait for, focus, move, resize, snap, minimize, maximize, raise, pin on top and close windows, and close several at once. | [find_windows](#find_windows), [get_foreground_window](#get_foreground_window), [focus_window](#focus_window), [set_window_bounds](#set_window_bounds), [set_window_state](#set_window_state), [snap_window](#snap_window), [move_window_to_monitor](#move_window_to_monitor), [set_window_zorder](#set_window_zorder), [close_window](#close_window), [close_windows_batch](#close_windows_batch), [get_owned_windows](#get_owned_windows), [get_window_info](#get_window_info), [wait_for_window](#wait_for_window) |
+| `windows` | on | about 11,300 | Find, wait for, focus, move, resize, snap, minimize, maximize, raise, pin on top and close windows, and close several at once. | [find_windows](#find_windows), [get_foreground_window](#get_foreground_window), [focus_window](#focus_window), [set_window_bounds](#set_window_bounds), [set_window_state](#set_window_state), [snap_window](#snap_window), [move_window_to_monitor](#move_window_to_monitor), [set_window_zorder](#set_window_zorder), [close_window](#close_window), [close_windows_batch](#close_windows_batch), [get_owned_windows](#get_owned_windows), [get_window_info](#get_window_info), [wait_for_window](#wait_for_window), [get_window_events](#get_window_events) |
 | `monitors` | on | about 200 | The monitors: bounds, work areas, scale factors, and the virtual screen they make up. | [get_monitors](#get_monitors) |
 | `capture` | on | about 5,900 | Screenshots of monitors, regions and windows, as image content. | [take_screenshot](#take_screenshot), [capture_region](#capture_region), [capture_window](#capture_window), [capture_with_elements](#capture_with_elements) |
 | `elements` | on | about 8,300 | UI Automation: one-call desktop observations, element trees, searches that return element refs (also in menus, dropdowns and dialogs), waits for elements, the focused element, the element at a point, an app's open popups, an element's text and a table's cells. | [get_desktop_state](#get_desktop_state), [get_ui_elements](#get_ui_elements), [find_ui_elements](#find_ui_elements), [get_focused_element](#get_focused_element), [get_element_at_point](#get_element_at_point), [get_active_popups](#get_active_popups), [read_element_text](#read_element_text), [read_table](#read_table), [wait_for_element](#wait_for_element) |
@@ -325,7 +325,7 @@ Every tool the server serves sits in the agent's context on every turn, and a lo
 | `ocr` | off | about 2,300 | Read and find text on the screen with Windows OCR where UI Automation exposes none (canvas apps, games, remote desktops, rendered PDFs), with click points for the mouse tools. | [read_screen_text](#read_screen_text), [find_text_on_screen](#find_text_on_screen) |
 | `deprecated` | off | about 4,900 | Tools replaced in 2.2.0 and removed in 3.0.0, unchanged until then and each served only with the toolset it came from: use mouse_click, set_window_bounds, find_windows, get_monitors and get_browser_url instead. | [click](#click), [right_click](#right_click), [double_click](#double_click), [move_window](#move_window), [resize_window](#resize_window), [get_all_windows](#get_all_windows), [get_primary_monitor](#get_primary_monitor), [list_screens](#list_screens), [get_active_browser_url](#get_active_browser_url) |
 
-The default surface (the toolsets that are on) is about 54,800 tokens, and every tool together about 69,300.
+The default surface (the toolsets that are on) is about 55,300 tokens, and every tool together about 69,700.
 <!-- tools:end toolsets -->
 
 **Tokens** is what the toolset's tools cost in tools/list, to the nearest 100: their names, titles, descriptions, input schemas and annotations as the server sends them, estimated at 4 bytes of JSON per token (roadmap M6.1). It is what turning the toolset on adds to the context a client loads up front, and what turning it off saves. The two totals under the table are measured the same way and generated with it. Contract tests hold each toolset, the default surface, the whole list and every single tool (at most 2,500 tokens) to a budget, so a change that makes them larger is a decision; see TESTING.md.
@@ -344,7 +344,7 @@ Of the tools later milestones add, the niche or heavy ones come in toolsets that
 **Read-only mode** serves the tools that only read, of the toolsets in force: windows, monitors, UI elements, browser pages, processes, layouts, the server's own state and get_clipboard (which then returns only what the user allows, since nothing the agent did can have filled the clipboard). The capture tools can write image files (`outputPath`), so they are not read-only (the OCR tools, which write none, are), and neither is anything that sends input, changes or closes windows, starts or ends processes, or writes or deletes layouts. Which tool counts as read-only is the tool's own annotation (`readOnlyHint`), and contract tests check that every tool annotated read-only is one the input gate also treats as read-only and is none of the tools that write files (save_layout, delete_layout, the captures). The list below is generated from the annotations:
 
 <!-- tools:begin read-only (generated from the readOnlyHint annotations: run the tests with UPDATE_SNAPSHOTS=1, see TESTING.md) -->
-Read-only mode serves these 26 tools: [find_windows](#find_windows), [get_foreground_window](#get_foreground_window), [get_owned_windows](#get_owned_windows), [get_window_info](#get_window_info), [wait_for_window](#wait_for_window), [get_monitors](#get_monitors), [get_desktop_state](#get_desktop_state), [get_ui_elements](#get_ui_elements), [find_ui_elements](#find_ui_elements), [get_focused_element](#get_focused_element), [get_element_at_point](#get_element_at_point), [get_active_popups](#get_active_popups), [read_element_text](#read_element_text), [read_table](#read_table), [wait_for_element](#wait_for_element), [get_browser_url](#get_browser_url), [get_browser_content](#get_browser_content), [list_tabs](#list_tabs), [wait_for_browser](#wait_for_browser), [get_control_status](#get_control_status), [list_installed_apps](#list_installed_apps), [list_processes](#list_processes), [get_clipboard](#get_clipboard), [list_layouts](#list_layouts), [get_layout](#get_layout), [get_server_info](#get_server_info). With their opt-in toolset turned on it also serves [get_all_windows](#get_all_windows) (`deprecated`), [get_primary_monitor](#get_primary_monitor) (`deprecated`), [list_screens](#list_screens) (`deprecated`), [read_screen_text](#read_screen_text) (`ocr`), [find_text_on_screen](#find_text_on_screen) (`ocr`), [wait_for_visual](#wait_for_visual) (`visual`), [get_active_browser_url](#get_active_browser_url) (`deprecated`), [browser_element_rect](#browser_element_rect) (`browser-actions`).
+Read-only mode serves these 27 tools: [find_windows](#find_windows), [get_foreground_window](#get_foreground_window), [get_owned_windows](#get_owned_windows), [get_window_info](#get_window_info), [wait_for_window](#wait_for_window), [get_window_events](#get_window_events), [get_monitors](#get_monitors), [get_desktop_state](#get_desktop_state), [get_ui_elements](#get_ui_elements), [find_ui_elements](#find_ui_elements), [get_focused_element](#get_focused_element), [get_element_at_point](#get_element_at_point), [get_active_popups](#get_active_popups), [read_element_text](#read_element_text), [read_table](#read_table), [wait_for_element](#wait_for_element), [get_browser_url](#get_browser_url), [get_browser_content](#get_browser_content), [list_tabs](#list_tabs), [wait_for_browser](#wait_for_browser), [get_control_status](#get_control_status), [list_installed_apps](#list_installed_apps), [list_processes](#list_processes), [get_clipboard](#get_clipboard), [list_layouts](#list_layouts), [get_layout](#get_layout), [get_server_info](#get_server_info). With their opt-in toolset turned on it also serves [get_all_windows](#get_all_windows) (`deprecated`), [get_primary_monitor](#get_primary_monitor) (`deprecated`), [list_screens](#list_screens) (`deprecated`), [read_screen_text](#read_screen_text) (`ocr`), [find_text_on_screen](#find_text_on_screen) (`ocr`), [wait_for_visual](#wait_for_visual) (`visual`), [get_active_browser_url](#get_active_browser_url) (`deprecated`), [browser_element_rect](#browser_element_rect) (`browser-actions`).
 <!-- tools:end read-only -->
 
 **When tools are off**, the server instructions every client gets end with one more line that names the toolsets, the read-only mode and the excluded tools the user turned off, and tells the agent to skip the steps whose tools it does not see and to tell the user instead of working around them.
@@ -888,6 +888,72 @@ A timeout (`isError: true`):
 ```
 
 **Window events.** Between two reads the server also listens for window events (roadmap M3.F22): a window created, destroyed, shown, hidden, renamed, minimized or restored, cloaked or uncloaked, or brought to the front. Such an event ends the pause early, so the next read comes sooner, but never sooner than 25 ms after the pause began. The events only bring the next read forward: the reads alone decide, `stableMs` is still measured by them, and when the server cannot listen (its hooks could not be installed) it reads on the schedule above. They change how soon a wait ends, not what it waits for.
+
+---
+
+### get_window_events
+
+What happened to the desktop's windows since an earlier call (roadmap M7.2): which windows came up (a dialog, a popup, a menu, a new window), were hidden, closed, retitled, minimized or restored, and which came to the front. One cheap read answers "did a dialog pop up, did the focus move, did the title change" after an action, a popup that is already gone again included, where a [find_windows](#find_windows) afterwards only sees what is still there. Read-only; it runs outside the input gate and while input is paused.
+
+<!-- tools:begin params:get_window_events -->
+**Parameters:**
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| sinceSeq | integer | No | - | nextSeq of an earlier call: only the events after it. Leave out for the latest events |
+| types | string (one of: `"shown"`, `"hidden"`, `"destroyed"`, `"foreground"`, `"titleChanged"`, `"minimized"`, `"restored"`)[] | No | - | Only these event types (default: all) |
+| processName | string | No | - | Only events of this process: the whole name, case-insensitive, with or without .exe |
+| handle | integer | No | - | Only events of this window (handle as integer) |
+| limit | integer | No | 50 | At most this many events, 1-200 (default 50); more: true when there are more |
+<!-- tools:end params:get_window_events -->
+
+**How to use it.** The journal records only while it is read: the first call starts it (`startedNow: true`; nothing earlier was recorded, so that call returns no events) and it stops after 10 minutes without a call. So call it once before an action, keep its `nextSeq`, and after the action call it with `sinceSeq` set to that `nextSeq`: the result has every event since, oldest first, and a new `nextSeq` for the next time. Without `sinceSeq` it returns the latest events.
+
+| Event `type` | When |
+|--------------|------|
+| `shown` | A window appeared (EVENT_OBJECT_SHOW): a dialog, a popup, a menu, a new window |
+| `hidden` | A window was hidden |
+| `destroyed` | A window closed; only for a window the journal had already seen, with its last title (a closed window can no longer be read) |
+| `foreground` | A window came to the front |
+| `titleChanged` | The title of a window the journal had seen changed |
+| `minimized`, `restored` | A window was minimized, or restored from minimized |
+
+Each event has `seq` (higher than every earlier one), `at`, `type`, `handle`, `title` (when the event was recorded; cut to 200 characters), `className` (`#32770` is a standard dialog), `processName`, `processId` and `ownerHandle` (the window that owns it, a dialog's main window; left out when it has none). Filter with `types`, `processName` (the whole name, case-insensitive, with or without `.exe`) and `handle`; `limit` (1-200, default 50) caps a call, and `more: true` says to call again with `nextSeq` for the rest.
+
+| Field | Meaning |
+|-------|---------|
+| `events` | The events after `sinceSeq` that pass the filters, oldest first |
+| `nextSeq` | Pass it as `sinceSeq` next time |
+| `recordingSince` | When the journal started recording |
+| `startedNow` | `true` when this call started the recording: nothing before it was recorded. Left out otherwise |
+| `missed` | How many events after `sinceSeq` the journal no longer holds: it keeps the last 1,024. Left out when none were missed |
+| `more` | `true` when `limit` cut the events. Left out otherwise |
+
+**What is recorded.** Only top-level windows, and only other processes' windows (never the server's own). Tooltips, their shadows and input method windows are left out, and so are the title changes of the agent's own host (its terminal retitles itself all the time); the host's other events are kept, so the focus coming back to the terminal shows. The journal reads each window as the event comes, on a thread of its own, with reads that send the window no message, so a hung window cannot hold it up. It uses the same window events as [wait_for_window](#wait_for_window)'s wake-ups, which the server installs only while something listens: no hook stays installed for a session that never reads the journal. It records titles of every app, as find_windows lists them; the [target policy](#target-policy) does not hide them.
+
+**Example:**
+> "Click Save, then check whether a dialog came up."
+
+```json
+{
+  "name": "get_window_events",
+  "arguments": { "sinceSeq": 41, "types": ["shown", "foreground"] }
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "events": [
+    { "seq": 42, "at": "2026-10-17T12:00:00+00:00", "type": "shown", "handle": 1706944, "title": "Save As", "className": "#32770", "processName": "notepad", "processId": 10244, "ownerHandle": 1706796 },
+    { "seq": 43, "at": "2026-10-17T12:00:00.016+00:00", "type": "foreground", "handle": 1706944, "title": "Save As", "className": "#32770", "processName": "notepad", "processId": 10244, "ownerHandle": 1706796 }
+  ],
+  "nextSeq": 43,
+  "recordingSince": "2026-10-17T11:58:00+00:00"
+}
+```
+
+`limit` outside 1-200 or an unknown `types` value is `InvalidArguments` (a tool error); nothing is recorded or returned.
 
 ---
 
@@ -8589,6 +8655,11 @@ the new tools; their sections have the rest.
   (run_steps: `stoppedBy` `userInterrupted`) when the user uses the keyboard or mouse meanwhile; with `warn` they go on and
   the result has a `warning` (new on drag and run_steps). get_control_status reports `takeover` (mode and state). Nothing
   changes while it is off.
+- **Window event journal (roadmap M7.2).** A new read-only tool in the default-on `windows` toolset (62 tools by
+  default): [get_window_events](#get_window_events) returns what happened to the desktop's top-level windows since an
+  earlier call (`sinceSeq`, `nextSeq`): windows shown, hidden, destroyed, retitled, minimized, restored, and foreground
+  changes, with each window's title, class, process and owner. The journal records from the first call until 10 minutes
+  without one and keeps the last 1,024 events. The default tools/list grows by about 450 tokens.
 - **Windows on other virtual desktops (roadmap M7.3).** find_windows rows and get_window_info's `standard` and `full`
   detail carry `isOnOtherDesktop: true` for a cloaked window on another virtual desktop, and leave it out otherwise.
   `Cloaked` errors from focus_window and the capture tools now say whether the window is on another virtual desktop

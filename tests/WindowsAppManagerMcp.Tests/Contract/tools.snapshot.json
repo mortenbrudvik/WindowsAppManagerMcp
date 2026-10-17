@@ -4700,6 +4700,72 @@
       }
     },
     {
+      "name": "get_window_events",
+      "title": "Get Window Events",
+      "description": "What happened to the desktop's windows since an earlier call, oldest first: windows shown (a dialog, popup, menu or new window), hidden, destroyed, retitled, minimized and restored, and which came to the front. Each event has seq, at, type, handle, title, className ('#32770' is a dialog), processName, processId and ownerHandle (a dialog's window). Recording starts with the first call (startedNow: true; nothing earlier was recorded) and stops after 10 minutes without one: call it before an action, then after it with nextSeq as sinceSeq to see what came up, a popup already gone included. The last 1,024 events are kept (missed: how many after sinceSeq were lost). Only top-level windows of other processes; your own terminal's title changes are left out.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "sinceSeq": {
+            "description": "nextSeq of an earlier call: only the events after it. Leave out for the latest events",
+            "type": [
+              "integer",
+              "null"
+            ],
+            "default": null
+          },
+          "types": {
+            "description": "Only these event types (default: all)",
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string",
+              "enum": [
+                "shown",
+                "hidden",
+                "destroyed",
+                "foreground",
+                "titleChanged",
+                "minimized",
+                "restored"
+              ]
+            },
+            "default": null
+          },
+          "processName": {
+            "description": "Only events of this process: the whole name, case-insensitive, with or without .exe",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "handle": {
+            "description": "Only events of this window (handle as integer)",
+            "type": [
+              "integer",
+              "null"
+            ],
+            "default": null
+          },
+          "limit": {
+            "description": "At most this many events, 1-200 (default 50); more: true when there are more",
+            "type": "integer",
+            "default": 50
+          }
+        }
+      },
+      "annotations": {
+        "title": "Get Window Events",
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      }
+    },
+    {
       "name": "get_window_info",
       "title": "Get Window Info",
       "description": "Read one window, named by handle or by a window selector, without listing every window. detail 'compact' gives handle, title, process and state; 'standard' (default) what find_windows reports, visibleBounds (the frame you see) included; 'full' adds clientBounds (the client area on screen), isForeground, zOrder (position among all top-level windows, hidden ones included, front to back; not window.index, and isForeground tells what is in front), isTopmost, isEnabled (false: a modal dialog takes its input), isResponding (false: Windows reports it hung), dpi (96 is 100%), and its process's integrityLevel and elevated, with aboveServer: true when it runs above this server (TargetElevated). Untitled, cloaked and tool windows are read too when named by handle. errorCode InvalidHandle: the handle is no window; WindowNotFound, AmbiguousWindow (with candidates) or HandleMismatch: the selector named no single window.",

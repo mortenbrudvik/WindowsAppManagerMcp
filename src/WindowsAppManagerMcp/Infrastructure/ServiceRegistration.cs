@@ -99,6 +99,10 @@ public static class ServiceRegistration
         // a thread of their own, which the first wait that sleeps starts and the container stops with the server
         services.AddSingleton<INativeWinEventWrapper, NativeWinEventWrapper>();
         services.AddSingleton<IWindowEventSource, WindowEventSource>();
+
+        // get_window_events' journal (roadmap M7.2): listens to the same window events while it is read, and stops after 10
+        // minutes without a read
+        services.AddSingleton<IWindowEventJournal, WindowEventJournal>();
         // Places the launch tools' windows (placement, roadmap M3.13) and apply_layout's launched ones (roadmap M3.F27)
         // through the window and foreground services, finding a named monitor again by its id when it places (M6.7, M6.8)
         services.AddSingleton<ILaunchPlacementService>(sp => new LaunchPlacementService(
