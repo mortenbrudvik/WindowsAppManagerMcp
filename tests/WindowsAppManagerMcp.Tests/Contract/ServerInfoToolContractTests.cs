@@ -93,6 +93,43 @@ public class ServerInfoToolContractTests
         info.GetProperty("toolsets").GetProperty("servedTools").GetInt32().Should().Be(listed.Count);
     }
 
+    [Fact]
+    public async Task GetServerInfo_ListsTheServedResourcesAndPrompts()
+    {
+        // Roadmap M6.9: an agent whose client shows resources and prompts only to the user still learns they exist, and
+        // read-only mode leaves out the prompts that act
+        using var services = new ContractServices(ContractMode.Typical);
+        var readOnly = ToolsetSelection.FromEnvironment(name => name == ToolsetSelection.ReadOnlyVariable ? "1" : null, Toolsets.Server);
+        await using var all = await InProcessMcpServer.StartAsync(
+            [], builder => builder.AddWindowsAppManagerTools(), configureServices: services.Register);
+        await using var reading = await InProcessMcpServer.StartAsync(
+            [], builder => builder.AddWindowsAppManagerTools(readOnly), configureServices: services.Register);
+
+        var toolsets = Json(await all.CallToolAsync("get_server_info")).GetProperty("toolsets");
+        var readOnlyToolsets = Json(await reading.CallToolAsync("get_server_info")).GetProperty("toolsets");
+
+        Names(toolsets, "resources").Should().Equal("wam://layouts/{name}", "wam://monitors", "wam://windows");
+        Names(toolsets, "prompts").Should().Equal("arrange_workspace", "automate_app", "diagnose_click", "fill_form");
+        Names(readOnlyToolsets, "prompts").Should().Equal("diagnose_click");
+    }
+
+    [Fact]
+    public async Task GetServerInfo_LeavesOutResourcesAndPrompts_WhenNoneIsServed()
+    {
+        using var services = new ContractServices(ContractMode.Typical);
+        var serverOnly = ToolsetSelection.FromEnvironment(name => name == ToolsetSelection.ToolsetsVariable ? "server" : null, Toolsets.Server);
+        await using var server = await InProcessMcpServer.StartAsync(
+            [], builder => builder.AddWindowsAppManagerTools(serverOnly), configureServices: services.Register);
+
+        var toolsets = Json(await server.CallToolAsync("get_server_info")).GetProperty("toolsets");
+
+        toolsets.TryGetProperty("resources", out _).Should().BeFalse();
+        toolsets.TryGetProperty("prompts", out _).Should().BeFalse();
+    }
+
+    private static IEnumerable<string?> Names(JsonElement toolsets, string member) =>
+        toolsets.GetProperty(member).EnumerateArray().Select(e => e.GetString());
+
     private static JsonElement Json(CallToolResult result)
     {
         var text = result.Content.OfType<TextContentBlock>().Single().Text;

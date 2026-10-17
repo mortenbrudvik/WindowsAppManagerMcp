@@ -27,7 +27,8 @@ public sealed class ServerInfoService(
     ProtocolAllowlist? protocols = null,
     UiaEngineOptions? uiaEngine = null) : IServerInfoService
 {
-    public ServerInfoResult Read(ServerConnectionInfo connection, int servedTools)
+    public ServerInfoResult Read(ServerConnectionInfo connection, int servedTools, IReadOnlyList<string>? resources = null,
+        IReadOnlyList<string>? prompts = null)
     {
         ArgumentNullException.ThrowIfNull(connection);
 
@@ -86,7 +87,7 @@ public sealed class ServerInfoService(
                 protocolSetting.AllowedSchemes.ToList()),
             new ServerPathsInfo(layouts.LayoutsPath, auditLog?.Folder),
             new ToolsetInfo(selection.Enabled, selection.Disabled, selection.Source, selection.ReadOnly, selection.ExcludedTools, servedTools,
-                selection.Moved),
+                selection.Moved, resources is { Count: > 0 } ? resources : null, prompts is { Count: > 0 } ? prompts : null),
             warnings.Count == 0 ? null : warnings,
             new UiAutomationInfo(
                 engine.Engine,

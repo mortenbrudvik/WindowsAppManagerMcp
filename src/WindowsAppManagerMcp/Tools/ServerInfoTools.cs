@@ -36,6 +36,9 @@ public class ServerInfoTools
         ArgumentNullException.ThrowIfNull(server);
 
         var connection = new ServerConnectionInfo(server.NegotiatedProtocolVersion, server.ClientInfo?.Name, server.ClientInfo?.Version);
-        return _info.Read(connection, server.ServerOptions.ToolCollection?.Count ?? 0);
+        var options = server.ServerOptions;
+        return _info.Read(connection, options.ToolCollection?.Count ?? 0,
+            options.ResourceCollection?.Select(r => r.ProtocolResourceTemplate.UriTemplate).Order(StringComparer.Ordinal).ToList(),
+            options.PromptCollection?.Select(p => p.ProtocolPrompt.Name).Order(StringComparer.Ordinal).ToList());
     }
 }

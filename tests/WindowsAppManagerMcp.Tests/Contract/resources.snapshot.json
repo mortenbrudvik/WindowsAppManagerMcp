@@ -1,0 +1,93 @@
+{
+  "$comment": "The resources/list, resources/templates/list and prompts/list results of the server, each sorted. Generated: do not edit. After a deliberate change, run the tests with UPDATE_SNAPSHOTS=1 and review the diff (see TESTING.md, \"Tool surface snapshot\").",
+  "resources": [
+    {
+      "name": "monitors",
+      "title": "Monitors",
+      "uri": "wam://monitors",
+      "description": "The monitors as get_monitors returns them: bounds, work areas, scale factors, the primary monitor and the virtual screen.",
+      "mimeType": "application/json"
+    },
+    {
+      "name": "windows",
+      "title": "Windows",
+      "uri": "wam://windows",
+      "description": "The user-facing app windows, front to back, as find_windows with no filter returns them: handle, title, process, class, bounds, visible frame and state.",
+      "mimeType": "application/json"
+    }
+  ],
+  "resourceTemplates": [
+    {
+      "name": "layout",
+      "title": "Layout preset",
+      "uriTemplate": "wam://layouts/{name}",
+      "description": "A saved layout preset as get_layout returns it: each placement's window, monitor and position. A name no preset has is an error.",
+      "mimeType": "application/json"
+    }
+  ],
+  "prompts": [
+    {
+      "name": "arrange_workspace",
+      "title": "Arrange windows",
+      "description": "Arrange windows on the user's monitors as described: find each window, then snap, place, move or maximize it, and check the result.",
+      "arguments": [
+        {
+          "name": "description",
+          "description": "The arrangement, in the user's words (for example 'editor on the left half, browser on the right')",
+          "required": true
+        }
+      ]
+    },
+    {
+      "name": "automate_app",
+      "title": "Automate an app",
+      "description": "Do a task in a Windows app with the locate, act and verify loop: find its window and elements, act through element refs, check each step.",
+      "arguments": [
+        {
+          "name": "app",
+          "description": "The app, as the user names it (for example 'Notepad' or 'the Settings app')",
+          "required": true
+        },
+        {
+          "name": "goal",
+          "description": "What to do in it",
+          "required": true
+        }
+      ]
+    },
+    {
+      "name": "diagnose_click",
+      "title": "Diagnose a click",
+      "description": "Find out why a click did nothing or hit the wrong thing: input paused, a blocking dialog, a covered or wrong point, a disabled control. Reads first, acts again only once the cause is known.",
+      "arguments": [
+        {
+          "name": "window",
+          "description": "The window the click was meant for",
+          "required": true
+        },
+        {
+          "name": "symptom",
+          "description": "What was clicked and what happened (for example 'clicked Save at 812,640, nothing happened')",
+          "required": true
+        }
+      ]
+    },
+    {
+      "name": "fill_form",
+      "title": "Fill in a form",
+      "description": "Fill in a form in a window with the values given: find each field's element, set it through UI Automation, read it back, and submit only when asked.",
+      "arguments": [
+        {
+          "name": "window",
+          "description": "The window with the form (for example 'the Contoso sign-up dialog')",
+          "required": true
+        },
+        {
+          "name": "fields",
+          "description": "The values to enter, field by field (for example 'Name=Ada Lovelace; Country=Norway')",
+          "required": true
+        }
+      ]
+    }
+  ]
+}

@@ -22,40 +22,37 @@ public class MonitorInfoTools
     [McpServerTool(Name = "get_monitors", Title = "List Monitors", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
     [Description("Get information about all connected displays/monitors including bounds, work area (excluding taskbar), and scale factor, " +
                  "and virtualScreen: the bounds of all monitors together, which take_screenshot captures with monitorIndex -1.")]
-    public MonitorsResult GetMonitors()
+    public MonitorsResult GetMonitors() => ReadMonitors(_monitorService, _screen);
+
+    [McpServerTool(Name = "get_primary_monitor", Title = "Get Primary Monitor", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
+    [Description("Deprecated, removed in 3.0.0: use get_monitors instead (the monitor with isPrimary). Returns the primary monitor.")]
+    public MonitorInfoDto GetPrimaryMonitor() => ToDto(_monitorService.GetPrimaryMonitor());
+
+    /// <summary>
+    /// get_monitors' result, which the wam://monitors resource returns too (roadmap M6.9), so a change to one changes both.
+    /// </summary>
+    internal static MonitorsResult ReadMonitors(IMonitorService monitorService, IScreenCaptureWrapper screen)
     {
-        var monitors = _monitorService.GetAllMonitors();
+        var monitors = monitorService.GetAllMonitors();
         var primaryIndex = monitors.FirstOrDefault(m => m.IsPrimary)?.Index ?? 0;
-        var (x, y, width, height) = _screen.GetVirtualScreenBounds();
+        var (x, y, width, height) = screen.GetVirtualScreenBounds();
 
         return new MonitorsResult(
-            Monitors: monitors.Select(m => new MonitorInfoDto(
-                Index: m.Index,
-                Name: m.DeviceName,
-                IsPrimary: m.IsPrimary,
-                Bounds: new BoundsDto(m.Bounds.X, m.Bounds.Y, m.Bounds.Width, m.Bounds.Height),
-                WorkArea: new BoundsDto(m.WorkArea.X, m.WorkArea.Y, m.WorkArea.Width, m.WorkArea.Height),
-                ScaleFactor: m.ScaleFactor
-            )).ToList(),
+            Monitors: monitors.Select(ToDto).ToList(),
             PrimaryIndex: primaryIndex,
             VirtualScreen: new VirtualScreenBounds(x, y, width, height)
         );
     }
 
-    [McpServerTool(Name = "get_primary_monitor", Title = "Get Primary Monitor", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
-    [Description("Deprecated, removed in 3.0.0: use get_monitors instead (the monitor with isPrimary). Returns the primary monitor.")]
-    public MonitorInfoDto GetPrimaryMonitor()
-    {
-        var monitor = _monitorService.GetPrimaryMonitor();
-        return new MonitorInfoDto(
-            Index: monitor.Index,
-            Name: monitor.DeviceName,
-            IsPrimary: monitor.IsPrimary,
-            Bounds: new BoundsDto(monitor.Bounds.X, monitor.Bounds.Y, monitor.Bounds.Width, monitor.Bounds.Height),
-            WorkArea: new BoundsDto(monitor.WorkArea.X, monitor.WorkArea.Y, monitor.WorkArea.Width, monitor.WorkArea.Height),
-            ScaleFactor: monitor.ScaleFactor
-        );
-    }
+    /// <summary>A monitor as get_monitors, get_primary_monitor and the wam://monitors resource return it.</summary>
+    internal static MonitorInfoDto ToDto(MonitorInfo monitor) => new(
+        Index: monitor.Index,
+        Name: monitor.DeviceName,
+        IsPrimary: monitor.IsPrimary,
+        Bounds: new BoundsDto(monitor.Bounds.X, monitor.Bounds.Y, monitor.Bounds.Width, monitor.Bounds.Height),
+        WorkArea: new BoundsDto(monitor.WorkArea.X, monitor.WorkArea.Y, monitor.WorkArea.Width, monitor.WorkArea.Height),
+        ScaleFactor: monitor.ScaleFactor
+    );
 }
 
 public record MonitorsResult(

@@ -102,6 +102,61 @@ public class ToolSurfaceSnapshotTests
     }
 
     [Fact]
+    public async Task ResourcesAndPromptsLists_MatchTheCheckedInSnapshot()
+    {
+        // Roadmap M6.9: resources/list, resources/templates/list and prompts/list are surface a client acts on too
+        // Arrange
+        var live = await ResourceSurface.ListAsync();
+        var expected = ResourceSurface.ToSnapshotText(live);
+
+        // Act
+        var committed = Snapshots.ReadNormalized(ResourceSurface.SnapshotPath);
+
+        // Assert
+        if (committed == expected)
+        {
+            return;
+        }
+
+        if (Snapshots.UpdateRequested)
+        {
+            Snapshots.WritePreservingFormat(ResourceSurface.SnapshotPath, expected);
+            return;
+        }
+
+        var paths = new List<string>();
+        if (committed != null)
+        {
+            var before = JsonNode.Parse(committed)!.AsObject();
+            foreach (var (member, _, _) in ResourceSurface.Lists)
+            {
+                ChangedPaths(before[member], live[member], member, paths);
+            }
+        }
+
+        Assert.Fail(
+            "resources/list, resources/templates/list or prompts/list differs from Contract/resources.snapshot.json. If the change " +
+            $"is intended, regenerate the snapshots with {Snapshots.UpdateVariable}=1 (see TESTING.md) and review the diff.\n" +
+            string.Join("\n", committed == null
+                ? [$"{ResourceSurface.SnapshotPath} does not exist."]
+                : paths.Take(MaxReportedPaths).Select(path => $"changed: {path}").DefaultIfEmpty("(only the formatting of the file differs)")));
+    }
+
+    [Fact]
+    public async Task EveryRevision_AdvertisesResourcesPromptsAndCompletions_WithoutSubscriptions()
+    {
+        // Roadmap M6.9: no resource changes on its own schedule, so no client is offered subscriptions to them
+        foreach (var (revision, node) in await HandshakeResults.Value)
+        {
+            var capabilities = node!["capabilities"]!;
+            capabilities["resources"].Should().NotBeNull("the server serves resources ({0})", revision);
+            capabilities["prompts"].Should().NotBeNull("the server serves prompts ({0})", revision);
+            capabilities["completions"].Should().NotBeNull("layout names complete in wam://layouts/{{name}} ({0})", revision);
+            ((bool?)capabilities["resources"]!["subscribe"]).Should().NotBe(true, "nothing sends resource updates ({0})", revision);
+        }
+    }
+
+    [Fact]
     public async Task ToolsList_ServesExactlyTheRegisteredTools_EachOnceSortedByName()
     {
         // The snapshot, the generated docs and the per-tool contract tests run over these names
@@ -146,6 +201,21 @@ public class ToolSurfaceSnapshotTests
             .And.Contain("./scripts/Test-ToolsSnapshot.ps1 -ExePath ./bin/WindowsAppManagerMcp.exe -OnlyIfCurrent");
         script.Should().Contain($"'{string.Join('/', ToolSurface.SnapshotRelativePath)}'",
             "the script's default snapshot is the file this test keeps current");
+    }
+
+    [Fact]
+    public void TheGuardScript_AlsoComparesTheResourcesAndPrompts_WithTheirSnapshot()
+    {
+        // Roadmap M6.9: an exe that serves stale resources or prompts fails CI as one with stale tools does
+        var script = Snapshots.ReadNormalized(RepositoryFiles.PathOf("scripts", "Test-ToolsSnapshot.ps1"))!;
+
+        script.Should().Contain($"'{string.Join('/', ResourceSurface.SnapshotRelativePath)}'",
+            "the script's default resources snapshot is the file ResourcesAndPromptsLists_MatchTheCheckedInSnapshot keeps current");
+        foreach (var (member, method, key) in ResourceSurface.Lists)
+        {
+            script.Should().Contain($"@{{ Member = '{member}'; Method = '{method}'; Key = '{key}' }}",
+                "the script lists {0} with {1} and compares its items by {2}", member, method, key);
+        }
     }
 
     [Fact]

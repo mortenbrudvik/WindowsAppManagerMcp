@@ -150,6 +150,11 @@ public sealed record ServerPathsInfo(string Layouts, string? AuditLog = null);
 /// Where the tools that moved out of a toolset in force went (roadmap M6.1), one sentence per toolset that is off: for
 /// example click, which the deprecated toolset holds and mouse_click replaces. Null when none is out of reach.
 /// </param>
+/// <param name="Resources">
+/// The URIs (or URI templates) of the resources served (roadmap M6.9), so an agent whose client shows resources only to the
+/// user still learns they exist; null when none is served.
+/// </param>
+/// <param name="Prompts">The names of the prompts served (roadmap M6.9); null when none is served.</param>
 public sealed record ToolsetInfo(
     IReadOnlyList<string> Enabled,
     IReadOnlyList<string> Disabled,
@@ -157,4 +162,6 @@ public sealed record ToolsetInfo(
     bool ReadOnly,
     IReadOnlyList<string> ExcludedTools,
     int ServedTools,
-    IReadOnlyList<string>? Moved = null);
+    IReadOnlyList<string>? Moved = null,
+    IReadOnlyList<string>? Resources = null,
+    IReadOnlyList<string>? Prompts = null);

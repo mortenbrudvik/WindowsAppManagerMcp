@@ -286,8 +286,8 @@ public static class ServiceRegistration
     }
 
     /// <summary>
-    /// Registers the call filters and the server's tools with the MCP server, and serves the ones
-    /// <paramref name="toolsets"/> chooses (roadmap M2.14).
+    /// Registers the call filters and the server's tools, resources and prompts with the MCP server, and serves the ones
+    /// <paramref name="toolsets"/> chooses (roadmap M2.14, M6.9).
     /// </summary>
     /// <param name="builder">The MCP server builder.</param>
     /// <param name="toolsets">
@@ -339,7 +339,10 @@ public static class ServiceRegistration
             .WithServerTools<InputControlTools>()
             .WithServerTools<ServerInfoTools>()
             .WithServerTools<ClipboardTools>()
-            // Last: removes the tools the user's toolsets, exclusions or read-only mode leave out
+            // The wam:// resources and the prompts (roadmap M6.9), with their own request log
+            .AddWindowsAppManagerResourcesAndPrompts()
+            // Last: removes the tools the user's toolsets, exclusions or read-only mode leave out, and the resources and
+            // prompts whose tools are then not served
             .WithToolsets(toolsets ?? ToolsetSelection.All());
     }
 }
