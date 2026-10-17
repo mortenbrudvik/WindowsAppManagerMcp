@@ -725,19 +725,88 @@ public class AppLauncherToolsTests
     }
 
     [Fact]
-    public async Task LaunchApplication_PassesRunAsAdmin_WithoutAConfirmationTheUserDidNotGive()
+    public async Task LaunchApplication_PassesRunAsAdmin_WithoutAnApprovalTheUserDidNotGive()
     {
         // Arrange - the client cannot ask (no server), and Windows would not ask either: the service refuses it
         LaunchReturns(new LaunchResult(false, ErrorMessage: "needs confirmation", ErrorCode: nameof(LaunchErrorCode.ElevationNotConfirmed)));
-        _mockProcessService.Setup(p => p.ElevationNeedsConfirmation()).Returns(true);
+        _mockProcessService.Setup(p => p.PreviewElevation(It.IsAny<LaunchRequest>()))
+            .Returns(new ElevationPreview(true, "User Account Control is off", new ElevationApproval(@"C:\Tools\app.exe", "")));
 
         // Act
         var result = await CreateSut().LaunchApplication(@"C:\Tools\app.exe", runAsAdmin: true);
 
         // Assert
         result.ErrorCode.Should().Be(nameof(LaunchErrorCode.ElevationNotConfirmed));
+        result.Elevation.Should().BeNull();
         _mockProcessService.Verify(p => p.LaunchApplicationAsync(
-            It.Is<LaunchRequest>(r => r.RunAsAdmin && !r.ElevationConfirmed), false, 5000, It.IsAny<CancellationToken>()), Times.Once);
+            It.Is<LaunchRequest>(r => r.RunAsAdmin && r.ApprovedElevation == null), false, 5000, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task LaunchApplication_RunAsAdminWindowsAsksAbout_ReportsElevationUacPrompt()
+    {
+        // Review M6.5 #8: the result, and so the audit line, say how the elevation was approved
+        LaunchReturns(new LaunchResult(true, 1234, Status: LaunchStatus.Started));
+        _mockProcessService.Setup(p => p.PreviewElevation(It.IsAny<LaunchRequest>()))
+            .Returns(new ElevationPreview(false, null, new ElevationApproval(@"C:\Tools\app.exe", "")));
+
+        var result = await CreateSut().LaunchApplication(@"C:\Tools\app.exe", runAsAdmin: true);
+
+        result.Elevation.Should().Be("uacPrompt");
+        (await CreateSut().LaunchApplication(@"C:\Tools\app.exe")).Elevation.Should().BeNull("nothing was elevated");
+    }
+
+    [Fact]
+    public async Task LaunchApplication_ARunAsAdminThePlanRefuses_IsRefusedBeforeAnyQuestion_AndStartsNothing()
+    {
+        _mockProcessService.Setup(p => p.PreviewElevation(It.IsAny<LaunchRequest>()))
+            .Returns(new ElevationPreview(false, null, null, ToolErrorReporting.InvalidArgumentsErrorCode, "runAsAdmin starts only a program's .exe"));
+
+        var result = await CreateSut().LaunchApplication("ms-settings:", runAsAdmin: true);
+
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(ToolErrorReporting.InvalidArgumentsErrorCode);
+        _mockProcessService.Verify(p => p.LaunchApplicationAsync(It.IsAny<LaunchRequest>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task LaunchApplication_WhileAnotherCallHoldsTheGate_GivesUpWithInputBusy_AndStartsNothing()
+    {
+        // Review M6.5, missing test 6: launch_application takes the gate itself, with the filter's InputBusy
+        using var session = new InputSession(new FakeInputWrapper());
+        var sut = new AppLauncherTools(_mockProcessService.Object, session: session, gateWaitTimeout: TimeSpan.FromMilliseconds(50));
+        var held = Task.Run(() => InputGate.Enter());
+        using var gate = await held;
+
+        var act = () => sut.LaunchApplication("notepad.exe");
+
+        (await act.Should().ThrowAsync<ToolErrorException>()).Which.ErrorCode.Should().Be("InputBusy");
+        _mockProcessService.Verify(p => p.LaunchApplicationAsync(It.IsAny<LaunchRequest>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task LaunchApplication_ReleasesTheGate_WhenTheLaunchThrows()
+    {
+        _mockProcessService.Setup(p => p.LaunchApplicationAsync(It.IsAny<LaunchRequest>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("launch failed"));
+
+        var act = () => CreateSut().LaunchApplication("notepad.exe");
+
+        await act.Should().ThrowAsync<InvalidOperationException>();
+        var next = Task.Run(() => InputGate.Enter().Dispose());
+        (await Task.WhenAny(next, Task.Delay(TimeSpan.FromSeconds(10))) == next).Should().BeTrue("the gate was released");
+    }
+
+    [Fact]
+    public void ElevationApprovalLost_TellsTheAgentTheUserIsAskedAgain()
+    {
+        // Review M6.5 #9: an approval is not kept across an InputBusy; the retry asks the user again
+        var busy = new ToolErrorException("InputBusy", "Another call held the input for 30 seconds. Nothing was done.");
+
+        var lost = AppLauncherTools.ElevationApprovalLost(busy);
+
+        lost.ErrorCode.Should().Be("InputBusy");
+        lost.Message.Should().StartWith(busy.Message).And.Contain("asked again");
     }
 
     [Fact]
@@ -772,6 +841,7 @@ public class AppLauncherToolsTests
         passed!.Select(r => r.RunAsAdmin).Should().Equal(true, false);
         result.Results[1].ErrorCode.Should().Be(ToolErrorReporting.InvalidArgumentsErrorCode);
         result.Succeeded.Should().Be(2);
+        result.Results.Select(r => r.Elevation).Should().Equal("uacPrompt", null, null);
     }
 
     private readonly Mock<IInstalledAppsService> _installedApps = new();

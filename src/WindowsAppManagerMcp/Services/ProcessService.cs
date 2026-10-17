@@ -137,8 +137,55 @@ public class ProcessService : IProcessService
     /// </summary>
     private const int ApplicationNotRegistered = unchecked((int)0x80270254);
 
-    public bool ElevationNeedsConfirmation() =>
-        (_securityProbe?.GetElevationPrompt() ?? ElevationPrompt.Unknown) != ElevationPrompt.Prompts;
+    /// <summary>
+    /// How many activations may be stuck at once (review M6.5 #5): each one that does not return keeps its start thread and
+    /// the wrapper's STA thread until Windows answers, so at this many the next activation is refused at once.
+    /// </summary>
+    public const int MaxHungActivations = 3;
+
+    /// <summary>Activations that missed <see cref="ActivationTimeout"/> and have not returned yet.</summary>
+    private int _hungActivations;
+
+    /// <summary>Activations that missed <see cref="ActivationTimeout"/> and have not returned yet.</summary>
+    public int HungActivations => Volatile.Read(ref _hungActivations);
+
+    public ElevationPreview PreviewElevation(LaunchRequest request)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        var plan = request.ReuseExisting
+            ? PlanFor(request with { RunAsAdmin = true })
+            : PlanLaunch(request.Executable, request.Arguments, request.WorkingDirectory, request.ForceAccessibility, runAsAdmin: true);
+        if (!plan.IsValid)
+        {
+            return new ElevationPreview(false, null, null, plan.ErrorCode, plan.ErrorMessage);
+        }
+
+        var reason = ElevationApprovalReason();
+        return new ElevationPreview(reason != null, reason, ApprovalOf(plan));
+    }
+
+    /// <summary>The launch a plan would start, as the user approves it.</summary>
+    private static ElevationApproval ApprovalOf(LaunchPlan plan) => new(plan.StartInfo!.FileName, plan.StartInfo.Arguments ?? string.Empty);
+
+    /// <summary>
+    /// Why the user must approve an elevated start through the client, or null when Windows asks them itself with a UAC
+    /// prompt (owner decision D11; review M6.5 #1).
+    /// </summary>
+    private string? ElevationApprovalReason()
+    {
+        if (ServerIsElevated())
+        {
+            return "this server runs elevated, so a program it starts as administrator gets no UAC prompt";
+        }
+
+        return (_securityProbe?.GetElevationPrompt() ?? ElevationPrompt.Unknown) switch
+        {
+            ElevationPrompt.Prompts => null,
+            ElevationPrompt.Silent => "User Account Control does not ask on this computer (it is off, it does not ask " +
+                                      "administrators, or this is the built-in Administrator account)",
+            _ => "the User Account Control policy could not be read, so the server cannot tell whether Windows would ask"
+        };
+    }
 
     /// <summary>Whether the server itself runs elevated; false when that cannot be read.</summary>
     private bool ServerIsElevated() =>
@@ -224,9 +271,33 @@ public class ProcessService : IProcessService
                 ToolErrorReporting.InvalidArgumentsErrorCode);
         }
 
-        return PlanLaunch(request.Executable, request.Arguments, request.WorkingDirectory, request.ForceAccessibility,
-            request.RunAsAdmin, request.ElevationConfirmed);
+        var plan = PlanLaunch(request.Executable, request.Arguments, request.WorkingDirectory, request.ForceAccessibility, request.RunAsAdmin);
+        if (!plan.IsValid || !request.RunAsAdmin)
+        {
+            return plan;
+        }
+
+        // Review M6.5 #2: only the launch the user approved runs; a name can resolve to another program by now
+        if (request.ApprovedElevation is { } approved)
+        {
+            var planned = ApprovalOf(plan);
+            return planned == approved
+                ? plan
+                : LaunchPlan.Rejected(
+                    $"The user approved starting '{approved.FileName}' {ShownArguments(approved.Arguments)} as administrator, but " +
+                    $"the request now starts '{planned.FileName}' {ShownArguments(planned.Arguments)}. Nothing was started; launch " +
+                    "again, so that the user is asked about what would start now.",
+                    nameof(LaunchErrorCode.ElevationNotConfirmed),
+                    plan.Warning);
+        }
+
+        return ElevationApprovalReason() is { } reason
+            ? LaunchPlan.Rejected(ElevationNotConfirmedMessage(reason), nameof(LaunchErrorCode.ElevationNotConfirmed), plan.Warning)
+            : plan;
     }
+
+    private static string ShownArguments(string arguments) =>
+        arguments.Length == 0 ? "with no arguments" : $"with the arguments '{AppText.Cut(arguments, 200)}'";
 
     /// <summary>What a launch reports besides its own outcome: whether forceAccessibility took effect, and an elevated start.</summary>
     private LaunchResult Finish(LaunchResult result, LaunchPlan plan) => WithElevationNote(WithForceAccessibility(result, plan), plan);
@@ -530,6 +601,15 @@ public class ProcessService : IProcessService
         LaunchPlan plan, bool takeBaseline, CancellationToken cancellationToken, Action<Task<IProcessHandle?>>? onAbandonedStart = null)
     {
         var activate = plan.Target is { Kind: LaunchTargetKind.PackagedApp, App: not null } && _appsWrapper != null;
+        if (activate && HungActivations >= MaxHungActivations)
+        {
+            return new StartedLaunch(plan, null, null, DateTime.UtcNow, new LaunchResult(false,
+                ErrorMessage: $"{MaxHungActivations} earlier activations of packaged apps are still waiting for Windows to answer, so " +
+                              "no other is started now. Nothing was started. Look for the apps' windows with find_windows, and try " +
+                              "again once they have opened (or ask the user to check them).",
+                ErrorCode: nameof(LaunchErrorCode.ActivationFailed), Warning: plan.Warning));
+        }
+
         string? startNote = null;
         if (activate && ServerIsElevated())
         {
@@ -568,6 +648,11 @@ public class ProcessService : IProcessService
             cancellationToken.ThrowIfCancellationRequested();
             if (activate)
             {
+                // Counted until Windows answers: a stuck activation keeps two threads
+                Interlocked.Increment(ref _hungActivations);
+                start.ContinueWith(
+                    _ => Interlocked.Decrement(ref _hungActivations),
+                    CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
                 return new StartedLaunch(plan, null, null, launchedAt, new LaunchResult(
                     Success: true,
                     Warning: CombineWarnings(plan.Warning,
@@ -629,14 +714,26 @@ public class ProcessService : IProcessService
             if (activation.ProcessId is not { } processId)
                 return null;
 
+            IProcessHandle? process;
             try
             {
-                return _processWrapper.OpenProcess(processId);
+                process = _processWrapper.OpenProcess(processId);
             }
             catch (Exception ex) when (ex is InvalidOperationException or Win32Exception or ArgumentException or UnauthorizedAccessException)
             {
                 return null;
             }
+
+            // Review M6.5 #4: an app that exited at once may have left its PID to another process before it was opened. The
+            // handle, now held, pins the PID: the process behind it must be of the app's package
+            if (process != null &&
+                !string.Equals(_appsWrapper.GetPackageFamilyName(processId), app.PackageFamilyName, StringComparison.OrdinalIgnoreCase))
+            {
+                process.Dispose();
+                return null;
+            }
+
+            return process;
         }
 
         if (!ActivationRefusedForElevation.Contains(activation.HResult))
@@ -708,8 +805,9 @@ public class ProcessService : IProcessService
             DocumentHints = DocumentHints(target, request.Arguments, launch.Plan.StartInfo!.WorkingDirectory),
             TitleContains = string.IsNullOrWhiteSpace(request.ExpectWindow?.TitleContains) ? null : request.ExpectWindow.TitleContains.Trim(),
             TryClaim = tryClaim,
-            // A packaged app's frame may be in the baseline, cloaked: Windows shows a suspended app's frame again (roadmap M6.5)
-            WasCloakedOwner = target.Kind == LaunchTargetKind.PackagedApp && launch.Process != null
+            // A packaged app's frame may be in the baseline, cloaked: Windows shows a suspended app's frame again (roadmap
+            // M6.5). Only for a process the activation started: an app that ran before keeps its window (review M6.5 #9)
+            WasCloakedOwner = target.Kind == LaunchTargetKind.PackagedApp && launch.Process is { } activated && StartedSince(activated.Id, launch.LaunchedAtUtc)
                 ? candidate => owner.StartedProcess(candidate.ProcessId)
                 : null
         };
@@ -747,6 +845,10 @@ public class ProcessService : IProcessService
             Window: window,
             LauncherExited: launcherExited);
     }
+
+    /// <summary>Whether the process started at or after <paramref name="launchedAtUtc"/> (a second's tolerance); false when unknown.</summary>
+    private bool StartedSince(int processId, DateTime launchedAtUtc) =>
+        _processWrapper.GetProcessStartTime(processId) is { } started && started >= launchedAtUtc - TimeSpan.FromSeconds(1);
 
     private LaunchWindowOwner OwnerOf(StartedLaunch launch, LaunchRequest request) =>
         LaunchWindowOwner.For(_processWrapper, launch.Process?.Id, launch.LaunchedAtUtc, launch.Plan.Target!, request.ExpectWindow,
@@ -933,13 +1035,12 @@ public class ProcessService : IProcessService
     /// one packaged app is planned as it, one desktop app as its program (through every check here), several are
     /// AmbiguousApp.</item>
     /// <item><paramref name="runAsAdmin"/> (roadmap M6.5) starts a program's .exe with the runas verb; any other target is
-    /// refused, and so is a computer where Windows would elevate without asking, unless
-    /// <paramref name="elevationConfirmed"/> (the user said yes through the client).</item>
+    /// refused. Whether the user must approve the elevation is decided by the launch, not here (PreviewElevation).</item>
     /// </list>
     /// </remarks>
     public LaunchPlan PlanLaunch(
         string executable, string[]? arguments = null, string? workingDirectory = null, bool forceAccessibility = false,
-        bool runAsAdmin = false, bool elevationConfirmed = false)
+        bool runAsAdmin = false)
     {
         // Validate executable path
         var executableValidation = _validationService.ValidateExecutable(executable);
@@ -1001,7 +1102,7 @@ public class ProcessService : IProcessService
         if (target.NotFound)
         {
             if (PlanInstalledApp(executable, arguments, workingDirectory, requestedWorkingDirectory, forceAccessibility, runAsAdmin,
-                    elevationConfirmed, warning) is { } byName)
+                    warning) is { } byName)
             {
                 return byName;
             }
@@ -1020,8 +1121,9 @@ public class ProcessService : IProcessService
             return LaunchPlan.Rejected(refusal.Message, refusal.ErrorCode, warning);
         }
 
-        // A desktop app's shell:AppsFolder entry: the shell starts its program, which the guard above cannot see (roadmap M6.5)
-        if (arguments?.Length > 0 && target.Kind == LaunchTargetKind.Other &&
+        // A desktop app's shell:AppsFolder entry: the shell starts its program, which the guard above cannot see (roadmap
+        // M6.5): a script is refused with or without arguments (review M6.5 #3), and arguments need a program that is known
+        if (target.Kind == LaunchTargetKind.Other &&
             target.FileName.StartsWith(PackagedAppId.AppsFolderPrefix, StringComparison.OrdinalIgnoreCase))
         {
             var appId = target.FileName[PackagedAppId.AppsFolderPrefix.Length..];
@@ -1049,11 +1151,6 @@ public class ProcessService : IProcessService
             if (!isNativeExecutable)
             {
                 return LaunchPlan.Rejected(RunAsAdminOnlyExe(executable), ToolErrorReporting.InvalidArgumentsErrorCode, warning);
-            }
-
-            if (!elevationConfirmed && ElevationNeedsConfirmation())
-            {
-                return LaunchPlan.Rejected(ElevationNotConfirmedMessage(), nameof(LaunchErrorCode.ElevationNotConfirmed), warning);
             }
         }
 
@@ -1103,13 +1200,10 @@ public class ProcessService : IProcessService
         $"runAsAdmin starts only a program's .exe as administrator, and '{executable}' is not one (a URI, document, shortcut " +
         "or packaged app). Nothing was started.";
 
-    private string ElevationNotConfirmedMessage() =>
-        (_securityProbe?.GetElevationPrompt() == ElevationPrompt.Silent
-            ? "Windows on this computer elevates programs without asking (User Account Control is off, or administrators are not asked for consent)"
-            : "The User Account Control policy could not be read, so the server cannot tell whether Windows would ask the user") +
-        ", so runAsAdmin needs the user's confirmation through the client: launch_application asks for it when the client can " +
-        "ask (elicitation), and launch_applications_batch never asks. Nothing was started. Ask the user to start the program " +
-        "as administrator.";
+    private static string ElevationNotConfirmedMessage(string reason) =>
+        $"Windows will not ask the user before it elevates this program: {reason}. So runAsAdmin needs the user's approval " +
+        "through the client: launch_application asks for it when the client can ask (elicitation), and " +
+        "launch_applications_batch never asks. Nothing was started. Ask the user to start the program as administrator.";
 
     /// <summary>
     /// Plans a packaged app's activation (roadmap M6.5): its shell:AppsFolder target (what the shell fallback starts), the
@@ -1166,7 +1260,7 @@ public class ProcessService : IProcessService
     /// </summary>
     private LaunchPlan? PlanInstalledApp(
         string name, string[]? arguments, string? workingDirectory, string? requestedWorkingDirectory, bool forceAccessibility,
-        bool runAsAdmin, bool elevationConfirmed, string? warning)
+        bool runAsAdmin, string? warning)
     {
         if (_installedApps == null || name.IndexOfAny(['\\', '/', ':']) >= 0)
             return null;
@@ -1200,7 +1294,7 @@ public class ProcessService : IProcessService
 
         // Planned again from its path, so the program gets every check a path gets; that plan validates the working directory
         // again and repeats its warning, so only the name's note is added
-        var plan = PlanLaunch(app.Path!, arguments, workingDirectory, forceAccessibility, runAsAdmin, elevationConfirmed);
+        var plan = PlanLaunch(app.Path!, arguments, workingDirectory, forceAccessibility, runAsAdmin);
         return plan with { Warning = CombineWarnings(note, plan.Warning) };
     }
 

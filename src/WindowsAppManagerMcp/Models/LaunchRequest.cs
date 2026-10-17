@@ -47,11 +47,12 @@ public sealed record LaunchRequest(
     public bool RunAsAdmin { get; init; }
 
     /// <summary>
-    /// With <see cref="RunAsAdmin"/>: the user confirmed the elevation through the client (elicitation), which a computer
-    /// where Windows elevates without a UAC prompt needs (roadmap M6.5, owner decision D11). Only the launch tools set it,
-    /// after the user's yes.
+    /// With <see cref="RunAsAdmin"/>: the launch the user approved through the client (elicitation), which an elevation
+    /// Windows would not ask about needs (roadmap M6.5, owner decision D11; review M6.5 #1, #2). Only that launch runs: when
+    /// planning the request again gives another program or command line, nothing is started. Only launch_application sets
+    /// it, after the user's yes to the question that showed it.
     /// </summary>
-    public bool ElevationConfirmed { get; init; }
+    public ElevationApproval? ApprovedElevation { get; init; }
 
     /// <summary>
     /// Called with the started process's ID as soon as the start returns one, before the window wait. launch_browser_with_debug
@@ -156,3 +157,20 @@ public static class LaunchStatusNames
         _ => throw new ArgumentOutOfRangeException(nameof(status), status, null)
     };
 }
+
+/// <summary>An elevated launch as the user saw and approved it: the resolved program and its command line.</summary>
+/// <param name="FileName">The program, as ShellExecute gets it (a full path once resolved).</param>
+/// <param name="Arguments">The command line after it, as built from the arguments (empty for none).</param>
+public sealed record ElevationApproval(string FileName, string Arguments);
+
+/// <summary>
+/// What a runAsAdmin request would start, planned without starting anything (IProcessService.PreviewElevation, roadmap
+/// M6.5): whether the user must approve it because Windows would not ask (and why), and the launch to show them. A request
+/// the plan refuses has <paramref name="ErrorCode"/> and <paramref name="Error"/> instead, and needs no question.
+/// </summary>
+public sealed record ElevationPreview(
+    bool NeedsConfirmation,
+    string? Reason,
+    ElevationApproval? Launch,
+    string? ErrorCode = null,
+    string? Error = null);

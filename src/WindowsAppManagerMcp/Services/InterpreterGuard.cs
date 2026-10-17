@@ -138,7 +138,7 @@ public sealed partial class InterpreterGuard
     public static readonly IReadOnlyList<string> InterpreterPackagePrefixes =
     [
         "Microsoft.PowerShell", "PythonSoftwareFoundation.Python.", "CanonicalGroupLimited.", "TheDebianProject.", "KaliLinux.",
-        "46932SUSE.", "WhitewaterFoundryLtd.", "Microsoft.WindowsTerminal",
+        "46932SUSE.", "WhitewaterFoundryLtd.", "Microsoft.WindowsTerminal", "Microsoft.DesktopAppInstaller",
         "MicrosoftCorporationII.WindowsSubsystemForLinux"
     ];
 
@@ -156,6 +156,16 @@ public sealed partial class InterpreterGuard
     public static InterpreterRefusal? CheckApp(string appId, string? program, string? packageFamilyName, IReadOnlyList<string>? arguments)
     {
         ArgumentNullException.ThrowIfNull(appId);
+
+        // Review M6.5 #3: an entry whose shortcut starts a script runs it, with or without arguments
+        if (!string.IsNullOrWhiteSpace(program) && ScriptExtensions.Contains(Path.GetExtension(program.Trim().TrimEnd('.', ' '))))
+        {
+            var extension = Path.GetExtension(program.Trim().TrimEnd('.', ' ')).ToLowerInvariant();
+            return new InterpreterRefusal(nameof(LaunchErrorCode.ScriptFile),
+                $"The app '{appId}' starts a script ({extension}) that Windows would run with its interpreter, and " +
+                $"launch_application does not run scripts: {NoCommands} Ask the user to run it. Nothing was started.");
+        }
+
         if (arguments is not { Count: > 0 })
             return null;
 

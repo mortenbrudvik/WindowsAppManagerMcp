@@ -18,8 +18,14 @@ public sealed class InstalledAppsService : IInstalledAppsService
     private readonly INativeAppsWrapper _native;
     private readonly TimeProvider _time;
     private readonly object _sync = new();
-    private IReadOnlyList<InstalledApp>? _apps;
+    private Snapshot? _snapshot;
     private long _readAt;
+
+    /// <summary>The read in progress, which callers that come meanwhile wait for instead of starting their own (review M6.5 #6).</summary>
+    private Lazy<Snapshot?>? _reading;
+
+    /// <summary>One read of the folder: its apps, packaged first and then by name, and how many items could not be read.</summary>
+    private sealed record Snapshot(IReadOnlyList<InstalledApp> Apps, int SkippedItems);
 
     /// <param name="native">Reads the Applications folder and the package manifests.</param>
     /// <param name="time">The clock of the cache; default the system clock.</param>
@@ -31,7 +37,7 @@ public sealed class InstalledAppsService : IInstalledAppsService
 
     public InstalledAppsListing List(string? nameFilter, int limit)
     {
-        if (Apps() is not { } apps)
+        if (Read() is not { Apps: var apps } snapshot)
             return new InstalledAppsListing([], 0, false, Unreadable: true);
 
         var matching = string.IsNullOrEmpty(nameFilter)
@@ -39,13 +45,13 @@ public sealed class InstalledAppsService : IInstalledAppsService
             : apps.Where(a => a.Name.Contains(nameFilter, StringComparison.OrdinalIgnoreCase) ||
                               a.AppId.Contains(nameFilter, StringComparison.OrdinalIgnoreCase)).ToList();
         var returned = matching.Take(Math.Max(0, limit)).ToList();
-        return new InstalledAppsListing(returned, matching.Count, returned.Count < matching.Count, Unreadable: false);
+        return new InstalledAppsListing(returned, matching.Count, returned.Count < matching.Count, Unreadable: false, snapshot.SkippedItems);
     }
 
     public IReadOnlyList<InstalledApp>? FindByName(string name)
     {
         ArgumentNullException.ThrowIfNull(name);
-        if (Apps() is not { } apps)
+        if (Complete() is not { } apps)
             return null;
 
         var wanted = name.Trim();
@@ -58,7 +64,7 @@ public sealed class InstalledAppsService : IInstalledAppsService
     public InstalledApp? FindByAppId(string appId)
     {
         ArgumentNullException.ThrowIfNull(appId);
-        return Apps()?.FirstOrDefault(a => string.Equals(a.AppId, appId, StringComparison.OrdinalIgnoreCase));
+        return Complete()?.FirstOrDefault(a => string.Equals(a.AppId, appId, StringComparison.OrdinalIgnoreCase));
     }
 
     public string? ProgramOf(PackagedAppId app)
@@ -98,21 +104,51 @@ public sealed class InstalledAppsService : IInstalledAppsService
         return name[(name.LastIndexOf('\\') + 1)..] is { Length: > 0 } fileName ? fileName : null;
     }
 
-    /// <summary>The folder's apps, packaged first and then by name, each AppUserModelID once; null when it cannot be read.</summary>
-    private IReadOnlyList<InstalledApp>? Apps()
+    /// <summary>
+    /// The folder's apps when every item could be read; null otherwise. A name or appId is resolved only on a complete
+    /// list (review M6.5 #7): an item that was skipped may be another app of the same name.
+    /// </summary>
+    private IReadOnlyList<InstalledApp>? Complete() => Read() is { SkippedItems: 0 } snapshot ? snapshot.Apps : null;
+
+    /// <summary>
+    /// The folder, read at most once in <see cref="CacheDuration"/>; null when it cannot be read (which is not kept). A read
+    /// takes up to the wrapper's deadline, so it runs outside the lock, and callers that come meanwhile share it.
+    /// </summary>
+    private Snapshot? Read()
     {
+        Lazy<Snapshot?> reading;
         lock (_sync)
         {
-            if (_apps != null && _time.GetElapsedTime(_readAt) < CacheDuration)
-                return _apps;
+            if (_snapshot != null && _time.GetElapsedTime(_readAt) < CacheDuration)
+                return _snapshot;
+
+            reading = _reading ??= new Lazy<Snapshot?>(ReadFolder, LazyThreadSafetyMode.ExecutionAndPublication);
         }
 
-        // Read outside the lock: the read can take seconds, and a concurrent caller then reads too rather than waits
-        var entries = _native.EnumerateAppsFolder();
-        if (entries == null)
+        var snapshot = reading.Value;
+        lock (_sync)
+        {
+            if (ReferenceEquals(_reading, reading))
+            {
+                _reading = null;
+                if (snapshot != null)
+                {
+                    _snapshot = snapshot;
+                    _readAt = _time.GetTimestamp();
+                }
+            }
+        }
+
+        return snapshot;
+    }
+
+    private Snapshot? ReadFolder()
+    {
+        var listing = _native.EnumerateAppsFolder();
+        if (listing == null)
             return null;
 
-        var apps = entries
+        var apps = listing.Entries
             .Where(e => !string.IsNullOrWhiteSpace(e.Name) && !string.IsNullOrWhiteSpace(e.AppId))
             .DistinctBy(e => e.AppId, StringComparer.OrdinalIgnoreCase)
             .Select(ToApp)
@@ -120,14 +156,7 @@ public sealed class InstalledAppsService : IInstalledAppsService
             .ThenBy(a => a.Name, StringComparer.OrdinalIgnoreCase)
             .ThenBy(a => a.AppId, StringComparer.OrdinalIgnoreCase)
             .ToList();
-
-        lock (_sync)
-        {
-            _apps = apps;
-            _readAt = _time.GetTimestamp();
-        }
-
-        return apps;
+        return new Snapshot(apps, listing.SkippedItems);
     }
 
     private static InstalledApp ToApp(AppsFolderEntry entry)

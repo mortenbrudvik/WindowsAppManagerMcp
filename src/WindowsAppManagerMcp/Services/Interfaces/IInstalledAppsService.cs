@@ -17,12 +17,16 @@ public interface IInstalledAppsService
 
     /// <summary>
     /// The apps whose display name is exactly <paramref name="name"/> (case-insensitive, surrounding spaces ignored), each
-    /// once (two shortcuts to the same program are one app); null when the folder cannot be read. Never a part of a name:
+    /// once (two shortcuts to the same program are one app); null when the folder cannot be read, or some of its items
+    /// could not be (one of them may be another app of the name). Never a part of a name:
     /// any program of the user can add a Start menu shortcut, so a near name must not lead to one.
     /// </summary>
     IReadOnlyList<InstalledApp>? FindByName(string name);
 
-    /// <summary>The app with this AppUserModelID (case-insensitive); null when there is none or the folder cannot be read.</summary>
+    /// <summary>
+    /// The app with this AppUserModelID (case-insensitive); null when there is none, or the folder or some of its items
+    /// cannot be read.
+    /// </summary>
     InstalledApp? FindByAppId(string appId);
 
     /// <summary>
@@ -40,7 +44,8 @@ public interface IInstalledAppsService
 public sealed record InstalledApp(string Name, string AppId, bool Packaged, string? Path);
 
 /// <summary>
-/// A list of installed apps: the apps returned, how many matched in all, whether the limit cut the list, and whether the
-/// Applications folder could not be read (the list is then empty).
+/// A list of installed apps: the apps returned, how many matched in all, whether the limit cut the list, whether the
+/// Applications folder could not be read (the list is then empty), and how many of its items could not be read (they are
+/// missing from the list).
 /// </summary>
-public sealed record InstalledAppsListing(IReadOnlyList<InstalledApp> Apps, int Total, bool Truncated, bool Unreadable);
+public sealed record InstalledAppsListing(IReadOnlyList<InstalledApp> Apps, int Total, bool Truncated, bool Unreadable, int SkippedApps = 0);

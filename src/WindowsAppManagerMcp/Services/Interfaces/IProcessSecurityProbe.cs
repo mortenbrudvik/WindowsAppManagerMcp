@@ -48,7 +48,8 @@ public interface IProcessSecurityProbe
     /// <summary>
     /// Whether Windows asks the user before it elevates a program started as administrator (roadmap M6.5):
     /// <see cref="ElevationPrompt.Silent"/> when User Account Control is off (EnableLUA 0) or elevates administrators
-    /// without asking (ConsentPromptBehaviorAdmin 0), <see cref="ElevationPrompt.Unknown"/> when the policy cannot be
+    /// without asking (ConsentPromptBehaviorAdmin 0), or the server runs as the built-in Administrator without Admin Approval
+    /// Mode (FilterAdministratorToken not 1), <see cref="ElevationPrompt.Unknown"/> when the policy cannot be
     /// read. A missing value counts as Windows' default, which asks. Read live on every call.
     /// </summary>
     ElevationPrompt GetElevationPrompt();

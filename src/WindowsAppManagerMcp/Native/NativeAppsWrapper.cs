@@ -82,12 +82,12 @@ public sealed class NativeAppsWrapper : INativeAppsWrapper
         return result;
     }
 
-    public IReadOnlyList<AppsFolderEntry>? EnumerateAppsFolder()
+    public AppsFolderListing? EnumerateAppsFolder()
     {
         if (Volatile.Read(ref _abandonedEnumerations) > 0)
             return null;
 
-        List<AppsFolderEntry>? entries = null;
+        AppsFolderListing? entries = null;
         var state = Running;
         var finished = new ManualResetEventSlim();
         var worker = new Thread(() =>
@@ -133,7 +133,7 @@ public sealed class NativeAppsWrapper : INativeAppsWrapper
         return Volatile.Read(ref entries);
     }
 
-    private static List<AppsFolderEntry>? ReadAppsFolder()
+    private static AppsFolderListing? ReadAppsFolder()
     {
         var folderId = AppsFolderId;
         var itemIid = ShellItemIid;
@@ -150,12 +150,27 @@ public sealed class NativeAppsWrapper : INativeAppsWrapper
                 return null;
 
             var entries = new List<AppsFolderEntry>();
-            while (items.Next(1, out var itemObject, out var fetched) == 0 && fetched == 1 && itemObject != null)
+            var skipped = 0;
+            while (true)
             {
+                var hr = items.Next(1, out var itemObject, out var fetched);
+                if (hr < 0)
+                    return null; // A list cut short would look complete
+
+                if (hr != 0 || fetched != 1 || itemObject == null)
+                    break; // S_FALSE: the end
+
                 try
                 {
+                    // One item whose property handler fails is skipped and counted, not the whole list
                     if (itemObject is IShellItem2 item && ReadEntry(item) is { } entry)
                         entries.Add(entry);
+                    else
+                        skipped++;
+                }
+                catch (Exception ex) when (ex is COMException or InvalidCastException or ArgumentException)
+                {
+                    skipped++;
                 }
                 finally
                 {
@@ -163,7 +178,7 @@ public sealed class NativeAppsWrapper : INativeAppsWrapper
                 }
             }
 
-            return entries;
+            return new AppsFolderListing(entries, skipped);
         }
         finally
         {

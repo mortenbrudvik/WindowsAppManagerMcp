@@ -154,31 +154,54 @@ public class AppLauncherTools
             }
         }
 
-        // Owner decision D11: where Windows would elevate without a UAC prompt, the user confirms instead, through the client,
-        // before the input gate is taken (a user who takes minutes to answer must not hold up every input and window call)
-        var elevationConfirmed = false;
-        if (runAsAdmin && _processService.ElevationNeedsConfirmation() && UserConfirmation.CanAsk(server))
+        var request = new LaunchRequest(executable, arguments, workingDirectory, expectWindow, reuseExisting, forceAccessibility)
         {
-            var answer = await UserConfirmation.AskAsync(
-                server!, ElevationQuestion(executable, arguments), "Start as administrator", _answerTimeout, cancellationToken).ConfigureAwait(false);
-            if (!answer.Confirmed)
+            RunAsAdmin = runAsAdmin
+        };
+
+        // Owner decision D11: where Windows would elevate without a UAC prompt, the user approves instead, through the client,
+        // before the input gate is taken (a user who takes minutes to answer must not hold up every input and window call).
+        // The launch is planned first, so the user sees the program it resolves to and its arguments, and only that plan runs
+        // (review M6.5 #2)
+        ElevationApproval? approved = null;
+        if (runAsAdmin && _processService.PreviewElevation(request) is { } preview)
+        {
+            if (preview.ErrorCode is { } refusedCode)
             {
-                return new LaunchResultDto(false,
-                    Error: $"{answer.Reason} Nothing was started. Ask the user how to continue.",
-                    ErrorCode: nameof(ProcessErrorCode.ConfirmationDeclined));
+                return new LaunchResultDto(false, Error: preview.Error, ErrorCode: refusedCode);
             }
 
-            elevationConfirmed = true;
+            if (preview is { NeedsConfirmation: true, Launch: { } launch } && UserConfirmation.CanAsk(server))
+            {
+                var answer = await UserConfirmation.AskAsync(
+                    server!, ElevationQuestion(launch, preview.Reason), "Start as administrator", _answerTimeout, cancellationToken)
+                    .ConfigureAwait(false);
+                if (!answer.Confirmed)
+                {
+                    return new LaunchResultDto(false,
+                        Error: $"{answer.Reason} Nothing was started. Ask the user how to continue.",
+                        ErrorCode: nameof(ProcessErrorCode.ConfirmationDeclined));
+                }
+
+                approved = launch;
+            }
         }
 
-        // The launch and the placement run inside the input gate, as every window-changing tool does
-        using var gate = await InputGateToolFilter.EnterAsync(_session, cancellationToken, _gateWaitTimeout).ConfigureAwait(false);
+        // The launch and the placement run inside the input gate, as every window-changing tool does. An approval is not kept
+        // for a retry after InputBusy: the retry asks the user again (review M6.5 #9)
+        IDisposable gate;
+        try
+        {
+            gate = await InputGateToolFilter.EnterAsync(_session, cancellationToken, _gateWaitTimeout).ConfigureAwait(false);
+        }
+        catch (ToolErrorException busy) when (approved != null)
+        {
+            throw ElevationApprovalLost(busy);
+        }
+
+        using var _ = gate;
         var result = await _processService.LaunchApplicationAsync(
-            new LaunchRequest(executable, arguments, workingDirectory, expectWindow, reuseExisting, forceAccessibility)
-            {
-                RunAsAdmin = runAsAdmin,
-                ElevationConfirmed = elevationConfirmed
-            },
+            request with { ApprovedElevation = approved },
             waitForWindow || plan != null,
             BoundedWait(waitTimeoutMs),
             cancellationToken).ConfigureAwait(false);
@@ -196,22 +219,45 @@ public class AppLauncherTools
             Window: result.Window is { } window ? WindowFinderTools.ToDto(window) : null,
             LauncherExited: result.LauncherExited,
             Placement: placed[0],
-            ForceAccessibilityApplied: result.ForceAccessibilityApplied
+            ForceAccessibilityApplied: result.ForceAccessibilityApplied,
+            Elevation: ElevationOf(runAsAdmin, result.Success, approved != null)
         );
     }
 
     /// <summary>
-    /// The question runAsAdmin asks the user where Windows would elevate without asking (roadmap M6.5): the program, and its
-    /// arguments' count, never their text.
+    /// How an elevated launch was approved, for the result and the audit line (review M6.5 #8): "confirmed" when the user said
+    /// yes through the client, "uacPrompt" when Windows' own UAC prompt asks them; null when nothing was elevated.
     /// </summary>
-    private static string ElevationQuestion(string executable, string[]? arguments)
+    private static string? ElevationOf(bool runAsAdmin, bool success, bool confirmed) =>
+        !runAsAdmin || !success ? null : confirmed ? "confirmed" : "uacPrompt";
+
+    /// <summary>
+    /// The InputBusy (or pause) a launch the user approved got while it waited for the input gate, saying that the approval
+    /// was not kept: a retry asks the user again (review M6.5 #9).
+    /// </summary>
+    public static ToolErrorException ElevationApprovalLost(ToolErrorException refusal)
     {
-        var argumentText = arguments is { Length: > 0 }
-            ? $" with {arguments.Length} argument{(arguments.Length == 1 ? string.Empty : "s")}"
-            : string.Empty;
-        return $"The AI agent asks to start {UserConfirmation.Quote(executable)}{argumentText} as administrator. Windows on this " +
-               "computer does not ask before it elevates a program (User Account Control is off or does not prompt), so you are " +
-               "asked here. The program gets full control of the computer. Allow it?";
+        ArgumentNullException.ThrowIfNull(refusal);
+        return new ToolErrorException(refusal.ErrorCode,
+            $"{refusal.Message} The user's approval to start the program as administrator was not kept: they are asked again on a retry.");
+    }
+
+    /// <summary>The longest command line an elevation question shows, after secret-looking values are masked.</summary>
+    private const int MaxQuestionArgumentsLength = 200;
+
+    /// <summary>
+    /// The question runAsAdmin asks the user where Windows would elevate without asking (roadmap M6.5, review M6.5 #2): the
+    /// program the launch resolved to (its file name whole, the middle of its folder shortened when needed), its command line
+    /// with secret-looking values masked (CommandLineRedactor) and cut to 200 characters, and why Windows will not ask.
+    /// </summary>
+    private static string ElevationQuestion(ElevationApproval launch, string? reason)
+    {
+        var argumentText = launch.Arguments.Length == 0
+            ? "with no arguments"
+            : $"with the arguments {UserConfirmation.Quote(AppText.Cut(CommandLineRedactor.Redact(launch.Arguments).Text, MaxQuestionArgumentsLength), MaxQuestionArgumentsLength + 2)}";
+        return $"The AI agent asks to start {UserConfirmation.QuotePath(launch.FileName)} {argumentText} as administrator. " +
+               $"Windows will not ask you first: {reason ?? "it cannot be told whether it would"}. The program gets full control " +
+               "of the computer. Allow it?";
     }
 
     [McpServerTool(Name = "list_installed_apps", Title = "List Installed Apps", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
@@ -237,7 +283,10 @@ public class AppLauncherTools
             listing.Truncated,
             listing.Unreadable
                 ? "The Start menu's apps could not be read in time; try again, or launch the program by its path."
-                : null);
+                : listing.SkippedApps > 0
+                    ? $"{listing.SkippedApps} of the Start menu's apps could not be read and are missing; launch_application does " +
+                      "not resolve an app's name or appId until the next read (30 seconds) reads them all."
+                    : null);
     }
 
     /// <summary>The number of monitors, to check a placement's monitorIndex before the launch; null without a monitor service.</summary>
@@ -537,6 +586,7 @@ public class AppLauncherTools
             }
 
             var r = results[next];
+            var elevated = applications[i].RunAsAdmin;
             items.Add(new LaunchResultItem(
                 Executable: applications[i].Executable,
                 Success: r.Success,
@@ -549,7 +599,9 @@ public class AppLauncherTools
                 Window: r.Window is { } window ? WindowFinderTools.ToDto(window) : null,
                 LauncherExited: r.LauncherExited,
                 Placement: placed[next],
-                ForceAccessibilityApplied: r.ForceAccessibilityApplied));
+                ForceAccessibilityApplied: r.ForceAccessibilityApplied,
+                // A batch never asks the user, so a successful elevation is one Windows asked about (review M6.5 #8)
+                Elevation: ElevationOf(elevated, r.Success, confirmed: false)));
             next++;
         }
 
@@ -583,6 +635,8 @@ public record KillResultDto(
 /// launcherExited says whether the started process had exited by the end of the window wait. placement is what the
 /// placement did, when one was asked for and the launch succeeded (roadmap M3.13). forceAccessibilityApplied says whether
 /// the program was started with --force-renderer-accessibility, when forceAccessibility was asked for (roadmap M3.3).
+/// elevation says how a runAsAdmin start was approved (roadmap M6.5): "confirmed" by the user through the client, or
+/// "uacPrompt" when Windows asks them with its UAC prompt.
 /// </summary>
 public record LaunchResultDto(
     bool Success,
@@ -595,7 +649,8 @@ public record LaunchResultDto(
     WindowInfoDto? Window = null,
     bool? LauncherExited = null,
     LaunchPlacementResultDto? Placement = null,
-    bool? ForceAccessibilityApplied = null
+    bool? ForceAccessibilityApplied = null,
+    string? Elevation = null
 );
 
 /// <summary>

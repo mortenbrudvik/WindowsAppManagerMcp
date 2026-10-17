@@ -49,6 +49,10 @@ public class PackagedAppLaunchTests
         _apps.Setup(a => a.ActivateApplication(It.IsAny<string>(), It.IsAny<string?>()))
             .Callback<string, string?>((id, arguments) => _activations.Add((id, arguments)))
             .Returns(new AppActivationResult(0, ActivatedProcessId));
+        // The activated process belongs to the package of the app activated last, and started just now
+        _apps.Setup(a => a.GetPackageFamilyName(ActivatedProcessId))
+            .Returns(() => _activations.Count == 0 ? null : _activations[^1].AppId.Split('!')[0]);
+        _processes.Setup(p => p.GetProcessStartTime(ActivatedProcessId)).Returns(() => DateTime.UtcNow);
 
         _installed.Setup(i => i.ProgramOf(It.Is<PackagedAppId>(a => a.AppUserModelId == Calculator))).Returns("CalculatorApp.exe");
         _installed.Setup(i => i.ProgramOf(It.Is<PackagedAppId>(a => a.AppUserModelId == Notepad))).Returns("Notepad.exe");
@@ -430,6 +434,84 @@ public class PackagedAppLaunchTests
     }
 
     [Fact]
+    public async Task Launch_AnActivatedProcessIdThatNowBelongsToAnotherProcess_IsNotTheApp()
+    {
+        // Review M6.5 #4: the app exited at once and its PID was reused before it was opened
+        _apps.Setup(a => a.GetPackageFamilyName(ActivatedProcessId)).Returns((string?)null);
+
+        var result = await CreateSut().LaunchApplicationAsync(new LaunchRequest(Calculator), false, 5000);
+
+        result.Success.Should().BeTrue();
+        result.ProcessId.Should().BeNull("the process at the PID is not of the app's package");
+        _activated.Verify(p => p.Dispose(), Times.Once);
+    }
+
+    [Fact]
+    public async Task Launch_HungActivations_AreCapped_SoTheyCannotPileUpThreads()
+    {
+        // Review M6.5 #5: each activation that does not return keeps two threads; at the cap, the next one is refused at once
+        using var release = new ManualResetEventSlim();
+        _apps.Setup(a => a.ActivateApplication(It.IsAny<string>(), It.IsAny<string?>()))
+            .Callback<string, string?>((id, arguments) => _activations.Add((id, arguments)))
+            .Returns(() =>
+            {
+                release.Wait(TimeSpan.FromSeconds(10));
+                return new AppActivationResult(0, ActivatedProcessId);
+            });
+        var sut = CreateSut(activationTimeout: TimeSpan.FromMilliseconds(30));
+
+        for (var i = 0; i < ProcessService.MaxHungActivations; i++)
+        {
+            (await sut.LaunchApplicationAsync(new LaunchRequest(Calculator), false, 5000)).Status.Should().Be(LaunchStatus.TimedOut);
+        }
+
+        var refused = await sut.LaunchApplicationAsync(new LaunchRequest(Calculator), false, 5000);
+        refused.ErrorCode.Should().Be(nameof(LaunchErrorCode.ActivationFailed));
+        refused.ErrorMessage.Should().Contain("still");
+        _apps.Verify(a => a.ActivateApplication(It.IsAny<string>(), It.IsAny<string?>()), Times.Exactly(ProcessService.MaxHungActivations));
+
+        // Once they return, activations run again
+        release.Set();
+        await WaitUntilAsync(() => sut.HungActivations == 0);
+        (await sut.LaunchApplicationAsync(new LaunchRequest(Calculator), false, 5000)).ProcessId.Should().Be(ActivatedProcessId);
+    }
+
+    private static async Task WaitUntilAsync(Func<bool> condition)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        while (!condition() && DateTime.UtcNow < deadline)
+        {
+            await Task.Delay(10);
+        }
+
+        condition().Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task Launch_AnAppThatWasRunningBeforeTheActivation_DoesNotReviveItsCloakedFrameAsNew()
+    {
+        // Review M6.5 #9: its frame was there before (another virtual desktop, a suspended app): that is a reused window
+        _processes.Setup(p => p.GetProcessStartTime(ActivatedProcessId)).Returns(DateTime.UtcNow.AddHours(-1));
+        WaitFinds(WindowWaitOutcome.ReusedExistingWindow, CalculatorWindow);
+
+        await CreateSut().LaunchApplicationAsync(new LaunchRequest(Calculator), true, 5000);
+
+        _waits.Single().Options.WasCloakedOwner.Should().BeNull();
+    }
+
+    [Fact]
+    public void PlanLaunch_ADesktopAppEntryWhoseTargetIsAScript_IsRefused_WithOrWithoutArguments()
+    {
+        // Review M6.5 #3
+        const string entry = @"shell:AppsFolder\Vendor.Setup";
+        _resolver.Setup(r => r.Resolve(entry, It.IsAny<string?>())).Returns(new ResolvedLaunchTarget(entry, LaunchTargetKind.Other));
+        _installed.Setup(i => i.FindByAppId("Vendor.Setup")).Returns(new InstalledApp("Setup", "Vendor.Setup", false, @"C:\Vendor\setup.hta"));
+
+        CreateSut().PlanLaunch(entry, ["x"]).ErrorCode.Should().Be(nameof(LaunchErrorCode.ScriptFile));
+        CreateSut().PlanLaunch(entry).ErrorCode.Should().Be(nameof(LaunchErrorCode.ScriptFile));
+    }
+
+    [Fact]
     public async Task ReuseExisting_FindsAnOpenWindowOfThePackage_WithoutExpectWindow()
     {
         var open = TestDataFactory.CreateWindowInfo(handleValue: 0x700, title: "Kalkulator", processName: "CalculatorApp", processId: 6000);
@@ -475,28 +557,100 @@ public class PackagedAppLaunchTests
         VerifyNothingStarted();
     }
 
+    private const string Reg = @"C:\Windows\System32\reg.exe";
+
+    private void ServerRunsElevated() =>
+        _security.SetupGet(s => s.ServerIntegrity).Returns(new ProcessIntegrity(Environment.ProcessId, IntegrityLevel.High, ProcessIntegrity.HighRid, true, null));
+
     [Theory]
-    [InlineData(ElevationPrompt.Silent)]
-    [InlineData(ElevationPrompt.Unknown)]
-    public async Task RunAsAdmin_WhereWindowsWouldNotAsk_NeedsTheUsersConfirmation(ElevationPrompt prompt)
+    [InlineData(ElevationPrompt.Silent, "User Account Control")]
+    [InlineData(ElevationPrompt.Unknown, "could not be read")]
+    public async Task RunAsAdmin_WhereWindowsWouldNotAsk_NeedsTheUsersApprovalOfExactlyThatPlan(ElevationPrompt prompt, string reason)
     {
         _security.Setup(s => s.GetElevationPrompt()).Returns(prompt);
+        _resolver.Setup(r => r.Resolve("reg", It.IsAny<string?>())).Returns(new ResolvedLaunchTarget(Reg, LaunchTargetKind.NativeExecutable));
         var sut = CreateSut();
+        var request = new LaunchRequest("reg", ["add", @"HKLM\Software\X"]) { RunAsAdmin = true };
 
-        sut.ElevationNeedsConfirmation().Should().BeTrue();
-        var refused = await sut.LaunchApplicationAsync(new LaunchRequest("app.exe") { RunAsAdmin = true }, false, 5000);
+        // The preview plans the launch (nothing starts) and says what the user must approve
+        var preview = sut.PreviewElevation(request);
+        preview.NeedsConfirmation.Should().BeTrue();
+        preview.Reason.Should().Contain(reason);
+        preview.Launch.Should().Be(new ElevationApproval(Reg, @"add HKLM\Software\X"));
+
+        var refused = await sut.LaunchApplicationAsync(request, false, 5000);
         refused.ErrorCode.Should().Be(nameof(LaunchErrorCode.ElevationNotConfirmed));
         VerifyNothingStarted();
 
-        var confirmed = await sut.LaunchApplicationAsync(new LaunchRequest("app.exe") { RunAsAdmin = true, ElevationConfirmed = true }, false, 5000);
-        confirmed.Success.Should().BeTrue();
+        var approved = await sut.LaunchApplicationAsync(request with { ApprovedElevation = preview.Launch }, false, 5000);
+        approved.Success.Should().BeTrue(approved.ErrorMessage);
+        _startedWith.Single().FileName.Should().Be(Reg);
         _startedWith.Single().Verb.Should().Be("runas");
     }
 
     [Fact]
-    public void ElevationNeedsConfirmation_IsFalse_WhenWindowsAsks()
+    public async Task RunAsAdmin_OnAnElevatedServer_NeedsTheUsersApproval_ThoughUacWouldPrompt()
     {
-        CreateSut().ElevationNeedsConfirmation().Should().BeFalse();
+        // Review M6.5 #1: an elevated server's runas starts the program elevated with no prompt at all
+        ServerRunsElevated();
+        var sut = CreateSut();
+        var request = new LaunchRequest(Reg) { RunAsAdmin = true };
+
+        var preview = sut.PreviewElevation(request);
+        preview.NeedsConfirmation.Should().BeTrue();
+        preview.Reason.Should().Contain("runs elevated");
+
+        (await sut.LaunchApplicationAsync(request, false, 5000)).ErrorCode.Should().Be(nameof(LaunchErrorCode.ElevationNotConfirmed));
+        VerifyNothingStarted();
+    }
+
+    [Fact]
+    public async Task RunAsAdmin_RunsOnlyThePlanTheUserApproved()
+    {
+        // Review M6.5 #2: the name resolved to another program after the user answered (a PATH or App Paths change)
+        _security.Setup(s => s.GetElevationPrompt()).Returns(ElevationPrompt.Silent);
+        _resolver.Setup(r => r.Resolve("reg", It.IsAny<string?>())).Returns(new ResolvedLaunchTarget(@"C:\Users\me\bin\reg.exe", LaunchTargetKind.NativeExecutable));
+        var approvedForAnother = new LaunchRequest("reg") { RunAsAdmin = true, ApprovedElevation = new ElevationApproval(Reg, "") };
+        var approvedOtherArguments = new LaunchRequest(Reg, ["delete"]) { RunAsAdmin = true, ApprovedElevation = new ElevationApproval(Reg, "query") };
+
+        var changed = await CreateSut().LaunchApplicationAsync(approvedForAnother, false, 5000);
+        var otherArguments = await CreateSut().LaunchApplicationAsync(approvedOtherArguments, false, 5000);
+
+        changed.ErrorCode.Should().Be(nameof(LaunchErrorCode.ElevationNotConfirmed));
+        changed.ErrorMessage.Should().Contain(@"C:\Users\me\bin\reg.exe").And.Contain("approved");
+        otherArguments.ErrorCode.Should().Be(nameof(LaunchErrorCode.ElevationNotConfirmed));
+        VerifyNothingStarted();
+    }
+
+    [Fact]
+    public void PreviewElevation_ARequestThePlanRefuses_ReportsTheRefusal_AndNeedsNoQuestion()
+    {
+        var preview = CreateSut().PreviewElevation(new LaunchRequest(Calculator) { RunAsAdmin = true });
+
+        preview.ErrorCode.Should().Be(ToolErrorReporting.InvalidArgumentsErrorCode);
+        preview.NeedsConfirmation.Should().BeFalse();
+        preview.Launch.Should().BeNull();
+    }
+
+    [Fact]
+    public void PreviewElevation_WhereWindowsAsks_NeedsNoQuestion()
+    {
+        var preview = CreateSut().PreviewElevation(new LaunchRequest(Reg) { RunAsAdmin = true });
+
+        preview.NeedsConfirmation.Should().BeFalse();
+        preview.Launch!.FileName.Should().Be(Reg);
+    }
+
+    [Fact]
+    public async Task Batch_ARunAsAdminItemWindowsWouldNotAskAbout_IsElevationNotConfirmed_AndTheOthersStart()
+    {
+        _security.Setup(s => s.GetElevationPrompt()).Returns(ElevationPrompt.Silent);
+
+        var results = await CreateSut().LaunchApplicationsBatchAsync([new LaunchRequest(Reg) { RunAsAdmin = true }, new LaunchRequest("notepad.exe")]);
+
+        results[0].ErrorCode.Should().Be(nameof(LaunchErrorCode.ElevationNotConfirmed));
+        results[1].Success.Should().BeTrue();
+        _startedWith.Should().ContainSingle().Which.Verb.Should().BeEmpty();
     }
 
     [Fact]

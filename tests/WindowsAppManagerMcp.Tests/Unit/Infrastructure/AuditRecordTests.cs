@@ -643,4 +643,31 @@ public class AuditRecordTests
         entry.Args!["runAsAdmin"]!.GetValue<bool>().Should().BeTrue();
         entry.Target!.Executable.Should().Be(@"C:\Tools\setup-helper.exe");
     }
+
+    [Theory]
+    [InlineData("confirmed")]
+    [InlineData("uacPrompt")]
+    public void ALaunchAsAdministrator_RecordsHowTheElevationWasApproved(string elevation)
+    {
+        // Review M6.5 #8: the user's yes through the client, or Windows' own UAC prompt
+        var entry = Build(Call("launch_application", new { executable = @"C:\Tools\setup-helper.exe", runAsAdmin = true }),
+            Result(new { success = true, processId = 4321, launchStatus = "started", elevation }));
+
+        entry.Args!["runAsAdmin"]!.GetValue<bool>().Should().BeTrue();
+        entry.Result!["elevation"]!.GetValue<string>().Should().Be(elevation);
+    }
+
+    [Fact]
+    public void ABatchItemLaunchedAsAdministrator_RecordsItsElevation()
+    {
+        var call = Call("launch_applications_batch", new { applications = new[] { new { executable = @"C:\Tools\a.exe", runAsAdmin = true } } });
+
+        var entry = Build(call, Result(new
+        {
+            totalRequested = 1, succeeded = 1, failed = 0,
+            results = new[] { new { executable = @"C:\Tools\a.exe", success = true, processId = 7, elevation = "uacPrompt" } }
+        }));
+
+        entry.Items!.Single().Elevation.Should().Be("uacPrompt");
+    }
 }

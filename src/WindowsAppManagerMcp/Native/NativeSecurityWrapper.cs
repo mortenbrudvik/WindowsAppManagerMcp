@@ -122,12 +122,34 @@ public sealed class NativeSecurityWrapper : INativeSecurityWrapper
     /// <summary>The key of the User Account Control policy values.</summary>
     private const string UacPolicyKey = @"SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System";
 
+    /// <summary>
+    /// Whether the server runs as the built-in Administrator account: a machine or domain account SID (S-1-5-21-...) whose
+    /// relative ID is 500. Null when the server's identity cannot be read.
+    /// </summary>
+    private static bool? IsBuiltInAdministrator()
+    {
+        try
+        {
+            using var identity = System.Security.Principal.WindowsIdentity.GetCurrent();
+            return identity.User?.Value is { } sid
+                ? sid.StartsWith("S-1-5-21-", StringComparison.Ordinal) && sid.EndsWith("-500", StringComparison.Ordinal)
+                : null;
+        }
+        catch (System.Security.SecurityException)
+        {
+            return null;
+        }
+    }
+
     public UacSettings? ReadUacSettings()
     {
         try
         {
             using var key = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(UacPolicyKey, writable: false);
-            return key == null ? null : new UacSettings(key.GetValue("EnableLUA") as int?, key.GetValue("ConsentPromptBehaviorAdmin") as int?);
+            return key == null
+                ? null
+                : new UacSettings(key.GetValue("EnableLUA") as int?, key.GetValue("ConsentPromptBehaviorAdmin") as int?,
+                    key.GetValue("FilterAdministratorToken") as int?, IsBuiltInAdministrator());
         }
         catch (Exception ex) when (ex is System.Security.SecurityException or UnauthorizedAccessException or IOException)
         {

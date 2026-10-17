@@ -27,10 +27,52 @@ public class InstalledAppsServiceTests
 
     public InstalledAppsServiceTests()
     {
-        _native.Setup(n => n.EnumerateAppsFolder()).Returns(() => _folder);
+        _native.Setup(n => n.EnumerateAppsFolder()).Returns(() => _folder == null ? null : new AppsFolderListing(_folder, _skipped));
     }
 
+    /// <summary>Items of the folder whose properties could not be read.</summary>
+    private int _skipped;
+
     private InstalledAppsService CreateSut() => new(_native.Object, _clock);
+
+    [Fact]
+    public void AFolderWithItemsThatCouldNotBeRead_IsListedWithAWarning_ButNotTrustedForNames()
+    {
+        // Review M6.5 #7: an item that was skipped may be the other app of a name, or the app an appId names
+        _skipped = 2;
+        var sut = CreateSut();
+
+        var listing = sut.List(null, 25);
+
+        listing.Unreadable.Should().BeFalse();
+        listing.SkippedApps.Should().Be(2);
+        listing.Apps.Should().NotBeEmpty();
+        sut.FindByName("Kalkulator").Should().BeNull();
+        sut.FindByAppId("Chrome").Should().BeNull();
+    }
+
+    [Fact]
+    public async Task ConcurrentCallers_ShareOneReadOfTheFolder()
+    {
+        // Review M6.5 #6: a slow read is not started again by every caller that comes while it runs
+        using var release = new ManualResetEventSlim();
+        var reads = 0;
+        _native.Setup(n => n.EnumerateAppsFolder()).Returns(() =>
+        {
+            Interlocked.Increment(ref reads);
+            release.Wait(TimeSpan.FromSeconds(10));
+            return new AppsFolderListing(_folder!, 0);
+        });
+        var sut = CreateSut();
+
+        var callers = Enumerable.Range(0, 4).Select(_ => Task.Run(() => sut.List(null, 25))).ToList();
+        await Task.Delay(100);
+        release.Set();
+        var listings = await Task.WhenAll(callers);
+
+        reads.Should().Be(1);
+        listings.Should().OnlyContain(l => l.Total == 8);
+    }
 
     [Fact]
     public void List_PutsPackagedAppsFirst_ThenByName_EachAppIdOnce()

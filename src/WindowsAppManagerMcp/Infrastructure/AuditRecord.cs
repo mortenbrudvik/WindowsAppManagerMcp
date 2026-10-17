@@ -97,6 +97,9 @@ public static class AuditRecord
 
     private const string ElementActionTool = "element_action";
 
+    /// <summary>How a launch with runAsAdmin was approved (roadmap M6.5): "confirmed" or "uacPrompt".</summary>
+    private const string ElevationProperty = "elevation";
+
     /// <summary>The tools that answer a dialog (roadmap M3.5, M3.14): their line's target is the dialog, <see cref="DialogHandleProperty"/>.</summary>
     private static readonly HashSet<string> DialogTools = new(StringComparer.Ordinal) { "respond_to_dialog", "file_dialog" };
 
@@ -574,7 +577,8 @@ public static class AuditRecord
                     Identifier(item, "errorCode"),
                     Identifier(item, "status") ?? Identifier(item, LaunchStatusProperty),
                     Bool(item, "launched"),
-                    placement);
+                    placement,
+                    Identifier(item, ElevationProperty));
             })
             .ToList();
     }
@@ -652,6 +656,12 @@ public static class AuditRecord
         if (Identifier(body, LaunchStatusProperty) is { } launchStatus)
         {
             scalars[LaunchStatusProperty] = launchStatus;
+        }
+
+        // How an elevated launch was approved (roadmap M6.5, review #8): confirmed through the client, or Windows' UAC prompt
+        if (Identifier(body, ElevationProperty) is { } elevation)
+        {
+            scalars[ElevationProperty] = elevation;
         }
 
         foreach (var (name, value) in body)

@@ -21,10 +21,11 @@ public interface INativeAppsWrapper
     /// <summary>
     /// Lists the Applications folder (FOLDERID_AppsFolder: the Start menu's apps, packaged and desktop) on a thread of its
     /// own, reading each item's display name and properties only (never an icon or thumbnail). The shell may load other
-    /// programs' property handlers for it, so a list that takes longer than its deadline (3 seconds) is abandoned. Null
-    /// when the folder cannot be read or the deadline passed. Never throws.
+    /// programs' property handlers for it, so a list that takes longer than its deadline (3 seconds) is abandoned. An item
+    /// whose properties cannot be read is skipped and counted. Null when the folder cannot be read, its enumeration fails
+    /// before its end (the list would look complete without the rest), or the deadline passed. Never throws.
     /// </summary>
-    IReadOnlyList<AppsFolderEntry>? EnumerateAppsFolder();
+    AppsFolderListing? EnumerateAppsFolder();
 
     /// <summary>
     /// The package family name of a running process (GetPackageFamilyName on a PROCESS_QUERY_LIMITED_INFORMATION handle),
@@ -60,3 +61,6 @@ public sealed record AppActivationResult(int HResult, int? ProcessId)
 /// the package family name of a packaged app, and the target path of a desktop app's shortcut (PKEY_Link_TargetParsingPath).
 /// </summary>
 public sealed record AppsFolderEntry(string Name, string AppId, string? PackageFamilyName = null, string? TargetPath = null);
+
+/// <summary>The items of the Applications folder that could be read, and how many could not (review M6.5 #7).</summary>
+public sealed record AppsFolderListing(IReadOnlyList<AppsFolderEntry> Entries, int SkippedItems);

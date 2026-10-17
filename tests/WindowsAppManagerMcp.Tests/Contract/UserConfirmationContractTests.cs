@@ -880,15 +880,31 @@ public sealed class UserConfirmationContractTests : IDisposable
 
     #region launch_application runAsAdmin (roadmap M6.5, owner decision D11)
 
+    /// <summary>A program whose folder is longer than a question line, so the question must shorten the folder, never the name.</summary>
+    private const string LongProgram =
+        @"C:\Program Files\Vendor With A Very Long Name\Product Suite\Administrative Tools\Version 2026.10.17\Deployment Packages\Components For Repair\x64\Release\bin\setup-helper.exe";
+
     private static IReadOnlyDictionary<string, object?> ElevatedLaunchArguments() =>
-        new Dictionary<string, object?> { ["executable"] = @"C:\Tools\setup-helper.exe", ["arguments"] = new[] { "--repair" }, ["runAsAdmin"] = true };
+        new Dictionary<string, object?>
+        {
+            ["executable"] = "setup-helper",
+            ["arguments"] = new[] { "--repair", "--token=SECRETVALUE" },
+            ["runAsAdmin"] = true
+        };
+
+    /// <summary>The service's plan of the elevated launch: the resolved program and its command line.</summary>
+    private static readonly ElevationApproval PlannedElevation = new(LongProgram, "--repair --token=SECRETVALUE");
+
+    private void ElevationNeedsTheUser(bool needed = true) =>
+        _services.Processes.Setup(p => p.PreviewElevation(It.IsAny<LaunchRequest>()))
+            .Returns(new ElevationPreview(needed, needed ? "User Account Control is off" : null, PlannedElevation));
 
     [Theory]
     [MemberData(nameof(Revisions))]
     public async Task LaunchApplication_RunAsAdminWindowsWouldNotAskAbout_AsksTheUser_OutsideTheGate(string? revision)
     {
         // Arrange - User Account Control would not prompt, so the user is asked here before the launch, which runs in the gate
-        _services.Processes.Setup(p => p.ElevationNeedsConfirmation()).Returns(true);
+        ElevationNeedsTheUser();
         bool? gateHeldDuringTheLaunch = null;
         LaunchRequest? passed = null;
         _services.Processes.Setup(p => p.LaunchApplicationAsync(It.IsAny<LaunchRequest>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
@@ -903,14 +919,17 @@ public sealed class UserConfirmationContractTests : IDisposable
         // Act
         var result = await server.CallToolAsync("launch_application", ElevatedLaunchArguments());
 
-        // Assert
+        // Assert - review M6.5 #2: the question shows the resolved program, its file name whole, and the redacted arguments
         result.IsError.Should().NotBe(true, Payload(result).ToString());
-        _questions.Should().ContainSingle().Which.Should()
-            .Contain(@"'C:\Tools\setup-helper.exe' with 1 argument as administrator").And.NotContain("--repair");
+        var question = _questions.Should().ContainSingle().Subject;
+        question.Should().Contain(@"\setup-helper.exe'").And.Contain(@"C:\Program Files\").And.Contain("…")
+            .And.Contain("--repair").And.Contain("--token=***").And.NotContain("SECRETVALUE")
+            .And.Contain("User Account Control is off").And.Contain("as administrator");
         _gateWasFreeDuringTheQuestion.Should().BeTrue("a question must never hold the input gate");
         gateHeldDuringTheLaunch.Should().BeTrue("the launch itself runs inside the gate");
         passed!.RunAsAdmin.Should().BeTrue();
-        passed.ElevationConfirmed.Should().BeTrue();
+        passed.ApprovedElevation.Should().Be(PlannedElevation, "only the plan the user saw may run");
+        Payload(result).GetProperty("elevation").GetString().Should().Be("confirmed");
     }
 
     [Theory]
@@ -918,7 +937,7 @@ public sealed class UserConfirmationContractTests : IDisposable
     [InlineData("accept", false)]
     public async Task LaunchApplication_RunAsAdminTheUserDoesNotConfirm_StartsNothing(string action, bool? confirm)
     {
-        _services.Processes.Setup(p => p.ElevationNeedsConfirmation()).Returns(true);
+        ElevationNeedsTheUser();
         await using var server = await StartAsync(null, _ => Answer(action, confirm));
 
         var result = await server.CallToolAsync("launch_application", ElevatedLaunchArguments());
@@ -932,14 +951,15 @@ public sealed class UserConfirmationContractTests : IDisposable
     public async Task LaunchApplication_RunAsAdminWindowsAsksAbout_IsNotAskedHereToo()
     {
         // UAC is the human approval then
-        _services.Processes.Setup(p => p.ElevationNeedsConfirmation()).Returns(false);
+        ElevationNeedsTheUser(needed: false);
         await using var server = await StartAsync(null, _ => Answer("accept", confirm: true));
 
-        await server.CallToolAsync("launch_application", ElevatedLaunchArguments());
+        var result = await server.CallToolAsync("launch_application", ElevatedLaunchArguments());
 
         _questions.Should().BeEmpty();
-        _services.Processes.Verify(p => p.LaunchApplicationAsync(It.Is<LaunchRequest>(r => r.RunAsAdmin && !r.ElevationConfirmed),
+        _services.Processes.Verify(p => p.LaunchApplicationAsync(It.Is<LaunchRequest>(r => r.RunAsAdmin && r.ApprovedElevation == null),
             It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Once);
+        Payload(result).GetProperty("elevation").GetString().Should().Be("uacPrompt");
     }
 
     #endregion

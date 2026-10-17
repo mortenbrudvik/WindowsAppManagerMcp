@@ -257,6 +257,7 @@ public class InterpreterGuardTests
     [InlineData("SomeLauncher.exe", "CanonicalGroupLimited.Ubuntu24.04LTS_79rhkp1fndgsc")]
     [InlineData("debian.exe", "TheDebianProject.DebianGNULinux_76v4gfsz19hv4")]
     [InlineData("App.exe", "Microsoft.WindowsTerminalPreview_8wekyb3d8bbwe")]
+    [InlineData("AppInstallerCLI.exe", "Microsoft.DesktopAppInstaller_8wekyb3d8bbwe")] // winget (review M6.5 #9)
     public void CheckApp_AnInterpreterPackageWithArguments_IsRefused(string program, string family)
     {
         // Act
@@ -290,6 +291,20 @@ public class InterpreterGuardTests
 
         // Assert
         refusal.Should().BeNull();
+    }
+
+    [Theory]
+    [InlineData(@"C:\Vendor\setup.hta", true)]
+    [InlineData(@"C:\Vendor\run.bat", false)]
+    [InlineData(@"C:\Vendor\tool.ps1", true)]
+    [InlineData(@"C:\Vendor\package.msi", false)]
+    public void CheckApp_AnEntryWhoseProgramIsAScript_IsRefused_WithOrWithoutArguments(string program, bool withArguments)
+    {
+        // Review M6.5 #3: the shell would run the script with its interpreter
+        var refusal = InterpreterGuard.CheckApp("Vendor.Setup", program, null, withArguments ? ["x"] : []);
+
+        refusal!.ErrorCode.Should().Be(nameof(LaunchErrorCode.ScriptFile));
+        refusal.Message.Should().Contain("Nothing was started");
     }
 
     [Fact]
