@@ -146,6 +146,14 @@ public interface IProcessService
     Task<DebugBrowserLaunchResult> LaunchBrowserWithDebugAsync(
         DebugBrowserLaunchRequest request,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Whether runAsAdmin needs the user's confirmation through the client (roadmap M6.5, owner decision D11): Windows would
+    /// elevate without a UAC prompt (User Account Control off, or administrators not asked for consent), or the policy
+    /// cannot be read. The launch tools ask the user before the input gate and pass the answer as
+    /// <see cref="LaunchRequest.ElevationConfirmed"/>; without it such a launch is ElevationNotConfirmed.
+    /// </summary>
+    bool ElevationNeedsConfirmation();
 }
 
 /// <summary>One running process, as <see cref="IProcessService.GetRunningProcesses"/> lists it.</summary>

@@ -120,6 +120,7 @@ public class EveryToolContractTests
             ["release_all_input"] = Args("{}"),
             ["launch_application"] = Args("""{ "executable": "notepad", "waitForWindow": true }"""),
             ["list_processes"] = Args("{}"),
+            ["list_installed_apps"] = Args("{}"),
             ["kill_process"] = Args("""{ "processId": 10244, "confirm": true, "expectedProcessName": "notepad" }"""),
             ["list_layouts"] = Args("{}"),
             ["get_layout"] = Args("""{ "name": "layout-1" }"""),

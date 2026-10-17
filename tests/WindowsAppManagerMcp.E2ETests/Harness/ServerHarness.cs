@@ -110,8 +110,12 @@ public sealed class ServerHarness : IDisposable
     /// choice (WAM_UIA_ENGINE, by default UIA3), so a scenario can run its reads against both engines.</param>
     /// <param name="agentHost">The agent's host as <see cref="RecordAgentHost(DesktopTier)"/> recorded it before the fixture
     /// started, which the server then uses as its own; null to let the server record it now, as it does when it starts.</param>
-    public static ServerHarness Create(DesktopTier tier, int fixtureProcessId, UiaEngine? uiaEngine = null, IHostGuard? agentHost = null) =>
-        Create(tier, fixtureProcessId, new Win32DesktopProbe(), Environment.GetEnvironmentVariable, uiaEngine, agentHost);
+    /// <param name="allowedActivations">Input tier only: the packaged apps the scenario may activate, without arguments
+    /// (roadmap M6.5, <see cref="FixtureOnlyCallPolicy"/>).</param>
+    public static ServerHarness Create(
+        DesktopTier tier, int fixtureProcessId, UiaEngine? uiaEngine = null, IHostGuard? agentHost = null,
+        IReadOnlyCollection<string>? allowedActivations = null) =>
+        Create(tier, fixtureProcessId, new Win32DesktopProbe(), Environment.GetEnvironmentVariable, uiaEngine, agentHost, allowedActivations);
 
     internal static ServerHarness Create(
         DesktopTier tier,
@@ -119,13 +123,15 @@ public sealed class ServerHarness : IDisposable
         IDesktopProbe probe,
         Func<string, string?> readVariable,
         UiaEngine? uiaEngine = null,
-        IHostGuard? agentHost = null)
+        IHostGuard? agentHost = null,
+        IReadOnlyCollection<string>? allowedActivations = null)
     {
         DesktopTestGate.ThrowIfNotAllowed(tier, readVariable);
         E2EProcess.EnsureServerDpiAwareness();
 
         var layoutsPath = Path.Combine(Path.GetTempPath(), "WamE2E", "layouts-" + Guid.NewGuid().ToString("N"));
-        var services = CreateServices(tier, fixtureProcessId, probe, layoutsPath, wrapperSubstitute: null, out var guarded, uiaEngine, agentHost);
+        var services = CreateServices(tier, fixtureProcessId, probe, layoutsPath, wrapperSubstitute: null, out var guarded, uiaEngine, agentHost,
+            allowedActivations);
         var harness = new ServerHarness(services, layoutsPath, guarded);
         try
         {
@@ -146,7 +152,7 @@ public sealed class ServerHarness : IDisposable
     /// <see cref="HostGuard"/> over the server's own window and process wrappers, behind the read-only guard in every tier
     /// (it only reads). Among other things it records the window in front as part of the host, so
     /// <see cref="E2ESession.Start"/> records it before it starts the fixture: the window in front is then the terminal that
-    /// runs the tests, never the fixture. Pass the result to <see cref="Create(DesktopTier, int, UiaEngine?, IHostGuard?)"/>.
+    /// runs the tests, never the fixture. Pass the result to <see cref="Create(DesktopTier, int, UiaEngine?, IHostGuard?, IReadOnlyCollection{string}?)"/>.
     /// Refuses unless <paramref name="tier"/> is opted in.
     /// </summary>
     public static IHostGuard RecordAgentHost(DesktopTier tier) =>
@@ -206,7 +212,8 @@ public sealed class ServerHarness : IDisposable
         Func<Type, object>? wrapperSubstitute,
         out IReadOnlyList<Type> guardedWrappers,
         UiaEngine? uiaEngine = null,
-        IHostGuard? agentHost = null)
+        IHostGuard? agentHost = null,
+        IReadOnlyCollection<string>? allowedActivations = null)
     {
         var services = new ServiceCollection();
         services.AddWindowsAppManagerServices(
@@ -239,7 +246,7 @@ public sealed class ServerHarness : IDisposable
         IWrapperCallPolicy policy = tier switch
         {
             DesktopTier.NoInput => new ReadOnlyCallPolicy(),
-            DesktopTier.Input => new FixtureOnlyCallPolicy(probe, fixtureProcessId),
+            DesktopTier.Input => new FixtureOnlyCallPolicy(probe, fixtureProcessId, allowedActivations: allowedActivations),
             _ => throw new ArgumentOutOfRangeException(nameof(tier), tier, "Unknown desktop tier.")
         };
         guardedWrappers = WrapperGuard.GuardNativeWrappers(services, policy);

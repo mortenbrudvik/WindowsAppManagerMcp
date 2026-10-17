@@ -63,10 +63,21 @@ public interface IWindowWaitService
         CancellationToken cancellationToken = default);
 }
 
-/// <summary>The top-level windows before a launch: each handle with its title, and the foreground window.</summary>
+/// <summary>
+/// The top-level windows before a launch: each handle with its title, the foreground window, and which windows were
+/// cloaked (roadmap M6.5: a UWP frame is created cloaked, and Windows keeps a suspended app's frame cloaked to show it again).
+/// </summary>
 public sealed record WindowBaseline(IReadOnlyDictionary<nint, string> Titles, nint Foreground)
 {
+    private static readonly IReadOnlySet<nint> NoWindows = new HashSet<nint>();
+
+    /// <summary>The windows that were cloaked when the baseline was taken.</summary>
+    public IReadOnlySet<nint> Cloaked { get; init; } = NoWindows;
+
     public bool Contains(nint handle) => Titles.ContainsKey(handle);
+
+    /// <summary>Whether the window was there and cloaked when the baseline was taken.</summary>
+    public bool WasCloaked(nint handle) => Cloaked.Contains(handle);
 }
 
 /// <summary>
@@ -119,4 +130,13 @@ public sealed record WindowWaitOptions
     /// false means another launch has it. Null claims every window.
     /// </summary>
     public Func<nint, bool>? TryClaim { get; init; }
+
+    /// <summary>
+    /// Roadmap M6.5: a window that was cloaked in the baseline counts as new, like a window that was not there, once it is
+    /// user-facing and both the owner check and this accept it. Windows creates a packaged app's frame cloaked and shows a
+    /// suspended app's frame again, the same handle, when the app is activated; the launch sets this to "the process the
+    /// activation started", so an unrelated window that is uncloaked meanwhile does not count. Null: a window in the
+    /// baseline is never new.
+    /// </summary>
+    public Func<WindowCandidate, bool>? WasCloakedOwner { get; init; }
 }

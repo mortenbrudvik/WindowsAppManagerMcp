@@ -49,7 +49,9 @@ public record ApplicationLaunchRequest(
     bool ReuseExisting = false,
     [property: Description("Start a Chromium, Electron or CEF .exe with --force-renderer-accessibility, as launch_application's " +
                            "forceAccessibility (default false)")]
-    bool ForceAccessibility = false
+    bool ForceAccessibility = false,
+    [property: Description("Start the .exe as administrator, as launch_application's runAsAdmin (default false)")]
+    bool RunAsAdmin = false
 );
 
 /// <summary>A close_windows_batch item: the window to close.</summary>

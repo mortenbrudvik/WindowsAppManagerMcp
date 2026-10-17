@@ -348,6 +348,8 @@ public static class AuditRecord
     /// <c>mailto:example.com</c>, <c>data:</c>): a path can be a bearer secret (webhook, password-reset, magic-login and
     /// share links), and an opaque URI's body (<c>data:</c>, <c>javascript:</c>) is content.</item>
     /// <item>A file path is kept; a <c>file:</c> URI as its local path, without query or fragment.</item>
+    /// <item>An installed app's <c>shell:AppsFolder\&lt;AppUserModelID&gt;</c> is kept: the ID names the app and holds
+    /// nothing else (roadmap M6.5).</item>
     /// <item>Anything else (a program name such as <c>notepad</c>, a relative path, or a URL without a scheme such as
     /// <c>www.example.com/reset?t=...</c>, which the shell opens too) is kept up to its first <c>/ ? #</c>, without what
     /// comes before an <c>@</c> (user info).</item>
@@ -356,6 +358,14 @@ public static class AuditRecord
     public static string RedactExecutable(string executable)
     {
         ArgumentNullException.ThrowIfNull(executable);
+
+        // Only letters, digits, '.', '_', '-' and one '!' after the prefix, as launch_application's validation allows them
+        if (executable.StartsWith(PackagedAppId.AppsFolderPrefix, StringComparison.OrdinalIgnoreCase) &&
+            executable.Length > PackagedAppId.AppsFolderPrefix.Length &&
+            executable[PackagedAppId.AppsFolderPrefix.Length..].All(c => char.IsAsciiLetterOrDigit(c) || c is '.' or '_' or '-' or '!'))
+        {
+            return Cut(executable, MaxTitleLength);
+        }
 
         if (Uri.TryCreate(executable, UriKind.Absolute, out var uri))
         {

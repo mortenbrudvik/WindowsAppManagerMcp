@@ -297,7 +297,8 @@ public sealed class ReadOnlyCallPolicy : IWrapperCallPolicy
 /// also in the foreground, since Windows can send the wheel to the focus window instead of the one under the cursor;
 /// window calls only when every window they name is a fixture window,
 /// and process closes and kills only on the fixture process. The check runs before every SendInput
-/// batch, so a window that comes to the front mid-text stops the typing. No process may be started.
+/// batch, so a window that comes to the front mid-text stops the typing. No process may be started, except an activation
+/// of a packaged app the scenario allows, without arguments (roadmap M6.5: Calculator, ended by the scenario through its PID).
 /// Two narrow exceptions serve verified activation (EnsureForeground): a batch of zero-distance mouse
 /// moves, which moves nothing and presses nothing, may be sent wherever the cursor is; and the server
 /// may attach its own calling thread's input to another thread (never two other threads to each other),
@@ -325,8 +326,14 @@ public sealed class FixtureOnlyCallPolicy : IWrapperCallPolicy
     private readonly IDesktopProbe _probe;
     private readonly int _fixtureProcessId;
     private readonly string _fixtureProcessName;
+    private readonly IReadOnlySet<string> _allowedActivations;
 
-    public FixtureOnlyCallPolicy(IDesktopProbe probe, int fixtureProcessId, string fixtureProcessName = FixtureContract.ProcessName)
+    /// <param name="allowedActivations">The packaged apps (AppUserModelIDs) a scenario may activate, without arguments
+    /// (roadmap M6.5): apps that hold none of the user's data, such as Calculator, which the scenario then ends by the
+    /// process ID the activation returned. Empty by default: no process may be started.</param>
+    public FixtureOnlyCallPolicy(
+        IDesktopProbe probe, int fixtureProcessId, string fixtureProcessName = FixtureContract.ProcessName,
+        IReadOnlyCollection<string>? allowedActivations = null)
     {
         ArgumentNullException.ThrowIfNull(probe);
         ArgumentException.ThrowIfNullOrWhiteSpace(fixtureProcessName);
@@ -337,6 +344,7 @@ public sealed class FixtureOnlyCallPolicy : IWrapperCallPolicy
         _probe = probe;
         _fixtureProcessId = fixtureProcessId;
         _fixtureProcessName = fixtureProcessName;
+        _allowedActivations = new HashSet<string>(allowedActivations ?? [], StringComparer.OrdinalIgnoreCase);
     }
 
     public string? Check(WrapperCall call) => call.Member?.Kind switch
@@ -348,10 +356,33 @@ public sealed class FixtureOnlyCallPolicy : IWrapperCallPolicy
         WrapperCallKind.ProcessAction => CheckProcess(call),
         WrapperCallKind.ThreadInputAttach => CheckThreadInputAttach(call),
         WrapperCallKind.UiaAction => CheckUiaAction(call),
-        WrapperCallKind.ProcessStart =>
-            $"an E2E test may not start processes; teach {nameof(FixtureOnlyCallPolicy)} which starts are safe first.",
+        WrapperCallKind.ProcessStart => CheckProcessStart(call),
         var kind => $"{nameof(FixtureOnlyCallPolicy)} has no rule for {kind} calls."
     };
+
+    /// <summary>
+    /// A start is refused, except an activation (INativeAppsWrapper.ActivateApplication) of an app the scenario allows, without
+    /// arguments (roadmap M6.5). StartProcess stays refused, so the shell fallback of an elevated server cannot start one.
+    /// </summary>
+    private string? CheckProcessStart(WrapperCall call)
+    {
+        const string refused = $"an E2E test may not start processes; teach {nameof(FixtureOnlyCallPolicy)} which starts are safe first.";
+        if (call.ServiceType != typeof(INativeAppsWrapper) || call.Method.Name != nameof(INativeAppsWrapper.ActivateApplication) ||
+            _allowedActivations.Count == 0)
+        {
+            return refused;
+        }
+
+        var appId = call.Args.Length > 0 ? call.Args[0] as string : null;
+        if (appId == null || !_allowedActivations.Contains(appId))
+        {
+            return $"the scenario does not allow activating '{appId}'; {refused}";
+        }
+
+        return call.Args.Length > 1 && !string.IsNullOrEmpty(call.Args[1] as string)
+            ? $"activating '{appId}' with arguments is refused: a scenario starts an allowed app without arguments."
+            : null;
+    }
 
     private string? CheckInput(WrapperCall call)
     {

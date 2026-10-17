@@ -41,6 +41,19 @@ public sealed record LaunchRequest(
     public bool OnlyStartedProcess { get; init; }
 
     /// <summary>
+    /// Start the program elevated, as administrator (ProcessStartInfo.Verb "runas", roadmap M6.5): Windows asks the user
+    /// through User Account Control. Only a program's .exe; any other target is refused (InvalidArguments).
+    /// </summary>
+    public bool RunAsAdmin { get; init; }
+
+    /// <summary>
+    /// With <see cref="RunAsAdmin"/>: the user confirmed the elevation through the client (elicitation), which a computer
+    /// where Windows elevates without a UAC prompt needs (roadmap M6.5, owner decision D11). Only the launch tools set it,
+    /// after the user's yes.
+    /// </summary>
+    public bool ElevationConfirmed { get; init; }
+
+    /// <summary>
     /// Called with the started process's ID as soon as the start returns one, before the window wait. launch_browser_with_debug
     /// sets it (roadmap M5.4), so that a call cancelled during the wait can still close the browser it started: its debug
     /// port has no authentication, and nobody else learns its process ID. No tool parameter sets it.
@@ -57,8 +70,9 @@ public sealed record LaunchRequest(
 }
 
 /// <summary>
-/// The window a launch is expected to open, for the cases the server cannot work out on its own: a packaged app
-/// started through a URI or shell:AppsFolder, or a document opened by whatever app is registered for it. A window
+/// The window a launch is expected to open, for the cases the server cannot work out on its own: an app started through
+/// a URI or a desktop app's shell:AppsFolder entry, or a document opened by whatever app is registered for it (a packaged
+/// app's windows are told by its package, roadmap M6.5). A window
 /// that appears during the wait and matches every field that is set counts as the launch's window; reuseExisting reuses
 /// only an open window that matches it (a web address needs <see cref="TitleContains"/>, since a page sets its own title).
 /// </summary>

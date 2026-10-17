@@ -119,6 +119,22 @@ public sealed class NativeSecurityWrapper : INativeSecurityWrapper
         return desktop == nint.Zero ? null : ReadObjectName(desktop);
     }
 
+    /// <summary>The key of the User Account Control policy values.</summary>
+    private const string UacPolicyKey = @"SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System";
+
+    public UacSettings? ReadUacSettings()
+    {
+        try
+        {
+            using var key = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(UacPolicyKey, writable: false);
+            return key == null ? null : new UacSettings(key.GetValue("EnableLUA") as int?, key.GetValue("ConsentPromptBehaviorAdmin") as int?);
+        }
+        catch (Exception ex) when (ex is System.Security.SecurityException or UnauthorizedAccessException or IOException)
+        {
+            return null;
+        }
+    }
+
     public SessionStateQuery? QuerySessionState()
     {
         int sessionId;

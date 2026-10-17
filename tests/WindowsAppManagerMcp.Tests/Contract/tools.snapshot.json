@@ -4830,12 +4830,12 @@
     {
       "name": "launch_application",
       "title": "Launch Application",
-      "description": "Launch an application by executable path, name, or protocol URI (http/https, mailto, tel, ms-settings: Settings pages, shell:AppsFolder\\<AppUserModelID> for Store apps, and the schemes the user allows). Returns launchStatus and the process ID. With waitForWindow=true it also returns the window the launch opened, whichever process owns it (launchers such as calc, code or a browser hand off to another process): launchStatus windowObserved, reusedExistingWindow or openedInTab (single-instance and tabbed apps such as Notepad, Terminal, VS Code or Explorer), or, without a window, possibleHandoff, exitedWithoutWindow or timedOut. awaitingUserConsent means Windows shows the user a prompt (UAC, SmartScreen) that only the user may answer. Never launch again just because no window was found: look for it with find_windows. placement arranges the window in the same call (snap or bounds, monitor, state, focus) and returns placement {finalBounds, finalState, monitorIndex, focused, reapplied}; a placement that fails has placement.errorCode and error while success stays true, because the app was launched: fix the window with the window tools, never launch again. reuseExisting uses an open window of the app instead of starting another (launchStatus alreadyOpen).",
+      "description": "Launch an application by executable path, name, installed app (appId or exact name from list_installed_apps; a packaged app returns its own processId), or protocol URI (http/https, mailto, tel, ms-settings: Settings pages, and the schemes the user allows). Returns launchStatus and the process ID. With waitForWindow=true it also returns the window the launch opened, whichever process owns it (launchers such as calc, code or a browser hand off to another process): launchStatus windowObserved, reusedExistingWindow or openedInTab (single-instance and tabbed apps such as Notepad, Terminal, VS Code or Explorer), or, without a window, possibleHandoff, exitedWithoutWindow or timedOut. awaitingUserConsent means Windows shows the user a prompt (UAC, SmartScreen) that only the user may answer. Never launch again just because no window was found: look for it with find_windows. placement arranges the window in the same call (snap or bounds, monitor, state, focus) and returns placement {finalBounds, finalState, monitorIndex, focused, reapplied}; a placement that fails has placement.errorCode and error while success stays true, because the app was launched: fix the window with the window tools, never launch again. reuseExisting uses an open window of the app instead of starting another (launchStatus alreadyOpen).",
       "inputSchema": {
         "type": "object",
         "properties": {
           "executable": {
-            "description": "Path to executable, application name, or protocol URI (e.g., 'notepad', 'C:\\Program Files\\App\\app.exe', 'https://example.com', 'ms-settings:display'). A bare name is looked up in the Windows folder, System32, PATH and App Paths, never in the current folder; one that is not found there fails with ExecutableNotFound",
+            "description": "Path to executable, application name, appId, or protocol URI (e.g., 'notepad', 'C:\\Program Files\\App\\app.exe', 'Microsoft.WindowsCalculator_8wekyb3d8bbwe!App', 'https://example.com', 'ms-settings:display'). A bare name is looked up in the Windows folder, System32, PATH and App Paths, never in the current folder, then as an installed app's exact name (AmbiguousApp when several have it); else ExecutableNotFound",
             "type": "string"
           },
           "arguments": {
@@ -4871,7 +4871,7 @@
             "default": 5000
           },
           "expectWindow": {
-            "description": "With waitForWindow or placement: the window to expect when the server cannot tell it from the started process, such as a Store app, a URI or a document opened by whatever app is registered for it; a new window that matches every field set counts as the launch's window. With reuseExisting: the open window must match it (a web address needs titleContains)",
+            "description": "With waitForWindow or placement: the window to expect when the server cannot tell it from the started process, such as a URI or a document opened by whatever app is registered for it; a new window that matches every field set counts as the launch's window. With reuseExisting: the open window must match it (a web address needs titleContains)",
             "type": [
               "object",
               "null"
@@ -4996,6 +4996,11 @@
           },
           "forceAccessibility": {
             "description": "Start a Chromium browser, an Electron app (VS Code, Slack, Discord) or a CEF app with --force-renderer-accessibility, so get_ui_elements sees its web content from the first read (default false). Added only when the executable is such a program's .exe (for VS Code Code.exe, not code); otherwise nothing is added and warning says why. forceAccessibilityApplied reports it. An app that is already running keeps its mode, and warning says so: end every process of it first (a browser may keep one without a window)",
+            "type": "boolean",
+            "default": false
+          },
+          "runAsAdmin": {
+            "description": "Start the .exe as administrator (default false). Windows asks the user (UAC); where it would not, the user is asked here. Not with placement, reuseExisting or a target that is no .exe (InvalidArguments). Input to the elevated window is refused (TargetElevated)",
             "type": "boolean",
             "default": false
           }
@@ -5170,6 +5175,11 @@
                 },
                 "forceAccessibility": {
                   "description": "Start a Chromium, Electron or CEF .exe with --force-renderer-accessibility, as launch_application's forceAccessibility (default false)",
+                  "type": "boolean",
+                  "default": false
+                },
+                "runAsAdmin": {
+                  "description": "Start the .exe as administrator, as launch_application's runAsAdmin (default false)",
                   "type": "boolean",
                   "default": false
                 }
@@ -5362,6 +5372,36 @@
         "idempotentHint": false,
         "openWorldHint": true,
         "readOnlyHint": false
+      }
+    },
+    {
+      "name": "list_installed_apps",
+      "title": "List Installed Apps",
+      "description": "List the installed apps of the Start menu, packaged apps first, each with name (localized), appId, packaged, and path for a desktop app. Launch one with launch_application: executable = appId for a packaged app, path for a desktop app, or the exact name. total and truncated tell when limit cut the list.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "nameFilter": {
+            "description": "Only apps whose name or appId contains this text (case-insensitive)",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "limit": {
+            "description": "Return at most this many apps (1-200, default 25)",
+            "type": "integer",
+            "default": 25
+          }
+        }
+      },
+      "annotations": {
+        "title": "List Installed Apps",
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true
       }
     },
     {

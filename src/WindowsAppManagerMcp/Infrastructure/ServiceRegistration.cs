@@ -80,6 +80,10 @@ public static class ServiceRegistration
         // browser_handle_dialog (roadmap M5.8, dialogs): a Chrome or Edge window's JavaScript dialog, through UI Automation
         services.AddSingleton<IBrowserDialogService, BrowserDialogService>();
         services.AddSingleton<IProcessService, ProcessService>();
+        // Packaged app activation and the installed apps (roadmap M6.5): launch_application's AppUserModelIDs and friendly
+        // names, and list_installed_apps. The E2E harness refuses the activation (WrapperCatalog: ProcessStart)
+        services.AddSingleton<INativeAppsWrapper, NativeAppsWrapper>();
+        services.AddSingleton<IInstalledAppsService>(sp => new InstalledAppsService(sp.GetRequiredService<INativeAppsWrapper>()));
         // The debug browsers' lifecycle (roadmap M5.4): named profiles, reuseIfRunning and close_debug_browser. It reaches a
         // browser only through ICdpService (Browser.close, /json/version), which the E2E harness refuses
         services.AddSingleton(_ => DebugBrowserProfiles.FromEnvironment());

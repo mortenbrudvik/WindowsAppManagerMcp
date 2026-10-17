@@ -35,7 +35,20 @@ public interface INativeSecurityWrapper
     /// Reads WTSSessionInfoEx for the server's own session. Returns null when it cannot be read.
     /// </summary>
     SessionStateQuery? QuerySessionState();
+
+    /// <summary>
+    /// Reads the User Account Control policy (HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System: EnableLUA and
+    /// ConsentPromptBehaviorAdmin, roadmap M6.5). Returns null when the key cannot be read; a value that is missing or
+    /// not a number is null.
+    /// </summary>
+    UacSettings? ReadUacSettings();
 }
+
+/// <summary>
+/// The User Account Control values that decide whether Windows asks before it elevates a program: EnableLUA (0 turns UAC
+/// off) and ConsentPromptBehaviorAdmin (0 elevates an administrator without asking).
+/// </summary>
+public sealed record UacSettings(int? EnableLua, int? ConsentPromptBehaviorAdmin);
 
 /// <summary>How far <see cref="INativeSecurityWrapper.QueryProcessToken"/> got.</summary>
 public enum TokenQueryStatus

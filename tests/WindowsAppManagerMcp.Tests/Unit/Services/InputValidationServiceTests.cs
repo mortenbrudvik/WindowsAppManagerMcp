@@ -740,4 +740,16 @@ public class InputValidationServiceTests
     }
 
     #endregion
+
+    [Theory]
+    [InlineData("Microsoft.WindowsCalculator_8wekyb3d8bbwe!App")]
+    [InlineData("  MSTeams_8wekyb3d8bbwe!MSTeams ")]
+    public void ValidateExecutable_ABarePackagedAppId_IsAllowedUnchanged(string executable)
+    {
+        // Roadmap M6.5: the launch activates it; nothing is resolved on disk
+        var result = new InputValidationService(ProtocolAllowlist.BuiltIn).ValidateExecutable(executable);
+
+        result.IsValid.Should().BeTrue();
+        result.SanitizedExecutable.Should().Be(executable.Trim());
+    }
 }

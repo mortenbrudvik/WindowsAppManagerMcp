@@ -458,4 +458,47 @@ public class ProcessSecurityProbeTests
     }
 
     #endregion
+
+    #region Elevation prompt (roadmap M6.5)
+
+    [Theory]
+    [InlineData(1, 5, ElevationPrompt.Prompts)]
+    [InlineData(1, 2, ElevationPrompt.Prompts)]
+    [InlineData(1, 1, ElevationPrompt.Prompts)]
+    [InlineData(1, 0, ElevationPrompt.Silent)]
+    [InlineData(0, 5, ElevationPrompt.Silent)]
+    [InlineData(0, 0, ElevationPrompt.Silent)]
+    [InlineData(null, 5, ElevationPrompt.Prompts)]
+    [InlineData(1, null, ElevationPrompt.Prompts)]
+    public void ElevationPrompt_ReadsWhetherUacAsksAnAdministrator(int? enableLua, int? consentPromptBehaviorAdmin, ElevationPrompt expected)
+    {
+        // Arrange - a missing value is Windows' default: UAC on, and consent asked for
+        _native.Setup(n => n.ReadUacSettings()).Returns(new UacSettings(enableLua, consentPromptBehaviorAdmin));
+
+        // Act & Assert
+        new ProcessSecurityProbe(_native.Object).GetElevationPrompt().Should().Be(expected);
+    }
+
+    [Fact]
+    public void ElevationPrompt_SettingsThatCannotBeRead_AreUnknown()
+    {
+        _native.Setup(n => n.ReadUacSettings()).Returns((UacSettings?)null);
+
+        new ProcessSecurityProbe(_native.Object).GetElevationPrompt().Should().Be(ElevationPrompt.Unknown);
+    }
+
+    [Fact]
+    public void ElevationPrompt_IsReadLiveOnEveryCall()
+    {
+        var settings = new UacSettings(1, 5);
+        _native.Setup(n => n.ReadUacSettings()).Returns(() => settings);
+        var sut = new ProcessSecurityProbe(_native.Object);
+        sut.GetElevationPrompt().Should().Be(ElevationPrompt.Prompts);
+
+        settings = new UacSettings(0, 5);
+
+        sut.GetElevationPrompt().Should().Be(ElevationPrompt.Silent);
+    }
+
+    #endregion
 }

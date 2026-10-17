@@ -409,6 +409,78 @@ public class WindowWaitServiceTests
         _desktop.Elapsed.Should().BeLessThan(TimeSpan.FromMilliseconds(500));
     }
 
+    #region Frames that were cloaked before the start (roadmap M6.5)
+
+    private const int SuspendedFrameHandle = 0x40;
+
+    [Fact]
+    public void TakeBaseline_RecordsWhichWindowsWereCloaked()
+    {
+        _desktop.Add(SuspendedFrameHandle, "Settings", LaunchedProcessId);
+        _desktop.Cloak(SuspendedFrameHandle);
+
+        var baseline = _desktop.CreateService().TakeBaseline();
+
+        baseline.WasCloaked(SuspendedFrameHandle).Should().BeTrue();
+        baseline.WasCloaked(TerminalHandle).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task AFrameThatWasCloakedBeforeTheStart_IsNew_WhenTheStartedAppShowsIt()
+    {
+        // Arrange - Windows keeps a suspended app's frame cloaked and shows the same handle again when the app is activated
+        _desktop.Add(SuspendedFrameHandle, "Settings", LaunchedProcessId);
+        _desktop.Cloak(SuspendedFrameHandle);
+        _desktop.At(200, d => d.Uncloak(SuspendedFrameHandle));
+
+        // Act
+        var result = await WaitAsync(new WindowWaitOptions { WasCloakedOwner = w => w.ProcessId == LaunchedProcessId });
+
+        // Assert
+        result.Outcome.Should().Be(WindowWaitOutcome.NewWindow);
+        result.Window!.Handle.Should().Be((nint)SuspendedFrameHandle);
+    }
+
+    [Fact]
+    public async Task AFrameThatWasCloakedBeforeTheStart_IsNotNew_ForAnotherProcess()
+    {
+        // Arrange - the frame belongs to the launch's app by name (LaunchOwns), but not to the started process
+        _desktop.Add(SuspendedFrameHandle, "notes.txt - Notepad", NotepadProcessId);
+        _desktop.Cloak(SuspendedFrameHandle);
+        _desktop.At(200, d => d.Uncloak(SuspendedFrameHandle));
+
+        // Act
+        var result = await WaitAsync(new WindowWaitOptions { TimeoutMs = 2000, WasCloakedOwner = w => w.ProcessId == LaunchedProcessId });
+
+        // Assert
+        result.Outcome.Should().NotBe(WindowWaitOutcome.NewWindow);
+    }
+
+    [Fact]
+    public async Task AFrameThatWasCloakedBeforeTheStart_IsNotNew_WithoutTheRule()
+    {
+        _desktop.Add(SuspendedFrameHandle, "Settings", LaunchedProcessId);
+        _desktop.Cloak(SuspendedFrameHandle);
+        _desktop.At(200, d => d.Uncloak(SuspendedFrameHandle));
+
+        var result = await WaitAsync(new WindowWaitOptions { TimeoutMs = 2000 });
+
+        result.Outcome.Should().NotBe(WindowWaitOutcome.NewWindow);
+    }
+
+    [Fact]
+    public async Task AWindowThatWasVisibleBeforeTheStart_IsNeverNew()
+    {
+        // Arrange - an uncloaked window of the started process was there already: the rule is for cloaked frames only
+        _desktop.Add(SuspendedFrameHandle, "Settings", LaunchedProcessId);
+
+        var result = await WaitAsync(new WindowWaitOptions { TimeoutMs = 2000, WasCloakedOwner = w => w.ProcessId == LaunchedProcessId });
+
+        result.Outcome.Should().NotBe(WindowWaitOutcome.NewWindow);
+    }
+
+    #endregion
+
     /// <summary>
     /// A desktop of top-level windows (with titles, processes, owners and UWP children) that changes at given times on a
     /// manual clock, which the wait's delay moves forward.
@@ -424,6 +496,7 @@ public class WindowWaitServiceTests
         private readonly Dictionary<nint, string> _classes = [];
         private readonly Dictionary<nint, nint> _owners = [];
         private readonly HashSet<nint> _userFacing = [];
+        private readonly HashSet<nint> _cloaked = [];
         private readonly Dictionary<nint, List<nint>> _children = [];
 
         public FakeDesktop()
@@ -467,6 +540,20 @@ public class WindowWaitServiceTests
 
         public void SetTitle(nint handle, string title) => _titles[handle] = title;
 
+        /// <summary>Cloaks a window (a UWP frame Windows keeps for a suspended app): it is then no user-facing window.</summary>
+        public void Cloak(nint handle)
+        {
+            _cloaked.Add(handle);
+            _userFacing.Remove(handle);
+        }
+
+        /// <summary>Uncloaks a window, which is then user-facing again.</summary>
+        public void Uncloak(nint handle)
+        {
+            _cloaked.Remove(handle);
+            _userFacing.Add(handle);
+        }
+
         public WindowWaitService CreateService()
         {
             var native = new Mock<INativeWindowWrapper>();
@@ -482,6 +569,7 @@ public class WindowWaitServiceTests
             native.Setup(n => n.GetWindowThreadProcessId(It.IsAny<nint>())).Returns<nint>(h => _processes.GetValueOrDefault(h));
             native.Setup(n => n.GetClassName(It.IsAny<nint>())).Returns<nint>(h => _classes.GetValueOrDefault(h, string.Empty));
             native.Setup(n => n.GetWindow(It.IsAny<nint>(), 4u)).Returns<nint, uint>((h, _) => _owners.GetValueOrDefault(h));
+            native.Setup(n => n.IsCloaked(It.IsAny<nint>())).Returns<nint>(h => _cloaked.Contains(h));
             native.Setup(n => n.EnumChildWindows(It.IsAny<nint>(), It.IsAny<Func<nint, bool>>()))
                 .Callback<nint, Func<nint, bool>>((parent, callback) =>
                 {

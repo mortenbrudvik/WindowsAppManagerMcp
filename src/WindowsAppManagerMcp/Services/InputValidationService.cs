@@ -71,6 +71,12 @@ public partial class InputValidationService : IInputValidationService
 
         executable = executable.Trim();
 
+        // A packaged app's bare AppUserModelID (roadmap M6.5): the launch activates it, and nothing is resolved on disk
+        if (PackagedAppId.TryParse(executable, out _))
+        {
+            return new ExecutableValidationResult(true, SanitizedExecutable: executable);
+        }
+
         // Check if it's a protocol URI FIRST (before the character checks)
         // This ensures protocol URIs are handled properly even if they contain special chars
         if (IsProtocolUri(executable))

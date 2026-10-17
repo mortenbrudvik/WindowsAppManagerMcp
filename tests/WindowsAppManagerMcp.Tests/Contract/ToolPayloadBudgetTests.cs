@@ -136,6 +136,7 @@ public class ToolPayloadBudgetTests
         // App Launch
         ["launch_application"] = 160, // 103 (with the window it found)
         ["list_processes"] = 4_500, // 2,976: 40 processes, each with its parent, start time, integrity and windows (1,328 before M6.6)
+        ["list_installed_apps"] = 1_150, // 761: the first 25 of 140 Start menu apps, packaged first, desktop apps with their paths (roadmap M6.5)
         ["kill_process"] = 100, // 28
         ["close_application"] = 100, // 49: one Notepad window
 
@@ -158,11 +159,11 @@ public class ToolPayloadBudgetTests
     /// handle parameters and drag to get_monitors, find_windows and mouse_click instead of the deprecated tools, and added
     /// get_server_info's moved field to its description (-2,121 in all); then 62,348 tokens, 249,390 bytes after M6.6's
     /// list_processes parameters (processId, pathContains, sortBy, limit, includeCommandLine) and result fields in its
-    /// description (+361) and get_window_info's integrity fields (+31); then 63,402 tokens, 253,608 bytes for 79 tools after M6.2's run_steps, its description and the step item schema with the tool list; then 64,474 tokens, 257,896 bytes for 80 tools after M6.4's wait_for_visual in the opt-in visual toolset; then 66,562 tokens, 266,245 bytes for 82 tools after M6.3's read_screen_text and find_text_on_screen in the opt-in ocr toolset (+2,088, sharing their target and result descriptions); DefaultToolListTokenBudget measures the tools served by default), so every addition to the surface is a decision. When a change
+    /// description (+361) and get_window_info's integrity fields (+31); then 63,402 tokens, 253,608 bytes for 79 tools after M6.2's run_steps, its description and the step item schema with the tool list; then 64,474 tokens, 257,896 bytes for 80 tools after M6.4's wait_for_visual in the opt-in visual toolset; then 66,562 tokens, 266,245 bytes for 82 tools after M6.3's read_screen_text and find_text_on_screen in the opt-in ocr toolset (+2,088, sharing their target and result descriptions); then 66,919 tokens, 267,673 bytes for 83 tools after M6.5's list_installed_apps in the default-on launch toolset (about 200), launch_application's runAsAdmin and installed-app wording (about 115) and the batch item's runAsAdmin (about 40); DefaultToolListTokenBudget measures the tools served by default), so every addition to the surface is a decision. When a change
     /// adds to the surface on purpose, raise it in the same change by what the failure message measures; when a change
     /// trims descriptions, lower it.
     /// </summary>
-    public const int ToolListTokenBudget = 66_598;
+    public const int ToolListTokenBudget = 66_955;
 
     /// <summary>
     /// The token budget of the default tools/list (roadmap M6.1): the tools a server started without WAM_TOOLSETS,
@@ -175,10 +176,11 @@ public class ToolPayloadBudgetTests
     /// get_active_browser_url) to the opt-in deprecated toolset and the three geometry batches to the opt-in windows-batch
     /// toolset (-9,027); then 51,397 tokens (205,585 bytes) after M6.6's list_processes parameters and fields (+361) and
     /// get_window_info's integrity fields (+31), October 2026; then 52,451 tokens (209,803 bytes, 59 tools) after M6.2's run_steps in the steps
-    /// toolset, on by default. A tool in a toolset that is off by default never moves it; a change to the default
+    /// toolset, on by default; then 52,808 tokens (211,231 bytes, 60 tools) after M6.5's list_installed_apps in the launch toolset,
+    /// on by default, and runAsAdmin on launch_application and the batch item (+357). A tool in a toolset that is off by default never moves it; a change to the default
     /// surface raises it by what the failure message measures, in the same change, or lowers it.
     /// </summary>
-    public const int DefaultToolListTokenBudget = 52_487;
+    public const int DefaultToolListTokenBudget = 52_844;
 
     /// <summary>
     /// The most tokens one tool object (name, title, description, input schema, annotations) may cost in tools/list (roadmap
@@ -204,7 +206,7 @@ public class ToolPayloadBudgetTests
         ["elements"] = 8_300, // 8,262
         ["input"] = 14_800, // 14,758: 10 tools (19,415 with the click trio before M6.1b)
         ["clipboard"] = 750, // 734
-        ["launch"] = 2_900, // 2,890
+        ["launch"] = 3_283, // 3,247 (2,890 before M6.5's list_installed_apps and runAsAdmin)
         ["process"] = 2_318, // 2,282 (1,921 before M6.6's list_processes parameters and fields)
         ["layouts"] = 1_200, // 1,181
         ["steps"] = 1_091, // 1,055: run_steps alone (roadmap M6.2), its description and the steps' item schema with the tool list

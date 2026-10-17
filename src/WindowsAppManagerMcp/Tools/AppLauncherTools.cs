@@ -58,6 +58,7 @@ public class AppLauncherTools
     private readonly TimeSpan? _gateWaitTimeout;
     private readonly ILaunchPlacementService? _placementService;
     private readonly IMonitorService? _monitorService;
+    private readonly IInstalledAppsService? _installedApps;
 
     /// <param name="processService">Launches, lists and ends processes.</param>
     /// <param name="windowService">Names the windows of a process in kill_process's question to the user.</param>
@@ -66,6 +67,7 @@ public class AppLauncherTools
     /// <param name="gateWaitTimeout">How long kill_process waits for the input gate; default <see cref="InputGateToolFilter.GateWaitTimeout"/>.</param>
     /// <param name="placementService">Places the launches' windows (placement, roadmap M3.13). The server always passes it.</param>
     /// <param name="monitorService">Checks a placement's monitorIndex before anything is launched; without it the placement reports it.</param>
+    /// <param name="installedApps">Lists the installed apps (list_installed_apps, roadmap M6.5). The server always passes it.</param>
     public AppLauncherTools(
         IProcessService processService,
         IWindowService? windowService = null,
@@ -73,7 +75,8 @@ public class AppLauncherTools
         TimeSpan? answerTimeout = null,
         TimeSpan? gateWaitTimeout = null,
         ILaunchPlacementService? placementService = null,
-        IMonitorService? monitorService = null)
+        IMonitorService? monitorService = null,
+        IInstalledAppsService? installedApps = null)
     {
         _processService = processService;
         _windowService = windowService;
@@ -82,11 +85,21 @@ public class AppLauncherTools
         _gateWaitTimeout = gateWaitTimeout;
         _placementService = placementService;
         _monitorService = monitorService;
+        _installedApps = installedApps;
     }
 
+    private const string RunAsAdminDescription =
+        "Start the .exe as administrator (default false). Windows asks the user (UAC); where it would not, the user is asked " +
+        "here. Not with placement, reuseExisting or a target that is no .exe (InvalidArguments). Input to the elevated window " +
+        "is refused (TargetElevated)";
+
+    /// <summary>The most apps list_installed_apps returns in one call.</summary>
+    public const int MaxInstalledApps = 200;
+
     [McpServerTool(Name = "launch_application", Title = "Launch Application", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = true)]
-    [Description("Launch an application by executable path, name, or protocol URI (http/https, mailto, tel, ms-settings: Settings pages, " +
-                 "shell:AppsFolder\\<AppUserModelID> for Store apps, and the schemes the user allows). Returns launchStatus and the process ID. " +
+    [Description("Launch an application by executable path, name, installed app (appId or exact name from list_installed_apps; a packaged " +
+                 "app returns its own processId), or protocol URI (http/https, mailto, tel, ms-settings: Settings pages, and the schemes " +
+                 "the user allows). Returns launchStatus and the process ID. " +
                  "With waitForWindow=true it also returns the window the launch opened, whichever process owns it (launchers such as calc, " +
                  "code or a browser hand off to another process): launchStatus windowObserved, reusedExistingWindow or openedInTab " +
                  "(single-instance and tabbed apps such as Notepad, Terminal, VS Code or Explorer), or, without a window, possibleHandoff, " +
@@ -97,7 +110,7 @@ public class AppLauncherTools
                  "stays true, because the app was launched: fix the window with the window tools, never launch again. reuseExisting uses " +
                  "an open window of the app instead of starting another (launchStatus alreadyOpen).")]
     public async Task<LaunchResultDto> LaunchApplication(
-        [Description("Path to executable, application name, or protocol URI (e.g., 'notepad', 'C:\\Program Files\\App\\app.exe', 'https://example.com', 'ms-settings:display'). A bare name is looked up in the Windows folder, System32, PATH and App Paths, never in the current folder; one that is not found there fails with ExecutableNotFound")]
+        [Description("Path to executable, application name, appId, or protocol URI (e.g., 'notepad', 'C:\\Program Files\\App\\app.exe', 'Microsoft.WindowsCalculator_8wekyb3d8bbwe!App', 'https://example.com', 'ms-settings:display'). A bare name is looked up in the Windows folder, System32, PATH and App Paths, never in the current folder, then as an installed app's exact name (AmbiguousApp when several have it); else ExecutableNotFound")]
         string executable,
         [Description("Command line arguments, one array element per argument (quoting is handled for you; do not add quotes). No commands or scripts are run: an interpreter (cmd, powershell, wscript, python, ...) with arguments fails with InterpreterWithArguments, a script (.bat, .cmd, .ps1; for code use code.exe) with ScriptFile. For a target that is not an .exe, arguments with & | < > ^ % ! or \" fail with UnsafeBatchArguments.")]
         string[]? arguments = null,
@@ -107,7 +120,7 @@ public class AppLauncherTools
         bool waitForWindow = false,
         [Description("Maximum time in milliseconds to wait for the window (0-30000, default: 5000)")]
         int waitTimeoutMs = 5000,
-        [Description("With waitForWindow or placement: the window to expect when the server cannot tell it from the started process, such as a Store app, a URI or a document opened by whatever app is registered for it; a new window that matches every field set counts as the launch's window. With reuseExisting: the open window must match it (a web address needs titleContains)")]
+        [Description("With waitForWindow or placement: the window to expect when the server cannot tell it from the started process, such as a URI or a document opened by whatever app is registered for it; a new window that matches every field set counts as the launch's window. With reuseExisting: the open window must match it (a web address needs titleContains)")]
         LaunchWindowHint? expectWindow = null,
         [Description(PlacementDescription)]
         LaunchPlacement? placement = null,
@@ -115,12 +128,25 @@ public class AppLauncherTools
         bool reuseExisting = false,
         [Description(ForceAccessibilityDescription)]
         bool forceAccessibility = false,
+        [Description(RunAsAdminDescription)]
+        bool runAsAdmin = false,
+        McpServer? server = null,
         CancellationToken cancellationToken = default)
     {
+        // Nothing while the user has paused input, not even a question
+        InputGateToolFilter.ThrowIfPaused(_session);
+
         // A placement is checked before anything is launched; a bad one launches nothing
         LaunchPlacementPlan? plan = null;
         if (placement != null)
         {
+            if (runAsAdmin)
+            {
+                throw new ToolErrorException(ToolErrorReporting.InvalidArgumentsErrorCode,
+                    "runAsAdmin cannot be combined with placement: the server cannot reliably move or focus a window that runs above " +
+                    "it. Launch without placement, and ask the user to arrange the window. Nothing was launched.");
+            }
+
             var monitorCount = MonitorCount();
             if (!LaunchPlacing.TryPlan(placement, monitorCount, out plan, out var errorCode, out var error))
             {
@@ -128,8 +154,31 @@ public class AppLauncherTools
             }
         }
 
+        // Owner decision D11: where Windows would elevate without a UAC prompt, the user confirms instead, through the client,
+        // before the input gate is taken (a user who takes minutes to answer must not hold up every input and window call)
+        var elevationConfirmed = false;
+        if (runAsAdmin && _processService.ElevationNeedsConfirmation() && UserConfirmation.CanAsk(server))
+        {
+            var answer = await UserConfirmation.AskAsync(
+                server!, ElevationQuestion(executable, arguments), "Start as administrator", _answerTimeout, cancellationToken).ConfigureAwait(false);
+            if (!answer.Confirmed)
+            {
+                return new LaunchResultDto(false,
+                    Error: $"{answer.Reason} Nothing was started. Ask the user how to continue.",
+                    ErrorCode: nameof(ProcessErrorCode.ConfirmationDeclined));
+            }
+
+            elevationConfirmed = true;
+        }
+
+        // The launch and the placement run inside the input gate, as every window-changing tool does
+        using var gate = await InputGateToolFilter.EnterAsync(_session, cancellationToken, _gateWaitTimeout).ConfigureAwait(false);
         var result = await _processService.LaunchApplicationAsync(
-            new LaunchRequest(executable, arguments, workingDirectory, expectWindow, reuseExisting, forceAccessibility),
+            new LaunchRequest(executable, arguments, workingDirectory, expectWindow, reuseExisting, forceAccessibility)
+            {
+                RunAsAdmin = runAsAdmin,
+                ElevationConfirmed = elevationConfirmed
+            },
             waitForWindow || plan != null,
             BoundedWait(waitTimeoutMs),
             cancellationToken).ConfigureAwait(false);
@@ -149,6 +198,46 @@ public class AppLauncherTools
             Placement: placed[0],
             ForceAccessibilityApplied: result.ForceAccessibilityApplied
         );
+    }
+
+    /// <summary>
+    /// The question runAsAdmin asks the user where Windows would elevate without asking (roadmap M6.5): the program, and its
+    /// arguments' count, never their text.
+    /// </summary>
+    private static string ElevationQuestion(string executable, string[]? arguments)
+    {
+        var argumentText = arguments is { Length: > 0 }
+            ? $" with {arguments.Length} argument{(arguments.Length == 1 ? string.Empty : "s")}"
+            : string.Empty;
+        return $"The AI agent asks to start {UserConfirmation.Quote(executable)}{argumentText} as administrator. Windows on this " +
+               "computer does not ask before it elevates a program (User Account Control is off or does not prompt), so you are " +
+               "asked here. The program gets full control of the computer. Allow it?";
+    }
+
+    [McpServerTool(Name = "list_installed_apps", Title = "List Installed Apps", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
+    [Description("List the installed apps of the Start menu, packaged apps first, each with name (localized), appId, packaged, and path " +
+                 "for a desktop app. Launch one with launch_application: executable = appId for a packaged app, path for a desktop app, " +
+                 "or the exact name. total and truncated tell when limit cut the list.")]
+    public InstalledAppsResultDto ListInstalledApps(
+        [Description("Only apps whose name or appId contains this text (case-insensitive)")]
+        string? nameFilter = null,
+        [Description("Return at most this many apps (1-200, default 25)")]
+        int limit = 25)
+    {
+        if (limit is < 1 or > MaxInstalledApps)
+        {
+            throw new ToolErrorException(ToolErrorReporting.InvalidArgumentsErrorCode,
+                $"limit must be between 1 and {MaxInstalledApps}, but it is {limit}. Use nameFilter to narrow the list.");
+        }
+
+        var listing = _installedApps?.List(nameFilter, limit) ?? new InstalledAppsListing([], 0, false, Unreadable: true);
+        return new InstalledAppsResultDto(
+            listing.Apps.Select(a => new InstalledAppDto(a.Name, a.AppId, a.Packaged, a.Path)).ToList(),
+            listing.Total,
+            listing.Truncated,
+            listing.Unreadable
+                ? "The Start menu's apps could not be read in time; try again, or launch the program by its path."
+                : null);
     }
 
     /// <summary>The number of monitors, to check a placement's monitorIndex before the launch; null without a monitor service.</summary>
@@ -398,6 +487,13 @@ public class AppLauncherTools
                     Error: $"Item {i} of applications is null; each item needs an executable. Nothing was launched for it.",
                     ErrorCode: ToolErrorReporting.InvalidArgumentsErrorCode);
             }
+            else if (application.Placement != null && application.RunAsAdmin)
+            {
+                refusals[i] = new LaunchResultItem(application.Executable, false,
+                    Error: $"Item {i}: runAsAdmin cannot be combined with placement: the server cannot reliably move or focus a window " +
+                           "that runs above it. Nothing was launched for it.",
+                    ErrorCode: ToolErrorReporting.InvalidArgumentsErrorCode);
+            }
             else if (application.Placement != null &&
                      !LaunchPlacing.TryPlan(application.Placement, monitorCount, out plans[i], out var errorCode, out var error))
             {
@@ -409,7 +505,10 @@ public class AppLauncherTools
         var requested = Enumerable.Range(0, applications.Length).Where(i => refusals[i] == null).ToList();
         var serviceApplications = requested
             .Select(i => applications[i])
-            .Select(a => new LaunchRequest(a.Executable, a.Arguments, a.WorkingDirectory, a.ExpectWindow, a.ReuseExisting, a.ForceAccessibility))
+            .Select(a => new LaunchRequest(a.Executable, a.Arguments, a.WorkingDirectory, a.ExpectWindow, a.ReuseExisting, a.ForceAccessibility)
+            {
+                RunAsAdmin = a.RunAsAdmin
+            })
             .ToList();
 
         // Started one after another, then the windows are waited for together; the client gets "i of n" as each one is
@@ -541,3 +640,12 @@ public record ProcessInfoDto(
 
 /// <summary>One of a process's windows in list_processes (roadmap M6.6): its handle and its title, cut as the window tools cut it.</summary>
 public record ProcessWindowDto(long Handle, string Title);
+
+/// <summary>
+/// list_installed_apps' result (roadmap M6.5): the apps returned, how many matched in all, whether limit cut the list, and a
+/// warning when the Start menu's apps could not be read.
+/// </summary>
+public record InstalledAppsResultDto(IReadOnlyList<InstalledAppDto> Apps, int Total, bool Truncated, string? Warning = null);
+
+/// <summary>An installed app: its name (localized), its AppUserModelID, whether it is packaged, and a desktop app's program or file.</summary>
+public record InstalledAppDto(string Name, string AppId, bool Packaged, string? Path = null);

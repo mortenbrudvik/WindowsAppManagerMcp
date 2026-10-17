@@ -76,7 +76,7 @@ public static class InputGateToolFilter
     /// </summary>
     public static IReadOnlySet<string> WindowChangingTools { get; } = new HashSet<string>(StringComparer.Ordinal)
     {
-        "apply_layout", "launch_application", "launch_applications_batch", "launch_browser_with_debug", "set_clipboard"
+        "apply_layout", "launch_applications_batch", "launch_browser_with_debug", "set_clipboard"
     };
 
     /// <summary>
@@ -109,7 +109,9 @@ public static class InputGateToolFilter
     /// (roadmap M6.2) checks its steps and resolves its window without the gate, then holds it for the whole run with
     /// <see cref="HoldAsync"/> (at most its maxDurationMs, 60 seconds): its own steps pass the gate it holds, through this
     /// filter and through the input services, and every other call waits, or gets InputBusy after
-    /// <see cref="GateWaitTimeout"/>.
+    /// <see cref="GateWaitTimeout"/>. launch_application (roadmap M6.5) asks the user first when its runAsAdmin needs a
+    /// confirmation Windows itself would not ask for, then holds the gate for the launch, its window wait and its placement,
+    /// as this filter did before.
     /// </summary>
     public static IReadOnlySet<string> SelfGatedTools { get; } = new HashSet<string>(StringComparer.Ordinal)
     {
@@ -124,7 +126,10 @@ public static class InputGateToolFilter
         // tab to the front for a capture (roadmap M5.8)
         "browser_click", "browser_type", "browser_handle_dialog", "browser_evaluate", "browser_screenshot",
         // Holds the gate for its whole run through a lease its own steps pass (roadmap M6.2)
-        "run_steps"
+        "run_steps",
+        // Asks the user before an elevation Windows would not ask about (runAsAdmin, roadmap M6.5), then holds the gate for the
+        // launch, its window wait and its placement, as the filter did
+        "launch_application"
     };
 
     /// <summary>
@@ -136,7 +141,7 @@ public static class InputGateToolFilter
     public static IReadOnlySet<string> ReadOnlyTools { get; } = new HashSet<string>(StringComparer.Ordinal)
     {
         "find_windows", "get_all_windows", "get_foreground_window", "get_monitors", "get_primary_monitor",
-        "list_processes", "list_layouts", "get_layout", "save_layout", "delete_layout", "get_browser_url",
+        "list_processes", "list_installed_apps", "list_layouts", "get_layout", "save_layout", "delete_layout", "get_browser_url",
         "get_browser_content", "get_active_browser_url", "list_screens", "take_screenshot", "capture_region",
         "capture_window", "capture_with_elements", "get_ui_elements", "find_ui_elements", "get_focused_element", "get_element_at_point",
         "get_active_popups",

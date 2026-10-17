@@ -211,6 +211,58 @@ public class LaunchWindowOwnerTests
         owner.Matches(Window(1234, "Example Domain")).Should().BeFalse();
     }
 
+    #region Packaged apps (roadmap M6.5)
+
+    private const string CalculatorFamily = "Microsoft.WindowsCalculator_8wekyb3d8bbwe";
+
+    private LaunchWindowOwner PackagedOwnerOf(Dictionary<int, string> families, int? launchedProcessId = LaunchedProcessId) =>
+        LaunchWindowOwner.For(_processes.Object, launchedProcessId, LaunchedAt,
+            new ResolvedLaunchTarget($@"shell:AppsFolder\{CalculatorFamily}!App", LaunchTargetKind.PackagedApp)
+            {
+                App = new PackagedAppId(CalculatorFamily, "App")
+            },
+            hint: null, packageFamilyOf: id => families.GetValueOrDefault(id));
+
+    [Fact]
+    public void AWindowOfAProcessOfTheSamePackage_Belongs_EvenWhenTheActivatedProcessHandedOff()
+    {
+        // Arrange - 2000 is another process of the app's package (a single-instance app that took the request over)
+        AddProcess(2000, 4, "CalculatorApp.exe", LaunchedAt.AddHours(-1));
+        AddProcess(3000, 4, "CalculatorApp.exe", LaunchedAt.AddHours(-1));
+        var owner = PackagedOwnerOf(new Dictionary<int, string> { [2000] = CalculatorFamily, [3000] = "Other.Calculator_8wekyb3d8bbwe" });
+
+        // Act & Assert
+        owner.Matches(Window(2000, "Kalkulator", hostProcessId: 9000)).Should().BeTrue();
+        owner.Matches(Window(3000, "Kalkulator")).Should().BeFalse("the name alone never counts for a packaged app: another package's");
+        owner.Matches(Window(LaunchedProcessId)).Should().BeTrue();
+    }
+
+    [Fact]
+    public void APackagedApp_WithoutAStartedProcess_IsMatchedByItsPackageOnly()
+    {
+        AddProcess(2000, 4, "CalculatorApp.exe", LaunchedAt.AddHours(-1));
+        var owner = PackagedOwnerOf(new Dictionary<int, string> { [2000] = CalculatorFamily }, launchedProcessId: null);
+
+        owner.Matches(Window(2000)).Should().BeTrue();
+        owner.Matches(Window(4444)).Should().BeFalse();
+    }
+
+    [Fact]
+    public void ThePackageOfAProcess_IsReadOncePerLaunch()
+    {
+        var reads = 0;
+        var owner = LaunchWindowOwner.For(_processes.Object, null, LaunchedAt,
+            new ResolvedLaunchTarget("x", LaunchTargetKind.PackagedApp) { App = new PackagedAppId(CalculatorFamily, "App") },
+            hint: null, packageFamilyOf: _ => { reads++; return CalculatorFamily; });
+
+        owner.Matches(Window(2000));
+        owner.Matches(Window(2000));
+
+        reads.Should().Be(1);
+    }
+
+    #endregion
+
     [Fact]
     public void TheProcessChecks_AreMadeOncePerProcess()
     {

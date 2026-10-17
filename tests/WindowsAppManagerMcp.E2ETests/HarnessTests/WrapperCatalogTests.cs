@@ -37,7 +37,9 @@ public class WrapperCatalogTests
             typeof(IUiaInvokePattern),
             typeof(IUiaLegacyIAccessiblePattern),
             // Windows OCR on pixels the server already holds (roadmap M6.3)
-            typeof(IOcrEngineWrapper)
+            typeof(IOcrEngineWrapper),
+            // Packaged app activation and the Applications folder (roadmap M6.5)
+            typeof(INativeAppsWrapper)
         });
     }
 
@@ -188,6 +190,8 @@ public class WrapperCatalogTests
     [InlineData(typeof(ITcpPortOwnerResolver), nameof(ITcpPortOwnerResolver.TryGetListeningProcessId), WrapperCallKind.Read)]
     [InlineData(typeof(INativeProcessWrapper), nameof(INativeProcessWrapper.OpenProcess), WrapperCallKind.Read)]
     [InlineData(typeof(INativeProcessWrapper), nameof(INativeProcessWrapper.StartProcess), WrapperCallKind.ProcessStart)]
+    [InlineData(typeof(INativeAppsWrapper), nameof(INativeAppsWrapper.ActivateApplication), WrapperCallKind.ProcessStart)]
+    [InlineData(typeof(INativeAppsWrapper), nameof(INativeAppsWrapper.EnumerateAppsFolder), WrapperCallKind.Read)]
     [InlineData(typeof(IProcessHandle), nameof(IProcessHandle.CloseMainWindow), WrapperCallKind.ProcessAction)]
     [InlineData(typeof(IProcessHandle), nameof(IProcessHandle.Kill), WrapperCallKind.ProcessAction)]
     [InlineData(typeof(IProcessHandle), nameof(IDisposable.Dispose), WrapperCallKind.Read)]
