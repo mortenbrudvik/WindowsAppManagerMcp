@@ -34,8 +34,10 @@ public sealed class VisualSignature
     private readonly ulong[] _hashes;
 
     private VisualSignature(int originX, int originY, int width, int height, ulong[] hashes, bool uniform, string? method,
-        IReadOnlyList<Rectangle> excluded)
+        IReadOnlyList<Rectangle> excluded, Rectangle? caret = null, bool caretRead = false)
     {
+        Caret = caret;
+        CaretRead = caretRead;
         OriginX = originX;
         OriginY = originY;
         Width = width;
@@ -80,9 +82,17 @@ public sealed class VisualSignature
 
     /// <summary>
     /// Screen rectangles left out of every comparison with this signature: the windows the target policy denied over a
-    /// screen read, and the text caret, where they were when it was read (owner decision D8).
+    /// screen read, where they were when it was read (owner decision D8).
     /// </summary>
     public IReadOnlyList<Rectangle> Excluded { get; }
+
+    /// <summary>The text caret on the screen when the pixels were read (widened by a margin), or null without one.</summary>
+    public Rectangle? Caret { get; }
+
+    /// <summary>
+    /// True when <see cref="Caret"/> was read with the pixels (a wait's frame); false for a capture, whose caret is unknown.
+    /// </summary>
+    public bool CaretRead { get; }
 
     /// <summary>The tiles' hashes, row by row: tile (column, row) is at <c>row * Columns + column</c>.</summary>
     public ReadOnlySpan<ulong> Hashes => _hashes;
@@ -97,7 +107,18 @@ public sealed class VisualSignature
     public VisualSignature WithExcluded(IReadOnlyList<Rectangle> excluded)
     {
         ArgumentNullException.ThrowIfNull(excluded);
-        return new VisualSignature(OriginX, OriginY, Width, Height, _hashes, Uniform, Method, [.. excluded]);
+        return new VisualSignature(OriginX, OriginY, Width, Height, _hashes, Uniform, Method, [.. excluded], Caret, CaretRead);
+    }
+
+    /// <summary>The same signature, with <paramref name="caret"/> as the caret read with its pixels (none: null).</summary>
+    public VisualSignature WithCaret(Rectangle? caret) =>
+        new(OriginX, OriginY, Width, Height, _hashes, Uniform, Method, Excluded, caret, caretRead: true);
+
+    /// <summary>True when <paramref name="other"/> shows the same rectangle, read the same way, with the same hashes.</summary>
+    public bool SameAs(VisualSignature other)
+    {
+        ArgumentNullException.ThrowIfNull(other);
+        return Region == other.Region && Method == other.Method && Hashes.SequenceEqual(other.Hashes);
     }
 
     /// <summary>True when <paramref name="other"/> has the same size, so the two compare tile by tile.</summary>

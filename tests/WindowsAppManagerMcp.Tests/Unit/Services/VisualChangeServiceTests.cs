@@ -155,7 +155,7 @@ public class VisualChangeServiceTests
         result.Checks.Should().Be(1);
         result.ChangedPercent.Should().Be(0);
         result.ChangedRegions.Should().BeNull();
-        result.CaptureId.Should().NotBeNull("the last frame is the next wait's since");
+        result.CaptureId.Should().Be(since, "nothing changed, so since stays the next wait's since");
     }
 
     [Fact]
@@ -839,6 +839,122 @@ public class VisualChangeServiceTests
 
         result.Checks.Should().Be(4);
         _monitors.Verify(m => m.GetAllMonitors(), Times.Once());
+    }
+
+    #endregion
+
+    #region Second review: typed text at the caret, a minimize mid-read, since kept, stale since, jitter
+
+    [Fact]
+    public async Task TextTypedAtTheCaret_IsAChange_ThoughTheCaretIsLeftOutWhereItBlinks()
+    {
+        // Arrange - the caret at image (300, 300) moves 8 px right as a glyph appears where it was
+        var reads = 0;
+        _threads.Setup(t => t.GetGuiThreadInfo(Thread)).Returns(() => new GuiThreadInfo(0, Window, Window, 0, 0, Window,
+            new WindowRect(++reads == 1 ? 400 : 408, 500, 2, 16)));
+        var before = WindowFrame();
+        var typed = before.Copy().Paint(300, 302, 6, 12, (0, 0, 0)).Paint(308, 300, 2, 16, (0, 0, 0));
+        _screen.Frames(before, typed);
+
+        // Act
+        var result = await CreateSut().WaitAsync(Request(TheWindow(), timeoutMs: 600));
+
+        // Assert
+        result.Satisfied.Should().BeTrue(result.Error);
+        result.Reason.Should().Be("pixels");
+    }
+
+    [Fact]
+    public async Task AWindowMinimizedBetweenItsCheckAndItsRead_IsMinimized_NotAChangeOfPixels()
+    {
+        // Arrange - the second read comes back as one color because the window was minimized right before it
+        _screenshots.SetupSequence(s => s.CheckWindow(Window))
+            .Returns((CaptureRefusal?)null).Returns((CaptureRefusal?)null).Returns((CaptureRefusal?)null)
+            .Returns(new CaptureRefusal(ScreenshotErrorCode.WindowMinimized, "minimized"));
+        _screen.Frames(WindowFrame().Paint(10, 10, 4, 4, (0, 0, 0)), new VisualFrames(640, 480, 100, 200, (0, 0, 0)));
+
+        // Act
+        var result = await CreateSut().WaitAsync(Request(TheWindow()));
+
+        // Assert
+        result.Satisfied.Should().BeTrue();
+        result.Reason.Should().Be("minimized");
+    }
+
+    [Fact]
+    public async Task Since_WhenNothingChanged_ReturnsSincesCaptureId_InsteadOfRegisteringAnother()
+    {
+        // The registry keeps 32 captures: a wait that saw nothing new does not push out one the agent may click on
+        var before = new VisualFrames(300, 200, 2000, 100).Paint(5, 5, 3, 3, (0, 0, 0));
+        var since = Register(before, window: false);
+        _screen.Frames(before);
+
+        var result = await CreateSut().WaitAsync(Request(new VisualTarget.Since(since), timeoutMs: 0));
+
+        result.TimedOut.Should().BeTrue();
+        result.CaptureId.Should().Be(since);
+    }
+
+    [Fact]
+    public async Task AScreenFrame_WhoseMonitorsCannotBeRead_IsNotRegistered()
+    {
+        // A click on a capture checks whether the monitors moved since; without them it could not
+        _monitors.Setup(m => m.GetAllMonitors()).Throws(new InvalidOperationException("no monitors"));
+        _screen.Frames(new VisualFrames(40, 40));
+
+        var result = await CreateSut().WaitAsync(Request(new VisualTarget.Region(0, 0, 40, 40), timeoutMs: 200));
+
+        result.TimedOut.Should().BeTrue();
+        result.CaptureId.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task Since_ARegionNoLongerOnTheScreen_IsStaleCapture_AndReadsNothing()
+    {
+        // A monitor was removed since the capture: the rectangle would read black and look like a change
+        var since = Register(new VisualFrames(300, 200, 4400, 100), window: false);
+
+        var result = await CreateSut().WaitAsync(Request(new VisualTarget.Since(since)));
+
+        result.ErrorCode.Should().Be("StaleCapture");
+        _screen.Sources.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task Stable_WithStableMsAsLongAsTimeoutMs_IsSatisfied_WhenTheTimerWakesEarlyAndAReadTakesTime()
+    {
+        // Arrange - each read takes 5 ms and each pause ends 1 ms early, so the last read in time starts before stableMs
+        _screen.FrameAt = _ =>
+        {
+            _clock.Advance(TimeSpan.FromMilliseconds(5));
+            return WindowFrame();
+        };
+        var sut = new VisualChangeService(_screen, _screenshots.Object, _windows.Object, _monitors.Object, _capturePolicy.Object,
+            _windowCalls, _registry, _threads.Object, new TargetPolicy(new TargetPolicySettings([], null, "test")), _clock,
+            (pause, token) =>
+            {
+                _clock.Advance(pause > TimeSpan.FromMilliseconds(1) ? pause - TimeSpan.FromMilliseconds(1) : pause);
+                return Task.CompletedTask;
+            });
+
+        // Act
+        var result = await sut.WaitAsync(Request(TheWindow(), VisualWaitCondition.Stable, timeoutMs: 1000, stableMs: 1000));
+
+        // Assert
+        result.Satisfied.Should().BeTrue(result.Error);
+        result.StableForMs.Should().BeGreaterThanOrEqualTo(1000);
+    }
+
+    [Fact]
+    public async Task Stable_Since_WithStableMsAsLongAsTimeoutMs_IsSatisfied()
+    {
+        var before = WindowFrame();
+        var since = Register(before, window: true);
+        _screen.Frames(before);
+
+        var result = await CreateSut().WaitAsync(Request(new VisualTarget.Since(since), VisualWaitCondition.Stable, timeoutMs: 1000, stableMs: 1000));
+
+        result.Satisfied.Should().BeTrue(result.Error);
     }
 
     #endregion

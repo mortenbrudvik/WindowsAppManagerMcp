@@ -122,12 +122,13 @@ public sealed class VisualChangeService : IVisualChangeService
         VisualSignature? Signature,
         string? Method,
         IReadOnlyList<Rectangle> Excluded,
+        Rectangle? Caret,
         Func<CaptureGeometry?> Geometry,
         string? GoneReason = null,
         string? GoneCode = null,
         string? GoneMessage = null)
     {
-        public static Frame Gone(CaptureRefusal refusal) => new(null, null, [], () => null, refusal.Code switch
+        public static Frame Gone(CaptureRefusal refusal) => new(null, null, [], null, () => null, refusal.Code switch
         {
             ScreenshotErrorCode.WindowMinimized => "minimized",
             ScreenshotErrorCode.WindowHidden or ScreenshotErrorCode.Cloaked => "hidden",
@@ -185,6 +186,9 @@ public sealed class VisualChangeService : IVisualChangeService
         /// <summary>Reads the next frame.</summary>
         /// <exception cref="Refused">The pixels could not be read (CaptureFailed).</exception>
         public abstract Frame Read();
+
+        /// <summary>Why the target is gone from the screen now (a window minimized or closed), or null.</summary>
+        public virtual Frame? Recheck() => null;
     }
 
     private sealed class WindowSource(VisualChangeService service, nint handle, bool includeFrame, uint expectedProcessId) : Source
@@ -244,9 +248,7 @@ public sealed class VisualChangeService : IVisualChangeService
             }
 
             var signature = pixels.Signature;
-            var excluded = new List<Rectangle>(_mask?.Areas ?? []);
-            excluded.AddRange(service.Caret(windows.GetWindowThreadId(handle)));
-            return new Frame(signature, pixels.Method, excluded, () => rect is { } r
+            return new Frame(signature, pixels.Method, [.. _mask?.Areas ?? []], service.Caret(windows.GetWindowThreadId(handle)), () => rect is { } r
                 ? new CaptureGeometry(signature.Width, signature.Height,
                     new ImageToScreenTransform(signature.OriginX, signature.OriginY, 1, 1), signature.Region,
                     new CapturedWindow((long)handle, (int)processId, WindowRect.FromLTRB(r.Left, r.Top, r.Right, r.Bottom), includeFrame,
@@ -254,6 +256,9 @@ public sealed class VisualChangeService : IVisualChangeService
                     VirtualScreen: null)
                 : null);
         }
+
+        /// <inheritdoc />
+        public override Frame? Recheck() => service._screenshots.CheckWindow(handle) is { } gone ? Frame.Gone(gone) : null;
 
         /// <summary>
         /// The window drawn by itself (PrintWindow under the window-call deadline), or copied from the screen for the rest of
@@ -309,30 +314,35 @@ public sealed class VisualChangeService : IVisualChangeService
             }
 
             _mask.Add(area);
-            var excluded = new List<Rectangle>(_mask.Areas);
-            excluded.AddRange(service.Caret(service._windows.GetWindowThreadId(service._windows.GetForegroundWindow())));
             var signature = read.Signature;
-            return new Frame(signature, read.Method, excluded, () =>
+            var caret = service.Caret(service._windows.GetWindowThreadId(service._windows.GetForegroundWindow()));
+            return new Frame(signature, read.Method, [.. _mask.Areas], caret, () =>
             {
+                // Without the monitors a click on the frame could not tell whether they moved since, so it is not registered
+                if (service.ReadMonitors() is not { } monitors)
+                {
+                    return null;
+                }
+
                 var screen = service._capture.GetVirtualScreenBounds();
                 return new CaptureGeometry(signature.Width, signature.Height,
                     new ImageToScreenTransform(signature.OriginX, signature.OriginY, 1, 1), signature.Region, Window: null,
-                    new VirtualScreenBounds(screen.X, screen.Y, screen.Width, screen.Height), service.ReadMonitors());
+                    new VirtualScreenBounds(screen.X, screen.Y, screen.Width, screen.Height), monitors);
             });
         }
     }
 
-    /// <summary>The text caret of <paramref name="thread"/> on the screen, widened by a margin; none without one.</summary>
-    private IReadOnlyList<Rectangle> Caret(uint thread)
+    /// <summary>The text caret of <paramref name="thread"/> on the screen, widened by a margin; null without one.</summary>
+    private Rectangle? Caret(uint thread)
     {
         if (_threads == null || thread == 0 || _threads.GetGuiThreadInfo(thread) is not { Caret: { } caret })
         {
-            return [];
+            return null;
         }
 
         var rectangle = new Rectangle(caret.X, caret.Y, caret.Width, caret.Height);
         rectangle.Inflate(CaretMargin, CaretMargin);
-        return [rectangle];
+        return rectangle;
     }
 
     /// <summary>The monitors a screen frame registers, or null when they cannot be read.</summary>
@@ -354,6 +364,7 @@ public sealed class VisualChangeService : IVisualChangeService
         private readonly string _condition = ConditionName(request.Condition);
         private Source? _source;
         private Frame? _last;
+        private VisualSignature? _since;
         private int _checks;
 
         public async Task<VisualWaitResult> RunAsync(IProgress<OperationProgress>? progress, CancellationToken cancellationToken)
@@ -369,9 +380,12 @@ public sealed class VisualChangeService : IVisualChangeService
             }
 
             var changed = request.Condition == VisualWaitCondition.Changed;
-            var since = reference;
+            _since = reference;
             IReadOnlyList<Rectangle> referenceExcluded = reference?.Excluded ?? [];
+            var referenceCaret = reference?.Caret;
+            var referenceCaretRead = reference?.CaretRead ?? false;
             long deadline = request.TimeoutMs;
+            var lastChance = false;
             VisualChange? lastChange = null;
             IReadOnlyList<BoundsDto>? motion = null;
             double? motionPercent = null;
@@ -393,18 +407,14 @@ public sealed class VisualChangeService : IVisualChangeService
                 }
 
                 _checks++;
-                if (frame.GoneReason is { } gone)
+                if (frame.GoneReason != null)
                 {
-                    // A window that closed or left the screen is a visible change, but nothing is left to be still. Its last
-                    // frame is not registered: a capture of a window that is not on the screen has nothing to click on
-                    var where = (_last?.Signature ?? since) is { } before ? VisualDiff.Whole(before) : null;
-                    _last = null;
-                    return changed ? Satisfied(gone, changedPercent: null, where) : Failure(frame.GoneCode!, frame.GoneMessage!);
+                    return Gone(frame, changed);
                 }
 
                 var signature = frame.Signature!;
                 _last = frame;
-                if (reference != null && ReadAnotherWay(reference, signature, fromSince: ReferenceEquals(reference, since)))
+                if (reference != null && ReadAnotherWay(reference, signature, fromSince: ReferenceEquals(reference, _since)))
                 {
                     // Frames read by PrintWindow and by a screen copy differ where nothing changed, so the wait starts again
                     // from this one
@@ -416,6 +426,8 @@ public sealed class VisualChangeService : IVisualChangeService
                 {
                     reference = signature;
                     referenceExcluded = frame.Excluded;
+                    referenceCaret = frame.Caret;
+                    referenceCaretRead = true;
                     runStart = readAt;
                     runHolds = false;
                     if (!changed && _checks == 1)
@@ -426,7 +438,18 @@ public sealed class VisualChangeService : IVisualChangeService
                 }
                 else
                 {
-                    var change = VisualDiff.Compare(reference, signature, [.. referenceExcluded, .. frame.Excluded]);
+                    var excluded = new List<Rectangle>(referenceExcluded);
+                    excluded.AddRange(frame.Excluded);
+                    excluded.AddRange(CaretLeftOut(referenceCaret, referenceCaretRead, frame.Caret));
+                    var change = VisualDiff.Compare(reference, signature, excluded);
+                    var counts = change == null || Counts(change);
+                    if (counts && signature.Uniform && _source.Recheck() is { } gone)
+                    {
+                        // One color where the window was: it was minimized or closed right before the read
+                        _last = null;
+                        return Gone(gone, changed);
+                    }
+
                     if (changed)
                     {
                         if (change == null)
@@ -434,7 +457,7 @@ public sealed class VisualChangeService : IVisualChangeService
                             return Satisfied("resized", 100, VisualDiff.Whole(signature));
                         }
 
-                        if (Counts(change))
+                        if (counts)
                         {
                             return Satisfied("pixels", change.ChangedPercent, change.Regions);
                         }
@@ -443,7 +466,7 @@ public sealed class VisualChangeService : IVisualChangeService
                     }
                     else
                     {
-                        if (change == null || Counts(change))
+                        if (counts)
                         {
                             runStart = readAt;
                             runHolds = false;
@@ -457,6 +480,8 @@ public sealed class VisualChangeService : IVisualChangeService
 
                         reference = signature;
                         referenceExcluded = frame.Excluded;
+                        referenceCaret = frame.Caret;
+                        referenceCaretRead = true;
                         if (runHolds && readAt - runStart >= request.StableMs)
                         {
                             return Satisfied(reason: null, changedPercent: null, regions: null) with { StableForMs = readAt - runStart };
@@ -468,6 +493,16 @@ public sealed class VisualChangeService : IVisualChangeService
                 var remaining = deadline - now;
                 if (remaining <= 0)
                 {
+                    // A stable run that would end within one poll after the deadline gets one more frame then: a timer that
+                    // wakes a little early, or a read that takes a few milliseconds, must not fail a stableMs of timeoutMs
+                    var runEnds = runStart + request.StableMs;
+                    if (!changed && runHolds && !lastChance && runEnds - deadline <= request.PollMs)
+                    {
+                        lastChance = true;
+                        await service._delay(TimeSpan.FromMilliseconds(Math.Max(runEnds - now, 0) + 1), cancellationToken).ConfigureAwait(false);
+                        continue;
+                    }
+
                     return changed
                         ? TimedOut(lastChange is { ChangedTiles: > 0 } ? lastChange.ChangedPercent : 0, lastChange is { ChangedTiles: > 0 } ? lastChange.Regions : null)
                         : TimedOut(motionPercent, motion);
@@ -483,6 +518,37 @@ public sealed class VisualChangeService : IVisualChangeService
                 var pause = Math.Min(Math.Max(request.PollMs - (now - readAt), 0), remaining);
                 await service._delay(TimeSpan.FromMilliseconds(pause), cancellationToken).ConfigureAwait(false);
             }
+        }
+
+        /// <summary>
+        /// A window that closed or left the screen: a visible change, but nothing is left to be still. Its last frame is not
+        /// registered: a capture of a window that is not on the screen has nothing to click on.
+        /// </summary>
+        private VisualWaitResult Gone(Frame frame, bool changed)
+        {
+            var where = (_last?.Signature ?? _since) is { } before ? VisualDiff.Whole(before) : null;
+            _last = null;
+            return changed ? Satisfied(frame.GoneReason, changedPercent: null, where) : Failure(frame.GoneCode!, frame.GoneMessage!);
+        }
+
+        /// <summary>
+        /// The caret left out of a comparison: only where it is in both frames, so a caret that blinks is no change, but
+        /// text typed at it, which moves it, is. Against a capture, whose caret is unknown, the caret of the newer frame.
+        /// </summary>
+        private static IReadOnlyList<Rectangle> CaretLeftOut(Rectangle? before, bool beforeRead, Rectangle? now)
+        {
+            if (!beforeRead)
+            {
+                return now is { } caret ? [caret] : [];
+            }
+
+            if (before is not { } a || now is not { } b)
+            {
+                return [];
+            }
+
+            var both = Rectangle.Intersect(a, b);
+            return both.Width > 0 && both.Height > 0 ? [both] : [];
         }
 
         private bool Counts(VisualChange change) => change.ChangedTiles > 0 && change.ChangedPercent > request.MinChangedPercent;
@@ -632,8 +698,19 @@ public sealed class VisualChangeService : IVisualChangeService
                 return (OpenWindow(handle, window.IncludeFrame, (uint)window.ProcessId), signature);
             }
 
-            // A monitor or region capture: the same screen rectangle, wherever the monitors are now
-            return (OpenArea(new Rectangle(signature.OriginX, signature.OriginY, signature.Width, signature.Height), clipped: null), signature);
+            // A monitor or region capture: the same screen rectangle, which must still be on the screen: a monitor that was
+            // removed would read black and look like a change
+            var area = new Rectangle(signature.OriginX, signature.OriginY, signature.Width, signature.Height);
+            var screen = service._capture.GetVirtualScreenBounds();
+            if (!new Rectangle(screen.X, screen.Y, screen.Width, screen.Height).Contains(area))
+            {
+                throw new Refused(nameof(InputErrorCode.StaleCapture),
+                    $"The capture '{captureId}' shows ({area.X}, {area.Y}, {area.Width}x{area.Height}), which is no longer all on the " +
+                    $"screen: the monitors cover ({screen.X}, {screen.Y}, {screen.Width}x{screen.Height}) now. Take a new capture and " +
+                    "pass its captureId. Nothing was waited for.");
+            }
+
+            return (OpenArea(area, clipped: null), signature);
         }
 
         private static void ThrowIfRefused(CaptureRefusal? refusal)
@@ -706,11 +783,25 @@ public sealed class VisualChangeService : IVisualChangeService
         }
 
         /// <summary>The last frame as a capture without an image (its signature for since, a 1:1 transform), or null.</summary>
-        /// <remarks>The frame's signature keeps what it left out (the denied windows, the caret), so a since on it leaves them
-        /// out too, even once a denied window closed or moved (owner decision D8).</remarks>
-        private string? RegisterLastFrame() =>
-            service._registry != null && _last is { Signature: { } signature } frame && frame.Geometry() is { } geometry
-                ? service._registry.Register(geometry, signature.WithExcluded(frame.Excluded)).CaptureId
+        /// <remarks>The frame's signature keeps what it left out (the denied windows) and its caret, so a since on it leaves
+        /// them out too, even once a denied window closed or moved (owner decision D8). When the last frame shows what
+        /// since's capture showed, since's captureId is returned instead, so a wait that saw nothing new does not push one of
+        /// the 32 captures out.</remarks>
+        private string? RegisterLastFrame()
+        {
+            if (service._registry == null || _last is not { Signature: { } signature } frame)
+            {
+                return null;
+            }
+
+            if (request.Target is VisualTarget.Since since && _since != null && signature.SameAs(_since))
+            {
+                return since.CaptureId;
+            }
+
+            return frame.Geometry() is { } geometry
+                ? service._registry.Register(geometry, signature.WithExcluded(frame.Excluded).WithCaret(frame.Caret)).CaptureId
                 : null;
+        }
     }
 }
