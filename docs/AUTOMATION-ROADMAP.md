@@ -950,6 +950,8 @@ Overlapping tools make tool selection less reliable, and default payloads are un
 
 *Sources: r1:R12, r2:R53, r1:crit:R12, r1:MCP-G6, r1:UIA-G8, r2:MSP-G9*
 
+**As built in 3.0.0 (`v3-removals`, owner decisions D1 and D3).** The nine tools of the `deprecated` toolset and the toolset are removed. Infrastructure/RemovedTools.cs refuses a call to one with ToolRemoved, naming its replacement (a call-tool filter inside the error filter, before the argument check and the gate), and ToolsetCatalog's retired names let WAM_TOOLSETS and WAM_EXCLUDE_TOOLS values written for 2.x read without failing closed (a plain `deprecated` alone still does). Every monitorIndex parameter is removed (MonitorTargeting takes `monitor` alone; LaunchPlacementPlan.TryCreate takes the resolved index separately); the undeclared-argument refusal names `monitor` for a stray `monitorIndex`, and LaunchPlacement and WindowSnapPlacement refuse unknown members, so a placement's `monitorIndex` is never ignored. get_ui_elements returns `text` by default; its typical result fell from about 6,000 to 2,462 tokens, inside the 4,000 this item aimed for. All tools: 65,683 tokens for 78 tools (70,852 for 87 before); default: 55,673.
+
 ### M6.2 run_steps: bounded, guarded step sequences
 
 **Priority:** P2 · **Effort:** L · **Kind:** extend

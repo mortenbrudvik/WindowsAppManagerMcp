@@ -545,7 +545,7 @@ public class AuditLogContractTests
         {
             ["executable"] = "notepad",
             ["reuseExisting"] = true,
-            ["placement"] = new Dictionary<string, object?> { ["snap"] = "Left-Half", ["monitorIndex"] = 0, ["focus"] = true }
+            ["placement"] = new Dictionary<string, object?> { ["snap"] = "Left-Half", ["monitor"] = 0, ["focus"] = true }
         }, PlacesAtTheLeftHalf);
 
         var line = lines.Single();

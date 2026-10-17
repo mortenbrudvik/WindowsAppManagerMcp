@@ -58,7 +58,7 @@ public class ScreenshotToolsTests
         var sut = CreateSut();
 
         // Act
-        sut.TakeScreenshot(monitorIndex: 2);
+        sut.TakeScreenshot(monitor: MonitorSelector.OfIndex(2));
 
         // Assert
         _mockScreenshotService.Verify(s => s.CaptureMonitor(2, Defaults), Times.Once);
@@ -117,7 +117,7 @@ public class ScreenshotToolsTests
         var sut = CreateSut();
 
         // Act
-        var result = sut.TakeScreenshot(monitorIndex: 99);
+        var result = sut.TakeScreenshot(monitor: MonitorSelector.OfIndex(99));
 
         // Assert
         result.IsError.Should().BeTrue();

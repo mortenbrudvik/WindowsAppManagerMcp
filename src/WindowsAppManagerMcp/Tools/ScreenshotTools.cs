@@ -142,8 +142,6 @@ public class ScreenshotTools
                  ImageResultDescription + ImageToScreenDescription + " A monitor name that names none is MonitorNotFound.")]
     [ToolResultPayload(typeof(ScreenshotResult))]
     public CallToolResult TakeScreenshot(
-        [Description(MonitorSelectorDescriptions.DeprecatedIndex)]
-        int? monitorIndex = null,
         [Description(FormatDescription)]
         CaptureFormat format = CaptureFormat.Auto,
         [Description(QualityDescription)]
@@ -172,7 +170,7 @@ public class ScreenshotTools
             IncludeCursor = includeCursor,
             GridSpacing = gridSpacing
         };
-        var index = MonitorTargeting.Index(_monitorService, monitorIndex, monitor, allowAll: true, "Nothing was captured.") ??
+        var index = MonitorTargeting.Index(_monitorService, monitor, allowAll: true, "Nothing was captured.") ??
                     _screenshotService.ListScreens().PrimaryIndex;
         return ToolImages.ToCallToolResult(_screenshotService.CaptureMonitor(index, options));
     }

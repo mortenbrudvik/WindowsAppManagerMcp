@@ -242,7 +242,7 @@ public enum WindowDetail
 }
 
 /// <summary>The shape of get_ui_elements' result (roadmap M3.1).</summary>
-[ToolEnum(WindowsAppManagerMcp.Infrastructure.ToolErrorReporting.InvalidArgumentsErrorCode, "format", NullMeans = "tree")]
+[ToolEnum(WindowsAppManagerMcp.Infrastructure.ToolErrorReporting.InvalidArgumentsErrorCode, "format", NullMeans = "text")]
 public enum UIElementFormat
 {
     /// <summary>Elements nested under the element they are inside (children).</summary>

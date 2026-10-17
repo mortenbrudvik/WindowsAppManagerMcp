@@ -86,8 +86,6 @@ public class OcrTools
         int? width = null,
         [Description(RegionDescription + "height in pixels")]
         int? height = null,
-        [Description(MonitorSelectorDescriptions.DeprecatedIndex)]
-        int? monitorIndex = null,
         [Description(IncludeFrameDescription)]
         bool includeFrame = true,
         [Description(LanguageDescription)]
@@ -102,7 +100,7 @@ public class OcrTools
         CancellationToken cancellationToken = default)
     {
         CheckRange(nameof(maxLines), maxLines, MaxLinesLimit);
-        var target = Target(handle, window, x, y, width, height, monitorIndex, monitor, includeFrame);
+        var target = Target(handle, window, x, y, width, height, monitor, includeFrame);
         return await _ocr.ReadTextAsync(new OcrRequest(target, language), detail, maxLines, ToolProgress.ForServices(progress), cancellationToken)
             .ConfigureAwait(false);
     }
@@ -132,8 +130,6 @@ public class OcrTools
         int? width = null,
         [Description(RegionDescription + "height in pixels")]
         int? height = null,
-        [Description(MonitorSelectorDescriptions.DeprecatedIndex)]
-        int? monitorIndex = null,
         [Description(IncludeFrameDescription)]
         bool includeFrame = true,
         [Description(LanguageDescription)]
@@ -149,7 +145,7 @@ public class OcrTools
         var matcher = OcrTextMatcher.TryCreate(text ?? string.Empty, match, caseSensitive, out var invalid) ??
                       throw new ToolErrorException(ToolErrorReporting.InvalidArgumentsErrorCode, invalid + " Nothing was read.");
 
-        var target = Target(handle, window, x, y, width, height, monitorIndex, monitor, includeFrame);
+        var target = Target(handle, window, x, y, width, height, monitor, includeFrame);
         try
         {
             return await _ocr.FindTextAsync(new OcrRequest(target, language), matcher, maxResults, ToolProgress.ForServices(progress),
@@ -169,7 +165,7 @@ public class OcrTools
     /// primary monitor.
     /// </summary>
     /// <exception cref="ToolErrorException">Two targets, part of a region, or a window that does not resolve.</exception>
-    private CaptureTarget Target(long? handle, WindowSelector? window, int? x, int? y, int? width, int? height, int? monitorIndex,
+    private CaptureTarget Target(long? handle, WindowSelector? window, int? x, int? y, int? width, int? height,
         MonitorSelector? monitor, bool includeFrame)
     {
         int?[] region = [x, y, width, height];
@@ -181,13 +177,13 @@ public class OcrTools
         }
 
         var windowNamed = handle != null || window != null;
-        if ((windowNamed ? 1 : 0) + (regionParts == 4 ? 1 : 0) + (monitorIndex != null || monitor != null ? 1 : 0) > 1)
+        if ((windowNamed ? 1 : 0) + (regionParts == 4 ? 1 : 0) + (monitor != null ? 1 : 0) > 1)
         {
             throw new ToolErrorException(ToolErrorReporting.InvalidArgumentsErrorCode,
                 "Pass one target: a window (handle or window), a region (x, y, width, height) or monitor. Nothing was read.");
         }
 
-        var index = MonitorTargeting.Index(_monitorService, monitorIndex, monitor, allowAll: true, "Nothing was read.");
+        var index = MonitorTargeting.Index(_monitorService, monitor, allowAll: true, "Nothing was read.");
 
         if (windowNamed)
         {

@@ -318,14 +318,14 @@ Every tool the server serves sits in the agent's context on every turn, and a lo
 | `layouts` | on | about 2,000 | Save, apply and manage window layout presets. | [list_layouts](#list_layouts), [get_layout](#get_layout), [save_layout](#save_layout), [apply_layout](#apply_layout), [delete_layout](#delete_layout) |
 | `workspaces` | off | about 600 | Save the open windows with what File Explorer and browser windows show, and restore them: open missing folders and pages, then arrange. | [save_workspace](#save_workspace), [restore_workspace](#restore_workspace) |
 | `steps` | on | about 1,100 | Run several steps (element actions, keys, clicks, waits) on one window in one call, under one input gate hold, stopping at the first failure. | [run_steps](#run_steps) |
-| `browser` | on | about 4,400 | Read the URL and text of browser pages, list a debug browser's tabs and wait for a page; start and close a browser with a DevTools port. | [get_browser_url](#get_browser_url), [get_browser_content](#get_browser_content), [launch_browser_with_debug](#launch_browser_with_debug), [close_debug_browser](#close_debug_browser), [list_tabs](#list_tabs), [wait_for_browser](#wait_for_browser) |
+| `browser` | on | about 4,300 | Read the URL and text of browser pages, list a debug browser's tabs and wait for a page; start and close a browser with a DevTools port. | [get_browser_url](#get_browser_url), [get_browser_content](#get_browser_content), [launch_browser_with_debug](#launch_browser_with_debug), [close_debug_browser](#close_debug_browser), [list_tabs](#list_tabs), [wait_for_browser](#wait_for_browser) |
 | `browser-actions` | off | about 3,600 | Act on a debug browser's pages through CDP: show and navigate tabs (with a load wait), click and type in a page without the real mouse or keyboard, answer its JavaScript dialogs, place its elements on the screen, capture it. | [activate_tab](#activate_tab), [browser_navigate](#browser_navigate), [browser_element_rect](#browser_element_rect), [browser_click](#browser_click), [browser_type](#browser_type), [browser_handle_dialog](#browser_handle_dialog), [browser_screenshot](#browser_screenshot) |
 | `browser-script` | off | about 500 | Run JavaScript in a debug browser's page through CDP, with the page's rights. | [browser_evaluate](#browser_evaluate) |
 | `visual` | off | about 1,100 | Wait until a window, region or monitor changes on screen or stops changing, compared tile by tile, without image tokens. | [wait_for_visual](#wait_for_visual) |
-| `windows-batch` | off | about 2,100 | Place, snap, or minimize, maximize and restore several windows in one call, each with its own placement or state. | [set_windows_bounds_batch](#set_windows_bounds_batch), [snap_windows_batch](#snap_windows_batch), [set_windows_state_batch](#set_windows_state_batch) |
-| `ocr` | off | about 2,300 | Read and find text on the screen with Windows OCR where UI Automation exposes none (canvas apps, games, remote desktops, rendered PDFs), with click points for the mouse tools. | [read_screen_text](#read_screen_text), [find_text_on_screen](#find_text_on_screen) |
+| `windows-batch` | off | about 2,000 | Place, snap, or minimize, maximize and restore several windows in one call, each with its own placement or state. | [set_windows_bounds_batch](#set_windows_bounds_batch), [snap_windows_batch](#snap_windows_batch), [set_windows_state_batch](#set_windows_state_batch) |
+| `ocr` | off | about 2,200 | Read and find text on the screen with Windows OCR where UI Automation exposes none (canvas apps, games, remote desktops, rendered PDFs), with click points for the mouse tools. | [read_screen_text](#read_screen_text), [find_text_on_screen](#find_text_on_screen) |
 
-The default surface (the toolsets that are on) is about 55,800 tokens, and every tool together about 65,900.
+The default surface (the toolsets that are on) is about 55,700 tokens, and every tool together about 65,700.
 <!-- tools:end toolsets -->
 
 **Tokens** is what the toolset's tools cost in tools/list, to the nearest 100: their names, titles, descriptions, input schemas and annotations as the server sends them, estimated at 4 bytes of JSON per token (roadmap M6.1). It is what turning the toolset on adds to the context a client loads up front, and what turning it off saves. The two totals under the table are measured the same way and generated with it. Contract tests hold each toolset, the default surface, the whole list and every single tool (at most 2,500 tokens) to a budget, so a change that makes them larger is a decision; see TESTING.md.
@@ -914,7 +914,7 @@ Only move_window_to_monitor with `positioning: "maximize"` can still activate th
 | `InvalidHandle` | The handle is not a window, or the window closed during the call |
 | `InvalidArguments` | set_window_bounds: `width` or `height` is below 1; nothing was changed. Any of them: both `handle` and `window`, or neither, or a selector that cannot be used (tool error) |
 | `WindowNotFound`, `AmbiguousWindow`, `HandleMismatch` | The `window` selector named no window, several (with `candidates`), or a reused handle (tool error); nothing was changed. See [Window selectors](#window-selectors) |
-| `InvalidMonitorIndex` | snap_window, move_window_to_monitor, set_window_bounds in percent: the `monitor` index (or the deprecated `monitorIndex`) is not a monitor; `error` gives the valid range. Nothing was changed (it is never put on another monitor instead) |
+| `InvalidMonitorIndex` | snap_window, move_window_to_monitor, set_window_bounds in percent: the `monitor` index is not a monitor; `error` gives the valid range. Nothing was changed (it is never put on another monitor instead) |
 | `MonitorNotFound`, `AmbiguousMonitor` | The same tools: a `monitor` name names no monitor, or two stacked ones (see [Monitor selectors](#monitor-selectors)). Nothing was changed |
 | `TargetDeniedByPolicy` | The user's [target policy](#target-policy) denies the window's app, or its process name cannot be read while the policy denies anything; nothing was changed. Ask the user |
 | `AccessDenied` | Windows refused the move or resize (Win32 error 5): the window belongs to a more privileged app, for example one running as administrator, and User Interface Privilege Isolation blocks this server. Ask the user |
@@ -1279,7 +1279,6 @@ Snap a window to predefined screen positions (like Windows Snap Assist).
 | position | string (one of: `"left_half"`, `"right_half"`, `"top_half"`, `"bottom_half"`, `"top_left_quarter"`, `"top_right_quarter"`, `"bottom_left_quarter"`, `"bottom_right_quarter"`, `"left_third"`, `"center_third"`, `"right_third"`, `"left_two_thirds"`, `"right_two_thirds"`, `"fullscreen"`) | Yes | - | Snap position (see table below) |
 | handle | integer | No | - | Window handle |
 | window | object | No | - | Alternative to handle: the window as a selector, resolved to exactly one window or refused (WindowNotFound; AmbiguousWindow with candidates). Filters as in find_windows (processName is the whole name); index picks a match in z-order; foreground is the window in front; handle plus filters must still match (HandleMismatch). |
-| monitorIndex | integer | No | - | Deprecated, removed in 3.0.0: use `monitor` |
 | monitor | integer or string | No | current | Target monitor (see [Monitor selectors](#monitor-selectors)); the window's own when left out |
 | bringToFront | boolean | No | true | Raise the window to the top of the z-order without activating it (see [Window Control](#window-control)) |
 | settleMs | integer | No | 0 | Wait up to this many milliseconds (clamped to 0-5000) for the window to stop moving before it is read: until two reads 20 ms apart agree |
@@ -1352,13 +1351,12 @@ Move a window to a specific monitor. The window keeps its normal size, made smal
 **Parameters:**
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| monitorIndex | integer | No | - | Deprecated, removed in 3.0.0: use `monitor` |
+| monitor | integer or string | Yes | - | Target monitor (see [Monitor selectors](#monitor-selectors)) |
 | handle | integer | No | - | Window handle |
 | window | object | No | - | Alternative to handle: the window as a selector, resolved to exactly one window or refused (WindowNotFound; AmbiguousWindow with candidates). Filters as in find_windows (processName is the whole name); index picks a match in z-order; foreground is the window in front; handle plus filters must still match (HandleMismatch). |
 | positioning | string (one of: `"center"`, `"topleft"`, `"topright"`, `"bottomleft"`, `"bottomright"`, `"maximize"`, `"restore"`) | No | "center" | Position on monitor (see below) |
 | bringToFront | boolean | No | true | Raise the window to the top of the z-order without activating it (see [Window Control](#window-control)) |
 | settleMs | integer | No | 0 | Wait up to this many milliseconds (clamped to 0-5000) for the window to stop moving before it is read: until two reads 20 ms apart agree |
-| monitor | integer or string | No | - | Target monitor (see [Monitor selectors](#monitor-selectors)); required unless the deprecated `monitorIndex` is given |
 <!-- tools:end params:move_window_to_monitor -->
 
 **Positioning Options:**
@@ -1540,7 +1538,6 @@ Each item of `placements` contains:
 |-------|------|----------|---------|-------------|
 | position | string (one of: `"left_half"`, `"right_half"`, `"top_half"`, `"bottom_half"`, `"top_left_quarter"`, `"top_right_quarter"`, `"bottom_left_quarter"`, `"bottom_right_quarter"`, `"left_third"`, `"center_third"`, `"right_third"`, `"left_two_thirds"`, `"right_two_thirds"`, `"fullscreen"`) | Yes | - | Snap position (see snap_window) |
 | handle | integer | No | - | Window handle |
-| monitorIndex | integer | No | - | Deprecated, removed in 3.0.0: use `monitor` |
 | bringToFront | boolean | No | true | Raise the window to the top of the z-order without activating it (see [Window Control](#window-control)) |
 | window | object | No | - | - |
 | monitor | integer or string | No | current | Target monitor (see [Monitor selectors](#monitor-selectors)) |
@@ -1806,7 +1803,7 @@ Every tool that takes a monitor has a `monitor` parameter (roadmap M6.7): [snap_
 | a `name` (`"\\.\DISPLAY2"` or `"DISPLAY2"`) | The monitor with that device name |
 | `"all"` (or -1) | Every monitor in one image: only the capture tools and wait_for_visual take it (elsewhere `InvalidArguments`) |
 
-Words compare ignoring case, and a number such as `1.0` is the index 1. `"current"` is the monitor of whatever window is in front, which is often the agent's own terminal or editor. A name is resolved when the call starts, before anything is done, and a call that names no single monitor does nothing. The window tools wait for the input gate before they act, so they find a named monitor again then, by its id (or its device name when it has none), and fail with `MonitorNotFound` when it is gone: a dock or undock while the call waits never sends the window to another monitor. `-1` is `InvalidMonitorIndex` for every tool that takes one monitor. `monitorIndex` still works on every one of these tools until 3.0.0 removes it (owner decision D1); passing it together with `monitor` is `InvalidArguments`. Prefer an `id` over an index when a monitor should stay the same one across docking, and `"left"` or `"right"` for what the user calls the left or the right monitor.
+Words compare ignoring case, and a number such as `1.0` is the index 1. `"current"` is the monitor of whatever window is in front, which is often the agent's own terminal or editor. A name is resolved when the call starts, before anything is done, and a call that names no single monitor does nothing. The window tools wait for the input gate before they act, so they find a named monitor again then, by its id (or its device name when it has none), and fail with `MonitorNotFound` when it is gone: a dock or undock while the call waits never sends the window to another monitor. `-1` is `InvalidMonitorIndex` for every tool that takes one monitor. 3.0.0 removed the `monitorIndex` parameter these tools also took (owner decision D1): `monitor` takes the index, and a call or a placement that still passes `monitorIndex` is `InvalidArguments`, so it never lands on another monitor. Prefer an `id` over an index when a monitor should stay the same one across docking, and `"left"` or `"right"` for what the user calls the left or the right monitor.
 
 <!-- tools:begin params:get_monitors -->
 **Parameters:** None
@@ -1897,7 +1894,6 @@ Capture a screenshot of a specific monitor ([Monitor selectors](#monitor-selecto
 **Parameters:**
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| monitorIndex | integer | No | - | Deprecated, removed in 3.0.0: use `monitor` |
 | format | string (one of: `"auto"`, `"png"`, `"jpeg"`, `"jpg"`) | No | "auto" | "auto" (JPEG, or PNG up to a 512-pixel long edge), "png" or "jpeg" |
 | quality | integer | No | 80 | JPEG quality (1-100) |
 | maxDimension | integer | No | 1568 px | Longest image edge in pixels; 0 keeps full resolution. Not applied when only `maxWidth` is given |
@@ -2303,7 +2299,6 @@ Read the text of a window, a screen region or a monitor with Windows OCR (`Windo
 | y | integer | No | - | With x, y, width and height: the region's top edge |
 | width | integer | No | - | With x, y, width and height: the region's width in pixels |
 | height | integer | No | - | With x, y, width and height: the region's height in pixels |
-| monitorIndex | integer | No | - | Deprecated, removed in 3.0.0: use `monitor` |
 | includeFrame | boolean | No | true | For a window: read its frame (title bar) too. Default: true |
 | language | string | No | the user's | An installed OCR language tag such as 'en-US', or 'en' for the first English one. Default: the user's. |
 | detail | string (one of: `"lines"`, `"words"`) | No | "lines" | 'lines' (default: each line's text and bounds) or 'words' (also each word's text and bounds). |
@@ -2340,7 +2335,7 @@ Read the text of a window, a screen region or a monitor with Windows OCR (`Windo
 }
 ```
 
-**The target.** One of: a window (`handle` or `window`), a region (`x`, `y`, `width` and `height` together, physical virtual-screen pixels as in [capture_region](#capture_region)) or a monitor (`monitorIndex`, `-1` for every monitor in one image). With none, the primary monitor is read, as [take_screenshot](#take_screenshot) does. Two targets, or part of a region, are `InvalidArguments` and nothing is read. A window is read as [capture_window](#capture_window) captures it (`includeFrame`; PrintWindow, so a covered window still reads; a window that does not answer is copied from the screen with a `WindowNotResponding` warning, and then what covers it is read too), and is refused the same way: `WindowMinimized` (nothing is restored: the tool only reads, so it takes no input lock), `WindowHidden`, `Cloaked`. A region or monitor is copied from the screen: what is on screen there is read.
+**The target.** One of: a window (`handle` or `window`), a region (`x`, `y`, `width` and `height` together, physical virtual-screen pixels as in [capture_region](#capture_region)) or a monitor (`monitor`, `"all"` or `-1` for every monitor in one image). With none, the primary monitor is read, as [take_screenshot](#take_screenshot) does. Two targets, or part of a region, are `InvalidArguments` and nothing is read. A window is read as [capture_window](#capture_window) captures it (`includeFrame`; PrintWindow, so a covered window still reads; a window that does not answer is copied from the screen with a `WindowNotResponding` warning, and then what covers it is read too), and is refused the same way: `WindowMinimized` (nothing is restored: the tool only reads, so it takes no input lock), `WindowHidden`, `Cloaked`. A region or monitor is copied from the screen: what is on screen there is read.
 
 **The user's target policy.** A window of an app the user's [target policy](#target-policy) denies is refused with `TargetDeniedByPolicy`, as capture_window refuses it. In a region, a monitor, or a window copied from the screen, the visible parts of the top-level windows the policy denies are blacked out before OCR (each window's rectangle less what opaque windows above it cover, read just before and just after the capture), and `maskedWindows` says how many were; it is left out when none were. While the policy denies anything, a window whose process cannot be named is masked too. OCR turns pixels into text an agent can log and search, so it is held to more than a screenshot, which shows a denied window that happens to be on screen. A denied window on screen whose rectangle cannot be read refuses the read (`CaptureFailed`) rather than go unmasked. Masking by rectangle cannot hide denied content that another app draws (a remote desktop, a screen share), a denied app's child window inside another app's window, or what a blurred (blur-behind or acrylic) window above a denied one shows of it. Layered, click-through, DirectComposition and region-shaped windows count as see-through, so a denied window under them stays masked.
 
@@ -2377,7 +2372,6 @@ Find text in a window, region or monitor with Windows OCR and get click points f
 | y | integer | No | - | With x, y, width and height: the region's top edge |
 | width | integer | No | - | With x, y, width and height: the region's width in pixels |
 | height | integer | No | - | With x, y, width and height: the region's height in pixels |
-| monitorIndex | integer | No | - | Deprecated, removed in 3.0.0: use `monitor` |
 | includeFrame | boolean | No | true | For a window: read its frame (title bar) too. Default: true |
 | language | string | No | the user's | An installed OCR language tag such as 'en-US', or 'en' for the first English one. Default: the user's. |
 | maxResults | integer | No | 20 | The most matches to return (default: 20, min: 1, max: 100). |
@@ -2453,7 +2447,6 @@ Wait on the server until a window, a screen region or a monitor changes on scree
 | y | integer | No | - | Region: Y of its top edge |
 | width | integer | No | - | Region: width in pixels |
 | height | integer | No | - | Region: height in pixels |
-| monitorIndex | integer | No | - | Deprecated, removed in 3.0.0: use `monitor` |
 | since | string | No | - | A captureId from a capture taken before you acted (output 'metadata' costs no image): the baseline, and the target (its window, region or monitor). Alone, not with another target |
 | timeoutMs | integer | No | 10000 | How long to wait in milliseconds (default: 10000, min: 0, max: 60000); 0 compares once, with since |
 | pollMs | integer | No | 200 | Milliseconds from one frame to the next (default: 200, min: 100, max: 2000) |
@@ -2468,7 +2461,7 @@ Wait on the server until a window, a screen region or a monitor changes on scree
 |--------|---------|--------------|
 | `handle` or `window` (with `includeFrame`) | As [capture_window](#capture_window) reads it: the window draws itself (PrintWindow), so windows that cover it do not count, cut to its visible frame (or its client area with `includeFrame: false`). A window that stops answering is copied from the screen for the rest of the wait (`captureMethod: "ScreenBitBlt"`, warning `WindowNotResponding`) | `TargetDeniedByPolicy` (the user's [target policy](#target-policy) denies its app), `InvalidHandle`, `WindowMinimized`, `WindowHidden`, `Cloaked` (at the start; later, see the reasons below) |
 | `x`, `y`, `width`, `height` | As [capture_region](#capture_region) reads it: copied from the screen, cut to the screen (warning `RegionClipped`) | `InvalidRegion`, `RegionOffScreen` |
-| `monitor` | As [take_screenshot](#take_screenshot) reads it ([Monitor selectors](#monitor-selectors)); `"all"` (or -1) is every monitor. The deprecated `monitorIndex` too | `InvalidMonitorIndex`, `MonitorNotFound`, `AmbiguousMonitor` |
+| `monitor` | As [take_screenshot](#take_screenshot) reads it ([Monitor selectors](#monitor-selectors)); `"all"` (or -1) is every monitor | `InvalidMonitorIndex`, `MonitorNotFound`, `AmbiguousMonitor` |
 | `since` alone | The target of the capture with that `captureId`: its window (with the capture's `includeFrame`), or its screen rectangle for a monitor or region capture. The capture is also the baseline (see below) | `CaptureNotFound`; `TargetDeniedByPolicy` for a window |
 
 A region or monitor (also through `since`) is at most 32 megapixels (one 8K monitor; `InvalidRegion` otherwise), since every check reads all of it: watch a monitor, a window or a part of the screen rather than a large virtual screen.
@@ -2680,7 +2673,7 @@ Like every tool result, the JSON writes apostrophes and non-ASCII text as they a
 
 ### get_ui_elements
 
-Get the UI element tree with bounding boxes for a window. Provides a lightweight alternative to screenshots when only element coordinates are needed for programmatic interaction planning.
+Get the UI element tree with bounding boxes for a window. Provides a lightweight alternative to screenshots when only element coordinates are needed for programmatic interaction planning. By default (since 3.0.0, owner decision D3) the result is `text`, one compact line per element; `format: "tree"` or `"flat"` returns the elements as JSON (see [Formats](#formats)).
 
 <!-- tools:begin params:get_ui_elements -->
 **Parameters:**
@@ -2696,7 +2689,7 @@ Get the UI element tree with bounding boxes for a window. Provides a lightweight
 | minHeight | integer | No | - | Minimum element height to include |
 | timeoutMs | integer | No | 10000 | Timeout for UI traversal in ms (1000-30000). When it passes, the elements read so far are returned |
 | maxElements | integer | No | 300 | Stop once this many elements are returned (1-5000), with `truncationReason: MaxElements`. The walk is breadth first, so the levels nearest the window are kept |
-| format | string (one of: `"tree"`, `"flat"`, `"text"`) | No | "tree" | `tree` nests each element's `children`; `flat` lists every element once with `depth` and `parent`; `text` returns `text`, one compact line per element (see [Formats](#formats)) |
+| format | string (one of: `"tree"`, `"flat"`, `"text"`) | No | "text" | `tree` nests each element's `children`; `flat` lists every element once with `depth` and `parent`; `text` returns `text`, one compact line per element (see [Formats](#formats)) |
 <!-- tools:end params:get_ui_elements -->
 
 **Supported Control Types:**
@@ -2725,9 +2718,9 @@ AppBar and SemanticZoom (used by UWP/WinUI apps) are named from their control ty
 #### Formats
 
 `format` changes only the shape of the result; the walk and the other fields are the same.
-- `tree` (default): each element lists the elements inside it in `children`.
+- `tree`: each element lists the elements inside it in `children`.
 - `flat`: every element once, in reading order (an element, then the elements inside it), without `children`, with `depth` (1 for the elements directly under the window) and `parent` (the index in `elements` of the element it is inside; left out under the window).
-- `text`: `elements` is left out and `text` holds one line per element, indented two spaces per level. It costs the fewest tokens. A line is the element's [ref](#ui-automation) when it has one; the control type; the name in single quotes (`'` and `\` inside are escaped with `\`, line breaks and other control characters become spaces, and names longer than 100 characters are cut with `…`), left out when there is none; `aid=` and the automation id (quoted the same way when it holds a space, a quote, a backslash, `@`, `[` or `]`); `fw=` and the UI framework, only where it changes from the element it is inside (see `frameworkId` below); `@x,y wxh`, the bounds in physical screen pixels, left out when there are none; and the flags `[disabled]` and `[offscreen]` when they apply. The element's centre is `x + w/2`, `y + h/2`.
+- `text` (default since 3.0.0; `tree` before): `elements` is left out and `text` holds one line per element, indented two spaces per level. It costs the fewest tokens. A line is the element's [ref](#ui-automation) when it has one; the control type; the name in single quotes (`'` and `\` inside are escaped with `\`, line breaks and other control characters become spaces, and names longer than 100 characters are cut with `…`), left out when there is none; `aid=` and the automation id (quoted the same way when it holds a space, a quote, a backslash, `@`, `[` or `]`); `fw=` and the UI framework, only where it changes from the element it is inside (see `frameworkId` below); `@x,y wxh`, the bounds in physical screen pixels, left out when there are none; and the flags `[disabled]` and `[offscreen]` when they apply. The element's centre is `x + w/2`, `y + h/2`.
 
 ```text
 w4120035e1 ToolBar 'Standard' @100,130 600x28
@@ -2761,7 +2754,8 @@ w4120035e2 Edit 'Text Editor' aid=15 @100,160 1200x740
     "controlTypes": "Button,Edit",
     "interactableOnly": true,
     "minWidth": 20,
-    "minHeight": 20
+    "minHeight": 20,
+    "format": "tree"
   }
 }
 ```
@@ -5888,7 +5882,6 @@ Launch an application by path, name, installed app (its `appId` or exact name fr
 | `snap` | A [snap_window](#snap_window) position, on `monitor` or the window's own monitor. Not with `bounds` |
 | `bounds` | `{x, y, width, height}`: the visible frame, as [set_window_bounds](#set_window_bounds) takes it (physical virtual-screen pixels). Not with `snap` or `monitor` |
 | `monitor` | The monitor ([Monitor selectors](#monitor-selectors), roadmap M6.7): where `snap` places the window; without `snap` and `bounds`, the window is centred on it at its own size (with `state: "maximized"`, maximized there, as [move_window_to_monitor](#move_window_to_monitor) does). A name is resolved before anything is launched |
-| `monitorIndex` | Deprecated, removed in 3.0.0: use `monitor`. Not together with `monitor` |
 | `state` | `normal`, `maximized` (not with `snap` or `bounds`) or `minimized` (placed first, then minimized; not with `focus`). `maximized`, and `normal` for a window that is minimized or maximized, work as [set_window_state](#set_window_state) does, and Windows activates the window; `snap` and `bounds` restore a window to normal without activating it |
 | `focus` | `true` brings the window to the front afterwards, exactly as [focus_window](#focus_window) does (the foreground lock, the target policy and the pause apply) |
 
@@ -8283,6 +8276,22 @@ the new tools; their sections have the rest.
   `Cloaked` errors from focus_window and the capture tools now say whether the window is on another virtual desktop
   (activating it would switch the user's desktop, which the server never does), is a suspended or prelaunched Store
   app's frame, or cannot be told; the code is unchanged. No new tool or parameter.
+- **Release 3.0.0: the deprecations take effect (owner decisions D1 and D3).** **Breaking:** the nine tools 2.2.0
+  replaced are removed with their `deprecated` toolset: click, right_click and double_click (use
+  [mouse_click](#mouse_click)), move_window and resize_window ([set_window_bounds](#set_window_bounds)), get_all_windows
+  ([find_windows](#find_windows)), get_primary_monitor and list_screens ([get_monitors](#get_monitors)), and
+  get_active_browser_url ([get_browser_url](#get_browser_url) with `window: {"foreground": true}`). A call to one fails
+  with the new error code `ToolRemoved`, which names the replacement; it is never forwarded. `WAM_EXCLUDE_TOOLS` that
+  names one of them, or `deprecated`, still reads (no fail-closed), and `+deprecated` or `-deprecated` in `WAM_TOOLSETS`
+  is ignored with a warning. **Breaking:** the `monitorIndex` parameter is removed from take_screenshot, snap_window,
+  move_window_to_monitor, read_screen_text, find_text_on_screen, wait_for_visual, the launch tools' `placement` and
+  snap_windows_batch's items: pass `monitor`, which takes the index too. A call that still passes it is
+  `InvalidArguments` (the error says to use `monitor`), and a placement or batch item with a member it does not take is
+  refused rather than ignored, so a window never lands on another monitor than asked. move_window_to_monitor's
+  `monitor` is required. Results keep their `monitorIndex` fields, and layout files their `monitorIndex`. **Changed:**
+  [get_ui_elements](#get_ui_elements)' default `format` is `text` (one compact line per element, about 2,500 tokens for
+  a typical window instead of about 6,000); pass `format: "tree"` for the JSON tree. The full tools/list is about 65,700
+  tokens (78 tools) instead of about 70,900; the default one is unchanged in its tools.
 
 ## Error Codes
 

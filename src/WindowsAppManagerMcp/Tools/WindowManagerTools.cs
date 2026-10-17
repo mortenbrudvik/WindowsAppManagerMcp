@@ -139,7 +139,7 @@ public class WindowManagerTools
         }
 
         var hwnd = Target(handle, window);
-        var choice = percent ? MonitorTargeting.Choose(_monitorService, null, monitor, allowAll: false, NothingChanged) : default;
+        var choice = percent ? MonitorTargeting.Choose(_monitorService, monitor, allowAll: false, NothingChanged) : default;
         using (await EnterGateAsync(cancellationToken).ConfigureAwait(false))
         {
             WindowTargeting.ThrowIfChanged(_windowService, window, hwnd);
@@ -940,8 +940,6 @@ public class WindowManagerTools
         long? handle = null,
         [Description(WindowTargeting.WindowDescription)]
         WindowSelector? window = null,
-        [Description(MonitorSelectorDescriptions.DeprecatedIndex)]
-        int? monitorIndex = null,
         [Description(MonitorSelectorDescriptions.Monitor + " Default: the window's own.")]
         MonitorSelector? monitor = null,
         [Description(BringToFrontDescription)]
@@ -951,7 +949,7 @@ public class WindowManagerTools
         CancellationToken cancellationToken = default)
     {
         var hwnd = Target(handle, window);
-        var choice = MonitorTargeting.Choose(_monitorService, monitorIndex, monitor, allowAll: false, NothingChanged);
+        var choice = MonitorTargeting.Choose(_monitorService, monitor, allowAll: false, NothingChanged);
         using (await EnterGateAsync(cancellationToken).ConfigureAwait(false))
         {
             WindowTargeting.ThrowIfChanged(_windowService, window, hwnd);
@@ -973,8 +971,8 @@ public class WindowManagerTools
                  "it did not return to normal from minimized or maximized, or it is not on that monitor afterwards (with 'maximize': not " +
                  "maximized there). An unknown positioning fails with InvalidPositioning.")]
     public async Task<WindowOperationResult> MoveWindowToMonitor(
-        [Description(MonitorSelectorDescriptions.DeprecatedIndex)]
-        int? monitorIndex = null,
+        [Description(MonitorSelectorDescriptions.Monitor)]
+        MonitorSelector monitor,
         [Description(HandleDescription)]
         long? handle = null,
         [Description(WindowTargeting.WindowDescription)]
@@ -985,17 +983,11 @@ public class WindowManagerTools
         bool bringToFront = true,
         [Description(SettleDescription)]
         int settleMs = 0,
-        [Description(MonitorSelectorDescriptions.Monitor)]
-        MonitorSelector? monitor = null,
         CancellationToken cancellationToken = default)
     {
+        ArgumentNullException.ThrowIfNull(monitor);
         var hwnd = Target(handle, window);
-        var choice = MonitorTargeting.Choose(_monitorService, monitorIndex, monitor, allowAll: false, NothingChanged);
-        if (choice.Index == null)
-        {
-            throw new ToolErrorException(ToolErrorReporting.InvalidArgumentsErrorCode,
-                $"Pass monitor, the monitor to move the window to. {NothingChanged}");
-        }
+        var choice = MonitorTargeting.Choose(_monitorService, monitor, allowAll: false, NothingChanged);
 
         using (await EnterGateAsync(cancellationToken).ConfigureAwait(false))
         {
@@ -1133,7 +1125,7 @@ public class WindowManagerTools
                 return new WindowResultItem(t.Handle.ToInt64(), false, Error: $"Item {i}: {error}", ErrorCode: nameof(InvalidSnapPosition));
 
             // The item's monitor, resolved before the gate (roadmap M6.7); one that names no single monitor fails the item alone
-            return MonitorTargeting.TryChoose(_monitorService, placements[i].MonitorIndex, placements[i].Monitor, allowAll: false,
+            return MonitorTargeting.TryChoose(_monitorService, placements[i].Monitor, allowAll: false,
                 $"{nameof(placements)}[{i}].", out monitors[i], out var monitorCode, out var monitorError)
                 ? null
                 : new WindowResultItem(t.Handle.ToInt64(), false, Error: $"Item {i}: {monitorError}", ErrorCode: monitorCode);

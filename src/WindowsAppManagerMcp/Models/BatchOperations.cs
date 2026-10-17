@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Text.Json.Serialization;
 
 namespace WindowsAppManagerMcp.Models;
 
@@ -17,13 +18,13 @@ public record WindowBoundsPlacement(
 
 /// <summary>
 /// A snap_windows_batch item. Position is checked per item (an unknown one fails that item with InvalidSnapPosition);
-/// the input schema lists the positions.
+/// the input schema lists the positions. An unknown member, such as the monitorIndex 3.0.0 removed, is refused
+/// (InvalidArguments), so it is never ignored.
 /// </summary>
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 public record WindowSnapPlacement(
     [ToolValues(typeof(SnapPosition))] string Position,
     long? Handle = null,
-    [property: Description(MonitorSelectorDescriptions.DeprecatedIndex)]
-    int? MonitorIndex = null,
     bool BringToFront = true,
     WindowSelector? Window = null,
     [property: Description(MonitorSelectorDescriptions.Monitor)]

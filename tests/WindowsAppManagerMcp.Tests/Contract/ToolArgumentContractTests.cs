@@ -71,7 +71,7 @@ public sealed class ToolArgumentContractTests : IDisposable
     public async Task MoveWindowToMonitor_UnknownPositioning_IsInvalidPositioning()
     {
         // It used to center the window and report success
-        var result = await CallAsync("move_window_to_monitor", """{ "handle": 1706796, "monitorIndex": 1, "positioning": "left" }""");
+        var result = await CallAsync("move_window_to_monitor", """{ "handle": 1706796, "monitor": 1, "positioning": "left" }""");
 
         ShouldBeRefused(result, nameof(WindowErrorCode.InvalidPositioning), "center, topleft, topright, bottomleft, bottomright, maximize, restore");
         _services.Windows.Verify(w => w.MoveWindowToMonitor(It.IsAny<nint>(), It.IsAny<int>(), It.IsAny<MonitorPositioning>(), It.IsAny<bool>()), Times.Never);
@@ -127,7 +127,7 @@ public sealed class ToolArgumentContractTests : IDisposable
     public async Task SnapAndMoveToMonitor_AcceptTheirOtherSpellings()
     {
         (await CallAsync("snap_window", """{ "handle": 1706796, "position": "Left-Half" }""")).IsError.Should().NotBe(true);
-        (await CallAsync("move_window_to_monitor", """{ "handle": 1706796, "monitorIndex": 1, "positioning": "top_left" }""")).IsError.Should().NotBe(true);
+        (await CallAsync("move_window_to_monitor", """{ "handle": 1706796, "monitor": 1, "positioning": "top_left" }""")).IsError.Should().NotBe(true);
 
         _services.Windows.Verify(w => w.SnapWindow((nint)1706796, SnapPosition.LeftHalf, null, true), Times.Once);
         _services.Windows.Verify(w => w.MoveWindowToMonitor((nint)1706796, 1, MonitorPositioning.TopLeft, true), Times.Once);
@@ -315,7 +315,7 @@ public sealed class ToolArgumentContractTests : IDisposable
             .Returns(WindowChangeResult.Failed(1706796, WindowErrorCode.InvalidMonitorIndex, WindowService.MonitorIndexMessage(5, 2)));
 
         // Act
-        var result = await CallAsync("snap_window", """{ "handle": 1706796, "position": "left_half", "monitorIndex": 5 }""");
+        var result = await CallAsync("snap_window", """{ "handle": 1706796, "position": "left_half", "monitor": 5 }""");
 
         // Assert
         result.IsError.Should().BeTrue();

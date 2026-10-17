@@ -124,7 +124,7 @@ public class UIElementToolContractTests
 
         // Act
         var json = Json(await server.CallToolAsync("get_ui_elements",
-            new Dictionary<string, object?> { ["handle"] = (long)Handle, ["controlTypes"] = "Button" }));
+            new Dictionary<string, object?> { ["handle"] = (long)Handle, ["controlTypes"] = "Button", ["format"] = "tree" }));
 
         // Assert
         json.GetProperty("success").GetBoolean().Should().BeTrue();

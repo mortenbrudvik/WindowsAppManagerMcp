@@ -137,7 +137,7 @@ public class UIElementTools
     }
 
     [McpServerTool(Name = "get_ui_elements", Title = "Get UI Element Tree", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
-    [Description("Get UI element tree with bounding boxes for a window. Returns each element's ref (for element_action and the other element tools), control name, type, automation ID and coordinates. Use this as a lightweight alternative to screenshots when only element coordinates are needed. The walk is breadth first and stops at maxElements (default 300) or the timeout with what it has read, truncated=true and truncationReason saying why (OperationTimedOut when no element matching the filters was found yet). format 'text' gives one compact line per element and costs the fewest tokens. A window that does not respond is not read (NotResponding).")]
+    [Description("Get UI element tree with bounding boxes for a window. Returns each element's ref (for element_action and the other element tools), control name, type, automation ID and coordinates. Use this as a lightweight alternative to screenshots when only element coordinates are needed. The walk is breadth first and stops at maxElements (default 300) or the timeout with what it has read, truncated=true and truncationReason saying why (OperationTimedOut when no element matching the filters was found yet). The default format, 'text', gives one compact line per element and costs the fewest tokens; 'tree' and 'flat' return the elements as JSON. A window that does not respond is not read (NotResponding).")]
     public async Task<UIElementResult> GetUIElements(
         [Description("Window handle (as integer) from find_windows. Pass handle or window, not both.")]
         long? handle = null,
@@ -159,8 +159,8 @@ public class UIElementTools
         int timeoutMs = DefaultTimeoutMs,
         [Description("Stop once this many elements are returned (default: 300, min: 1, max: 5000); then truncated=true and truncationReason MaxElements. The walk reads breadth first, so the levels nearest the window are kept; narrow it with controlTypes, interactableOnly or a smaller maxDepth rather than raising this.")]
         int maxElements = DefaultMaxElements,
-        [Description("Shape of the result: 'tree' (default) nests each element's children under it; 'flat' lists every element once in reading order with depth (1 = under the window) and parent (index in the list); 'text' leaves elements out and returns text, one line per element indented by depth, such as \"w4120035e17 Button 'Save' aid=SaveBtn @812,44 80x24 [disabled]\" (the element's ref first, for element_action and withinRef; then type, name, aid=, fw= where the UI framework changes, @x,y wxh bounds in physical screen pixels, flags [disabled], [offscreen]).")]
-        UIElementFormat format = UIElementFormat.Tree,
+        [Description("Shape of the result: 'text' (default) leaves elements out and returns text, one line per element indented by depth, such as \"w4120035e17 Button 'Save' aid=SaveBtn @812,44 80x24 [disabled]\" (the element's ref first, for element_action and withinRef; then type, name, aid=, fw= where the UI framework changes, @x,y wxh bounds in physical screen pixels, flags [disabled], [offscreen]); 'tree' nests each element's children under it; 'flat' lists every element once in reading order with depth (1 = under the window) and parent (index in the list).")]
+        UIElementFormat format = UIElementFormat.Text,
         IProgress<ProgressNotificationValue>? progress = null,
         CancellationToken cancellationToken = default)
     {

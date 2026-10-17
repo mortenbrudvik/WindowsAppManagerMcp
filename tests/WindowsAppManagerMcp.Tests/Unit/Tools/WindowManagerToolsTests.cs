@@ -396,7 +396,7 @@ public class WindowManagerToolsTests
         var sut = CreateSut();
 
         // Act
-        await sut.SnapWindow(SnapPosition.LeftHalf, handle: 12345, monitorIndex: 1);
+        await sut.SnapWindow(SnapPosition.LeftHalf, handle: 12345, monitor: MonitorSelector.OfIndex(1));
 
         // Assert
         _mockWindowService.Verify(w => w.SnapWindow(handle, SnapPosition.LeftHalf, 1, It.IsAny<bool>()), Times.Once);
@@ -415,7 +415,7 @@ public class WindowManagerToolsTests
         var sut = CreateSut();
 
         // Act
-        var result = await sut.MoveWindowToMonitor(1, handle: 99999);
+        var result = await sut.MoveWindowToMonitor(MonitorSelector.OfIndex(1), handle: 99999);
 
         // Assert
         result.Success.Should().BeFalse();
@@ -434,7 +434,7 @@ public class WindowManagerToolsTests
         var sut = CreateSut();
 
         // Act
-        var result = await sut.MoveWindowToMonitor(1, handle: 12345);
+        var result = await sut.MoveWindowToMonitor(MonitorSelector.OfIndex(1), handle: 12345);
 
         // Assert
         result.Success.Should().BeTrue();
@@ -453,7 +453,7 @@ public class WindowManagerToolsTests
         var sut = CreateSut();
 
         // Act
-        await sut.MoveWindowToMonitor(0, handle: 12345, positioning: MonitorPositioning.Maximize);
+        await sut.MoveWindowToMonitor(MonitorSelector.OfIndex(0), handle: 12345, positioning: MonitorPositioning.Maximize);
 
         // Assert
         _mockWindowService.Verify(w => w.MoveWindowToMonitor(handle, 0, MonitorPositioning.Maximize, It.IsAny<bool>()), Times.Once);
@@ -531,7 +531,7 @@ public class WindowManagerToolsTests
             .Returns(WindowChangeResult.Failed(handle, WindowErrorCode.MoveFailed, "The window is on monitor 0, not on monitor 1"));
         _mockWindowService.Setup(w => w.GetWindowInfo(handle)).Returns(TestDataFactory.CreateWindowInfo());
 
-        var result = await CreateSut().MoveWindowToMonitor(1, handle: 12345);
+        var result = await CreateSut().MoveWindowToMonitor(MonitorSelector.OfIndex(1), handle: 12345);
 
         result.ErrorCode.Should().Be(nameof(WindowErrorCode.MoveFailed));
         result.MonitorIndex.Should().Be(0);
@@ -611,7 +611,7 @@ public class WindowManagerToolsTests
             "set_window_bounds" => await sut.SetWindowBounds(0, 0, 640, 480, handle: 12345),
             "set_window_state" => await sut.SetWindowState(WindowStateRequest.Minimize, handle: 12345),
             "snap_window" => await sut.SnapWindow(SnapPosition.LeftHalf, handle: 12345),
-            _ => await sut.MoveWindowToMonitor(0, handle: 12345)
+            _ => await sut.MoveWindowToMonitor(MonitorSelector.OfIndex(0), handle: 12345)
         };
 
         // Assert

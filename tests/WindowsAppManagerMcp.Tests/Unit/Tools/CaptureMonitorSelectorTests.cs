@@ -5,7 +5,7 @@ namespace WindowsAppManagerMcp.Tests.Unit.Tools;
 
 /// <summary>
 /// The `monitor` parameter of the tools that read a monitor's pixels (roadmap M6.7): take_screenshot, read_screen_text,
-/// find_text_on_screen and wait_for_visual take a name or 'all', keep monitorIndex (deprecated), and refuse both
+/// find_text_on_screen and wait_for_visual take a name or 'all'
 /// together. The services are mocks, so nothing is captured.
 /// </summary>
 public class CaptureMonitorSelectorTests
@@ -72,17 +72,6 @@ public class CaptureMonitorSelectorTests
     }
 
     [Fact]
-    public async Task TakeScreenshot_WithMonitorAndMonitorIndex_IsInvalidArguments_AndCapturesNothing()
-    {
-        // Act
-        var error = await RefusedAsync(() => Task.FromResult(Screenshots().TakeScreenshot(monitorIndex: 0, monitor: MonitorSelector.Of("right"))));
-
-        // Assert
-        error.ErrorCode.Should().Be(ToolErrorReporting.InvalidArgumentsErrorCode);
-        _screenshots.Verify(s => s.CaptureMonitor(It.IsAny<int>(), It.IsAny<CaptureOptions>()), Times.Never);
-    }
-
-    [Fact]
     public async Task TakeScreenshot_WithAMonitorNameThatNamesNone_IsMonitorNotFound()
     {
         // Act
@@ -126,17 +115,6 @@ public class CaptureMonitorSelectorTests
         // Assert
         error.ErrorCode.Should().Be(ToolErrorReporting.InvalidArgumentsErrorCode);
         error.Message.Should().Contain("monitor");
-    }
-
-    [Fact]
-    public async Task ReadScreenText_WithMonitorAndMonitorIndex_IsInvalidArguments()
-    {
-        // Act
-        var error = await RefusedAsync(() => Ocr().ReadScreenText(monitorIndex: 0, monitor: MonitorSelector.Of("right")));
-
-        // Assert
-        error.ErrorCode.Should().Be(ToolErrorReporting.InvalidArgumentsErrorCode);
-        _ocrRequest.Should().BeNull();
     }
 
     #endregion

@@ -197,6 +197,74 @@ public class RemovedToolsContractTests
             .And.NotContain("deprecated");
     }
 
+    // ---- monitorIndex (owner decision D1): every tool and placement takes monitor alone since 3.0.0 ----
+
+    [Theory]
+    [InlineData("take_screenshot", """{ "monitorIndex": 0 }""")]
+    [InlineData("snap_window", """{ "handle": 1706796, "position": "left_half", "monitorIndex": 1 }""")]
+    [InlineData("move_window_to_monitor", """{ "handle": 1706796, "monitorIndex": 1 }""")]
+    [InlineData("read_screen_text", """{ "monitorIndex": 0 }""")]
+    [InlineData("wait_for_visual", """{ "monitorIndex": 0 }""")]
+    public async Task MonitorIndex_IsRefused_AndTheErrorSendsTheAgentToMonitor(string tool, string arguments)
+    {
+        var (result, services) = await CallAsync(tool, arguments);
+
+        using (services)
+        {
+            result.IsError.Should().BeTrue();
+            var payload = Payload(result);
+            payload.GetProperty("errorCode").GetString().Should().Be(ToolErrorReporting.InvalidArgumentsErrorCode);
+            payload.GetProperty("error").GetString().Should().Contain("'monitorIndex' (removed in 3.0.0: use 'monitor'");
+            services.Windows.Invocations.Should().NotContain(i => i.Method.Name.StartsWith("Snap") || i.Method.Name.StartsWith("MoveWindow"));
+            services.Screen.Invocations.Should().NotContain(i => i.Method.Name.StartsWith("Capture"));
+        }
+    }
+
+    [Theory]
+    [InlineData("launch_application", """{ "executable": "notepad", "placement": { "snap": "left_half", "monitorIndex": 1 } }""")]
+    [InlineData("snap_windows_batch", """{ "placements": [ { "position": "left_half", "handle": 1706796, "monitorIndex": 1 } ] }""")]
+    public async Task MonitorIndex_InAPlacement_IsRefused_NotIgnored(string tool, string arguments)
+    {
+        // An ignored member would launch or snap the window on another monitor than the agent meant
+        var (result, services) = await CallAsync(tool, arguments);
+
+        using (services)
+        {
+            result.IsError.Should().BeTrue();
+            var payload = Payload(result);
+            payload.GetProperty("errorCode").GetString().Should().Be(ToolErrorReporting.InvalidArgumentsErrorCode);
+            payload.GetProperty("error").GetString().Should().Contain("monitorIndex");
+            services.Processes.Invocations.Should().NotContain(i => i.Method.Name.StartsWith("Launch"));
+            services.Windows.Invocations.Should().NotContain(i => i.Method.Name.StartsWith("Snap"));
+        }
+    }
+
+    [Fact]
+    public async Task MoveWindowToMonitor_WithoutMonitor_IsInvalidArguments()
+    {
+        var (result, services) = await CallAsync("move_window_to_monitor", """{ "handle": 1706796 }""");
+
+        using (services)
+        {
+            result.IsError.Should().BeTrue();
+            Payload(result).GetProperty("errorCode").GetString().Should().Be(ToolErrorReporting.InvalidArgumentsErrorCode);
+            services.Windows.Invocations.Should().NotContain(i => i.Method.Name.StartsWith("MoveWindow"));
+        }
+    }
+
+    private static async Task<(CallToolResult Result, ContractServices Services)> CallAsync(string tool, string arguments)
+    {
+        var services = new ContractServices(ContractMode.Typical);
+        await using var server = await InProcessMcpServer.StartAsync(
+            [], builder => builder.AddWindowsAppManagerTools(), configureServices: services.Register);
+        using var document = JsonDocument.Parse(arguments);
+        var parsed = document.RootElement.EnumerateObject().ToDictionary(p => p.Name, p => (object?)p.Value.Clone(), StringComparer.Ordinal);
+        return (await server.CallToolAsync(tool, parsed), services);
+    }
+
+    private static JsonElement Payload(CallToolResult result) =>
+        JsonDocument.Parse(result.Content.OfType<TextContentBlock>().Single().Text).RootElement.Clone();
+
     private static async Task<JsonElement> ServerInfoAsync(ToolsetSelection selection)
     {
         using var services = new ContractServices(ContractMode.Typical);

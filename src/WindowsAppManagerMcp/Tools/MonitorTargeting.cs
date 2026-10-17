@@ -16,9 +16,8 @@ internal readonly record struct MonitorChoice(int? Index, MonitorInfo? Named = n
 /// <summary>
 /// The `monitor` parameter of the tools that take a monitor (roadmap M6.7, owner decision D13): snap_window,
 /// move_window_to_monitor, set_window_bounds (in percent), snap_windows_batch's items, take_screenshot, read_screen_text,
-/// find_text_on_screen, wait_for_visual and the launch tools' placement. Each keeps monitorIndex, deprecated until 3.0.0
-/// (owner decision D1); giving both is InvalidArguments. A name is resolved here, before anything is done; an index goes on
-/// to the tool's own checks, so an index out of range is still the tool's InvalidMonitorIndex, but -1 (every monitor) is
+/// find_text_on_screen, wait_for_visual and the launch tools' placement. 3.0.0 removed the monitorIndex they also took
+/// (owner decision D1). A name is resolved here, before anything is done; an index goes on to the tool's own checks, so an index out of range is still the tool's InvalidMonitorIndex, but -1 (every monitor) is
 /// refused here for a tool that takes one monitor.
 /// </summary>
 internal static class MonitorTargeting
@@ -26,53 +25,36 @@ internal static class MonitorTargeting
     private const string NothingDone = " Nothing was done.";
 
     /// <summary>
-    /// The monitor index the call names with <paramref name="monitorIndex"/> or <paramref name="monitor"/>, or null when it
-    /// names none, for a tool that acts on it at once (the captures). <paramref name="allowAll"/>: whether 'all' and -1
+    /// The monitor index the call names with <paramref name="monitor"/>, or null when it names none, for a tool that acts on it at once (the captures). <paramref name="allowAll"/>: whether 'all' and -1
     /// (<see cref="MonitorSelection.AllMonitors"/>) are a target.
     /// </summary>
     /// <exception cref="ToolErrorException">As <see cref="Choose"/>.</exception>
-    public static int? Index(IMonitorService? monitors, int? monitorIndex, MonitorSelector? monitor, bool allowAll, string nothingDone) =>
-        Choose(monitors, monitorIndex, monitor, allowAll, nothingDone).Index;
+    public static int? Index(IMonitorService? monitors, MonitorSelector? monitor, bool allowAll, string nothingDone) =>
+        Choose(monitors, monitor, allowAll, nothingDone).Index;
 
     /// <summary>What the call names, for a tool that acts later: pass it to <see cref="Current"/> inside the input gate.</summary>
     /// <exception cref="ToolErrorException">
-    /// Both are given, or 'all' where it is not a target (InvalidArguments), -1 where it is not a target (InvalidMonitorIndex),
+    /// 'all' where it is not a target (InvalidArguments), -1 where it is not a target (InvalidMonitorIndex),
     /// or the name fits no monitor (MonitorNotFound) or two (AmbiguousMonitor). <paramref name="nothingDone"/> ends the message.
     /// </exception>
-    public static MonitorChoice Choose(IMonitorService? monitors, int? monitorIndex, MonitorSelector? monitor, bool allowAll, string nothingDone) =>
-        TryChoose(monitors, monitorIndex, monitor, allowAll, string.Empty, out var choice, out var errorCode, out var error)
+    public static MonitorChoice Choose(IMonitorService? monitors, MonitorSelector? monitor, bool allowAll, string nothingDone) =>
+        TryChoose(monitors, monitor, allowAll, string.Empty, out var choice, out var errorCode, out var error)
             ? choice
             : throw new ToolErrorException(errorCode!, $"{WithoutNothingDone(error!)} {nothingDone}");
 
     /// <summary>
-    /// <see cref="Index"/> for a placement, whose failure is its own: false with the error code and an error that starts with
-    /// <paramref name="prefix"/> (the argument's path, such as "placement.").
+    /// <see cref="Choose"/> for a placement or a batch item, whose failure is its own: false with the error code and an error
+    /// that starts with <paramref name="prefix"/> (the argument's path, such as "placement.").
     /// </summary>
-    public static bool TryIndex(IMonitorService? monitors, int? monitorIndex, MonitorSelector? monitor, bool allowAll, string prefix,
-        out int? index, out string? errorCode, out string? error)
-    {
-        var chosen = TryChoose(monitors, monitorIndex, monitor, allowAll, prefix, out var choice, out errorCode, out error);
-        index = choice.Index;
-        return chosen;
-    }
-
-    /// <summary><see cref="Choose"/> for a batch item, whose failure is its own (see <see cref="TryIndex"/>).</summary>
-    public static bool TryChoose(IMonitorService? monitors, int? monitorIndex, MonitorSelector? monitor, bool allowAll, string prefix,
+    public static bool TryChoose(IMonitorService? monitors, MonitorSelector? monitor, bool allowAll, string prefix,
         out MonitorChoice choice, out string? errorCode, out string? error)
     {
-        choice = new MonitorChoice(monitorIndex);
+        choice = default;
         errorCode = null;
         error = null;
         if (monitor == null)
         {
             return true;
-        }
-
-        if (monitorIndex != null)
-        {
-            return Fail(ToolErrorReporting.InvalidArgumentsErrorCode,
-                $"Pass {prefix}monitor or {prefix}monitorIndex, not both ({prefix}monitorIndex is deprecated: use {prefix}monitor). " +
-                "Nothing was done.", out errorCode, out error);
         }
 
         if (monitor.Index is { } given)

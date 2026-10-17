@@ -389,7 +389,7 @@ public class TargetPolicyEnforcementTests
             await tools.SetWindowBounds(10, 10, 400, 300, handle: keePass),
             await tools.SetWindowState(WindowStateRequest.Restore, handle: keePass),
             await tools.SnapWindow(SnapPosition.LeftHalf, handle: keePass),
-            await tools.MoveWindowToMonitor(0, handle: keePass)
+            await tools.MoveWindowToMonitor(MonitorSelector.OfIndex(0), handle: keePass)
         };
 
         // Assert
@@ -413,7 +413,7 @@ public class TargetPolicyEnforcementTests
         var bounds = await tools.SetWindowsBoundsBatch(
             [new WindowBoundsPlacement(0, 0, 400, 300, Handle: notepad), new WindowBoundsPlacement(0, 0, 400, 300, Handle: keePass)], delayBetweenMs: 0);
         var snaps = await tools.SnapWindowsBatch(
-            [new WindowSnapPlacement("left_half", Handle: keePass, MonitorIndex: 0), new WindowSnapPlacement("right_half", Handle: notepad, MonitorIndex: 0)], delayBetweenMs: 0);
+            [new WindowSnapPlacement("left_half", Handle: keePass, Monitor: MonitorSelector.OfIndex(0)), new WindowSnapPlacement("right_half", Handle: notepad, Monitor: MonitorSelector.OfIndex(0))], delayBetweenMs: 0);
         var states = await tools.SetWindowsStateBatch(
             [new WindowStateChange("maximize", Handle: notepad), new WindowStateChange("restore", Handle: keePass)], delayBetweenMs: 0);
 
@@ -482,7 +482,7 @@ public class TargetPolicyEnforcementTests
             await tools.SetWindowBounds(10, 10, 400, 300, handle: vault),
             await tools.SetWindowState(WindowStateRequest.Restore, handle: vault),
             await tools.SnapWindow(SnapPosition.LeftHalf, handle: vault),
-            await tools.MoveWindowToMonitor(0, handle: vault)
+            await tools.MoveWindowToMonitor(MonitorSelector.OfIndex(0), handle: vault)
         };
         var batch = await tools.SetWindowsBoundsBatch(
             [new WindowBoundsPlacement(0, 0, 400, 300, Handle: notepad), new WindowBoundsPlacement(0, 0, 400, 300, Handle: vault)], delayBetweenMs: 0);

@@ -5,8 +5,7 @@ namespace WindowsAppManagerMcp.Tests.Unit.Tools;
 
 /// <summary>
 /// The window tools' `monitor` parameter (roadmap M6.7, owner decision D13): snap_window, move_window_to_monitor and
-/// snap_windows_batch resolve a name to an index before anything is changed, keep monitorIndex (deprecated) working, and
-/// refuse both together. The services are mocks, so nothing real moves.
+/// snap_windows_batch resolve a name to an index before anything is changed. The services are mocks, so nothing real moves.
 /// </summary>
 public class WindowManagerToolsMonitorTests
 {
@@ -121,19 +120,6 @@ public class WindowManagerToolsMonitorTests
         _windows.Verify(w => w.MoveWindowToMonitor(Handle, 0, MonitorPositioning.Center, true), Times.Once);
     }
 
-    [Fact]
-    public async Task SnapWindow_WithMonitorAndMonitorIndex_IsInvalidArguments_AndNothingMoves()
-    {
-        // Act
-        var act = () => CreateSut().SnapWindow(SnapPosition.LeftHalf, handle: Handle, monitorIndex: 1, monitor: MonitorSelector.Of("left"));
-
-        // Assert
-        var error = (await act.Should().ThrowAsync<ToolErrorException>()).Which;
-        error.ErrorCode.Should().Be(ToolErrorReporting.InvalidArgumentsErrorCode);
-        error.Message.Should().Contain("monitorIndex is deprecated");
-        _windows.Verify(w => w.SnapWindow(It.IsAny<nint>(), It.IsAny<SnapPosition>(), It.IsAny<int?>(), It.IsAny<bool>()), Times.Never);
-    }
-
     [Theory]
     [InlineData(nameof(WindowErrorCode.MonitorNotFound))]
     [InlineData(nameof(WindowErrorCode.AmbiguousMonitor))]
@@ -185,26 +171,13 @@ public class WindowManagerToolsMonitorTests
     }
 
     [Fact]
-    public async Task MoveWindowToMonitor_WithTheDeprecatedMonitorIndex_StillWorks()
+    public async Task MoveWindowToMonitor_WithAnIndex_MovesThere_WithoutResolvingAName()
     {
         // Act
-        await CreateSut().MoveWindowToMonitor(1, handle: Handle);
+        await CreateSut().MoveWindowToMonitor(MonitorSelector.OfIndex(1), handle: Handle);
 
         // Assert
         _windows.Verify(w => w.MoveWindowToMonitor(Handle, 1, MonitorPositioning.Center, true), Times.Once);
-    }
-
-    [Fact]
-    public async Task MoveWindowToMonitor_WithNoMonitor_IsInvalidArguments()
-    {
-        // Act
-        var act = () => CreateSut().MoveWindowToMonitor(handle: Handle);
-
-        // Assert
-        var error = (await act.Should().ThrowAsync<ToolErrorException>()).Which;
-        error.ErrorCode.Should().Be(ToolErrorReporting.InvalidArgumentsErrorCode);
-        error.Message.Should().Contain("monitor");
-        _windows.Verify(w => w.MoveWindowToMonitor(It.IsAny<nint>(), It.IsAny<int>(), It.IsAny<MonitorPositioning>(), It.IsAny<bool>()), Times.Never);
     }
 
     #endregion
@@ -415,14 +388,14 @@ public class WindowManagerToolsMonitorTests
         [
             new WindowSnapPlacement("left_half", Handle: 111, Monitor: MonitorSelector.Of("right")),
             new WindowSnapPlacement("left_half", Handle: 222, Monitor: MonitorSelector.Of("m-00000000")),
-            new WindowSnapPlacement("left_half", Handle: 333, MonitorIndex: 0, Monitor: MonitorSelector.OfIndex(1))
+            new WindowSnapPlacement("left_half", Handle: 333, Monitor: MonitorSelector.OfIndex(-1))
         ], delayBetweenMs: 0);
 
         // Assert
         result.Results.Select(r => r.Success).Should().Equal(true, false, false);
         result.Results[1].ErrorCode.Should().Be(nameof(WindowErrorCode.MonitorNotFound));
         result.Results[1].Error.Should().StartWith("Item 1: placements[1].monitor:");
-        result.Results[2].ErrorCode.Should().Be(ToolErrorReporting.InvalidArgumentsErrorCode);
+        result.Results[2].ErrorCode.Should().Be(nameof(WindowErrorCode.InvalidMonitorIndex));
         sent!.Should().ContainSingle().Which.Should().Be(((nint)111, SnapPosition.LeftHalf, (int?)2, true));
     }
 

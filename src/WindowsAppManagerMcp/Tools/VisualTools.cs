@@ -71,8 +71,6 @@ public class VisualTools
         int? width = null,
         [Description("Region: height in pixels")]
         int? height = null,
-        [Description(MonitorSelectorDescriptions.DeprecatedIndex)]
-        int? monitorIndex = null,
         [Description("A captureId from a capture taken before you acted (output 'metadata' costs no image): the baseline, and the target " +
                      "(its window, region or monitor). Alone, not with another target")]
         string? since = null,
@@ -94,7 +92,7 @@ public class VisualTools
         var stable = CheckValues(since != null, condition, timeoutMs, pollMs, stableMs, minChangedPercent);
         var request = new VisualWaitRequest
         {
-            Target = Target(handle, window, includeFrame, x, y, width, height, monitorIndex, monitor, since),
+            Target = Target(handle, window, includeFrame, x, y, width, height, monitor, since),
             Condition = condition,
             TimeoutMs = timeoutMs,
             PollMs = pollMs,
@@ -109,10 +107,10 @@ public class VisualTools
 
     /// <summary>The one target the arguments name, or InvalidArguments; a selector is resolved to its one window.</summary>
     private VisualTarget Target(long? handle, WindowSelector? window, bool? includeFrame, int? x, int? y, int? width, int? height,
-        int? monitorIndex, MonitorSelector? monitor, string? since)
+        MonitorSelector? monitor, string? since)
     {
         var region = x.HasValue || y.HasValue || width.HasValue || height.HasValue;
-        var monitorNamed = monitorIndex.HasValue || monitor != null;
+        var monitorNamed = monitor != null;
         var named = (handle.HasValue || window != null ? 1 : 0) + (region ? 1 : 0) + (monitorNamed ? 1 : 0) + (since != null ? 1 : 0);
         if (named != 1)
         {
@@ -136,7 +134,7 @@ public class VisualTools
         if (monitorNamed)
         {
             return new VisualTarget.Monitor(
-                MonitorTargeting.Index(_monitors, monitorIndex, monitor, allowAll: true, "Nothing was waited for.")!.Value);
+                MonitorTargeting.Index(_monitors, monitor, allowAll: true, "Nothing was waited for.")!.Value);
         }
 
         if (region)

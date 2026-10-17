@@ -495,7 +495,7 @@ public static partial class AuditRecord
 
     /// <summary>
     /// A launch's placement (roadmap M3.13), default-deny: of the arguments only snap and state that are valid values (as
-    /// their canonical names), monitorIndex, a monitor that is an index, a keyword, an id or a device name (roadmap M6.7,
+    /// their canonical names), a monitor that is an index, a keyword, an id or a device name (roadmap M6.7,
     /// <see cref="MonitorName"/>), the bounds' numbers and focus; of the result (<paramref name="owner"/>'s
     /// placement) the final bounds, a valid final state, focused, reapplied and the errorCode, never the error text. Null
     /// when neither has one.
@@ -521,9 +521,6 @@ public static partial class AuditRecord
                    ToolEnum<SnapPosition>.TryParse(s.GetString(), out var position, out _) ? ToolEnum<SnapPosition>.Name(position) : null;
             state = r.TryGetProperty("state", out var st) && st.ValueKind == JsonValueKind.String &&
                     ToolEnum<LaunchWindowState>.TryParse(st.GetString(), out var parsed, out _) ? ToolEnum<LaunchWindowState>.Name(parsed) : null;
-            monitorIndex = r.TryGetProperty("monitorIndex", out var m) && m.ValueKind == JsonValueKind.Number && m.TryGetInt32(out var index)
-                ? index
-                : null;
             if (r.TryGetProperty("monitor", out var selector))
             {
                 if (selector.ValueKind == JsonValueKind.Number && selector.TryGetInt32(out var selectorIndex))

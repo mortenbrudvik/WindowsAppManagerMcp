@@ -16,8 +16,8 @@ internal sealed record LaunchToPlace(bool Success, nint? Window, LaunchStatus? S
 internal static class LaunchPlacing
 {
     /// <summary>
-    /// Checks a placement: its monitor resolved to an index (roadmap M6.7: MonitorNotFound, AmbiguousMonitor, and
-    /// InvalidArguments with monitorIndex), the placement itself (<see cref="LaunchPlacementPlan.TryCreate"/>), and the index
+    /// Checks a placement: its monitor resolved to an index (roadmap M6.7: MonitorNotFound, AmbiguousMonitor), the placement
+    /// itself (<see cref="LaunchPlacementPlan.TryCreate"/>), and the index
     /// against the monitors there are when <paramref name="monitors"/> is known. A name's monitor is kept by its id (or
     /// device name) in <see cref="LaunchPlacementPlan.MonitorKey"/>, so the placement finds it again once the window is there.
     /// </summary>
@@ -25,14 +25,14 @@ internal static class LaunchPlacing
         out string? error)
     {
         plan = null;
-        if (!MonitorTargeting.TryChoose(monitors, placement.MonitorIndex, placement.Monitor, allowAll: false, "placement.", out var choice,
+        if (!MonitorTargeting.TryChoose(monitors, placement.Monitor, allowAll: false, "placement.", out var choice,
                 out errorCode, out error))
         {
             error = MonitorTargeting.WithoutNothingDone(error!);
             return false;
         }
 
-        if (!LaunchPlacementPlan.TryCreate(placement with { MonitorIndex = choice.Index }, out plan, out errorCode, out error))
+        if (!LaunchPlacementPlan.TryCreate(placement, choice.Index, out plan, out errorCode, out error))
         {
             return false;
         }
