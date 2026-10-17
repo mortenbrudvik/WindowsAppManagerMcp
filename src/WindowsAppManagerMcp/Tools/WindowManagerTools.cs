@@ -218,9 +218,9 @@ public class WindowManagerTools
         _monitorService ?? throw new InvalidOperationException("No monitor service is registered.");
 
     /// <summary>
-    /// set_window_bounds' change (roadmap M6.1): both pairs place the visible frame in one SetWindowPos; a position alone is
-    /// move_window's move (it keeps the size) and a size alone resize_window's resize (it keeps the corner and, unless asked,
-    /// the z-order), so each keeps its own error code and the second placement after a DPI change.
+    /// set_window_bounds' change (roadmap M6.1): both pairs place the visible frame in one SetWindowPos; a position alone is a
+    /// move (it keeps the size) and a size alone a resize (it keeps the corner and, unless asked, the z-order), as the
+    /// move_window and resize_window that 3.0.0 removed did, so each keeps its own error code and the second placement after a DPI change.
     /// </summary>
     private Func<WindowChangeResult> BoundsChange(nint hwnd, int? x, int? y, int? width, int? height, bool? bringToFront) =>
         (x, y, width, height) switch
@@ -985,7 +985,13 @@ public class WindowManagerTools
         int settleMs = 0,
         CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(monitor);
+        if (monitor == null)
+        {
+            // A JSON null binds; it is the caller's argument error, not the server's
+            throw new ToolErrorException(ToolErrorReporting.InvalidArgumentsErrorCode,
+                $"Pass monitor, the monitor to move the window to (an index or a name). {NothingChanged}");
+        }
+
         var hwnd = Target(handle, window);
         var choice = MonitorTargeting.Choose(_monitorService, monitor, allowAll: false, NothingChanged);
 

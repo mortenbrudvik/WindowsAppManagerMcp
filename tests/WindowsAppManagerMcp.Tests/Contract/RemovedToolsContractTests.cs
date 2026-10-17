@@ -115,12 +115,14 @@ public class RemovedToolsContractTests
         payload.GetProperty("error").GetString().Should().Contain($"'{tool}' was removed in 3.0.0").And.Contain(replacement)
             .And.EndWith("Nothing was done.");
         services.Input.VerifyNoOtherCalls();
+        services.AuditLines().Should().BeEmpty("a removed tool is no audited tool, and it did nothing");
     }
 
     [Theory]
     [InlineData("click")]
     [InlineData("click,move_window,list_screens,set_windows_bounds_batch")]
     [InlineData("deprecated,windows-batch")]
+    [InlineData("CLICK,Deprecated")]
     public async Task ExcludingARemovedOrUnservedTool_DoesNotFailClosed(string exclude)
     {
         // A WAM_EXCLUDE_TOOLS written for 2.x names tools 3.0.0 removed or the default does not serve; it must not cut the
@@ -148,11 +150,15 @@ public class RemovedToolsContractTests
         selection.Serves("get_monitors", readOnlyHint: true).Should().BeTrue();
     }
 
-    [Fact]
-    public void TheDeprecatedToolsetAlone_StillFailsClosed()
+    [Theory]
+    [InlineData("deprecated")]
+    [InlineData("Deprecated")]
+    [InlineData("deprecated,+windows")]
+    public void TheDeprecatedToolsetAlone_StillFailsClosed(string toolsets)
     {
-        // The user meant to serve the deprecated tools only, which are gone: the default would serve more
-        var selection = Select("deprecated");
+        // The user meant to serve the deprecated tools only (with +windows: the default would not be the base), which are
+        // gone: the default would serve more
+        var selection = Select(toolsets);
 
         selection.Source.Should().Be(ToolsetSelection.ToolsetsVariable);
         selection.Serves("mouse_click", readOnlyHint: false).Should().BeFalse();
@@ -223,6 +229,8 @@ public class RemovedToolsContractTests
     [Theory]
     [InlineData("launch_application", """{ "executable": "notepad", "placement": { "snap": "left_half", "monitorIndex": 1 } }""")]
     [InlineData("snap_windows_batch", """{ "placements": [ { "position": "left_half", "handle": 1706796, "monitorIndex": 1 } ] }""")]
+    [InlineData("launch_applications_batch", """{ "applications": [ { "executable": "notepad", "placement": { "snap": "left_half", "monitorIndex": 1 } } ] }""")]
+    [InlineData("launch_browser_with_debug", """{ "url": "https://example.com/", "placement": { "snap": "left_half", "monitorIndex": 1 } }""")]
     public async Task MonitorIndex_InAPlacement_IsRefused_NotIgnored(string tool, string arguments)
     {
         // An ignored member would launch or snap the window on another monitor than the agent meant
@@ -235,20 +243,41 @@ public class RemovedToolsContractTests
             payload.GetProperty("errorCode").GetString().Should().Be(ToolErrorReporting.InvalidArgumentsErrorCode);
             payload.GetProperty("error").GetString().Should().Contain("monitorIndex");
             services.Processes.Invocations.Should().NotContain(i => i.Method.Name.StartsWith("Launch"));
+            services.DebugBrowsers.Invocations.Should().NotContain(i => i.Method.Name.StartsWith("Launch"));
             services.Windows.Invocations.Should().NotContain(i => i.Method.Name.StartsWith("Snap"));
         }
     }
 
-    [Fact]
-    public async Task MoveWindowToMonitor_WithoutMonitor_IsInvalidArguments()
+    [Theory]
+    [InlineData("""{ "handle": 1706796 }""")]
+    [InlineData("""{ "handle": 1706796, "monitor": null }""")]
+    public async Task MoveWindowToMonitor_WithoutMonitor_IsInvalidArguments(string arguments)
     {
-        var (result, services) = await CallAsync("move_window_to_monitor", """{ "handle": 1706796 }""");
+        var (result, services) = await CallAsync("move_window_to_monitor", arguments);
 
         using (services)
         {
             result.IsError.Should().BeTrue();
             Payload(result).GetProperty("errorCode").GetString().Should().Be(ToolErrorReporting.InvalidArgumentsErrorCode);
             services.Windows.Invocations.Should().NotContain(i => i.Method.Name.StartsWith("MoveWindow"));
+        }
+    }
+
+    // ---- get_ui_elements' default format (owner decision D3) ----
+
+    [Theory]
+    [InlineData("""{ "handle": 1706796 }""")]
+    [InlineData("""{ "handle": 1706796, "format": null }""")]
+    public async Task GetUIElements_WithoutAFormat_OrANullOne_ReturnsText(string arguments)
+    {
+        var (result, services) = await CallAsync("get_ui_elements", arguments);
+
+        using (services)
+        {
+            result.IsError.Should().NotBe(true);
+            var payload = Payload(result);
+            payload.GetProperty("text").GetString().Should().NotBeNullOrEmpty();
+            payload.TryGetProperty("elements", out _).Should().BeFalse();
         }
     }
 

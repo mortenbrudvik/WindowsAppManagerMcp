@@ -65,7 +65,7 @@ public partial class BrowserReadingTools
     private const string RequireCdpDescription =
         "If true, return the CDP error (for example CdpTimeout, CdpDialogOpen, CdpTargetNotFound) instead of falling back to UI Automation. Needs a debug port; implied by targetId. Default: false.";
 
-    // get_active_browser_url takes no targetId, so its description does not mention one
+    // The browser in front (get_browser_url with a bare foreground selector) takes no targetId, so this does not mention one
     private const string ActiveRequireCdpDescription =
         "If true, return the CDP error (for example CdpTimeout, CdpDialogOpen, CdpTargetNotFound) instead of falling back to UI Automation. Needs a debug port. Default: false.";
 
@@ -106,7 +106,8 @@ public partial class BrowserReadingTools
         var cdp = new CdpOptions(cdpPort, requireCdp, timeoutMs, targetId, useCdp);
         if (handle == null && WindowTargeting.IsBareForeground(window))
         {
-            // Roadmap M6.1: the selector that only says "the window in front" is get_active_browser_url, with its
+            // Roadmap M6.1: the selector that only says "the window in front" reads the active browser (get_active_browser_url's
+            // read before 3.0.0 removed it), with its
             // NoBrowserInForeground when that window is not a browser (or there is none)
             return ToDto(await _browserReadingService.GetActiveBrowserUrlAsync(cdp, cancellationToken));
         }

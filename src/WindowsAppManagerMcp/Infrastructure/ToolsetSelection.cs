@@ -102,7 +102,7 @@ public sealed class ToolsetSelection
     /// <summary>
     /// One line for the end of the server instructions when the user turned off tools that the default serves (a
     /// toolset that is on by default, read-only mode, excluded tools): the instructions name tools of the loop, such as
-    /// focus_window and click, and the agent must skip the steps whose tools are missing instead of looking for them or
+    /// focus_window and mouse_click, and the agent must skip the steps whose tools are missing instead of looking for them or
     /// working around them. Null when nothing the default serves is off (an opt-in toolset that is off is not mentioned).
     /// </summary>
     public string? InstructionsNote

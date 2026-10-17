@@ -13,7 +13,7 @@ public class MonitorInfoTools
     private readonly IScreenCaptureWrapper _screen;
 
     /// <param name="monitorService">The monitors.</param>
-    /// <param name="screen">The virtual screen's bounds, read as list_screens and the captures read them (roadmap M6.1).</param>
+    /// <param name="screen">The virtual screen's bounds, read as the captures read them (roadmap M6.1).</param>
     public MonitorInfoTools(IMonitorService monitorService, IScreenCaptureWrapper screen)
     {
         _monitorService = monitorService;

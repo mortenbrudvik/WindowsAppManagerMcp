@@ -2576,9 +2576,9 @@ around `#q` whose submit goes to `/done`), `/dialogs` (buttons that open `alert(
 ### Desktop check: M6.1 additive consolidations
 
 M6.1a's consolidations are tested over fakes: set_window_bounds' pairs in `WindowManagerToolsTests` (each pair goes to
-the service call move_window or resize_window makes, half a pair is `InvalidArguments` with no call) and
+the service's move or resize call, half a pair is `InvalidArguments` with no call) and
 `WindowServiceGeometryTests` (a resize that raises keeps SWP_NOACTIVATE), get_monitors' `virtualScreen` in
-`MonitorInfoToolsTests` (the same rectangle as list_screens over the same wrappers), get_browser_url's bare foreground
+`MonitorInfoToolsTests` (the same rectangle the captures read over the same wrappers), get_browser_url's bare foreground
 selector in `BrowserReadingToolsTests`, and mouse_click's description in `ToolDescriptionTests`. Not yet run on a real
 desktop; before the release that carries it, the owner checks:
 
@@ -2586,21 +2586,22 @@ desktop; before the release that carries it, the owner checks:
    by its handle: `x` and `y` alone keep the visible frame's size to the pixel; `width` and `height` alone keep its
    top-left corner and leave the z-order and the foreground as they were (read get_foreground_window before and after:
    the agent's host stays in front); `x` and `y` alone onto the monitor with the other scale go through the second
-   placement, as move_window does (skip with one monitor); half a pair is `InvalidArguments` and the window does not
+   placement (skip with one monitor); half a pair is `InvalidArguments` and the window does not
    move. The harness closes only the fixture windows it opened.
-2. **get_monitors' `virtualScreen`** (no input, no window, no pixels): equal to the deprecated list_screens' `virtualScreen` (with `WAM_TOOLSETS=+deprecated`), and to
-   take_screenshot's `capturedRegion` with `monitorIndex: -1` and `output: "metadata"`. Always pass `output: "metadata"`:
+2. **get_monitors' `virtualScreen`** (no input, no window, no pixels): equal to
+   take_screenshot's `capturedRegion` with `monitor: "all"` and `output: "metadata"`. Always pass `output: "metadata"`:
    the default output returns a picture of every monitor, with whatever the owner has open, to read four integers.
 3. **get_browser_url with `window: {"foreground": true}`** (optional, as in "Desktop check: M5 browser bridge"): with the
    agent's terminal in front the result is `NoBrowserInForeground`. With a throwaway debug browser from
    launch_browser_with_debug, focused by its handle, it returns that browser's URL; close it with close_debug_browser by
    its processId. Never focus or close a browser by its title.
-4. **The deprecations in a real client** (M6.1b; no window, no input): with the built exe in Claude Code, `/mcp` lists 58
+4. **The removals in a real client** (3.0.0; no window, no input): with the built exe in Claude Code, `/mcp` lists 62
    tools without toolset variables, and none of click, right_click, double_click, move_window, resize_window,
-   get_all_windows, get_primary_monitor, list_screens, get_active_browser_url or the three geometry batches;
-   `WAM_TOOLSETS=+deprecated` adds the nine with their one-line descriptions; `WAM_EXCLUDE_TOOLS=click` still lists the
-   58 (it does not fail closed); and get_server_info's `toolsets.moved` names the deprecated and windows-batch toolsets.
-   The in-process contract tests (`DeprecatedToolsContractTests`) cover all of it except the client's own rendering.
+   get_all_windows, get_primary_monitor, list_screens, get_active_browser_url or the three geometry batches; a call to
+   click returns `ToolRemoved` naming mouse_click; `WAM_TOOLSETS=+deprecated` lists the same 62 with a warning in
+   get_server_info; `WAM_EXCLUDE_TOOLS=click` still lists the 62 (it does not fail closed); and get_server_info's
+   `toolsets.moved` names the windows-batch toolset. The in-process contract tests (`RemovedToolsContractTests`) cover
+   all of it except the client's own rendering.
 
 ### Desktop check: M6.3 OCR
 
@@ -2924,7 +2925,7 @@ typical result over 300 tokens, and tools/list itself, measured in October 2026:
 | `get_desktop_state` | 15 window rows, the focused element, 2 popups and 80 element lines with refs (roadmap M3.12) | 2,129 | 3,200 |
 | `capture_with_elements` | Metadata with the legend of 120 marks, one line each, and the tags' `markPrefix` (the image is budgeted separately; roadmap M3.11, M3.F38) | 1,416 | 2,150 |
 | `read_screen_text` | The 40 lines OCR reads in a window, each with its bounds (roadmap M6.3) | 1,276 | 1,900 |
-| `find_windows`, `get_all_windows` | 15 windows, each with `visibleBounds` | 1,213 | 1,850 |
+| `find_windows` | 15 windows, each with `visibleBounds` | 1,213 | 1,850 |
 | `read_element_text` | The first page of a 3,000-character e-mail | 802 | 1,200 |
 | `list_installed_apps` | The first 25 of 140 Start menu apps, packaged first, desktop apps with their paths (roadmap M6.5) | 761 | 1,150 |
 | `read_table` | Task Manager's first 50 processes, 5 columns with headers | 643 | 1,000 |
@@ -2968,12 +2969,12 @@ were capture_with_elements at 2,396 and element_action at 2,386, so they have ab
 | `browser-script` | off | 1 | 468 | 500 |
 | `visual` | off | 1 | 1,145 | 1,181 |
 | `windows-batch` | off | 3 | 2,066 | 2,102 |
-| `deprecated` | off | 9 | 4,925 | 4,950 |
 | `ocr` | off | 2 | 2,254 | 2,290 |
 
 The rows are measured after M6.1b (October 2026), which moved six tools out of `windows`, two out of `monitors`, three
-out of `input` and one out of `browser` into the opt-in `windows-batch` and `deprecated` toolsets. The deprecated tools'
-one-line descriptions keep their full parameters, which are most of the `deprecated` row. M6.6 (October 2026) raised
+out of `input` and one out of `browser` into the opt-in `windows-batch` and `deprecated` toolsets; 3.0.0 removed the
+`deprecated` toolset (9 tools, 4,925 tokens) and the monitorIndex parameters, which lowered `windows`, `capture`,
+`launch`, `browser`, `visual`, `windows-batch` and `ocr` (ToolPayloadBudgetTests has the current sizes). M6.6 (October 2026) raised
 `process` by 361 (list_processes' five parameters and its result fields in the description; 1,921 before) and
 `windows` by 31 (get_window_info's integrity fields in 'full'; 9,921 before), each budget to the measured size plus 36. The `steps` row is measured
 after M6.2 added run_steps (October 2026). M6.4 added the `visual` row
@@ -3065,7 +3066,7 @@ cancellation tests check the wire with `server.AssertNoResponseSentAsync(id)` (n
 fixture catalog that has an opt-in toolset: `WAM_TOOLSETS`, `WAM_EXCLUDE_TOOLS` and `WAM_READ_ONLY` decide what
 tools/list lists, and a call to a tool that is not served is an unknown tool. Against the production catalog it
 checks that every served tool is in exactly one toolset, that the default serves every toolset except the opt-in
-`browser-actions`, `browser-script`, `visual`, `windows-batch` and `deprecated`, that browser_evaluate is served only with `browser-script` (turning on
+`browser-actions`, `browser-script`, `visual`, `windows-batch`, `ocr` and `workspaces`, that browser_evaluate is served only with `browser-script` (turning on
 `browser-actions` does not serve it, and `browser-script` alone serves none of the other DOM bridge tools), that read-only
 mode serves exactly the tools annotated `readOnlyHint: true` (browser_element_rect only once `browser-actions` is on,
 wait_for_visual only once `visual` is on, browser_evaluate never), and that each of those is a read-only tool of the input
@@ -3073,18 +3074,15 @@ gate. `Unit/Infrastructure/ToolsetSelectionTests` covers the parsing, and over a
 rules of roadmap M6.1: a moved tool is served only while the toolset it came from is on too, a toolset's name in
 `WAM_EXCLUDE_TOOLS` also excludes the tools that moved out of it, excluding a tool that is not served is no error (no
 fail-closed), `moved` says where a tool that is out of reach went, and the warnings name a moved tool its toolset cannot
-serve and the replaced tools that are served. `Contract/DeprecatedToolsContractTests` checks the production catalog: the
-nine tools of `deprecated` and the three of `windows-batch`, both off by default, every deprecated tool's one-line
-description with its replacement and "removed in 3.0.0", a call to a moved tool on a default server being an unknown
-tool (never forwarded), `all,-input` serving no click, `WAM_EXCLUDE_TOOLS=click` on a default server serving the whole
-default, the deprecated tools staying on the input gate's and the audit log's lists, and get_server_info's `moved` and
-warnings. `Contract/ServerInfoToolContractTests` calls
+serve and the replaced tools that are served. `Contract/RemovedToolsContractTests` checks what 3.0.0 removed (owner
+decision D1): no selection lists the nine replaced tools, a call to one is `ToolRemoved` naming its replacement (never
+forwarded, never audited), `WAM_EXCLUDE_TOOLS` and `WAM_TOOLSETS` values that name them or `deprecated` read without
+failing closed, a `monitorIndex` argument or placement member is refused naming `monitor`, the three geometry batches
+of `windows-batch` are served only with `windows`, and get_server_info's `moved`. `Contract/ServerInfoToolContractTests` calls
 `get_server_info` over MCP (a real `ServerInfoService` over the contract services' mocked sources),
 `Unit/Services/ServerInfoServiceTests` checks the report and its warnings, and `Contract/ServerInstructionsTests`
 keeps the server instructions at 15 to 20 lines and under 3,000 characters, naming only tools the default serves; its
-Act rule names every input tool the default serves and lists exactly those (click, right_click and double_click stay on
-the input gate's list while the opt-in `deprecated` toolset serves them, but the instructions send the agent to
-mouse_click).
+Act rule names every input tool the default serves and lists exactly those.
 
 ### Audit log and clipboard in tests
 

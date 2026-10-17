@@ -87,7 +87,7 @@ public class ScreenshotService : IScreenshotService
     // so their captures keep no visual signature (roadmap M6.4)
     private readonly ConcurrentDictionary<nint, int> _restoredForCapture = new();
 
-    /// <summary>take_screenshot's monitorIndex for the whole virtual screen: every monitor in one image (roadmap M3.11).</summary>
+    /// <summary>The monitor index of the whole virtual screen (take_screenshot's monitor 'all' or -1): every monitor in one image (roadmap M3.11).</summary>
     public const int VirtualScreenIndex = -1;
 
     /// <param name="captureWrapper">The pixel capture.</param>

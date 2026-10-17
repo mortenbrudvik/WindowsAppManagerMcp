@@ -333,7 +333,7 @@ public partial class WindowFinderTools
 /// omitted when null: an unowned window, or a window that is not a UWP frame. IsAgentHost is true for
 /// the agent's own host window (its terminal, editor or chat app, or a window it owns) and omitted
 /// for every other window. Bounds is the window rect (GetWindowRect, with the invisible resize borders of about 7 px left,
-/// right and bottom); VisibleBounds is the visible frame, the rect set_window_bounds, move_window and the geometry
+/// right and bottom); VisibleBounds is the visible frame, the rect set_window_bounds and the geometry
 /// results use (omitted when DWM cannot report it). Title is cut to <see cref="AppText.MaxLength"/> characters, the
 /// ellipsis of a cut one included (roadmap M3.F14); the filters compare the whole title. IsTopmost is true for a topmost
 /// window and omitted for every other (roadmap M6.7). IsOnOtherDesktop is true for a cloaked window the shell's virtual
