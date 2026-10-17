@@ -877,4 +877,21 @@ public class LayoutPresetToolsTests
     }
 
     #endregion
+
+    [Theory]
+    [InlineData("""{ "processName": "Code", "snap": "left_half", "launch": { "executable": "code.exe", "arguments": ["--new-window"] } }""", "launch.arguments")]
+    [InlineData("""{ "processName": "Code", "snap": "left_half", "launchCommand": "code.exe --new-window" }""", "launchCommand")]
+    [InlineData("""{ "processName": "Code", "snap": "left_half", "monitorIndex": 1 }""", "monitorIndex")]
+    [InlineData("""{ "processName": "Code", "snap": "left_half", "order": 4 }""", "order")]
+    [InlineData("""{ "processName": "Code", "snap": "left_half", "workspace": 2 }""", "workspace")]
+    [InlineData("""{ "processName": "Code", "position": { "x": 0.75, "y": 0, "width": 0.5, "height": 1 } }""", "at most 1")]
+    public void AnUnknownOrIgnoredField_AsAClientSendsIt_FailsThePlacement(string json, string expected)
+    {
+        // Review M6.8 #4: bound as the server binds save_layout's arguments, then checked
+        var spec = System.Text.Json.JsonSerializer.Deserialize<LayoutPlacementSpec>(json, ToolJson.SerializerOptions)!;
+
+        LayoutPresetSchema.TryBuildPlacement(spec, 0, [TestDataFactory.CreateMonitorInfo()], out _, out var error).Should().BeFalse();
+
+        error.Should().StartWith("placements[0]").And.Contain(expected);
+    }
 }

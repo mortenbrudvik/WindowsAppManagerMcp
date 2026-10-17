@@ -1,4 +1,6 @@
 using System.ComponentModel;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace WindowsAppManagerMcp.Models;
 
@@ -64,4 +66,12 @@ public sealed record LayoutLaunch(
     [property: Description("A program's path or name")]
     string? Executable = null,
     [property: Description("An installed app's appId (list_installed_apps)")]
-    string? AppId = null);
+    string? AppId = null)
+{
+    /// <summary>
+    /// Members the launch does not have (review M6.8 #4), such as arguments: save_layout refuses a placement whose launch has
+    /// any, rather than ignore what the agent meant. Null when there are none.
+    /// </summary>
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? UnknownMembers { get; init; }
+}

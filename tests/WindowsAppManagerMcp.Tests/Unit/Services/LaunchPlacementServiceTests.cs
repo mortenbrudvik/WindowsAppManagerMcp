@@ -690,4 +690,39 @@ public class LaunchPlacementServiceTests
         outcome.Success.Should().BeTrue();
         _monitors.Verify(m => m.ResolveMonitor(It.IsAny<MonitorSelector>()), Times.Never);
     }
+
+    [Fact]
+    public async Task ALayoutsMaximizedPlan_PlacesTheRestoreRectangle_ThenMaximizes()
+    {
+        // Review M6.8 #5: apply_layout's launched maximized window restores to its saved rectangle
+        var plan = new LaunchPlacementPlan(null, null, new WindowRect(192, 104, 960, 520), LaunchWindowState.Maximized, false)
+        {
+            Frame = BoundsFrame.Outer
+        };
+
+        var outcome = (await CreateSut().PlaceAsync([(Code, plan)])).Single();
+
+        outcome.Success.Should().BeTrue(outcome.Error);
+        Actions.Should().Equal("bounds 192,104,960,520", "state Maximize");
+    }
+
+    [Fact]
+    public async Task ARelativeRectangle_IsPlacedOnTheKeyedMonitorsWorkAreaAsItIsNow()
+    {
+        // Review M6.8 #5: the monitor moved and changed size while the launch waited; its id is the same
+        var now = new MonitorInfo(2, @"\\.\DISPLAY3", false, new MonitorRect(3840, 0, 2560, 1440), new MonitorRect(3840, 0, 2560, 1400), 1.0)
+        {
+            Id = "m-0a1b2c3d"
+        };
+        _monitors.Setup(m => m.ResolveMonitor(It.Is<MonitorSelector>(s => s.Name == "m-0a1b2c3d"))).Returns(MonitorResolution.Found(2, now));
+        var plan = new LaunchPlacementPlan(null, null, new WindowRect(0, 0, 960, 1040), null, false)
+        {
+            Frame = BoundsFrame.Outer, MonitorKey = "m-0a1b2c3d", RelativeBounds = new RelativePosition(0.5, 0, 0.5, 1)
+        };
+
+        var outcome = (await CreateSut().PlaceAsync([(Code, plan)])).Single();
+
+        outcome.Success.Should().BeTrue(outcome.Error);
+        Actions.Should().Equal("bounds 5120,0,1280,1400");
+    }
 }

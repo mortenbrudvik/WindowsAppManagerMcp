@@ -293,6 +293,9 @@ public class LayoutService : ILayoutService
         if (nameError != null)
             return new LayoutSaveResult(false, null, ErrorMessage: nameError, ErrorCode: nameof(LayoutErrorCode.InvalidName));
 
+        if (DescriptionError(description) is { } descriptionError)
+            return new LayoutSaveResult(false, null, ErrorMessage: descriptionError, ErrorCode: Infrastructure.ToolErrorReporting.InvalidArgumentsErrorCode);
+
         var windows = _windowService.GetAllWindows(includeMinimized);
         var monitors = _monitorService.GetAllMonitors();
         var placements = new List<WindowPlacement>();
@@ -396,12 +399,16 @@ public class LayoutService : ILayoutService
         return await SavePresetAsync(preset, cancellationToken);
     }
 
-    /// <summary>A rectangle as fractions of a work area, clamped as save_layout has always clamped it (x and y 0 to 1, sizes 0.1 to 1).</summary>
-    private static RelativePosition RelativeTo(WindowRect bounds, MonitorRect workArea) => new(
+    /// <summary>
+    /// A rectangle as fractions of a work area, clamped as save_layout has always clamped it (x and y 0 to 1, sizes 0.1 to 1),
+    /// and moved back inside the work area when it reaches past it (<see cref="LayoutPresetSchema.InsideWorkArea"/>), so a
+    /// captured preset goes back into save_layout's placements.
+    /// </summary>
+    private static RelativePosition RelativeTo(WindowRect bounds, MonitorRect workArea) => LayoutPresetSchema.InsideWorkArea(new(
         Math.Clamp((double)(bounds.X - workArea.X) / workArea.Width, 0, 1),
         Math.Clamp((double)(bounds.Y - workArea.Y) / workArea.Height, 0, 1),
         Math.Clamp((double)bounds.Width / workArea.Width, 0.1, 1),
-        Math.Clamp((double)bounds.Height / workArea.Height, 0.1, 1));
+        Math.Clamp((double)bounds.Height / workArea.Height, 0.1, 1)));
 
     public async Task<LayoutSaveResult> SaveAuthoredLayoutAsync(
         string name,
@@ -413,6 +420,9 @@ public class LayoutService : ILayoutService
         var nameError = ValidateName(name);
         if (nameError != null)
             return new LayoutSaveResult(false, null, ErrorMessage: nameError, ErrorCode: nameof(LayoutErrorCode.InvalidName));
+
+        if (DescriptionError(description) is { } descriptionError)
+            return new LayoutSaveResult(false, null, ErrorMessage: descriptionError, ErrorCode: Infrastructure.ToolErrorReporting.InvalidArgumentsErrorCode);
 
         if (placements.Count is 0 or > LayoutPresetSchema.MaxPlacements)
         {
@@ -448,8 +458,24 @@ public class LayoutService : ILayoutService
             UpdatedAt = now,
             AuthoredBy = LayoutPresetSchema.AgentAuthor
         };
+
+        // The user confirms these launches once, and sees every one of them (review M6.8 #1)
+        if (LayoutPresetSchema.LaunchTargets(preset) is { Count: > LayoutPresetSchema.MaxLaunchTargets } targets)
+        {
+            return new LayoutSaveResult(false, null,
+                ErrorMessage: $"placements start {targets.Count} different programs or apps, and a layout an agent writes may start at " +
+                              $"most {LayoutPresetSchema.MaxLaunchTargets}: the user is asked about them all at once. Nothing was saved.",
+                ErrorCode: nameof(LayoutErrorCode.InvalidPlacement));
+        }
+
         return await SavePresetAsync(preset, cancellationToken);
     }
+
+    /// <summary>Why a preset's description cannot be saved: longer than <see cref="LayoutPresetSchema.MaxDescriptionLength"/>.</summary>
+    private static string? DescriptionError(string? description) =>
+        description?.Length > LayoutPresetSchema.MaxDescriptionLength
+            ? $"description is longer than {LayoutPresetSchema.MaxDescriptionLength} characters. Nothing was saved."
+            : null;
 
     #region Launch confirmations (owner decision D15)
 
@@ -460,18 +486,29 @@ public class LayoutService : ILayoutService
     public const string LaunchConfirmationsFileName = ".launch-confirmations";
 
     private readonly object _confirmationsLock = new();
-    private HashSet<string>? _confirmedLaunches;
+
+    // The confirmations as last read from the file, and what the file was then: it is read again when it changes or goes away
+    // (review M6.8 #6), so deleting it revokes every confirmation at once
+    private HashSet<string> _confirmedLaunches = new(StringComparer.Ordinal);
+    private (bool Exists, DateTime LastWriteUtc, long Length)? _confirmationsStamp;
+
+    // Confirmations the file could not keep (it could not be written): they hold until the server stops
+    private readonly HashSet<string> _unsavedConfirmations = new(StringComparer.Ordinal);
 
     public bool AreLaunchesConfirmed(LayoutPreset preset)
     {
         ArgumentNullException.ThrowIfNull(preset);
-        if (!IsAgentAuthored(preset))
+        if (!LayoutPresetSchema.IsAgentAuthored(preset))
             return true;
+
+        // A preset that starts more than the question shows is never confirmed (review M6.8 #1)
+        if (LayoutPresetSchema.ConfirmationRefusal(preset) != null)
+            return false;
 
         var key = LayoutPresetSchema.LaunchFingerprint(preset);
         lock (_confirmationsLock)
         {
-            return Confirmations().Contains(key);
+            return Confirmations().Contains(key) || _unsavedConfirmations.Contains(key);
         }
     }
 
@@ -481,40 +518,60 @@ public class LayoutService : ILayoutService
         var key = LayoutPresetSchema.LaunchFingerprint(preset);
         lock (_confirmationsLock)
         {
-            if (!Confirmations().Add(key))
+            if (Confirmations().Contains(key))
                 return;
 
             try
             {
-                File.AppendAllText(Path.Combine(LayoutsPath, LaunchConfirmationsFileName), key + Environment.NewLine);
+                // Appended in one write, on a line of its own whatever the file ends with; another server may append too
+                using (var stream = new FileStream(ConfirmationsPath, FileMode.Append, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete))
+                {
+                    var line = System.Text.Encoding.UTF8.GetBytes("\n" + key + "\n");
+                    stream.Write(line, 0, line.Length);
+                }
+
+                _confirmationsStamp = null;
             }
             catch (Exception ex) when (IsFileSystemError(ex))
             {
-                // Best effort: the confirmation holds until the server stops
+                _unsavedConfirmations.Add(key);
             }
         }
     }
 
-    private static bool IsAgentAuthored(LayoutPreset preset) =>
-        string.Equals(preset.AuthoredBy, LayoutPresetSchema.AgentAuthor, StringComparison.OrdinalIgnoreCase);
+    private string ConfirmationsPath => Path.Combine(LayoutsPath, LaunchConfirmationsFileName);
 
-    /// <summary>The confirmed launches, read from the file once (callers hold <see cref="_confirmationsLock"/>).</summary>
+    /// <summary>
+    /// The confirmed launches in the file, read again whenever it was written, replaced or deleted since the last read
+    /// (callers hold <see cref="_confirmationsLock"/>). Only whole lines of 64 lowercase hex digits count: garbage, a cut-off
+    /// line or a blank line confirms nothing.
+    /// </summary>
     private HashSet<string> Confirmations()
     {
-        if (_confirmedLaunches != null)
-            return _confirmedLaunches;
-
-        _confirmedLaunches = new HashSet<string>(StringComparer.Ordinal);
+        (bool Exists, DateTime LastWriteUtc, long Length) stamp;
         try
         {
-            var path = Path.Combine(LayoutsPath, LaunchConfirmationsFileName);
-            if (File.Exists(path))
+            var file = new FileInfo(ConfirmationsPath);
+            stamp = file.Exists ? (true, file.LastWriteTimeUtc, file.Length) : (false, default, 0);
+        }
+        catch (Exception ex) when (IsFileSystemError(ex))
+        {
+            stamp = (false, default, 0);
+        }
+
+        if (_confirmationsStamp == stamp)
+            return _confirmedLaunches;
+
+        var keys = new HashSet<string>(StringComparer.Ordinal);
+        try
+        {
+            if (stamp.Exists)
             {
-                foreach (var line in File.ReadLines(path))
+                foreach (var line in File.ReadLines(ConfirmationsPath))
                 {
                     var key = line.Trim();
                     if (key.Length == 64 && key.All(char.IsAsciiHexDigitLower))
-                        _confirmedLaunches.Add(key);
+                        keys.Add(key);
                 }
             }
         }
@@ -523,7 +580,9 @@ public class LayoutService : ILayoutService
             // An unreadable file confirms nothing
         }
 
-        return _confirmedLaunches;
+        _confirmedLaunches = keys;
+        _confirmationsStamp = stamp;
+        return keys;
     }
 
     #endregion
@@ -725,6 +784,20 @@ public class LayoutService : ILayoutService
                 }
 
                 launchCommand = launchTarget;
+
+                // Planned first, as the launch plans it, without starting anything: a dry run says what the apply would, and the
+                // user is never asked about a launch that would be refused (review M6.8 #3)
+                var request = new LaunchRequest(launchTarget, ExpectWindow: ExpectedWindow(placement));
+                var refusal = LayoutPresetSchema.LaunchTargetError(launchTarget) is { } targetError
+                    ? new LaunchRefusal(nameof(LayoutErrorCode.LaunchFailed), targetError)
+                    : _processService.CheckLaunch(request);
+                if (refusal != null)
+                {
+                    return (Result(LayoutPlacementStatus.Failed, null, nameof(LayoutErrorCode.LaunchFailed),
+                        $"Failed to launch '{launchTarget}' for {label} ({refusal.ErrorCode}): {refusal.Error}"),
+                        dryRun ? "would not be launched" : "could not be launched");
+                }
+
                 if (!launchesConfirmed)
                 {
                     var why = options.LaunchRefusal ?? "apply_layout asks the user first when the client can ask (elicitation)";
@@ -744,7 +817,7 @@ public class LayoutService : ILayoutService
                 // arguments are refused, a packaged app is activated), and its window is waited for, whichever process
                 // owns it (roadmap M6.8, D-PAL-14). A cancelled call stops waiting for its window
                 var launchResult = await _processService.LaunchApplicationAsync(
-                    new LaunchRequest(launchTarget, ExpectWindow: ExpectedWindow(placement)),
+                    request,
                     waitForWindow: true,
                     waitTimeoutMs: LaunchWaitTimeoutMs,
                     cancellationToken: cancellationToken).ConfigureAwait(false);
@@ -798,7 +871,15 @@ public class LayoutService : ILayoutService
             }
 
             if (dryRun)
-                return (Result(LayoutPlacementStatus.WouldApply, window, target: DryRunTarget(plan)), "would be arranged");
+            {
+                // A window its app hid while it is minimized or maximized is refused by the arrangement, which would show it
+                // (review M6.8 #3): the dry run says so too
+                return HiddenRefusal(window, plan) is { } hidden
+                    ? (Result(LayoutPlacementStatus.Failed, window, nameof(LayoutErrorCode.ArrangeFailed),
+                        $"Failed to arrange window '{window.Title}' for {label}: {nameof(WindowErrorCode.MoveFailed)}: {hidden}"),
+                        "would not be arranged: its window is hidden")
+                    : (Result(LayoutPlacementStatus.WouldApply, window, target: DryRunTarget(plan)), "would be arranged");
+            }
 
             // A window that is minimized and stays minimized is given its restore rectangle without being shown (roadmap M6.8)
             var keptMinimized = placement.State == WindowState.Minimized && window.State == WindowState.Minimized && plan.Snap == null;
@@ -947,6 +1028,24 @@ public class LayoutService : ILayoutService
     }
 
     /// <summary>
+    /// Why the arrangement would refuse the window, as the window service does: it is hidden (its app hid it, in the notification
+    /// area, say) and minimized or maximized, so restoring it or setting its restore rectangle would show it. A window maximized
+    /// on its monitor that stays so is left alone and not refused. Null when it is not refused.
+    /// </summary>
+    private static string? HiddenRefusal(WindowInfo window, PlannedPlacement plan)
+    {
+        if (window.IsVisible || window.State is not (WindowState.Minimized or WindowState.Maximized))
+            return null;
+
+        var leftAlone = plan.Snap == null && plan.Placement.State == WindowState.Maximized && window.State == WindowState.Maximized &&
+                        window.MonitorIndex == plan.Monitor?.Index;
+        return leftAlone
+            ? null
+            : $"The window is hidden and {window.State.ToString().ToLowerInvariant()}: its application hid it (for example in the " +
+              "notification area), and arranging it would show it, so it would not be arranged. Show it through its application, or ask the user.";
+    }
+
+    /// <summary>
     /// Where a dry run says the window would go: the restore rectangle of a maximized placement (the work area when it saved
     /// none) or of a minimized one, else its rectangle.
     /// </summary>
@@ -966,22 +1065,34 @@ public class LayoutService : ILayoutService
 
     /// <summary>
     /// The launch placement plan of a placement whose window was launched (roadmap M3.F27), as <see cref="Arrange"/> places an
-    /// open window: snapped on its monitor; a maximized placement maximized on its monitor; any other given the placement's
-    /// rectangle as the window rect (<see cref="BoundsFrame.Outer"/>), the rect layouts save, and minimized afterwards for state
-    /// minimized. A plan that names the monitor keeps its id (or device name), so it is found again when the window is placed
-    /// (roadmap M6.8).
+    /// open window: snapped on its monitor; a maximized placement given its restore rectangle and then maximized (maximized on
+    /// its monitor when it has none); any other given the placement's rectangle as the window rect
+    /// (<see cref="BoundsFrame.Outer"/>), the rect layouts save, and minimized afterwards for state minimized. Every plan keeps
+    /// the monitor's id (or device name), and a rectangle also as fractions of the work area, so the window is placed on the
+    /// monitor as it is when the window appears (roadmap M6.8, review #5).
     /// </summary>
     private static LaunchPlacementPlan LaunchPlan(PlannedPlacement plan)
     {
         var placement = plan.Placement;
         var monitor = plan.Monitor!;
         var minimized = placement.State == WindowState.Minimized ? LaunchWindowState.Minimized : (LaunchWindowState?)null;
-        var launchPlan = plan.Snap is { } snap
-            ? new LaunchPlacementPlan(snap, monitor.Index, null, minimized, placement.Focus)
-            : placement.State == WindowState.Maximized
-                ? new LaunchPlacementPlan(null, monitor.Index, null, LaunchWindowState.Maximized, placement.Focus)
-                : new LaunchPlacementPlan(null, null, plan.Target, minimized, placement.Focus) { Frame = BoundsFrame.Outer };
-        return launchPlan.MonitorIndex == null ? launchPlan : launchPlan with { MonitorKey = monitor.Id ?? monitor.DeviceName };
+        var key = monitor.Id ?? monitor.DeviceName;
+        if (plan.Snap is { } snap)
+            return new LaunchPlacementPlan(snap, monitor.Index, null, minimized, placement.Focus) { MonitorKey = key };
+
+        // A maximized placement with a restore rectangle is given it before it is maximized, as an open window is
+        if (placement.State == WindowState.Maximized && plan.NormalTarget is null)
+            return new LaunchPlacementPlan(null, monitor.Index, null, LaunchWindowState.Maximized, placement.Focus) { MonitorKey = key };
+
+        // The rectangle as fractions too, so it is placed on the monitor's work area as it is when the window appears
+        var maximized = placement.State == WindowState.Maximized;
+        return new LaunchPlacementPlan(null, null, maximized ? plan.NormalTarget : plan.Target,
+            maximized ? LaunchWindowState.Maximized : minimized, placement.Focus)
+        {
+            Frame = BoundsFrame.Outer,
+            MonitorKey = key,
+            RelativeBounds = maximized ? placement.NormalPosition : placement.Position
+        };
     }
 
     /// <summary>

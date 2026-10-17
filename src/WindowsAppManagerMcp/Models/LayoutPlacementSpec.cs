@@ -1,4 +1,6 @@
 using System.ComponentModel;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace WindowsAppManagerMcp.Models;
 
@@ -32,4 +34,12 @@ public sealed record LayoutPlacementSpec(
     int? Ordinal = null,
     string? MonitorName = null,
     [property: Description("Restore rectangle of a maximized or minimized window, as position")]
-    RelativePosition? NormalPosition = null);
+    RelativePosition? NormalPosition = null)
+{
+    /// <summary>
+    /// The members the placement does not take (review M6.8 #4). get_layout's order, monitorIndex and launchCommand pass when
+    /// they agree with the placement, so its output still round-trips; anything else fails the save with InvalidPlacement.
+    /// </summary>
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? UnknownMembers { get; init; }
+}

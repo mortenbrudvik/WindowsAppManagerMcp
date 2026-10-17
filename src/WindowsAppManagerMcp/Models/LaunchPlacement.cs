@@ -68,6 +68,13 @@ public sealed record LaunchPlacementPlan(
     /// </summary>
     public string? MonitorKey { get; init; }
 
+    /// <summary>
+    /// <see cref="Bounds"/> as fractions of the work area of the <see cref="MonitorKey"/> monitor (apply_layout's launches,
+    /// roadmap M6.8): the placement service places them on that monitor's work area as it is when it places the window. Null
+    /// when Bounds are pixels as given.
+    /// </summary>
+    public RelativePosition? RelativeBounds { get; init; }
+
     /// <summary>True when the plan moves, sizes or changes the state of the window (anything but focus).</summary>
     public bool ChangesGeometry => Snap != null || Bounds != null || MonitorIndex != null || State != null;
 

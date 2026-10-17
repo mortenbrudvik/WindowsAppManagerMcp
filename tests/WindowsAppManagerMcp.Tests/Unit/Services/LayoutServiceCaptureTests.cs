@@ -184,4 +184,38 @@ public class LayoutServiceCaptureTests : IDisposable
         json.Should().Contain("\"version\": 2");
         CreateSut().GetPreset("captured")!.AuthoredBy.Should().BeNull();
     }
+
+    [Fact]
+    public async Task ACapturedLayout_GoesBackIntoSaveLayoutThroughGetLayout_Unchanged()
+    {
+        // Review M6.8: a right-snapped window (its invisible border reaches past the work area), one the user dragged partly
+        // off the screen (recorded inside it), a maximized one and a packaged app
+        OpenWindows(
+            Window(0x101, "Code", 501, 953, 0, 974, 1047),
+            Window(0x102, "notepad", 502, 1600, 900, 800, 600),
+            Window(0x103, "msedge", 503, -8, -8, 1936, 1056, WindowState.Maximized),
+            Window(0x104, "CalculatorApp", 504, 100, 100, 400, 600));
+        _processes.Setup(p => p.GetProcessPath(It.IsAny<int>())).Returns((int pid) => $@"C:\Apps\app{pid}.exe");
+        _windows.Setup(w => w.GetNormalBounds((nint)0x103)).Returns(new WindowRect(192, 104, 960, 520));
+        _apps.Setup(a => a.GetPackageFamilyName(504)).Returns(CalculatorFamily);
+        _apps.Setup(a => a.GetWindowAppUserModelId((nint)0x104)).Returns(CalculatorAppId);
+        var sut = CreateSut();
+        (await sut.CaptureCurrentLayoutAsync("captured")).Success.Should().BeTrue();
+        var captured = sut.GetPreset("captured")!;
+        // A window reaching past the work area is recorded inside it, at its size
+        var moved = captured.Placements[1].Position;
+        (moved.X + moved.Width).Should().BeApproximately(1, 1e-9);
+        (moved.Y + moved.Height).Should().BeApproximately(1, 1e-9);
+        moved.Width.Should().BeApproximately(800.0 / 1920, 1e-9);
+
+        // Act - get_layout's JSON, as a client reads it, back into save_layout
+        var detail = new WindowsAppManagerMcp.Tools.LayoutPresetTools(sut).GetLayout("captured");
+        var json = System.Text.Json.JsonSerializer.Serialize(detail.Placements, WindowsAppManagerMcp.Infrastructure.ToolJson.SerializerOptions);
+        var specs = System.Text.Json.JsonSerializer.Deserialize<LayoutPlacementSpec[]>(json, WindowsAppManagerMcp.Infrastructure.ToolJson.SerializerOptions)!;
+        var saved = await sut.SaveAuthoredLayoutAsync("captured", captured.Description, specs);
+
+        // Assert - every field the same; only the author is new
+        saved.Success.Should().BeTrue(saved.ErrorMessage);
+        sut.GetPreset("captured")!.Placements.Should().BeEquivalentTo(captured.Placements);
+    }
 }

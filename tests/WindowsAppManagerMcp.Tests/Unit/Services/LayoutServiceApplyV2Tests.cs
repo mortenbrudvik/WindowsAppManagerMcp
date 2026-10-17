@@ -513,4 +513,143 @@ public class LayoutServiceApplyV2Tests : IDisposable
     }
 
     #endregion
+
+    #region Review M6.8
+
+    private string StorePath => Path.Combine(_layoutsPath, LayoutService.LaunchConfirmationsFileName);
+
+    private async Task<(LayoutService Sut, LayoutPreset Preset)> AgentLayoutAsync(string authoredBy = LayoutPresetSchema.AgentAuthor)
+    {
+        OpenWindows();
+        var sut = await SavedAsync(authoredBy, Placement("notepad") with { Launch = new LayoutLaunch(Executable: "notepad.exe") });
+        return (sut, sut.GetPreset("layout")!);
+    }
+
+    [Fact]
+    public async Task SaveAuthoredLayout_ThatStartsMoreThanTheQuestionShows_IsInvalidPlacement()
+    {
+        var specs = Enumerable.Range(0, 9)
+            .Select(i => new LayoutPlacementSpec($"app{i}", Snap: "left_half", Launch: new LayoutLaunch($@"C:\Tools\app{i}.exe")))
+            .ToList();
+
+        var result = await CreateSut().SaveAuthoredLayoutAsync("many", null, specs);
+
+        result.ErrorCode.Should().Be(nameof(LayoutErrorCode.InvalidPlacement));
+        result.ErrorMessage.Should().Contain("9").And.Contain("at most 8");
+        CreateSut().GetPreset("many").Should().BeNull();
+    }
+
+    [Fact]
+    public async Task ADescriptionThatIsTooLong_IsRefused_ByBothSaves()
+    {
+        var description = new string('d', LayoutPresetSchema.MaxDescriptionLength + 1);
+        OpenWindows(Code);
+
+        (await CreateSut().SaveAuthoredLayoutAsync("long", description, [new LayoutPlacementSpec("Code", Snap: "left_half")]))
+            .ErrorCode.Should().Be("InvalidArguments");
+        (await CreateSut().CaptureCurrentLayoutAsync("long", description)).ErrorCode.Should().Be("InvalidArguments");
+    }
+
+    [Theory]
+    [InlineData("Agent")]
+    [InlineData(" agent ")]
+    [InlineData("someone else")]
+    public async Task APresetWithAnyAuthor_NeedsTheUsersConfirmation(string authoredBy)
+    {
+        var (sut, _) = await AgentLayoutAsync(authoredBy);
+
+        var result = await sut.ApplyPresetAsync("layout", launchMissing: true);
+
+        result.Placements!.Single().ErrorCode.Should().Be(nameof(LayoutErrorCode.LaunchNotConfirmed));
+        VerifyNothingChanged();
+    }
+
+    [Fact]
+    public async Task DeletingTheStore_RevokesTheConfirmations_WithoutARestart()
+    {
+        var (sut, preset) = await AgentLayoutAsync();
+        sut.ConfirmLaunches(preset);
+        sut.AreLaunchesConfirmed(preset).Should().BeTrue();
+
+        File.Delete(StorePath);
+
+        sut.AreLaunchesConfirmed(preset).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task AStoreEditedOnDisk_IsReadAgain()
+    {
+        var (sut, preset) = await AgentLayoutAsync();
+        sut.AreLaunchesConfirmed(preset).Should().BeFalse();
+
+        await File.WriteAllTextAsync(StorePath, LayoutPresetSchema.LaunchFingerprint(preset));
+
+        sut.AreLaunchesConfirmed(preset).Should().BeTrue("a whole key on the last line counts, without a line break after it");
+    }
+
+    [Fact]
+    public async Task ATamperedStore_ConfirmsOnlyWholeKeys_AndANewKeyStaysOnItsOwnLine()
+    {
+        var (sut, preset) = await AgentLayoutAsync();
+        var key = LayoutPresetSchema.LaunchFingerprint(preset);
+        await File.WriteAllTextAsync(StorePath, $"garbage\r\n{key.ToUpperInvariant()}\n{key[..63]}\n{key}x\n  \n{key[..40]}");
+        sut.AreLaunchesConfirmed(preset).Should().BeFalse("no line holds the key, whole and lowercase");
+
+        sut.ConfirmLaunches(preset);
+
+        var restarted = CreateSut();
+        restarted.AreLaunchesConfirmed(restarted.GetPreset("layout")!).Should().BeTrue("the key was appended on a line of its own");
+        (await File.ReadAllLinesAsync(StorePath)).Should().Contain(key);
+    }
+
+    [Fact]
+    public async Task ALaunchThePlanRefuses_IsTheSameFailure_InADryRunAndInTheApply_AndNothingStarts()
+    {
+        // Review M6.8 #3: the dry run plans the launch as the launch would; the user is not asked about a refused one
+        OpenWindows();
+        _processes.Setup(p => p.CheckLaunch(It.IsAny<LaunchRequest>()))
+            .Returns(new LaunchRefusal(nameof(LaunchErrorCode.ScriptFile), "run.bat is a script."));
+        var sut = await SavedAsync(LayoutPresetSchema.AgentAuthor, Placement("notepad") with { Launch = new LayoutLaunch(Executable: @"C:\Tools\run.bat") });
+
+        var preview = (await sut.ApplyPresetAsync("layout", launchMissing: true, options: new LayoutApplyOptions(DryRun: true))).Placements!.Single();
+        var applied = (await sut.ApplyPresetAsync("layout", launchMissing: true)).Placements!.Single();
+
+        preview.Should().BeEquivalentTo(applied);
+        applied.Status.Should().Be(LayoutPlacementStatus.Failed);
+        applied.ErrorCode.Should().Be(nameof(LayoutErrorCode.LaunchFailed));
+        applied.Error.Should().Contain("ScriptFile").And.Contain("run.bat is a script.");
+        VerifyNothingChanged();
+    }
+
+    [Fact]
+    public async Task ADryRun_SaysAHiddenMinimizedWindowWouldNotBeArranged()
+    {
+        // Review M6.8 #3: SetMinimizedBounds refuses it, since it would show it
+        OpenWindows(Code with { State = WindowState.Minimized, IsVisible = false });
+        var sut = await SavedAsync(Placement("Code") with { State = WindowState.Minimized });
+
+        var placement = (await sut.ApplyPresetAsync("layout", options: new LayoutApplyOptions(DryRun: true))).Placements!.Single();
+
+        placement.Status.Should().Be(LayoutPlacementStatus.Failed);
+        placement.ErrorCode.Should().Be(nameof(LayoutErrorCode.ArrangeFailed));
+        placement.Error.Should().Contain("hidden");
+    }
+
+    [Fact]
+    public async Task AVersion1File_IsByteForByteTheSame_AfterAnApply()
+    {
+        OpenWindows(Code);
+        const string json = "{\n  \"name\": \"old\",\n  \"placements\": [ { \"matcher\": { \"processName\": \"Code\" }, \"monitorIndex\": 0,\n" +
+                            "    \"position\": { \"x\": 0, \"y\": 0, \"width\": 0.5, \"height\": 1 }, \"launchCommand\": \"code.exe\" } ]\n}\n";
+        Directory.CreateDirectory(_layoutsPath);
+        var file = Path.Combine(_layoutsPath, "old.json");
+        await File.WriteAllBytesAsync(file, System.Text.Encoding.UTF8.GetBytes(json));
+        var before = await File.ReadAllBytesAsync(file);
+
+        (await CreateSut().ApplyPresetAsync("old", launchMissing: true)).Success.Should().BeTrue();
+
+        (await File.ReadAllBytesAsync(file)).Should().Equal(before);
+    }
+
+    #endregion
 }

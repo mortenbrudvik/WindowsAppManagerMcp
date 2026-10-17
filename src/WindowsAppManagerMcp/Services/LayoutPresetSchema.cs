@@ -1,6 +1,8 @@
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
+using System.Text.RegularExpressions;
 using WindowsAppManagerMcp.Models;
 
 namespace WindowsAppManagerMcp.Services;
@@ -10,7 +12,7 @@ namespace WindowsAppManagerMcp.Services;
 /// fields every written preset keeps for older servers, what launchMissing starts for a placement, and the strict check of
 /// the placements an agent writes (save_layout's placements). Pure.
 /// </summary>
-public static class LayoutPresetSchema
+public static partial class LayoutPresetSchema
 {
     /// <summary>The schema version the server writes.</summary>
     public const int CurrentVersion = 2;
@@ -20,6 +22,70 @@ public static class LayoutPresetSchema
 
     /// <summary>The most placements save_layout takes from an agent in one preset.</summary>
     public const int MaxPlacements = 50;
+
+    /// <summary>
+    /// The most programs and apps an agent-written preset may start (review M6.8 #1): as many as apply_layout's question to the
+    /// user shows, so the user confirms only what they saw.
+    /// </summary>
+    public const int MaxLaunchTargets = 8;
+
+    /// <summary>The longest executable or appId an agent-written launch may have (MAX_PATH).</summary>
+    public const int MaxLaunchLength = 260;
+
+    /// <summary>The longest processName, titleContains, className, titlePattern or monitorName save_layout takes.</summary>
+    public const int MaxTextLength = 260;
+
+    /// <summary>The longest exePath save_layout takes.</summary>
+    public const int MaxExePathLength = 1024;
+
+    /// <summary>The largest ordinal save_layout takes.</summary>
+    public const int MaxOrdinal = 999;
+
+    /// <summary>The longest description a preset may have.</summary>
+    public const int MaxDescriptionLength = 1000;
+
+    /// <summary>
+    /// How far a rectangle may reach past the work area's right or bottom edge: a window rect has invisible resize borders
+    /// (about 7 px at 100%), so a window snapped to the right reaches that far past it.
+    /// </summary>
+    public const double EdgeSlack = 0.01;
+
+    /// <summary>
+    /// Whether an agent wrote the preset (review M6.8 #2): any authoredBy at all, in any case or spelling, so a preset is trusted
+    /// only when it has none. save_layout writes "agent".
+    /// </summary>
+    public static bool IsAgentAuthored(LayoutPreset preset)
+    {
+        ArgumentNullException.ThrowIfNull(preset);
+        return !string.IsNullOrWhiteSpace(preset.AuthoredBy);
+    }
+
+    /// <summary>The distinct programs and apps the preset starts, as launchMissing starts them, in placement order.</summary>
+    public static IReadOnlyList<string> LaunchTargets(LayoutPreset preset)
+    {
+        ArgumentNullException.ThrowIfNull(preset);
+        return preset.Placements.Select(LaunchTarget).OfType<string>().Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+    }
+
+    /// <summary>
+    /// Why the user cannot be asked to confirm the preset's launches (review M6.8 #1): it starts more programs than the question
+    /// shows, or one whose name is longer than it shows whole (a file written by hand or by an older or newer server). Null
+    /// when the question can show them all.
+    /// </summary>
+    public static string? ConfirmationRefusal(LayoutPreset preset)
+    {
+        var targets = LaunchTargets(preset);
+        if (targets.Count > MaxLaunchTargets)
+        {
+            return $"the layout starts {targets.Count} programs or apps, more than the {MaxLaunchTargets} a question to the user shows, " +
+                   "so the user is not asked";
+        }
+
+        return targets.Any(t => t.Length > PackagedAppId.AppsFolderPrefix.Length + MaxLaunchLength)
+            ? $"one of the programs it starts is longer than {MaxLaunchLength} characters, more than a question to the user shows, " +
+              "so the user is not asked"
+            : null;
+    }
 
     /// <summary>
     /// A preset read from a file, in the version 2 shape: a version 1 placement's launchCommand also becomes its
@@ -96,6 +162,45 @@ public static class LayoutPresetSchema
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(text.ToString()))).ToLowerInvariant();
     }
 
+    /// <summary>
+    /// Why a layout's launch target is not one a layout may start (review M6.8 #3), whoever wrote it: a layout starts a
+    /// program by a bare name (no spaces, no folder), by a full path on a local drive, or by a URI, and an app by its
+    /// AppUserModelID; never a network path, a relative path or a command line (launch_application would read "cmd.exe /c x"
+    /// as a file in the current folder). Null when it may; the launch's own planning checks it further.
+    /// </summary>
+    public static string? LaunchTargetError(string target)
+    {
+        ArgumentNullException.ThrowIfNull(target);
+        if (target.StartsWith(PackagedAppId.AppsFolderPrefix, StringComparison.OrdinalIgnoreCase))
+        {
+            return AppIdPattern().IsMatch(target[PackagedAppId.AppsFolderPrefix.Length..])
+                ? null
+                : $"'{target[PackagedAppId.AppsFolderPrefix.Length..]}' is not an app's appId (list_installed_apps lists them).";
+        }
+
+        if (target.StartsWith(@"\\", StringComparison.Ordinal) || target.StartsWith("//", StringComparison.Ordinal))
+            return $"'{target}' is on a network path, which a layout does not start.";
+
+        if (LocalPathPattern().IsMatch(target) || UriPattern().IsMatch(target))
+            return null;
+
+        return target.Any(c => char.IsWhiteSpace(c) || c is '\\' or '/')
+            ? $"'{target}' is neither a program's name nor a full path on a local drive (a command line, or a relative path, is " +
+              "not started): give the program's full path, its name without arguments, or an app's appId."
+            : null;
+    }
+
+    // An app's AppUserModelID, as shell:AppsFolder takes it (InputValidationService allows the same)
+    [GeneratedRegex(@"^[A-Za-z0-9][A-Za-z0-9._-]*(![A-Za-z0-9][A-Za-z0-9._-]*)?$")]
+    private static partial Regex AppIdPattern();
+
+    [GeneratedRegex(@"^[A-Za-z]:\\")]
+    private static partial Regex LocalPathPattern();
+
+    // A scheme of two letters or more, so C:\ is a path, not a URI
+    [GeneratedRegex(@"^[A-Za-z][A-Za-z0-9+.-]+:[^\\]")]
+    private static partial Regex UriPattern();
+
     private static LayoutLaunch LaunchOf(string command) =>
         command.StartsWith(PackagedAppId.AppsFolderPrefix, StringComparison.OrdinalIgnoreCase) &&
         command.Length > PackagedAppId.AppsFolderPrefix.Length
@@ -120,6 +225,24 @@ public static class LayoutPresetSchema
         ArgumentNullException.ThrowIfNull(monitors);
         placement = null;
         var at = $"placements[{index}]";
+
+        // Nothing the agent wrote is ignored (review M6.8 #4): get_layout's own fields pass only when they agree (below)
+        var echoes = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
+        foreach (var (member, value) in spec.UnknownMembers ?? [])
+        {
+            if (member is not (OrderMember or MonitorIndexMember or LaunchCommandMember))
+                return Fail($"{at}.{member} is not a placement field, so it would be ignored. Leave it out.", out error);
+            echoes[member] = value;
+        }
+
+        if (spec.Launch?.UnknownMembers is { Count: > 0 } launchExtras)
+        {
+            return Fail($"{at}.launch.{launchExtras.Keys.First()} is not taken: a launch is an executable or an appId, without " +
+                        "arguments (owner decision D15).", out error);
+        }
+
+        if (LengthError(spec, at) is { } tooLong)
+            return Fail(tooLong, out error);
 
         var processName = Trimmed(spec.ProcessName);
         var titleContains = Trimmed(spec.TitleContains);
@@ -175,7 +298,14 @@ public static class LayoutPresetSchema
             var appId = Trimmed(given.AppId);
             if ((executable == null) == (appId == null))
                 return Fail($"{at}.launch takes executable or appId, one of the two.", out error);
+            if ((executable ?? appId)!.Length > MaxLaunchLength)
+                return Fail($"{at}.launch is longer than {MaxLaunchLength} characters.", out error);
             launch = new LayoutLaunch(executable, appId);
+            if (LaunchTargetError(LaunchTarget(new WindowPlacement(new WindowMatcher(), 0, new RelativePosition(0, 0, 1, 1)) { Launch = launch })!)
+                is { } targetError)
+            {
+                return Fail($"{at}.launch: {targetError}", out error);
+            }
         }
 
         var workArea = monitorInfo?.WorkArea;
@@ -210,9 +340,75 @@ public static class LayoutPresetSchema
             Launch = launch
         };
 
-        placement = built with { LaunchCommand = LaunchTarget(built) };
+        built = built with { LaunchCommand = LaunchTarget(built) };
+        if (EchoError(echoes, built, spec.Monitor, index, at, out var echoedIndex) is { } echoError)
+            return Fail(echoError, out error);
+
+        placement = echoedIndex is { } kept ? built with { MonitorIndex = kept } : built;
         error = null;
         return true;
+    }
+
+    private const string OrderMember = "order";
+    private const string MonitorIndexMember = "monitorIndex";
+    private const string LaunchCommandMember = "launchCommand";
+
+    /// <summary>
+    /// Checks the get_layout fields save_layout does not set itself, which an unchanged get_layout output carries: order must be
+    /// the placement's place in the array, launchCommand what its launch starts, and monitorIndex comes only with monitor (as
+    /// get_layout shows them both), where it is kept as the index of last resort. Anything else would be ignored, so it fails.
+    /// </summary>
+    private static string? EchoError(Dictionary<string, JsonElement> echoes, WindowPlacement built, MonitorSelector? monitor, int index,
+        string at, out int? monitorIndex)
+    {
+        monitorIndex = null;
+        if (echoes.TryGetValue(OrderMember, out var order) &&
+            !(order.ValueKind == JsonValueKind.Number && order.TryGetInt32(out var given) && given == index))
+        {
+            return $"{at}.order is {order}, but a placement's order is its place in the array ({index}). Reorder the array, and " +
+                   "leave order out.";
+        }
+
+        if (echoes.TryGetValue(LaunchCommandMember, out var command) && command.ValueKind != JsonValueKind.Null &&
+            !(command.ValueKind == JsonValueKind.String && string.Equals(command.GetString(), built.LaunchCommand, StringComparison.Ordinal)))
+        {
+            return $"{at}.launchCommand is set from launch, as get_layout shows it; it would be ignored. Use launch (an executable " +
+                   "or an appId, without arguments), and leave launchCommand out.";
+        }
+
+        if (echoes.TryGetValue(MonitorIndexMember, out var echoed) && echoed.ValueKind != JsonValueKind.Null)
+        {
+            if (echoed.ValueKind != JsonValueKind.Number || !echoed.TryGetInt32(out var value) || value < 0)
+                return $"{at}.monitorIndex is {echoed}, not a monitor index.";
+
+            if (monitor == null)
+                return $"{at}.monitorIndex is deprecated and would be ignored: use monitor.";
+
+            if (monitor.Index is { } chosen && chosen != value)
+                return $"{at} has monitor {chosen} and monitorIndex {value}: leave monitorIndex out.";
+
+            monitorIndex = value;
+        }
+
+        return null;
+    }
+
+    /// <summary>Why a text of the placement is too long (review M6.8 #4), or its ordinal out of range; null when none is.</summary>
+    private static string? LengthError(LayoutPlacementSpec spec, string at)
+    {
+        foreach (var (name, value, max) in new (string, string?, int)[]
+                 {
+                     ("processName", spec.ProcessName, MaxTextLength), ("titleContains", spec.TitleContains, MaxTextLength),
+                     ("className", spec.ClassName, MaxTextLength), ("titlePattern", spec.TitlePattern, MaxTextLength),
+                     ("monitorName", spec.MonitorName, MaxTextLength), ("exePath", spec.ExePath, MaxExePathLength),
+                     ("monitor", spec.Monitor?.Name, MaxTextLength)
+                 })
+        {
+            if (value?.Length > max)
+                return $"{at}.{name} is longer than {max} characters.";
+        }
+
+        return spec.Ordinal is < 0 or > MaxOrdinal ? $"{at}.ordinal must be 0 to {MaxOrdinal}." : null;
     }
 
     /// <summary>
@@ -266,15 +462,38 @@ public static class LayoutPresetSchema
         return true;
     }
 
-    /// <summary>Why fractions of a work area are out of range: x and y from 0 to 1, width and height above 0 up to 1.</summary>
+    /// <summary>
+    /// Why fractions of a work area are out of range: x and y from 0 to 1, width and height above 0 up to 1, and the rectangle
+    /// inside the work area (x + width and y + height up to 1, with <see cref="EdgeSlack"/> for the invisible borders).
+    /// </summary>
     private static string? RangeError(RelativePosition position)
     {
         static bool In(double value, bool aboveZero) => !double.IsNaN(value) && value <= 1 && (aboveZero ? value > 0 : value >= 0);
 
-        return In(position.X, false) && In(position.Y, false) && In(position.Width, true) && In(position.Height, true)
-            ? null
-            : string.Create(CultureInfo.InvariantCulture,
+        if (!(In(position.X, false) && In(position.Y, false) && In(position.Width, true) && In(position.Height, true)))
+        {
+            return string.Create(CultureInfo.InvariantCulture,
                 $"x {position.X}, y {position.Y}, width {position.Width}, height {position.Height} are fractions of the work area: x and y from 0 to 1, width and height above 0 up to 1.");
+        }
+
+        return position.X + position.Width > 1 + EdgeSlack || position.Y + position.Height > 1 + EdgeSlack
+            ? string.Create(CultureInfo.InvariantCulture,
+                $"x {position.X} + width {position.Width} and y {position.Y} + height {position.Height} must be at most 1: the rectangle reaches past the work area.")
+            : null;
+    }
+
+    /// <summary>
+    /// The rectangle moved back inside the work area when it reaches past its right or bottom edge by more than
+    /// <see cref="EdgeSlack"/> (a window the user dragged partly off the screen), keeping its size; save_layout's capture
+    /// records it so, and so the preset goes back into save_layout. Within the slack (a snapped window's invisible borders) it
+    /// is kept as it is.
+    /// </summary>
+    public static RelativePosition InsideWorkArea(RelativePosition position)
+    {
+        ArgumentNullException.ThrowIfNull(position);
+        var x = position.X + position.Width > 1 + EdgeSlack ? Math.Max(0, 1 - position.Width) : position.X;
+        var y = position.Y + position.Height > 1 + EdgeSlack ? Math.Max(0, 1 - position.Height) : position.Y;
+        return position with { X = x, Y = y };
     }
 
     private static RelativePosition FractionsOf(MonitorRect rect, MonitorRect workArea) => new(

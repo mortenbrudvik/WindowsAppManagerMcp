@@ -308,7 +308,11 @@ public sealed class LaunchPlacementService : ILaunchPlacementService
                     "do not launch it again."), LaunchPlacementStep.Place);
             }
 
-            plan = plan with { MonitorIndex = monitor.Index };
+            plan = plan with
+            {
+                MonitorIndex = plan.MonitorIndex == null ? null : monitor.Index,
+                Bounds = plan.RelativeBounds is { } relative ? LayoutPlanner.TargetOf(relative, monitor.WorkArea) : plan.Bounds
+            };
         }
 
         var placed = Guarded(handle, () => plan switch
@@ -324,6 +328,13 @@ public sealed class LaunchPlacementService : ILaunchPlacementService
         });
         if (!placed.Success)
             return (placed, LaunchPlacementStep.Place);
+
+        // A layout's maximized placement is given its restore rectangle first, then maximized (roadmap M6.8)
+        if (plan.State == LaunchWindowState.Maximized && plan.Bounds != null)
+        {
+            var maximized = Guarded(handle, () => _windows.SetWindowState(handle, WindowStateRequest.Maximize));
+            return (maximized, maximized.Success ? LaunchPlacementStep.None : LaunchPlacementStep.Place);
+        }
 
         if (plan.State != LaunchWindowState.Minimized)
             return (placed, LaunchPlacementStep.None);

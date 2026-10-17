@@ -1066,4 +1066,120 @@ public sealed class UserConfirmationContractTests : IDisposable
     }
 
     #endregion
+
+    #region apply_layout review M6.8: what the question can show, a new version meanwhile, and the pause
+
+    private static LayoutPreset AgentLayoutStarting(params string[] executables) => AgentLayout with
+    {
+        Placements = executables.Select((e, i) =>
+            new WindowPlacement(new WindowMatcher(ProcessName: $"app{i}"), 0, new RelativePosition(0, 0, 0.5, 1), Order: i)
+            {
+                Launch = new LayoutLaunch(Executable: e)
+            }).ToList()
+    };
+
+    [Fact]
+    public async Task ApplyLayout_OfALayoutThatStartsMoreThanTheQuestionShows_AsksNothing_AndStartsNothingOfIt()
+    {
+        var applies = AgentLayoutNeedsTheUser();
+        var many = AgentLayoutStarting(Enumerable.Range(0, 9).Select(i => $@"C:\Tools\app{i}.exe").ToArray());
+        _services.Layouts.Setup(l => l.GetPreset("agent-desk")).Returns(many);
+        _services.Layouts.Setup(l => l.AreLaunchesConfirmed(many)).Returns(false);
+        await using var server = await StartAsync(null, _ => Answer("accept", confirm: true));
+
+        await server.CallToolAsync("apply_layout", ApplyAgentLayoutArguments());
+
+        _questions.Should().BeEmpty("the user would confirm programs they were not shown");
+        _services.Layouts.Verify(l => l.ConfirmLaunches(It.IsAny<LayoutPreset>()), Times.Never);
+        applies.Last().Options!.LaunchRefusal.Should().Contain("9").And.Contain("8");
+    }
+
+    [Fact]
+    public async Task ApplyLayout_ShowsEachProgramAtMostALineLong()
+    {
+        // One long name must not push the others out of the question
+        AgentLayoutNeedsTheUser();
+        var preset = AgentLayoutStarting(@"C:\Tools\" + new string('n', 240) + ".exe", @"C:\Windows\System32\notepad.exe");
+        _services.Layouts.Setup(l => l.GetPreset("agent-desk")).Returns(preset);
+        _services.Layouts.Setup(l => l.AreLaunchesConfirmed(preset)).Returns(false);
+        await using var server = await StartAsync(null, _ => Answer("decline"));
+
+        await server.CallToolAsync("apply_layout", ApplyAgentLayoutArguments());
+
+        var question = _questions.Should().ContainSingle().Subject;
+        question.Should().Contain("…").And.Contain(@"'C:\Windows\System32\notepad.exe'");
+        question.Length.Should().BeLessThan(700);
+    }
+
+    [Fact]
+    public async Task ApplyLayout_OfALayoutSavedAgainWhileTheUserAnswered_StartsNothing()
+    {
+        // Review M6.8: a real layout service; the agent saves a new version while the question is open, so the yes was for
+        // another version, and nothing of the new one starts
+        var folder = Path.Combine(Path.GetTempPath(), $"UserConfirmationContractTests_{Guid.NewGuid():N}");
+        try
+        {
+            _services.Windows.Setup(w => w.GetAllWindows(It.IsAny<bool>())).Returns([]);
+            var layouts = new LayoutService(_services.Windows.Object, _services.Monitors.Object, _services.Processes.Object,
+                _services.Foreground.Object, folder, _services.Placement.Object);
+            var version = AgentLayoutStarting(@"C:\Windows\System32\notepad.exe");
+            (await layouts.SavePresetAsync(version)).Success.Should().BeTrue();
+            _flow = InputGate.TagFlow();
+            var options = new McpClientOptions
+            {
+                Handlers = new McpClientHandlers
+                {
+                    ElicitationHandler = async (request, token) =>
+                    {
+                        _questions.Add(request!.Message);
+                        await layouts.SavePresetAsync(version with { UpdatedAt = version.UpdatedAt.AddMinutes(1) }, token);
+                        return Answer("accept", confirm: true);
+                    }
+                }
+            };
+            await using var server = await InProcessMcpServer.StartAsync(
+                [],
+                builder => builder.AddWindowsAppManagerTools(),
+                clientOptions: options,
+                configureServices: services =>
+                {
+                    _services.Register(services);
+                    Microsoft.Extensions.DependencyInjection.ServiceCollectionServiceExtensions.AddSingleton<ILayoutService>(services, layouts);
+                });
+
+            var result = await server.CallToolAsync("apply_layout", ApplyAgentLayoutArguments());
+
+            _questions.Should().ContainSingle();
+            Payload(result).GetProperty("placements")[0].GetProperty("errorCode").GetString()
+                .Should().Be(nameof(LayoutErrorCode.LaunchNotConfirmed));
+            _services.Processes.Verify(p => p.LaunchApplicationAsync(It.IsAny<LaunchRequest>(), It.IsAny<bool>(), It.IsAny<int>(),
+                It.IsAny<CancellationToken>()), Times.Never);
+        }
+        finally
+        {
+            if (Directory.Exists(folder))
+                Directory.Delete(folder, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task ApplyLayout_WhilePaused_DryRunsWithoutTheGate_AndOtherwiseIsPausedByUser_BeforeAnyQuestion()
+    {
+        var applies = AgentLayoutNeedsTheUser();
+        _services.Session.Pause(InputControlSources.Hotkey);
+        await using var server = await StartAsync(null, _ => Answer("accept", confirm: true));
+
+        var dryRun = await server.CallToolAsync("apply_layout",
+            new Dictionary<string, object?> { ["name"] = "agent-desk", ["launchMissing"] = true, ["dryRun"] = true });
+        var apply = await server.CallToolAsync("apply_layout", ApplyAgentLayoutArguments());
+
+        Payload(dryRun).GetProperty("status").GetString().Should().Be("dryRun", "a dry run runs while input is paused");
+        applies.Should().ContainSingle().Which.Should().Be((applies[0].Options, false), "the dry run took no gate");
+        applies[0].Options!.DryRun.Should().BeTrue();
+        apply.IsError.Should().BeTrue();
+        Payload(apply).GetProperty("errorCode").GetString().Should().Be("PausedByUser");
+        _questions.Should().BeEmpty("nothing is asked while input is paused");
+    }
+
+    #endregion
 }

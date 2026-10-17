@@ -145,14 +145,18 @@ public class LayoutPresetTools
 
         // An agent wrote this layout: the user confirms its launches before the input gate is taken (owner decision D15), so a
         // user who takes minutes to answer holds up no input or window call. Only when this apply would start something
-        if (launchMissing && _layoutService.GetPreset(name) is { } preset &&
-            string.Equals(preset.AuthoredBy, LayoutPresetSchema.AgentAuthor, StringComparison.OrdinalIgnoreCase) &&
+        if (launchMissing && _layoutService.GetPreset(name) is { } preset && LayoutPresetSchema.IsAgentAuthored(preset) &&
             !_layoutService.AreLaunchesConfirmed(preset))
         {
             var preview = await _layoutService.ApplyPresetAsync(name, matchBy, launchMissing, options with { DryRun = true }, null, cancellationToken);
             if (preview.Placements?.Any(p => p.ErrorCode == nameof(LayoutErrorCode.LaunchNotConfirmed)) == true)
             {
-                if (!UserConfirmation.CanAsk(server))
+                // The user confirms only what the question shows them whole (review M6.8 #1)
+                if (LayoutPresetSchema.ConfirmationRefusal(preset) is { } cannotShow)
+                {
+                    options = options with { LaunchRefusal = cannotShow };
+                }
+                else if (!UserConfirmation.CanAsk(server))
                 {
                     options = options with { LaunchRefusal = "the client cannot ask the user (no elicitation)" };
                 }
@@ -190,30 +194,31 @@ public class LayoutPresetTools
         Placements: result.Placements
     );
 
-    /// <summary>The most programs the launch question names; the rest are counted.</summary>
-    private const int MaxQuestionPrograms = 8;
+    /// <summary>
+    /// The longest one program or app is shown in the launch question (review M6.8 #1), so no entry pushes the others out of
+    /// view: a path's folder is shortened in the middle first (<see cref="UserConfirmation.QuotePath"/>), then any entry is cut.
+    /// </summary>
+    internal const int MaxShownTargetLength = UserConfirmation.MaxQuotedPathLength + 2;
 
     /// <summary>
     /// The question apply_layout asks before an agent-written layout starts programs (owner decision D15): the layout's name and
-    /// when it was saved, and what it may start (each program's path as <see cref="UserConfirmation.QuotePath"/> shows it, an
-    /// app's ID quoted), at most <see cref="MaxQuestionPrograms"/> of them. Layout launches carry no arguments.
+    /// when it was saved, and every program and app it may start (at most <see cref="LayoutPresetSchema.MaxLaunchTargets"/>,
+    /// which the caller checks), each at most <see cref="MaxShownTargetLength"/> characters. Layout launches carry no arguments.
     /// </summary>
     internal static string LaunchQuestion(LayoutPreset preset)
     {
-        var targets = preset.Placements
-            .Select(LayoutPresetSchema.LaunchTarget)
-            .OfType<string>()
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToList();
-        var shown = targets.Take(MaxQuestionPrograms)
+        var shown = LayoutPresetSchema.LaunchTargets(preset)
             .Select(t => t.StartsWith(PackagedAppId.AppsFolderPrefix, StringComparison.OrdinalIgnoreCase)
-                ? $"the app {UserConfirmation.Quote(t[PackagedAppId.AppsFolderPrefix.Length..])}"
-                : UserConfirmation.QuotePath(t));
-        var more = targets.Count > MaxQuestionPrograms ? $" and {targets.Count - MaxQuestionPrograms} more" : string.Empty;
+                ? "the app " + UserConfirmation.Quote(t[PackagedAppId.AppsFolderPrefix.Length..], MaxShownTargetLength - 2)
+                : Capped(UserConfirmation.QuotePath(t)));
         return $"An AI agent wrote the window layout {UserConfirmation.Quote(preset.Name)} (saved " +
                $"{preset.UpdatedAt.ToUniversalTime():yyyy-MM-dd HH:mm} UTC), and applying it starts programs for its missing windows: " +
-               $"{string.Join(", ", shown)}{more}, with no arguments. Allow this version of the layout to start them, now and " +
+               $"{string.Join(", ", shown)}, with no arguments. Allow this version of the layout to start them, now and " +
                "when it is applied again?";
+
+        // QuotePath keeps a file name whole; a name longer than the line is cut too
+        static string Capped(string quoted) =>
+            quoted.Length <= MaxShownTargetLength ? quoted : UserConfirmation.Quote(quoted[1..^1], MaxShownTargetLength - 2);
     }
 
     [McpServerTool(Name = "delete_layout", Title = "Delete Layout", ReadOnly = false, Destructive = true, Idempotent = true, OpenWorld = false)]
