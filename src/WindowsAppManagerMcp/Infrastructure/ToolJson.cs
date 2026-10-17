@@ -1,7 +1,9 @@
+using System.ComponentModel;
 using System.Reflection;
 using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.Json.Serialization.Metadata;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 using ModelContextProtocol;
@@ -230,6 +232,33 @@ public static class ToolJson
             keys["items"] = new JsonObject { ["type"] = "string" };
             return keys;
         }
+
+        // A `monitor` argument (roadmap M6.7): an index or a name, which its converter reads. A custom converter leaves the
+        // exporter no type to mark nullable: an optional parameter has its null default
+        if (type == typeof(MonitorSelector))
+        {
+            var monitor = schema as JsonObject ?? [];
+            var optional = AllowsNull(monitor["type"]) || monitor.TryGetPropertyValue("default", out var fallback) && fallback is null;
+            return MonitorSchema(monitor, optional);
+        }
+
+        // An object with a `monitor` property (snap_windows_batch's items, the launch placement): the exporter neither calls
+        // this for a property whose type has a custom converter nor adds its description, so the object describes it
+        if (context.TypeInfo.Kind == JsonTypeInfoKind.Object && schema is JsonObject { } described &&
+            described["properties"] is JsonObject properties)
+        {
+            foreach (var property in context.TypeInfo.Properties.Where(p => p.PropertyType == typeof(MonitorSelector)))
+            {
+                var monitor = new JsonObject();
+                if (property.AttributeProvider?.GetCustomAttributes(typeof(DescriptionAttribute), inherit: true).FirstOrDefault()
+                    is DescriptionAttribute description)
+                {
+                    monitor["description"] = description.Description;
+                }
+
+                properties[property.Name] = MonitorSchema(monitor, optional: property.IsSetNullable);
+            }
+        }
         if (type.IsArray && type.GetElementType() is { } element && ToolEnumInfo.IsToolEnum(element) && schema is JsonObject array)
         {
             array["items"] = new JsonObject
@@ -262,6 +291,15 @@ public static class ToolJson
 
         node["enum"] = values;
         return node;
+    }
+
+    /// <summary>A `monitor` schema: an integer or a string (and null when optional), keeping its description and default.</summary>
+    private static JsonObject MonitorSchema(JsonObject monitor, bool optional)
+    {
+        monitor.Remove("properties");
+        monitor.Remove("required");
+        monitor["type"] = optional ? new JsonArray("integer", "string", "null") : new JsonArray("integer", "string");
+        return monitor;
     }
 
     private static bool AllowsNull(JsonNode? type) =>

@@ -86,6 +86,7 @@ public class ScreenshotTools
     private readonly IInputSession? _session;
     private readonly IElementRegistry? _elementRegistry;
     private readonly ICaptureTargetPolicy _capturePolicy;
+    private readonly IMonitorService? _monitorService;
 
     /// <param name="screenshotService">The captures.</param>
     /// <param name="uiElementService">The UI Automation walk of capture_with_elements.</param>
@@ -102,6 +103,9 @@ public class ScreenshotTools
     /// The target policy's check of a captured window, shared with the raw pixel reads (roadmap M6); default a
     /// <see cref="CaptureTargetPolicy"/> over <paramref name="windowService"/> and <paramref name="targetPolicy"/>.
     /// </param>
+    /// <param name="monitorService">
+    /// Resolves take_screenshot's `monitor` name (roadmap M6.7). The server always passes it; without it a monitor name fails.
+    /// </param>
     public ScreenshotTools(
         IScreenshotService screenshotService,
         IUIElementService uiElementService,
@@ -109,7 +113,8 @@ public class ScreenshotTools
         ITargetPolicy targetPolicy,
         IInputSession? session = null,
         IElementRegistry? elementRegistry = null,
-        ICaptureTargetPolicy? capturePolicy = null)
+        ICaptureTargetPolicy? capturePolicy = null,
+        IMonitorService? monitorService = null)
     {
         _screenshotService = screenshotService;
         _uiElementService = uiElementService;
@@ -118,6 +123,7 @@ public class ScreenshotTools
         _session = session;
         _elementRegistry = elementRegistry;
         _capturePolicy = capturePolicy ?? new CaptureTargetPolicy(windowService, targetPolicy);
+        _monitorService = monitorService;
     }
 
     [McpServerTool(Name = "list_screens", Title = "List Screens", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
@@ -128,11 +134,12 @@ public class ScreenshotTools
     }
 
     [McpServerTool(Name = "take_screenshot", Title = "Capture Monitor", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = false)]
-    [Description("Capture a specific monitor, or with monitorIndex -1 every monitor in one image (the virtual screen, at most 64 megapixels). " +
-                 ImageResultDescription + ImageToScreenDescription + " Use get_monitors to get available monitor indices.")]
+    [Description("Capture a monitor (default: the primary), or with monitor 'all' every monitor in one image (the virtual screen, at " +
+                 "most 64 megapixels; areas between monitors of different sizes are black). " +
+                 ImageResultDescription + ImageToScreenDescription + " A monitor name that names none is MonitorNotFound.")]
     [ToolResultPayload(typeof(ScreenshotResult))]
     public CallToolResult TakeScreenshot(
-        [Description("Monitor index to capture (0-based), or -1 for the whole virtual screen (all monitors; areas between monitors of different sizes are black). Use get_monitors to see available monitors. Defaults to primary monitor.")]
+        [Description(MonitorSelectorDescriptions.DeprecatedIndex)]
         int? monitorIndex = null,
         [Description(FormatDescription)]
         CaptureFormat format = CaptureFormat.Auto,
@@ -149,10 +156,13 @@ public class ScreenshotTools
         [Description(SaveToFileDescription)]
         bool saveToFile = false,
         [Description(MaxWidthDescription)]
-        int? maxWidth = null)
+        int? maxWidth = null,
+        [Description(MonitorSelectorDescriptions.MonitorOrAll)]
+        MonitorSelector? monitor = null)
     {
         var options = Options(format, quality, maxDimension, output, outputPath, overwrite, saveToFile, maxWidth);
-        var index = monitorIndex ?? _screenshotService.ListScreens().PrimaryIndex;
+        var index = MonitorTargeting.Index(_monitorService, monitorIndex, monitor, allowAll: true, "Nothing was captured.") ??
+                    _screenshotService.ListScreens().PrimaryIndex;
         return ToolImages.ToCallToolResult(_screenshotService.CaptureMonitor(index, options));
     }
 

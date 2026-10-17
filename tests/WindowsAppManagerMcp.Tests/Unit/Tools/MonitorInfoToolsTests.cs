@@ -88,6 +88,26 @@ public class MonitorInfoToolsTests
     }
 
     [Fact]
+    public void GetMonitors_ReportsEachMonitorsIdentity_DpiAndPlaceFromThePrimary()
+    {
+        // Arrange (roadmap M6.7): the primary at 150 %, an identified monitor left of it, and one below it with no identity
+        _mockMonitorService.Setup(m => m.GetAllMonitors()).Returns(new List<MonitorInfo>
+        {
+            TestDataFactory.CreateMonitorInfo(0, scaleFactor: 1.5) with { Id = "m-3f9a12c4", FriendlyName = "DELL U2720Q", IsInternal = false },
+            TestDataFactory.CreateMonitorInfo(1, @"\\.\DISPLAY2", false, -1920, 0) with { Id = "m-81c07e5b", FriendlyName = "Built-in", IsInternal = true },
+            TestDataFactory.CreateMonitorInfo(2, @"\\.\DISPLAY3", false, 0, 1080)
+        });
+
+        // Act
+        var monitors = CreateSut().GetMonitors().Monitors;
+
+        // Assert
+        monitors[0].Should().BeEquivalentTo(new { Id = "m-3f9a12c4", FriendlyName = "DELL U2720Q", Dpi = 144, IsInternal = (bool?)null, Relation = (string?)null });
+        monitors[1].Should().BeEquivalentTo(new { Id = "m-81c07e5b", FriendlyName = "Built-in", Dpi = 96, IsInternal = (bool?)true, Relation = "left" });
+        monitors[2].Should().BeEquivalentTo(new { Id = (string?)null, FriendlyName = (string?)null, Dpi = 96, IsInternal = (bool?)null, Relation = "below" });
+    }
+
+    [Fact]
     public void GetMonitors_HandlesSingleMonitor()
     {
         // Arrange

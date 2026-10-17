@@ -16,21 +16,31 @@ internal sealed record LaunchToPlace(bool Success, nint? Window, LaunchStatus? S
 internal static class LaunchPlacing
 {
     /// <summary>
-    /// Checks a placement (<see cref="LaunchPlacementPlan.TryCreate"/>), and its monitorIndex against the monitors there are
-    /// when <paramref name="monitorCount"/> is known.
+    /// Checks a placement: its monitor resolved to an index (roadmap M6.7: MonitorNotFound, AmbiguousMonitor, and
+    /// InvalidArguments with monitorIndex), the placement itself (<see cref="LaunchPlacementPlan.TryCreate"/>), and the index
+    /// against the monitors there are when <paramref name="monitors"/> is known.
     /// </summary>
-    public static bool TryPlan(LaunchPlacement placement, int? monitorCount, out LaunchPlacementPlan? plan, out string? errorCode, out string? error)
+    public static bool TryPlan(LaunchPlacement placement, IMonitorService? monitors, out LaunchPlacementPlan? plan, out string? errorCode,
+        out string? error)
     {
-        if (!LaunchPlacementPlan.TryCreate(placement, out plan, out errorCode, out error))
+        plan = null;
+        if (!MonitorTargeting.TryIndex(monitors, placement.MonitorIndex, placement.Monitor, allowAll: false, "placement.", out var monitorIndex,
+                out errorCode, out error))
+        {
+            error = MonitorTargeting.WithoutNothingDone(error!);
+            return false;
+        }
+
+        if (!LaunchPlacementPlan.TryCreate(placement with { MonitorIndex = monitorIndex }, out plan, out errorCode, out error))
         {
             return false;
         }
 
-        if (plan!.MonitorIndex is { } index && monitorCount is { } count && index >= count)
+        if (plan!.MonitorIndex is { } index && monitors?.GetAllMonitors().Count is { } count && index >= count)
         {
             plan = null;
             errorCode = nameof(WindowErrorCode.InvalidMonitorIndex);
-            error = $"placement.monitorIndex: {WindowService.MonitorIndexMessage(index, count)}";
+            error = $"placement monitor: {WindowService.MonitorIndexMessage(index, count)}";
             return false;
         }
 

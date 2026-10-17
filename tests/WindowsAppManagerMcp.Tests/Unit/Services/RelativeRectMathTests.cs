@@ -372,6 +372,58 @@ public class RelativeRectMathTests
 
     #endregion
 
+    #region A position or a size alone (set_window_bounds with one pair, roadmap M6.7)
+
+    [Fact]
+    public void PointFromPercent_IsTheCornerFromPercentWouldGive()
+    {
+        var area = new MonitorRect(-2560, 100, 2560, 1400);
+
+        RelativeRectMath.PointFromPercent(area, 100 / 3.0, 50).Should().Be((-2560 + 853, 800));
+        RelativeRectMath.PointFromPercent(area, 0, 0).Should().Be((-2560, 100));
+        RelativeRectMath.PointFromPercent(area, 100, 100).Should().Be((0, 1500), "100 % is the area's far edge, where a window may start");
+    }
+
+    [Fact]
+    public void SizeFromPercent_IsTheSizeFromPercentWouldGiveFromTheAreasCorner()
+    {
+        var area = new MonitorRect(1920, 0, 2560, 1400);
+
+        RelativeRectMath.SizeFromPercent(area, 100 / 3.0, 100).Should().Be((853, 1400));
+        RelativeRectMath.SizeFromPercent(area, 25, 50).Should().Be((640, 700));
+    }
+
+    [Theory]
+    [InlineData(-0.5, 0, "x must be from 0 to 100")]
+    [InlineData(0, 100.5, "y must be from 0 to 100")]
+    [InlineData(double.NaN, 0, "x must be a number")]
+    public void PointFromPercent_OutOfRange_IsRefusedWithCheckPercentPositionsMessage(double x, double y, string message)
+    {
+        RelativeRectMath.CheckPercentPosition(x, y).Should().StartWith(message);
+        var act = () => RelativeRectMath.PointFromPercent(new MonitorRect(0, 0, 1920, 1080), x, y);
+        act.Should().Throw<ArgumentOutOfRangeException>().WithMessage(message + "*");
+    }
+
+    [Theory]
+    [InlineData(0, 50, "width must be above 0")]
+    [InlineData(50, 100.5, "height must be above 0 and at most 100")]
+    public void SizeFromPercent_OutOfRange_IsRefusedWithCheckPercentSizesMessage(double width, double height, string message)
+    {
+        RelativeRectMath.CheckPercentSize(width, height).Should().StartWith(message);
+        var act = () => RelativeRectMath.SizeFromPercent(new MonitorRect(0, 0, 1920, 1080), width, height);
+        act.Should().Throw<ArgumentOutOfRangeException>().WithMessage(message + "*");
+    }
+
+    [Fact]
+    public void SizeFromPercent_UnderOnePixel_IsRefused()
+    {
+        var act = () => RelativeRectMath.SizeFromPercent(new MonitorRect(0, 0, 1920, 1080), 0.01, 50);
+
+        act.Should().Throw<ArgumentOutOfRangeException>().WithMessage("The width is less than one pixel on this area*");
+    }
+
+    #endregion
+
     /// <summary>The rectangle, or null when it is refused for being less than one pixel wide or high.</summary>
     private static MonitorRect? UnlessUnderOnePixel(Func<MonitorRect> rect)
     {

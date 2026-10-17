@@ -12,12 +12,12 @@ public enum LaunchWindowState
     [ToolValueAlias("restore", Listed = false)]
     Normal,
 
-    /// <summary>Maximized on its monitor (or on monitorIndex). Windows has no maximize that does not activate.</summary>
+    /// <summary>Maximized on its monitor (or on monitor). Windows has no maximize that does not activate.</summary>
     [JsonStringEnumMemberName("maximized")]
     [ToolValueAlias("maximize", Listed = false)]
     Maximized,
 
-    /// <summary>Placed first (with snap, bounds or monitorIndex), then minimized.</summary>
+    /// <summary>Placed first (with snap, bounds or monitor), then minimized.</summary>
     [JsonStringEnumMemberName("minimized")]
     [ToolValueAlias("minimize", Listed = false)]
     Minimized
@@ -26,13 +26,14 @@ public enum LaunchWindowState
 /// <summary>
 /// Where launch_application and a launch_applications_batch item put the launch's window once it is found (roadmap
 /// M3.13): snapped or at bounds (not both), on a monitor, in a state, and in front. The strings are checked by the tool
-/// (<see cref="LaunchPlacementPlan.TryCreate"/>), so a bad batch item fails alone.
+/// (<see cref="LaunchPlacementPlan.TryCreate"/>), so a bad batch item fails alone. Monitor (roadmap M6.7) is resolved to
+/// MonitorIndex before the check (LaunchPlacing); MonitorIndex is deprecated until 3.0.0.
 /// </summary>
 public sealed record LaunchPlacement(
     [property: ToolValues(typeof(SnapPosition))]
     [property: Description("Snap position, as snap_window takes it; not together with bounds")]
     string? Snap = null,
-    [property: Description("Monitor (0-based, see get_monitors): where snap places the window; without snap and bounds the window is centred on it (with state 'maximized', maximized there). Not together with bounds")]
+    [property: Description(MonitorSelectorDescriptions.DeprecatedIndex)]
     int? MonitorIndex = null,
     [property: Description("The visible frame to place the window at: x, y, width and height in physical virtual-screen pixels, as set_window_bounds takes them; not together with snap")]
     BoundsDto? Bounds = null,
@@ -40,7 +41,9 @@ public sealed record LaunchPlacement(
     [property: Description("normal, maximized (not with snap or bounds; activates the window) or minimized (after it is placed; not with focus)")]
     string? State = null,
     [property: Description("Bring the window to the front afterwards, as focus_window does (default false)")]
-    bool? Focus = null);
+    bool? Focus = null,
+    [property: Description(MonitorSelectorDescriptions.Monitor + " Snapped, else centred or maximized, there; not with bounds")]
+    MonitorSelector? Monitor = null);
 
 /// <summary>A <see cref="LaunchPlacement"/> that was checked: the parsed values, consistent with each other.</summary>
 public sealed record LaunchPlacementPlan(
@@ -99,10 +102,10 @@ public sealed record LaunchPlacementPlan(
             return Fail(invalid, "placement takes snap or bounds, not both.", out errorCode, out error);
         }
 
-        if (placement.Bounds != null && placement.MonitorIndex != null)
+        if (placement.Bounds != null && (placement.MonitorIndex != null || placement.Monitor != null))
         {
             return Fail(invalid, "placement.bounds are virtual-screen coordinates, which already name the monitor: leave out " +
-                                 "monitorIndex, or use snap with monitorIndex.", out errorCode, out error);
+                                 "monitor (and monitorIndex), or use snap with monitor.", out errorCode, out error);
         }
 
         if (placement.Bounds is { } bounds && (bounds.Width < 1 || bounds.Height < 1))
@@ -114,12 +117,12 @@ public sealed record LaunchPlacementPlan(
         if (placement.MonitorIndex is < 0)
         {
             return Fail(nameof(WindowErrorCode.InvalidMonitorIndex),
-                $"placement.monitorIndex {placement.MonitorIndex} is not a monitor: indexes start at 0 (see get_monitors).", out errorCode, out error);
+                $"placement monitor {placement.MonitorIndex} is not a monitor: indexes start at 0 (see get_monitors).", out errorCode, out error);
         }
 
         if (state == LaunchWindowState.Maximized && (snap != null || placement.Bounds != null))
         {
-            return Fail(invalid, "placement.state 'maximized' fills the monitor, so it takes no snap or bounds (use monitorIndex to pick the monitor).",
+            return Fail(invalid, "placement.state 'maximized' fills the monitor, so it takes no snap or bounds (use monitor to pick the monitor).",
                 out errorCode, out error);
         }
 
@@ -135,7 +138,7 @@ public sealed record LaunchPlacementPlan(
             state, focus);
         if (!candidate.ChangesGeometry && !candidate.Focus)
         {
-            return Fail(invalid, "placement asks for nothing: give snap, bounds, monitorIndex, state or focus: true, or leave placement out.",
+            return Fail(invalid, "placement asks for nothing: give snap, bounds, monitor, state or focus: true, or leave placement out.",
                 out errorCode, out error);
         }
 

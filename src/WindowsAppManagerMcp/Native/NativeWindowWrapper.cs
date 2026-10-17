@@ -73,6 +73,14 @@ public class NativeWindowWrapper : INativeWindowWrapper
             : Win32CallResult.Failure(Marshal.GetLastPInvokeError());
     }
 
+    public Win32CallResult SetWindowZOrder(nint hWnd, nint insertAfter, uint flags)
+    {
+        // The error must be read here, right after the call: nothing else may run in between
+        return NativeMethods.User32.SetWindowPos(hWnd, insertAfter, 0, 0, 0, 0, flags | NativeEnums.SWP_NOMOVE | NativeEnums.SWP_NOSIZE)
+            ? Win32CallResult.Ok
+            : Win32CallResult.Failure(Marshal.GetLastPInvokeError());
+    }
+
     public bool ShowWindow(nint hWnd, int cmdShow)
     {
         return NativeMethods.User32.ShowWindow(hWnd, cmdShow);

@@ -65,6 +65,15 @@ public interface INativeWindowWrapper
     Win32CallResult SetWindowPos(nint hWnd, int x, int y, int width, int height, uint flags);
 
     /// <summary>
+    /// Changes only the window's place in the z-order (roadmap M6.7, set_window_zorder): SetWindowPos with
+    /// <paramref name="insertAfter"/> (HWND_TOP 0, HWND_BOTTOM 1, HWND_TOPMOST -1, HWND_NOTOPMOST -2, or the window to go
+    /// directly behind) and SWP_NOMOVE and SWP_NOSIZE added to <paramref name="flags"/>, so it never moves or resizes the
+    /// window. It is activated unless the flags have SWP_NOACTIVATE. A refused call carries the Win32 error read right
+    /// after it, as <see cref="SetWindowPos"/>'s does.
+    /// </summary>
+    Win32CallResult SetWindowZOrder(nint hWnd, nint insertAfter, uint flags);
+
+    /// <summary>
     /// Sets the show state of the specified window.
     /// </summary>
     bool ShowWindow(nint hWnd, int cmdShow);

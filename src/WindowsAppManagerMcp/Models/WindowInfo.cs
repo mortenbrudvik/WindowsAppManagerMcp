@@ -53,4 +53,10 @@ public record WindowInfo(
     /// unless it is named explicitly with allowHostTarget, and close_window refuses it without force.
     /// </summary>
     public bool IsAgentHost { get; init; }
+
+    /// <summary>
+    /// Whether the window is topmost (WS_EX_TOPMOST): it stays above every window that is not, also while another window is
+    /// active (roadmap M6.7; set_window_zorder changes it).
+    /// </summary>
+    public bool IsTopmost { get; init; }
 }
