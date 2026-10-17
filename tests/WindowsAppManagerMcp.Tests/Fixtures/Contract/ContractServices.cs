@@ -161,14 +161,21 @@ public sealed class ContractServices : IDisposable
 
     private IAuditLog? _audit;
 
-    /// <summary>Every line the audit log wrote, in order, from all its day files.</summary>
-    public IReadOnlyList<JsonElement> AuditLines() =>
-        !Directory.Exists(AuditFolder)
+    /// <summary>
+    /// Every line the audit log wrote, in order, from all its day files. A call waits for its line at most
+    /// <see cref="AuditLog.MaxCallDelay"/>, so on a slow machine the line can still be on its way when the call returns:
+    /// the lines handed to the writer are waited for first (at most 10 seconds).
+    /// </summary>
+    public IReadOnlyList<JsonElement> AuditLines()
+    {
+        (_audit as AuditLog)?.WaitForPendingLines(TimeSpan.FromSeconds(10));
+        return !Directory.Exists(AuditFolder)
             ? []
             : Directory.GetFiles(AuditFolder, "*.jsonl").Order(StringComparer.Ordinal)
                 .SelectMany(File.ReadAllLines)
                 .Select(line => JsonDocument.Parse(line).RootElement.Clone())
                 .ToList();
+    }
 
     /// <summary>Puts a file where <see cref="AuditFolder"/> should be, so no line can be written.</summary>
     public void BlockAuditFolder()
