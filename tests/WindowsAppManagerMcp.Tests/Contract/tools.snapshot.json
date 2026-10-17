@@ -1268,6 +1268,24 @@
               "null"
             ],
             "default": null
+          },
+          "includeCursor": {
+            "description": "Draw the mouse pointer into the image (default: false). The result always says where it is (cursor)",
+            "type": "boolean",
+            "default": false
+          },
+          "gridSpacing": {
+            "description": "Draw a grid every this many screen pixels (20-10000), labeled with screen coordinates, to read points off the image",
+            "type": [
+              "integer",
+              "null"
+            ],
+            "default": null
+          },
+          "zoom": {
+            "description": "Enlarge the image up to this many times (1-4, default 1) to read small text or controls; maxDimension still caps its long edge, and imageToScreen maps its points back",
+            "type": "number",
+            "default": 1
           }
         },
         "required": [
@@ -1468,6 +1486,19 @@
               "wgc",
               "screen"
             ]
+          },
+          "includeCursor": {
+            "description": "Draw the mouse pointer into the image (default: false). The result always says where it is (cursor)",
+            "type": "boolean",
+            "default": false
+          },
+          "gridSpacing": {
+            "description": "Draw a grid every this many screen pixels (20-10000), labeled with screen coordinates, to read points off the image",
+            "type": [
+              "integer",
+              "null"
+            ],
+            "default": null
           }
         }
       },
@@ -9040,6 +9071,19 @@
               "string",
               "null"
             ]
+          },
+          "includeCursor": {
+            "description": "Draw the mouse pointer into the image (default: false). The result always says where it is (cursor)",
+            "type": "boolean",
+            "default": false
+          },
+          "gridSpacing": {
+            "description": "Draw a grid every this many screen pixels (20-10000), labeled with screen coordinates, to read points off the image",
+            "type": [
+              "integer",
+              "null"
+            ],
+            "default": null
           }
         }
       },

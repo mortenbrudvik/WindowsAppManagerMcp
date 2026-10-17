@@ -152,6 +152,51 @@ public class ScreenCaptureWrapper : IScreenCaptureWrapper
         return (x, y, width, height);
     }
 
+    /// <summary>CURSORINFO.flags: the pointer is shown.</summary>
+    private const uint CursorShowing = 0x1;
+
+    /// <summary>DrawIconEx's DI_NORMAL: the shape with its mask.</summary>
+    private const uint DiNormal = 0x3;
+
+    /// <inheritdoc />
+    public PointerState? GetPointer()
+    {
+        var info = new CURSORINFO { cbSize = Marshal.SizeOf<CURSORINFO>() };
+        return NativeMethods.User32.GetCursorInfo(ref info)
+            ? new PointerState(info.ptScreenPos.X, info.ptScreenPos.Y, (info.flags & CursorShowing) != 0)
+            : null;
+    }
+
+    /// <inheritdoc />
+    public bool DrawPointer(nint hdc, int originX, int originY)
+    {
+        var info = new CURSORINFO { cbSize = Marshal.SizeOf<CURSORINFO>() };
+        if (!NativeMethods.User32.GetCursorInfo(ref info) || (info.flags & CursorShowing) == 0 || info.hCursor == nint.Zero ||
+            !NativeMethods.User32.GetIconInfo(info.hCursor, out var icon))
+        {
+            return false;
+        }
+
+        try
+        {
+            return NativeMethods.User32.DrawIconEx(hdc, info.ptScreenPos.X - icon.xHotspot - originX,
+                info.ptScreenPos.Y - icon.yHotspot - originY, info.hCursor, 0, 0, 0, nint.Zero, DiNormal);
+        }
+        finally
+        {
+            // GetIconInfo hands out copies of the shape's bitmaps
+            if (icon.hbmMask != nint.Zero)
+            {
+                NativeMethods.Gdi32.DeleteObject(icon.hbmMask);
+            }
+
+            if (icon.hbmColor != nint.Zero)
+            {
+                NativeMethods.Gdi32.DeleteObject(icon.hbmColor);
+            }
+        }
+    }
+
     public bool IsValidWindow(nint windowHandle)
     {
         return windowHandle != nint.Zero && NativeMethods.User32.IsWindow(windowHandle);

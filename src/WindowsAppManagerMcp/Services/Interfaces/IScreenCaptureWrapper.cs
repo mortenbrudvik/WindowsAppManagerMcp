@@ -217,6 +217,16 @@ public interface IScreenCaptureWrapper
     /// </summary>
     bool IsValidWindow(nint windowHandle);
 
+    /// <summary>The mouse pointer: its screen position and whether it is shown (roadmap M7.1); null when it cannot be read.</summary>
+    PointerState? GetPointer();
+
+    /// <summary>
+    /// Draws the pointer's current shape into <paramref name="hdc"/>, a device context of the server's own image whose
+    /// top-left pixel is screen point (<paramref name="originX"/>, <paramref name="originY"/>), at the pointer's place (its
+    /// hot spot on the pointer's position). False when the pointer is hidden or could not be drawn. Only draws into that image.
+    /// </summary>
+    bool DrawPointer(nint hdc, int originX, int originY);
+
     /// <summary>
     /// Reads <paramref name="source"/>'s pixels and lends them to <paramref name="read"/> without copying them (roadmap M6,
     /// for polling): the reader runs on the calling thread, once, while the pixels exist, and its result is returned.
@@ -230,3 +240,6 @@ public interface IScreenCaptureWrapper
     /// <param name="read">What to compute from the pixels; it must not keep the span.</param>
     T WithPixels<T>(PixelSource source, PixelReader<T> read);
 }
+
+/// <summary>The mouse pointer's screen position (physical virtual-screen pixels), and whether it is shown.</summary>
+public sealed record PointerState(int X, int Y, bool Visible);

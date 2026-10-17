@@ -155,6 +155,12 @@ public class NativeCallGuardTests
                                                "SetValue and Commit, so it can only read it",
         ["Apps.PropVariantClear"] = "frees a PROPVARIANT the server read into its own memory",
 
+        // The pointer in captures (ScreenCaptureWrapper, roadmap M7.1): where it is, and its shape drawn into the server's own
+        // image; nothing moves it or changes its shape
+        ["User32.GetCursorInfo"] = "reads the pointer's shape, visibility and position",
+        ["User32.GetIconInfo"] = "reads a pointer shape's hot spot and copies its bitmaps, which the server deletes",
+        ["User32.DrawIconEx"] = "draws a pointer shape into a device context of the server's own image",
+
         // Windows.Graphics.Capture (NativeGraphicsCaptureWrapper, roadmap M7.1): one frame of a window as the compositor shows
         // it, read through a Direct3D device of the server's own. The capture session only reads; the wrapper never changes
         // the window, and sets only its own session's flags (no pointer, no border)

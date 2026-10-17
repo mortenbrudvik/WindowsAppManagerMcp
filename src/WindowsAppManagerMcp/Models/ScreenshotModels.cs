@@ -49,8 +49,15 @@ public record ScreenshotResult(
     string? CaptureId = null,
     string? Ref = null,
     bool? RefMoved = null,
-    string? MarkPrefix = null
+    string? MarkPrefix = null,
+    CursorPosition? Cursor = null
 ) : ICaptureMetadata;
+
+/// <summary>
+/// Where the mouse pointer was when the capture was taken (roadmap M7.1), in physical virtual-screen pixels. Hidden is true
+/// when the pointer was hidden (a touch or pen session, a game); Drawn is true when includeCursor drew it into the image.
+/// </summary>
+public record CursorPosition(int X, int Y, bool? Hidden = null, bool? Drawn = null);
 
 /// <summary>
 /// The captured screen rectangle, in physical virtual-screen pixels, before any scaling.
@@ -269,6 +276,15 @@ public sealed record CaptureOptions
 
     /// <summary>How a window capture reads the window's pixels (roadmap M7.1); the other captures ignore it.</summary>
     public WindowCaptureMethod CaptureMethod { get; init; } = WindowCaptureMethod.Auto;
+
+    /// <summary>Draw the mouse pointer into the image (roadmap M7.1).</summary>
+    public bool IncludeCursor { get; init; }
+
+    /// <summary>Draw a grid every this many screen pixels, labeled with screen coordinates (roadmap M7.1); null for none.</summary>
+    public int? GridSpacing { get; init; }
+
+    /// <summary>Enlarge the image this many times (1-4) before the size limits apply (roadmap M7.1, capture_region).</summary>
+    public double Zoom { get; init; } = 1;
 }
 
 /// <summary>
@@ -280,6 +296,9 @@ public static class CaptureWarnings
 {
     /// <summary>Every sampled pixel has one color.</summary>
     public const string ImageBlank = "ImageBlank";
+
+    /// <summary>The grid's spacing was widened so its lines stay apart in the scaled image (roadmap M7.1).</summary>
+    public const string GridWidened = "GridWidened";
 
     /// <summary>The window did not answer, so its pixels were copied from the screen.</summary>
     public const string WindowNotResponding = "WindowNotResponding";
