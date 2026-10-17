@@ -32,7 +32,6 @@ public static class ToolDocCatalog
         new("Window Discovery",
         [
             new("find_windows", "Find windows by criteria", "titleContains", "titleEquals", "titleRegex", "processName", "processId", "className", "sort", "limit"),
-            new("get_all_windows", "Deprecated: use find_windows (toolset deprecated, removed in 3.0.0)", "includeMinimized"),
             new("get_foreground_window", "Get focused window"),
             new("get_owned_windows", "Dialogs and popups a window owns; which one blocks it", "handle", "includeHidden"),
             new("get_window_info", "One window, without listing all; full adds foreground, z-order, topmost, enabled, responding, DPI", "window (or handle)", "detail"),
@@ -45,8 +44,6 @@ public static class ToolDocCatalog
                    "none with `WindowNotFound`. `window.handle` with `processId` or a title refuses a reused handle (`HandleMismatch`)."),
         new("Window Control",
         [
-            new("move_window", "Deprecated: use set_window_bounds with x and y (toolset deprecated, removed in 3.0.0)", "window (or handle)", "x", "y"),
-            new("resize_window", "Deprecated: use set_window_bounds with width and height (toolset deprecated, removed in 3.0.0)", "window (or handle)", "width", "height"),
             new("set_window_bounds", "Move, resize, or both (x and y, width and height, or all four), in pixels or percent of a monitor", "window (or handle)", "x", "y", "width", "height", "unit", "monitor"),
             new("set_window_state", "Min/max/restore", "window (or handle)", "state"),
             new("focus_window", "Bring to foreground, verified; reports what is in front", "window (or handle)"),
@@ -66,11 +63,9 @@ public static class ToolDocCatalog
         new("Monitor Info",
         [
             new("get_monitors", "List all displays with id, name, DPI and place, and the virtual screen's bounds"),
-            new("get_primary_monitor", "Deprecated: use get_monitors, the monitor with isPrimary (toolset deprecated, removed in 3.0.0)"),
         ]),
         new("Screenshot",
         [
-            new("list_screens", "Deprecated: use get_monitors (toolset deprecated, removed in 3.0.0)"),
             new("take_screenshot", "Capture a monitor", "monitor", "maxDimension", "output"),
             new("capture_region", "Capture screen region", "x", "y", "width", "height", "maxDimension", "output"),
             new("capture_window", "Capture a window, or crop it to one element", "handle", "ref", "padding", "includeFrame", "maxDimension", "output"),
@@ -102,7 +97,6 @@ public static class ToolDocCatalog
         new("Browser Reading",
         [
             new("get_browser_url", "URL of a browser window (`window: {\"foreground\": true}` for the one in front)", "handle", "window", "cdpPort", "requireCdp"),
-            new("get_active_browser_url", "Deprecated: use get_browser_url with `window: {\"foreground\": true}` (toolset deprecated, removed in 3.0.0)", "cdpPort", "requireCdp"),
             new("get_browser_content", "Text of the page (or HTML through CDP), a page at a time", "handle", "maxLength", "offset", "textOnly", "cdpPort", "requireCdp"),
             new("launch_browser_with_debug", "Start Chrome, Edge or Brave with a DevTools port", "browser", "url", "port", "userDataDir", "profile", "reuseIfRunning"),
             new("close_debug_browser", "Close a debug browser this server started, and delete its temporary profile", "processId", "cdpPort", "deleteProfile", "confirm"),
@@ -134,9 +128,6 @@ public static class ToolDocCatalog
                    "`browserWsEndpoint` (or `cdpEndpoint`)."),
         new("Input Simulation",
         [
-            new("click", "Deprecated: use mouse_click (toolset deprecated, removed in 3.0.0)", "x", "y", "windowHandle", "captureId (x, y on its image)"),
-            new("right_click", "Deprecated: use mouse_click with button `secondary` (toolset deprecated, removed in 3.0.0)", "x", "y", "windowHandle", "captureId"),
-            new("double_click", "Deprecated: use mouse_click with clickCount 2 (toolset deprecated, removed in 3.0.0)", "x", "y", "delayMs", "windowHandle", "captureId"),
             new("mouse_click", "Any button, 1-3 clicks, with modifier keys held (ctrl+click, middle, triple, x1/x2)", "x", "y", "button", "clickCount", "modifiers", "windowHandle", "captureId"),
             new("drag", "Press, move and release: drag and drop, sliders, selections; nothing stays held", "fromX", "fromY", "toX", "toY", "button", "modifiers", "windowHandle", "toWindowHandle"),
             new("mouse_move", "Move cursor (no click)", "x", "y", "windowHandle", "captureId"),
@@ -145,9 +136,7 @@ public static class ToolDocCatalog
             new("send_keys", "Send keys to the named window", "keys (e.g., `^c`, `{ENTER}`)", "windowHandle"),
             new("press_keys", "Press key chords by name (ctrl+shift+t) or sequences (tab*3 enter); nothing stays held", "keys", "repeat", "holdMs", "delayBetweenMs", "windowHandle"),
         ],
-        SkillNote: "Click with mouse_click: click, right_click and double_click are deprecated, served only with " +
-                   "`WAM_TOOLSETS=+deprecated` until 3.0.0 removes them. " +
-                   "All ten also take `allowHostTarget` (default false): only for input to your own host window, named as " +
+        SkillNote: "All seven also take `allowHostTarget` (default false): only for input to your own host window, named as " +
                    "`windowHandle`, when the user asked for it; and `releaseHeldModifiers` (default false): only for a stuck " +
                    "modifier key (see `ModifiersHeld`)."),
         new("Input Control",

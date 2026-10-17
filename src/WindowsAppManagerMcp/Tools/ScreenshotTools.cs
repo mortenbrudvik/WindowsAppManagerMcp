@@ -136,13 +136,6 @@ public class ScreenshotTools
         _monitorService = monitorService;
     }
 
-    [McpServerTool(Name = "list_screens", Title = "List Screens", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
-    [Description("Deprecated, removed in 3.0.0: use get_monitors instead (its virtualScreen too). Lists the monitors and the virtual screen's bounds.")]
-    public ScreenListResult ListScreens()
-    {
-        return _screenshotService.ListScreens();
-    }
-
     [McpServerTool(Name = "take_screenshot", Title = "Capture Monitor", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = false)]
     [Description("Capture a monitor (default: the primary), or with monitor 'all' every monitor in one image (the virtual screen, at " +
                  "most 64 megapixels; areas between monitors of different sizes are black). " +

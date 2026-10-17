@@ -11,8 +11,7 @@ namespace WindowsAppManagerMcp.Infrastructure;
 public sealed record Toolset(string Name, bool OnByDefault, string Description, IReadOnlyList<string> Tools);
 
 /// <summary>
-/// A tool that moved out of a toolset into another one (roadmap M6.1: into the opt-in windows-batch and deprecated
-/// toolsets). It is served only while the toolset it came from is on too, so turning its new toolset on never serves a
+/// A tool that moved out of a toolset into another one (roadmap M6.1: into the opt-in windows-batch toolset). It is served only while the toolset it came from is on too, so turning its new toolset on never serves a
 /// configuration more than it served before the move, and excluding the toolset it came from by name excludes it too.
 /// </summary>
 /// <param name="Tool">The tool, by name.</param>
@@ -31,7 +30,8 @@ public sealed class ToolsetCatalog
     private readonly Dictionary<string, Toolset> _byTool = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, MovedTool> _moves = new(StringComparer.OrdinalIgnoreCase);
 
-    public ToolsetCatalog(string alwaysOn, IReadOnlyList<Toolset> toolsets, string? alwaysServedTool = null, IReadOnlyList<MovedTool>? moved = null)
+    public ToolsetCatalog(string alwaysOn, IReadOnlyList<Toolset> toolsets, string? alwaysServedTool = null, IReadOnlyList<MovedTool>? moved = null,
+        IReadOnlyList<string>? retired = null)
     {
         ArgumentNullException.ThrowIfNull(toolsets);
         if (toolsets.Select(t => t.Name).Distinct(StringComparer.OrdinalIgnoreCase).Count() != toolsets.Count)
@@ -90,7 +90,27 @@ public sealed class ToolsetCatalog
         }
 
         MovedTools = movedTools;
+
+        foreach (var name in retired ?? [])
+        {
+            if (Find(name) != null || ToolsetOf(name) != null)
+            {
+                throw new ArgumentException($"The retired name '{name}' is still a toolset or tool of the catalog.", nameof(retired));
+            }
+        }
+
+        RetiredNames = retired ?? [];
     }
+
+    /// <summary>
+    /// The names of the tools and toolsets a major release removed (3.0.0: the nine tools 2.2.0 replaced and their
+    /// deprecated toolset). WAM_TOOLSETS and WAM_EXCLUDE_TOOLS read them as known names that serve nothing, so a value written
+    /// for an older release does not make the server fail closed.
+    /// </summary>
+    public IReadOnlyList<string> RetiredNames { get; }
+
+    /// <summary>True when a major release removed the tool or toolset of this name (any case).</summary>
+    public bool IsRetired(string name) => RetiredNames.Contains(name, StringComparer.OrdinalIgnoreCase);
 
     /// <summary>The tools that moved out of a toolset, in the order the catalog lists the moves.</summary>
     public IReadOnlyList<MovedTool> MovedTools { get; }
@@ -123,9 +143,12 @@ public sealed class ToolsetCatalog
 
 /// <summary>
 /// The server's toolsets (roadmap M2.14). Each tool the server serves is in exactly one of them (ToolsetCatalogTests),
-/// and docs/TOOLS.md lists them in a generated region. Every toolset is on by default except browser-actions (roadmap
-/// M5.5, M5.8), browser-script (roadmap M5.8), visual (roadmap M6.4), windows-batch and deprecated (roadmap M6.1), and ocr
-/// (roadmap M6.3). Of the tools M6 adds, the niche or heavy ones come in toolsets that are off by default (ocr, visual,
+/// and docs/TOOLS.md lists them in a generated region. Every toolset is on by default except workspaces (roadmap M7.5),
+/// browser-actions (roadmap M5.5, M5.8), browser-script (roadmap M5.8), visual (roadmap M6.4), windows-batch (roadmap M6.1)
+/// and ocr (roadmap M6.3). The nine tools 2.2.0 replaced, served by the opt-in deprecated toolset until then, are gone in
+/// 3.0.0 (owner decision D1): a call to one fails with ToolRemoved, naming its replacement (RemovedTools), and the
+/// variables read their names as retired ones. Of the tools M6 adds, the niche or heavy ones come in toolsets that are off
+/// by default (ocr, visual,
 /// windows-batch), and the small everyday steps (list_installed_apps, set_window_zorder, run_steps) join toolsets that are on
 /// (owner decision D2, October 2026): run_steps in a toolset of its own, steps (roadmap M6.2), so WAM_TOOLSETS=-steps drops
 /// it alone.
@@ -134,9 +157,6 @@ public static class Toolsets
 {
     /// <summary>The always-on toolset.</summary>
     public const string ServerToolset = "server";
-
-    /// <summary>The opt-in toolset of the tools roadmap M6.1 replaced, until 3.0.0 removes them.</summary>
-    public const string DeprecatedToolset = "deprecated";
 
     public static ToolsetCatalog Server { get; } = new(
         ServerToolset,
@@ -223,34 +243,19 @@ public static class Toolsets
                 "Read and find text on the screen with Windows OCR where UI Automation exposes none (canvas apps, games, remote " +
                 "desktops, rendered PDFs), with click points for the mouse tools.",
                 ["read_screen_text", "find_text_on_screen"]),
-            // Off by default (roadmap M6.1, owner decision D1): the tools another tool replaced in 2.2.0, served unchanged until
-            // 3.0.0 removes them. Their descriptions are one line that names the replacement; a call is never forwarded to it
-            new(DeprecatedToolset, OnByDefault: false,
-                "Tools replaced in 2.2.0 and removed in 3.0.0, unchanged until then and each served only with the toolset it came " +
-                "from: use mouse_click, set_window_bounds, find_windows, get_monitors and get_browser_url instead.",
-                ["click", "right_click", "double_click", "move_window", "resize_window", "get_all_windows", "get_primary_monitor",
-                    "list_screens", "get_active_browser_url"]),
         ],
         // It reports the toolsets in force and why a tool is missing, and the server instructions send the agent to it
         alwaysServedTool: "get_server_info",
-        // Roadmap M6.1: each is served only while the toolset it came from is on too, so 'all' and '+deprecated' never serve a
-        // configuration a tool it did not serve before 2.2.0 (all,-input serves no click), and WAM_EXCLUDE_TOOLS=input
-        // still excludes click; get_server_info says where each went while it is off
+        // Roadmap M6.1: each is served only while the toolset it came from is on too, so 'all' never serves a configuration a
+        // tool it did not serve before 2.2.0, and WAM_EXCLUDE_TOOLS=windows still excludes it; get_server_info says where each
+        // went while it is off
         moved:
         [
             new("set_windows_bounds_batch", "windows"),
             new("snap_windows_batch", "windows"),
             new("set_windows_state_batch", "windows"),
-            new("click", "input", "mouse_click"),
-            new("right_click", "input", "mouse_click with button 'secondary'"),
-            new("double_click", "input", "mouse_click with clickCount 2"),
-            new("move_window", "windows", "set_window_bounds with x and y"),
-            new("resize_window", "windows", "set_window_bounds with width and height"),
-            new("get_all_windows", "windows", "find_windows"),
-            new("get_primary_monitor", "monitors", "get_monitors"),
-            new("list_screens", "monitors", "get_monitors"),
-            new("get_active_browser_url", "browser", "get_browser_url with window {\"foreground\": true}"),
-        ]);
+        ],
+        retired: [RemovedTools.Toolset, .. RemovedTools.Replacements.Keys]);
 
     /// <summary>
     /// Serves only the tools <paramref name="selection"/> chooses: registers the selection (get_server_info reports it)

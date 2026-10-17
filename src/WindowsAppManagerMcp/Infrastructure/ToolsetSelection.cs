@@ -15,8 +15,10 @@ namespace WindowsAppManagerMcp.Infrastructure;
 /// tools/list annotation readOnlyHint).</item>
 /// </list>
 /// A tool that moved out of a toolset (<see cref="ToolsetCatalog.MovedTools"/>, roadmap M6.1) is served only while the
-/// toolset it came from is on too, so <c>all</c> or <c>+deprecated</c> never serves a configuration a tool it did not serve
-/// before the move; get_server_info says where each moved tool went while its toolset is off (<see cref="Moved"/>).
+/// toolset it came from is on too, so <c>all</c> never serves a configuration a tool it did not serve before the move;
+/// get_server_info says where each moved tool went while its toolset is off (<see cref="Moved"/>). A name a major release
+/// removed (<see cref="ToolsetCatalog.RetiredNames"/>) is a known name that serves nothing: excluding it, or adding or
+/// removing it as a toolset, changes nothing and does not fail closed.
 /// A name that is not a toolset or tool is ignored with a warning (logged at start, reported by get_server_info), as long
 /// as ignoring it serves fewer tools, not more. The variables exist to restrict the server, so a value that cannot be
 /// read fails closed: when a <c>-name</c> of <see cref="ToolsetsVariable"/> names no toolset (the user meant to remove
@@ -93,7 +95,7 @@ public sealed class ToolsetSelection
     /// Where the tools that moved out of a toolset in force went (roadmap M6.1), one sentence per toolset that is off and
     /// holds such tools: the toolset, how to turn it on, and each tool with its replacement, if any. A tool the user
     /// excluded, or whose former toolset is off too, is left out. Null when there is none: get_server_info reports it, so an
-    /// agent that looks for click learns that it is in the deprecated toolset and that mouse_click replaces it.
+    /// agent that looks for set_windows_bounds_batch learns that the windows-batch toolset serves it.
     /// </summary>
     public IReadOnlyList<string>? Moved { get; }
 
@@ -274,6 +276,19 @@ public sealed class ToolsetSelection
                 _ => catalog.Find(name) is { } toolset ? [toolset.Name] : null
             };
 
+            if (toolsets == null && catalog.IsRetired(name))
+            {
+                // A toolset a major release removed (3.0.0: deprecated): +name or -name changes nothing now, so it is
+                // ignored; a plain name still counts as unknown, so a list of nothing else fails closed as before
+                warnings.Add($"{ToolsetsVariable}: the '{name}' toolset was removed in a major release, so '{entry}' is ignored.");
+                if (!entry.StartsWith('-') && !entry.StartsWith('+'))
+                {
+                    unknown.Add(entry);
+                }
+
+                continue;
+            }
+
             if (toolsets == null)
             {
                 warnings.Add($"{ToolsetsVariable}: '{entry}' is not a toolset and is ignored. The toolsets are " +
@@ -336,6 +351,12 @@ public sealed class ToolsetSelection
                 : catalog.Find(entry) is { } toolset
                     ? [.. toolset.Tools, .. catalog.MovedTools.Where(move => move.FormerToolset == toolset.Name).Select(move => move.Tool)]
                     : null;
+            if (tools == null && catalog.IsRetired(entry))
+            {
+                // A tool or toolset a major release removed (3.0.0: click, deprecated): it is excluded already
+                continue;
+            }
+
             if (tools == null)
             {
                 warnings.Add($"{ExcludeToolsVariable}: '{entry}' is not a tool or toolset of this server. The toolsets are " +

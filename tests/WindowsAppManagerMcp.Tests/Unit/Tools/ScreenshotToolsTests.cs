@@ -34,59 +34,6 @@ public class ScreenshotToolsTests
         _mockWindowService.Object,
         new TargetPolicy(_policy));
 
-    #region T9.3.1: ListScreens Tests
-
-    [Fact]
-    public void ListScreens_CallsService()
-    {
-        // Arrange
-        var sut = CreateSut();
-
-        // Act
-        sut.ListScreens();
-
-        // Assert
-        _mockScreenshotService.Verify(s => s.ListScreens(), Times.Once);
-    }
-
-    [Fact]
-    public void ListScreens_ReturnsServiceResult()
-    {
-        // Arrange
-        var expectedResult = TestDataFactory.CreateScreenListResult();
-        _mockScreenshotService.Setup(s => s.ListScreens()).Returns(expectedResult);
-        var sut = CreateSut();
-
-        // Act
-        var result = sut.ListScreens();
-
-        // Assert
-        result.Should().Be(expectedResult);
-    }
-
-    [Fact]
-    public void ListScreens_ReturnsMultipleScreens()
-    {
-        // Arrange
-        var screens = new List<ScreenInfo>
-        {
-            TestDataFactory.CreateScreenInfo(0, true),
-            TestDataFactory.CreateScreenInfo(1, false, x: 1920),
-            TestDataFactory.CreateScreenInfo(2, false, x: 3840)
-        };
-        var expectedResult = TestDataFactory.CreateScreenListResult(screens, 0);
-        _mockScreenshotService.Setup(s => s.ListScreens()).Returns(expectedResult);
-        var sut = CreateSut();
-
-        // Act
-        var result = sut.ListScreens();
-
-        // Assert
-        result.Screens.Should().HaveCount(3);
-    }
-
-    #endregion
-
     #region T9.3.2-T9.3.4: TakeScreenshot Tests
 
     [Fact]

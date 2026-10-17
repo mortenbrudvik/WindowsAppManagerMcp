@@ -122,10 +122,10 @@ public class ToolsetContractTests
 
     /// <summary>
     /// The toolsets that are off by default: browser-actions since roadmap M5.5 (and the DOM bridge of M5.8), browser-script
-    /// since M5.8, windows-batch and deprecated since M6.1 (owner decisions D4 and D1; DeprecatedToolsContractTests), visual
-    /// since M6.4 (owner decisions D2 and D10), ocr since M6.3 (owner decision D2).
+    /// since M5.8, windows-batch since M6.1 (owner decision D4; RemovedToolsContractTests), visual since M6.4 (owner
+    /// decisions D2 and D10), ocr since M6.3 (owner decision D2), workspaces since M7.5.
     /// </summary>
-    private static readonly string[] OptInToolsets = ["workspaces", "browser-actions", "browser-script", "visual", "windows-batch", "deprecated", "ocr"];
+    private static readonly string[] OptInToolsets = ["workspaces", "browser-actions", "browser-script", "visual", "windows-batch", "ocr"];
 
     /// <summary>The DOM bridge's tools (roadmap M5.8) that browser-actions serves: all but browser_evaluate.</summary>
     private static readonly string[] DomBridgeActionTools =
@@ -136,7 +136,7 @@ public class ToolsetContractTests
     {
         // The niche or heavy toolsets M5-M6 add are opt-in (owner decision D2: browser actions and scripts, OCR, visual diffs,
         // the geometry batches); the first, browser-actions (activate_tab, browser_navigate, roadmap M5.5), changes what a
-        // debug browser shows. The tools M6.1 replaced wait in the opt-in deprecated toolset until 3.0.0. Turning a toolset
+        // debug browser shows. The tools M6.1 replaced are gone since 3.0.0. Turning a toolset
         // off by default changes what every user sees: change this test, the docs and the release notes with it.
         var selection = ToolsetSelection.FromEnvironment(_ => null, Toolsets.Server);
 
@@ -210,7 +210,6 @@ public class ToolsetContractTests
     [InlineData(null)]
     [InlineData("+browser-actions")]
     [InlineData("+browser-script")]
-    [InlineData("+deprecated")]
     [InlineData("+visual")]
     [InlineData("+ocr")]
     [InlineData("all")]
@@ -374,7 +373,7 @@ public class ToolsetContractTests
 
         var tools = await server.Client.ListToolsAsync();
 
-        // The default without kill_process: every tool but the opt-in toolsets' (browser-actions, browser-script, windows-batch, deprecated) and the one excluded
+        // The default without kill_process: every tool but the opt-in toolsets' (browser-actions, browser-script, windows-batch and the others) and the one excluded
         var optIn = Toolsets.Server.Toolsets.Where(t => !t.OnByDefault).Sum(t => t.Tools.Count);
         tools.Select(t => t.Name).Should().NotContain("kill_process")
             .And.HaveCount(ServerToolCatalog.ServedToolNames.Count - optIn - 1);

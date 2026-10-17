@@ -27,10 +27,6 @@ public class MonitorInfoTools
                  "all monitors together, which take_screenshot captures with monitor 'all'.")]
     public MonitorsResult GetMonitors() => ReadMonitors(_monitorService, _screen);
 
-    [McpServerTool(Name = "get_primary_monitor", Title = "Get Primary Monitor", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
-    [Description("Deprecated, removed in 3.0.0: use get_monitors instead (the monitor with isPrimary). Returns the primary monitor.")]
-    public MonitorInfoDto GetPrimaryMonitor() => ToDto(_monitorService.GetPrimaryMonitor());
-
     /// <summary>
     /// get_monitors' result, which the wam://monitors resource returns too (roadmap M6.9), so a change to one changes both.
     /// </summary>
@@ -49,7 +45,7 @@ public class MonitorInfoTools
     }
 
     /// <summary>
-    /// A monitor as get_monitors, get_primary_monitor and the wam://monitors resource return it, with its identity and DPI
+    /// A monitor as get_monitors and the wam://monitors resource return it, with its identity and DPI
     /// (roadmap M6.7) and, given the <paramref name="primary"/>, where it is from it.
     /// </summary>
     internal static MonitorInfoDto ToDto(MonitorInfo monitor, MonitorInfo? primary = null) => new(

@@ -386,8 +386,6 @@ public class TargetPolicyEnforcementTests
         // Act
         var results = new[]
         {
-            await tools.MoveWindow(10, 10, handle: keePass),
-            await tools.ResizeWindow(400, 300, handle: keePass),
             await tools.SetWindowBounds(10, 10, 400, 300, handle: keePass),
             await tools.SetWindowState(WindowStateRequest.Restore, handle: keePass),
             await tools.SnapWindow(SnapPosition.LeftHalf, handle: keePass),
@@ -481,8 +479,6 @@ public class TargetPolicyEnforcementTests
         // Act
         var results = new[]
         {
-            await tools.MoveWindow(10, 10, handle: vault),
-            await tools.ResizeWindow(400, 300, handle: vault),
             await tools.SetWindowBounds(10, 10, 400, 300, handle: vault),
             await tools.SetWindowState(WindowStateRequest.Restore, handle: vault),
             await tools.SnapWindow(SnapPosition.LeftHalf, handle: vault),

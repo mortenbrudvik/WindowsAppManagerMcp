@@ -20,11 +20,8 @@ public class EveryToolContractTests
         new Dictionary<string, IReadOnlyDictionary<string, object?>>(StringComparer.Ordinal)
         {
             ["find_windows"] = Args("""{ "processName": "notepad" }"""),
-            ["get_all_windows"] = Args("{}"), // deprecated (roadmap M6.1): find_windows
             ["get_foreground_window"] = Args("{}"),
             // Deprecated (roadmap M6.1): set_window_bounds with x and y, or with width and height
-            ["move_window"] = Args("""{ "handle": 1706796, "x": 100, "y": 80 }"""),
-            ["resize_window"] = Args("""{ "handle": 1706796, "width": 1280, "height": 720 }"""),
             ["set_window_bounds"] = Args("""{ "handle": 1706796, "x": 0, "y": 0, "width": 1280, "height": 1392 }"""),
             ["set_window_state"] = Args("""{ "handle": 1706796, "state": "maximize" }"""),
             ["focus_window"] = Args("""{ "handle": 1706796 }"""),
@@ -54,8 +51,6 @@ public class EveryToolContractTests
                 { "applications": [ { "executable": "notepad" }, { "executable": "code", "arguments": ["."] } ], "waitForWindows": true }
                 """),
             ["get_monitors"] = Args("{}"),
-            ["get_primary_monitor"] = Args("{}"), // deprecated (roadmap M6.1): get_monitors
-            ["list_screens"] = Args("{}"), // deprecated (roadmap M6.1): get_monitors
             ["take_screenshot"] = Args("{}"),
             ["capture_region"] = Args("""{ "x": 100, "y": 100, "width": 800, "height": 600 }"""),
             ["capture_window"] = Args("""{ "handle": 1706796 }"""),
@@ -76,7 +71,6 @@ public class EveryToolContractTests
             ["get_active_popups"] = Args("""{ "window": { "processName": "notepad" } }"""),
             ["wait_for_element"] = Args("""{ "window": { "processName": "notepad" }, "name": "Save", "condition": "enabled" }"""),
             ["get_browser_url"] = Args("""{ "handle": 2821181 }"""),
-            ["get_active_browser_url"] = Args("{}"), // deprecated (roadmap M6.1): get_browser_url with a foreground selector
             ["get_browser_content"] = Args("""{ "handle": 2821181 }"""),
             ["launch_browser_with_debug"] = Args("""{ "url": "https://example.com/" }"""),
             ["close_debug_browser"] = Args("""{ "processId": 31337, "confirm": true }"""),
@@ -91,9 +85,6 @@ public class EveryToolContractTests
             ["browser_type"] = Args("""{ "handle": 2821181, "text": "window layout presets", "selector": "#search" }"""),
             ["browser_screenshot"] = Args("""{ "handle": 2821181 }"""),
             // Deprecated (roadmap M6.1): mouse_click
-            ["click"] = Args("""{ "x": 560, "y": 110, "windowHandle": 1706796 }"""),
-            ["right_click"] = Args("""{ "x": 560, "y": 110, "windowHandle": 1706796 }"""),
-            ["double_click"] = Args("""{ "x": 560, "y": 110, "windowHandle": 1706796 }"""),
             ["mouse_click"] = Args("""{ "x": 560, "y": 110, "button": "secondary", "modifiers": ["shift"], "windowHandle": 1706796 }"""),
             ["drag"] = Args("""{ "fromX": 560, "fromY": 110, "toX": 760, "toY": 110, "windowHandle": 1706796 }"""),
             ["mouse_move"] = Args("""{ "x": 560, "y": 110, "windowHandle": 1706796 }"""),
@@ -148,7 +139,7 @@ public class EveryToolContractTests
     /// </summary>
     private static readonly HashSet<string> ImageOnRequest = new(StringComparer.Ordinal)
     {
-        "get_desktop_state", "element_action", "click", "right_click", "double_click", "mouse_click", "drag", "type_text", "send_keys",
+        "get_desktop_state", "element_action", "mouse_click", "drag", "type_text", "send_keys",
         "press_keys", "respond_to_dialog",
         // The images of its steps with return true, and of its last step (roadmap M6.2)
         "run_steps"

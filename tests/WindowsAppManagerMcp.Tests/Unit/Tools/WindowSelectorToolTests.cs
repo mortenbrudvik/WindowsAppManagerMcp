@@ -48,9 +48,9 @@ public class WindowSelectorToolTests
     #region The single-window tools
 
     [Fact]
-    public async Task MoveWindow_WithASelector_ActsOnTheResolvedWindow_AndReportsItsHandle()
+    public async Task SetWindowBounds_WithASelector_ActsOnTheResolvedWindow_AndReportsItsHandle()
     {
-        var result = await CreateWindowTools().MoveWindow(10, 20, window: NotepadSelector);
+        var result = await CreateWindowTools().SetWindowBounds(10, 20, window: NotepadSelector);
 
         result.Success.Should().BeTrue();
         result.Handle.Should().Be(Notepad);
@@ -58,9 +58,9 @@ public class WindowSelectorToolTests
     }
 
     [Fact]
-    public async Task MoveWindow_WithAnAmbiguousSelector_IsRefusedWithTheCandidates_AndNothingMoves()
+    public async Task SetWindowBounds_WithAnAmbiguousSelector_IsRefusedWithTheCandidates_AndNothingMoves()
     {
-        var act = () => CreateWindowTools().MoveWindow(10, 20, window: ChromeSelector);
+        var act = () => CreateWindowTools().SetWindowBounds(10, 20, window: ChromeSelector);
 
         var error = (await act.Should().ThrowAsync<ToolErrorException>()).Which;
         error.ErrorCode.Should().Be("AmbiguousWindow");
@@ -77,17 +77,17 @@ public class WindowSelectorToolTests
         _windows.Setup(w => w.ResolveWindow(ChromeSelector)).Returns(WindowResolution.Failed("AmbiguousWindow",
             "2 windows match processName 'chrome'.", [ChromeWindows[0] with { Title = title }, ChromeWindows[1]]));
 
-        var act = () => CreateWindowTools().MoveWindow(10, 20, window: ChromeSelector);
+        var act = () => CreateWindowTools().SetWindowBounds(10, 20, window: ChromeSelector);
 
         var error = (await act.Should().ThrowAsync<ToolErrorException>()).Which;
         error.Candidates!.Select(c => c.Title).Should().Equal(title[..(AppText.MaxLength - 1)] + "…", "Docs - Google Chrome");
     }
 
     [Fact]
-    public async Task MoveWindow_WithHandleAndWindow_OrWithNeither_IsInvalidArguments()
+    public async Task SetWindowBounds_WithHandleAndWindow_OrWithNeither_IsInvalidArguments()
     {
-        var both = () => CreateWindowTools().MoveWindow(10, 20, handle: Notepad, window: NotepadSelector);
-        var neither = () => CreateWindowTools().MoveWindow(10, 20);
+        var both = () => CreateWindowTools().SetWindowBounds(10, 20, handle: Notepad, window: NotepadSelector);
+        var neither = () => CreateWindowTools().SetWindowBounds(10, 20);
 
         (await both.Should().ThrowAsync<ToolErrorException>()).Which.ErrorCode.Should().Be(ToolErrorReporting.InvalidArgumentsErrorCode);
         (await neither.Should().ThrowAsync<ToolErrorException>()).Which.ErrorCode.Should().Be(ToolErrorReporting.InvalidArgumentsErrorCode);
@@ -98,7 +98,7 @@ public class WindowSelectorToolTests
     [Fact]
     public async Task ASelectorThatOnlyNamesAHandle_IsThatHandle_WithoutAResolution()
     {
-        var result = await CreateWindowTools().MoveWindow(10, 20, window: new WindowSelector { Handle = Notepad });
+        var result = await CreateWindowTools().SetWindowBounds(10, 20, window: new WindowSelector { Handle = Notepad });
 
         result.Handle.Should().Be(Notepad);
         _windows.Verify(w => w.ResolveWindow(It.IsAny<WindowSelector>()), Times.Never);
@@ -115,7 +115,7 @@ public class WindowSelectorToolTests
         _windows.Setup(w => w.EvaluateTargetPolicy((nint)KeePass)).Returns(new TargetPolicyVerdict(false, "KeePass", "default deny list"));
 
         // Act
-        var result = await CreateWindowTools().MoveWindow(10, 20, window: keePass);
+        var result = await CreateWindowTools().SetWindowBounds(10, 20, window: keePass);
 
         // Assert
         result.Success.Should().BeFalse();
@@ -144,7 +144,7 @@ public class WindowSelectorToolTests
         });
 
         // Act
-        await CreateWindowTools().MoveWindow(10, 20, window: NotepadSelector);
+        await CreateWindowTools().SetWindowBounds(10, 20, window: NotepadSelector);
 
         // Assert
         gateFreeWhileResolving.Should().BeTrue("a slow resolution must not hold up every input and window call");
@@ -160,7 +160,7 @@ public class WindowSelectorToolTests
             .Returns(TestDataFactory.CreateWindowInfo((int)Notepad, "Windows PowerShell", "WindowsTerminal", 300));
 
         // Act
-        var act = () => CreateWindowTools().MoveWindow(10, 20, window: NotepadSelector);
+        var act = () => CreateWindowTools().SetWindowBounds(10, 20, window: NotepadSelector);
 
         // Assert
         var error = (await act.Should().ThrowAsync<ToolErrorException>()).Which;
@@ -182,7 +182,7 @@ public class WindowSelectorToolTests
         });
 
         // Act
-        var result = await CreateWindowTools().MoveWindow(10, 20, window: NotepadSelector);
+        var result = await CreateWindowTools().SetWindowBounds(10, 20, window: NotepadSelector);
 
         // Assert
         result.Success.Should().BeTrue();
@@ -413,15 +413,15 @@ public class WindowSelectorToolTests
         // Arrange - the input service waits for the gate (up to 30 s) after the selector was resolved
         var input = new Mock<IInputSimulationService>();
         InputTarget? passed = null;
-        input.Setup(i => i.Click(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<InputTarget>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
-            .Callback((int _, int _, InputTarget target, bool _, CancellationToken _) => passed = target)
+        input.Setup(i => i.MouseClick(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<MouseButton>(), It.IsAny<int>(), It.IsAny<IReadOnlyList<MouseModifier>>(), It.IsAny<InputTarget>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Callback((int _, int _, MouseButton _, int _, IReadOnlyList<MouseModifier> _, InputTarget target, bool _, CancellationToken _) => passed = target)
             .Returns(new ClickResult(true, 5, 6, "left"));
         var tools = new InputSimulationTools(input.Object, _windows.Object);
         var selector = new WindowSelector { ProcessName = "notepad", TitleContains = "notes.txt" };
         _windows.Setup(w => w.ResolveWindow(selector)).Returns(WindowResolution.Found(NotepadWindow));
 
         // Act
-        await tools.Click(5, 6, window: selector);
+        await tools.MouseClick(5, 6, window: selector);
 
         // Assert - still the same document: no refusal; then the user switches the tab, and the recheck says so
         passed!.Value.SelectorRecheck.Should().NotBeNull();
@@ -438,13 +438,13 @@ public class WindowSelectorToolTests
         // Arrange - resolved while the title was short; inside the gate the title makes the pattern time out
         var input = new Mock<IInputSimulationService>();
         InputTarget? passed = null;
-        input.Setup(i => i.Click(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<InputTarget>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
-            .Callback((int _, int _, InputTarget target, bool _, CancellationToken _) => passed = target)
+        input.Setup(i => i.MouseClick(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<MouseButton>(), It.IsAny<int>(), It.IsAny<IReadOnlyList<MouseModifier>>(), It.IsAny<InputTarget>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Callback((int _, int _, MouseButton _, int _, IReadOnlyList<MouseModifier> _, InputTarget target, bool _, CancellationToken _) => passed = target)
             .Returns(new ClickResult(true, 5, 6, "left"));
         var tools = new InputSimulationTools(input.Object, _windows.Object);
         var selector = new WindowSelector { ProcessName = "notepad", TitleRegex = "^(a+)+$" };
         _windows.Setup(w => w.ResolveWindow(selector)).Returns(WindowResolution.Found(NotepadWindow with { Title = "aaa" }));
-        await tools.Click(5, 6, window: selector);
+        await tools.MouseClick(5, 6, window: selector);
         _windows.Setup(w => w.GetWindowInfo((nint)Notepad)).Returns(NotepadWindow with { Title = new string('a', 5000) + "!" });
 
         // Act
@@ -460,29 +460,29 @@ public class WindowSelectorToolTests
     {
         var input = new Mock<IInputSimulationService>();
         InputTarget? passed = null;
-        input.Setup(i => i.Click(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<InputTarget>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
-            .Callback((int _, int _, InputTarget target, bool _, CancellationToken _) => passed = target)
+        input.Setup(i => i.MouseClick(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<MouseButton>(), It.IsAny<int>(), It.IsAny<IReadOnlyList<MouseModifier>>(), It.IsAny<InputTarget>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Callback((int _, int _, MouseButton _, int _, IReadOnlyList<MouseModifier> _, InputTarget target, bool _, CancellationToken _) => passed = target)
             .Returns(new ClickResult(true, 5, 6, "left"));
 
-        await new InputSimulationTools(input.Object, _windows.Object).Click(5, 6, windowHandle: Notepad);
+        await new InputSimulationTools(input.Object, _windows.Object).MouseClick(5, 6, windowHandle: Notepad);
 
         passed!.Value.SelectorRecheck.Should().BeNull();
     }
 
     [Fact]
-    public async Task Click_WithASelector_TargetsTheResolvedWindow_AsWindowHandle()
+    public async Task MouseClick_WithASelector_TargetsTheResolvedWindow_AsWindowHandle()
     {
         // Arrange - the resolved window goes to the input service as windowHandle would: its guard checks it there
         var input = new Mock<IInputSimulationService>();
-        input.Setup(i => i.Click(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<InputTarget>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+        input.Setup(i => i.MouseClick(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<MouseButton>(), It.IsAny<int>(), It.IsAny<IReadOnlyList<MouseModifier>>(), It.IsAny<InputTarget>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .Returns(new ClickResult(true, 5, 6, "left"));
         var tools = new InputSimulationTools(input.Object, _windows.Object);
 
         // Act
-        await tools.Click(5, 6, window: NotepadSelector);
+        await tools.MouseClick(5, 6, window: NotepadSelector);
 
         // Assert
-        input.Verify(i => i.Click(5, 6, new InputTarget((nint)Notepad, false), false, It.IsAny<CancellationToken>()), Times.Once);
+        input.Verify(i => i.MouseClick(5, 6, MouseButton.Primary, 1, It.IsAny<IReadOnlyList<MouseModifier>>(), new InputTarget((nint)Notepad, false), false, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -544,15 +544,15 @@ public class WindowSelectorToolTests
         var named = new WindowSelector { Handle = Notepad, ProcessId = 200 };
         _windows.Setup(w => w.ResolveWindow(named)).Returns(WindowResolution.Found(NotepadWindow));
         var input = new Mock<IInputSimulationService>();
-        input.Setup(i => i.Click(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<InputTarget>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+        input.Setup(i => i.MouseClick(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<MouseButton>(), It.IsAny<int>(), It.IsAny<IReadOnlyList<MouseModifier>>(), It.IsAny<InputTarget>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .Returns(new ClickResult(true, 5, 6, "left"));
         var tools = new InputSimulationTools(input.Object, _windows.Object);
 
         // Act
-        await tools.Click(5, 6, window: named, allowHostTarget: true);
+        await tools.MouseClick(5, 6, window: named, allowHostTarget: true);
 
         // Assert
-        input.Verify(i => i.Click(5, 6, new InputTarget((nint)Notepad, true), false, It.IsAny<CancellationToken>()), Times.Once);
+        input.Verify(i => i.MouseClick(5, 6, MouseButton.Primary, 1, It.IsAny<IReadOnlyList<MouseModifier>>(), new InputTarget((nint)Notepad, true), false, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]

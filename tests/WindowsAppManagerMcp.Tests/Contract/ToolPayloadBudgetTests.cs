@@ -37,7 +37,6 @@ public class ToolPayloadBudgetTests
     {
         // Window Discovery: 15 windows
         ["find_windows"] = 1_850, // 1,213: each window with visibleBounds
-        ["get_all_windows"] = 1_850, // 1,213
         ["get_foreground_window"] = 110, // 72
         ["get_owned_windows"] = 150, // 76: one Save As dialog
         ["get_window_info"] = 150, // 100: detail full, by a window selector (roadmap M2.4)
@@ -45,8 +44,6 @@ public class ToolPayloadBudgetTests
         ["get_window_events"] = 200, // the Save As dialog shown and in front: two events (roadmap M7.2)
 
         // Window Control
-        ["move_window"] = 100, // 43: handle (roadmap M2.4), bounds, outerBounds, state, monitorIndex (roadmap M2.3)
-        ["resize_window"] = 100, // 43
         ["set_window_bounds"] = 100, // 43
         ["set_window_state"] = 100, // 43
         ["focus_window"] = 100, // 44
@@ -64,10 +61,8 @@ public class ToolPayloadBudgetTests
 
         // Monitor Info: 2 monitors
         ["get_monitors"] = 220, // 146: each monitor with id, friendlyName, dpi and relation (98 before roadmap M6.7)
-        ["get_primary_monitor"] = 100, // 44
 
         // Screenshot: metadata only; the image is checked against ImageTokenBudget
-        ["list_screens"] = 200, // 116
         ["take_screenshot"] = 150, // 131
         ["capture_region"] = 150, // 118
         ["capture_window"] = 150, // 126
@@ -92,15 +87,11 @@ public class ToolPayloadBudgetTests
 
         // Browser Reading
         ["get_browser_url"] = 100, // 56
-        ["get_active_browser_url"] = 100, // 56
         ["get_browser_content"] = 6_000, // 3,815: a 15,000-character article
         ["launch_browser_with_debug"] = 150, // 96: with launchStatus and the readiness fields (M5.1)
         ["close_debug_browser"] = 100, // 65: closed with Browser.close, its temporary profile deleted (M5.4)
 
         // Input Simulation
-        ["click"] = 150, // 79
-        ["right_click"] = 150, // 80
-        ["double_click"] = 150, // 80
         ["mouse_click"] = 150, // 90
         ["drag"] = 180, // 116
         ["mouse_move"] = 150, // 75
@@ -228,7 +219,6 @@ public class ToolPayloadBudgetTests
         ["browser-script"] = 500, // 468 (off by default)
         ["visual"] = 1_181, // 1,145 (off by default): wait_for_visual with handle, the window selector, a region, monitor (and the deprecated monitorIndex) and since (roadmap M6.4; 1,072 before M6.7)
         ["windows-batch"] = 2_102, // 2,066 (off by default since M6.1b; 1,978 before M6.7's monitor on snap_windows_batch's items)
-        ["deprecated"] = 4_950, // 4,925 (off by default since M6.1b): nine one-line descriptions, but their full parameters
         ["ocr"] = 2_290, // 2,254 (off by default, roadmap M6.3): read_screen_text and find_text_on_screen (2,087 before M6.7's monitor)
     };
 

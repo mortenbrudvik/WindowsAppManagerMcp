@@ -132,7 +132,7 @@ public class UndeclaredArgumentContractTests
     [Fact]
     public async Task Click_WithHandle_SuggestsWindowHandle_AndSendsNothing()
     {
-        var (result, services) = await CallAsync("click", new Dictionary<string, object?> { ["x"] = 10, ["y"] = 10, ["handle"] = 1706796L });
+        var (result, services) = await CallAsync("mouse_click", new Dictionary<string, object?> { ["x"] = 10, ["y"] = 10, ["handle"] = 1706796L });
 
         using (services)
         {

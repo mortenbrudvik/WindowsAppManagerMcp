@@ -95,59 +95,6 @@ public class WindowManagerTools
         _monitorService = monitorService;
     }
 
-    [McpServerTool(Name = "move_window", Title = "Move Window", ReadOnly = false, Destructive = false, Idempotent = true, OpenWorld = false)]
-    [Description("Deprecated, removed in 3.0.0: use set_window_bounds with x and y instead. Moves a window's visible frame to x, y and keeps its size.")]
-    public async Task<WindowOperationResult> MoveWindow(
-        [Description("X coordinate of the visible frame's left edge")]
-        int x,
-        [Description("Y coordinate of the visible frame's top edge")]
-        int y,
-        [Description(HandleDescription)]
-        long? handle = null,
-        [Description(WindowTargeting.WindowDescription)]
-        WindowSelector? window = null,
-        [Description(BringToFrontDescription)]
-        bool bringToFront = true,
-        [Description(SettleDescription)]
-        int settleMs = 0,
-        CancellationToken cancellationToken = default)
-    {
-        var hwnd = Target(handle, window);
-        using (await EnterGateAsync(cancellationToken).ConfigureAwait(false))
-        {
-            WindowTargeting.ThrowIfChanged(_windowService, window, hwnd);
-            return Precheck(hwnd) ?? Change(hwnd, () => _windowService.MoveWindow(hwnd, x, y, bringToFront), settleMs);
-        }
-    }
-
-    [McpServerTool(Name = "resize_window", Title = "Resize Window", ReadOnly = false, Destructive = false, Idempotent = true, OpenWorld = false)]
-    [Description("Deprecated, removed in 3.0.0: use set_window_bounds with width and height instead. Resizes a window's visible frame and keeps its top-left corner.")]
-    public async Task<WindowOperationResult> ResizeWindow(
-        [Description("New width of the visible frame in pixels (at least 1)")]
-        int width,
-        [Description("New height of the visible frame in pixels (at least 1)")]
-        int height,
-        [Description(HandleDescription)]
-        long? handle = null,
-        [Description(WindowTargeting.WindowDescription)]
-        WindowSelector? window = null,
-        [Description(SettleDescription)]
-        int settleMs = 0,
-        CancellationToken cancellationToken = default)
-    {
-        if (SizeRefusal(width, height) is { } invalid)
-        {
-            return invalid;
-        }
-
-        var hwnd = Target(handle, window);
-        using (await EnterGateAsync(cancellationToken).ConfigureAwait(false))
-        {
-            WindowTargeting.ThrowIfChanged(_windowService, window, hwnd);
-            return Precheck(hwnd) ?? Change(hwnd, () => _windowService.ResizeWindow(hwnd, width, height), settleMs);
-        }
-    }
-
     [McpServerTool(Name = "set_window_bounds", Title = "Set Window Bounds", ReadOnly = false, Destructive = false, Idempotent = true, OpenWorld = false)]
     [Description("Move, resize, or move and resize a window in a single operation: x, y, width and height are its visible frame. " +
                  "Pass x and y to move it (it keeps its size), width and height to resize it (its top-left corner stays), or all four." +

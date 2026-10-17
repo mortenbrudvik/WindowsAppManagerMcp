@@ -174,25 +174,6 @@ public partial class BrowserReadingTools
         return ToDto(result);
     }
 
-    [McpServerTool(Name = "get_active_browser_url", Title = "Get Active Browser URL", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
-    [Description("Deprecated, removed in 3.0.0: use get_browser_url with window {\"foreground\": true} instead. Reads the URL of the browser in front.")]
-    public async Task<BrowserUrlResultDto> GetActiveBrowserUrl(
-        [Description(CdpPortDescription)]
-        int? cdpPort = null,
-        [Description(ActiveRequireCdpDescription)]
-        bool requireCdp = false,
-        [Description(TimeoutDescription)]
-        int timeoutMs = CdpOptions.DefaultTimeoutMs,
-        [Description(UseCdpDescription)]
-        bool useCdp = true,
-        CancellationToken cancellationToken = default)
-    {
-        RefuseCdpWithoutCdp(useCdp, cdpPort, targetId: null, requireCdp);
-        var result = await _browserReadingService.GetActiveBrowserUrlAsync(
-            new CdpOptions(cdpPort, requireCdp, timeoutMs, UseCdp: useCdp), cancellationToken);
-        return ToDto(result);
-    }
-
     [McpServerTool(Name = "launch_browser_with_debug", Title = "Launch Browser with Debug Port", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = true)]
     [Description("Launch a browser with CDP (Chrome DevTools Protocol) debug port enabled. The reading tools then read its windows through CDP, without cdpPort. Uses a new temporary profile by default, separate from the user's browser." +
                  " The debug port has no authentication: any program on this computer can control that browser until it exits. Launch it only when CDP is needed, and close it with close_debug_browser when done." +

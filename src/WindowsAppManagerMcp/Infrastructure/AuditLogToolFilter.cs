@@ -38,13 +38,12 @@ public static class AuditLogToolFilter
     /// WAM_ALLOW_USER_CLIPBOARD), recorded with its format, origin and length, never its content. Other read-only tools are
     /// never audited. The captures are left out: they are destructive only through overwrite:true of an image file, and
     /// are observation, called too often for their lines to help. A contract test checks that every other destructive
-    /// tool, and every input tool, is here. click, right_click and double_click stay here while the opt-in deprecated toolset
-    /// serves them (roadmap M6.1): a line names the tool the agent called, never its replacement.
+    /// tool, and every input tool, is here.
     /// </summary>
     public static IReadOnlySet<string> AuditedTools { get; } = new HashSet<string>(StringComparer.Ordinal)
     {
         // Input, and actions on UI elements through UI Automation patterns (roadmap M3.6)
-        "click", "right_click", "double_click", "mouse_click", "drag", "mouse_move", "type_text", "send_keys", "press_keys", "scroll",
+        "mouse_click", "drag", "mouse_move", "type_text", "send_keys", "press_keys", "scroll",
         "release_all_input", "element_action",
         // Dialogs answered and file dialogs completed through element_action (roadmap M3.5, M3.14)
         "respond_to_dialog", "file_dialog",

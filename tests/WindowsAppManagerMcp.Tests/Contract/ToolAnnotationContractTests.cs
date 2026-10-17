@@ -84,8 +84,7 @@ public class ToolAnnotationContractTests
             "close_window", "close_windows_batch", "close_application", "kill_process", "delete_layout", "save_layout",
             // save_workspace replaces a preset of the same name, as save_layout does (roadmap M7.5)
             "save_workspace",
-            // click, right_click and double_click are deprecated (roadmap M6.1) but unchanged, annotations included
-            "click", "right_click", "double_click", "mouse_click", "drag", "scroll", "type_text", "send_keys", "press_keys",
+            "mouse_click", "drag", "scroll", "type_text", "send_keys", "press_keys",
             "element_action",
             // respond_to_dialog presses a dialog's button (Don't Save loses work); file_dialog can replace a file (roadmap M3.5, M3.14)
             "respond_to_dialog", "file_dialog",
@@ -116,12 +115,11 @@ public class ToolAnnotationContractTests
             .Select(t => t!["name"]!.GetValue<string>()).ToList();
 
         // Every find/get/list tool, the browser reads, the control status and the clipboard read (it may ask the user, which
-        // changes nothing); get_all_windows, get_primary_monitor, list_screens and get_active_browser_url are deprecated
-        // (roadmap M6.1) but keep their annotations
+        // changes nothing)
         readOnly.Should().BeEquivalentTo(
         [
-            "find_windows", "get_all_windows", "get_foreground_window", "get_monitors", "get_primary_monitor", "list_screens",
-            "get_ui_elements", "get_focused_element", "get_element_at_point", "get_browser_url", "get_active_browser_url",
+            "find_windows", "get_foreground_window", "get_monitors",
+            "get_ui_elements", "get_focused_element", "get_element_at_point", "get_browser_url",
             "get_browser_content", "list_processes", "list_installed_apps", "list_layouts", "get_layout", "get_control_status", "get_server_info",
             "get_owned_windows", "get_clipboard", "get_window_info", "wait_for_window", "get_window_events", "find_ui_elements", "get_active_popups",
             "read_element_text", "read_table", "wait_for_element", "get_desktop_state",

@@ -702,8 +702,18 @@ public class DependencyInjectionTests : IDisposable
         // Assert - added right after the audit log's: the SDK runs the first filter added as the outermost
         // (ServerFilterPipelineTests), so it also logs the input gate filter's wait and the calls that filter refuses
         // while input is paused
-        options.Filters.Request.CallToolFilters.Should().HaveCount(4);
+        options.Filters.Request.CallToolFilters.Should().HaveCount(5);
         options.Filters.Request.CallToolFilters[1].Method.Should().BeSameAs(filter);
+    }
+
+    [Fact]
+    public void AddWindowsAppManagerTools_RegistersTheRemovedToolRefusal_InsideTheErrorFilter()
+    {
+        // 3.0.0 (owner decision D1): inside the error filter, so a call to a removed tool gets ToolRemoved as a tool error;
+        // outside the argument check and the gate, so it is refused before either looks at the call
+        var filters = _serviceProvider.GetRequiredService<IOptions<McpServerOptions>>().Value.Filters.Request.CallToolFilters;
+
+        filters[2].Method.Should().BeSameAs(typeof(RemovedTools).GetMethod(nameof(RemovedTools.Filter)));
     }
 
     [Fact]
@@ -713,8 +723,8 @@ public class DependencyInjectionTests : IDisposable
         // outside the input gate filter, so it never waits for the gate or a pause
         var filters = _serviceProvider.GetRequiredService<IOptions<McpServerOptions>>().Value.Filters.Request.CallToolFilters;
 
-        filters[2].Method.Should().BeSameAs(typeof(UndeclaredArgumentToolFilter).GetMethod(nameof(UndeclaredArgumentToolFilter.Filter)));
-        filters[3].Method.Should().BeSameAs(typeof(InputGateToolFilter).GetMethod(nameof(InputGateToolFilter.Filter)));
+        filters[3].Method.Should().BeSameAs(typeof(UndeclaredArgumentToolFilter).GetMethod(nameof(UndeclaredArgumentToolFilter.Filter)));
+        filters[4].Method.Should().BeSameAs(typeof(InputGateToolFilter).GetMethod(nameof(InputGateToolFilter.Filter)));
     }
 
     [Fact]

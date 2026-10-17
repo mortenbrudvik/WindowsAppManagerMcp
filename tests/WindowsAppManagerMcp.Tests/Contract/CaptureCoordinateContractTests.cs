@@ -129,7 +129,7 @@ public class CaptureCoordinateContractTests
         var captureId = await CaptureNotepadAsync(server);
 
         // Act - no windowHandle: the captured window is the target
-        var payload = Payload(await server.CallToolAsync("click", new Dictionary<string, object?>
+        var payload = Payload(await server.CallToolAsync("mouse_click", new Dictionary<string, object?>
         {
             ["x"] = 392,
             ["y"] = 196,
@@ -168,7 +168,7 @@ public class CaptureCoordinateContractTests
         var center = legend[(legend.IndexOf("center=(", StringComparison.Ordinal) + 8)..legend.IndexOf(')')].Split(',').Select(int.Parse).ToArray();
 
         // Act
-        var payload = Payload(await server.CallToolAsync("click", new Dictionary<string, object?>
+        var payload = Payload(await server.CallToolAsync("mouse_click", new Dictionary<string, object?>
         {
             ["x"] = center[0],
             ["y"] = center[1],
@@ -230,7 +230,7 @@ public class CaptureCoordinateContractTests
         crop.GetProperty("width").GetInt32().Should().Be(56);
 
         // Act - the middle of the 56 x 36 crop
-        var payload = Payload(await server.CallToolAsync("click", new Dictionary<string, object?>
+        var payload = Payload(await server.CallToolAsync("mouse_click", new Dictionary<string, object?>
         {
             ["x"] = 28,
             ["y"] = 18,
@@ -268,7 +268,7 @@ public class CaptureCoordinateContractTests
         crop.GetProperty("width").GetInt32().Should().Be(56);
 
         // Act - the middle of the 56 x 36 crop
-        var payload = Payload(await server.CallToolAsync("click", new Dictionary<string, object?>
+        var payload = Payload(await server.CallToolAsync("mouse_click", new Dictionary<string, object?>
         {
             ["x"] = 28,
             ["y"] = 18,
@@ -289,7 +289,7 @@ public class CaptureCoordinateContractTests
         At(Calculator);
 
         // Act
-        var payload = Payload(await server.CallToolAsync("click", new Dictionary<string, object?>
+        var payload = Payload(await server.CallToolAsync("mouse_click", new Dictionary<string, object?>
         {
             ["x"] = 392, ["y"] = 196, ["captureId"] = captureId
         }));
@@ -308,7 +308,7 @@ public class CaptureCoordinateContractTests
         _notepadRect = (50, 100, 1650, 1000);
 
         // Act
-        var result = await server.CallToolAsync("click", new Dictionary<string, object?> { ["x"] = 392, ["y"] = 196, ["captureId"] = captureId });
+        var result = await server.CallToolAsync("mouse_click", new Dictionary<string, object?> { ["x"] = 392, ["y"] = 196, ["captureId"] = captureId });
 
         // Assert
         result.IsError.Should().BeTrue();
@@ -338,7 +338,7 @@ public class CaptureCoordinateContractTests
         await using var server = await StartServerAsync();
         var captureId = await CaptureNotepadAsync(server);
 
-        var result = await server.CallToolAsync("click", new Dictionary<string, object?>
+        var result = await server.CallToolAsync("mouse_click", new Dictionary<string, object?>
         {
             ["x"] = 392, ["y"] = 196, ["captureId"] = captureId, ["windowHandle"] = (long)Calculator
         });
@@ -356,7 +356,7 @@ public class CaptureCoordinateContractTests
         await using var server = await StartServerAsync();
 
         // Act
-        var payload = Payload(await server.CallToolAsync("click", new Dictionary<string, object?>
+        var payload = Payload(await server.CallToolAsync("mouse_click", new Dictionary<string, object?>
         {
             ["x"] = 392, ["y"] = 169, ["space"] = "client", ["windowHandle"] = (long)Notepad
         }));
@@ -373,7 +373,7 @@ public class CaptureCoordinateContractTests
     {
         await using var server = await StartServerAsync();
 
-        var result = await server.CallToolAsync("click", new Dictionary<string, object?> { ["x"] = 1, ["y"] = 1, ["space"] = "pixels" });
+        var result = await server.CallToolAsync("mouse_click", new Dictionary<string, object?> { ["x"] = 1, ["y"] = 1, ["space"] = "pixels" });
 
         result.IsError.Should().BeTrue();
         var payload = Payload(result);

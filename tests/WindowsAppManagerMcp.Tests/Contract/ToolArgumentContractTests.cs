@@ -202,7 +202,7 @@ public sealed class ToolArgumentContractTests : IDisposable
     #region Ranges
 
     [Theory]
-    [InlineData("resize_window", """{ "handle": 1706796, "width": 0, "height": 600 }""")]
+    [InlineData("set_window_bounds", """{ "handle": 1706796, "width": 0, "height": 600 }""")]
     [InlineData("set_window_bounds", """{ "handle": 1706796, "x": 0, "y": 0, "width": 800, "height": -1 }""")]
     public async Task WindowSizes_ThatAreNotPositive_AreInvalidArguments_AndNothingIsChanged(string tool, string arguments)
     {
@@ -236,7 +236,7 @@ public sealed class ToolArgumentContractTests : IDisposable
     [InlineData("get_browser_content", """{ "handle": 2821181, "targetId": "TAB1?x" }""", "CDP tab id")]
     [InlineData("get_browser_url", """{ "handle": 2821181, "cdpPort": 9222, "useCdp": false }""", "useCdp=false")]
     [InlineData("get_browser_content", """{ "handle": 2821181, "targetId": "8C1F0A6E2B7D4F3A", "useCdp": false }""", "useCdp=false")]
-    [InlineData("get_active_browser_url", """{ "requireCdp": true, "useCdp": false }""", "useCdp=false")]
+    [InlineData("get_browser_url", """{ "window": { "foreground": true }, "requireCdp": true, "useCdp": false }""", "useCdp=false")]
     [InlineData("get_browser_content", """{ "handle": 2821181, "selector": "main", "useCdp": false }""", "so selector cannot be used with it")]
     public async Task TargetId_Malformed_OrUseCdpFalseWithCdp_IsInvalidArguments_AndNothingIsRead(string tool, string arguments, string message)
     {

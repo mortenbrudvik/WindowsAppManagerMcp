@@ -4,9 +4,7 @@ namespace WindowsAppManagerMcp.Tests.Contract;
 /// Contract: the [Description] text that tools/list sends to every MCP client, including clients
 /// that never load the plugin skill, does not teach destructive key chords, and the input tools
 /// tell the agent to confirm the target window first.
-/// These tests only reflect over the server assembly. The tools roadmap M6.1 deprecated (click, right_click, double_click,
-/// move_window, resize_window and the others of the deprecated toolset) carry a one-line description that sends the agent
-/// to their replacement instead (DeprecatedToolsContractTests), so the rules here hold for the replacements.
+/// These tests only reflect over the server assembly.
 /// </summary>
 public class ToolDescriptionTests
 {
@@ -131,7 +129,7 @@ public class ToolDescriptionTests
     [Fact]
     public void MouseClickDescription_StandsAlone_WithEveryCheckOfAClick()
     {
-        // Roadmap M6.1: mouse_click replaces click, right_click and double_click, so it cannot send the agent to their text
+        // Roadmap M6.1: mouse_click replaced click, right_click and double_click (removed in 3.0.0), so it stands alone
         var description = ServerToolCatalog.Description("mouse_click");
 
         description.Should().NotContain("as for click").And.NotContain("as click");
@@ -268,7 +266,6 @@ public class ToolDescriptionTests
     }
 
     [Theory]
-    [InlineData("move_window")]
     [InlineData("set_window_bounds")]
     [InlineData("snap_window")]
     [InlineData("move_window_to_monitor")]
@@ -300,7 +297,6 @@ public class ToolDescriptionTests
     }
 
     [Theory]
-    [InlineData("move_window")]
     [InlineData("set_window_bounds")]
     [InlineData("snap_window")]
     [InlineData("set_windows_bounds_batch.placements")]

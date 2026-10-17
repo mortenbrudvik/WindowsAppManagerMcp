@@ -54,7 +54,7 @@ public class AuditLogContractTests
     public void TheAuditedTools_AreTheInputCloseKillLaunchLayoutScrollAndClipboardTools()
     {
         AuditLogToolFilter.AuditedTools.Should().BeEquivalentTo(
-            "click", "right_click", "double_click", "mouse_click", "drag", "mouse_move", "type_text", "send_keys", "press_keys", "scroll",
+            "mouse_click", "drag", "mouse_move", "type_text", "send_keys", "press_keys", "scroll",
             "release_all_input", "element_action", "respond_to_dialog", "file_dialog", "close_window", "close_windows_batch", "close_application", "kill_process", "close_debug_browser",
             "launch_application", "launch_applications_batch", "launch_browser_with_debug",
             "apply_layout", "save_layout", "delete_layout", "set_clipboard", "get_clipboard", "activate_tab", "browser_navigate",
@@ -292,7 +292,7 @@ public class AuditLogContractTests
     public async Task Click_RecordsObserve_ButNotTheObservation()
     {
         // Act - roadmap M3.F32: the input tools' observe, as element_action's
-        var (_, lines) = await CallAsync("click", new Dictionary<string, object?>(EveryToolContractTests.ArgumentsFor("click"))
+        var (_, lines) = await CallAsync("mouse_click", new Dictionary<string, object?>(EveryToolContractTests.ArgumentsFor("mouse_click"))
         {
             ["observe"] = "state"
         });
@@ -502,9 +502,9 @@ public class AuditLogContractTests
     [Fact]
     public async Task AnArgumentTheToolDoesNotDeclare_IsOnlyCounted_AndTheRefusalIsRecorded()
     {
-        var arguments = new Dictionary<string, object?>(EveryToolContractTests.ArgumentsFor("click")) { ["password=hunter2"] = 1 };
+        var arguments = new Dictionary<string, object?>(EveryToolContractTests.ArgumentsFor("mouse_click")) { ["password=hunter2"] = 1 };
 
-        var (result, lines) = await CallAsync("click", arguments);
+        var (result, lines) = await CallAsync("mouse_click", arguments);
 
         // Every tool refuses it (roadmap M3.F42), without repeating a name that is no parameter name; the line records the
         // refusal, with the name left out
@@ -658,7 +658,7 @@ public class AuditLogContractTests
     [Fact]
     public async Task ACallWithInvalidArguments_IsAuditedWithInvalidArguments()
     {
-        var (_, lines) = await CallAsync("click", new Dictionary<string, object?> { ["x"] = "left" });
+        var (_, lines) = await CallAsync("mouse_click", new Dictionary<string, object?> { ["x"] = "left" });
 
         lines.Single().GetProperty("errorCode").GetString().Should().Be(ToolErrorReporting.InvalidArgumentsErrorCode);
     }
@@ -678,7 +678,7 @@ public class AuditLogContractTests
     public async Task AnAuditLogThatCannotBeWritten_NeverBreaksTheCall()
     {
         // Arrange - a file stands where the audit folder should be
-        var (result, lines) = await CallAsync("click", EveryToolContractTests.ArgumentsFor("click"), services => services.BlockAuditFolder());
+        var (result, lines) = await CallAsync("mouse_click", EveryToolContractTests.ArgumentsFor("mouse_click"), services => services.BlockAuditFolder());
 
         // Assert
         result.IsError.Should().NotBe(true);
@@ -701,7 +701,7 @@ public class AuditLogContractTests
         }
         else
         {
-            begin.Returns(new AuditCall("click", new Dictionary<string, JsonElement>(), null, DateTimeOffset.Now, 0,
+            begin.Returns(new AuditCall("mouse_click", new Dictionary<string, JsonElement>(), null, DateTimeOffset.Now, 0,
                 new Dictionary<long, AuditTarget>(), new Dictionary<int, string?>()));
             audit.Setup(a => a.EndAsync(It.IsAny<AuditCall>(), It.IsAny<CallToolResult?>(), It.IsAny<string>())).Throws(new IOException("end"));
         }
@@ -714,7 +714,7 @@ public class AuditLogContractTests
             });
 
         // Act
-        var result = await server.CallToolAsync("click", EveryToolContractTests.ArgumentsFor("click"));
+        var result = await server.CallToolAsync("mouse_click", EveryToolContractTests.ArgumentsFor("mouse_click"));
 
         // Assert
         result.IsError.Should().NotBe(true);
@@ -732,7 +732,7 @@ public class AuditLogContractTests
         var audit = new Mock<IAuditLog>();
         audit.Setup(a => a.Begin(It.IsAny<string>(), It.IsAny<IEnumerable<KeyValuePair<string, JsonElement>>?>(),
                 It.IsAny<string?>(), It.IsAny<JsonElement?>()))
-            .Returns(new AuditCall("click", new Dictionary<string, JsonElement>(), null, DateTimeOffset.Now, 0,
+            .Returns(new AuditCall("mouse_click", new Dictionary<string, JsonElement>(), null, DateTimeOffset.Now, 0,
                 new Dictionary<long, AuditTarget>(), new Dictionary<int, string?>()));
         audit.Setup(a => a.EndAsync(It.IsAny<AuditCall>(), It.IsAny<CallToolResult?>(), It.IsAny<string>()))
             .Returns(neverFinishes ? new TaskCompletionSource().Task : Task.FromException(new IOException("end")));
@@ -746,7 +746,7 @@ public class AuditLogContractTests
 
         // Act
         var watch = System.Diagnostics.Stopwatch.StartNew();
-        var result = await server.CallToolAsync("click", EveryToolContractTests.ArgumentsFor("click"));
+        var result = await server.CallToolAsync("mouse_click", EveryToolContractTests.ArgumentsFor("mouse_click"));
 
         // Assert
         result.IsError.Should().NotBe(true);
@@ -764,7 +764,7 @@ public class AuditLogContractTests
 
         // Act
         var before = Json(await server.CallToolAsync("get_server_info"));
-        await server.CallToolAsync("click", EveryToolContractTests.ArgumentsFor("click"));
+        await server.CallToolAsync("mouse_click", EveryToolContractTests.ArgumentsFor("mouse_click"));
         var after = Json(await server.CallToolAsync("get_server_info"));
 
         // Assert

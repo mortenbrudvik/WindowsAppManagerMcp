@@ -255,16 +255,6 @@ public partial class WindowFinderTools
         return (integrity, aboveServer);
     }
 
-    [McpServerTool(Name = "get_all_windows", Title = "List All Windows", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
-    [Description("Deprecated, removed in 3.0.0: use find_windows instead. Lists the visible user-facing app windows, as find_windows with no filter does.")]
-    public IReadOnlyList<WindowInfoDto> GetAllWindows(
-        [Description("Include minimized windows (default: true)")]
-        bool includeMinimized = true)
-    {
-        var results = _windowService.GetAllWindows(includeMinimized);
-        return results.Select(ToDto).ToList();
-    }
-
     [McpServerTool(Name = "get_foreground_window", Title = "Get Foreground Window", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
     [Description("Get information about the currently focused (foreground) window. Untitled windows such as menus, popups and the taskbar are reported too, with an empty title and their className. When no window is in the foreground (for a moment while windows switch, or while a UAC prompt or the lock screen is shown), the call fails with errorCode NoForegroundWindow: call it again shortly.")]
     public WindowInfoDto GetForegroundWindow()

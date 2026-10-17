@@ -338,7 +338,7 @@ public class BrowserReadingToolsTests
     #region get_browser_url with a bare foreground selector (roadmap M6.1)
 
     [Fact]
-    public async Task GetBrowserUrl_WithABareForegroundSelector_ReadsTheActiveBrowser_AsGetActiveBrowserUrlDoes()
+    public async Task GetBrowserUrl_WithABareForegroundSelector_ReadsTheActiveBrowser()
     {
         // Arrange
         CdpOptions? passed = null;
@@ -351,7 +351,7 @@ public class BrowserReadingToolsTests
         // Act
         var result = await sut.GetBrowserUrl(window: new WindowSelector { Foreground = true }, cdpPort: 9222, requireCdp: true, timeoutMs: 4000);
 
-        // Assert - the same service call get_active_browser_url makes, with the same CDP options; no selector resolution
+        // Assert - the active-browser service call, with the CDP options; no selector resolution
         result.Success.Should().BeTrue();
         result.Url.Should().Be("https://example.com");
         passed.Should().Be(new CdpOptions(9222, true, 4000, null, true));
@@ -392,80 +392,6 @@ public class BrowserReadingToolsTests
         // Assert
         result.Success.Should().BeTrue();
         _mockBrowserReadingService.Verify(s => s.GetActiveBrowserUrlAsync(It.IsAny<CdpOptions?>(), It.IsAny<CancellationToken>()), Times.Never);
-    }
-
-    #endregion
-
-    #region GetActiveBrowserUrl Tests
-
-    [Fact]
-    public async Task GetActiveBrowserUrl_CallsService()
-    {
-        // Arrange
-        _mockBrowserReadingService.Setup(s => s.GetActiveBrowserUrlAsync(It.IsAny<CdpOptions?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new BrowserUrlResult(
-                Success: true,
-                Url: "https://example.com",
-                BrowserType: "edge",
-                PageTitle: "Example",
-                Error: null,
-                ErrorCode: BrowserErrorCode.None));
-        var sut = CreateSut();
-
-        // Act
-        await sut.GetActiveBrowserUrl();
-
-        // Assert
-        _mockBrowserReadingService.Verify(s => s.GetActiveBrowserUrlAsync(It.IsAny<CdpOptions?>(), It.IsAny<CancellationToken>()), Times.Once);
-    }
-
-    [Fact]
-    public async Task GetActiveBrowserUrl_ReturnsMappedDto_OnSuccess()
-    {
-        // Arrange
-        _mockBrowserReadingService.Setup(s => s.GetActiveBrowserUrlAsync(It.IsAny<CdpOptions?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new BrowserUrlResult(
-                Success: true,
-                Url: "https://example.com",
-                BrowserType: "edge",
-                PageTitle: "Microsoft Edge",
-                Error: null,
-                ErrorCode: BrowserErrorCode.None));
-        var sut = CreateSut();
-
-        // Act
-        var result = await sut.GetActiveBrowserUrl();
-
-        // Assert
-        result.Success.Should().BeTrue();
-        result.Url.Should().Be("https://example.com");
-        result.BrowserType.Should().Be("edge");
-        result.PageTitle.Should().Be("Microsoft Edge");
-        result.ErrorCode.Should().Be("None");
-    }
-
-    [Fact]
-    public async Task GetActiveBrowserUrl_ReturnsMappedDto_WhenNoBrowser()
-    {
-        // Arrange
-        _mockBrowserReadingService.Setup(s => s.GetActiveBrowserUrlAsync(It.IsAny<CdpOptions?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new BrowserUrlResult(
-                Success: false,
-                Url: null,
-                BrowserType: null,
-                PageTitle: null,
-                Error: "No browser in foreground",
-                ErrorCode: BrowserErrorCode.NoBrowserInForeground));
-        var sut = CreateSut();
-
-        // Act
-        var result = await sut.GetActiveBrowserUrl();
-
-        // Assert
-        result.Success.Should().BeFalse();
-        result.Url.Should().BeNull();
-        result.Error.Should().Be("No browser in foreground");
-        result.ErrorCode.Should().Be("NoBrowserInForeground");
     }
 
     #endregion
@@ -563,21 +489,6 @@ public class BrowserReadingToolsTests
     }
 
     [Fact]
-    public async Task GetActiveBrowserUrl_PassesCdpOptionsAndCancellationToken()
-    {
-        using var cts = new CancellationTokenSource();
-        _mockBrowserReadingService
-            .Setup(s => s.GetActiveBrowserUrlAsync(It.IsAny<CdpOptions?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(AnyUrlResult);
-        var sut = CreateSut();
-
-        await sut.GetActiveBrowserUrl(cdpPort: 9222, requireCdp: false, timeoutMs: 1500, cancellationToken: cts.Token);
-
-        _mockBrowserReadingService.Verify(s => s.GetActiveBrowserUrlAsync(
-            new CdpOptions(9222, false, 1500, null, true), cts.Token), Times.Once);
-    }
-
-    [Fact]
     public async Task GetBrowserUrl_PassesTargetIdThrough()
     {
         _mockBrowserReadingService
@@ -640,7 +551,7 @@ public class BrowserReadingToolsTests
     }
 
     [Fact]
-    public async Task GetBrowserUrlAndContentAndActive_PassUseCdpFalseThrough()
+    public async Task GetBrowserUrlAndContent_PassUseCdpFalseThrough()
     {
         _mockBrowserReadingService
             .Setup(s => s.GetBrowserUrlAsync(It.IsAny<nint>(), It.IsAny<CdpOptions?>(), It.IsAny<CancellationToken>()))
@@ -649,17 +560,13 @@ public class BrowserReadingToolsTests
             .Setup(s => s.GetBrowserContentAsync(
                 It.IsAny<nint>(), It.IsAny<BrowserContentOptions?>(), It.IsAny<CdpOptions?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(AnyContentResult);
-        _mockBrowserReadingService
-            .Setup(s => s.GetActiveBrowserUrlAsync(It.IsAny<CdpOptions?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(AnyUrlResult);
         var sut = CreateSut();
 
         await sut.GetBrowserUrl(12345, useCdp: false);
         await sut.GetBrowserContent(12345, useCdp: false);
-        await sut.GetActiveBrowserUrl(useCdp: false);
 
         _mockBrowserReadingService.Invocations.SelectMany(i => i.Arguments).OfType<CdpOptions>()
-            .Should().HaveCount(3).And.OnlyContain(o => !o.UseCdp && o.Port == null);
+            .Should().HaveCount(2).And.OnlyContain(o => !o.UseCdp && o.Port == null);
     }
 
     [Theory]
@@ -676,31 +583,7 @@ public class BrowserReadingToolsTests
 
         (await url.Should().ThrowAsync<ToolErrorException>()).Which.ErrorCode.Should().Be(ToolErrorReporting.InvalidArgumentsErrorCode);
         (await content.Should().ThrowAsync<ToolErrorException>()).Which.Message.Should().Contain(named).And.Contain("Nothing was read");
-        if (targetId == null)
-        {
-            var active = () => sut.GetActiveBrowserUrl(cdpPort: cdpPort, requireCdp: requireCdp, useCdp: false);
-            (await active.Should().ThrowAsync<ToolErrorException>()).Which.Message.Should().Contain(named);
-        }
-
         _mockBrowserReadingService.VerifyNoOtherCalls();
-    }
-
-    [Fact]
-    public void GetActiveBrowserUrl_HasNoTargetId()
-    {
-        // The foreground window defines its tab
-        typeof(BrowserReadingTools).GetMethod(nameof(BrowserReadingTools.GetActiveBrowserUrl))!
-            .GetParameters().Select(p => p.Name).Should().NotContain("targetId");
-    }
-
-    [Fact]
-    public void GetActiveBrowserUrl_DescribesNoTargetId()
-    {
-        // Its schema must not mention an argument the server would refuse as undeclared (M3.F42)
-        var parameters = typeof(BrowserReadingTools).GetMethod(nameof(BrowserReadingTools.GetActiveBrowserUrl))!.GetParameters();
-
-        parameters.Select(p => p.GetCustomAttribute<DescriptionAttribute>()?.Description ?? "")
-            .Should().AllSatisfy(d => d.Should().NotContain("targetId"));
     }
 
     [Fact]
@@ -963,7 +846,6 @@ public class BrowserReadingToolsTests
     [Theory]
     [InlineData(nameof(BrowserReadingTools.GetBrowserUrl))]
     [InlineData(nameof(BrowserReadingTools.GetBrowserContent))]
-    [InlineData(nameof(BrowserReadingTools.GetActiveBrowserUrl))]
     public void TheReadingToolsCdpPort_IsTheOneLaunchBrowserWithDebugReturned(string tool)
     {
         // launch_browser_with_debug no longer listens on 9222 by default (roadmap M5.1)
