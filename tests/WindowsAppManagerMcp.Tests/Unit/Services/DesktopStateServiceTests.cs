@@ -572,8 +572,14 @@ public class DesktopStateServiceTests
         var clock = new ManualTimerClock();
         var timeout = TimeSpan.FromSeconds(1);
 
-        // Act - up to a tick before the deadline, then to it
+        // Act - up to a tick before the deadline, then to it. The other parts are mocks that answer at once, but on a busy
+        // machine their tasks may not have run yet when the test's clock jumps: wait until they were read, and a moment more
+        // for them to finish, so only the walk that never returns misses the deadline
         var call = CreateSut(clock).GetStateAsync(Request(timeout: timeout), CancellationToken.None);
+        SpinWait.SpinUntil(() => _windows.Invocations.Any(i => i.Method.Name == nameof(IWindowService.GetAllWindows)) &&
+                                 _inspection.Invocations.Any(i => i.Method.Name == nameof(IElementInspectionService.GetFocusedElementAsync)),
+            HangGuard).Should().BeTrue("the call reads the windows and the focus");
+        await Task.Delay(200);
         clock.Advance(timeout - TimeSpan.FromTicks(1));
         var returnedBeforeTheDeadline = call.IsCompleted;
         clock.Advance(TimeSpan.FromTicks(1));
