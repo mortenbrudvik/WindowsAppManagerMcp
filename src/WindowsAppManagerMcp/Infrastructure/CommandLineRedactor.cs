@@ -8,7 +8,7 @@ public sealed record RedactedCommandLine(string Text, bool Redacted);
 
 /// <summary>
 /// Masks the secrets a process's command line commonly carries, so that it can be shown to the agent (roadmap M6.6's
-/// list_processes, and later M6.8's layout launch info and M7.5). Pure and heuristic: it knows the usual shapes, and a
+/// list_processes, and later M7.5; M6.8's layout launch info holds no arguments, owner decision D15). Pure and heuristic: it knows the usual shapes, and a
 /// secret in another shape (a positional password, a base64 blob, a switch with an unusual name) passes through. Callers
 /// must keep showing a command line opt-in and narrow, and never claim it is free of secrets.
 /// <para>Each masked value becomes <see cref="Mask"/>; everything else, quotes included, is kept as it was. It masks:</para>

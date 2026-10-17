@@ -103,6 +103,8 @@ public class LaunchPlacementServiceTests
         return WindowChangeResult.Done(handle);
     }
 
+    private readonly Mock<IMonitorService> _monitors = new();
+
     private LaunchPlacementService CreateSut() => new(_windows.Object, _foreground.Object, _session.Object, _clock, (delay, token) =>
     {
         token.ThrowIfCancellationRequested();
@@ -118,7 +120,7 @@ public class LaunchPlacementServiceTests
         _duringEveryDelay?.Invoke();
         token.ThrowIfCancellationRequested();
         return Task.CompletedTask;
-    });
+    }, _monitors.Object);
 
     /// <summary>The time the service has waited since the test began.</summary>
     private TimeSpan Elapsed => _clock.Now - _start;
@@ -645,5 +647,47 @@ public class LaunchPlacementServiceTests
 
         await call.Should().ThrowAsync<OperationCanceledException>();
         _calls.Should().BeEmpty();
+    }
+    [Fact]
+    public async Task ANamedMonitor_IsFoundAgainByItsKey_WhenTheWindowIsPlaced()
+    {
+        // Roadmap M6.7, M6.8: the name was resolved to index 1 before the launch; the displays changed during the window
+        // wait, and the monitor with that id is index 2 now
+        var moved = new MonitorInfo(2, @"\\.\DISPLAY3", false, new MonitorRect(3840, 0, 1920, 1080), new MonitorRect(3840, 0, 1920, 1040), 1.0)
+        {
+            Id = "m-0a1b2c3d"
+        };
+        _monitors.Setup(m => m.ResolveMonitor(It.Is<MonitorSelector>(s => s.Name == "m-0a1b2c3d"))).Returns(MonitorResolution.Found(2, moved));
+        var plan = Plan(new LaunchPlacement(Snap: "left_half", MonitorIndex: 1)) with { MonitorKey = "m-0a1b2c3d" };
+
+        var outcome = (await CreateSut().PlaceAsync([(Code, plan)])).Single();
+
+        outcome.Success.Should().BeTrue();
+        Actions.Should().Equal("snap LeftHalf 2");
+    }
+
+    [Fact]
+    public async Task ANamedMonitorThatIsGone_FailsThePlacement_WithMonitorNotFound_AndNothingIsPlaced()
+    {
+        _monitors.Setup(m => m.ResolveMonitor(It.IsAny<MonitorSelector>()))
+            .Returns(MonitorResolution.Failed(nameof(WindowErrorCode.MonitorNotFound), "No monitor has the id 'm-0a1b2c3d' now. Nothing was done."));
+        var plan = Plan(new LaunchPlacement(Snap: "left_half", MonitorIndex: 1, Focus: true)) with { MonitorKey = "m-0a1b2c3d" };
+
+        var outcome = (await CreateSut().PlaceAsync([(Code, plan)])).Single();
+
+        outcome.Success.Should().BeFalse();
+        outcome.ErrorCode.Should().Be(WindowErrorCode.MonitorNotFound);
+        outcome.FailedStep.Should().Be(LaunchPlacementStep.Place);
+        outcome.Error.Should().Contain("m-0a1b2c3d").And.Contain("gone");
+        Actions.Should().BeEmpty("neither placed on another monitor nor focused");
+    }
+
+    [Fact]
+    public async Task APlainIndex_IsUsedAsGiven()
+    {
+        var outcome = await PlaceOneAsync(Code, new LaunchPlacement(Snap: "left_half", MonitorIndex: 1));
+
+        outcome.Success.Should().BeTrue();
+        _monitors.Verify(m => m.ResolveMonitor(It.IsAny<MonitorSelector>()), Times.Never);
     }
 }

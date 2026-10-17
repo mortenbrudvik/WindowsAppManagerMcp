@@ -184,6 +184,8 @@ public class NativeCallGuardTests
         ["User32.SendMessageTimeoutW"] = "sends WM_NULL, which every window ignores, with SMTO_ABORTIFHUNG and a timeout (RespondsWithin): " +
             "reads whether the window's thread answers; the wrapper sends no other message",
         ["User32.GetDpiForWindow"] = "reads the DPI of a window",
+        ["User32.GetWindowPlacement"] = "reads a window's show state and restore rectangle into a struct of the server " +
+                                        "(SetWindowPlacement, which changes them, is pinned to the wrapper's window changes)",
         ["Dwmapi.DwmGetWindowAttribute"] = "reads a DWM attribute such as cloaking or the visible frame (DwmSetWindowAttribute, which changes them, is not listed)",
         ["Kernel32.GetCurrentProcessId"] = "reads the server's own process ID",
         // Thread reads for verified activation (NativeThreadInputWrapper; AttachThreadInput is not listed)

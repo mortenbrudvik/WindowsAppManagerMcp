@@ -76,7 +76,7 @@ public static class InputGateToolFilter
     /// </summary>
     public static IReadOnlySet<string> WindowChangingTools { get; } = new HashSet<string>(StringComparer.Ordinal)
     {
-        "apply_layout", "launch_applications_batch", "launch_browser_with_debug", "set_clipboard"
+        "launch_applications_batch", "launch_browser_with_debug", "set_clipboard"
     };
 
     /// <summary>
@@ -111,7 +111,9 @@ public static class InputGateToolFilter
     /// filter and through the input services, and every other call waits, or gets InputBusy after
     /// <see cref="GateWaitTimeout"/>. launch_application (roadmap M6.5) asks the user first when its runAsAdmin needs a
     /// confirmation Windows itself would not ask for, then holds the gate for the launch, its window wait and its placement,
-    /// as this filter did before.
+    /// as this filter did before. apply_layout (roadmap M6.8) takes no gate for a dry run, which only reads; otherwise it asks
+    /// the user first when an agent-written layout would start programs, then holds the gate for the arrangement and its
+    /// launches, as this filter did before.
     /// </summary>
     public static IReadOnlySet<string> SelfGatedTools { get; } = new HashSet<string>(StringComparer.Ordinal)
     {
@@ -130,7 +132,10 @@ public static class InputGateToolFilter
         "run_steps",
         // Asks the user before an elevation Windows would not ask about (runAsAdmin, roadmap M6.5), then holds the gate for the
         // launch, its window wait and its placement, as the filter did
-        "launch_application"
+        "launch_application",
+        // Plans without the gate (a dry run takes none), asks the user before an agent-written layout starts programs, then
+        // holds the gate for the arrangement and its launches (roadmap M6.8)
+        "apply_layout"
     };
 
     /// <summary>

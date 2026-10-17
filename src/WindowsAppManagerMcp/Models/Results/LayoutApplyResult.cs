@@ -11,6 +11,7 @@ namespace WindowsAppManagerMcp.Models.Results;
 /// no window of such a placement was arranged. apply_layout returns it as focus.
 /// </param>
 /// <param name="Placements">What happened to each placement, in placement order; null when the preset was not applied at all.</param>
+/// <param name="DryRun">A dry run (roadmap M6.8): the placements say what would happen, and nothing was changed.</param>
 public record LayoutApplyResult(
     bool Success,
     string PresetName,
@@ -20,13 +21,16 @@ public record LayoutApplyResult(
     List<string>? Errors = null,
     string? ErrorCode = null,
     List<FocusResult>? Focus = null,
-    List<LayoutPlacementResult>? Placements = null
+    List<LayoutPlacementResult>? Placements = null,
+    bool DryRun = false
 )
 {
-    /// <summary>The overall outcome: every placement applied, some of them, or none.</summary>
-    public string Status => Success
-        ? LayoutApplyStatus.Applied
-        : WindowsArranged > 0 ? LayoutApplyStatus.Partial : LayoutApplyStatus.Failed;
+    /// <summary>The overall outcome: every placement applied, some of them, or none; dryRun for a dry run.</summary>
+    public string Status => DryRun
+        ? LayoutApplyStatus.DryRun
+        : Success
+            ? LayoutApplyStatus.Applied
+            : WindowsArranged > 0 ? LayoutApplyStatus.Partial : LayoutApplyStatus.Failed;
 }
 
 /// <summary>The values of <see cref="LayoutApplyResult.Status"/>.</summary>
@@ -40,6 +44,9 @@ public static class LayoutApplyStatus
 
     /// <summary>No window was arranged.</summary>
     public const string Failed = "failed";
+
+    /// <summary>A dry run (roadmap M6.8): nothing was arranged; the placements say what would be.</summary>
+    public const string DryRun = "dryRun";
 }
 
 /// <summary>What apply_layout did with one placement.</summary>
@@ -51,8 +58,16 @@ public static class LayoutApplyStatus
 /// <param name="ErrorCode">Why the placement was not (fully) applied; null when it was.</param>
 /// <param name="Error">The reason, in words.</param>
 /// <param name="LaunchCommand">
-/// The placement's launchCommand when it was run for this placement (launchMissing), whether or not the launch worked;
-/// null when nothing was launched.
+/// What launchMissing started for this placement (its program, or an app's shell:AppsFolder entry), whether or not the launch
+/// worked, or in a dry run would start; null when nothing was launched.
+/// </param>
+/// <param name="Target">
+/// A dry run's target (roadmap M6.8): where the window would go, in virtual-screen pixels (the window rect; a snap position's
+/// visible frame; for a maximized placement the rectangle it is given before it is maximized). Null outside a dry run.
+/// </param>
+/// <param name="MonitorFallback">
+/// How the placement's monitor was found when the monitor it saved is not connected (roadmap M6.8): "name" (another monitor
+/// with its EDID name) or "index" (its monitor index). Null when the saved monitor was found, or none was saved.
 /// </param>
 public sealed record LayoutPlacementResult(
     int Order,
@@ -62,7 +77,9 @@ public sealed record LayoutPlacementResult(
     bool? Focused = null,
     string? ErrorCode = null,
     string? Error = null,
-    string? LaunchCommand = null);
+    string? LaunchCommand = null,
+    BoundsDto? Target = null,
+    string? MonitorFallback = null);
 
 /// <summary>The window a placement was given: its handle, title and process name.</summary>
 public sealed record LayoutWindowRef(long Handle, string Title, string ProcessName)
@@ -89,4 +106,32 @@ public static class LayoutPlacementStatus
 
     /// <summary>The placement could not be applied: its monitor does not exist, its launch failed, or the window could not be arranged.</summary>
     public const string Failed = "failed";
+
+    /// <summary>A dry run (roadmap M6.8): the window was found and would be arranged.</summary>
+    public const string WouldApply = "wouldApply";
+
+    /// <summary>A dry run (roadmap M6.8): no window matched, and launchMissing would start one.</summary>
+    public const string WouldLaunch = "wouldLaunch";
 }
+
+/// <summary>The values of <see cref="LayoutPlacementResult.MonitorFallback"/> (roadmap M6.8).</summary>
+public static class LayoutMonitorFallback
+{
+    /// <summary>The saved monitor is not connected; the one monitor with its EDID name was used.</summary>
+    public const string Name = "name";
+
+    /// <summary>The saved monitor is not connected; the placement's monitor index was used.</summary>
+    public const string Index = "index";
+}
+
+/// <summary>How apply_layout applies a preset (roadmap M6.8).</summary>
+/// <param name="DryRun">Plan only: say what each placement would do, and change, focus and launch nothing.</param>
+/// <param name="Placements">
+/// Only these placements, by their 0-based place in the preset (as get_layout lists them); null for all. Every placement is
+/// still matched, so each of these gets the window it would get in a full apply.
+/// </param>
+/// <param name="LaunchRefusal">
+/// Why the user has not confirmed the launches of an agent-written preset (declined, or the client cannot ask), for the error
+/// of each placement that would launch; null when nobody was asked.
+/// </param>
+public sealed record LayoutApplyOptions(bool DryRun = false, IReadOnlyList<int>? Placements = null, string? LaunchRefusal = null);

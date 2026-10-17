@@ -963,4 +963,107 @@ public sealed class UserConfirmationContractTests : IDisposable
     }
 
     #endregion
+
+    #region apply_layout of an agent-written layout (roadmap M6.8, owner decision D15)
+
+    private static readonly LayoutPreset AgentLayout = new("agent-desk", null,
+    [
+        new WindowPlacement(new WindowMatcher(ProcessName: "notepad"), 0, new RelativePosition(0, 0, 0.5, 1))
+        {
+            Launch = new LayoutLaunch(Executable: @"C:\Windows\System32\notepad.exe")
+        },
+        new WindowPlacement(new WindowMatcher(ProcessName: "CalculatorApp"), 0, new RelativePosition(0.5, 0, 0.5, 1), Order: 1)
+        {
+            Launch = new LayoutLaunch(AppId: "Microsoft.WindowsCalculator_8wekyb3d8bbwe!App")
+        }
+    ])
+    {
+        AuthoredBy = LayoutPresetSchema.AgentAuthor,
+        UpdatedAt = new DateTime(2026, 10, 17, 9, 30, 0, DateTimeKind.Utc)
+    };
+
+    private static IReadOnlyDictionary<string, object?> ApplyAgentLayoutArguments() =>
+        new Dictionary<string, object?> { ["name"] = "agent-desk", ["launchMissing"] = true };
+
+    /// <summary>The options of each apply_layout call to the service, and whether it held the gate; a dry run says a launch needs the user.</summary>
+    private List<(LayoutApplyOptions? Options, bool GateHeld)> AgentLayoutNeedsTheUser(bool confirmed = false)
+    {
+        var applies = new List<(LayoutApplyOptions?, bool)>();
+        _services.Layouts.Setup(l => l.GetPreset("agent-desk")).Returns(AgentLayout);
+        _services.Layouts.Setup(l => l.AreLaunchesConfirmed(AgentLayout)).Returns(confirmed);
+        _services.Layouts.Setup(l => l.ApplyPresetAsync("agent-desk", It.IsAny<LayoutMatchBy>(), true, It.IsAny<LayoutApplyOptions?>(),
+                It.IsAny<IProgress<OperationProgress>?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string name, LayoutMatchBy _, bool _, LayoutApplyOptions? options, IProgress<OperationProgress>? _, CancellationToken _) =>
+            {
+                lock (applies)
+                {
+                    applies.Add((options, InputGate.IsHeldBy(_flow)));
+                }
+
+                return options?.DryRun == true
+                    ? new LayoutApplyResult(false, name, DryRun: true, Placements:
+                        [new LayoutPlacementResult(0, LayoutPlacementStatus.WouldLaunch, ErrorCode: nameof(LayoutErrorCode.LaunchNotConfirmed))])
+                    : new LayoutApplyResult(true, name, WindowsArranged: 1, WindowsLaunched: 1);
+            });
+        return applies;
+    }
+
+    [Theory]
+    [MemberData(nameof(Revisions))]
+    public async Task ApplyLayout_OfAnAgentWrittenLayoutThatWouldLaunch_AsksTheUser_OutsideTheGate(string? revision)
+    {
+        var applies = AgentLayoutNeedsTheUser();
+        await using var server = await StartAsync(revision, _ => Answer("accept", confirm: true));
+
+        var result = await server.CallToolAsync("apply_layout", ApplyAgentLayoutArguments());
+
+        result.IsError.Should().NotBe(true, Payload(result).ToString());
+        var question = _questions.Should().ContainSingle().Subject;
+        question.Should().Contain("'agent-desk'").And.Contain(@"'C:\Windows\System32\notepad.exe'")
+            .And.Contain("'Microsoft.WindowsCalculator_8wekyb3d8bbwe!App'").And.Contain("2026-10-17 09:30 UTC").And.Contain("AI agent");
+        _gateWasFreeDuringTheQuestion.Should().BeTrue("a question must never hold the input gate");
+        _services.Layouts.Verify(l => l.ConfirmLaunches(AgentLayout), Times.Once);
+        applies.Select(a => (a.Options!.DryRun, a.GateHeld)).Should().Equal((true, false), (false, true));
+        applies[1].Options!.LaunchRefusal.Should().BeNull();
+    }
+
+    [Theory]
+    [InlineData("decline", null, "declined")]
+    [InlineData("accept", false, "did not confirm")]
+    public async Task ApplyLayout_WhoseLaunchesTheUserDoesNotConfirm_ArrangesWithTheRefusal(string action, bool? confirm, string reason)
+    {
+        var applies = AgentLayoutNeedsTheUser();
+        await using var server = await StartAsync(null, _ => Answer(action, confirm));
+
+        await server.CallToolAsync("apply_layout", ApplyAgentLayoutArguments());
+
+        _services.Layouts.Verify(l => l.ConfirmLaunches(It.IsAny<LayoutPreset>()), Times.Never);
+        applies.Last().Options!.LaunchRefusal.Should().Contain(reason);
+    }
+
+    [Fact]
+    public async Task ApplyLayout_OfAnAgentWrittenLayout_OnAClientThatCannotAsk_LaunchesNothingOfIt()
+    {
+        var applies = AgentLayoutNeedsTheUser();
+        await using var server = await StartAsync(null, answer: null);
+
+        await server.CallToolAsync("apply_layout", ApplyAgentLayoutArguments());
+
+        _questions.Should().BeEmpty();
+        applies.Last().Options!.LaunchRefusal.Should().Contain("cannot ask");
+    }
+
+    [Fact]
+    public async Task ApplyLayout_OfAConfirmedVersion_IsNotAskedAgain()
+    {
+        var applies = AgentLayoutNeedsTheUser(confirmed: true);
+        await using var server = await StartAsync(null, _ => Answer("accept", confirm: true));
+
+        await server.CallToolAsync("apply_layout", ApplyAgentLayoutArguments());
+
+        _questions.Should().BeEmpty();
+        applies.Should().ContainSingle().Which.Options!.DryRun.Should().BeFalse();
+    }
+
+    #endregion
 }

@@ -78,7 +78,6 @@ public class InputGateToolFilterTests
     [Theory]
     [InlineData("launch_browser_with_debug")]
     [InlineData("set_clipboard")]
-    [InlineData("apply_layout")]
     [InlineData("launch_applications_batch")]
     [InlineData("a_tool_nobody_classified")] // fails safe
     public async Task WindowChangingTool_WaitsWhileAnInputCallHoldsTheGate(string tool)
@@ -138,7 +137,7 @@ public class InputGateToolFilterTests
         });
 
         // Act
-        await handler(CreateRequest("apply_layout"), CancellationToken.None);
+        await handler(CreateRequest("launch_applications_batch"), CancellationToken.None);
 
         // Assert - and the gate was released again: an input call can take it
         heldDuringTheCall.Should().BeTrue();
@@ -172,7 +171,7 @@ public class InputGateToolFilterTests
         using (InputGate.Enter())
         {
             // Act
-            var call = handler(CreateRequest("apply_layout"), cancellation.Token).AsTask();
+            var call = handler(CreateRequest("launch_applications_batch"), cancellation.Token).AsTask();
             cancellation.Cancel();
 
             // Assert
@@ -184,7 +183,6 @@ public class InputGateToolFilterTests
     }
 
     [Theory]
-    [InlineData("apply_layout")]
     [InlineData("set_clipboard")]
     [InlineData("launch_browser_with_debug")]
     [InlineData("launch_applications_batch")]
@@ -235,7 +233,7 @@ public class InputGateToolFilterTests
     [Fact]
     public async Task APauseWhileWaitingForTheGate_StopsTheWindowChangingTool()
     {
-        // Arrange - an input call holds the gate, so apply_layout (not paused yet) waits for it
+        // Arrange - an input call holds the gate, so launch_applications_batch (not paused yet) waits for it
         var session = new InputSession(new FakeInputWrapper());
         var ran = false;
         var handler = InputGateToolFilter.Filter((_, _) =>
@@ -244,7 +242,7 @@ public class InputGateToolFilterTests
             return ValueTask.FromResult(new CallToolResult());
         });
         var gate = InputGate.Enter();
-        var call = handler(CreateRequest("apply_layout", session), CancellationToken.None).AsTask();
+        var call = handler(CreateRequest("launch_applications_batch", session), CancellationToken.None).AsTask();
 
         // Act - the user pauses meanwhile, then the input call ends
         session.Pause(InputControlSources.Hotkey);
@@ -286,7 +284,7 @@ public class InputGateToolFilterTests
         var session = new InputSession(new FakeInputWrapper());
         var handler = InputGateToolFilter.Filter((_, _) => ValueTask.FromResult(new CallToolResult()));
         using var gate = InputGate.Enter();
-        var call = handler(CreateRequest("apply_layout", session), CancellationToken.None).AsTask();
+        var call = handler(CreateRequest("launch_applications_batch", session), CancellationToken.None).AsTask();
 
         // Act
         session.Pause(InputControlSources.Hotkey);

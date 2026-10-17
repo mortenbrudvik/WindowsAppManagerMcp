@@ -161,10 +161,10 @@ public class LayoutPresetToolsTests
         placementDto.ProcessName.Should().Be("code");
         placementDto.TitleContains.Should().Be("Visual Studio");
         placementDto.MonitorIndex.Should().Be(1);
-        placementDto.Position.X.Should().Be(0.0);
-        placementDto.Position.Y.Should().Be(0.0);
-        placementDto.Position.Width.Should().Be(0.5);
-        placementDto.Position.Height.Should().Be(1.0);
+        placementDto.Position!.X.Should().Be(0.0);
+        placementDto.Position!.Y.Should().Be(0.0);
+        placementDto.Position!.Width.Should().Be(0.5);
+        placementDto.Position!.Height.Should().Be(1.0);
         placementDto.LaunchCommand.Should().Be("code.exe");
         placementDto.Focus.Should().BeTrue();
         placementDto.Order.Should().Be(1);
@@ -214,7 +214,7 @@ public class LayoutPresetToolsTests
             It.IsAny<string?>(),
             It.IsAny<string[]?>(),
             It.IsAny<string[]?>(),
-            It.IsAny<CancellationToken>()))
+            It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new LayoutSaveResult(true, capturedPreset));
         var sut = CreateSut();
 
@@ -231,7 +231,7 @@ public class LayoutPresetToolsTests
             "Test description",
             It.Is<string[]>(arr => arr.Contains("chrome") && arr.Contains("code")),
             It.Is<string[]>(arr => arr.Contains("explorer")),
-            It.IsAny<CancellationToken>()), Times.Once);
+            It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -244,7 +244,7 @@ public class LayoutPresetToolsTests
             It.IsAny<string?>(),
             It.IsAny<string[]?>(),
             It.IsAny<string[]?>(),
-            It.IsAny<CancellationToken>()))
+            It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new LayoutSaveResult(true, capturedPreset));
         var sut = CreateSut();
 
@@ -257,7 +257,7 @@ public class LayoutPresetToolsTests
             It.IsAny<string?>(),
             It.Is<string[]>(arr => arr.Length == 3 && arr[0] == "chrome" && arr[1] == "code" && arr[2] == "notepad"),
             It.IsAny<string[]?>(),
-            It.IsAny<CancellationToken>()), Times.Once);
+            It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -277,7 +277,7 @@ public class LayoutPresetToolsTests
             It.IsAny<string?>(),
             It.IsAny<string[]?>(),
             It.IsAny<string[]?>(),
-            It.IsAny<CancellationToken>()))
+            It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new LayoutSaveResult(true, capturedPreset));
         var sut = CreateSut();
 
@@ -300,7 +300,7 @@ public class LayoutPresetToolsTests
             It.IsAny<string?>(),
             It.IsAny<string[]?>(),
             It.IsAny<string[]?>(),
-            It.IsAny<CancellationToken>()))
+            It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new LayoutSaveResult(true, capturedPreset));
         var sut = CreateSut();
 
@@ -313,7 +313,7 @@ public class LayoutPresetToolsTests
             null,
             null,
             null,
-            It.IsAny<CancellationToken>()), Times.Once);
+            It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     #endregion
@@ -335,7 +335,7 @@ public class LayoutPresetToolsTests
             It.IsAny<string>(),
             It.IsAny<LayoutMatchBy>(),
             It.IsAny<bool>(),
-            It.IsAny<IProgress<OperationProgress>?>(),
+            It.IsAny<LayoutApplyOptions?>(), It.IsAny<IProgress<OperationProgress>?>(),
             It.IsAny<CancellationToken>()))
             .ReturnsAsync(applyResult);
         var sut = CreateSut();
@@ -351,7 +351,7 @@ public class LayoutPresetToolsTests
             "test-layout",
             LayoutMatchBy.ProcessOnly,
             true,
-            It.IsAny<IProgress<OperationProgress>?>(),
+            It.IsAny<LayoutApplyOptions?>(), It.IsAny<IProgress<OperationProgress>?>(),
             It.IsAny<CancellationToken>()), Times.Once);
     }
 
@@ -370,7 +370,7 @@ public class LayoutPresetToolsTests
             It.IsAny<string>(),
             It.IsAny<LayoutMatchBy>(),
             It.IsAny<bool>(),
-            It.IsAny<IProgress<OperationProgress>?>(),
+            It.IsAny<LayoutApplyOptions?>(), It.IsAny<IProgress<OperationProgress>?>(),
             It.IsAny<CancellationToken>()))
             .ReturnsAsync(applyResult);
         var sut = CreateSut();
@@ -383,7 +383,7 @@ public class LayoutPresetToolsTests
             "test",
             LayoutMatchBy.ProcessAndTitle,
             false,
-            It.IsAny<IProgress<OperationProgress>?>(),
+            It.IsAny<LayoutApplyOptions?>(), It.IsAny<IProgress<OperationProgress>?>(),
             It.IsAny<CancellationToken>()), Times.Once);
     }
 
@@ -397,7 +397,7 @@ public class LayoutPresetToolsTests
             new(1, LayoutPlacementStatus.NotFound, ErrorCode: nameof(LayoutErrorCode.WindowNotFound), Error: "No open window matched placement 1")
         };
         _mockLayoutService.Setup(l => l.ApplyPresetAsync(
-                It.IsAny<string>(), It.IsAny<LayoutMatchBy>(), It.IsAny<bool>(), It.IsAny<IProgress<OperationProgress>?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<string>(), It.IsAny<LayoutMatchBy>(), It.IsAny<bool>(), It.IsAny<LayoutApplyOptions?>(), It.IsAny<IProgress<OperationProgress>?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new LayoutApplyResult(false, "two", WindowsArranged: 1, WindowsNotFound: 1,
                 ErrorCode: nameof(LayoutErrorCode.WindowNotFound), Placements: placements));
 
@@ -433,7 +433,7 @@ public class LayoutPresetToolsTests
             It.IsAny<string>(),
             It.IsAny<LayoutMatchBy>(),
             It.IsAny<bool>(),
-            It.IsAny<IProgress<OperationProgress>?>(),
+            It.IsAny<LayoutApplyOptions?>(), It.IsAny<IProgress<OperationProgress>?>(),
             It.IsAny<CancellationToken>()))
             .ReturnsAsync(applyResult);
         var sut = CreateSut();
@@ -463,7 +463,7 @@ public class LayoutPresetToolsTests
             ErrorCode: nameof(WindowErrorCode.FocusFailed));
         _mockLayoutService.Setup(l => l.ApplyPresetAsync(
                 It.IsAny<string>(), It.IsAny<LayoutMatchBy>(), It.IsAny<bool>(),
-                It.IsAny<IProgress<OperationProgress>?>(),
+                It.IsAny<LayoutApplyOptions?>(), It.IsAny<IProgress<OperationProgress>?>(),
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(new LayoutApplyResult(
                 Success: false,
@@ -575,7 +575,7 @@ public class LayoutPresetToolsTests
         var capturedPreset = TestDataFactory.CreateLayoutPreset("failing");
         _mockLayoutService.Setup(l => l.CaptureCurrentLayoutAsync(
                 It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string[]?>(), It.IsAny<string[]?>(),
-                It.IsAny<CancellationToken>()))
+                It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new LayoutSaveResult(
                 Success: false,
                 Preset: capturedPreset,
@@ -596,7 +596,7 @@ public class LayoutPresetToolsTests
     {
         _mockLayoutService.Setup(l => l.CaptureCurrentLayoutAsync(
                 It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string[]?>(), It.IsAny<string[]?>(),
-                It.IsAny<CancellationToken>()))
+                It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new LayoutSaveResult(
                 Success: false,
                 Preset: null,
@@ -616,7 +616,7 @@ public class LayoutPresetToolsTests
     {
         _mockLayoutService.Setup(l => l.CaptureCurrentLayoutAsync(
                 It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string[]?>(), It.IsAny<string[]?>(),
-                It.IsAny<CancellationToken>()))
+                It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new LayoutSaveResult(true, TestDataFactory.CreateLayoutPreset("again"), Replaced: true));
         var sut = CreateSut();
 
@@ -631,7 +631,7 @@ public class LayoutPresetToolsTests
     {
         _mockLayoutService.Setup(l => l.ApplyPresetAsync(
                 It.IsAny<string>(), It.IsAny<LayoutMatchBy>(), It.IsAny<bool>(),
-                It.IsAny<IProgress<OperationProgress>?>(),
+                It.IsAny<LayoutApplyOptions?>(), It.IsAny<IProgress<OperationProgress>?>(),
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(new LayoutApplyResult(
                 Success: false,
@@ -671,9 +671,9 @@ public class LayoutPresetToolsTests
         using var call = new CancellationTokenSource();
         CancellationToken serviceToken = default;
         _mockLayoutService.Setup(l => l.ApplyPresetAsync(
-                It.IsAny<string>(), It.IsAny<LayoutMatchBy>(), It.IsAny<bool>(), It.IsAny<IProgress<OperationProgress>?>(),
+                It.IsAny<string>(), It.IsAny<LayoutMatchBy>(), It.IsAny<bool>(), It.IsAny<LayoutApplyOptions?>(), It.IsAny<IProgress<OperationProgress>?>(),
                 It.IsAny<CancellationToken>()))
-            .Callback((string _, LayoutMatchBy _, bool _, IProgress<OperationProgress>? progress, CancellationToken token) =>
+            .Callback((string _, LayoutMatchBy _, bool _, LayoutApplyOptions? _, IProgress<OperationProgress>? progress, CancellationToken token) =>
             {
                 serviceToken = token;
                 progress!.Report(new OperationProgress(1, 2, "1 of 2: placement 1 (process 'code') was arranged"));
@@ -690,4 +690,191 @@ public class LayoutPresetToolsTests
         (report.Progress, report.Total).Should().Be((1f, 2f));
         report.Message.Should().Be("1 of 2: placement 1 (process 'code') was arranged");
     }
+
+    #region Schema version 2 (roadmap M6.8)
+
+    /// <summary>get_layout's result for <paramref name="preset"/>.</summary>
+    private LayoutDetailDto Detail(LayoutPreset preset)
+    {
+        _mockLayoutService.Setup(l => l.GetStorageError()).Returns((string?)null);
+        _mockLayoutService.Setup(l => l.GetPreset(preset.Name)).Returns(preset);
+        return CreateSut().GetLayout(preset.Name);
+    }
+
+    [Fact]
+    public async Task SaveLayout_WithPlacements_SavesThemAsAnAgentLayout_AndCapturesNothing()
+    {
+        var specs = new[] { new LayoutPlacementSpec("Code", Snap: "left_half") };
+        _mockLayoutService.Setup(l => l.SaveAuthoredLayoutAsync("desk", "mine", specs, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new LayoutSaveResult(true, TestDataFactory.CreateLayoutPreset("desk")));
+
+        var result = await CreateSut().SaveLayout("desk", "mine", placements: specs);
+
+        result.Success.Should().BeTrue();
+        _mockLayoutService.Verify(l => l.CaptureCurrentLayoutAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string[]?>(),
+            It.IsAny<string[]?>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Theory]
+    [InlineData("chrome", null, false)]
+    [InlineData(null, "explorer", false)]
+    [InlineData(null, null, true)]
+    public async Task SaveLayout_WithPlacementsAndACaptureFilter_IsInvalidArguments(string? include, string? exclude, bool includeMinimized)
+    {
+        var call = () => CreateSut().SaveLayout("desk", includeProcesses: include, excludeProcesses: exclude, includeMinimized: includeMinimized,
+            placements: [new LayoutPlacementSpec("Code", Snap: "left_half")]);
+
+        (await call.Should().ThrowAsync<ToolErrorException>()).Which.ErrorCode.Should().Be("InvalidArguments");
+        _mockLayoutService.Verify(l => l.SaveAuthoredLayoutAsync(It.IsAny<string>(), It.IsAny<string?>(),
+            It.IsAny<IReadOnlyList<LayoutPlacementSpec>>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task SaveLayout_PassesIncludeMinimized()
+    {
+        _mockLayoutService.Setup(l => l.CaptureCurrentLayoutAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string[]?>(),
+                It.IsAny<string[]?>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new LayoutSaveResult(true, TestDataFactory.CreateLayoutPreset()));
+
+        await CreateSut().SaveLayout("desk", includeMinimized: true);
+
+        _mockLayoutService.Verify(l => l.CaptureCurrentLayoutAsync("desk", null, null, null, true, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    private void ApplyReturns(Func<LayoutApplyOptions?, LayoutApplyResult> result) =>
+        _mockLayoutService.Setup(l => l.ApplyPresetAsync(It.IsAny<string>(), It.IsAny<LayoutMatchBy>(), It.IsAny<bool>(),
+                It.IsAny<LayoutApplyOptions?>(), It.IsAny<IProgress<OperationProgress>?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string _, LayoutMatchBy _, bool _, LayoutApplyOptions? options, IProgress<OperationProgress>? _, CancellationToken _) =>
+                result(options));
+
+    [Fact]
+    public async Task ApplyLayout_DryRun_PassesTheOptions_AndRunsWhileInputIsPaused()
+    {
+        // A dry run only reads: it takes no input gate, and the pause does not stop it
+        var session = new Mock<IInputSession>();
+        session.Setup(s => s.IsPaused).Returns(true);
+        LayoutApplyOptions? passed = null;
+        ApplyReturns(options =>
+        {
+            passed = options;
+            return new LayoutApplyResult(true, "desk", DryRun: true);
+        });
+
+        var result = await new LayoutPresetTools(_mockLayoutService.Object, session.Object).ApplyLayout("desk", dryRun: true, placements: [1, 2]);
+
+        result.Status.Should().Be("dryRun");
+        passed!.DryRun.Should().BeTrue();
+        passed.Placements.Should().Equal(1, 2);
+    }
+
+    [Fact]
+    public async Task ApplyLayout_WhileInputIsPaused_IsPausedByUser_AndAppliesNothing()
+    {
+        var session = new Mock<IInputSession>();
+        session.Setup(s => s.IsPaused).Returns(true);
+
+        var call = () => new LayoutPresetTools(_mockLayoutService.Object, session.Object).ApplyLayout("desk");
+
+        (await call.Should().ThrowAsync<ToolErrorException>()).Which.ErrorCode.Should().Be(nameof(WindowErrorCode.PausedByUser));
+        _mockLayoutService.Verify(l => l.ApplyPresetAsync(It.IsAny<string>(), It.IsAny<LayoutMatchBy>(), It.IsAny<bool>(),
+            It.IsAny<LayoutApplyOptions?>(), It.IsAny<IProgress<OperationProgress>?>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ApplyLayout_OfAPresetNoAgentWrote_AsksNothing_AndPlansNoDryRun()
+    {
+        _mockLayoutService.Setup(l => l.GetPreset("desk")).Returns(TestDataFactory.CreateLayoutPreset("desk"));
+        var calls = new List<LayoutApplyOptions?>();
+        ApplyReturns(options =>
+        {
+            calls.Add(options);
+            return new LayoutApplyResult(true, "desk");
+        });
+
+        await CreateSut().ApplyLayout("desk", launchMissing: true);
+
+        calls.Should().ContainSingle().Which!.DryRun.Should().BeFalse();
+        _mockLayoutService.Verify(l => l.AreLaunchesConfirmed(It.IsAny<LayoutPreset>()), Times.Never);
+    }
+
+    [Fact]
+    public void GetLayout_ShowsTheVersion2Fields_AndAWarningForANewerPreset()
+    {
+        var preset = new LayoutPreset("v3", null,
+        [
+            new WindowPlacement(new WindowMatcher(ProcessName: "Code"), 1, new RelativePosition(0, 0, 1, 1))
+            {
+                State = WindowState.Maximized,
+                Monitor = "m-22222222",
+                MonitorName = "DELL U2720Q",
+                NormalPosition = new RelativePosition(0.1, 0.1, 0.5, 0.5),
+                Launch = new LayoutLaunch(Executable: "code")
+            },
+            new WindowPlacement(new WindowMatcher(ProcessName: "notepad"), 0, new RelativePosition(0, 0, 0.5, 1), Order: 1)
+        ])
+        { Version = 3, AuthoredBy = "agent" };
+
+        var dto = Detail(preset);
+
+        dto.AuthoredBy.Should().Be("agent");
+        dto.Warning.Should().Contain("schema version 3");
+        dto.Placements[0].Monitor.Should().Be(MonitorSelector.Of("m-22222222"));
+        dto.Placements[0].MonitorName.Should().Be("DELL U2720Q");
+        dto.Placements[0].NormalPosition.Should().Be(new PositionDto(0.1, 0.1, 0.5, 0.5));
+        dto.Placements[0].Launch.Should().Be(new LayoutLaunch(Executable: "code"));
+        dto.Placements[1].Monitor.Should().Be(MonitorSelector.OfIndex(0), "a version 1 placement's monitor is its index");
+        Detail(preset with { Version = 2 }).Warning.Should().BeNull();
+    }
+
+    [Fact]
+    public void GetLayoutsPlacements_GoBackIntoSaveLayout_Unchanged()
+    {
+        // Owner decision D15: get_layout's output round-trips into save_layout's placements (it replaces update_layout)
+        IReadOnlyList<MonitorInfo> monitors =
+        [
+            TestDataFactory.CreateMonitorInfo() with { Id = "m-11111111" },
+            TestDataFactory.CreateMonitorInfo(1, @"\\.\DISPLAY2", false, 1920, 0, 2560, 1440, 1920, 0, 2560, 1400, 1.25) with { Id = "m-22222222" }
+        ];
+        var original = new List<WindowPlacement>
+        {
+            new(new WindowMatcher(ProcessName: "Code", ClassName: "Chrome_WidgetWin_1")
+            {
+                ExactProcessName = true, TitlePattern = "notes - Visual Studio Code", ExePath = @"C:\Code\Code.exe", Ordinal = 1
+            }, 1, new RelativePosition(0, 0, 1, 1), Focus: true)
+            {
+                State = WindowState.Maximized,
+                Monitor = "m-22222222",
+                MonitorName = "DELL U2720Q",
+                NormalPosition = new RelativePosition(0.1, 0.1, 0.5, 0.5),
+                Launch = new LayoutLaunch(Executable: @"C:\Code\Code.exe")
+            },
+            new(new WindowMatcher(TitleContains: "Inbox"), 0, new RelativePosition(0.5, 0, 0.5, 1), Order: 1)
+            {
+                Snap = "right_half",
+                Monitor = "primary",
+                Launch = new LayoutLaunch(AppId: "Microsoft.OutlookForWindows_8wekyb3d8bbwe!Microsoft.OutlookforWindows")
+            },
+            new(new WindowMatcher(ProcessName: "notepad"), 0, new RelativePosition(0.25, 0.25, 0.4, 0.4), Order: 2)
+            {
+                State = WindowState.Minimized,
+                Monitor = "m-11111111",
+                NormalPosition = new RelativePosition(0.25, 0.25, 0.4, 0.4)
+            }
+        };
+        var dto = Detail(new LayoutPreset("desk", null, original));
+
+        // Act - the client reads get_layout's JSON and passes its placements to save_layout as they are
+        var json = System.Text.Json.JsonSerializer.Serialize(dto.Placements, ToolJson.SerializerOptions);
+        var specs = System.Text.Json.JsonSerializer.Deserialize<LayoutPlacementSpec[]>(json, ToolJson.SerializerOptions)!;
+        var rebuilt = specs.Select((spec, i) =>
+        {
+            LayoutPresetSchema.TryBuildPlacement(spec, i, monitors, out var placement, out var error).Should().BeTrue(error);
+            return placement!;
+        }).ToList();
+
+        // Assert - the same preset, the version 1 launchCommand filled as save_layout writes it
+        rebuilt.Should().BeEquivalentTo(original.Select(p => p with { LaunchCommand = LayoutPresetSchema.LaunchTarget(p) }));
+    }
+
+    #endregion
 }

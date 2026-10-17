@@ -327,8 +327,9 @@ public static class TypicalDesktop
         Patterns: ["Value", "Text", "ScrollItem"],
         Value: "window layout presets for a dual monitor setup");
 
-    // Presets as save_layout writes them (roadmap M2.8): the exact process name and the window's identity, plus a
-    // launch command and focus the user added to the first placement by hand
+    // Presets as save_layout writes them (roadmap M2.8, M6.8): the exact process name and the window's identity, its monitor's
+    // id and name, its program to launch, and a maximized window's restore rectangle, plus focus the user added to the first
+    // placement by hand
     public static IReadOnlyList<LayoutPreset> Layouts { get; } = Enumerable.Range(1, 5)
         .Select(i => new LayoutPreset(
             Name: $"layout-{i}",
@@ -343,11 +344,15 @@ public static class TypicalDesktop
                 },
                 MonitorIndex: p % 2,
                 Position: new RelativePosition(p % 2 * 0.5, 0, 0.5, 1),
-                LaunchCommand: p == 0 ? "code" : null,
+                LaunchCommand: $@"C:\Program Files\{ProcessNames[p]}\{ProcessNames[p]}.exe",
                 Focus: p == 0,
                 Order: p)
             {
-                State = p == 0 ? WindowState.Maximized : WindowState.Normal
+                State = p == 0 ? WindowState.Maximized : WindowState.Normal,
+                Monitor = p % 2 == 0 ? "m-3f9a12c4" : "m-81c07e5b",
+                MonitorName = p % 2 == 0 ? "DELL U2720Q" : "LG ULTRAFINE",
+                NormalPosition = p == 0 ? new RelativePosition(0.1, 0.1, 0.6, 0.7) : null,
+                Launch = new LayoutLaunch(Executable: $@"C:\Program Files\{ProcessNames[p]}\{ProcessNames[p]}.exe")
             }).ToList())
         {
             CreatedAt = new DateTime(2026, 9, 1, 8, 30, 0, DateTimeKind.Utc),

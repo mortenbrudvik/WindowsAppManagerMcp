@@ -15,6 +15,10 @@ public class ReadOnlyNativeWindowWrapperTests
         { nameof(INativeWindowWrapper.SetWindowPos), w => w.SetWindowPos(Handle, 0, 0, 100, 100, 0) },
         { nameof(INativeWindowWrapper.SetWindowZOrder), w => w.SetWindowZOrder(Handle, 0, 0) },
         { nameof(INativeWindowWrapper.ShowWindow), w => w.ShowWindow(Handle, 0) },
+        {
+            nameof(INativeWindowWrapper.SetWindowPlacement),
+            w => w.SetWindowPlacement(Handle, new NativeWindowPlacement(7, 0, (0, 0), (0, 0), (0, 0, 100, 100)))
+        },
         { nameof(INativeWindowWrapper.SetForegroundWindow), w => w.SetForegroundWindow(Handle) },
         { nameof(INativeWindowWrapper.BringWindowToTop), w => w.BringWindowToTop(Handle) },
         { nameof(INativeWindowWrapper.PostMessage), w => w.PostMessage(Handle, 0x0010, nint.Zero, nint.Zero) },
@@ -65,6 +69,8 @@ public class ReadOnlyNativeWindowWrapperTests
         inner.Setup(w => w.IsHungAppWindow(Handle)).Returns(true);
         inner.Setup(w => w.GetDpiForWindow(Handle)).Returns(144u);
         inner.Setup(w => w.RespondsWithin(Handle, 500u)).Returns(true);
+        var placement = new NativeWindowPlacement(2, 0, (-32000, -32000), (-1, -1), (10, 20, 300, 400));
+        inner.Setup(w => w.GetWindowPlacement(Handle)).Returns(placement);
         var sut = new ReadOnlyNativeWindowWrapper(inner.Object);
         var enumerated = new List<nint>();
         var children = new List<nint>();
@@ -84,6 +90,7 @@ public class ReadOnlyNativeWindowWrapperTests
         sut.IsHungAppWindow(Handle).Should().BeTrue();
         sut.GetDpiForWindow(Handle).Should().Be(144u);
         sut.RespondsWithin(Handle, 500u).Should().BeTrue();
+        sut.GetWindowPlacement(Handle).Should().Be(placement);
         sut.IsWindowVisible(Handle).Should().BeTrue();
         sut.IsWindow(Handle).Should().BeTrue();
         sut.IsIconic(Handle).Should().BeTrue();
@@ -120,7 +127,7 @@ public class ReadOnlyNativeWindowWrapperTests
             nameof(INativeWindowWrapper.IsCloaked), nameof(INativeWindowWrapper.GetCloakReason), nameof(INativeWindowWrapper.HasWindowRegion),
             nameof(INativeWindowWrapper.GetExtendedFrameBounds),
             nameof(INativeWindowWrapper.IsHungAppWindow), nameof(INativeWindowWrapper.GetDpiForWindow),
-            nameof(INativeWindowWrapper.RespondsWithin),
+            nameof(INativeWindowWrapper.RespondsWithin), nameof(INativeWindowWrapper.GetWindowPlacement),
         ];
         var changes = WindowChanges().Select(row => (string)row[0]);
 

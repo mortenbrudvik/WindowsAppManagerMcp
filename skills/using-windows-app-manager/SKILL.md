@@ -244,6 +244,8 @@ Use this skill when the user asks to:
 - "Apply my [name] layout"
 - "Show my saved layouts"
 - "Delete the [name] layout"
+- "Lay out VS Code on the left two thirds and Edge on the right third" (save_layout with `placements`: snap positions and monitor names, no capture; then apply_layout)
+- "What would my [name] layout move?" (apply_layout with `dryRun: true`: changes nothing)
 
 ### Server
 - "Which version of the server is running?" / "Is input paused?"
@@ -425,8 +427,8 @@ A step is a tool of the list with that tool's own `args`. A step that names no w
 |------|-------------|----------------|
 | `list_layouts` | List saved presets | (none) |
 | `get_layout` | Get preset details | name |
-| `save_layout` | Save current arrangement | name, description, includeProcesses, excludeProcesses |
-| `apply_layout` | Restore saved preset | name, matchBy, launchMissing |
+| `save_layout` | Save the current arrangement, or placements you write | name, description, includeProcesses, excludeProcesses, includeMinimized, placements |
+| `apply_layout` | Restore saved preset, or preview it | name, matchBy, launchMissing, dryRun, placements |
 | `delete_layout` | Delete a preset | name |
 
 ### Server Info (1 tool)

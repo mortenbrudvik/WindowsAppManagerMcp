@@ -187,6 +187,15 @@ public static class TestDataFactory
                     WindowHandle: wait ? new nint(8888) : null,
                     ErrorMessage: null));
 
+        // The overload layouts launch through (roadmap M6.8)
+        mock.Setup(p => p.LaunchApplicationAsync(It.IsAny<LaunchRequest>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((LaunchRequest _, bool wait, int _, CancellationToken _) =>
+                new LaunchResult(
+                    Success: true,
+                    ProcessId: 9999,
+                    WindowHandle: wait ? new nint(8888) : null,
+                    ErrorMessage: null));
+
         return mock;
     }
 

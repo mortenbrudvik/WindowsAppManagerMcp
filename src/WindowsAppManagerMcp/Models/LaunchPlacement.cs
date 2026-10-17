@@ -60,6 +60,14 @@ public sealed record LaunchPlacementPlan(
     /// </summary>
     public BoundsFrame Frame { get; init; } = BoundsFrame.Visible;
 
+    /// <summary>
+    /// The monitor a name resolved to (roadmap M6.7, M6.8): its id, or its device name when it has none. The window appears
+    /// up to the launch's wait later, and docking can renumber the monitors meanwhile, so the placement service finds that
+    /// monitor again by this key when it places the window, and fails with MonitorNotFound when it is gone. Null for a
+    /// plain index, which is placed as given.
+    /// </summary>
+    public string? MonitorKey { get; init; }
+
     /// <summary>True when the plan moves, sizes or changes the state of the window (anything but focus).</summary>
     public bool ChangesGeometry => Snap != null || Bounds != null || MonitorIndex != null || State != null;
 

@@ -29,7 +29,7 @@ public class LayoutServiceLaunchPlacementTests : IDisposable
     public LayoutServiceLaunchPlacementTests()
     {
         _windows.Setup(w => w.GetWindowInfo(Notepad.Handle)).Returns(Notepad);
-        _processes.Setup(p => p.LaunchApplicationAsync(It.IsAny<string>(), It.IsAny<string[]?>(), It.IsAny<string?>(), It.IsAny<bool>(),
+        _processes.Setup(p => p.LaunchApplicationAsync(It.IsAny<LaunchRequest>(), It.IsAny<bool>(),
                 It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new LaunchResult(true, ProcessId: 900, WindowHandle: Notepad.Handle));
         _placer.Setup(p => p.PlaceAsync(It.IsAny<IReadOnlyList<(nint, LaunchPlacementPlan)>>(), It.IsAny<CancellationToken>()))
@@ -94,7 +94,7 @@ public class LayoutServiceLaunchPlacementTests : IDisposable
         result.Success.Should().BeTrue();
         _placed.Should().BeEmpty();
         _windows.Verify(w => w.SetWindowBounds(Chrome.Handle, 0, 0, 960, 1040, It.IsAny<bool>()), Times.Once);
-        _processes.Verify(p => p.LaunchApplicationAsync(It.IsAny<string>(), It.IsAny<string[]?>(), It.IsAny<string?>(), It.IsAny<bool>(),
+        _processes.Verify(p => p.LaunchApplicationAsync(It.IsAny<LaunchRequest>(), It.IsAny<bool>(),
             It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
@@ -107,7 +107,8 @@ public class LayoutServiceLaunchPlacementTests : IDisposable
         await ApplyAsync(Placement("notepad") with { State = state });
 
         _placed.Single().Plan.Should().Be(state == WindowState.Maximized
-            ? new LaunchPlacementPlan(null, 0, null, LaunchWindowState.Maximized, false)
+            // The monitor is found again by its key when the window is placed (roadmap M6.8); this one has no id
+            ? new LaunchPlacementPlan(null, 0, null, LaunchWindowState.Maximized, false) { MonitorKey = @"\\.\DISPLAY1" }
             : new LaunchPlacementPlan(null, null, new WindowRect(0, 0, 960, 1040),
                 state == WindowState.Minimized ? LaunchWindowState.Minimized : null, false) { Frame = BoundsFrame.Outer });
     }

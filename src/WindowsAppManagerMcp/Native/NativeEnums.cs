@@ -17,6 +17,9 @@ internal static class NativeEnums
     public const int SW_SHOWDEFAULT = 10;
     public const int SW_FORCEMINIMIZE = 11;
 
+    // WINDOWPLACEMENT flags (roadmap M6.8): the window returns to maximized when it is restored from minimized
+    public const int WPF_RESTORETOMAXIMIZED = 2;
+
     // SetWindowPos flags
     public const uint SWP_NOSIZE = 0x0001;
     public const uint SWP_NOMOVE = 0x0002;

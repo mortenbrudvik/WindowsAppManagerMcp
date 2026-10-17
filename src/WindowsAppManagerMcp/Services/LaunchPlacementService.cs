@@ -40,6 +40,7 @@ public sealed class LaunchPlacementService : ILaunchPlacementService
     private readonly IInputSession? _session;
     private readonly TimeProvider _time;
     private readonly Func<TimeSpan, CancellationToken, Task> _delay;
+    private readonly IMonitorService? _monitors;
 
     /// <param name="windows">Reads and places the windows.</param>
     /// <param name="foreground">Brings a window to the front (focus).</param>
@@ -49,18 +50,24 @@ public sealed class LaunchPlacementService : ILaunchPlacementService
     /// Waits between two reads; default <see cref="Task.Delay(TimeSpan, TimeProvider, CancellationToken)"/> on
     /// <paramref name="time"/>. Tests pass one that moves a manual clock.
     /// </param>
+    /// <param name="monitors">
+    /// Finds a plan's named monitor again by its <see cref="LaunchPlacementPlan.MonitorKey"/> each time the window is placed
+    /// (roadmap M6.7, M6.8). Without it the plan's index is used as given.
+    /// </param>
     public LaunchPlacementService(
         IWindowService windows,
         IForegroundService foreground,
         IInputSession? session = null,
         TimeProvider? time = null,
-        Func<TimeSpan, CancellationToken, Task>? delay = null)
+        Func<TimeSpan, CancellationToken, Task>? delay = null,
+        IMonitorService? monitors = null)
     {
         _windows = windows;
         _foreground = foreground;
         _session = session;
         _time = time ?? TimeProvider.System;
         _delay = delay ?? ((wait, token) => Task.Delay(wait, _time, token));
+        _monitors = monitors;
     }
 
     /// <inheritdoc />
@@ -290,6 +297,20 @@ public sealed class LaunchPlacementService : ILaunchPlacementService
     /// </summary>
     private (WindowChangeResult Result, LaunchPlacementStep FailedStep) Apply(nint handle, LaunchPlacementPlan plan)
     {
+        // A named monitor is found again now, by its id or device name: the displays may have changed since the name was resolved
+        if (plan.MonitorKey is { } key && _monitors != null)
+        {
+            if (_monitors.ResolveMonitor(MonitorSelector.Of(key)) is not { Succeeded: true, Monitor: { } monitor })
+            {
+                return (WindowChangeResult.Failed(handle, MonitorNotFound,
+                    $"The placement's monitor ({key}) is gone: the displays changed while the launch waited for its window, so the " +
+                    "window was not placed. Call get_monitors, then arrange the window with snap_window or move_window_to_monitor; " +
+                    "do not launch it again."), LaunchPlacementStep.Place);
+            }
+
+            plan = plan with { MonitorIndex = monitor.Index };
+        }
+
         var placed = Guarded(handle, () => plan switch
         {
             { Snap: { } snap } => _windows.SnapWindow(handle, snap, plan.MonitorIndex, bringToFront: true),

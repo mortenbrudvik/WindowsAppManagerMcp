@@ -204,4 +204,17 @@ public interface INativeWindowWrapper
     /// GetDpiForMonitor (INativeMonitorWrapper) instead. Returns 0 when the handle is not a window.
     /// </summary>
     uint GetDpiForWindow(nint hWnd);
+
+    /// <summary>
+    /// Reads the window's placement (GetWindowPlacement, roadmap M6.8): its show state and its restore rectangle, the rect a
+    /// minimized or maximized window returns to. Only reads. Null when it cannot be read (the handle is not a window).
+    /// </summary>
+    NativeWindowPlacement? GetWindowPlacement(nint hWnd);
+
+    /// <summary>
+    /// Sets the window's placement (SetWindowPlacement, roadmap M6.8): its show state and its restore rectangle in one call.
+    /// The show command decides what the user sees: SW_SHOWMINNOACTIVE keeps a minimized window minimized and does not
+    /// activate it. A refused call carries the Win32 error read right after it, as <see cref="SetWindowPos"/>'s does.
+    /// </summary>
+    Win32CallResult SetWindowPlacement(nint hWnd, NativeWindowPlacement placement);
 }

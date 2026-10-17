@@ -125,6 +125,37 @@ public class AppLauncherToolsPlacementTests
     }
 
     [Theory]
+    [InlineData("m-0a1b2c3d", "m-0a1b2c3d")]
+    [InlineData(null, @"\\.\DISPLAY2")]
+    public async Task APlacementsMonitorName_KeepsTheMonitorsKey_SoItIsFoundAgainWhenTheWindowIsPlaced(string? id, string key)
+    {
+        // Roadmap M6.7, M6.8: the window appears up to the wait later, and the displays can change meanwhile; the placement
+        // service finds the monitor again by its id, or by its device name when it has none
+        var right = new MonitorInfo(1, @"\\.\DISPLAY2", false, new MonitorRect(1920, 0, 1920, 1080), new MonitorRect(1920, 0, 1920, 1040), 1.0)
+        {
+            Id = id
+        };
+        _monitors.Setup(m => m.ResolveMonitor(It.Is<MonitorSelector>(s => s.Name == "right"))).Returns(MonitorResolution.Found(1, right));
+        LaunchReturns(new LaunchResult(true, 600, CodeWindow.Handle, Status: LaunchStatus.WindowObserved, Window: CodeWindow));
+
+        await CreateSut().LaunchApplication("code", placement: new LaunchPlacement(Snap: "left_half", Monitor: MonitorSelector.Of("right")));
+
+        var plan = _placed.Single().Single().Plan;
+        plan.MonitorIndex.Should().Be(1);
+        plan.MonitorKey.Should().Be(key);
+    }
+
+    [Fact]
+    public async Task APlacementsMonitorIndex_HasNoKey()
+    {
+        LaunchReturns(new LaunchResult(true, 600, CodeWindow.Handle, Status: LaunchStatus.WindowObserved, Window: CodeWindow));
+
+        await CreateSut().LaunchApplication("code", placement: new LaunchPlacement(Snap: "left_half", Monitor: MonitorSelector.OfIndex(1)));
+
+        _placed.Single().Single().Plan.MonitorKey.Should().BeNull();
+    }
+
+    [Theory]
     [InlineData(nameof(WindowErrorCode.MonitorNotFound))]
     [InlineData(nameof(WindowErrorCode.AmbiguousMonitor))]
     public async Task APlacementsMonitorNameThatNamesNoSingleMonitor_IsAToolError_AndNothingIsLaunched(string code)
