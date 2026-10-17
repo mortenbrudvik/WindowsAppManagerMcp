@@ -125,6 +125,8 @@ public static class WrapperCatalog
                 // SendMessageTimeout with WM_NULL, which the window ignores: reads whether its thread answers
                 [nameof(INativeWindowWrapper.RespondsWithin)] = WrapperMember.Read,
                 [nameof(INativeWindowWrapper.GetDpiForWindow)] = WrapperMember.Read,
+                // A window's show state and restore rectangle (layouts, roadmap M6.8)
+                [nameof(INativeWindowWrapper.GetWindowPlacement)] = WrapperMember.Read,
                 [nameof(INativeWindowWrapper.SetWindowPos)] = WrapperMember.WindowAction("hWnd"),
                 // set_window_zorder (roadmap M6.7): insertAfter is HWND_TOP, HWND_BOTTOM, HWND_TOPMOST, HWND_NOTOPMOST or the
                 // window to go behind; that window only marks the place and is not changed
@@ -133,6 +135,8 @@ public static class WrapperCatalog
                     OtherHandleParameters = ["insertAfter"]
                 },
                 [nameof(INativeWindowWrapper.ShowWindow)] = WrapperMember.WindowAction("hWnd"),
+                // Sets a minimized window's restore rectangle with SW_SHOWMINNOACTIVE (apply_layout, roadmap M6.8)
+                [nameof(INativeWindowWrapper.SetWindowPlacement)] = WrapperMember.WindowAction("hWnd"),
                 [nameof(INativeWindowWrapper.SetForegroundWindow)] = WrapperMember.WindowAction("hWnd"),
                 [nameof(INativeWindowWrapper.BringWindowToTop)] = WrapperMember.WindowAction("hWnd"),
                 [nameof(INativeWindowWrapper.PostMessage)] = WrapperMember.WindowAction("hWnd") with

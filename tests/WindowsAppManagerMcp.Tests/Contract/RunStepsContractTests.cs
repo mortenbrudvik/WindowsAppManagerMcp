@@ -297,8 +297,8 @@ public class RunStepsContractTests
             });
         var layoutApplied = false;
         services.Layouts.Setup(l => l.ApplyPresetAsync(It.IsAny<string>(), It.IsAny<LayoutMatchBy>(), It.IsAny<bool>(),
-                It.IsAny<IProgress<OperationProgress>?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((string name, LayoutMatchBy _, bool _, IProgress<OperationProgress>? _, CancellationToken _) =>
+                It.IsAny<LayoutApplyOptions?>(), It.IsAny<IProgress<OperationProgress>?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string name, LayoutMatchBy _, bool _, LayoutApplyOptions? _, IProgress<OperationProgress>? _, CancellationToken _) =>
             {
                 layoutApplied = true;
                 return new LayoutApplyResult(true, name, WindowsArranged: 1);

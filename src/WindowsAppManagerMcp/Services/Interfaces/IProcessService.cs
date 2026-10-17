@@ -156,7 +156,19 @@ public interface IProcessService
     /// is ElevationNotConfirmed.
     /// </summary>
     ElevationPreview PreviewElevation(LaunchRequest request);
+
+    /// <summary>
+    /// Plans a request as <see cref="LaunchApplicationAsync(LaunchRequest, bool, int, CancellationToken)"/> would, without
+    /// starting anything (roadmap M6.8, review #3): the file system and the installed apps are only read. Null when the launch
+    /// would be planned; otherwise the error code and message the launch would fail with (ScriptFile, InterpreterWithArguments,
+    /// ExecutableNotFound, ...). apply_layout's dry run reports it, and a layout's launch is refused with it before the user is
+    /// asked about it.
+    /// </summary>
+    LaunchRefusal? CheckLaunch(LaunchRequest request);
 }
+
+/// <summary>Why a launch would not start: the error code and message the launch tools report.</summary>
+public sealed record LaunchRefusal(string ErrorCode, string Error);
 
 /// <summary>One running process, as <see cref="IProcessService.GetRunningProcesses"/> lists it.</summary>
 /// <param name="ProcessId">The process ID.</param>

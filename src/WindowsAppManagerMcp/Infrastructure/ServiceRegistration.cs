@@ -100,9 +100,10 @@ public static class ServiceRegistration
         services.AddSingleton<INativeWinEventWrapper, NativeWinEventWrapper>();
         services.AddSingleton<IWindowEventSource, WindowEventSource>();
         // Places the launch tools' windows (placement, roadmap M3.13) and apply_layout's launched ones (roadmap M3.F27)
-        // through the window and foreground services
+        // through the window and foreground services, finding a named monitor again by its id when it places (M6.7, M6.8)
         services.AddSingleton<ILaunchPlacementService>(sp => new LaunchPlacementService(
-            sp.GetRequiredService<IWindowService>(), sp.GetRequiredService<IForegroundService>(), sp.GetRequiredService<IInputSession>()));
+            sp.GetRequiredService<IWindowService>(), sp.GetRequiredService<IForegroundService>(), sp.GetRequiredService<IInputSession>(),
+            monitors: sp.GetRequiredService<IMonitorService>()));
         services.AddSingleton<IScreenCaptureWrapper, ScreenCaptureWrapper>();
         // Captures register under a captureId, and the mouse tools convert image, window and client points (roadmap M3.11).
         // They keep their visual signatures only while wait_for_visual is served (roadmap M6.4, owner decision D9), so the
@@ -187,9 +188,11 @@ public static class ServiceRegistration
             var processService = sp.GetRequiredService<IProcessService>();
             var foregroundService = sp.GetRequiredService<IForegroundService>();
 
-            // launchMissing's windows are placed as the launch tools place theirs (roadmap M3.F27)
+            // launchMissing's windows are placed as the launch tools place theirs (roadmap M3.F27); save_layout records a
+            // packaged app's window by its appId (roadmap M6.8)
             return new LayoutService(windowService, monitorService, processService, foregroundService, createLayoutStorage(),
-                launchPlacement: sp.GetRequiredService<ILaunchPlacementService>());
+                launchPlacement: sp.GetRequiredService<ILaunchPlacementService>(), apps: sp.GetRequiredService<INativeAppsWrapper>(),
+                installedApps: sp.GetRequiredService<IInstalledAppsService>());
         });
 
         // Verified window activation (focus_window, apply_layout, and the input guard): all attach and

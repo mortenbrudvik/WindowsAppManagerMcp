@@ -149,7 +149,7 @@ public class ToolResultSerializationTests
     {
         // Arrange - the placement with focus was arranged, but Windows kept the terminal in front
         var layoutService = new Mock<ILayoutService>();
-        layoutService.Setup(l => l.ApplyPresetAsync("work-setup", It.IsAny<LayoutMatchBy>(), It.IsAny<bool>(), It.IsAny<IProgress<OperationProgress>?>(), It.IsAny<CancellationToken>()))
+        layoutService.Setup(l => l.ApplyPresetAsync("work-setup", It.IsAny<LayoutMatchBy>(), It.IsAny<bool>(), It.IsAny<LayoutApplyOptions?>(), It.IsAny<IProgress<OperationProgress>?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new LayoutApplyResult(
                 Success: false,
                 PresetName: "work-setup",
@@ -185,7 +185,7 @@ public class ToolResultSerializationTests
     {
         // Arrange - roadmap M2.8: one placement arranged, one not found, one skipped
         var layoutService = new Mock<ILayoutService>();
-        layoutService.Setup(l => l.ApplyPresetAsync("work-setup", It.IsAny<LayoutMatchBy>(), It.IsAny<bool>(), It.IsAny<IProgress<OperationProgress>?>(), It.IsAny<CancellationToken>()))
+        layoutService.Setup(l => l.ApplyPresetAsync("work-setup", It.IsAny<LayoutMatchBy>(), It.IsAny<bool>(), It.IsAny<LayoutApplyOptions?>(), It.IsAny<IProgress<OperationProgress>?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new LayoutApplyResult(
                 Success: false,
                 PresetName: "work-setup",

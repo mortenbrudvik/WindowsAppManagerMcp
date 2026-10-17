@@ -450,4 +450,58 @@ public class LayoutServiceStorageTests : IDisposable
     }
 
     #endregion
+    #region Schema version 2 (roadmap M6.8)
+
+    [Fact]
+    public void GetPreset_OfAVersion1File_IsUpgradedInMemory_AndTheFileIsLeftAsItWas()
+    {
+        // Arrange - the sample shape: no version, a launchCommand
+        const string json = """
+            {
+              "name": "old",
+              "placements": [
+                { "matcher": { "processName": "Code" }, "monitorIndex": 0,
+                  "position": { "x": 0, "y": 0, "width": 0.5, "height": 1 }, "launchCommand": "code", "order": 0 }
+              ]
+            }
+            """;
+        Directory.CreateDirectory(_layoutsPath);
+        var file = Path.Combine(_layoutsPath, "old.json");
+        File.WriteAllText(file, json);
+
+        // Act
+        var preset = CreateSutWithPath(_layoutsPath).GetPreset("old");
+
+        // Assert
+        preset!.Version.Should().Be(2);
+        preset.Placements.Single().Launch.Should().Be(new LayoutLaunch(Executable: "code"));
+        File.ReadAllText(file).Should().Be(json, "a user's file is never rewritten on load");
+    }
+
+    [Fact]
+    public async Task SavePresetAsync_WritesVersion2_WithTheVersion1Fields()
+    {
+        // Arrange
+        var sut = CreateSutWithPath(_layoutsPath);
+        var placement = TestDataFactory.CreateWindowPlacement(processName: "Code") with
+        {
+            Launch = new LayoutLaunch(AppId: "Microsoft.WindowsCalculator_8wekyb3d8bbwe!App"),
+            Monitor = "m-11111111"
+        };
+
+        // Act
+        await sut.SavePresetAsync(TestDataFactory.CreateLayoutPreset("v2", placements: [placement]));
+
+        // Assert
+        using var document = JsonDocument.Parse(File.ReadAllText(Path.Combine(_layoutsPath, "v2.json")));
+        var root = document.RootElement;
+        root.GetProperty("version").GetInt32().Should().Be(2);
+        var written = root.GetProperty("placements")[0];
+        written.GetProperty("launchCommand").GetString().Should().Be(@"shell:AppsFolder\Microsoft.WindowsCalculator_8wekyb3d8bbwe!App");
+        written.GetProperty("monitorIndex").GetInt32().Should().Be(0);
+        written.GetProperty("monitor").GetString().Should().Be("m-11111111");
+        written.GetProperty("launch").GetProperty("appId").GetString().Should().Be("Microsoft.WindowsCalculator_8wekyb3d8bbwe!App");
+    }
+
+    #endregion
 }

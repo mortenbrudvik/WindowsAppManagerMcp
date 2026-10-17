@@ -77,7 +77,7 @@ public sealed class InputControlToolContractTests : IDisposable
         // A window-changing tool that only records that it ran
         var windowTool = McpServerTool.Create(
             () => { Interlocked.Increment(ref _windowToolRuns); return "activated"; },
-            new McpServerToolCreateOptions { Name = "apply_layout" });
+            new McpServerToolCreateOptions { Name = "launch_applications_batch" });
         return InProcessMcpServer.StartAsync(
             [windowTool],
             builder =>
@@ -637,7 +637,7 @@ public sealed class InputControlToolContractTests : IDisposable
         _session.Pause(InputControlSources.Hotkey);
         await using var server = await StartAsync();
 
-        var focus = await server.CallToolAsync("apply_layout");
+        var focus = await server.CallToolAsync("launch_applications_batch");
         var status = Payload(await server.CallToolAsync("get_control_status"));
 
         focus.IsError.Should().BeTrue();

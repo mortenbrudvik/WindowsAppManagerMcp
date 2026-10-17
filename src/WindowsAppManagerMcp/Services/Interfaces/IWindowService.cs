@@ -114,6 +114,22 @@ public interface IWindowService
     WindowChangeResult SetWindowState(nint handle, WindowStateRequest state);
 
     /// <summary>
+    /// The window's restore rectangle in screen coordinates (roadmap M6.8): the window rect (with its invisible borders,
+    /// <see cref="BoundsFrame.Outer"/>) a minimized or maximized window returns to, read with GetWindowPlacement and converted
+    /// from workspace coordinates. Null when it cannot be read. Only reads.
+    /// </summary>
+    WindowRect? GetNormalBounds(nint handle);
+
+    /// <summary>
+    /// Gives a minimized window a new restore rectangle (the window rect, <see cref="BoundsFrame.Outer"/>) without restoring,
+    /// showing or activating it (roadmap M6.8): SetWindowPlacement with SW_SHOWMINNOACTIVE, read back. Refused like any window
+    /// change (InvalidHandle, TargetDeniedByPolicy, AccessDenied); MoveFailed when the window is not minimized, is hidden (its
+    /// app hid it, and the call would show it), or the read-back does not show the rectangle.
+    /// </summary>
+    /// <exception cref="WindowNotRespondingException">The window did not answer in time.</exception>
+    WindowChangeResult SetMinimizedBounds(nint handle, int x, int y, int width, int height);
+
+    /// <summary>
     /// Snaps the window on monitor <paramref name="monitorIndex"/>, or on its own monitor when it is null. An index that
     /// is not a monitor fails with InvalidMonitorIndex and the valid range.
     /// </summary>

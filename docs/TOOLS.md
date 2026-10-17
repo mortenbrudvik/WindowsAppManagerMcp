@@ -315,7 +315,7 @@ Every tool the server serves sits in the agent's context on every turn, and a lo
 | `clipboard` | on | about 700 | Read what the agent copied, put text on the clipboard to paste it; the user's own clipboard only with their consent. | [get_clipboard](#get_clipboard), [set_clipboard](#set_clipboard) |
 | `launch` | on | about 3,300 | Start applications, optionally waiting for their window, and list the installed apps. | [launch_application](#launch_application), [launch_applications_batch](#launch_applications_batch), [list_installed_apps](#list_installed_apps) |
 | `process` | on | about 2,300 | List processes and close or end one, or close an application's windows gracefully. | [list_processes](#list_processes), [kill_process](#kill_process), [close_application](#close_application) |
-| `layouts` | on | about 1,200 | Save, apply and manage window layout presets. | [list_layouts](#list_layouts), [get_layout](#get_layout), [save_layout](#save_layout), [apply_layout](#apply_layout), [delete_layout](#delete_layout) |
+| `layouts` | on | about 2,000 | Save, apply and manage window layout presets. | [list_layouts](#list_layouts), [get_layout](#get_layout), [save_layout](#save_layout), [apply_layout](#apply_layout), [delete_layout](#delete_layout) |
 | `steps` | on | about 1,100 | Run several steps (element actions, keys, clicks, waits) on one window in one call, under one input gate hold, stopping at the first failure. | [run_steps](#run_steps) |
 | `browser` | on | about 4,400 | Read the URL and text of browser pages, list a debug browser's tabs and wait for a page; start and close a browser with a DevTools port. | [get_browser_url](#get_browser_url), [get_browser_content](#get_browser_content), [launch_browser_with_debug](#launch_browser_with_debug), [close_debug_browser](#close_debug_browser), [list_tabs](#list_tabs), [wait_for_browser](#wait_for_browser) |
 | `browser-actions` | off | about 3,600 | Act on a debug browser's pages through CDP: show and navigate tabs (with a load wait), click and type in a page without the real mouse or keyboard, answer its JavaScript dialogs, place its elements on the screen, capture it. | [activate_tab](#activate_tab), [browser_navigate](#browser_navigate), [browser_element_rect](#browser_element_rect), [browser_click](#browser_click), [browser_type](#browser_type), [browser_handle_dialog](#browser_handle_dialog), [browser_screenshot](#browser_screenshot) |
@@ -325,7 +325,7 @@ Every tool the server serves sits in the agent's context on every turn, and a lo
 | `ocr` | off | about 2,300 | Read and find text on the screen with Windows OCR where UI Automation exposes none (canvas apps, games, remote desktops, rendered PDFs), with click points for the mouse tools. | [read_screen_text](#read_screen_text), [find_text_on_screen](#find_text_on_screen) |
 | `deprecated` | off | about 4,900 | Tools replaced in 2.2.0 and removed in 3.0.0, unchanged until then and each served only with the toolset it came from: use mouse_click, set_window_bounds, find_windows, get_monitors and get_browser_url instead. | [click](#click), [right_click](#right_click), [double_click](#double_click), [move_window](#move_window), [resize_window](#resize_window), [get_all_windows](#get_all_windows), [get_primary_monitor](#get_primary_monitor), [list_screens](#list_screens), [get_active_browser_url](#get_active_browser_url) |
 
-The default surface (the toolsets that are on) is about 54,000 tokens, and every tool together about 68,400.
+The default surface (the toolsets that are on) is about 54,800 tokens, and every tool together about 69,200.
 <!-- tools:end toolsets -->
 
 **Tokens** is what the toolset's tools cost in tools/list, to the nearest 100: their names, titles, descriptions, input schemas and annotations as the server sends them, estimated at 4 bytes of JSON per token (roadmap M6.1). It is what turning the toolset on adds to the context a client loads up front, and what turning it off saves. The two totals under the table are measured the same way and generated with it. Contract tests hold each toolset, the default surface, the whole list and every single tool (at most 2,500 tokens) to a budget, so a change that makes them larger is a decision; see TESTING.md.
@@ -6849,6 +6849,9 @@ If the folder cannot be created or used (for example, `WAM_LAYOUTS_PATH` points 
 | `WindowNotFound` | apply_layout | No open window matched a placement (or every match was given to another placement) |
 | `NoMatchCriterion` | apply_layout | A placement has no criterion the `matchBy` used can match on, so it was skipped |
 | `InvalidMonitorIndex` | apply_layout | A placement's monitor does not exist (for example, after undocking) |
+| `MonitorNotFound` | apply_layout | A placement saved its monitor by identity, that monitor is not connected, and neither its name nor its monitor index fits one |
+| `InvalidPlacement` | save_layout | A placement of `placements` is not valid; nothing was saved |
+| `LaunchNotConfirmed` | apply_layout | An AI agent wrote the layout and the user has not confirmed that it may start programs; nothing was started for that placement |
 | `LaunchFailed` | apply_layout | A missing app could not be launched, or its window did not appear |
 | `ArrangeFailed` | apply_layout | A matched window could not be moved, resized, maximized, minimized or brought to the foreground |
 | `TargetDeniedByPolicy` | apply_layout | The user's [target policy](#target-policy) denies a matched window's app, or its process cannot be named while the policy denies anything; that placement's window was not arranged |
@@ -6929,7 +6932,7 @@ Get full details of a layout preset. If no preset has that name, the call return
       "processName": "Code",
       "monitorIndex": 0,
       "position": { "x": 0, "y": 0, "width": 0.5, "height": 1.0 },
-      "launchCommand": "code.exe",
+      "launchCommand": "C:\\Users\\user\\AppData\\Local\\Programs\\Microsoft VS Code\\Code.exe",
       "focus": true,
       "order": 1,
       "exactProcessName": true,
@@ -6937,7 +6940,10 @@ Get full details of a layout preset. If no preset has that name, the call return
       "titlePattern": "main.cs - WindowsAppManagerMcp - Visual Studio Code",
       "exePath": "C:\\Users\\user\\AppData\\Local\\Programs\\Microsoft VS Code\\Code.exe",
       "ordinal": 0,
-      "state": "normal"
+      "state": "normal",
+      "monitor": "m-3f9a12c4",
+      "monitorName": "DELL U2720Q",
+      "launch": { "executable": "C:\\Users\\user\\AppData\\Local\\Programs\\Microsoft VS Code\\Code.exe" }
     },
     {
       "processName": "WindowsTerminal",
@@ -6961,13 +6967,15 @@ Get full details of a layout preset. If no preset has that name, the call return
 }
 ```
 
-The first placement above was saved by [save_layout](#save_layout) (and given a launch command and focus by hand), so it also has what save_layout records about the window: `exactProcessName`, `className`, `titlePattern`, `exePath`, `ordinal` and `state` (see [save_layout](#save_layout)). Placements written by hand, like the other two, leave them out.
+The first placement above was saved by [save_layout](#save_layout) (and given focus by hand), so it also has what save_layout records about the window: `exactProcessName`, `className`, `titlePattern`, `exePath`, `ordinal`, `state`, its monitor's identity and what `launchMissing` starts (see [save_layout](#save_layout)). Placements written by hand, like the other two, leave them out.
+
+`monitor` is what save_layout's `placements` take back: the saved monitor id (or device name, or `primary`, `left` or `right` for a layout an agent wrote), or `monitorIndex` when none was saved. A snapped placement shows `snap` instead of `position`. `authoredBy` is `"agent"` for a layout whose placements an agent wrote (see [Agent-written layouts](#agent-written-layouts)). Presets are stored in schema version 2 (roadmap M6.8), which keeps every field earlier versions read, so an older plugin version still applies them; a file an earlier version wrote is read as it is, and never rewritten. A preset a newer version wrote is read as far as this one knows its fields, and get_layout adds a `warning` saying so.
 
 ---
 
 ### save_layout
 
-Save the current window arrangement as a preset. Saving under an existing name replaces that preset, and the response has `replaced: true`.
+Save the current window arrangement as a preset, or the placements you write (`placements`, see [Agent-written layouts](#agent-written-layouts)). Saving under an existing name replaces that preset, and the response has `replaced: true`.
 
 If no visible window matches the filters, nothing is saved (an existing preset with that name is kept) and the call fails with `NoWindowsCaptured`.
 
@@ -6979,6 +6987,27 @@ If no visible window matches the filters, nothing is saved (an existing preset w
 | description | string | No | - | Description of the layout |
 | includeProcesses | string | No | - | Only save these processes (comma-separated) |
 | excludeProcesses | string | No | - | Exclude these processes (comma-separated) |
+| includeMinimized | boolean | No | false | Also save minimized windows (default false) |
+| placements | object[] | No | - | The placements to save instead of capturing windows, in order; not with the capture filters |
+
+Each item of `placements` contains:
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| processName | string | No | - | Part of the window's process name, or all of it with exactProcessName |
+| titleContains | string | No | - | Text the window title contains |
+| snap | string | No | - | A [snap_window](#snap_window) position (`left_half`, `right_third`, ...); or position |
+| position | object | No | - | x, y, width, height: fractions (0-1) of the work area |
+| monitor | integer or string | No | - | A monitor: index, 'primary' (default), 'left', 'right', or an id or name from get_monitors |
+| state | string (one of: `"normal"`, `"maximized"`, `"minimized"`) | No | - | maximized needs no snap or position |
+| focus | boolean | No | - | - |
+| launch | object | No | - | What launchMissing starts: executable or appId, no arguments |
+| exactProcessName | boolean | No | - | - |
+| className | string | No | - | - |
+| titlePattern | string | No | - | - |
+| exePath | string | No | - | - |
+| ordinal | integer | No | - | - |
+| monitorName | string | No | - | - |
+| normalPosition | object | No | - | Restore rectangle of a maximized or minimized window, as position |
 <!-- tools:end params:save_layout -->
 
 The process filters match part of the process name, case-insensitive. As in [find_windows](#find_windows), a Store (UWP) app's window matches both its own process name and `ApplicationFrameHost`. Each saved placement stores the app's own process name (for example `CalculatorApp`).
@@ -6992,9 +7021,12 @@ Each placement also records which window it is, so [apply_layout](#apply_layout)
 | `titlePattern` | The window title when it was saved (not saved for a window the [target policy](#target-policy) denies, or whose process cannot be named while the policy denies anything) |
 | `exePath` | The full path of the window's program. It only identifies the window: apply_layout never starts it |
 | `ordinal` | Which window of its process it was, from the top of the z-order (0 is the top one) |
-| `state` | `normal` or `maximized` |
+| `state` | `normal`, `maximized` or `minimized` |
+| `normalPosition` | A maximized or minimized window's restore rectangle, the rectangle it returns to (fractions of the work area, as `position`). A normal window has none: its `position` is its window rect, which keeps a snapped window where it is |
+| `monitor`, `monitorName` | The monitor's id (`m-` and 8 hex digits, which follows the monitor on its port; its device name when the id cannot be read) and its EDID name, as [get_monitors](#get_monitors) reports them. `monitorIndex` is kept for older versions |
+| `launch` | What `launchMissing` starts: the window's program (`executable`), or a packaged app's `appId` (Calculator, Terminal, the new Outlook), never arguments. Nothing for a window the [target policy](#target-policy) denies, or a packaged app whose window does not say which of its package's apps it is. `launchCommand` holds the same for older versions |
 
-Minimized windows are not saved, and no launch command is recorded: `launchMissing` only starts what you add as `launchCommand` by hand. A `launchCommand` is a program name, path or URI without arguments, launched with [launch_application](#launch_application)'s checks, so a script is not run: `code` (VS Code's `code.cmd`) fails with `LaunchFailed` and the `ScriptFile` refusal in `error`; write `code.exe`. Presets saved by earlier versions keep working, and earlier versions ignore these fields.
+Minimized windows are saved only with `includeMinimized: true`, at their restore rectangle. A window that reaches past the work area's right or bottom edge (dragged partly off the screen) is recorded inside it, at its size; a snapped window's invisible border, a few pixels past the edge, is kept as it is. `launchMissing` starts what `launch` names, through [launch_application](#launch_application)'s plan and checks, so a script is not run: a hand-written `code` (VS Code's `code.cmd`) fails with `LaunchFailed` and the `ScriptFile` refusal in `error`; write `code.exe`. Presets saved by earlier versions keep working (their `launchCommand` is their `launch`), and earlier versions ignore these fields.
 
 **Example 1:** Save all windows
 > "Save my current layout as 'morning-routine'"
@@ -7033,6 +7065,38 @@ Minimized windows are not saved, and no launch command is recorded: `launchMissi
 }
 ```
 
+#### Agent-written layouts
+
+With `placements`, save_layout saves the placements you write and captures no window (roadmap M6.8, owner decision D15), so `includeProcesses`, `excludeProcesses` and `includeMinimized` are refused with `InvalidArguments`. Each placement names its window (`processName` or `titleContains`, at least one), and where it goes: `snap` (a [snap_window](#snap_window) position, resolved on its monitor when the layout is applied) or `position` (fractions of the work area), not both; `state: "maximized"` needs neither. `monitor` defaults to `primary`; `left` and `right` are resolved when the layout is applied, an id or device name is kept even when that monitor is not connected now, and `current` and `all` are refused. `launch` takes `executable` or `appId`, never arguments: an executable is a program's name (no spaces, no folder), a full path on a local drive, or a URI, never a network path, a relative path or a command line (`cmd.exe /c x`), and an appId is an AppUserModelID; each at most 260 characters. A layout may start at most 8 different programs or apps, as many as the user is shown when asked. `position` and `normalPosition` must lie inside the work area (`x + width` and `y + height` at most 1, give or take a window's invisible border). Texts are at most 260 characters (`exePath` 1,024, a description 1,000) and `ordinal` 0 to 999. A field save_layout does not take (`launch.arguments`, `workspace`, ...) fails the placement rather than be ignored; get_layout's own `order`, `monitorIndex` and `launchCommand` pass only when they agree with the placement (`order` its place in the array, `launchCommand` what its `launch` starts, `monitorIndex` beside `monitor`). Everything is checked before anything is written: one bad placement fails the call with `InvalidPlacement`, an `error` that starts with its index (`placements[2].snap: ...`), and the preset that was there is kept. At most 50 placements.
+
+get_layout's `placements` go back into save_layout unchanged, so editing a layout is get_layout, change, save_layout with the same name. The preset is marked `authoredBy: "agent"`: apply_layout asks the user before it starts anything for it (see [apply_layout](#apply_layout)).
+
+```json
+{
+  "name": "save_layout",
+  "arguments": {
+    "name": "review",
+    "placements": [
+      { "processName": "Code", "snap": "left_two_thirds", "monitor": "left", "focus": true },
+      { "titleContains": "Pull request", "processName": "msedge", "snap": "right_third", "monitor": "left" },
+      { "processName": "WindowsTerminal", "state": "maximized", "monitor": "right", "launch": { "appId": "Microsoft.WindowsTerminal_8wekyb3d8bbwe!App" } }
+    ]
+  }
+}
+```
+
+**Failure response:**
+```json
+{
+  "success": false,
+  "layoutName": "review",
+  "windowCount": 0,
+  "error": "placements[1].snap: 'right_quarter' is not a valid snap position. Use one of: left_half, right_half, ... Nothing was saved.",
+  "errorCode": "InvalidPlacement",
+  "replaced": false
+}
+```
+
 **Failure response:**
 ```json
 {
@@ -7057,7 +7121,9 @@ Apply a saved layout preset.
 |-----------|------|----------|---------|-------------|
 | name | string | Yes | - | Name of the preset |
 | matchBy | string (one of: `"process_and_title"`, `"process_only"`, `"title_only"`) | No | "process_and_title" | Match method (see below) |
-| launchMissing | boolean | No | false | Run the preset's `launchCommand` for each placement whose window is not found. A second call can start another instance while the launched window does not match yet |
+| launchMissing | boolean | No | false | Start the program or app each placement names (`launch`, or a hand-written `launchCommand`) when its window is not found. A second call can start another instance while the launched window does not match yet. For a layout an agent wrote, the user is asked first, once per version of the layout |
+| dryRun | boolean | No | false | Only plan: report what each placement would do, and change, focus and start nothing (default false) |
+| placements | integer[] | No | - | Only these placements, 0-based as get_layout lists them (default: all) |
 <!-- tools:end params:apply_layout -->
 
 **Match Methods:**
@@ -7073,21 +7139,33 @@ A placement's process name matches part of the window's process name, case-insen
 
 **One window per placement.** apply_layout reads the open windows once, the windows [find_windows](#find_windows) lists without a filter, and gives each placement its own window: a window is never given to two placements, and a placement left without a window is `notFound` (a layout with three Chrome windows and one Chrome window open arranges that window once). Among the windows that pass the method's filter, the one most like what save_layout recorded wins: the same title (or most of its parts, split at ` - ` and ` | `, so a browser window whose tab changed still counts), the same window class, the same program, and then the window closest to the placement's place and the same position among its process's windows. The best pairs are taken first, so a placement that recognizes its window by title gets it even when an earlier placement would take any window of that process; a hand-written placement without these fields takes the matching window closest to its place. A window on another virtual desktop (cloaked) or a tool window is not listed, so its placement counts as not found, and with `launchMissing` a placement that has a launch command starts its application again; if that brings up a window another placement was given (a single-instance app), the placement fails with `LaunchFailed`.
 
-**Monitors and state.** A placement whose `monitorIndex` is not a monitor now (after undocking, for example) fails with `InvalidMonitorIndex`; it is no longer put on monitor 0. A placement with `state: "maximized"` maximizes its window on its monitor, as [move_window_to_monitor](#move_window_to_monitor) `maximize` does; any other placement restores a minimized or maximized window first without activating it, then gives it the placement's rectangle (a hidden one, such as an app's window in the notification area, is not shown: the placement fails with `ArrangeFailed`), and `state: "minimized"` (hand-written only) minimizes it afterwards; a minimize that the application does not answer leaves the placement `applied`, with `ArrangeFailed` saying it could not be minimized.
+**Monitors.** A placement saved with its monitor's identity (roadmap M6.8) goes to that monitor wherever it is now, even when docking renumbered the monitors. When that monitor is not connected, the placement goes to the one monitor with its saved EDID name (another port or dock gives the monitor a new id), and then to its `monitorIndex`, and its result says so in `monitorFallback` (`name` or `index`): check those windows. A placement that saved no identity (a layout of an earlier version) uses its `monitorIndex`. A placement whose monitor fits none of these fails with `MonitorNotFound` (or `InvalidMonitorIndex` without an identity); it is never put on monitor 0.
 
-**Launched windows** (roadmap M3.F27). A window that `launchMissing` launched is placed the way [launch_application's `placement`](#launch-and-arrange) places its window, at the same rectangle and state an open window would get. It is checked before it is touched: a window of the agent's own host (a launch command such as `wt` can open a tab in the terminal the agent runs in) is never moved or focused (`ArrangeFailed`, with an error that starts `ProtectedWindow:`), a window the user's [target policy](#target-policy) denies fails with `TargetDeniedByPolicy` as before, and nothing is placed while the user has paused input (`PausedByUser:`). After it is placed it is watched as launch_application's is, for up to 3 seconds, and placed again each time the app moves it back, as browsers and VS Code do when they restore their saved bounds; then it is brought to the front if the placement has `focus`. The watch adds about a second to each launched window. When the app moves it back a fourth time it is left where the app put it, and the placement is `applied` with `ArrangeFailed` saying so; when it was moved back and could not be placed again, the placement is `applied` with `ArrangeFailed` and the reason; a window that closes while it is watched fails (`InvalidHandle:`). A window that was already open is arranged once, as described above. A placement's monitor is its `monitorIndex`, for launched and open windows alike: placing by the monitor's identity is not done yet.
+**State.** A placement with `state: "maximized"` first gives its window its restore rectangle (`normalPosition`), then maximizes it there, so it restores to that rectangle; a window that is already maximized on its monitor is left alone, and one without a restore rectangle is maximized on its monitor, as [move_window_to_monitor](#move_window_to_monitor) `maximize` does. Maximizing activates the window (Windows has no maximize that does not). A placement with `state: "minimized"` whose window is minimized gives it its restore rectangle without showing or activating it (SetWindowPlacement with SW_SHOWMINNOACTIVE); a window that is not minimized is placed, then minimized. Any other placement restores a minimized or maximized window first without activating it, then gives it the placement's rectangle (a hidden one, such as an app's window in the notification area, is not shown: the placement fails with `ArrangeFailed`); a `snap` placement is snapped on its monitor, as [snap_window](#snap_window) does. A minimize that the application does not answer leaves the placement `applied`, with `ArrangeFailed` saying it could not be minimized.
+
+**Launched windows** (roadmap M3.F27). A window that `launchMissing` launched is placed the way [launch_application's `placement`](#launch-and-arrange) places its window, at the same rectangle and state an open window would get. It is checked before it is touched: a window of the agent's own host (a launch command such as `wt` can open a tab in the terminal the agent runs in) is never moved or focused (`ArrangeFailed`, with an error that starts `ProtectedWindow:`), a window the user's [target policy](#target-policy) denies fails with `TargetDeniedByPolicy` as before, and nothing is placed while the user has paused input (`PausedByUser:`). After it is placed it is watched as launch_application's is, for up to 3 seconds, and placed again each time the app moves it back, as browsers and VS Code do when they restore their saved bounds; then it is brought to the front if the placement has `focus`. The watch adds about a second to each launched window. When the app moves it back a fourth time it is left where the app put it, and the placement is `applied` with `ArrangeFailed` saying so; when it was moved back and could not be placed again, the placement is `applied` with `ArrangeFailed` and the reason; a window that closes while it is watched fails (`InvalidHandle:`). A window that was already open is arranged once, as described above. A launched window's monitor is found again by its identity when the window appears, so a dock or undock during the launch's wait fails the placement rather than land it on another screen. The launch goes through [launch_application](#launch_application)'s plan: a packaged app's `appId` is activated as its own process, scripts and interpreters with arguments are refused, and the window is found whichever process opens it (a placement's `processName` is the window it expects).
+
+**Dry run and a subset** (roadmap M6.8). `dryRun: true` plans the layout as apply_layout would, and changes, focuses and starts nothing: it takes no input gate and runs while the user has paused input. `status` is `dryRun`, and each placement is `wouldApply` (with its `window`) or `wouldLaunch` (with `launchCommand`), with `target`, the rectangle the window would get in virtual-screen pixels, or `notFound`, `notApplicable` or `failed` with the reason. `success` is true when every placement would apply or launch. It is a preview, not a promise: windows can open, close or move before the real call, and a launch that an app hands to a window it already has cannot be foreseen. `placements` applies only the placements it names, 0-based as get_layout lists them; each still gets the window it would get in a full apply. An index that is no placement fails with `InvalidArguments`, and nothing is arranged.
+
+**Agent-written layouts.** A layout an agent saved with `placements` could start programs in a later session, so before `launchMissing` starts anything for it, apply_layout asks the user, with the layout's name, when it was saved and every program or app it would start (elicitation, before the input gate is taken; each shown on at most a line, a long folder shortened in the middle). A preset with any `authoredBy` counts as agent-written, whatever its spelling. A yes holds for that version of the layout, also after a restart (`.launch-confirmations` in the layouts folder), until the layout is saved again; deleting that file takes back every yes at once. Without a yes, or on a client that cannot ask, nothing is started for it: those placements fail with `LaunchNotConfirmed`, and the open windows are arranged. A preset file that starts more than 8 programs, or one longer than 260 characters, is never asked about, so its launches always fail with `LaunchNotConfirmed`. A dry run reports such a launch as `wouldLaunch` with `LaunchNotConfirmed`, and asks nothing.
+
+What this guards, and what not: it stops an agent that has only this server's tools from saving a layout that a later session starts programs from without the user's say. It does not guard against anything that can write the layouts folder itself (an agent with file tools, another program): such a writer can leave `authoredBy` out, which marks a layout as the user's own, or add a line to `.launch-confirmations`. launch_application starts programs without asking anyway; the confirmation keeps a saved layout from doing so later, unseen. Older versions of the server ignore `authoredBy` and start an agent-written layout's programs without asking.
+
+**Launch checks.** Every launch, in a dry run too, is first planned as [launch_application](#launch_application) plans it, without starting anything: a launch target that is not a program's name, a local path, a URI or an appId, a script, an interpreter with arguments or a program that cannot be found fails with `LaunchFailed` and the planner's code in `error` (`ScriptFile`, `ExecutableNotFound`, ...), the same in the dry run and in the apply, and the user is not asked about it. A dry run also says `failed` (`ArrangeFailed`) for a hidden window that is minimized or maximized, which the apply would not show to arrange.
 
 **Results.** `success` is true only when every placement was arranged (and focused, for a placement with focus). `status` is `applied` when it was, `partial` when some placements were arranged and others not, and `failed` when none was. `placements` has one result per placement, in placement order:
 
 | Field | Meaning |
 |-------|---------|
 | `order` | The placement's `order` |
-| `status` | `applied`, `notFound`, `notApplicable` or `failed` |
+| `status` | `applied`, `notFound`, `notApplicable` or `failed`; in a dry run `wouldApply` or `wouldLaunch` instead of `applied` |
 | `window` | The window it was given: `handle`, `title`, `processName`; left out when none was |
 | `launched` | `true` when the window was launched for it (`launchMissing`), also when the placement failed after the launch |
-| `launchCommand` | The preset's `launchCommand` when it was run for this placement (`launchMissing`), whether or not the launch worked; left out when nothing was launched |
+| `launchCommand` | What `launchMissing` started for this placement (its program, or an app's `shell:AppsFolder\` entry), whether or not the launch worked, or in a dry run would start; left out when nothing was launched |
+| `target` | A dry run's `x`, `y`, `width` and `height`: where the window would go (a maximized placement's restore rectangle) |
+| `monitorFallback` | `name` or `index` when the saved monitor is not connected and another was used (see Monitors above) |
 | `focused` | For a placement with `focus: true` that was arranged: whether its window is in front |
-| `errorCode`, `error` | Why it was not (fully) applied: `WindowNotFound`, `NoMatchCriterion`, `InvalidMonitorIndex`, `LaunchFailed`, `TargetDeniedByPolicy` or `ArrangeFailed`. An `applied` placement with `ArrangeFailed` was arranged but not brought to the front (or not minimized), or its launched window was moved back by its app and not placed again (see Launched windows above) |
+| `errorCode`, `error` | Why it was not (fully) applied: `WindowNotFound`, `NoMatchCriterion`, `InvalidMonitorIndex`, `MonitorNotFound`, `LaunchFailed`, `LaunchNotConfirmed`, `TargetDeniedByPolicy` or `ArrangeFailed`. An `applied` placement with `ArrangeFailed` was arranged but not brought to the front (or not minimized), or its launched window was moved back by its app and not placed again (see Launched windows above) |
 
 `errorCode` names the first problem and `errors` lists every problem; the counts show what was done. Each placement runs on its own: one that fails, even unexpectedly, does not stop the others.
 
@@ -7167,6 +7245,23 @@ A placement with `focus: true` brings its window to the front with the same veri
     { "order": 1, "status": "applied", "window": { "handle": 2884384, "title": "main.cs - Visual Studio Code", "processName": "Code" }, "focused": false, "errorCode": "ArrangeFailed", "error": "Arranged window 'main.cs - Visual Studio Code' for placement 1 (process 'Code'), but could not bring it to the foreground (FocusFailed): ..." },
     { "order": 2, "status": "applied", "window": { "handle": 1312934, "title": "Administrator: Windows PowerShell", "processName": "WindowsTerminal" } },
     { "order": 3, "status": "applied", "window": { "handle": 657212, "title": "GitHub - Google Chrome", "processName": "chrome" } }
+  ]
+}
+```
+
+**Dry run response** (`dryRun: true`, `launchMissing: true`, the DELL is not connected):
+```json
+{
+  "success": true,
+  "status": "dryRun",
+  "presetName": "work-setup",
+  "windowsArranged": 0,
+  "windowsNotFound": 0,
+  "windowsLaunched": 0,
+  "placements": [
+    { "order": 1, "status": "wouldApply", "window": { "handle": 2884384, "title": "main.cs - Visual Studio Code", "processName": "Code" }, "target": { "x": -7, "y": 0, "width": 974, "height": 1047 } },
+    { "order": 2, "status": "wouldLaunch", "launchCommand": "shell:AppsFolder\\Microsoft.WindowsTerminal_8wekyb3d8bbwe!App", "target": { "x": 953, "y": 0, "width": 974, "height": 527 } },
+    { "order": 3, "status": "wouldApply", "window": { "handle": 657212, "title": "GitHub - Google Chrome", "processName": "chrome" }, "target": { "x": -7, "y": 0, "width": 1934, "height": 1047 }, "monitorFallback": "index" }
   ]
 }
 ```
@@ -8440,6 +8535,30 @@ the new tools; their sections have the rest.
   `shell:AppsFolder` entry that starts a script is refused (`ScriptFile`). New error codes: `AmbiguousApp`, `ActivationFailed`,
   `ElevationNotConfirmed`, and `ConfirmationDeclined` for launch_application. launch_application now takes the input gate
   itself, after that question, so a question never holds it; its gating is otherwise unchanged.
+- **Layouts: schema version 2, layouts an agent writes, and a dry run (roadmap M6.8).** No new tools: the `layouts-v2`
+  toolset an earlier version of this document promised is not coming (owner decision D15). **Changed:** save_layout now
+  records, per window, its monitor's id and EDID name, a maximized or minimized window's restore rectangle, and what
+  `launchMissing` starts (`launch`: the program, or a packaged app's `appId`; never arguments; nothing for a window the
+  target policy denies), so apply_layout's `launchMissing` now starts programs for captured layouts, where it started
+  nothing before; `launchCommand` holds the same for older versions. Presets are written as schema version 2 and keep
+  every version 1 field, so an older plugin version still applies them (and drops the new fields if it saves under the
+  same name); files of earlier versions are read as they are and never rewritten. New: save_layout's `includeMinimized`
+  and `placements` (agent-written placements with snap positions, monitor names and launches, checked strictly:
+  `InvalidPlacement`; get_layout's placements go back in unchanged), apply_layout's `dryRun` (status `dryRun`,
+  placements `wouldApply` or `wouldLaunch` with `target`) and `placements` (a subset by index). **Changed:**
+  apply_layout finds a saved monitor by its id wherever it is now, then by its name, then by its index, and says which
+  in `monitorFallback`; a monitor that fits none is `MonitorNotFound`. A maximized placement is first given its restore
+  rectangle, then maximized (a brief move may show; maximize still activates), and one already maximized on its monitor
+  is left alone; a minimized window that stays minimized is given its restore rectangle without being shown. Launches go
+  through launch_application's plan (packaged apps are activated, scripts refused, the window found whichever process
+  opens it). apply_layout now takes the input gate itself, after any question to the user, so a dry run neither waits
+  for the gate nor stops while input is paused. Before an agent-written layout starts anything, the user is asked once
+  per version of it; without a yes, or on a client that cannot ask, those placements fail with `LaunchNotConfirmed`.
+  launch_application's and the batch's `placement` now find a named monitor again by its id when the window appears,
+  and fail with `MonitorNotFound` when it is gone. Any `authoredBy` marks a preset as agent-written; the confirmation
+  guards against agents with only the MCP tools, not against anything that can write the layouts folder, and older servers
+  ignore `authoredBy` and launch without asking. A layout's launches are checked by launch_application's planning, in a dry
+  run too; save_layout refuses fields it does not take, rectangles past the work area and more than 8 launches.
 
 ## Error Codes
 
@@ -8603,11 +8722,12 @@ table, it gives more detail.
 | `InvalidImageSize` | [Screenshot](#screenshot) tools | `maxDimension` is negative or `maxWidth` is not positive |
 | `InvalidKeySpecification` | [send_keys](#send_keys), [press_keys](#press_keys) | The keys string breaks the [syntax](#send_keys), such as a `{` without its `}`, a modifier with no key after it (`100%`; write `100{%}`), an unclosed group or a count outside 1-100; press_keys: a chord with two keys (`ctrl+a+b`), an empty name (`ctrl++`; write `plus`), a modifier named twice, a count outside 1-100, no keys, or more than 200 presses; nothing was sent. Fix the string (an unknown key name is `UnknownKey`) |
 | `InvalidMatchBy` | [apply_layout](#apply_layout) (tool error) | `matchBy` is not process_and_title, process_only or title_only; nothing was arranged |
-| `InvalidMonitorIndex` | [take_screenshot](#take_screenshot), [wait_for_visual](#wait_for_visual), [read_screen_text](#read_screen_text), [find_text_on_screen](#find_text_on_screen), [snap_window](#snap_window), [move_window_to_monitor](#move_window_to_monitor), [set_window_bounds](#set_window_bounds) (in percent), snap_windows_batch (per window), [apply_layout](#apply_layout) (per placement: its `monitorIndex`), [launch_application](#launch_application) and launch_applications_batch (a `placement`; tool error or per item, nothing launched) | The `monitor` index (or the deprecated `monitorIndex`) is not a monitor; `error` gives the valid range (see [get_monitors](#get_monitors) or [list_screens](#list_screens)). Nothing was changed: the window is never put on another monitor instead |
+| `InvalidMonitorIndex` | [take_screenshot](#take_screenshot), [wait_for_visual](#wait_for_visual), [read_screen_text](#read_screen_text), [find_text_on_screen](#find_text_on_screen), [snap_window](#snap_window), [move_window_to_monitor](#move_window_to_monitor), [set_window_bounds](#set_window_bounds) (in percent), snap_windows_batch (per window), [apply_layout](#apply_layout) (per placement: its `monitorIndex`, when it saved no monitor identity), [launch_application](#launch_application) and launch_applications_batch (a `placement`; tool error or per item, nothing launched) | The `monitor` index (or the deprecated `monitorIndex`) is not a monitor; `error` gives the valid range (see [get_monitors](#get_monitors) or [list_screens](#list_screens)). Nothing was changed: the window is never put on another monitor instead |
 | `InvalidName` | [save_layout](#save_layout), [delete_layout](#delete_layout) | The name is empty or longer than 128 characters |
 | `InvalidOutputMode` | [Screenshot](#screenshot) tools | `output` is not image, file, both or metadata (a tool error that lists them), or `outputPath` was given without a file output |
 | `InvalidOutputPath` | [Screenshot](#screenshot) tools | `outputPath` is not an absolute path on a drive letter (network and device paths are refused), does not end in an extension that matches the format, names a folder, or is in a folder that does not exist |
 | `InvalidPath` | [launch_application](#launch_application), launch_applications_batch | The executable or working directory is not a valid path |
+| `InvalidPlacement` | [save_layout](#save_layout) | A placement of `placements` is not valid (no processName or titleContains, snap with position, a fraction out of range or a rectangle past the work area, an unknown snap position, state or monitor, focus with minimized, a launch with both or neither of executable and appId or one that is no program name, local path, URI or appId, a field save_layout does not take, a text too long), or the placements start more than 8 programs or apps; `error` starts with its index. Nothing was saved, and the preset that was there is kept |
 | `InvalidPositioning` | [move_window_to_monitor](#move_window_to_monitor) (tool error) | `positioning` is not center, topleft, topright, bottomleft, bottomright, maximize or restore; nothing was moved |
 | `InvalidProcessId` | [kill_process](#kill_process) | `processId` is not a positive integer |
 | `InvalidRegion` | [capture_region](#capture_region), [wait_for_visual](#wait_for_visual), [read_screen_text](#read_screen_text) and [find_text_on_screen](#find_text_on_screen) (a region) | `width` or `height` is not positive, or the part of the region on screen is over the 64-megapixel budget or 16384 pixels on an edge; wait_for_visual: a region or monitor over 32 megapixels, which every check reads |
@@ -8619,8 +8739,9 @@ table, it gives more detail.
 | `KeysAfterFocusChange` | [send_keys](#send_keys), [press_keys](#press_keys) | Keys follow a chord that hands the keyboard to another window (Alt+Tab, Alt+Esc, Ctrl+Esc, the Windows key, Alt+Space, or a closing chord such as Alt+F4), so they would reach a window the guard never checked; nothing was sent. Make that chord the last key, and send the rest in a new call |
 | `LaunchException` | [launch_application](#launch_application), launch_applications_batch | Windows failed to start the target; `error` has the reason |
 | `LaunchFailed` | [apply_layout](#apply_layout) | A missing app could not be launched, its window did not appear, or the window it brought up was already given to another placement (a single-instance app) |
+| `LaunchNotConfirmed` | [apply_layout](#apply_layout) (per placement) | An AI agent wrote the layout (save_layout `placements`), and the user did not confirm that it may start programs: they declined, or the client cannot ask them. Nothing was started for the placement; the open windows were arranged. Ask the user |
 | `ModifiersHeld` | [Input Simulation](#input-simulation) tools, [element_action](#element_action) (mouse and keyboard paths), [release_all_input](#release_all_input) (`releaseHeldModifiers`) | Shift, Ctrl, Alt or Windows is down (`heldModifiers`), held by the user or stuck, or keys the server pressed earlier could not be released; nothing (more) was sent. Wait and retry; for a stuck key pass `releaseHeldModifiers: true` or call [release_all_input](#release_all_input) (element_action has no `releaseHeldModifiers`: call release_all_input). While any modifier of the [pause hotkey](#pause-hotkey) is down, no modifier is released for the agent: ask the user |
-| `MonitorNotFound` | Every tool that takes `monitor` (see [Monitor selectors](#monitor-selectors)): a tool error; per item in snap_windows_batch and launch_applications_batch | `monitor` names no monitor: an id no monitor has now (it was moved to another port or dock, or unplugged), a word that is not a selector, `"current"` while no window is in the foreground, or `"left"` or `"right"` with one monitor. Nothing was done. Call [get_monitors](#get_monitors) and pass an index or id it lists |
+| `MonitorNotFound` | Every tool that takes `monitor` (see [Monitor selectors](#monitor-selectors)): a tool error; per item in snap_windows_batch and launch_applications_batch; per placement in [apply_layout](#apply_layout), when the monitor it saved, its monitor's name and its index all fit none | `monitor` names no monitor: an id no monitor has now (it was moved to another port or dock, or unplugged), a word that is not a selector, `"current"` while no window is in the foreground, or `"left"` or `"right"` with one monitor. Nothing was done. Call [get_monitors](#get_monitors) and pass an index or id it lists |
 | `MouseInUse` | [click](#click), right_click, double_click, [mouse_click](#mouse_click), [drag](#drag), mouse_move, [scroll](#scroll), [element_action](#element_action) (mouse paths) | A mouse button is held down (the user is dragging or selecting), or another window has captured the mouse, so the input would go to that window instead of the one at the point, or the capture could not be read; nothing (more) was sent |
 | `MoveFailed` | move_window, set_window_bounds (with `x` and `y`), snap_window, move_window_to_monitor (see [Window Control](#window-control)), their batches (per window) | Windows did not move the window (`error` gives the Win32 error); a minimized or maximized window did not return to normal, or is hidden, so it was not placed; or move_window_to_monitor did not get the window onto the monitor asked for (with `positioning: "maximize"` it is then not maximized) |
 | `NavigationFailed` | [browser_navigate](#browser_navigate) | The browser could not load the page: `errorText` is its reason (such as `net::ERR_NAME_NOT_RESOLVED`, `net::ERR_CONNECTION_REFUSED` or `net::ERR_ABORTED`), and the tab shows the browser's error page (`loadState: "failed"`); check the address and that the site can be reached from this computer. With `loadState: "download"` the address answered with a file, which the browser downloads, and the tab keeps its page; do not navigate there again to read it (roadmap M5.5) |

@@ -211,4 +211,40 @@ public class NativeWindowWrapper : INativeWindowWrapper
     {
         return NativeMethods.User32.GetDpiForWindow(hWnd);
     }
+
+    public NativeWindowPlacement? GetWindowPlacement(nint hWnd)
+    {
+        var placement = WINDOWPLACEMENT.Create();
+        if (!NativeMethods.User32.GetWindowPlacement(hWnd, ref placement))
+            return null;
+
+        var normal = placement.rcNormalPosition;
+        return new NativeWindowPlacement(
+            placement.showCmd,
+            placement.flags,
+            (placement.ptMinPosition.X, placement.ptMinPosition.Y),
+            (placement.ptMaxPosition.X, placement.ptMaxPosition.Y),
+            (normal.Left, normal.Top, normal.Right, normal.Bottom));
+    }
+
+    public Win32CallResult SetWindowPlacement(nint hWnd, NativeWindowPlacement placement)
+    {
+        var native = WINDOWPLACEMENT.Create();
+        native.showCmd = placement.ShowCmd;
+        native.flags = placement.Flags;
+        native.ptMinPosition = new POINT { X = placement.MinPosition.X, Y = placement.MinPosition.Y };
+        native.ptMaxPosition = new POINT { X = placement.MaxPosition.X, Y = placement.MaxPosition.Y };
+        native.rcNormalPosition = new RECT
+        {
+            Left = placement.NormalPosition.Left,
+            Top = placement.NormalPosition.Top,
+            Right = placement.NormalPosition.Right,
+            Bottom = placement.NormalPosition.Bottom
+        };
+
+        // The error must be read here, right after the call: nothing else may run in between
+        return NativeMethods.User32.SetWindowPlacement(hWnd, ref native)
+            ? Win32CallResult.Ok
+            : Win32CallResult.Failure(Marshal.GetLastPInvokeError());
+    }
 }

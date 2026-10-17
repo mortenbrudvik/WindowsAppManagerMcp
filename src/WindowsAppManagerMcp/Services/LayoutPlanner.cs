@@ -1,4 +1,5 @@
 using WindowsAppManagerMcp.Models;
+using WindowsAppManagerMcp.Models.Results;
 
 namespace WindowsAppManagerMcp.Services;
 
@@ -60,16 +61,35 @@ public static class LayoutPlanner
             }
 
             // A saved monitor that is gone is reported, not swapped for the primary one: the window would land on the
-            // wrong screen with success
-            if (placement.MonitorIndex < 0 || placement.MonitorIndex >= monitors.Count)
+            // wrong screen with success. A monitor saved by identity that is not connected falls back to its name, then its
+            // index, and says so (roadmap M6.8)
+            var (monitor, fallback, monitorErrorCode, monitorError) = ResolveMonitor(placement, monitors);
+            if (monitor == null)
             {
-                plan.MonitorError = $"Did not arrange {plan.Label}: {WindowService.MonitorIndexMessage(placement.MonitorIndex, monitors.Count)}";
+                plan.MonitorErrorCode = monitorErrorCode;
+                plan.MonitorError = $"Did not arrange {plan.Label}: {monitorError}";
                 continue;
             }
 
-            var workArea = monitors[placement.MonitorIndex].WorkArea;
+            var workArea = monitor.WorkArea;
+            plan.Monitor = monitor;
+            plan.MonitorFallback = fallback;
             plan.WorkArea = workArea;
-            plan.Target = TargetOf(placement.Position, workArea);
+
+            // A snap position is resolved on the monitor as it is now (roadmap M6.8); a name this server does not know (a
+            // hand-edited file) leaves the position, which every preset has
+            if (placement.Snap != null && ToolEnum<SnapPosition>.TryParse(placement.Snap, out var snap, out _))
+            {
+                plan.Snap = snap;
+                var frame = SnapMath.Calculate(workArea, snap);
+                plan.Target = new WindowRect(frame.X, frame.Y, frame.Width, frame.Height);
+            }
+            else
+            {
+                plan.Target = TargetOf(placement.Position, workArea);
+            }
+
+            plan.NormalTarget = placement.NormalPosition is { } normal ? TargetOf(normal, workArea) : null;
         }
 
         // The position of each window among the snapshot's windows of its process, as save_layout counted it
@@ -114,6 +134,50 @@ public static class LayoutPlanner
         }
 
         return plans;
+    }
+
+    /// <summary>
+    /// The monitor a placement goes to (roadmap M6.8): the one its <see cref="WindowPlacement.Monitor"/> names (an id, a device
+    /// name, 'primary', 'left' or 'right'); when that names none, the one monitor with its <see cref="WindowPlacement.MonitorName"/>
+    /// (fallback "name"), then the one at its <see cref="WindowPlacement.MonitorIndex"/> (fallback "index"). A placement that
+    /// saved no identity (schema version 1) has its index alone, without a fallback. When none fits: MonitorNotFound for a
+    /// placement that saved an identity, InvalidMonitorIndex for one that did not.
+    /// </summary>
+    public static (MonitorInfo? Monitor, string? Fallback, string? ErrorCode, string? Error) ResolveMonitor(
+        WindowPlacement placement, IReadOnlyList<MonitorInfo> monitors)
+    {
+        ArgumentNullException.ThrowIfNull(placement);
+        ArgumentNullException.ThrowIfNull(monitors);
+
+        var saved = !string.IsNullOrWhiteSpace(placement.Monitor);
+        if (saved && MonitorSelection.Resolve(monitors, MonitorSelector.Of(placement.Monitor!), () => null) is
+                { Succeeded: true, Monitor: { } named })
+        {
+            return (named, null, null, null);
+        }
+
+        if (!string.IsNullOrWhiteSpace(placement.MonitorName))
+        {
+            var withName = monitors
+                .Where(m => string.Equals(m.FriendlyName, placement.MonitorName.Trim(), StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            if (withName.Count == 1)
+                return (withName[0], LayoutMonitorFallback.Name, null, null);
+        }
+
+        if (placement.MonitorIndex >= 0 && placement.MonitorIndex < monitors.Count)
+        {
+            var identified = saved || !string.IsNullOrWhiteSpace(placement.MonitorName);
+            return (monitors[placement.MonitorIndex], identified ? LayoutMonitorFallback.Index : null, null, null);
+        }
+
+        if (!saved)
+            return (null, null, nameof(WindowErrorCode.InvalidMonitorIndex), WindowService.MonitorIndexMessage(placement.MonitorIndex, monitors.Count));
+
+        var name = string.IsNullOrWhiteSpace(placement.MonitorName) ? string.Empty : $" ({placement.MonitorName.Trim()})";
+        return (null, null, nameof(WindowErrorCode.MonitorNotFound),
+            $"its monitor '{placement.Monitor}'{name} is not connected, and its monitor index {placement.MonitorIndex} does not exist " +
+            $"({monitors.Count} monitor{(monitors.Count == 1 ? string.Empty : "s")}). Nothing was changed. Call get_monitors to see them.");
     }
 
     /// <summary>
@@ -260,8 +324,26 @@ public sealed class PlannedPlacement(WindowPlacement placement, string label)
     /// <summary>Why the placement's monitor cannot be used; null when it can.</summary>
     public string? MonitorError { get; internal set; }
 
-    /// <summary>The placement's rectangle on its monitor; null when it is not applicable or its monitor does not exist.</summary>
+    /// <summary>The error code of <see cref="MonitorError"/>: InvalidMonitorIndex, or MonitorNotFound for a monitor saved by identity.</summary>
+    public string? MonitorErrorCode { get; internal set; }
+
+    /// <summary>The placement's monitor; null when it is not applicable or its monitor does not exist.</summary>
+    public MonitorInfo? Monitor { get; internal set; }
+
+    /// <summary>How the monitor was found when the saved one is not connected (<see cref="LayoutMonitorFallback"/>); null otherwise.</summary>
+    public string? MonitorFallback { get; internal set; }
+
+    /// <summary>
+    /// The placement's rectangle on its monitor, in virtual-screen pixels: the window rect of its position, or the visible frame of
+    /// its snap position. Null when it is not applicable or its monitor does not exist.
+    /// </summary>
     public WindowRect? Target { get; internal set; }
+
+    /// <summary>The snap position the window is snapped to on its monitor (roadmap M6.8); null for a placement with a position.</summary>
+    public SnapPosition? Snap { get; internal set; }
+
+    /// <summary>The restore rectangle of a maximized or minimized placement on its monitor (roadmap M6.8); null when none was saved.</summary>
+    public WindowRect? NormalTarget { get; internal set; }
 
     /// <summary>The work area of the placement's monitor; null when it is not applicable or its monitor does not exist.</summary>
     public MonitorRect? WorkArea { get; internal set; }

@@ -164,6 +164,15 @@ public class ProcessService : IProcessService
         return new ElevationPreview(reason != null, reason, ApprovalOf(plan));
     }
 
+    public LaunchRefusal? CheckLaunch(LaunchRequest request)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        var plan = PlanFor(request);
+        return plan.IsValid
+            ? null
+            : new LaunchRefusal(plan.ErrorCode ?? ToolErrorReporting.InvalidArgumentsErrorCode, plan.ErrorMessage ?? "The launch could not be planned.");
+    }
+
     /// <summary>The launch a plan would start, as the user approves it.</summary>
     private static ElevationApproval ApprovalOf(LaunchPlan plan) => new(plan.StartInfo!.FileName, plan.StartInfo.Arguments ?? string.Empty);
 

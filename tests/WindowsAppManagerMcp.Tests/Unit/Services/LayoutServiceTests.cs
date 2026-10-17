@@ -450,9 +450,9 @@ public class LayoutServiceTests : IDisposable
         // Arrange - the launched application's window never appears; the launch waits until the call is cancelled
         _mockWindowService.Setup(w => w.GetAllWindows(true)).Returns(new List<WindowInfo>());
         _mockProcessService.Setup(p => p.LaunchApplicationAsync(
-                It.IsAny<string>(), It.IsAny<string[]?>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<int>(),
+                It.IsAny<LaunchRequest>(), It.IsAny<bool>(), It.IsAny<int>(),
                 It.IsAny<CancellationToken>()))
-            .Returns(async (string _, string[]? _, string? _, bool _, int _, CancellationToken token) =>
+            .Returns(async (LaunchRequest _, bool _, int _, CancellationToken token) =>
             {
                 await Task.Delay(System.Threading.Timeout.Infinite, token);
                 return new LaunchResult(true);
@@ -598,9 +598,7 @@ public class LayoutServiceTests : IDisposable
         result.WindowsLaunched.Should().Be(1);
         _mockProcessService.Verify(
             p => p.LaunchApplicationAsync(
-                "launched.exe",
-                It.IsAny<string[]?>(),
-                It.IsAny<string?>(),
+                It.Is<LaunchRequest>(r => r.Executable == "launched.exe"),
                 true,
                 5000,
                 It.IsAny<CancellationToken>()),
@@ -633,9 +631,7 @@ public class LayoutServiceTests : IDisposable
         result.WindowsNotFound.Should().Be(1);
         _mockProcessService.Verify(
             p => p.LaunchApplicationAsync(
-                It.IsAny<string>(),
-                It.IsAny<string[]?>(),
-                It.IsAny<string?>(),
+                It.IsAny<LaunchRequest>(),
                 It.IsAny<bool>(),
                 It.IsAny<int>(),
                 It.IsAny<CancellationToken>()),
@@ -1281,7 +1277,7 @@ public class LayoutServiceTests : IDisposable
     {
         _mockWindowService.Setup(w => w.GetAllWindows(true)).Returns(new List<WindowInfo>());
         _mockProcessService.Setup(p => p.LaunchApplicationAsync(
-                It.IsAny<string>(), It.IsAny<string[]?>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<int>(),
+                It.IsAny<LaunchRequest>(), It.IsAny<bool>(), It.IsAny<int>(),
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(new LaunchResult(Success: false, ErrorMessage: "Executable not found"));
         var sut = CreateSut();

@@ -29,7 +29,7 @@ public class LayoutServiceLaunchPlacementTests : IDisposable
     public LayoutServiceLaunchPlacementTests()
     {
         _windows.Setup(w => w.GetWindowInfo(Notepad.Handle)).Returns(Notepad);
-        _processes.Setup(p => p.LaunchApplicationAsync(It.IsAny<string>(), It.IsAny<string[]?>(), It.IsAny<string?>(), It.IsAny<bool>(),
+        _processes.Setup(p => p.LaunchApplicationAsync(It.IsAny<LaunchRequest>(), It.IsAny<bool>(),
                 It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new LaunchResult(true, ProcessId: 900, WindowHandle: Notepad.Handle));
         _placer.Setup(p => p.PlaceAsync(It.IsAny<IReadOnlyList<(nint, LaunchPlacementPlan)>>(), It.IsAny<CancellationToken>()))
@@ -75,9 +75,13 @@ public class LayoutServiceLaunchPlacementTests : IDisposable
         result.WindowsLaunched.Should().Be(1);
         result.WindowsArranged.Should().Be(1);
 
-        // The window rect, as apply_layout places an open window (SetWindowBounds), not the visible frame
+        // The window rect, as apply_layout places an open window (SetWindowBounds), not the visible frame; with its monitor's
+        // key and as fractions, so it is placed on that monitor as it is when the window appears (review M6.8 #5)
         _placed.Should().Equal((Notepad.Handle,
-            new LaunchPlacementPlan(null, null, new WindowRect(0, 0, 960, 1040), null, false) { Frame = BoundsFrame.Outer }));
+            new LaunchPlacementPlan(null, null, new WindowRect(0, 0, 960, 1040), null, false)
+            {
+                Frame = BoundsFrame.Outer, MonitorKey = @"\\.\DISPLAY1", RelativeBounds = new RelativePosition(0, 0, 0.5, 1.0)
+            }));
         _windows.Verify(w => w.SetWindowBounds(It.IsAny<nint>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>()),
             Times.Never, "the placement service places it");
         _windows.Verify(w => w.EvaluateTargetPolicy(It.IsAny<nint>()), Times.Never, "the placement service checks it");
@@ -94,7 +98,7 @@ public class LayoutServiceLaunchPlacementTests : IDisposable
         result.Success.Should().BeTrue();
         _placed.Should().BeEmpty();
         _windows.Verify(w => w.SetWindowBounds(Chrome.Handle, 0, 0, 960, 1040, It.IsAny<bool>()), Times.Once);
-        _processes.Verify(p => p.LaunchApplicationAsync(It.IsAny<string>(), It.IsAny<string[]?>(), It.IsAny<string?>(), It.IsAny<bool>(),
+        _processes.Verify(p => p.LaunchApplicationAsync(It.IsAny<LaunchRequest>(), It.IsAny<bool>(),
             It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
@@ -107,9 +111,25 @@ public class LayoutServiceLaunchPlacementTests : IDisposable
         await ApplyAsync(Placement("notepad") with { State = state });
 
         _placed.Single().Plan.Should().Be(state == WindowState.Maximized
-            ? new LaunchPlacementPlan(null, 0, null, LaunchWindowState.Maximized, false)
+            // The monitor is found again by its key when the window is placed (roadmap M6.8); this one has no id
+            ? new LaunchPlacementPlan(null, 0, null, LaunchWindowState.Maximized, false) { MonitorKey = @"\\.\DISPLAY1" }
             : new LaunchPlacementPlan(null, null, new WindowRect(0, 0, 960, 1040),
-                state == WindowState.Minimized ? LaunchWindowState.Minimized : null, false) { Frame = BoundsFrame.Outer });
+                state == WindowState.Minimized ? LaunchWindowState.Minimized : null, false)
+            {
+                Frame = BoundsFrame.Outer, MonitorKey = @"\\.\DISPLAY1", RelativeBounds = new RelativePosition(0, 0, 0.5, 1.0)
+            });
+    }
+
+    [Fact]
+    public async Task ALaunchedMaximizedPlacement_GetsItsRestoreRectangle_ThenIsMaximized()
+    {
+        // Review M6.8 #5: as an open window does
+        await ApplyAsync(Placement("notepad") with { State = WindowState.Maximized, NormalPosition = new RelativePosition(0.1, 0.1, 0.5, 0.5) });
+
+        _placed.Single().Plan.Should().Be(new LaunchPlacementPlan(null, null, new WindowRect(192, 104, 960, 520), LaunchWindowState.Maximized, false)
+        {
+            Frame = BoundsFrame.Outer, MonitorKey = @"\\.\DISPLAY1", RelativeBounds = new RelativePosition(0.1, 0.1, 0.5, 0.5)
+        });
     }
 
     [Fact]

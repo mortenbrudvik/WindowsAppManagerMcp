@@ -475,9 +475,13 @@ public sealed class ContractServices : IDisposable
         Layouts.Setup(l => l.GetStorageError()).Returns((string?)null);
         Layouts.Setup(l => l.GetAllPresets()).Returns(TypicalDesktop.Layouts);
         Layouts.Setup(l => l.GetPreset(It.IsAny<string>())).Returns(preset);
-        Layouts.Setup(l => l.CaptureCurrentLayoutAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string[]?>(), It.IsAny<string[]?>(), It.IsAny<CancellationToken>()))
+        Layouts.Setup(l => l.CaptureCurrentLayoutAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string[]?>(), It.IsAny<string[]?>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new LayoutSaveResult(true, preset));
-        Layouts.Setup(l => l.ApplyPresetAsync(It.IsAny<string>(), It.IsAny<LayoutMatchBy>(), It.IsAny<bool>(), It.IsAny<IProgress<OperationProgress>?>(), It.IsAny<CancellationToken>()))
+        Layouts.Setup(l => l.SaveAuthoredLayoutAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<IReadOnlyList<LayoutPlacementSpec>>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new LayoutSaveResult(true, preset));
+        Layouts.Setup(l => l.AreLaunchesConfirmed(It.IsAny<LayoutPreset>())).Returns(true);
+        Layouts.Setup(l => l.ApplyPresetAsync(It.IsAny<string>(), It.IsAny<LayoutMatchBy>(), It.IsAny<bool>(), It.IsAny<LayoutApplyOptions?>(), It.IsAny<IProgress<OperationProgress>?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new LayoutApplyResult(true, preset.Name, WindowsArranged: preset.Placements.Count, Focus: [TypicalDesktop.NotepadFocused],
                 Placements: preset.Placements
                     .Select((placement, i) => new LayoutPlacementResult(placement.Order, LayoutPlacementStatus.Applied,
@@ -724,10 +728,10 @@ public sealed class ContractServices : IDisposable
                 BrowserScreenshotResult.Failed(nameof(BrowserErrorCode.CdpTimeout), "The tab produced no frame to capture.", 9222, failedTab), null));
 
         Layouts.Setup(l => l.GetStorageError()).Returns("The layouts folder cannot be written");
-        Layouts.Setup(l => l.CaptureCurrentLayoutAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string[]?>(), It.IsAny<string[]?>(), It.IsAny<CancellationToken>()))
+        Layouts.Setup(l => l.CaptureCurrentLayoutAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string[]?>(), It.IsAny<string[]?>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new LayoutSaveResult(false, null, ErrorMessage: "The layouts folder cannot be written", ErrorCode: nameof(LayoutErrorCode.SaveFailed)));
-        Layouts.Setup(l => l.ApplyPresetAsync(It.IsAny<string>(), It.IsAny<LayoutMatchBy>(), It.IsAny<bool>(), It.IsAny<IProgress<OperationProgress>?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((string name, LayoutMatchBy _, bool _, IProgress<OperationProgress>? _, CancellationToken _) =>
+        Layouts.Setup(l => l.ApplyPresetAsync(It.IsAny<string>(), It.IsAny<LayoutMatchBy>(), It.IsAny<bool>(), It.IsAny<LayoutApplyOptions?>(), It.IsAny<IProgress<OperationProgress>?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string name, LayoutMatchBy _, bool _, LayoutApplyOptions? _, IProgress<OperationProgress>? _, CancellationToken _) =>
                 new LayoutApplyResult(false, name, Errors: [$"Layout preset '{name}' was not found"], ErrorCode: nameof(LayoutErrorCode.PresetNotFound)));
         Layouts.Setup(l => l.DeletePresetAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((string name, CancellationToken _) =>

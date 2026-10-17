@@ -180,8 +180,8 @@ public static class ToolDocCatalog
         [
             new("list_layouts", "List saved presets"),
             new("get_layout", "Get preset details", "name"),
-            new("save_layout", "Save current arrangement", "name", "description", "includeProcesses", "excludeProcesses"),
-            new("apply_layout", "Restore saved preset", "name", "matchBy", "launchMissing"),
+            new("save_layout", "Save the current arrangement, or placements you write", "name", "description", "includeProcesses", "excludeProcesses", "includeMinimized", "placements"),
+            new("apply_layout", "Restore saved preset, or preview it", "name", "matchBy", "launchMissing", "dryRun", "placements"),
             new("delete_layout", "Delete a preset", "name"),
         ]),
         new("Server Info",

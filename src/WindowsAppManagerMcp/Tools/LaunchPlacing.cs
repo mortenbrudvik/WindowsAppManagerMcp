@@ -18,22 +18,28 @@ internal static class LaunchPlacing
     /// <summary>
     /// Checks a placement: its monitor resolved to an index (roadmap M6.7: MonitorNotFound, AmbiguousMonitor, and
     /// InvalidArguments with monitorIndex), the placement itself (<see cref="LaunchPlacementPlan.TryCreate"/>), and the index
-    /// against the monitors there are when <paramref name="monitors"/> is known.
+    /// against the monitors there are when <paramref name="monitors"/> is known. A name's monitor is kept by its id (or
+    /// device name) in <see cref="LaunchPlacementPlan.MonitorKey"/>, so the placement finds it again once the window is there.
     /// </summary>
     public static bool TryPlan(LaunchPlacement placement, IMonitorService? monitors, out LaunchPlacementPlan? plan, out string? errorCode,
         out string? error)
     {
         plan = null;
-        if (!MonitorTargeting.TryIndex(monitors, placement.MonitorIndex, placement.Monitor, allowAll: false, "placement.", out var monitorIndex,
+        if (!MonitorTargeting.TryChoose(monitors, placement.MonitorIndex, placement.Monitor, allowAll: false, "placement.", out var choice,
                 out errorCode, out error))
         {
             error = MonitorTargeting.WithoutNothingDone(error!);
             return false;
         }
 
-        if (!LaunchPlacementPlan.TryCreate(placement with { MonitorIndex = monitorIndex }, out plan, out errorCode, out error))
+        if (!LaunchPlacementPlan.TryCreate(placement with { MonitorIndex = choice.Index }, out plan, out errorCode, out error))
         {
             return false;
+        }
+
+        if (choice.Named is { } named)
+        {
+            plan = plan! with { MonitorKey = named.Id ?? named.DeviceName };
         }
 
         if (plan!.MonitorIndex is { } index && monitors?.GetAllMonitors().Count is { } count && index >= count)

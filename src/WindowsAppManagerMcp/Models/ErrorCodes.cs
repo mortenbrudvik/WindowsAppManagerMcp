@@ -402,7 +402,19 @@ public enum LayoutErrorCode
     /// A placement has no criterion apply_layout's matchBy can use (title_only without titleContains, process_only
     /// without a process name, or neither), so it was skipped instead of matching every window (roadmap M2.8).
     /// </summary>
-    NoMatchCriterion = 11
+    NoMatchCriterion = 11,
+
+    /// <summary>
+    /// A placement save_layout was given is not valid (roadmap M6.8): no matcher, snap with position, a fraction out of range,
+    /// an unknown snap position, state or monitor, and the like. Nothing was saved.
+    /// </summary>
+    InvalidPlacement = 12,
+
+    /// <summary>
+    /// An agent wrote the layout, and the user has not confirmed that it may start programs (roadmap M6.8, owner decision D15):
+    /// they declined, or the client cannot ask them. Nothing was launched for the placement.
+    /// </summary>
+    LaunchNotConfirmed = 13
 }
 
 /// <summary>

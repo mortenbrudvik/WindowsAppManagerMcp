@@ -85,7 +85,7 @@ public sealed class ToolArgumentContractTests : IDisposable
 
         ShouldBeRefused(result, nameof(LayoutErrorCode.InvalidMatchBy), "process_and_title, process_only, title_only");
         _services.Layouts.Verify(l => l.ApplyPresetAsync(It.IsAny<string>(), It.IsAny<LayoutMatchBy>(), It.IsAny<bool>(),
-            It.IsAny<IProgress<OperationProgress>?>(), It.IsAny<CancellationToken>()), Times.Never);
+            It.IsAny<LayoutApplyOptions?>(), It.IsAny<IProgress<OperationProgress>?>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Theory]

@@ -80,7 +80,9 @@ public class LayoutServiceMatchingTests : IDisposable
             @"C:\Program Files\Google\Chrome\Application\chrome.exe", @"C:\Windows\explorer.exe", @"C:\Program Files\Google\Chrome\Application\chrome.exe");
         placements.Select(p => p.Matcher.Ordinal).Should().Equal(0, 0, 1); // counted per process
         placements.Select(p => p.State).Should().Equal(WindowState.Normal, WindowState.Maximized, WindowState.Normal);
-        placements.Should().OnlyContain(p => p.LaunchCommand == null, "save_layout never records a command to run");
+        // Owner decision D15: the program each window runs, never arguments (roadmap M6.8)
+        placements.Select(p => p.Launch?.Executable).Should().Equal(
+            @"C:\Program Files\Google\Chrome\Application\chrome.exe", @"C:\Windows\explorer.exe", @"C:\Program Files\Google\Chrome\Application\chrome.exe");
     }
 
     [Fact]
@@ -461,7 +463,7 @@ public class LayoutServiceMatchingTests : IDisposable
             Placement(new WindowMatcher(TitleContains: "Mail", ProcessName: "chrome"), 0),
             Placement(new WindowMatcher(TitleContains: "Calendar", ProcessName: "chrome"), 1, x: 0.5, launchCommand: "chrome"));
         OpenWindows(ChromeLeft);
-        _processes.Setup(p => p.LaunchApplicationAsync(It.IsAny<string>(), It.IsAny<string[]?>(), It.IsAny<string?>(), It.IsAny<bool>(),
+        _processes.Setup(p => p.LaunchApplicationAsync(It.IsAny<LaunchRequest>(), It.IsAny<bool>(),
                 It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new LaunchResult(true, ProcessId: 501, WindowHandle: ChromeLeft.Handle));
 
@@ -598,7 +600,7 @@ public class LayoutServiceMatchingTests : IDisposable
         await SaveAsync(sut, "launch", Placement(new WindowMatcher(ProcessName: "notepad"), 0, launchCommand: "notepad"));
         OpenWindows();
         _windows.Setup(w => w.GetWindowInfo(launched.Handle)).Returns(launched);
-        _processes.Setup(p => p.LaunchApplicationAsync(It.IsAny<string>(), It.IsAny<string[]?>(), It.IsAny<string?>(), It.IsAny<bool>(),
+        _processes.Setup(p => p.LaunchApplicationAsync(It.IsAny<LaunchRequest>(), It.IsAny<bool>(),
                 It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new LaunchResult(true, ProcessId: 900, WindowHandle: launched.Handle));
         _windows.Setup(w => w.SetWindowBounds(launched.Handle, It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>()))

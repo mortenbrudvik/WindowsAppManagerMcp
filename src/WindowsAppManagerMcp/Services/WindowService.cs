@@ -593,6 +593,73 @@ public class WindowService : IWindowService
     public WindowChangeResult SetWindowState(nint handle, WindowStateRequest state) =>
         ChangeRefusal(handle) ?? ApplyState(handle, state);
 
+    public WindowRect? GetNormalBounds(nint handle)
+    {
+        if (handle == nint.Zero || _nativeWrapper.GetWindowPlacement(handle) is not { } placement)
+            return null;
+
+        var (left, top, right, bottom) = placement.NormalPosition;
+        var normal = WindowRect.FromLTRB(left, top, right, bottom);
+        return IsToolWindow(handle) ? normal : WorkspaceCoordinates.ToScreen(normal, _monitorService.GetAllMonitors());
+    }
+
+    public WindowChangeResult SetMinimizedBounds(nint handle, int x, int y, int width, int height)
+    {
+        if (ChangeRefusal(handle) is { } refused)
+            return refused;
+
+        if (!_nativeWrapper.IsIconic(handle))
+        {
+            return WindowChangeResult.Failed(handle, WindowErrorCode.MoveFailed,
+                $"The window is {ObservedState(handle)}, not minimized, so its restore rectangle was not set. Nothing was changed.");
+        }
+
+        // SW_SHOWMINNOACTIVE would show a window its app hid after minimizing it (a tray app), as the placements refuse to
+        if (!_nativeWrapper.IsWindowVisible(handle))
+        {
+            return WindowChangeResult.Failed(handle, WindowErrorCode.MoveFailed,
+                "The window is hidden and minimized: its application hid it (for example in the notification area), and setting " +
+                "its restore rectangle would show it, so nothing was changed. Show it through its application, or ask the user.");
+        }
+
+        if (_nativeWrapper.GetWindowPlacement(handle) is not { } current)
+            return _nativeWrapper.IsWindow(handle) ? NotPlaced(handle, 0, WindowErrorCode.MoveFailed) : WindowGone(handle);
+
+        var target = new WindowRect(x, y, width, height);
+        var normal = IsToolWindow(handle) ? target : WorkspaceCoordinates.ToWorkspace(target, _monitorService.GetAllMonitors());
+        var placement = current with
+        {
+            ShowCmd = NativeEnums.SW_SHOWMINNOACTIVE,
+            // Whether the window comes back maximized stays its own; no icon position is set
+            Flags = current.Flags & NativeEnums.WPF_RESTORETOMAXIMIZED,
+            NormalPosition = (normal.X, normal.Y, normal.X + normal.Width, normal.Y + normal.Height)
+        };
+
+        var set = _windowCalls.Run(handle, () => _nativeWrapper.SetWindowPlacement(handle, placement));
+        if (!set.Succeeded)
+            return NotPlaced(handle, set.Win32Error, WindowErrorCode.MoveFailed);
+
+        if (_nativeWrapper.GetWindowPlacement(handle) is { } now && Near(now.NormalPosition, placement.NormalPosition) &&
+            _nativeWrapper.IsIconic(handle))
+        {
+            return WindowChangeResult.Done(handle);
+        }
+
+        return _nativeWrapper.IsWindow(handle)
+            ? WindowChangeResult.Failed(handle, WindowErrorCode.MoveFailed,
+                $"Windows accepted the window's new restore rectangle, but the window is {ObservedState(handle)} with another one " +
+                "now (the application may have changed it). Check the window (find_windows with its handle).")
+            : WindowGone(handle);
+
+        static bool Near((int Left, int Top, int Right, int Bottom) a, (int Left, int Top, int Right, int Bottom) b) =>
+            Math.Abs(a.Left - b.Left) <= 1 && Math.Abs(a.Top - b.Top) <= 1 && Math.Abs(a.Right - b.Right) <= 1 &&
+            Math.Abs(a.Bottom - b.Bottom) <= 1;
+    }
+
+    /// <summary>Whether the window is a tool window (WS_EX_TOOLWINDOW), whose placement is in screen coordinates.</summary>
+    private bool IsToolWindow(nint handle) =>
+        (_nativeWrapper.GetWindowLongPtr(handle, NativeEnums.GWL_EXSTYLE) & (nint)NativeEnums.WS_EX_TOOLWINDOW) != 0;
+
     /// <summary>
     /// Changes the show state of a window that was checked already, and reports success only when the window is seen in
     /// that state within <see cref="StateChangeTimeout"/>: ShowWindow's return value says whether the window was visible
