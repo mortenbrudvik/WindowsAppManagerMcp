@@ -73,10 +73,15 @@ public static class ToolDocCatalog
             new("capture_region", "Capture screen region", "x", "y", "width", "height", "maxDimension", "output"),
             new("capture_window", "Capture a window, or crop it to one element", "handle", "ref", "padding", "includeFrame", "maxDimension", "output"),
             new("capture_with_elements", "Capture with numbered marks (element refs) and a legend", "handle", "maxElements", "controlTypes", "detail", "maxDimension"),
+            new("read_screen_text", "Read a window's, region's or monitor's text with Windows OCR: lines with screen boxes (toolset ocr)", "window (or handle)", "x", "y", "width", "height", "monitorIndex", "language", "detail", "maxLines"),
+            new("find_text_on_screen", "Find text with Windows OCR: click points and a captureId for mouse_click (toolset ocr)", "text", "match", "window (or handle)", "x", "y", "width", "height", "monitorIndex", "language"),
             new("wait_for_visual", "Wait until a window, region or monitor changes or settles on screen, no image (toolset visual)", "condition", "window (or handle)", "since", "stableMs", "minChangedPercent", "timeoutMs"),
         ],
         SkillNote: "All capture tools also accept `format` (`auto`, `png`, `jpeg`), `quality` (JPEG), `outputPath` and `overwrite` " +
-                   "(with output `file` or `both`), and the legacy `saveToFile` and `maxWidth`."),
+                   "(with output `file` or `both`), and the legacy `saveToFile` and `maxWidth`. read_screen_text and " +
+                   "find_text_on_screen are the fallback where UI Automation shows no text (canvas apps, games, remote desktops, " +
+                   "rendered PDFs): off by default (`WAM_TOOLSETS=+ocr`), and OCR can misread, so prefer element refs and check " +
+                   "the outcome of a click."),
         new("UI Automation",
         [
             new("get_desktop_state", "One call to get oriented: window in front, windows, focus, popups, the window's elements with refs; optional capture", "window (or handle)", "include", "maxElements", "scope"),

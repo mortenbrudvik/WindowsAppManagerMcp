@@ -127,6 +127,9 @@ public class ToolAnnotationContractTests
             "list_tabs", "wait_for_browser",
             // An element's place on the screen: a DOM query and the window's UI Automation tree (roadmap M5.8)
             "browser_element_rect",
+            // The screen's text through Windows OCR: they return no image and write no file, and refuse a minimized window
+            // instead of restoring it (roadmap M6.3)
+            "read_screen_text", "find_text_on_screen",
             // A wait on a window's, region's or monitor's pixels that returns rectangles only, never an image or a file (roadmap M6.4)
             "wait_for_visual"
         ]);

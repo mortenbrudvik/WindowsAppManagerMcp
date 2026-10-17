@@ -124,10 +124,11 @@ public sealed class ToolsetCatalog
 /// <summary>
 /// The server's toolsets (roadmap M2.14). Each tool the server serves is in exactly one of them (ToolsetCatalogTests),
 /// and docs/TOOLS.md lists them in a generated region. Every toolset is on by default except browser-actions (roadmap
-/// M5.5, M5.8), browser-script (roadmap M5.8), visual (roadmap M6.4), windows-batch and deprecated (roadmap M6.1). Of the tools M6 adds, the niche
-/// or heavy ones come in toolsets that are off by default (ocr, visual, windows-batch), and the small everyday steps
-/// (list_installed_apps, set_window_zorder, run_steps) join toolsets that are on (owner decision D2, October 2026):
-/// run_steps in a toolset of its own, steps (roadmap M6.2), so WAM_TOOLSETS=-steps drops it alone.
+/// M5.5, M5.8), browser-script (roadmap M5.8), visual (roadmap M6.4), windows-batch and deprecated (roadmap M6.1), and ocr
+/// (roadmap M6.3). Of the tools M6 adds, the niche or heavy ones come in toolsets that are off by default (ocr, visual,
+/// windows-batch), and the small everyday steps (list_installed_apps, set_window_zorder, run_steps) join toolsets that are on
+/// (owner decision D2, October 2026): run_steps in a toolset of its own, steps (roadmap M6.2), so WAM_TOOLSETS=-steps drops
+/// it alone.
 /// </summary>
 public static class Toolsets
 {
@@ -210,6 +211,12 @@ public static class Toolsets
             new("windows-batch", OnByDefault: false,
                 "Place, snap, or minimize, maximize and restore several windows in one call, each with its own placement or state.",
                 ["set_windows_bounds_batch", "snap_windows_batch", "set_windows_state_batch"]),
+            // Off by default (roadmap M6.3, owner decisions D2 and D10): OCR is the fallback for what UI Automation cannot read,
+            // and the first call loads Windows' WinRT OCR
+            new("ocr", OnByDefault: false,
+                "Read and find text on the screen with Windows OCR where UI Automation exposes none (canvas apps, games, remote " +
+                "desktops, rendered PDFs), with click points for the mouse tools.",
+                ["read_screen_text", "find_text_on_screen"]),
             // Off by default (roadmap M6.1, owner decision D1): the tools another tool replaced in 2.2.0, served unchanged until
             // 3.0.0 removes them. Their descriptions are one line that names the replacement; a call is never forwarded to it
             new(DeprecatedToolset, OnByDefault: false,

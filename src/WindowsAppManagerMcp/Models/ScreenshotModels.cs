@@ -308,6 +308,18 @@ public static class CaptureWarnings
     /// </summary>
     public const string WindowMoved = "WindowMoved";
 
+    /// <summary>
+    /// read_screen_text and find_text_on_screen (roadmap M6.3): the image was larger than Windows OCR reads at once, so it
+    /// was read in tiles; a line across a tile's edge can come back as two lines.
+    /// </summary>
+    public const string OcrTiled = "OcrTiled";
+
+    /// <summary>
+    /// read_screen_text and find_text_on_screen (roadmap M6.3): no language was given and none of the user's profile
+    /// languages has an OCR recognizer, so the first installed OCR language was used.
+    /// </summary>
+    public const string OcrLanguageFallback = "OcrLanguageFallback";
+
     /// <summary>"Code: text".</summary>
     public static string Format(string code, string text) => $"{code}: {text}";
 }

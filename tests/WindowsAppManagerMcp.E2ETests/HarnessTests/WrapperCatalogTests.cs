@@ -35,7 +35,9 @@ public class WrapperCatalogTests
             typeof(IUiaTree),
             // The pattern objects the engine adapters hand out (roadmap M3.2)
             typeof(IUiaInvokePattern),
-            typeof(IUiaLegacyIAccessiblePattern)
+            typeof(IUiaLegacyIAccessiblePattern),
+            // Windows OCR on pixels the server already holds (roadmap M6.3)
+            typeof(IOcrEngineWrapper)
         });
     }
 
@@ -211,6 +213,8 @@ public class WrapperCatalogTests
     [InlineData(typeof(IUiaLegacyIAccessiblePattern), nameof(IUiaLegacyIAccessiblePattern.DoDefaultAction), WrapperCallKind.UiaAction)]
     [InlineData(typeof(IUiaTextPattern), nameof(IUiaTextPattern.GetText), WrapperCallKind.Read)]
     [InlineData(typeof(IUiaTextPattern), nameof(IUiaTextPattern.GetTextPage), WrapperCallKind.Read)]
+    [InlineData(typeof(IOcrEngineWrapper), nameof(IOcrEngineWrapper.GetCapabilities), WrapperCallKind.Read)]
+    [InlineData(typeof(IOcrEngineWrapper), nameof(IOcrEngineWrapper.RecognizeAsync), WrapperCallKind.Read)]
     public void Find_ClassifiesTheMembersTheScenariosAndLaterWavesDependOn(Type type, string name, WrapperCallKind expected)
     {
         var method = AllMethods(type).Single(m => m.Name == name);

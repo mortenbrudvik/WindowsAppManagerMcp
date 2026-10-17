@@ -116,7 +116,7 @@ public class ReadOnlyNativeWindowWrapperTests
             nameof(INativeWindowWrapper.GetProcessName),
             nameof(INativeWindowWrapper.EnumChildWindows), nameof(INativeWindowWrapper.GetClassName),
             nameof(INativeWindowWrapper.GetWindowLongPtr), nameof(INativeWindowWrapper.GetWindow),
-            nameof(INativeWindowWrapper.IsCloaked), nameof(INativeWindowWrapper.GetCloakReason),
+            nameof(INativeWindowWrapper.IsCloaked), nameof(INativeWindowWrapper.GetCloakReason), nameof(INativeWindowWrapper.HasWindowRegion),
             nameof(INativeWindowWrapper.GetExtendedFrameBounds),
             nameof(INativeWindowWrapper.IsHungAppWindow), nameof(INativeWindowWrapper.GetDpiForWindow),
             nameof(INativeWindowWrapper.RespondsWithin),

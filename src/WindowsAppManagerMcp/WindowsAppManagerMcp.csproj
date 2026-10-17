@@ -13,10 +13,28 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
   </PropertyGroup>
 
+  <!--
+    Windows OCR (roadmap M6.3, owner decision D6): no Windows SDK TFM, whose 25 MB Microsoft.Windows.SDK.NET.dll a
+    framework-dependent single file cannot trim, and so no new minimum OS. The CsWinRT package generates a projection of
+    only the WinRT types Native/OcrEngineWrapper uses into this assembly (about 0.3 MB), and the publish bundles
+    WinRT.Runtime.dll (about 0.5 MB). NativeCallGuardTests (WinRtProjection_*) pins the projected namespaces and keeps every use of them
+    in that wrapper.
+    The Windows metadata comes from the Microsoft.Windows.SDK.Contracts package, downloaded by restore and never
+    referenced (PackageDownload), instead of an installed Windows SDK: a build machine or CI runner needs no Windows Kits.
+  -->
+  <PropertyGroup>
+    <CsWinRTWindowsMetadata>$(NuGetPackageRoot)microsoft.windows.sdk.contracts\10.0.19041.1\ref\netstandard2.0</CsWinRTWindowsMetadata>
+    <CsWinRTIncludes>Windows.Media.Ocr;Windows.Foundation;Windows.Globalization.Language;Windows.Globalization.ILanguage;Windows.Graphics.Imaging.SoftwareBitmap;Windows.Graphics.Imaging.ISoftwareBitmap;Windows.Graphics.Imaging.BitmapPixelFormat;Windows.Graphics.Imaging.BitmapAlphaMode;Windows.Graphics.Imaging.BitmapBuffer;Windows.Graphics.Imaging.IBitmapBuffer;Windows.Graphics.Imaging.BitmapPlaneDescription;Windows.Graphics.Imaging.BitmapBounds;Windows.Graphics.DirectX;Windows.Storage.Streams.IBuffer;Windows.Storage.Streams.Buffer;Windows.Security.Cryptography.CryptographicBuffer;Windows.Security.Cryptography.ICryptographicBufferStatics;Windows.Security.Cryptography.BinaryStringEncoding</CsWinRTIncludes>
+    <CsWinRTExcludes>Windows.Foundation.Diagnostics</CsWinRTExcludes>
+  </PropertyGroup>
+
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.10" />
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.10" />
     <PackageReference Include="ModelContextProtocol" Version="2.2.0" />
+    <!-- The OCR projection (see CsWinRTIncludes above) and its runtime, WinRT.Runtime.dll -->
+    <PackageReference Include="Microsoft.Windows.CsWinRT" Version="2.2.0" />
+    <PackageDownload Include="Microsoft.Windows.SDK.Contracts" Version="[10.0.19041.1]" />
     <!--
       No System.Drawing.Common package: on .NET 10 the Windows Desktop framework referenced below carries a newer
       System.Drawing.Common than any 9.x package, so NuGet prunes the package (NU1510) and the exe uses the framework's.

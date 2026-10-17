@@ -112,6 +112,13 @@ public static class ServiceRegistration
             sp.GetRequiredService<ICaptureTargetPolicy>(), sp.GetRequiredService<IWindowCallRunner>(),
             sp.GetRequiredService<ICaptureRegistry>(), sp.GetRequiredService<INativeThreadInputWrapper>(),
             sp.GetRequiredService<ITargetPolicy>()));
+        // Windows OCR (roadmap M6.3): read_screen_text and find_text_on_screen read the raw pixels above. The wrapper loads
+        // WinRT only on its first call, so a server without the ocr toolset never does
+        services.AddSingleton<IOcrEngineWrapper, OcrEngineWrapper>();
+        services.AddSingleton<IOcrService>(sp => new OcrService(
+            sp.GetRequiredService<IScreenshotService>(), sp.GetRequiredService<IOcrEngineWrapper>(),
+            sp.GetRequiredService<INativeWindowWrapper>(), sp.GetRequiredService<ICaptureTargetPolicy>(),
+            sp.GetRequiredService<ITargetPolicy>()));
         services.AddSingleton<IUIElementService, UIElementService>();
         // UI Automation tree seam (UIElementService) and single-element reads (get_focused_element,
         // get_element_at_point); UiaWorker runs every UI Automation read under a deadline. The engine (roadmap M3.2):
@@ -259,6 +266,7 @@ public static class ServiceRegistration
         services.AddSingleton<BrowserTabTools>();
         services.AddSingleton<BrowserPageTools>();
         services.AddSingleton<ScreenshotTools>();
+        services.AddSingleton<OcrTools>();
         services.AddSingleton<VisualTools>();
         services.AddSingleton<UIElementTools>();
         services.AddSingleton<PopupTools>();
@@ -341,6 +349,7 @@ public static class ServiceRegistration
             .WithServerTools<BrowserTabTools>()
             .WithServerTools<BrowserPageTools>()
             .WithServerTools<ScreenshotTools>()
+            .WithServerTools<OcrTools>()
             .WithServerTools<VisualTools>()
             .WithServerTools<UIElementTools>()
             .WithServerTools<PopupTools>()

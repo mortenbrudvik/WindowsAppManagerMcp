@@ -167,6 +167,8 @@ public class NativeCallGuardTests
         ["User32.GetShellWindow"] = "reads the handle of the desktop shell's window",
         ["User32.GetWindowLongW"] = "reads a style value of a window (SetWindowLongW, which changes it, is not listed)",
         ["User32.GetWindowLongPtrW"] = "reads a style value of a window",
+        ["User32.GetWindowRgnBox"] = "reads the bounding box of a window's region into a struct of the server (SetWindowRgn, " +
+                                     "which changes it, is not declared)",
         ["User32.GetWindow"] = "reads a related window, such as the owner or the enabled popup",
         ["User32.IsHungAppWindow"] = "reads whether the thread of a window is hung",
         ["User32.SendMessageTimeoutW"] = "sends WM_NULL, which every window ignores, with SMTO_ABORTIFHUNG and a timeout (RespondsWithin): " +
@@ -734,6 +736,71 @@ public class NativeCallGuardTests
             .And.Contain(c => c.EndsWith($"Process.{nameof(Process.CloseMainWindow)}"));
         Unexpected(callers, typeof(NativeProcessWrapper)).Should().BeEmpty(
             "starting and stopping processes must go through INativeProcessWrapper so tests can mock it");
+    }
+
+    /// <summary>
+    /// The namespaces of the slim CsWinRT projection that the build generates into the server assembly (roadmap M6.3, owner
+    /// decision D6; CsWinRTIncludes in the csproj): Windows.Media.Ocr and the few types it needs, with their ABI marshalers.
+    /// None of them can act on a window, the input or a process. A wider projection (Windows.UI.Input, Windows.System, ...)
+    /// must be reviewed here first.
+    /// </summary>
+    private static readonly string[] WinRtProjectionNamespaces =
+    [
+        "Windows.Foundation", "Windows.Foundation.Collections", "Windows.Foundation.Metadata", "Windows.Foundation.Numerics",
+        "Windows.Globalization", "Windows.Graphics.DirectX", "Windows.Graphics.DirectX.Direct3D11", "Windows.Graphics.Imaging",
+        "Windows.Media.Ocr", "Windows.Security.Cryptography", "Windows.Storage.Streams"
+    ];
+
+    /// <summary>
+    /// A type of the WinRT projection: generated into the server assembly (Windows.*, its ABI.* marshalers and the WinRT
+    /// helpers CsWinRT adds), or CsWinRT's runtime (WinRT.Runtime).
+    /// </summary>
+    private static bool IsWinRtProjectionType(Type? type) =>
+        type != null &&
+        ((type.Assembly == ServerAssembly && OutermostType(type).Namespace is { } ns &&
+          (ns.StartsWith("Windows.", StringComparison.Ordinal) || ns.StartsWith("ABI.", StringComparison.Ordinal) ||
+           ns == "WinRT" || ns.StartsWith("WinRT.", StringComparison.Ordinal))) ||
+         type.Assembly.GetName().Name == "WinRT.Runtime");
+
+    /// <summary>The server's own code: its namespace, not the generated projection's or Coverlet's.</summary>
+    private static bool IsServerCode(Type type) =>
+        type.Namespace?.StartsWith("WindowsAppManagerMcp", StringComparison.Ordinal) == true;
+
+    [Fact]
+    public void WinRtProjection_HoldsOnlyTheOcrNamespaces()
+    {
+        // Arrange - WinRT calls go through COM vtables (function pointers), not P/Invoke, so the NativeMethods allow-lists
+        // above cannot see them. This pins what the projection can reach instead (roadmap M6.3)
+
+        // Act - the generated namespaces, with their ABI.* marshalers folded onto the projected ones
+        var namespaces = ServerTypes()
+            .Where(t => !IsServerCode(t) && t.Namespace != null &&
+                        (t.Namespace.StartsWith("Windows.", StringComparison.Ordinal) ||
+                         t.Namespace.StartsWith("ABI.Windows.", StringComparison.Ordinal)))
+            .Select(t => t.Namespace!.StartsWith("ABI.", StringComparison.Ordinal) ? t.Namespace[4..] : t.Namespace)
+            .Distinct()
+            .Order(StringComparer.Ordinal)
+            .ToList();
+
+        // Assert
+        namespaces.Should().Equal(WinRtProjectionNamespaces.Order(StringComparer.Ordinal),
+            "the projection holds Windows.Media.Ocr and the types it needs; review a new namespace before adding it here");
+    }
+
+    [Fact]
+    public void WinRtProjection_IsOnlyCalledByOcrEngineWrapper()
+    {
+        // Act - every call from the server's own code into the projection or CsWinRT's runtime
+        var callers = FindCallers(callee => IsWinRtProjectionType(callee.DeclaringType))
+            .Where(c => IsServerCode(c.Key))
+            .ToDictionary(c => c.Key, c => c.Value);
+
+        // Assert - OcrEngineWrapper is the seam (IOcrEngineWrapper) that OcrService's tests replace with a fake, and the
+        // E2E guard classifies (WrapperCatalog)
+        callers.Keys.Should().Contain(typeof(OcrEngineWrapper), "the scan must see the wrapper's own OcrEngine calls");
+        callers[typeof(OcrEngineWrapper)].Should().Contain(c => c.EndsWith("OcrEngine.RecognizeAsync", StringComparison.Ordinal));
+        Unexpected(callers, typeof(OcrEngineWrapper)).Should().BeEmpty(
+            "WinRT must be reached only through IOcrEngineWrapper, so tests can replace it and the E2E guard sees every call");
     }
 
     [Fact]

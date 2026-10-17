@@ -141,6 +141,12 @@ public sealed class ContractServices : IDisposable
     /// <summary>The capture registry the typical captures register in and the mouse tools' image points resolve through (roadmap M3.11).</summary>
     public CaptureRegistry Captures { get; } = new();
 
+    /// <summary>
+    /// Windows OCR behind read_screen_text and find_text_on_screen (roadmap M6.3): the real OCR service reads the captures
+    /// above through this fake, which reads <see cref="FakeOcrEngine.TypicalPage"/> (Typical) or has no language (Failing).
+    /// </summary>
+    public FakeOcrEngine Ocr { get; } = new();
+
     /// <summary>The window the typical captures are of: 1600 x 900 at (0, 100), as the capture wrapper reports it.</summary>
     private readonly Mock<INativeWindowWrapper> _capturedWindows = new();
 
@@ -205,6 +211,10 @@ public sealed class ContractServices : IDisposable
         services.AddSingleton(SecurityProbe.Object);
         services.AddSingleton<IInputSession>(Session);
         services.AddSingleton(Screenshots);
+        services.AddSingleton<IOcrEngineWrapper>(Ocr);
+        var ocrPolicy = new TargetPolicy(TargetPolicySettings.Default);
+        services.AddSingleton<IOcrService>(_ => new OcrService(Screenshots, Ocr, NativeWindows.Object,
+            new CaptureTargetPolicy(Windows.Object, ocrPolicy), ocrPolicy));
         services.AddSingleton<ICaptureRegistry>(Captures);
         services.AddSingleton<ICoordinateSpaceResolver>(new CoordinateSpaceResolver(
             Captures, _capturedWindows.Object, Mock.Of<INativeHitTestWrapper>(), Screen.Object));
@@ -578,11 +588,13 @@ public sealed class ContractServices : IDisposable
         _capturedWindows.Setup(w => w.IsWindow(It.IsAny<nint>())).Returns(true);
         _capturedWindows.Setup(w => w.GetWindowRect(It.IsAny<nint>())).Returns((0, 100, 1600, 1000));
         _capturedWindows.Setup(w => w.GetWindowThreadProcessId(It.IsAny<nint>())).Returns(4242u);
+        // The raw pixel reads of OCR (roadmap M6.3) check the target policy of a window: Notepad is allowed
         Screenshots = new ScreenshotService(
             Screen.Object,
             monitors.Object,
             _capturedWindows.Object,
-            captureRegistry: Captures);
+            captureRegistry: Captures,
+            capturePolicy: new CaptureTargetPolicy(Windows.Object, new TargetPolicy(TargetPolicySettings.Default)));
     }
 
     /// <summary>A launch that started a process and, when it waited, found the window.</summary>
@@ -793,7 +805,13 @@ public sealed class ContractServices : IDisposable
         screenshots.Setup(s => s.CaptureMonitor(It.IsAny<int>(), It.IsAny<CaptureOptions>())).Returns(failed);
         screenshots.Setup(s => s.CaptureRegion(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<CaptureOptions>())).Returns(failed);
         screenshots.Setup(s => s.CaptureWindow(It.IsAny<nint>(), It.IsAny<bool>(), It.IsAny<CaptureOptions>())).Returns(failed);
+        screenshots.Setup(s => s.CapturePixels(It.IsAny<CaptureTarget>()))
+            .Throws(new CaptureException(ScreenshotErrorCode.CaptureFailed, "The capture failed"));
         Screenshots = screenshots.Object;
+
+        // No OCR language is installed (roadmap M6.3), so read_screen_text and find_text_on_screen fail before any capture
+        Ocr.Languages = [];
+        Ocr.ProfileLanguage = null;
     }
 }
 

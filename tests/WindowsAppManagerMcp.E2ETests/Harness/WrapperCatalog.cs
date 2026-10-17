@@ -117,6 +117,8 @@ public static class WrapperCatalog
                 [nameof(INativeWindowWrapper.GetWindowLongPtr)] = WrapperMember.Read,
                 [nameof(INativeWindowWrapper.GetWindow)] = WrapperMember.Read,
                 [nameof(INativeWindowWrapper.IsCloaked)] = WrapperMember.Read,
+                // GetWindowRgnBox: whether the window has a region, for the OCR mask (roadmap M6.3)
+                [nameof(INativeWindowWrapper.HasWindowRegion)] = WrapperMember.Read,
                 [nameof(INativeWindowWrapper.GetCloakReason)] = WrapperMember.Read,
                 [nameof(INativeWindowWrapper.GetExtendedFrameBounds)] = WrapperMember.Read,
                 [nameof(INativeWindowWrapper.IsHungAppWindow)] = WrapperMember.Read,
@@ -196,6 +198,14 @@ public static class WrapperCatalog
                 // The capture members without the copy (roadmap M6, polling for OCR and visual change): the same BitBlt of
                 // the screen or PrintWindow into the server's own memory DC, which changes no window and sends no input
                 [nameof(IScreenCaptureWrapper.WithPixels)] = WrapperMember.Read
+            },
+            // Windows OCR (roadmap M6.3): recognizes text in pixels the server already holds, through the WinRT projection of
+            // Windows.Media.Ocr. It reads no window or screen, sends no input and changes nothing; the capture it reads went through
+            // IScreenCaptureWrapper above. NativeCallGuardTests cannot see WinRT calls through P/Invoke, so its WinRtProjection tests keep them in OcrEngineWrapper
+            [typeof(IOcrEngineWrapper)] = new Dictionary<string, WrapperMember>
+            {
+                [nameof(IOcrEngineWrapper.GetCapabilities)] = WrapperMember.Read,
+                [nameof(IOcrEngineWrapper.RecognizeAsync)] = WrapperMember.Read
             },
             [typeof(INativeSystemInfoWrapper)] = new Dictionary<string, WrapperMember>
             {

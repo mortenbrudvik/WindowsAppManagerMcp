@@ -151,6 +151,8 @@ public static class InputGateToolFilter
         "list_tabs", "wait_for_browser",
         // An element's place on the screen: a DOM query and the window's UI Automation tree, read only (roadmap M5.8)
         "browser_element_rect",
+        // Read the screen's text with Windows OCR; a minimized window is refused, never restored (roadmap M6.3)
+        "read_screen_text", "find_text_on_screen",
         // A wait of up to a minute on a window's, region's or monitor's pixels; returns rectangles only (roadmap M6.4)
         "wait_for_visual"
     };
