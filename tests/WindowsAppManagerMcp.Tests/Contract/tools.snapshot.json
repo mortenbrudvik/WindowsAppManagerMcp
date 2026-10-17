@@ -3485,7 +3485,7 @@
             "default": null
           },
           "includeCloaked": {
-            "description": "Also return cloaked windows: windows on other virtual desktops and suspended apps, which are not on screen (default: false)",
+            "description": "Also return cloaked windows: windows on other virtual desktops (isOnOtherDesktop: true) and suspended apps, which are not on screen (default: false)",
             "type": "boolean",
             "default": false
           },

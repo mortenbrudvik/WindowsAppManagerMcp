@@ -51,11 +51,16 @@ public sealed class ForegroundService : IForegroundService
     private readonly ForegroundTiming _timing;
     private readonly ILogger<ForegroundService>? _logger;
     private readonly IInputSession? _session;
+    private readonly INativeVirtualDesktopWrapper? _virtualDesktops;
 
     /// <param name="session">
     /// The input session (roadmap M1.10). With it, activation is refused while the user has paused input
     /// (PausedByUser), and the input unlock and the Esc go through it, so a pause also stops them. The server
     /// always passes it; without it (tests of the activation steps) input goes straight to <paramref name="input"/>.
+    /// </param>
+    /// <param name="virtualDesktops">
+    /// The shell's virtual desktop manager (roadmap M7.3): a Cloaked refusal says whether the window is on another virtual
+    /// desktop. The server always passes it; without it the refusal names both causes.
     /// </param>
     public ForegroundService(
         INativeWindowWrapper windows,
@@ -66,7 +71,8 @@ public sealed class ForegroundService : IForegroundService
         IForegroundThread activationThread,
         ForegroundTiming? timing = null,
         ILogger<ForegroundService>? logger = null,
-        IInputSession? session = null)
+        IInputSession? session = null,
+        INativeVirtualDesktopWrapper? virtualDesktops = null)
     {
         _windows = windows;
         _threads = threads;
@@ -77,6 +83,7 @@ public sealed class ForegroundService : IForegroundService
         _timing = timing ?? ForegroundTiming.Default;
         _logger = logger;
         _session = session;
+        _virtualDesktops = virtualDesktops;
     }
 
     /// <inheritdoc />
@@ -155,8 +162,7 @@ public sealed class ForegroundService : IForegroundService
 
         if (_windows.IsCloaked(root))
         {
-            return Activation.Failed(root, foreground, WindowErrorCode.Cloaked,
-                "The window is cloaked: it is on another virtual desktop or its app has hidden it, so it was not activated.");
+            return Activation.Failed(root, foreground, WindowErrorCode.Cloaked, CloakedMessage(root));
         }
 
         // The user's policy for the windows the restore and the activation would put on screen, before anything changes
@@ -451,6 +457,21 @@ public sealed class ForegroundService : IForegroundService
         token.IsCancellationRequested ? Activation.Stopped(root, foreground)
         : _session?.IsPaused == true ? Paused(root, foreground)
         : null;
+
+    /// <summary>
+    /// Why a cloaked window is not activated. A window on another virtual desktop is refused because activating it makes
+    /// the shell switch the user to that desktop, and the server never switches desktops (roadmap M7.3).
+    /// </summary>
+    private string CloakedMessage(nint root) => VirtualDesktops.PlacementOf(_virtualDesktops, root) switch
+    {
+        VirtualDesktopPlacement.OtherDesktop =>
+            "The window is on another virtual desktop, so it was not activated: activating it would switch the user to that " +
+            "desktop. The server does not switch desktops; ask the user to switch to it, or use a window on this desktop.",
+        VirtualDesktopPlacement.NoDesktop =>
+            "The window is cloaked and on no virtual desktop: it is the frame of a suspended or prelaunched Store app, or its " +
+            "app hid it, so it was not activated. Start or show the app (launch_application) and use the window it shows.",
+        _ => "The window is cloaked: it is on another virtual desktop or its app has hidden it, so it was not activated."
+    };
 
     private static Activation Paused(nint root, nint foreground) =>
         Activation.Failed(root, foreground, WindowErrorCode.PausedByUser,

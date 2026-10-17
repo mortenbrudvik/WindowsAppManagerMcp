@@ -293,6 +293,30 @@ public class ForegroundServiceTests
     }
 
     [Theory]
+    [InlineData(VirtualDesktopPlacement.OtherDesktop, "on another virtual desktop", "does not switch desktops")]
+    [InlineData(VirtualDesktopPlacement.NoDesktop, "on no virtual desktop", "launch_application")]
+    [InlineData(VirtualDesktopPlacement.Unknown, "on another virtual desktop or its app has hidden it", "not activated")]
+    public void EnsureForeground_WhenTheTargetIsCloaked_SaysWhetherItIsOnAnotherVirtualDesktop(
+        VirtualDesktopPlacement placement, string cause, string advice)
+    {
+        // Arrange - activating a window on another desktop would switch the user to it (roadmap M7.3)
+        _windows.Setup(w => w.IsCloaked(Target)).Returns(true);
+        _lock = ForegroundLock.Open;
+        var desktops = new Mock<INativeVirtualDesktopWrapper>(MockBehavior.Strict);
+        desktops.Setup(d => d.GetPlacements(It.Is<IReadOnlyList<nint>>(w => w.SequenceEqual(new nint[] { Target }))))
+            .Returns([placement]);
+
+        // Act
+        var outcome = CreateSut(virtualDesktops: desktops.Object).EnsureForeground(Target, timeoutMs: 0);
+
+        // Assert
+        outcome.ErrorCode.Should().Be(WindowErrorCode.Cloaked);
+        outcome.Error.Should().Contain(cause).And.Contain(advice);
+        _calls.Should().BeEmpty();
+        _sentInput.Should().BeEmpty();
+    }
+
+    [Theory]
     [InlineData(false)]
     [InlineData(true)]
     public void EnsureForeground_WhenTheTargetIsHidden_RefusesWithWindowHidden(bool alreadyInFront)
@@ -1095,9 +1119,9 @@ public class ForegroundServiceTests
 
     private static readonly TimeSpan Grace = TimeSpan.FromSeconds(3);
 
-    private ForegroundService CreateSut(TimeSpan? stepSettle = null) =>
+    private ForegroundService CreateSut(TimeSpan? stepSettle = null, INativeVirtualDesktopWrapper? virtualDesktops = null) =>
         new(_windows.Object, _threads.Object, _input.Object, _security.Object, _windowService.Object, _activationThread,
-            Timing(stepSettle ?? TimeSpan.Zero));
+            Timing(stepSettle ?? TimeSpan.Zero), virtualDesktops: virtualDesktops);
 
     /// <summary>
     /// The window service's own target policy check (<see cref="WindowService.EvaluateTargetPolicy"/>) over the mocked

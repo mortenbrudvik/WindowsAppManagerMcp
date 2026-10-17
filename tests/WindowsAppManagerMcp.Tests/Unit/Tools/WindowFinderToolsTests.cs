@@ -489,5 +489,92 @@ public class WindowFinderToolsTests
         result.Windows!.Single().Title.Should().Be(CutTitle);
     }
 
+    // Windows on other virtual desktops (roadmap M7.3)
+
+    private readonly Mock<INativeVirtualDesktopWrapper> _mockVirtualDesktops = new(MockBehavior.Strict);
+
+    private WindowFinderTools CreateSutWithDesktops(IReadOnlyDictionary<nint, VirtualDesktopPlacement> placements)
+    {
+        _mockVirtualDesktops.Setup(d => d.GetPlacements(It.IsAny<IReadOnlyList<nint>>()))
+            .Returns<IReadOnlyList<nint>>(windows => windows
+                .Select(w => placements.TryGetValue(w, out var placement) ? placement : VirtualDesktopPlacement.Unknown).ToList());
+        return new WindowFinderTools(_mockWindowService.Object, virtualDesktops: _mockVirtualDesktops.Object);
+    }
+
+    [Fact]
+    public void FindWindows_MarksTheCloakedWindowsOnAnotherVirtualDesktop_AskingTheManagerOnce()
+    {
+        // Arrange - on screen, on another desktop, a suspended Store frame and one the manager cannot place
+        var shown = TestDataFactory.CreateWindowInfo(0x100);
+        var elsewhere = TestDataFactory.CreateWindowInfo(0x200) with { IsCloaked = true };
+        var suspended = TestDataFactory.CreateWindowInfo(0x300) with { IsCloaked = true };
+        var unknown = TestDataFactory.CreateWindowInfo(0x400) with { IsCloaked = true };
+        _mockWindowService.Setup(w => w.FindWindows(It.IsAny<WindowQuery>())).Returns([shown, elsewhere, suspended, unknown]);
+        var sut = CreateSutWithDesktops(new Dictionary<nint, VirtualDesktopPlacement>
+        {
+            [elsewhere.Handle] = VirtualDesktopPlacement.OtherDesktop,
+            [suspended.Handle] = VirtualDesktopPlacement.NoDesktop
+        });
+
+        // Act
+        var result = sut.FindWindows(includeCloaked: true);
+
+        // Assert - only the cloaked windows are asked about, in one call; a window not on screen for another reason is unmarked
+        result.Select(w => w.IsOnOtherDesktop).Should().Equal(null, true, null, null);
+        _mockVirtualDesktops.Verify(d => d.GetPlacements(It.Is<IReadOnlyList<nint>>(
+            windows => windows.SequenceEqual(new[] { elsewhere.Handle, suspended.Handle, unknown.Handle }))), Times.Once);
+    }
+
+    [Fact]
+    public void FindWindows_WithoutCloakedWindows_DoesNotAskTheVirtualDesktopManager()
+    {
+        // Arrange
+        _mockWindowService.Setup(w => w.FindWindows(It.IsAny<WindowQuery>()))
+            .Returns([TestDataFactory.CreateWindowInfo(0x100), TestDataFactory.CreateWindowInfo(0x200)]);
+        var sut = CreateSutWithDesktops(new Dictionary<nint, VirtualDesktopPlacement>());
+
+        // Act
+        var result = sut.FindWindows();
+
+        // Assert
+        result.Should().OnlyContain(w => w.IsOnOtherDesktop == null);
+        _mockVirtualDesktops.Verify(d => d.GetPlacements(It.IsAny<IReadOnlyList<nint>>()), Times.Never);
+    }
+
+    [Theory]
+    [InlineData(WindowDetail.Standard, VirtualDesktopPlacement.OtherDesktop, true)]
+    [InlineData(WindowDetail.Full, VirtualDesktopPlacement.OtherDesktop, true)]
+    [InlineData(WindowDetail.Standard, VirtualDesktopPlacement.NoDesktop, null)]
+    [InlineData(WindowDetail.Compact, VirtualDesktopPlacement.OtherDesktop, null)]
+    public void GetWindowInfo_MarksACloakedWindowOnAnotherVirtualDesktop_AtStandardAndFull(
+        WindowDetail detail, VirtualDesktopPlacement placement, bool? expected)
+    {
+        // Arrange
+        var window = UseWindow(TestDataFactory.CreateWindowInfo(0x100) with { IsCloaked = true });
+        var sut = CreateSutWithDesktops(new Dictionary<nint, VirtualDesktopPlacement> { [window.Handle] = placement });
+
+        // Act
+        var result = sut.GetWindowInfo(handle: window.Handle, detail: detail);
+
+        // Assert
+        result.Success.Should().BeTrue();
+        result.IsOnOtherDesktop.Should().Be(expected);
+    }
+
+    [Fact]
+    public void GetWindowInfo_OfAWindowThatIsNotCloaked_DoesNotAskTheVirtualDesktopManager()
+    {
+        // Arrange
+        var window = UseWindow(TestDataFactory.CreateWindowInfo(0x100));
+        var sut = CreateSutWithDesktops(new Dictionary<nint, VirtualDesktopPlacement>());
+
+        // Act
+        var result = sut.GetWindowInfo(handle: window.Handle, detail: WindowDetail.Full);
+
+        // Assert
+        result.IsOnOtherDesktop.Should().BeNull();
+        _mockVirtualDesktops.Verify(d => d.GetPlacements(It.IsAny<IReadOnlyList<nint>>()), Times.Never);
+    }
+
     #endregion
 }
