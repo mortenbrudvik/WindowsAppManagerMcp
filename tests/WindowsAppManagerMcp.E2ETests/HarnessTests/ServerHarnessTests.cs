@@ -1,5 +1,8 @@
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using Moq;
+using WindowsAppManagerMcp.Infrastructure;
 using WindowsAppManagerMcp.Native;
 using WindowsAppManagerMcp.Services;
 
@@ -363,6 +366,47 @@ public class ServerHarnessTests : IDisposable
 
     private static string? OptedIn(string variable) =>
         variable is DesktopTestGate.EnvironmentVariable or DesktopTestGate.NoInputEnvironmentVariable ? "1" : null;
+
+    [Fact]
+    public void Forward_GivesAnMcpHostTheHarnesssOwnServices_KeepsTheHostsOwn_AndLeavesTheHostedServicesOut()
+    {
+        // Arrange - a host collection that already registers a logger factory of its own, as the MCP host does
+        var services = CreateServicesWithMockedWrappers(DesktopTier.Input);
+        using var provider = services.BuildServiceProvider();
+        var hostLogging = LoggerFactory.Create(_ => { });
+        var host = new ServiceCollection();
+        host.AddSingleton(hostLogging);
+
+        // Act
+        ServerHarness.Forward(services, provider, host);
+        using var hostProvider = host.BuildServiceProvider();
+
+        // Assert - the same guarded instances, so a step's tool acts through the guard; no hotkey, no pruning
+        hostProvider.GetRequiredService<IWindowService>().Should().BeSameAs(provider.GetRequiredService<IWindowService>());
+        hostProvider.GetRequiredService<IInputSession>().Should().BeSameAs(provider.GetRequiredService<IInputSession>());
+        hostProvider.GetRequiredService<Tools.StepSequenceTools>().Should().BeSameAs(provider.GetRequiredService<Tools.StepSequenceTools>());
+        hostProvider.GetRequiredService<ILoggerFactory>().Should().BeSameAs(hostLogging);
+        services.Should().Contain(d => d.ServiceType == typeof(IHostedService), "precondition: the server starts hosted services");
+        host.Should().NotContain(d => d.ServiceType == typeof(IHostedService));
+    }
+
+    [Fact]
+    public async Task AnMcpHostOverTheHarnesssServices_ServesTheServersTools_WithoutStartingItsHostedServices()
+    {
+        // Arrange - strict mocks behind the guards: a hosted service that started (the pause hotkey's registration) would fail
+        var services = CreateServicesWithMockedWrappers(DesktopTier.Input);
+        using var provider = services.BuildServiceProvider();
+
+        // Act
+        await using var server = await InProcessMcpServer.StartAsync(
+            [],
+            builder => builder.AddWindowsAppManagerTools(),
+            configureServices: host => ServerHarness.Forward(services, provider, host));
+        var tools = await server.Client.ListToolsAsync();
+
+        // Assert
+        tools.Select(t => t.Name).Should().Contain(["run_steps", "element_action", "type_text", "focus_window"]);
+    }
 
     /// <summary>The harness's composition with a strict mock behind each wrapper's guard.</summary>
     private ServiceCollection CreateServicesWithMockedWrappers(DesktopTier tier) =>

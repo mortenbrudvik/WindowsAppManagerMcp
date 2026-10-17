@@ -96,6 +96,20 @@ public class EveryToolContractTests
             ["send_keys"] = Args("""{ "keys": "^s", "windowHandle": 1706796 }"""),
             ["press_keys"] = Args("""{ "keys": "ctrl+shift+t", "windowHandle": 1706796 }"""),
             ["scroll"] = Args("""{ "windowHandle": 1706796, "deltaY": 3 }"""),
+            // A form fill on Notepad's window (roadmap M6.2): two fields set through their refs, a typed line, a save, and the
+            // Save As dialog waited for; the steps that name no window get the run's
+            ["run_steps"] = Args("""
+                {
+                  "window": { "handle": 1706796 },
+                  "steps": [
+                    { "tool": "focus_window" },
+                    { "tool": "element_action", "args": { "ref": "w4120035e17", "action": "set_value", "value": "window layout presets" } },
+                    { "tool": "type_text", "args": { "text": "Meeting notes for Monday" } },
+                    { "tool": "press_keys", "args": { "keys": "ctrl+s" } },
+                    { "tool": "wait_for_window", "args": { "window": { "processName": "notepad", "titleContains": "Save As" } }, "id": "saveAs" }
+                  ]
+                }
+                """),
             ["get_clipboard"] = Args("{}"),
             ["set_clipboard"] = Args("""{ "text": "Meeting notes for Monday" }"""),
             ["get_control_status"] = Args("{}"),
@@ -127,7 +141,9 @@ public class EveryToolContractTests
     private static readonly HashSet<string> ImageOnRequest = new(StringComparer.Ordinal)
     {
         "get_desktop_state", "element_action", "click", "right_click", "double_click", "mouse_click", "drag", "type_text", "send_keys",
-        "press_keys", "respond_to_dialog"
+        "press_keys", "respond_to_dialog",
+        // The images of its steps with return true, and of its last step (roadmap M6.2)
+        "run_steps"
     };
 
     /// <summary>Tools with a success field that the mocked services cannot make fail.</summary>

@@ -2105,7 +2105,9 @@ tests use (`InProcessMcpServer`) lives in `WindowsAppManagerMcp.Tests.Infrastruc
 MCP pipeline (argument binding, filters, result serialization) too; `HarnessTests/InProcessMcpServerTests` runs it with
 a fake tool. A scenario that hosts the server's own tools through it (roadmap M6.2) must pass them the harness's guarded
 services (`configureServices`), never the defaults of `AddWindowsAppManagerServices`, which would put unguarded native
-wrappers behind the tools.
+wrappers behind the tools: `ServerHarness.StartMcpServerAsync` does, with the server's tools and call filters over the
+harness's own instances (one input session, element registry and audit log for the harness and the host) and none of its
+hosted services (no pause hotkey is registered). `FixtureRunStepsTests` runs run_steps through it.
 
 UI Automation elements come back from the wrapper as objects that services only read: NativeCallGuardTests
 forbids acting pattern calls outside the Native wrappers and the two UI Automation engine adapters, and the
@@ -2201,6 +2203,7 @@ being ignored.
 | `FixturePlacementTests` | Input | The launch tools' placement of a window (M3.13) |
 | `FixtureMouseTests` | Input | click, right_click, double_click and mouse_move land on the exact pixel aimed at (the corners and centres of the swatches), on the primary and on a monitor at another scale (skipped without one); click presses the user's primary button and right_click the secondary one, as the fixture's `mouseDown` events record them after Windows applied the user's swap; a double click is one press with `clickCount` 1 and one with 2 (M4.2) |
 | `FixtureMouseClickDragTests` | Input | mouse_click: a Ctrl+Shift click reaches the fixture with both modifiers down and neither stays down (a plain click after it sees none); the middle, X1 and X2 buttons arrive as themselves; a triple click is three presses with `clickCount` 1, 2 and 3 at the pixel. drag: a Ctrl+drag presses on one swatch and releases on another, with Ctrl down at both and no other press or release between them, and leaves nothing held; a drop point right of the fixture window is refused before anything is pressed (M4.3). The fixture logs presses and releases with their modifiers (`mouseDown`, `mouseUp`) |
+| `FixtureRunStepsTests` | Input | run_steps through the real MCP pipeline (`ServerHarness.StartMcpServerAsync`, M6.2): a form fill (focus, a click at a found element's clickPoint by `$steps` reference, ctrl+a, typing, a toggle, a wait that verifies the text) in one call, the fixture's events in step order, one audit line per audited step under `<run's id>#<step>`, no modifier left down; a failed step stops the run and the step after it does nothing; a direct element_action made during the run waits for the gate and lands after the run's last step; a pause between steps stops the run with `PausedByUser`; a wait longer than `maxDurationMs` stops it with `OperationTimedOut`; a second fixture, a process of its own, taking the foreground stops it with `TargetNotForeground` and keeps the foreground (the terminal is never touched) |
 
 **Running them.** Locally only with an opt-in, as above. On GitHub, `.github/workflows/e2e.yml`
 runs them on demand (Actions, "E2E", "Run workflow"), with a choice of tier, UI Automation engine (`engine`: uia3,
@@ -2585,6 +2588,27 @@ desktop; before the release that carries it, the owner checks:
    58 (it does not fail closed); and get_server_info's `toolsets.moved` names the deprecated and windows-batch toolsets.
    The in-process contract tests (`DeprecatedToolsContractTests`) cover all of it except the client's own rendering.
 
+### Desktop check: M6.2 run_steps
+
+run_steps is tested over fakes (`StepRunnerTests`: the checks before a run, the arguments each step gets, when a run
+stops, the input gate held for the whole run; `InputGateTests`: the lease) and through the real MCP pipeline with mocked
+services (`RunStepsContractTests`: one audit line per audited step under `<run's id>#<step>`, the toolsets and
+read-only mode, a direct call that waits for the run, a cancelled run that frees the gate, run-level progress only). Not
+yet run on a real desktop; before the release that carries it, the owner checks:
+
+1. **The fixture scenarios.** `FixtureRunStepsTests` with `WAM_ALLOW_DESKTOP_TESTS=1` (input tier), with the terminal
+   that runs the tests in front and untouched: the form fill, a failed step, a direct call during a run, a pause between
+   steps, a run out of time, and a second fixture taking the foreground. The harness closes only the fixtures it started.
+2. **Notepad, by hand, in a real client** (no window the check did not open): launch a new Notepad with
+   launch_application and `waitForWindow`, and note its handle and processId. On that handle, run_steps with
+   `type_text`, `press_keys` `ctrl+s` and `wait_for_window` for the Save As dialog it owns; then answer the dialog with
+   file_dialog, a direct call, to a file under `%TEMP%\wam-m62`. Check that the file holds the text, close Notepad with
+   close_window by the noted handle only, and delete the file. Never close or act on a window by its title.
+3. **The pause hotkey, by hand:** during a run of many type_text steps into that Notepad, press the pause hotkey. The
+   run reports `PausedByUser`, nothing more is typed, and the user resumes; the agent never does.
+4. **Taking the foreground, by hand:** during a run with `delayBetweenStepsMs: 2000` on that Notepad, click a second
+   Notepad the check opened. The run stops with `TargetNotForeground` and the second Notepad stays in front.
+
 ### Tool surface snapshot
 
 `Contract/ToolSurfaceSnapshotTests` tests the server the way an agent sees it. It lists the tools of an
@@ -2717,8 +2741,8 @@ typical result over 300 tokens, and tools/list itself, measured in October 2026:
 | `read_table` | Task Manager's first 50 processes, 5 columns with headers | 643 | 1,000 |
 | `get_server_info` | The default deny list, five host processes, two monitors | 634 | 850 |
 | `get_layout` | A preset of 6 placements, each with the captured window identity | 529 | 800 |
-| tools/list | Every tool's name, title, description, schemas and annotations: 78 tools, 247,825 bytes (`ToolList_StaysWithinItsBudget`; M5.8's six DOM bridge tools added 2,970, 936 of them their window selectors; M5.8's dialog option and the UI Automation browser_handle_dialog 199 more; M6.1a's additive consolidations 405 more: mouse_click's own click checks 249, set_window_bounds' optional pairs 87, get_browser_url's foreground sentence 41, get_monitors' virtualScreen 28; M6.1b's one-line descriptions of the nine deprecated tools and the descriptions that no longer send the agent to them 2,121 fewer) | 61,957 | 61,993 |
-| Default tools/list | The 58 tools a server serves without WAM_TOOLSETS, WAM_EXCLUDE_TOOLS and WAM_READ_ONLY, 204,020 bytes (`DefaultToolList_StaysWithinItsBudget`, roadmap M6.1; 59,627 before M6.1a, 60,032 after it with 70 tools, 9,027 fewer once M6.1b moved the nine deprecated tools and the three geometry batches to opt-in toolsets) | 51,005 | 51,041 |
+| tools/list | Every tool's name, title, description, schemas and annotations: 79 tools, 252,043 bytes (`ToolList_StaysWithinItsBudget`; M5.8's six DOM bridge tools added 2,970, 936 of them their window selectors; M5.8's dialog option and the UI Automation browser_handle_dialog 199 more; M6.1a's additive consolidations 405 more: mouse_click's own click checks 249, set_window_bounds' optional pairs 87, get_browser_url's foreground sentence 41, get_monitors' virtualScreen 28; M6.1b's one-line descriptions of the nine deprecated tools and the descriptions that no longer send the agent to them 2,121 fewer; M6.2's run_steps 1,054 more) | 63,011 | 63,047 |
+| Default tools/list | The 59 tools a server serves without WAM_TOOLSETS, WAM_EXCLUDE_TOOLS and WAM_READ_ONLY, 208,238 bytes (`DefaultToolList_StaysWithinItsBudget`, roadmap M6.1; 59,627 before M6.1a, 60,032 after it with 70 tools, 9,027 fewer once M6.1b moved the nine deprecated tools and the three geometry batches to opt-in toolsets, 1,055 more with M6.2's run_steps in the `steps` toolset, on by default) | 52,060 | 52,096 |
 
 Every other typical result is at most 300 tokens. When a change makes a result larger on purpose, raise its
 budget in the same change (the failure message gives the new size); when a change shrinks one a lot, lower it.
@@ -2749,6 +2773,7 @@ were capture_with_elements at 2,396 and element_action at 2,386, so they have ab
 | `launch` | on | 2 | 2,890 | 2,900 |
 | `process` | on | 3 | 1,921 | 1,950 |
 | `layouts` | on | 5 | 1,181 | 1,200 |
+| `steps` | on | 1 | 1,055 | 1,091 |
 | `browser` | on | 6 | 4,315 | 4,350 |
 | `browser-actions` | off | 7 | 3,577 | 3,600 |
 | `browser-script` | off | 1 | 468 | 500 |
@@ -2757,7 +2782,8 @@ were capture_with_elements at 2,396 and element_action at 2,386, so they have ab
 
 The rows are measured after M6.1b (October 2026), which moved six tools out of `windows`, two out of `monitors`, three
 out of `input` and one out of `browser` into the opt-in `windows-batch` and `deprecated` toolsets. The deprecated tools'
-one-line descriptions keep their full parameters, which are most of the `deprecated` row.
+one-line descriptions keep their full parameters, which are most of the `deprecated` row. The `steps` row is measured
+after M6.2 added run_steps (October 2026).
 
 A change states its default, per-toolset and all-tools deltas, and raises only the ratchets it moves: a new opt-in
 toolset moves the all-tools figure and its own row, never the default figure.

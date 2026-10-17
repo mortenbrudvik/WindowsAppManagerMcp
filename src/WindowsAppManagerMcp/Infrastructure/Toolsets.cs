@@ -126,7 +126,8 @@ public sealed class ToolsetCatalog
 /// and docs/TOOLS.md lists them in a generated region. Every toolset is on by default except browser-actions (roadmap
 /// M5.5, M5.8), browser-script (roadmap M5.8), windows-batch and deprecated (roadmap M6.1). Of the tools M6 adds, the niche
 /// or heavy ones come in toolsets that are off by default (ocr, visual, windows-batch), and the small everyday steps
-/// (list_installed_apps, set_window_zorder, run_steps) join toolsets that are on (owner decision D2, October 2026).
+/// (list_installed_apps, set_window_zorder, run_steps) join toolsets that are on (owner decision D2, October 2026):
+/// run_steps in a toolset of its own, steps (roadmap M6.2), so WAM_TOOLSETS=-steps drops it alone.
 /// </summary>
 public static class Toolsets
 {
@@ -179,6 +180,11 @@ public static class Toolsets
             new("layouts", OnByDefault: true,
                 "Save, apply and manage window layout presets.",
                 ["list_layouts", "get_layout", "save_layout", "apply_layout", "delete_layout"]),
+            // Roadmap M6.2: a run's steps call the tools of the toolsets above, and only those the server serves
+            new("steps", OnByDefault: true,
+                "Run several steps (element actions, keys, clicks, waits) on one window in one call, under one input gate hold, " +
+                "stopping at the first failure.",
+                ["run_steps"]),
             new("browser", OnByDefault: true,
                 "Read the URL and text of browser pages, list a debug browser's tabs and wait for a page; start and close a browser with a DevTools port.",
                 ["get_browser_url", "get_browser_content", "launch_browser_with_debug", "close_debug_browser", "list_tabs", "wait_for_browser"]),

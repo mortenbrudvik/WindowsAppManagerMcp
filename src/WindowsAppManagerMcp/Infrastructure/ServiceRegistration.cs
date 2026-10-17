@@ -259,6 +259,7 @@ public static class ServiceRegistration
         services.AddSingleton<InputControlTools>();
         services.AddSingleton<ServerInfoTools>();
         services.AddSingleton<ClipboardTools>();
+        services.AddSingleton<StepSequenceTools>();
 
         return services;
     }
@@ -339,6 +340,8 @@ public static class ServiceRegistration
             .WithServerTools<InputControlTools>()
             .WithServerTools<ServerInfoTools>()
             .WithServerTools<ClipboardTools>()
+            // run_steps (roadmap M6.2): its steps call the tools above through these same filters
+            .WithServerTools<StepSequenceTools>()
             // Last: removes the tools the user's toolsets, exclusions or read-only mode leave out
             .WithToolsets(toolsets ?? ToolsetSelection.All());
     }
