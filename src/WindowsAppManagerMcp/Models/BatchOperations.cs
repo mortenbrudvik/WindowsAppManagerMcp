@@ -52,7 +52,9 @@ public record ApplicationLaunchRequest(
     bool ReuseExisting = false,
     [property: Description("Start a Chromium, Electron or CEF .exe with --force-renderer-accessibility, as launch_application's " +
                            "forceAccessibility (default false)")]
-    bool ForceAccessibility = false
+    bool ForceAccessibility = false,
+    [property: Description("Start the .exe as administrator, as launch_application's runAsAdmin (default false)")]
+    bool RunAsAdmin = false
 );
 
 /// <summary>A close_windows_batch item: the window to close.</summary>
@@ -99,7 +101,8 @@ public record BatchLaunchResult(
 /// A launch_applications_batch result: as launch_application's, for one application. LaunchStatus, Window and
 /// LauncherExited are left out when the launch failed (and LauncherExited also without a window wait), Placement
 /// without a placement or when the launch failed, and ForceAccessibilityApplied when the item did not ask for
-/// forceAccessibility (roadmap M3.F25).
+/// forceAccessibility (roadmap M3.F25). Elevation is "uacPrompt" for an item started with runAsAdmin (roadmap M6.5),
+/// left out otherwise.
 /// </summary>
 public record LaunchResultItem(
     string Executable,
@@ -113,7 +116,8 @@ public record LaunchResultItem(
     WindowsAppManagerMcp.Tools.WindowInfoDto? Window = null,
     bool? LauncherExited = null,
     WindowsAppManagerMcp.Tools.LaunchPlacementResultDto? Placement = null,
-    bool? ForceAccessibilityApplied = null
+    bool? ForceAccessibilityApplied = null,
+    string? Elevation = null
 );
 
 public record BoundsDto(int X, int Y, int Width, int Height);

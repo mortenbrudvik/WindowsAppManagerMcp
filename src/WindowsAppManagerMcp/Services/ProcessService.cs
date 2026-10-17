@@ -30,6 +30,8 @@ public class ProcessService : IProcessService
     private readonly IDebugBrowserReadiness? _debugBrowserReadiness;
     private readonly DebugBrowserProfiles _debugBrowserProfiles;
     private readonly IProcessSecurityProbe? _securityProbe;
+    private readonly INativeAppsWrapper? _appsWrapper;
+    private readonly IInstalledAppsService? _installedApps;
 
     /// <param name="targetPolicy">
     /// The server's target policy, which kill_process enforces (roadmap M1.12), and which keeps list_processes from
@@ -55,8 +57,14 @@ public class ProcessService : IProcessService
     /// reports success (roadmap M5.1); without it the launch is reported once the browser's port is known.</param>
     /// <param name="debugBrowserProfiles">Where a debug launch's new temporary profile goes, and deletes it again (roadmap
     /// M5.4); default the server's folders under %TEMP% and %LOCALAPPDATA%.</param>
-    /// <param name="securityProbe">Reads the listed processes' integrity (roadmap M6.6). The server always passes it; without
-    /// it list_processes reports no integrity.</param>
+    /// <param name="securityProbe">Reads the listed processes' integrity (roadmap M6.6), the server's own (an elevated server
+    /// cannot activate packaged apps) and whether Windows asks before it elevates (runAsAdmin, roadmap M6.5). The server always
+    /// passes it; without it list_processes reports no integrity, and runAsAdmin needs the user's confirmation.</param>
+    /// <param name="appsWrapper">Activates packaged apps and reads which package a process belongs to (roadmap M6.5). The
+    /// server always passes it; without it a packaged app is started through the shell, as before, without a process ID.</param>
+    /// <param name="installedApps">The installed apps (roadmap M6.5): a bare name that is no program on disk is looked up by
+    /// its exact display name, and an app's program is read before arguments are passed to it. The server always passes it;
+    /// without it no name is looked up and no argument is passed to an app whose program the server cannot tell.</param>
     public ProcessService(
         IWindowService windowService,
         IInputValidationService validationService,
@@ -71,7 +79,9 @@ public class ProcessService : IProcessService
         DebugBrowserLocator? debugBrowserLocator = null,
         IDebugBrowserReadiness? debugBrowserReadiness = null,
         DebugBrowserProfiles? debugBrowserProfiles = null,
-        IProcessSecurityProbe? securityProbe = null)
+        IProcessSecurityProbe? securityProbe = null,
+        INativeAppsWrapper? appsWrapper = null,
+        IInstalledAppsService? installedApps = null)
     {
         _windowService = windowService;
         _validationService = validationService;
@@ -87,6 +97,8 @@ public class ProcessService : IProcessService
         _debugBrowserReadiness = debugBrowserReadiness;
         _debugBrowserProfiles = debugBrowserProfiles ?? DebugBrowserProfiles.FromEnvironment();
         _securityProbe = securityProbe;
+        _appsWrapper = appsWrapper;
+        _installedApps = installedApps;
     }
 
     /// <summary>
@@ -101,6 +113,83 @@ public class ProcessService : IProcessService
 
     /// <summary>ERROR_CANCELLED: the user declined or cancelled a prompt of the start (most likely UAC).</summary>
     private const int ErrorCancelled = 1223;
+
+    /// <summary>
+    /// How long a packaged app's activation may take (roadmap M6.5): IApplicationActivationManager returns once the app is
+    /// running, and a cold start with a splash screen takes seconds. Within the launch tools' 30-second cap.
+    /// </summary>
+    public static readonly TimeSpan DefaultActivationTimeout = TimeSpan.FromSeconds(15);
+
+    /// <summary>How long an activation may take (default <see cref="DefaultActivationTimeout"/>); tests shorten it.</summary>
+    public TimeSpan ActivationTimeout { get; init; } = DefaultActivationTimeout;
+
+    /// <summary>
+    /// The HRESULTs with which Windows refuses to activate a packaged app from this server's process, though the shell
+    /// can start it (roadmap M6.5), as winerror.h defines them (Windows SDK 10.0.22621): E_ELEVATED_ACTIVATION_NOT_SUPPORTED
+    /// 0x80270251 ("This app can't be activated from an elevated context"), E_UAC_DISABLED 0x80270252 ("... when UAC is
+    /// disabled") and E_FULL_ADMIN_NOT_SUPPORTED 0x80270253 ("... by the Built-in Administrator").
+    /// </summary>
+    private static readonly HashSet<int> ActivationRefusedForElevation =
+        [unchecked((int)0x80270251), unchecked((int)0x80270252), unchecked((int)0x80270253)];
+
+    /// <summary>
+    /// E_APPLICATION_NOT_REGISTERED (winerror.h): "This app does not support the contract specified or is not installed".
+    /// </summary>
+    private const int ApplicationNotRegistered = unchecked((int)0x80270254);
+
+    /// <summary>
+    /// How many activations may be stuck at once (review M6.5 #5): each one that does not return keeps its start thread and
+    /// the wrapper's STA thread until Windows answers, so at this many the next activation is refused at once.
+    /// </summary>
+    public const int MaxHungActivations = 3;
+
+    /// <summary>Activations that missed <see cref="ActivationTimeout"/> and have not returned yet.</summary>
+    private int _hungActivations;
+
+    /// <summary>Activations that missed <see cref="ActivationTimeout"/> and have not returned yet.</summary>
+    public int HungActivations => Volatile.Read(ref _hungActivations);
+
+    public ElevationPreview PreviewElevation(LaunchRequest request)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        var plan = request.ReuseExisting
+            ? PlanFor(request with { RunAsAdmin = true })
+            : PlanLaunch(request.Executable, request.Arguments, request.WorkingDirectory, request.ForceAccessibility, runAsAdmin: true);
+        if (!plan.IsValid)
+        {
+            return new ElevationPreview(false, null, null, plan.ErrorCode, plan.ErrorMessage);
+        }
+
+        var reason = ElevationApprovalReason();
+        return new ElevationPreview(reason != null, reason, ApprovalOf(plan));
+    }
+
+    /// <summary>The launch a plan would start, as the user approves it.</summary>
+    private static ElevationApproval ApprovalOf(LaunchPlan plan) => new(plan.StartInfo!.FileName, plan.StartInfo.Arguments ?? string.Empty);
+
+    /// <summary>
+    /// Why the user must approve an elevated start through the client, or null when Windows asks them itself with a UAC
+    /// prompt (owner decision D11; review M6.5 #1).
+    /// </summary>
+    private string? ElevationApprovalReason()
+    {
+        if (ServerIsElevated())
+        {
+            return "this server runs elevated, so a program it starts as administrator gets no UAC prompt";
+        }
+
+        return (_securityProbe?.GetElevationPrompt() ?? ElevationPrompt.Unknown) switch
+        {
+            ElevationPrompt.Prompts => null,
+            ElevationPrompt.Silent => "User Account Control does not ask on this computer (it is off, it does not ask " +
+                                      "administrators, or this is the built-in Administrator account)",
+            _ => "the User Account Control policy could not be read, so the server cannot tell whether Windows would ask"
+        };
+    }
+
+    /// <summary>Whether the server itself runs elevated; false when that cannot be read.</summary>
+    private bool ServerIsElevated() =>
+        _securityProbe?.ServerIntegrity is { } server && (server.IsElevated == true || server.IntegrityRid >= ProcessIntegrity.HighRid);
 
     public Task<LaunchResult> LaunchApplicationAsync(
         string executable,
@@ -119,7 +208,7 @@ public class ProcessService : IProcessService
     {
         ArgumentNullException.ThrowIfNull(request);
 
-        var plan = PlanLaunch(request.Executable, request.Arguments, request.WorkingDirectory, request.ForceAccessibility);
+        var plan = PlanFor(request);
         if (!plan.IsValid)
         {
             return Rejected(plan);
@@ -133,7 +222,7 @@ public class ProcessService : IProcessService
             var reuse = FindOpenWindow(plan, request, taken: null, openBefore: null);
             if (reuse.Result is { } alreadyOpen)
             {
-                return WithForceAccessibility(alreadyOpen, plan);
+                return Finish(alreadyOpen, plan);
             }
 
             plan = plan with { Warning = CombineWarnings(plan.Warning, reuse.Note) };
@@ -143,7 +232,7 @@ public class ProcessService : IProcessService
         var launch = await StartAsync(plan, waitForWindow, cancellationToken, request.OnStartAbandoned).ConfigureAwait(false);
         if (launch.Outcome is { } ended)
         {
-            return WithForceAccessibility(ended, plan);
+            return Finish(ended, plan);
         }
 
         if (launch.Process != null)
@@ -157,16 +246,82 @@ public class ProcessService : IProcessService
             // (launch_browser_with_debug closes its browser then, through LaunchRequest.OnStarted)
             if (!waitForWindow)
             {
-                return WithForceAccessibility(StartedWithoutWait(launch), plan);
+                return Finish(StartedWithoutWait(launch), plan);
             }
 
             var owner = OwnerOf(launch, request);
-            return WithForceAccessibility(
+            return Finish(
                 await WaitForWindowAsync(launch, request, owner, owner.Matches, waitTimeoutMs, tryClaim: null, cancellationToken)
                     .ConfigureAwait(false),
                 plan);
         }
     }
+
+    /// <summary>
+    /// Plans a request (<see cref="PlanLaunch"/>) with its runAsAdmin, which reuseExisting contradicts: an open window is
+    /// not the new elevated copy.
+    /// </summary>
+    private LaunchPlan PlanFor(LaunchRequest request)
+    {
+        if (request.RunAsAdmin && request.ReuseExisting)
+        {
+            return LaunchPlan.Rejected(
+                "runAsAdmin starts a new copy of the program as administrator, and reuseExisting would use an open window instead: " +
+                "leave one of them out. Nothing was started.",
+                ToolErrorReporting.InvalidArgumentsErrorCode);
+        }
+
+        var plan = PlanLaunch(request.Executable, request.Arguments, request.WorkingDirectory, request.ForceAccessibility, request.RunAsAdmin);
+        if (!plan.IsValid || !request.RunAsAdmin)
+        {
+            return plan;
+        }
+
+        // Review M6.5 #2: only the launch the user approved runs; a name can resolve to another program by now
+        if (request.ApprovedElevation is { } approved)
+        {
+            var planned = ApprovalOf(plan);
+            return planned == approved
+                ? plan
+                : LaunchPlan.Rejected(
+                    $"The user approved starting '{approved.FileName}' {ShownArguments(approved.Arguments)} as administrator, but " +
+                    $"the request now starts '{planned.FileName}' {ShownArguments(planned.Arguments)}. Nothing was started; launch " +
+                    "again, so that the user is asked about what would start now.",
+                    nameof(LaunchErrorCode.ElevationNotConfirmed),
+                    plan.Warning);
+        }
+
+        return ElevationApprovalReason() is { } reason
+            ? LaunchPlan.Rejected(ElevationNotConfirmedMessage(reason), nameof(LaunchErrorCode.ElevationNotConfirmed), plan.Warning)
+            : plan;
+    }
+
+    private static string ShownArguments(string arguments) =>
+        arguments.Length == 0 ? "with no arguments" : $"with the arguments '{AppText.Cut(arguments, 200)}'";
+
+    /// <summary>What a launch reports besides its own outcome: whether forceAccessibility took effect, and an elevated start.</summary>
+    private LaunchResult Finish(LaunchResult result, LaunchPlan plan) => WithElevationNote(WithForceAccessibility(result, plan), plan);
+
+    /// <summary>
+    /// runAsAdmin (roadmap M6.5): a program started as administrator runs above a server that is not elevated, so the input
+    /// guard refuses input and element actions to its windows (TargetElevated), and Windows drops the server's close
+    /// requests to them. Only when the start was handed to Windows.
+    /// </summary>
+    private LaunchResult WithElevationNote(LaunchResult result, LaunchPlan plan)
+    {
+        if (!result.Success || plan.StartInfo?.Verb != RunAsVerb || ServerIsElevated())
+            return result;
+
+        return result with
+        {
+            Warning = CombineWarnings(result.Warning,
+                "runAsAdmin: once the user approves, the program runs as administrator, above this server, so input and element " +
+                "actions to its windows are refused (TargetElevated) and close requests do not reach them. Ask the user to close it.")
+        };
+    }
+
+    /// <summary>The ShellExecute verb that starts a program as administrator.</summary>
+    private const string RunAsVerb = "runas";
 
     /// <summary>What to do so that --force-renderer-accessibility takes effect, when an instance of the app runs.</summary>
     private const string ForceAccessibilityAdvice =
@@ -257,7 +412,8 @@ public class ProcessService : IProcessService
     /// <item>of the same app: its process has the started program's path or name, or the name of the same app it hands
     /// off to (<see cref="LaunchWindowOwner.SameAppProcessNames"/>; never a terminal for a console program or a browser for
     /// a web address), and, when expectWindow names a process, that process (part of the name, also the frame host's). A
-    /// launch whose app is not known (a document, a Store app, a web address) needs expectWindow.processName;</item>
+    /// launch whose app is not known (a document, a desktop app's shell:AppsFolder entry, a web address) needs
+    /// expectWindow.processName; a packaged app's windows are those of its package's processes (roadmap M6.5);</item>
     /// <item>showing what the launch opens: its title contains expectWindow.titleContains when that is set; otherwise it
     /// shows every file and folder the launch opens (<see cref="ReuseTitleNames"/>) as <see cref="LaunchTitles.Shows"/>
     /// tells: as a whole name, so todo.txt is not shown by old-todo.txt or todo.txt.bak, and never after another path, so
@@ -279,7 +435,8 @@ public class ProcessService : IProcessService
         var names = LaunchWindowOwner.SameAppProcessNames(target);
         var imagePath = target.Kind == LaunchTargetKind.NativeExecutable && Path.IsPathFullyQualified(target.FileName) ? target.FileName : null;
         var wantedProcess = string.IsNullOrWhiteSpace(hint?.ProcessName) ? null : StripExe(hint.ProcessName.Trim());
-        if (names.Count == 0 && imagePath == null && wantedProcess == null)
+        var family = target.Kind == LaunchTargetKind.PackagedApp && _appsWrapper != null ? target.App?.PackageFamilyName : null;
+        if (names.Count == 0 && imagePath == null && wantedProcess == null && family == null)
         {
             return (null, "reuseExisting: the server cannot tell which app opens this target, so it did not look for an open window " +
                           "and started it. Pass expectWindow.processName to reuse a window of that app.");
@@ -309,8 +466,9 @@ public class ProcessService : IProcessService
         var nameSet = new HashSet<string>(names.Select(StripExe), StringComparer.OrdinalIgnoreCase);
         var appWindows = _windowService.GetApplicationWindows()
             .Where(w => !w.IsAgentHost && taken?.Contains(w.Handle) != true && openBefore?.Contains(w.Handle) != false)
-            .Where(w => (names.Count == 0 && imagePath == null) || nameSet.Contains(StripExe(w.ProcessName)) ||
-                        (imagePath != null && string.Equals(_processWrapper.GetProcessImagePath(w.ProcessId), imagePath, StringComparison.OrdinalIgnoreCase)))
+            .Where(w => (names.Count == 0 && imagePath == null && family == null) || nameSet.Contains(StripExe(w.ProcessName)) ||
+                        (imagePath != null && string.Equals(_processWrapper.GetProcessImagePath(w.ProcessId), imagePath, StringComparison.OrdinalIgnoreCase)) ||
+                        (family != null && string.Equals(_appsWrapper!.GetPackageFamilyName(w.ProcessId), family, StringComparison.OrdinalIgnoreCase)))
             .Where(w => wantedProcess == null || w.ProcessName.Contains(wantedProcess, StringComparison.OrdinalIgnoreCase) ||
                         w.HostProcessName?.Contains(wantedProcess, StringComparison.OrdinalIgnoreCase) == true)
             .Where(w => _windowService.EvaluateTargetPolicy(w.Handle) is not { Allowed: false })
@@ -435,22 +593,46 @@ public class ProcessService : IProcessService
     /// released). A declined prompt is <see cref="LaunchErrorCode.ElevationCancelled"/>, any other failure
     /// <see cref="LaunchErrorCode.LaunchException"/>. A call cancelled while the start still runs hands the start to
     /// <paramref name="onAbandonedStart"/> when there is one (which then owns the process handle it brings), and throws.
+    /// A packaged app (roadmap M6.5) is activated instead (<see cref="Activate"/>), for at most <see cref="ActivationTimeout"/>,
+    /// and an activation that takes longer is <see cref="LaunchStatus.TimedOut"/>; from an elevated server, which Windows does
+    /// not let activate an app, it is started through the shell, without a process ID.
     /// </summary>
     private async Task<StartedLaunch> StartAsync(
         LaunchPlan plan, bool takeBaseline, CancellationToken cancellationToken, Action<Task<IProcessHandle?>>? onAbandonedStart = null)
     {
+        var activate = plan.Target is { Kind: LaunchTargetKind.PackagedApp, App: not null } && _appsWrapper != null;
+        if (activate && HungActivations >= MaxHungActivations)
+        {
+            return new StartedLaunch(plan, null, null, DateTime.UtcNow, new LaunchResult(false,
+                ErrorMessage: $"{MaxHungActivations} earlier activations of packaged apps are still waiting for Windows to answer, so " +
+                              "no other is started now. Nothing was started. Look for the apps' windows with find_windows, and try " +
+                              "again once they have opened (or ask the user to check them).",
+                ErrorCode: nameof(LaunchErrorCode.ActivationFailed), Warning: plan.Warning));
+        }
+
+        string? startNote = null;
+        if (activate && ServerIsElevated())
+        {
+            activate = false;
+            startNote = "The server runs elevated, and Windows does not activate a packaged app from an elevated process, so the " +
+                        "app was started through the shell: its processId is not known (the app runs at the user's normal level, " +
+                        "and its window is found by its package).";
+        }
+
         var baseline = takeBaseline ? _windowWait.TakeBaseline() : null;
         var launchedAt = DateTime.UtcNow;
         // On a thread of its own, not the thread pool: a start that waits for the user's answer to a UAC prompt can take
         // minutes, and a busy thread pool must not delay a start into looking like one
-        var start = Task.Factory.StartNew(
-            () => _processWrapper.StartProcess(plan.StartInfo!),
-            CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
+        Func<IProcessHandle?> startCall = activate
+            ? () => Activate(plan, note => startNote = note)
+            : () => _processWrapper.StartProcess(plan.StartInfo!);
+        var start = Task.Factory.StartNew(startCall, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
 
+        var timeout = activate ? ActivationTimeout : StartTimeout;
         Task finished;
         using (var stopTimer = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
         {
-            finished = await Task.WhenAny(start, Task.Delay(StartTimeout, stopTimer.Token)).ConfigureAwait(false);
+            finished = await Task.WhenAny(start, Task.Delay(timeout, stopTimer.Token)).ConfigureAwait(false);
             stopTimer.Cancel();
         }
 
@@ -464,6 +646,22 @@ public class ProcessService : IProcessService
 
             ReleaseWhenStarted(start);
             cancellationToken.ThrowIfCancellationRequested();
+            if (activate)
+            {
+                // Counted until Windows answers: a stuck activation keeps two threads
+                Interlocked.Increment(ref _hungActivations);
+                start.ContinueWith(
+                    _ => Interlocked.Decrement(ref _hungActivations),
+                    CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+                return new StartedLaunch(plan, null, null, launchedAt, new LaunchResult(
+                    Success: true,
+                    Warning: CombineWarnings(plan.Warning,
+                        $"The activation of the app did not return within {timeout.TotalSeconds:0.#} seconds: it may still be " +
+                        "starting (a cold start with a splash screen) or be stuck, and its process ID is not known. Look for its " +
+                        "window with find_windows; do not launch it again."),
+                    Status: LaunchStatus.TimedOut));
+            }
+
             return new StartedLaunch(plan, null, null, launchedAt, new LaunchResult(
                 Success: true,
                 Warning: CombineWarnings(plan.Warning,
@@ -477,7 +675,14 @@ public class ProcessService : IProcessService
 
         try
         {
-            return new StartedLaunch(plan, await start.ConfigureAwait(false), baseline, launchedAt);
+            var process = await start.ConfigureAwait(false);
+            return new StartedLaunch(plan with { Warning = CombineWarnings(plan.Warning, startNote) }, process, baseline, launchedAt);
+        }
+        catch (ActivationFailedException ex)
+        {
+            return new StartedLaunch(plan, null, null, launchedAt, new LaunchResult(false,
+                ErrorMessage: ActivationFailureMessage(plan.Target!.App!, ex.Result),
+                ErrorCode: nameof(LaunchErrorCode.ActivationFailed), Warning: plan.Warning));
         }
         catch (Win32Exception ex) when (ex.NativeErrorCode == ErrorCancelled)
         {
@@ -491,6 +696,69 @@ public class ProcessService : IProcessService
             return new StartedLaunch(plan, null, null, launchedAt, new LaunchResult(false,
                 ErrorMessage: ex.Message, ErrorCode: nameof(LaunchErrorCode.LaunchException), Warning: plan.Warning));
         }
+    }
+
+    /// <summary>
+    /// Activates a packaged app (roadmap M6.5) on the start's own thread and opens the process the activation reports: null
+    /// when it exited already (it handed the request to an instance that was running, whose window the package then tells).
+    /// When Windows refuses the activation for this server's elevation, the app is started through the shell instead,
+    /// without a process ID, and <paramref name="note"/> says so; any other failure throws <see cref="ActivationFailedException"/>.
+    /// </summary>
+    private IProcessHandle? Activate(LaunchPlan plan, Action<string> note)
+    {
+        var app = plan.Target!.App!;
+        var arguments = string.IsNullOrEmpty(plan.StartInfo!.Arguments) ? null : plan.StartInfo.Arguments;
+        var activation = _appsWrapper!.ActivateApplication(app.AppUserModelId, arguments);
+        if (activation.Succeeded)
+        {
+            if (activation.ProcessId is not { } processId)
+                return null;
+
+            IProcessHandle? process;
+            try
+            {
+                process = _processWrapper.OpenProcess(processId);
+            }
+            catch (Exception ex) when (ex is InvalidOperationException or Win32Exception or ArgumentException or UnauthorizedAccessException)
+            {
+                return null;
+            }
+
+            // Review M6.5 #4: an app that exited at once may have left its PID to another process before it was opened. The
+            // handle, now held, pins the PID: the process behind it must be of the app's package
+            if (process != null &&
+                !string.Equals(_appsWrapper.GetPackageFamilyName(processId), app.PackageFamilyName, StringComparison.OrdinalIgnoreCase))
+            {
+                process.Dispose();
+                return null;
+            }
+
+            return process;
+        }
+
+        if (!ActivationRefusedForElevation.Contains(activation.HResult))
+            throw new ActivationFailedException(activation.HResult);
+
+        note($"Windows does not activate a packaged app from this server (HRESULT 0x{activation.HResult:X8}: the server runs " +
+             "elevated, or User Account Control is off), so the app was started through the shell: its processId is not known, " +
+             "and its window is found by its package.");
+        return _processWrapper.StartProcess(plan.StartInfo);
+    }
+
+    /// <summary>Why a packaged app's activation failed, with its HRESULT and what to do.</summary>
+    private static string ActivationFailureMessage(PackagedAppId app, int hresult)
+    {
+        var reason = hresult == ApplicationNotRegistered
+            ? "the app is not installed for the user, or cannot be launched this way: check the appId with list_installed_apps"
+            : "the app may not be installed for this user (check the appId with list_installed_apps), its package may be " +
+              "being updated, or it failed to start";
+        return $"Windows could not activate the app '{app.AppUserModelId}' (HRESULT 0x{hresult:X8}): {reason}. Nothing was started.";
+    }
+
+    /// <summary>A packaged app's activation failed with the HRESULT in <see cref="Result"/> (roadmap M6.5).</summary>
+    private sealed class ActivationFailedException(int result) : Exception($"The activation failed with HRESULT 0x{result:X8}.")
+    {
+        public int Result { get; } = result;
     }
 
     /// <summary>A start that was not waited for: its process handle is released when it comes, and a failure is observed.</summary>
@@ -536,7 +804,12 @@ public class ProcessService : IProcessService
             TimeoutMs = waitTimeoutMs,
             DocumentHints = DocumentHints(target, request.Arguments, launch.Plan.StartInfo!.WorkingDirectory),
             TitleContains = string.IsNullOrWhiteSpace(request.ExpectWindow?.TitleContains) ? null : request.ExpectWindow.TitleContains.Trim(),
-            TryClaim = tryClaim
+            TryClaim = tryClaim,
+            // A packaged app's frame may be in the baseline, cloaked: Windows shows a suspended app's frame again (roadmap
+            // M6.5). Only for a process the activation started: an app that ran before keeps its window (review M6.5 #9)
+            WasCloakedOwner = target.Kind == LaunchTargetKind.PackagedApp && launch.Process is { } activated && StartedSince(activated.Id, launch.LaunchedAtUtc)
+                ? candidate => owner.StartedProcess(candidate.ProcessId)
+                : null
         };
 
         var wait = await _windowWait.WaitForNewWindowAsync(launch.Baseline!, isOwner, options, cancellationToken).ConfigureAwait(false);
@@ -573,9 +846,13 @@ public class ProcessService : IProcessService
             LauncherExited: launcherExited);
     }
 
+    /// <summary>Whether the process started at or after <paramref name="launchedAtUtc"/> (a second's tolerance); false when unknown.</summary>
+    private bool StartedSince(int processId, DateTime launchedAtUtc) =>
+        _processWrapper.GetProcessStartTime(processId) is { } started && started >= launchedAtUtc - TimeSpan.FromSeconds(1);
+
     private LaunchWindowOwner OwnerOf(StartedLaunch launch, LaunchRequest request) =>
         LaunchWindowOwner.For(_processWrapper, launch.Process?.Id, launch.LaunchedAtUtc, launch.Plan.Target!, request.ExpectWindow,
-            request.OnlyStartedProcess);
+            request.OnlyStartedProcess, _appsWrapper == null ? null : _appsWrapper.GetPackageFamilyName);
 
     /// <summary>
     /// A batch launch's owner check: <paramref name="owner"/>'s match, except for a window whose process another launch of
@@ -751,9 +1028,19 @@ public class ProcessService : IProcessService
     /// arguments, only for a program <see cref="ChromiumPrograms"/> recognizes (a Chromium browser, an Electron or a CEF
     /// app, started by its .exe) and only once; for any other target nothing is added and the plan's warning says why. In
     /// front, because Chromium reads no switch after a "--" argument.</item>
+    /// <item>Roadmap M6.5: a packaged app's AppUserModelID, bare or as shell:AppsFolder\&lt;AUMID&gt;, is planned as an
+    /// activation (<see cref="LaunchTargetKind.PackagedApp"/>). Arguments go to an app or a shell:AppsFolder entry only when
+    /// its program is known and is no interpreter (<see cref="InterpreterGuard.CheckApp"/>). A bare name that is no program
+    /// on disk is looked up among the installed apps by its exact display name (<see cref="IInstalledAppsService.FindByName"/>):
+    /// one packaged app is planned as it, one desktop app as its program (through every check here), several are
+    /// AmbiguousApp.</item>
+    /// <item><paramref name="runAsAdmin"/> (roadmap M6.5) starts a program's .exe with the runas verb; any other target is
+    /// refused. Whether the user must approve the elevation is decided by the launch, not here (PreviewElevation).</item>
     /// </list>
     /// </remarks>
-    public LaunchPlan PlanLaunch(string executable, string[]? arguments = null, string? workingDirectory = null, bool forceAccessibility = false)
+    public LaunchPlan PlanLaunch(
+        string executable, string[]? arguments = null, string? workingDirectory = null, bool forceAccessibility = false,
+        bool runAsAdmin = false)
     {
         // Validate executable path
         var executableValidation = _validationService.ValidateExecutable(executable);
@@ -792,6 +1079,13 @@ public class ProcessService : IProcessService
 
         // The resolver checks the server's current directory itself; the working directory is checked when one was given
         var requestedWorkingDirectory = workingDirValidation.SanitizedPath ?? (string.IsNullOrWhiteSpace(workingDirectory) ? null : workingDirectory);
+
+        // A packaged app is activated by its AppUserModelID; the resolver has nothing to find (roadmap M6.5)
+        if (PackagedAppId.TryParse(executableValidation.SanitizedExecutable ?? executable, out var packagedApp))
+        {
+            return PlanPackagedApp(packagedApp, executable, arguments, requestedWorkingDirectory, forceAccessibility, runAsAdmin, warning);
+        }
+
         var target = _executableResolver.Resolve(executableValidation.SanitizedExecutable ?? executable, requestedWorkingDirectory);
 
         if (target.FoundOnlyInWorkingDirectory != null)
@@ -807,10 +1101,17 @@ public class ProcessService : IProcessService
 
         if (target.NotFound)
         {
+            if (PlanInstalledApp(executable, arguments, workingDirectory, requestedWorkingDirectory, forceAccessibility, runAsAdmin,
+                    warning) is { } byName)
+            {
+                return byName;
+            }
+
             return LaunchPlan.Rejected(
-                $"'{executable}' was not found in the Windows directory, System32, the PATH entries or App Paths. A bare name " +
-                "is never passed to Windows unresolved, because Windows would also search the server's current directory. Pass " +
-                @"the program's full path, or a URI such as ms-settings: or shell:AppsFolder\<AppUserModelID> for a Store app.",
+                $"'{executable}' was not found in the Windows directory, System32, the PATH entries or App Paths, and is no " +
+                "installed app's exact name. A bare name is never passed to Windows unresolved, because Windows would also search " +
+                "the server's current directory. Pass the program's full path, or an app's appId or path from list_installed_apps " +
+                "(names are localized), or a URI such as ms-settings:.",
                 nameof(LaunchErrorCode.ExecutableNotFound),
                 warning);
         }
@@ -818,6 +1119,18 @@ public class ProcessService : IProcessService
         if (_interpreterGuard.Check(executable, target.FileName, arguments) is { } refusal)
         {
             return LaunchPlan.Rejected(refusal.Message, refusal.ErrorCode, warning);
+        }
+
+        // A desktop app's shell:AppsFolder entry: the shell starts its program, which the guard above cannot see (roadmap
+        // M6.5): a script is refused with or without arguments (review M6.5 #3), and arguments need a program that is known
+        if (target.Kind == LaunchTargetKind.Other &&
+            target.FileName.StartsWith(PackagedAppId.AppsFolderPrefix, StringComparison.OrdinalIgnoreCase))
+        {
+            var appId = target.FileName[PackagedAppId.AppsFolderPrefix.Length..];
+            if (InterpreterGuard.CheckApp(appId, _installedApps?.FindByAppId(appId)?.Path, null, arguments) is { } appRefusal)
+            {
+                return LaunchPlan.Rejected(appRefusal.Message, appRefusal.ErrorCode, warning);
+            }
         }
 
         var isNativeExecutable = target.Kind == LaunchTargetKind.NativeExecutable;
@@ -833,6 +1146,14 @@ public class ProcessService : IProcessService
             }
         }
 
+        if (runAsAdmin)
+        {
+            if (!isNativeExecutable)
+            {
+                return LaunchPlan.Rejected(RunAsAdminOnlyExe(executable), ToolErrorReporting.InvalidArgumentsErrorCode, warning);
+            }
+        }
+
         bool? forceAccessibilityApplied = null;
         if (forceAccessibility)
         {
@@ -842,10 +1163,7 @@ public class ProcessService : IProcessService
             forceAccessibilityApplied = whyNot == null;
             if (whyNot != null)
             {
-                warning = CombineWarnings(warning,
-                    $"forceAccessibility was not applied to '{executable}': {whyNot}. {ChromiumPrograms.ForceRendererAccessibility} " +
-                    "is added only to a Chromium browser, an Electron or a CEF app started by its .exe (for VS Code, Code.exe, " +
-                    "not code.cmd).");
+                warning = CombineWarnings(warning, ForceAccessibilityNotApplied(executable, whyNot));
             }
             else if (arguments?.Any(ChromiumPrograms.IsForceAccessibilityArgument) != true)
             {
@@ -865,7 +1183,119 @@ public class ProcessService : IProcessService
             startInfo.Arguments = CommandLineBuilder.JoinArguments(arguments, quoteCmdDelimiters: !isNativeExecutable);
         }
 
+        if (runAsAdmin)
+        {
+            startInfo.Verb = RunAsVerb;
+        }
+
         return new LaunchPlan(startInfo, target.Kind, warning, Target: target, ForceAccessibilityApplied: forceAccessibilityApplied);
+    }
+
+    private static string ForceAccessibilityNotApplied(string executable, string whyNot) =>
+        $"forceAccessibility was not applied to '{executable}': {whyNot}. {ChromiumPrograms.ForceRendererAccessibility} " +
+        "is added only to a Chromium browser, an Electron or a CEF app started by its .exe (for VS Code, Code.exe, " +
+        "not code.cmd).";
+
+    private static string RunAsAdminOnlyExe(string executable) =>
+        $"runAsAdmin starts only a program's .exe as administrator, and '{executable}' is not one (a URI, document, shortcut " +
+        "or packaged app). Nothing was started.";
+
+    private static string ElevationNotConfirmedMessage(string reason) =>
+        $"Windows will not ask the user before it elevates this program: {reason}. So runAsAdmin needs the user's approval " +
+        "through the client: launch_application asks for it when the client can ask (elicitation), and " +
+        "launch_applications_batch never asks. Nothing was started. Ask the user to start the program as administrator.";
+
+    /// <summary>
+    /// Plans a packaged app's activation (roadmap M6.5): its shell:AppsFolder target (what the shell fallback starts), the
+    /// arguments quoted for the app alone (activation runs no cmd.exe), and refused when the app is an interpreter or its
+    /// program cannot be told (<see cref="InterpreterGuard.CheckApp"/>). Neither runAsAdmin nor forceAccessibility applies.
+    /// </summary>
+    private LaunchPlan PlanPackagedApp(
+        PackagedAppId app, string executable, string[]? arguments, string? workingDirectory, bool forceAccessibility, bool runAsAdmin,
+        string? warning)
+    {
+        if (runAsAdmin)
+        {
+            return LaunchPlan.Rejected(RunAsAdminOnlyExe(executable), ToolErrorReporting.InvalidArgumentsErrorCode, warning);
+        }
+
+        var program = arguments?.Length > 0 ? _installedApps?.ProgramOf(app) : null;
+        if (InterpreterGuard.CheckApp(app.AppUserModelId, program, app.PackageFamilyName, arguments) is { } refusal)
+        {
+            return LaunchPlan.Rejected(refusal.Message, refusal.ErrorCode, warning);
+        }
+
+        bool? forceAccessibilityApplied = null;
+        if (forceAccessibility)
+        {
+            forceAccessibilityApplied = false;
+            warning = CombineWarnings(warning, ForceAccessibilityNotApplied(executable, "it is a packaged app, not a program's .exe"));
+        }
+
+        var target = new ResolvedLaunchTarget(app.AppsFolderTarget, LaunchTargetKind.PackagedApp) { App = app };
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = app.AppsFolderTarget,
+            UseShellExecute = true,
+            WorkingDirectory = workingDirectory ?? DefaultWorkingDirectory(target)
+        };
+
+        if (arguments?.Length > 0)
+        {
+            startInfo.Arguments = CommandLineBuilder.JoinArguments(arguments, quoteCmdDelimiters: false);
+        }
+
+        return new LaunchPlan(startInfo, LaunchTargetKind.PackagedApp, warning, Target: target, ForceAccessibilityApplied: forceAccessibilityApplied);
+    }
+
+    /// <summary>The most installed apps an AmbiguousApp error lists.</summary>
+    private const int MaxAmbiguousApps = 5;
+
+    /// <summary>
+    /// A bare name that is no program on disk, looked up among the installed apps by its exact display name (roadmap M6.5,
+    /// owner decision D11: never a part of a name, since any program can add a Start menu shortcut). Null when no installed
+    /// app has the name (or the apps cannot be read), so the launch is ExecutableNotFound. One packaged app is planned as
+    /// its activation; one desktop app as its program's path, through every check of <see cref="PlanLaunch"/> (a shortcut's
+    /// own arguments are never used); several are AmbiguousApp.
+    /// </summary>
+    private LaunchPlan? PlanInstalledApp(
+        string name, string[]? arguments, string? workingDirectory, string? requestedWorkingDirectory, bool forceAccessibility,
+        bool runAsAdmin, string? warning)
+    {
+        if (_installedApps == null || name.IndexOfAny(['\\', '/', ':']) >= 0)
+            return null;
+
+        var apps = _installedApps.FindByName(name)?
+            .Where(a => a.Packaged ? PackagedAppId.TryParse(a.AppId, out _) : a.Path != null && Path.IsPathFullyQualified(a.Path))
+            .ToList();
+        if (apps is not { Count: > 0 })
+            return null;
+
+        if (apps.Count > 1)
+        {
+            var listed = string.Join("; ", apps.Take(MaxAmbiguousApps).Select(a => a.Packaged
+                ? $"'{a.Name}' appId {a.AppId}"
+                : $"'{a.Name}' appId {a.AppId}, path {a.Path}"));
+            var more = apps.Count > MaxAmbiguousApps ? $" and {apps.Count - MaxAmbiguousApps} more" : string.Empty;
+            return LaunchPlan.Rejected(
+                $"'{name}' is no program on disk, and {apps.Count} installed apps have that name: {listed}{more}. Launch one by its " +
+                "appId (a packaged app) or path. Nothing was started.",
+                nameof(LaunchErrorCode.AmbiguousApp),
+                warning);
+        }
+
+        var app = apps[0];
+        var note = $"'{name}' is no program on disk; it was resolved to the installed app '{app.Name}' " +
+                   (app.Packaged ? $"(appId {app.AppId})." : $"({app.Path}).");
+        if (app.Packaged && PackagedAppId.TryParse(app.AppId, out var packaged))
+        {
+            return PlanPackagedApp(packaged, name, arguments, requestedWorkingDirectory, forceAccessibility, runAsAdmin, CombineWarnings(warning, note));
+        }
+
+        // Planned again from its path, so the program gets every check a path gets; that plan validates the working directory
+        // again and repeats its warning, so only the name's note is added
+        var plan = PlanLaunch(app.Path!, arguments, workingDirectory, forceAccessibility, runAsAdmin);
+        return plan with { Warning = CombineWarnings(note, plan.Warning) };
     }
 
     /// <summary>
@@ -1153,7 +1583,7 @@ public class ProcessService : IProcessService
                 cancellationToken.ThrowIfCancellationRequested();
 
                 var request = applications[i];
-                var plan = PlanLaunch(request.Executable, request.Arguments, request.WorkingDirectory, request.ForceAccessibility);
+                var plan = PlanFor(request);
                 plans[i] = plan;
                 if (!plan.IsValid)
                 {
@@ -1247,7 +1677,7 @@ public class ProcessService : IProcessService
             }
         }
 
-        return results.Select((result, i) => plans[i] is { } plan ? WithForceAccessibility(result!, plan) : result!).ToList();
+        return results.Select((result, i) => plans[i] is { } plan ? Finish(result!, plan) : result!).ToList();
     }
 
     private static string DescribeLaunch(LaunchResult result) => !result.Success

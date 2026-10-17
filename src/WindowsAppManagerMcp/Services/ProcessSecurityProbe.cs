@@ -43,6 +43,15 @@ public sealed class ProcessSecurityProbe : IProcessSecurityProbe
 
     public ProcessIntegrity ServerIntegrity => _serverIntegrity.Value;
 
+    public ElevationPrompt GetElevationPrompt() => _native.ReadUacSettings() switch
+    {
+        null => ElevationPrompt.Unknown,
+        { EnableLua: 0 } or { ConsentPromptBehaviorAdmin: 0 } => ElevationPrompt.Silent,
+        // Review M6.5 #1: the built-in Administrator outside Admin Approval Mode (the default) is never asked
+        { IsBuiltInAdministrator: true, FilterAdministratorToken: not 1 } => ElevationPrompt.Silent,
+        _ => ElevationPrompt.Prompts
+    };
+
     public ProcessIntegrity GetIntegrity(int processId)
     {
         if (processId <= 0)

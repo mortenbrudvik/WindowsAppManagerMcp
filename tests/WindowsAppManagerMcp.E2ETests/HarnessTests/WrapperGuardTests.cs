@@ -575,6 +575,46 @@ public class WrapperGuardTests
         inner.VerifyNoOtherCalls();
     }
 
+    private const string CalculatorAppId = "Microsoft.WindowsCalculator_8wekyb3d8bbwe!App";
+
+    [Fact]
+    public void FixtureOnlyGuard_RefusesActivatingAPackagedApp_ByDefault()
+    {
+        // Roadmap M6.5: an activation starts the app's process, like StartProcess
+        var inner = new Mock<INativeAppsWrapper>(MockBehavior.Strict);
+        var guarded = WrapperGuard.Create(inner.Object, FixtureOnly(new FakeDesktop()));
+
+        var activate = () => guarded.ActivateApplication(CalculatorAppId, null);
+
+        activate.Should().Throw<E2EGuardException>().WithMessage("*may not start processes*");
+        inner.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public void FixtureOnlyGuard_ActivatesOnlyTheAppsTheScenarioAllows_WithoutArguments()
+    {
+        // Arrange - a packaged app scenario allows Calculator, which holds no data of the user
+        var inner = new Mock<INativeAppsWrapper>(MockBehavior.Strict);
+        inner.Setup(a => a.ActivateApplication(CalculatorAppId, null)).Returns(new AppActivationResult(0, 4242));
+        var guarded = WrapperGuard.Create(inner.Object, new FixtureOnlyCallPolicy(new FakeDesktop(), FixturePid, allowedActivations: [CalculatorAppId]));
+        var processes = new Mock<INativeProcessWrapper>(MockBehavior.Strict);
+        var guardedProcesses = WrapperGuard.Create(processes.Object,
+            new FixtureOnlyCallPolicy(new FakeDesktop(), FixturePid, allowedActivations: [CalculatorAppId]));
+
+        // Act
+        var activated = guarded.ActivateApplication(CalculatorAppId, null);
+        var withArguments = () => guarded.ActivateApplication(CalculatorAppId, "--evil");
+        var another = () => guarded.ActivateApplication("Microsoft.WindowsTerminal_8wekyb3d8bbwe!App", null);
+        var shellStart = () => guardedProcesses.StartProcess(new ProcessStartInfo(@"shell:AppsFolder\" + CalculatorAppId));
+
+        // Assert - the shell fallback is no activation, and stays refused
+        activated.ProcessId.Should().Be(4242);
+        withArguments.Should().Throw<E2EGuardException>().WithMessage("*arguments*");
+        another.Should().Throw<E2EGuardException>().WithMessage("*Microsoft.WindowsTerminal_8wekyb3d8bbwe!App*");
+        shellStart.Should().Throw<E2EGuardException>().WithMessage("*may not start processes*");
+        inner.Verify(a => a.ActivateApplication(It.IsAny<string>(), It.IsAny<string?>()), Times.Once);
+    }
+
     [Fact]
     public void FixtureOnlyGuard_ClosesAndKillsTheFixtureProcess()
     {

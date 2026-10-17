@@ -691,4 +691,198 @@ public class AppLauncherToolsTests
     }
 
     #endregion
+
+    #region Packaged apps, runAsAdmin and list_installed_apps (roadmap M6.5)
+
+    [Fact]
+    public async Task LaunchApplication_HoldsTheInputGateForTheLaunch_ItTakesItself()
+    {
+        // Arrange - launch_application is self-gated, so that its runAsAdmin question never holds the gate
+        var flow = InputGate.TagFlow();
+        bool? held = null;
+        _mockProcessService.Setup(p => p.LaunchApplicationAsync(It.IsAny<LaunchRequest>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .Callback(() => held = InputGate.IsHeldBy(flow))
+            .ReturnsAsync(new LaunchResult(true, 1234, Status: LaunchStatus.Started));
+
+        // Act
+        await CreateSut().LaunchApplication("notepad.exe");
+
+        // Assert - and released again
+        held.Should().BeTrue();
+        InputGate.IsHeldBy(flow).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task LaunchApplication_WhilePaused_IsPausedByUser_AndStartsNothing()
+    {
+        using var session = new InputSession(new FakeInputWrapper());
+        session.Pause(InputControlSources.Hotkey);
+
+        var act = () => new AppLauncherTools(_mockProcessService.Object, session: session).LaunchApplication("notepad.exe");
+
+        (await act.Should().ThrowAsync<ToolErrorException>()).Which.ErrorCode.Should().Be(nameof(WindowErrorCode.PausedByUser));
+        _mockProcessService.Verify(p => p.LaunchApplicationAsync(It.IsAny<LaunchRequest>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task LaunchApplication_PassesRunAsAdmin_WithoutAnApprovalTheUserDidNotGive()
+    {
+        // Arrange - the client cannot ask (no server), and Windows would not ask either: the service refuses it
+        LaunchReturns(new LaunchResult(false, ErrorMessage: "needs confirmation", ErrorCode: nameof(LaunchErrorCode.ElevationNotConfirmed)));
+        _mockProcessService.Setup(p => p.PreviewElevation(It.IsAny<LaunchRequest>()))
+            .Returns(new ElevationPreview(true, "User Account Control is off", new ElevationApproval(@"C:\Tools\app.exe", "")));
+
+        // Act
+        var result = await CreateSut().LaunchApplication(@"C:\Tools\app.exe", runAsAdmin: true);
+
+        // Assert
+        result.ErrorCode.Should().Be(nameof(LaunchErrorCode.ElevationNotConfirmed));
+        result.Elevation.Should().BeNull();
+        _mockProcessService.Verify(p => p.LaunchApplicationAsync(
+            It.Is<LaunchRequest>(r => r.RunAsAdmin && r.ApprovedElevation == null), false, 5000, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task LaunchApplication_RunAsAdminWindowsAsksAbout_ReportsElevationUacPrompt()
+    {
+        // Review M6.5 #8: the result, and so the audit line, say how the elevation was approved
+        LaunchReturns(new LaunchResult(true, 1234, Status: LaunchStatus.Started));
+        _mockProcessService.Setup(p => p.PreviewElevation(It.IsAny<LaunchRequest>()))
+            .Returns(new ElevationPreview(false, null, new ElevationApproval(@"C:\Tools\app.exe", "")));
+
+        var result = await CreateSut().LaunchApplication(@"C:\Tools\app.exe", runAsAdmin: true);
+
+        result.Elevation.Should().Be("uacPrompt");
+        (await CreateSut().LaunchApplication(@"C:\Tools\app.exe")).Elevation.Should().BeNull("nothing was elevated");
+    }
+
+    [Fact]
+    public async Task LaunchApplication_ARunAsAdminThePlanRefuses_IsRefusedBeforeAnyQuestion_AndStartsNothing()
+    {
+        _mockProcessService.Setup(p => p.PreviewElevation(It.IsAny<LaunchRequest>()))
+            .Returns(new ElevationPreview(false, null, null, ToolErrorReporting.InvalidArgumentsErrorCode, "runAsAdmin starts only a program's .exe"));
+
+        var result = await CreateSut().LaunchApplication("ms-settings:", runAsAdmin: true);
+
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(ToolErrorReporting.InvalidArgumentsErrorCode);
+        _mockProcessService.Verify(p => p.LaunchApplicationAsync(It.IsAny<LaunchRequest>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task LaunchApplication_WhileAnotherCallHoldsTheGate_GivesUpWithInputBusy_AndStartsNothing()
+    {
+        // Review M6.5, missing test 6: launch_application takes the gate itself, with the filter's InputBusy
+        using var session = new InputSession(new FakeInputWrapper());
+        var sut = new AppLauncherTools(_mockProcessService.Object, session: session, gateWaitTimeout: TimeSpan.FromMilliseconds(50));
+        var held = Task.Run(() => InputGate.Enter());
+        using var gate = await held;
+
+        var act = () => sut.LaunchApplication("notepad.exe");
+
+        (await act.Should().ThrowAsync<ToolErrorException>()).Which.ErrorCode.Should().Be("InputBusy");
+        _mockProcessService.Verify(p => p.LaunchApplicationAsync(It.IsAny<LaunchRequest>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task LaunchApplication_ReleasesTheGate_WhenTheLaunchThrows()
+    {
+        _mockProcessService.Setup(p => p.LaunchApplicationAsync(It.IsAny<LaunchRequest>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("launch failed"));
+
+        var act = () => CreateSut().LaunchApplication("notepad.exe");
+
+        await act.Should().ThrowAsync<InvalidOperationException>();
+        var next = Task.Run(() => InputGate.Enter().Dispose());
+        (await Task.WhenAny(next, Task.Delay(TimeSpan.FromSeconds(10))) == next).Should().BeTrue("the gate was released");
+    }
+
+    [Fact]
+    public void ElevationApprovalLost_TellsTheAgentTheUserIsAskedAgain()
+    {
+        // Review M6.5 #9: an approval is not kept across an InputBusy; the retry asks the user again
+        var busy = new ToolErrorException("InputBusy", "Another call held the input for 30 seconds. Nothing was done.");
+
+        var lost = AppLauncherTools.ElevationApprovalLost(busy);
+
+        lost.ErrorCode.Should().Be("InputBusy");
+        lost.Message.Should().StartWith(busy.Message).And.Contain("asked again");
+    }
+
+    [Fact]
+    public async Task LaunchApplication_RunAsAdminWithPlacement_IsInvalidArguments_AndLaunchesNothing()
+    {
+        var act = () => CreateSut().LaunchApplication(@"C:\Tools\app.exe", placement: new LaunchPlacement(Focus: true), runAsAdmin: true);
+
+        (await act.Should().ThrowAsync<ToolErrorException>()).Which.ErrorCode.Should().Be(ToolErrorReporting.InvalidArgumentsErrorCode);
+        _mockProcessService.Verify(p => p.LaunchApplicationAsync(It.IsAny<LaunchRequest>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task LaunchApplicationsBatch_PassesEachItemsRunAsAdmin_AndRefusesItWithPlacementAlone()
+    {
+        // Arrange
+        IReadOnlyList<LaunchRequest>? passed = null;
+        _mockProcessService.Setup(p => p.LaunchApplicationsBatchAsync(It.IsAny<IReadOnlyList<LaunchRequest>>(), It.IsAny<bool>(), It.IsAny<int>(),
+                It.IsAny<IProgress<OperationProgress>?>(), It.IsAny<CancellationToken>()))
+            .Callback((IReadOnlyList<LaunchRequest> apps, bool _, int _, IProgress<OperationProgress>? _, CancellationToken _) => passed = apps)
+            .ReturnsAsync((IReadOnlyList<LaunchRequest> apps, bool _, int _, IProgress<OperationProgress>? _, CancellationToken _) =>
+                apps.Select(_ => new LaunchResult(true, 1, Status: LaunchStatus.Started)).ToList());
+
+        // Act
+        var result = await CreateSut().LaunchApplicationsBatch(
+        [
+            new ApplicationLaunchRequest(@"C:\Tools\app.exe", RunAsAdmin: true),
+            new ApplicationLaunchRequest(@"C:\Tools\other.exe", Placement: new LaunchPlacement(Focus: true), RunAsAdmin: true),
+            new ApplicationLaunchRequest("notepad.exe")
+        ]);
+
+        // Assert
+        passed!.Select(r => r.RunAsAdmin).Should().Equal(true, false);
+        result.Results[1].ErrorCode.Should().Be(ToolErrorReporting.InvalidArgumentsErrorCode);
+        result.Succeeded.Should().Be(2);
+        result.Results.Select(r => r.Elevation).Should().Equal("uacPrompt", null, null);
+    }
+
+    private readonly Mock<IInstalledAppsService> _installedApps = new();
+
+    [Fact]
+    public void ListInstalledApps_ReturnsTheAppsWithTheirTotal()
+    {
+        // Arrange
+        _installedApps.Setup(i => i.List("calc", 5)).Returns(new InstalledAppsListing(
+            [new InstalledApp("Calculator", "Microsoft.WindowsCalculator_8wekyb3d8bbwe!App", true, null)], 3, true, false));
+
+        // Act
+        var result = new AppLauncherTools(_mockProcessService.Object, installedApps: _installedApps.Object).ListInstalledApps("calc", 5);
+
+        // Assert
+        result.Apps.Should().Equal(new InstalledAppDto("Calculator", "Microsoft.WindowsCalculator_8wekyb3d8bbwe!App", true));
+        result.Total.Should().Be(3);
+        result.Truncated.Should().BeTrue();
+        result.Warning.Should().BeNull();
+    }
+
+    [Fact]
+    public void ListInstalledApps_AStartMenuThatCannotBeRead_IsAnEmptyListWithAWarning()
+    {
+        _installedApps.Setup(i => i.List(null, 25)).Returns(new InstalledAppsListing([], 0, false, Unreadable: true));
+
+        var result = new AppLauncherTools(_mockProcessService.Object, installedApps: _installedApps.Object).ListInstalledApps();
+
+        result.Apps.Should().BeEmpty();
+        result.Warning.Should().Contain("could not be read");
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(201)]
+    public void ListInstalledApps_ALimitOutOfRange_IsInvalidArguments(int limit)
+    {
+        var act = () => new AppLauncherTools(_mockProcessService.Object, installedApps: _installedApps.Object).ListInstalledApps(limit: limit);
+
+        act.Should().Throw<ToolErrorException>().Which.ErrorCode.Should().Be(ToolErrorReporting.InvalidArgumentsErrorCode);
+    }
+
+    #endregion
 }

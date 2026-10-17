@@ -44,4 +44,26 @@ public interface IProcessSecurityProbe
     /// read. Read live on every call.
     /// </summary>
     bool IsSessionLocked();
+
+    /// <summary>
+    /// Whether Windows asks the user before it elevates a program started as administrator (roadmap M6.5):
+    /// <see cref="ElevationPrompt.Silent"/> when User Account Control is off (EnableLUA 0) or elevates administrators
+    /// without asking (ConsentPromptBehaviorAdmin 0), or the server runs as the built-in Administrator without Admin Approval
+    /// Mode (FilterAdministratorToken not 1), <see cref="ElevationPrompt.Unknown"/> when the policy cannot be
+    /// read. A missing value counts as Windows' default, which asks. Read live on every call.
+    /// </summary>
+    ElevationPrompt GetElevationPrompt();
+}
+
+/// <summary>Whether Windows shows a UAC prompt before it elevates a program (see <see cref="IProcessSecurityProbe.GetElevationPrompt"/>).</summary>
+public enum ElevationPrompt
+{
+    /// <summary>Windows asks: the user approves or declines the elevation.</summary>
+    Prompts,
+
+    /// <summary>Windows elevates without asking anyone.</summary>
+    Silent,
+
+    /// <summary>The policy could not be read.</summary>
+    Unknown
 }

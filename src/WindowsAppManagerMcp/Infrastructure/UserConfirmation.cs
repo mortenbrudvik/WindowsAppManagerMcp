@@ -115,7 +115,10 @@ public static class UserConfirmation
     /// so format characters outside the Basic Multilingual Plane (the tag characters U+E0000 to U+E007F, for example)
     /// are removed too; a lone surrogate, which is no character, is removed, and the cut never splits a surrogate pair.
     /// </summary>
-    public static string Quote(string? text)
+    public static string Quote(string? text) => Quote(text, MaxQuotedLength);
+
+    /// <summary>As <see cref="Quote(string?)"/>, cut at <paramref name="maxLength"/> characters instead.</summary>
+    public static string Quote(string? text, int maxLength)
     {
         var source = (text ?? string.Empty).AsSpan();
         var line = new StringBuilder(source.Length);
@@ -151,9 +154,9 @@ public static class UserConfirmation
         }
 
         var quoted = line.ToString();
-        if (quoted.Length > MaxQuotedLength)
+        if (quoted.Length > maxLength)
         {
-            var cut = MaxQuotedLength - 1;
+            var cut = maxLength - 1;
             if (char.IsHighSurrogate(quoted[cut - 1]))
             {
                 cut--;
@@ -163,5 +166,30 @@ public static class UserConfirmation
         }
 
         return $"'{quoted}'";
+    }
+
+    /// <summary>The longest program path a question shows (<see cref="QuotePath"/>).</summary>
+    public const int MaxQuotedPathLength = 160;
+
+    /// <summary>
+    /// A program's path as a question shows it (review M6.5 #2): cleaned as <see cref="Quote(string?)"/> cleans a text, its
+    /// file name always whole, and when the path is longer than <see cref="MaxQuotedPathLength"/>, the middle of its folder
+    /// shortened to an ellipsis (the drive and the start of the folder, and the folder the file is in, stay).
+    /// </summary>
+    public static string QuotePath(string path)
+    {
+        var clean = Quote(path, int.MaxValue)[1..^1];
+        var separator = clean.LastIndexOf('\\');
+        if (clean.Length <= MaxQuotedPathLength || separator <= 0)
+        {
+            return $"'{clean}'";
+        }
+
+        var folder = clean[..separator];
+        var name = clean[separator..];
+        var room = Math.Max(MaxQuotedPathLength - name.Length - 1, 20);
+        var head = folder[..Math.Min(folder.Length, (room + 1) / 2)];
+        var tail = folder[^Math.Min(folder.Length - head.Length, room / 2)..];
+        return $"'{head}…{tail}{name}'";
     }
 }

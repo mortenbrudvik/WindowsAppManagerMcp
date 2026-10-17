@@ -144,6 +144,16 @@ public class NativeCallGuardTests
 
         // The launch's interpreter check expands 8.3 short names (InterpreterGuard, roadmap M3.F8)
         ["Kernel32.GetLongPathNameW"] = "reads the long form of a file path from the file system",
+
+        // Packaged apps and the Applications folder (NativeAppsWrapper, roadmap M6.5). Activation is a COM call of the
+        // wrapper (IApplicationActivationManager), which the E2E guard classifies as a process start
+        ["Apps.GetPackageFamilyName"] = "reads the package family name of a process opened for query access",
+        ["Apps.GetPackagesByPackageFamily"] = "reads the full names of a package family's installed packages",
+        ["Apps.GetPackagePathByFullName"] = "reads the folder a package is installed in",
+        ["Apps.SHGetKnownFolderItem"] = "gets the Applications folder as a shell item, which the wrapper only lists",
+        ["Apps.SHGetPropertyStoreForWindow"] = "gets a window's property store; the wrapper declares IPropertyStore without " +
+                                               "SetValue and Commit, so it can only read it",
+        ["Apps.PropVariantClear"] = "frees a PROPVARIANT the server read into its own memory",
     };
 
     /// <summary>
@@ -382,6 +392,40 @@ public class NativeCallGuardTests
         comInterfaces.Single(t => t.Name == "IVirtualDesktopManager").GetMethods().Select(m => m.Name)
             .Should().BeEquivalentTo(["IsWindowOnCurrentVirtualDesktop", "GetWindowDesktopId"],
                 "the server only reads where a window is; MoveWindowToDesktop must stay undeclared");
+    }
+
+    [Fact]
+    public void ThePackagedAppComInterfaces_DeclareOnlyWhatTheServerCalls()
+    {
+        // Arrange - roadmap M6.5: activation starts a packaged app, so it is declared once, in NativeAppsWrapper, and only
+        // ActivateApplication; a property store is only read
+        var comInterfaces = ServerTypes()
+            .Where(t => t.IsInterface && t.IsDefined(typeof(System.Runtime.InteropServices.ComImportAttribute), inherit: false))
+            .ToList();
+        static IEnumerable<string> MethodsOf(Type type) => type.GetMethods().Select(m => m.Name);
+
+        // Assert
+        comInterfaces.Where(t => t.Name.Contains("Activation", StringComparison.Ordinal)).Should().ContainSingle()
+            .Which.DeclaringType.Should().Be(typeof(NativeAppsWrapper));
+        MethodsOf(comInterfaces.Single(t => t.Name == "IApplicationActivationManager"))
+            .Should().BeEquivalentTo(["ActivateApplication"], "ActivateForFile and ActivateForProtocol must stay undeclared");
+        MethodsOf(comInterfaces.Single(t => t.Name == "IPropertyStore"))
+            .Should().BeEquivalentTo(["GetCount", "GetAt", "GetValue"], "SetValue and Commit, which write a property, must stay undeclared");
+        MethodsOf(comInterfaces.Single(t => t.Name == "IEnumShellItems")).Should().BeEquivalentTo(["Next"]);
+        comInterfaces.Where(t => MethodsOf(t).Any(name => name is "SetValue" or "Commit" or "ActivateForFile" or "ActivateForProtocol"))
+            .Select(t => t.FullName).Should().BeEmpty();
+    }
+
+    [Fact]
+    public void AppActivation_IsOnlyCalledByNativeAppsWrapper()
+    {
+        // Act - a packaged app's activation starts its process, like Process.Start
+        var callers = FindCallers(callee => callee.DeclaringType?.Name == "IApplicationActivationManager");
+
+        // Assert
+        callers.Keys.Should().Contain(typeof(NativeAppsWrapper), "the scan must see the wrapper's own activation");
+        Unexpected(callers, typeof(NativeAppsWrapper)).Should().BeEmpty(
+            "activating packaged apps must go through INativeAppsWrapper so tests can fake it");
     }
 
     [Fact]

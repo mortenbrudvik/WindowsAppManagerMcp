@@ -245,4 +245,79 @@ public class InterpreterGuardTests
     }
 
     #endregion
+
+    #region Packaged apps and Applications folder entries (roadmap M6.5)
+
+    [Theory]
+    [InlineData("WindowsTerminal.exe", "Microsoft.WindowsTerminal_8wekyb3d8bbwe")]
+    [InlineData("ubuntu.exe", "CanonicalGroupLimited.UbuntuonWindows_79rhkp1fndgsc")]
+    [InlineData("pwsh.exe", "Microsoft.PowerShell_8wekyb3d8bbwe")]
+    [InlineData("python3.12.exe", "PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0")]
+    [InlineData("SomeLauncher.exe", "PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0")]
+    [InlineData("SomeLauncher.exe", "CanonicalGroupLimited.Ubuntu24.04LTS_79rhkp1fndgsc")]
+    [InlineData("debian.exe", "TheDebianProject.DebianGNULinux_76v4gfsz19hv4")]
+    [InlineData("App.exe", "Microsoft.WindowsTerminalPreview_8wekyb3d8bbwe")]
+    [InlineData("AppInstallerCLI.exe", "Microsoft.DesktopAppInstaller_8wekyb3d8bbwe")] // winget (review M6.5 #9)
+    public void CheckApp_AnInterpreterPackageWithArguments_IsRefused(string program, string family)
+    {
+        // Act
+        var refusal = InterpreterGuard.CheckApp($"{family}!App", program, family, ["-c", "echo"]);
+
+        // Assert
+        refusal.Should().NotBeNull();
+        refusal!.ErrorCode.Should().Be(nameof(LaunchErrorCode.InterpreterWithArguments));
+        refusal.Message.Should().Contain("Nothing was started");
+    }
+
+    [Fact]
+    public void CheckApp_AnAppWhoseProgramIsNotKnown_IsRefusedWithArguments_FailClosed()
+    {
+        // Act
+        var refusal = InterpreterGuard.CheckApp("Vendor.App_8wekyb3d8bbwe!App", program: null, "Vendor.App_8wekyb3d8bbwe", ["file.txt"]);
+
+        // Assert
+        refusal!.ErrorCode.Should().Be(nameof(LaunchErrorCode.InterpreterWithArguments));
+        refusal.Message.Should().Contain("cannot tell which program");
+    }
+
+    [Theory]
+    [InlineData("Notepad.exe", "Microsoft.WindowsNotepad_8wekyb3d8bbwe", true)]
+    [InlineData(null, "Vendor.App_8wekyb3d8bbwe", false)]
+    [InlineData("pwsh.exe", "Microsoft.PowerShell_8wekyb3d8bbwe", false)]
+    public void CheckApp_WithoutArguments_OrAnotherProgram_IsAllowed(string? program, string family, bool withArguments)
+    {
+        // Act
+        var refusal = InterpreterGuard.CheckApp($"{family}!App", program, family, withArguments ? [@"C:\notes\todo.txt"] : []);
+
+        // Assert
+        refusal.Should().BeNull();
+    }
+
+    [Theory]
+    [InlineData(@"C:\Vendor\setup.hta", true)]
+    [InlineData(@"C:\Vendor\run.bat", false)]
+    [InlineData(@"C:\Vendor\tool.ps1", true)]
+    [InlineData(@"C:\Vendor\package.msi", false)]
+    public void CheckApp_AnEntryWhoseProgramIsAScript_IsRefused_WithOrWithoutArguments(string program, bool withArguments)
+    {
+        // Review M6.5 #3: the shell would run the script with its interpreter
+        var refusal = InterpreterGuard.CheckApp("Vendor.Setup", program, null, withArguments ? ["x"] : []);
+
+        refusal!.ErrorCode.Should().Be(nameof(LaunchErrorCode.ScriptFile));
+        refusal.Message.Should().Contain("Nothing was started");
+    }
+
+    [Fact]
+    public void CheckApp_ADesktopAppEntry_IsCheckedByItsProgram()
+    {
+        // Act
+        var refused = InterpreterGuard.CheckApp("PowerShell7", @"C:\Program Files\PowerShell\7\pwsh.exe", null, ["-c", "x"]);
+        var allowed = InterpreterGuard.CheckApp("MSEdge", @"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe", null, ["https://example.com"]);
+
+        // Assert
+        refused!.ErrorCode.Should().Be(nameof(LaunchErrorCode.InterpreterWithArguments));
+        allowed.Should().BeNull();
+    }
+
+    #endregion
 }

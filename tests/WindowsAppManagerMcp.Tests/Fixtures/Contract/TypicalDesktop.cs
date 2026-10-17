@@ -59,6 +59,39 @@ public static class TypicalDesktop
             Integrity: new ProcessIntegrity(4_000 + i * 37, IntegrityLevel.Medium, ProcessIntegrity.MediumRid, false, null)))
         .ToList();
 
+    /// <summary>
+    /// list_installed_apps' typical result (roadmap M6.5): the first 25 of 140 Start menu apps, packaged ones first (their
+    /// AppUserModelIDs), then desktop apps with their programs' paths.
+    /// </summary>
+    public static InstalledAppsListing InstalledApps { get; } = new(
+    [
+        new("Calculator", "Microsoft.WindowsCalculator_8wekyb3d8bbwe!App", true, null),
+        new("Camera", "Microsoft.WindowsCamera_8wekyb3d8bbwe!App", true, null),
+        new("Clock", "Microsoft.WindowsAlarms_8wekyb3d8bbwe!App", true, null),
+        new("Microsoft Store", "Microsoft.WindowsStore_8wekyb3d8bbwe!App", true, null),
+        new("Microsoft Teams", "MSTeams_8wekyb3d8bbwe!MSTeams", true, null),
+        new("Notepad", "Microsoft.WindowsNotepad_8wekyb3d8bbwe!App", true, null),
+        new("Outlook (new)", "Microsoft.OutlookForWindows_8wekyb3d8bbwe!Microsoft.OutlookforWindows", true, null),
+        new("Paint", "Microsoft.Paint_8wekyb3d8bbwe!App", true, null),
+        new("Photos", "Microsoft.Windows.Photos_8wekyb3d8bbwe!App", true, null),
+        new("Settings", "windows.immersivecontrolpanel_cw5n1h2txyewy!microsoft.windows.immersivecontrolpanel", true, null),
+        new("Snipping Tool", "Microsoft.ScreenSketch_8wekyb3d8bbwe!App", true, null),
+        new("Terminal", "Microsoft.WindowsTerminal_8wekyb3d8bbwe!App", true, null),
+        new("Docker Desktop", "Docker.DockerDesktop", false, @"C:\Program Files\Docker\Docker\Docker Desktop.exe"),
+        new("Excel", "Microsoft.Office.EXCEL.EXE.15", false, @"C:\Program Files\Microsoft Office\root\Office16\EXCEL.EXE"),
+        new("Google Chrome", "Chrome", false, @"C:\Program Files\Google\Chrome\Application\chrome.exe"),
+        new("JetBrains Rider", "JetBrains.Rider", false, @"C:\Program Files\JetBrains\JetBrains Rider\bin\rider64.exe"),
+        new("Microsoft Edge", "MSEdge", false, @"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"),
+        new("Outlook (classic)", "Microsoft.Office.OUTLOOK.EXE.15", false, @"C:\Program Files\Microsoft Office\root\Office16\OUTLOOK.EXE"),
+        new("PowerPoint", "Microsoft.Office.POWERPNT.EXE.15", false, @"C:\Program Files\Microsoft Office\root\Office16\POWERPNT.EXE"),
+        new("Slack", "com.squirrel.slack.slack", false, @"C:\Users\user\AppData\Local\slack\slack.exe"),
+        new("Spotify", "Spotify", false, @"C:\Users\user\AppData\Roaming\Spotify\Spotify.exe"),
+        new("Visual Studio 2022", "VisualStudio.4f1c2d3e", false, @"C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\IDE\devenv.exe"),
+        new("Visual Studio Code", "Microsoft.VisualStudioCode", false, @"C:\Users\user\AppData\Local\Programs\Microsoft VS Code\Code.exe"),
+        new("Word", "Microsoft.Office.WINWORD.EXE.15", false, @"C:\Program Files\Microsoft Office\root\Office16\WINWORD.EXE"),
+        new("Zoom", "zoom.us.Zoom Video Meetings", false, @"C:\Users\user\AppData\Roaming\Zoom\bin\Zoom.exe"),
+    ], Total: 140, Truncated: true, Unreadable: false);
+
     public static string Article { get; } = string.Concat(Enumerable.Repeat(
         "Windows App Manager lets an agent find, arrange and read the windows on a desktop. ", 200))[..ArticleLength];
 

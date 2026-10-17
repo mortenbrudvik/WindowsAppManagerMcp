@@ -39,7 +39,7 @@ public sealed class E2ESession : IDisposable
     /// <summary>
     /// The agent's host as the server recorded it, before the fixture started (<see cref="ServerHarness.RecordAgentHost(DesktopTier)"/>):
     /// the server's own <see cref="IHostGuard"/>. Pass it to a second server of the session
-    /// (<see cref="ServerHarness.Create(DesktopTier, int, UiaEngine?, IHostGuard?)"/>), so both see the same host.
+    /// (<see cref="ServerHarness.Create(DesktopTier, int, UiaEngine?, IHostGuard?, IReadOnlyCollection{string}?)"/>), so both see the same host.
     /// </summary>
     public IHostGuard AgentHost { get; }
 
@@ -65,7 +65,11 @@ public sealed class E2ESession : IDisposable
     /// <param name="uiaEngine">The UI Automation engine of the server (roadmap M3.2), or null for the server's own choice:
     /// WAM_UIA_ENGINE in the test process, by default UIA3. A value of WAM_UIA_ENGINE the server does not understand is
     /// refused, rather than run with the default engine, so a run meant for one engine cannot quietly read with the other.</param>
-    public static E2ESession Start(DesktopTier tier, ITestOutputHelper output, FixtureLaunchOptions? launch = null, UiaEngine? uiaEngine = null)
+    /// <param name="allowedActivations">Input tier only: the packaged apps the scenario may activate, without arguments
+    /// (roadmap M6.5); the scenario ends each one itself, by the process ID the launch returned.</param>
+    public static E2ESession Start(
+        DesktopTier tier, ITestOutputHelper output, FixtureLaunchOptions? launch = null, UiaEngine? uiaEngine = null,
+        IReadOnlyCollection<string>? allowedActivations = null)
     {
         ArgumentNullException.ThrowIfNull(output);
         DesktopTestGate.ThrowIfNotAllowed(tier);
@@ -83,7 +87,7 @@ public sealed class E2ESession : IDisposable
         var fixture = FixtureAppSession.Launch(tier, launch, output);
         try
         {
-            var server = ServerHarness.Create(tier, fixture.ProcessId, uiaEngine, agentHost);
+            var server = ServerHarness.Create(tier, fixture.ProcessId, uiaEngine, agentHost, allowedActivations);
             try
             {
                 output.WriteLine($"UI Automation engine: {server.Get<IUiaTree>().Engine} ({server.Get<UiaEngineOptions>().Source}).");

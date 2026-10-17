@@ -172,9 +172,10 @@ public static class Toolsets
             new("clipboard", OnByDefault: true,
                 "Read what the agent copied, put text on the clipboard to paste it; the user's own clipboard only with their consent.",
                 ["get_clipboard", "set_clipboard"]),
+            // Roadmap M6.5 (owner decision D2): list_installed_apps is on by default, a small read-only step before a launch
             new("launch", OnByDefault: true,
-                "Start applications, optionally waiting for their window.",
-                ["launch_application", "launch_applications_batch"]),
+                "Start applications, optionally waiting for their window, and list the installed apps.",
+                ["launch_application", "launch_applications_batch", "list_installed_apps"]),
             new("process", OnByDefault: true,
                 "List processes and close or end one, or close an application's windows gracefully.",
                 ["list_processes", "kill_process", "close_application"]),

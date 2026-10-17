@@ -21,7 +21,14 @@ public enum LaunchTargetKind
     /// A URI, document, shortcut, script, or a name that could not be resolved. The program that
     /// will receive the arguments is not known.
     /// </summary>
-    Other
+    Other,
+
+    /// <summary>
+    /// A packaged (MSIX or Store) app named by its AppUserModelID, bare or as shell:AppsFolder\&lt;AUMID&gt; (roadmap
+    /// M6.5): activated through IApplicationActivationManager, which passes the arguments to the app as one command line
+    /// (no cmd.exe). <see cref="ResolvedLaunchTarget.App"/> names it.
+    /// </summary>
+    PackagedApp
 }
 
 /// <summary>
@@ -42,7 +49,14 @@ public record ResolvedLaunchTarget(
     LaunchTargetKind Kind,
     string? FoundOnlyInWorkingDirectory = null,
     bool NotFound = false
-);
+)
+{
+    /// <summary>
+    /// For <see cref="LaunchTargetKind.PackagedApp"/>: the app's AppUserModelID, whose package family name also tells its
+    /// windows (roadmap M6.5); <see cref="FileName"/> is then its shell:AppsFolder target. Null for any other kind.
+    /// </summary>
+    public PackagedAppId? App { get; init; }
+}
 
 /// <summary>
 /// A file or folder a launch opens, as a window title can show it: its name (such as todo.txt), and its full path when

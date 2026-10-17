@@ -458,4 +458,59 @@ public class ProcessSecurityProbeTests
     }
 
     #endregion
+
+    #region Elevation prompt (roadmap M6.5)
+
+    [Theory]
+    [InlineData(1, 5, ElevationPrompt.Prompts)]
+    [InlineData(1, 2, ElevationPrompt.Prompts)]
+    [InlineData(1, 1, ElevationPrompt.Prompts)]
+    [InlineData(1, 0, ElevationPrompt.Silent)]
+    [InlineData(0, 5, ElevationPrompt.Silent)]
+    [InlineData(0, 0, ElevationPrompt.Silent)]
+    [InlineData(null, 5, ElevationPrompt.Prompts)]
+    [InlineData(1, null, ElevationPrompt.Prompts)]
+    public void ElevationPrompt_ReadsWhetherUacAsksAnAdministrator(int? enableLua, int? consentPromptBehaviorAdmin, ElevationPrompt expected)
+    {
+        // Arrange - a missing value is Windows' default: UAC on, and consent asked for
+        _native.Setup(n => n.ReadUacSettings()).Returns(new UacSettings(enableLua, consentPromptBehaviorAdmin, null, false));
+
+        // Act & Assert
+        new ProcessSecurityProbe(_native.Object).GetElevationPrompt().Should().Be(expected);
+    }
+
+    [Theory]
+    [InlineData(null, ElevationPrompt.Silent)] // FilterAdministratorToken is off by default
+    [InlineData(0, ElevationPrompt.Silent)]
+    [InlineData(1, ElevationPrompt.Prompts)]
+    public void ElevationPrompt_TheBuiltInAdministrator_IsAskedOnlyWithAdminApprovalMode(int? filterAdministratorToken, ElevationPrompt expected)
+    {
+        // Review M6.5 #1: without FilterAdministratorToken the built-in Administrator runs everything with its full token
+        _native.Setup(n => n.ReadUacSettings()).Returns(new UacSettings(1, 5, filterAdministratorToken, true));
+
+        new ProcessSecurityProbe(_native.Object).GetElevationPrompt().Should().Be(expected);
+    }
+
+    [Fact]
+    public void ElevationPrompt_SettingsThatCannotBeRead_AreUnknown()
+    {
+        _native.Setup(n => n.ReadUacSettings()).Returns((UacSettings?)null);
+
+        new ProcessSecurityProbe(_native.Object).GetElevationPrompt().Should().Be(ElevationPrompt.Unknown);
+    }
+
+    [Fact]
+    public void ElevationPrompt_IsReadLiveOnEveryCall()
+    {
+        var settings = new UacSettings(1, 5, null, false);
+        _native.Setup(n => n.ReadUacSettings()).Returns(() => settings);
+        var sut = new ProcessSecurityProbe(_native.Object);
+        sut.GetElevationPrompt().Should().Be(ElevationPrompt.Prompts);
+
+        settings = new UacSettings(0, 5, null, false);
+
+        sut.GetElevationPrompt().Should().Be(ElevationPrompt.Silent);
+    }
+
+    #endregion
 }

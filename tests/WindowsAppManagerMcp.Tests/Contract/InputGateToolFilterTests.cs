@@ -56,6 +56,7 @@ public class InputGateToolFilterTests
     [InlineData("move_window")]
     [InlineData("set_window_state")]
     [InlineData("set_windows_bounds_batch")]
+    [InlineData("launch_application")] // asks about an elevation Windows would not ask about, then takes the gate (roadmap M6.5)
     public async Task AToolThatAsksTheUser_IsNotHeldInTheGateByTheFilter(string tool)
     {
         // Arrange - it takes the gate itself, after its question (UserConfirmationContractTests)
@@ -77,7 +78,6 @@ public class InputGateToolFilterTests
     [Theory]
     [InlineData("launch_browser_with_debug")]
     [InlineData("set_clipboard")]
-    [InlineData("launch_application")]
     [InlineData("apply_layout")]
     [InlineData("launch_applications_batch")]
     [InlineData("a_tool_nobody_classified")] // fails safe
@@ -151,7 +151,7 @@ public class InputGateToolFilterTests
     {
         var handler = InputGateToolFilter.Filter((_, _) => throw new InvalidOperationException("tool failed"));
 
-        var call = async () => await handler(CreateRequest("launch_application"), CancellationToken.None);
+        var call = async () => await handler(CreateRequest("launch_applications_batch"), CancellationToken.None);
 
         await call.Should().ThrowAsync<InvalidOperationException>();
         var next = Task.Run(() => InputGate.Enter().Dispose());
@@ -185,7 +185,6 @@ public class InputGateToolFilterTests
 
     [Theory]
     [InlineData("apply_layout")]
-    [InlineData("launch_application")]
     [InlineData("set_clipboard")]
     [InlineData("launch_browser_with_debug")]
     [InlineData("launch_applications_batch")]
@@ -270,7 +269,7 @@ public class InputGateToolFilterTests
         using var gate = InputGate.Enter();
 
         // Act
-        var result = await handler(CreateRequest("launch_application"), CancellationToken.None).AsTask().WaitAsync(Timeout);
+        var result = await handler(CreateRequest("launch_applications_batch"), CancellationToken.None).AsTask().WaitAsync(Timeout);
 
         // Assert
         ran.Should().BeFalse();

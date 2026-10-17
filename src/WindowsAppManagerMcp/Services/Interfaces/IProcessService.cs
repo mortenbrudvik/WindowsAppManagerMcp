@@ -146,6 +146,16 @@ public interface IProcessService
     Task<DebugBrowserLaunchResult> LaunchBrowserWithDebugAsync(
         DebugBrowserLaunchRequest request,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Plans a runAsAdmin request without starting anything (roadmap M6.5, owner decision D11): the program and command
+    /// line it would start, and whether the user must approve them through the client because Windows would not ask (User
+    /// Account Control off or not asking administrators, the built-in Administrator outside Admin Approval Mode, a server
+    /// that already runs elevated, or a policy that cannot be read). launch_application shows the user that launch before
+    /// the input gate and passes the approved one as <see cref="LaunchRequest.ApprovedElevation"/>; without it such a launch
+    /// is ElevationNotConfirmed.
+    /// </summary>
+    ElevationPreview PreviewElevation(LaunchRequest request);
 }
 
 /// <summary>One running process, as <see cref="IProcessService.GetRunningProcesses"/> lists it.</summary>

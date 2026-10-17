@@ -307,7 +307,21 @@ public static class WrapperCatalog
                 // Opens the input desktop for DESKTOP_READOBJECTS only; the server never switches desktops
                 [nameof(INativeSecurityWrapper.QueryInputDesktop)] = WrapperMember.Read,
                 [nameof(INativeSecurityWrapper.GetThreadDesktopName)] = WrapperMember.Read,
-                [nameof(INativeSecurityWrapper.QuerySessionState)] = WrapperMember.Read
+                [nameof(INativeSecurityWrapper.QuerySessionState)] = WrapperMember.Read,
+                // The User Account Control policy values, from the registry (runAsAdmin, roadmap M6.5)
+                [nameof(INativeSecurityWrapper.ReadUacSettings)] = WrapperMember.Read
+            },
+            // Packaged apps and the Applications folder (roadmap M6.5). Activating an app starts its process, which no tier
+            // allows (the fixture app is no packaged app); the rest only read a process's or a window's package, a package
+            // family's manifests and the Start menu's apps
+            [typeof(INativeAppsWrapper)] = new Dictionary<string, WrapperMember>
+            {
+                [nameof(INativeAppsWrapper.ActivateApplication)] = WrapperMember.ProcessStart,
+                [nameof(INativeAppsWrapper.EnumerateAppsFolder)] = WrapperMember.Read,
+                [nameof(INativeAppsWrapper.GetPackageFamilyName)] = WrapperMember.Read,
+                [nameof(INativeAppsWrapper.ReadPackageManifests)] = WrapperMember.Read,
+                // SHGetPropertyStoreForWindow: reads the window's AppUserModelID; the property store is never written
+                [nameof(INativeAppsWrapper.GetWindowAppUserModelId)] = WrapperMember.Read
             },
             [typeof(IUiaTree)] = new Dictionary<string, WrapperMember>
             {

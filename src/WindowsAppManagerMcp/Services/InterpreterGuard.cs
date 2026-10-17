@@ -131,6 +131,68 @@ public sealed partial class InterpreterGuard
     private const string NoCommands = "the server does not run commands or scripts for the agent.";
 
     /// <summary>
+    /// The package families whose apps are shells, terminals or language runtimes (roadmap M6.5): PowerShell, Python, the
+    /// WSL distributions and Windows Terminal from the Store, matched by the start of the package family name. A backstop for
+    /// <see cref="Interpreters"/>, which the app's program is checked against first.
+    /// </summary>
+    public static readonly IReadOnlyList<string> InterpreterPackagePrefixes =
+    [
+        "Microsoft.PowerShell", "PythonSoftwareFoundation.Python.", "CanonicalGroupLimited.", "TheDebianProject.", "KaliLinux.",
+        "46932SUSE.", "WhitewaterFoundryLtd.", "Microsoft.WindowsTerminal", "Microsoft.DesktopAppInstaller",
+        "MicrosoftCorporationII.WindowsSubsystemForLinux"
+    ];
+
+    /// <summary>
+    /// Why an app of the Applications folder must not be started with these arguments (roadmap M6.5), or null when it may:
+    /// a packaged app activated by its AppUserModelID, or a shell:AppsFolder entry, given arguments, whose program is an
+    /// interpreter (<see cref="Interpreters"/>), whose package is one (<see cref="InterpreterPackagePrefixes"/>), or whose
+    /// program cannot be told (fail closed: the server cannot rule out an interpreter). Without arguments any app starts.
+    /// </summary>
+    /// <param name="appId">The AppUserModelID, as the refusal shows it.</param>
+    /// <param name="program">The app's program: a packaged app's executable file name from its manifest, or a desktop app's
+    /// path; null when it is not known.</param>
+    /// <param name="packageFamilyName">The package family of a packaged app; null for a desktop app.</param>
+    /// <param name="arguments">The arguments; null or empty means none.</param>
+    public static InterpreterRefusal? CheckApp(string appId, string? program, string? packageFamilyName, IReadOnlyList<string>? arguments)
+    {
+        ArgumentNullException.ThrowIfNull(appId);
+
+        // Review M6.5 #3: an entry whose shortcut starts a script runs it, with or without arguments
+        if (!string.IsNullOrWhiteSpace(program) && ScriptExtensions.Contains(Path.GetExtension(program.Trim().TrimEnd('.', ' '))))
+        {
+            var extension = Path.GetExtension(program.Trim().TrimEnd('.', ' ')).ToLowerInvariant();
+            return new InterpreterRefusal(nameof(LaunchErrorCode.ScriptFile),
+                $"The app '{appId}' starts a script ({extension}) that Windows would run with its interpreter, and " +
+                $"launch_application does not run scripts: {NoCommands} Ask the user to run it. Nothing was started.");
+        }
+
+        if (arguments is not { Count: > 0 })
+            return null;
+
+        if (string.IsNullOrWhiteSpace(program))
+        {
+            return new InterpreterRefusal(nameof(LaunchErrorCode.InterpreterWithArguments),
+                $"The server cannot tell which program the app '{appId}' runs, so it cannot rule out a command interpreter, and " +
+                $"launch_application does not pass arguments to it: {NoCommands} Launch it without arguments, or launch the " +
+                "program's .exe by its path. Nothing was started.");
+        }
+
+        var name = program.Replace('/', '\\');
+        name = name[(name.LastIndexOf('\\') + 1)..];
+        var interpreter = InterpreterOf(ProgramName(name)) ??
+                          (packageFamilyName != null &&
+                           InterpreterPackagePrefixes.Any(prefix => packageFamilyName.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                              ? packageFamilyName
+                              : null);
+        return interpreter == null
+            ? null
+            : new InterpreterRefusal(nameof(LaunchErrorCode.InterpreterWithArguments),
+                $"The app '{appId}' is a command interpreter, terminal or language runtime ({interpreter}), and launch_application " +
+                $"does not start one with arguments: {NoCommands} Ask the user to run the command; do not type it into a console " +
+                "or terminal either. Started without arguments it opens as usual. Nothing was started.");
+    }
+
+    /// <summary>
     /// The file name a path, a quoted path or a file: URI ends in, as Windows reads it (8.3 short names expanded, an
     /// alternate data stream and trailing dots and spaces left out); null for another URI or an empty value.
     /// </summary>

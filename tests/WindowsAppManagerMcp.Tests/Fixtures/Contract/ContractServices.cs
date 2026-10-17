@@ -59,6 +59,9 @@ public sealed class ContractServices : IDisposable
     public Mock<IScreenCaptureWrapper> Screen { get; } =
         TestDataFactory.CreateMockScreenCaptureWrapper(captureWidth: 1600, captureHeight: 900, windowOriginX: 0, windowOriginY: 100);
     public Mock<IProcessService> Processes { get; } = new();
+
+    /// <summary>list_installed_apps (roadmap M6.5): the typical 25 of 140 apps, or a Start menu that cannot be read.</summary>
+    public Mock<IInstalledAppsService> InstalledApps { get; } = new();
     public Mock<IBrowserReadingService> Browser { get; } = new();
 
     /// <summary>The tab tools (roadmap M5.5): three tabs of a debug Chrome on port 9222, the first shown by the browser window.</summary>
@@ -189,6 +192,7 @@ public sealed class ContractServices : IDisposable
         services.AddSingleton(Monitors.Object);
         services.AddSingleton(Screen.Object);
         services.AddSingleton(Processes.Object);
+        services.AddSingleton(InstalledApps.Object);
         services.AddSingleton(Browser.Object);
         services.AddSingleton(BrowserTabs.Object);
         services.AddSingleton(BrowserPages.Object);
@@ -407,6 +411,7 @@ public sealed class ContractServices : IDisposable
         Processes.Setup(p => p.LaunchApplicationAsync(It.IsAny<LaunchRequest>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((LaunchRequest _, bool wait, int _, CancellationToken _) => TypicalLaunch(wait, notepad, TypicalDesktop.NotepadProcessId));
         Processes.Setup(p => p.GetRunningProcesses(It.IsAny<ProcessQuery>())).Returns(TypicalDesktop.Processes);
+        InstalledApps.Setup(i => i.List(It.IsAny<string?>(), It.IsAny<int>())).Returns(TypicalDesktop.InstalledApps);
         Processes.Setup(p => p.KillProcessAsync(It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<KillSafeguards?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((int id, bool _, bool _, int _, string? _, KillSafeguards? _, CancellationToken _) =>
                 new KillResult(true, id, ProcessName: "notepad", CloseRequested: true, Exited: true));
@@ -669,6 +674,7 @@ public sealed class ContractServices : IDisposable
         Processes.Setup(p => p.LaunchApplicationAsync(It.IsAny<string>(), It.IsAny<string[]?>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new LaunchResult(false, ErrorMessage: "The executable was not found", ErrorCode: "ExecutableNotFound"));
         Processes.Setup(p => p.GetRunningProcesses(It.IsAny<ProcessQuery>())).Returns([]);
+        InstalledApps.Setup(i => i.List(It.IsAny<string?>(), It.IsAny<int>())).Returns(new InstalledAppsListing([], 0, false, Unreadable: true));
         Processes.Setup(p => p.KillProcessAsync(It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<KillSafeguards?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((int id, bool _, bool _, int _, string? _, KillSafeguards? _, CancellationToken _) =>
                 new KillResult(false, id, ErrorMessage: "No process with that ID", ErrorCode: nameof(ProcessErrorCode.ProcessNotFound)));

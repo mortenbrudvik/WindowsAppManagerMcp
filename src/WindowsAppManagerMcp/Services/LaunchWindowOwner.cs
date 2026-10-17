@@ -12,6 +12,8 @@ namespace WindowsAppManagerMcp.Services;
 /// <item>a process with the started program's image path (QueryFullProcessImageNameW): a running instance it handed off to;</item>
 /// <item>a process with the program's name, or a name of the handoff map (wt to WindowsTerminal, calc to CalculatorApp,
 /// ms-settings: to SystemSettings, ...): the app the launcher or URI hands off to;</item>
+/// <item>for a packaged app (roadmap M6.5), a process of the app's package (GetPackageFamilyName): the instance a
+/// single-instance app hands the activation to, and the other processes of a multi-process package;</item>
 /// <item>or a match of the caller's <see cref="LaunchWindowHint"/> (every field it sets).</item>
 /// </list>
 /// The process checks are made once per process and remembered for the launch; the hint's title is checked each time.
@@ -57,6 +59,8 @@ public sealed class LaunchWindowOwner
     private readonly HashSet<string> _processNames;
     private readonly LaunchWindowHint? _hint;
     private readonly bool _onlyStartedProcess;
+    private readonly string? _packageFamilyName;
+    private readonly Func<int, string?>? _packageFamilyOf;
     private readonly Dictionary<int, bool> _processMatches = [];
     private readonly Dictionary<int, bool> _startedProcesses = [];
     private readonly Dictionary<int, string?> _processNamesById = [];
@@ -70,6 +74,9 @@ public sealed class LaunchWindowOwner
     /// <param name="hint">The caller's expectWindow hint, or null.</param>
     /// <param name="onlyStartedProcess">Count only windows of the started process and the processes it started, not a
     /// running instance it may have handed off to (<see cref="LaunchRequest.OnlyStartedProcess"/>).</param>
+    /// <param name="packageFamilyName">For a packaged app: its package family, whose processes' windows count.</param>
+    /// <param name="packageFamilyOf">Reads a process's package family (<see cref="INativeAppsWrapper.GetPackageFamilyName"/>);
+    /// without it no window counts by package.</param>
     public LaunchWindowOwner(
         INativeProcessWrapper processes,
         int? launchedProcessId,
@@ -77,8 +84,12 @@ public sealed class LaunchWindowOwner
         string? imagePath,
         IEnumerable<string> processNames,
         LaunchWindowHint? hint,
-        bool onlyStartedProcess = false)
+        bool onlyStartedProcess = false,
+        string? packageFamilyName = null,
+        Func<int, string?>? packageFamilyOf = null)
     {
+        _packageFamilyName = string.IsNullOrWhiteSpace(packageFamilyName) ? null : packageFamilyName;
+        _packageFamilyOf = packageFamilyOf;
         _processes = processes;
         _launchedProcessId = launchedProcessId;
         _launchedAtUtc = launchedAtUtc;
@@ -93,9 +104,11 @@ public sealed class LaunchWindowOwner
     /// </summary>
     /// <param name="target">What was started: the resolved file name (or URI) and its kind.</param>
     /// <param name="onlyStartedProcess">Count only windows of the started process and the processes it started.</param>
+    /// <param name="packageFamilyOf">Reads a process's package family; a packaged app's windows are then also those of
+    /// its package's processes.</param>
     public static LaunchWindowOwner For(
         INativeProcessWrapper processes, int? launchedProcessId, DateTime launchedAtUtc, ResolvedLaunchTarget target, LaunchWindowHint? hint,
-        bool onlyStartedProcess = false)
+        bool onlyStartedProcess = false, Func<int, string?>? packageFamilyOf = null)
     {
         var names = new List<string>();
         string? imagePath = null;
@@ -112,7 +125,9 @@ public sealed class LaunchWindowOwner
         if (target.Kind == LaunchTargetKind.NativeExecutable && Path.IsPathFullyQualified(target.FileName))
             imagePath = target.FileName;
 
-        return new LaunchWindowOwner(processes, launchedProcessId, launchedAtUtc, imagePath, names, hint, onlyStartedProcess);
+        var packageFamily = target.Kind == LaunchTargetKind.PackagedApp ? target.App?.PackageFamilyName : null;
+        return new LaunchWindowOwner(processes, launchedProcessId, launchedAtUtc, imagePath, names, hint, onlyStartedProcess,
+            packageFamily, packageFamilyOf);
     }
 
     /// <summary>
@@ -148,10 +163,13 @@ public sealed class LaunchWindowOwner
 
     /// <summary>
     /// The program's name (a resolved file without its extension) or a URI's scheme, which keys <see cref="HandoffMap"/>;
-    /// null for a document or anything else whose app is not known.
+    /// null for a document or anything else whose app is not known, and for a packaged app, whose package tells its windows.
     /// </summary>
     private static string? ProgramKey(ResolvedLaunchTarget target)
     {
+        if (target.Kind == LaunchTargetKind.PackagedApp)
+            return null;
+
         if (target.Kind != LaunchTargetKind.Other)
             return Path.GetFileNameWithoutExtension(target.FileName);
 
@@ -235,6 +253,10 @@ public sealed class LaunchWindowOwner
 
         if (_imagePath != null && _processes.GetProcessImagePath(processId) is { } path &&
             string.Equals(path, _imagePath, StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        if (_packageFamilyName != null && _packageFamilyOf?.Invoke(processId) is { } family &&
+            string.Equals(family, _packageFamilyName, StringComparison.OrdinalIgnoreCase))
             return true;
 
         return StartedProcess(processId); // the lock is re-entrant

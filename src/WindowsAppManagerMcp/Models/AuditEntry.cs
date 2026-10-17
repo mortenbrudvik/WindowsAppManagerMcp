@@ -105,7 +105,8 @@ public sealed record AuditItem(
     string? ErrorCode,
     string? Status = null,
     bool? Launched = null,
-    AuditPlacement? Placement = null);
+    AuditPlacement? Placement = null,
+    string? Elevation = null);
 
 /// <summary>The outcomes an <see cref="AuditEntry"/> records.</summary>
 public static class AuditOutcome

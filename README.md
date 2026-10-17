@@ -26,12 +26,12 @@ An MCP (Model Context Protocol) server that enables AI assistants like Claude to
 - **Browser Reading** - Read the URL and page text of browser windows through UI Automation or the Chrome DevTools Protocol
 - **Browser Tabs and Navigation** - List a debug browser's tabs, wait for a page's URL, text or element, and (opt-in `browser-actions` toolset) show a tab or open a URL with a load wait, through CDP only
 - **Browser Page (DOM Bridge)** - (opt-in `browser-actions` and `browser-script` toolsets) Click, type, answer JavaScript dialogs and capture a debug browser's page through CDP, without the real mouse or keyboard and without taking the foreground; place a page's element on the screen in physical pixels for the desktop tools; run a script (only with `browser-script`, which turning on clicks and typing does not turn on); and hand the browser to Playwright MCP (`--cdp-endpoint`) for anything richer
-- **Application Launch** - Start applications with arguments, open URLs, Settings pages and Store apps, and get back the window the launch opened, whichever process owns it; place it in the same call (snap, bounds, monitor, state, focus), or use a window of the app that is already open
+- **Application Launch** - Start applications with arguments, open URLs, Settings pages and packaged (Store) apps, and get back the window the launch opened, whichever process owns it; place it in the same call (snap, bounds, monitor, state, focus), or use a window of the app that is already open. `list_installed_apps` lists the Start menu's apps; a packaged app's `appId` (or an app's exact name) launches it with its own process ID, and `runAsAdmin` starts an `.exe` elevated after the user's UAC approval
 - **Process Management** - List running processes, close a whole application gracefully, terminate processes safely
 - **Layout Presets** - Save and restore window arrangements
 - **Server Info and Instructions** - `get_server_info` reports the build, the DPI awareness, the desktop state, the agent's host windows, the pause and the toolsets in force, with warnings; every MCP client gets usage instructions in the handshake, with or without the plugin skill
 - **Resources and Prompts** - Three read-only MCP resources (`wam://monitors`, `wam://windows`, `wam://layouts/{name}`) with the JSON of get_monitors, find_windows and get_layout, and four prompts (`automate_app`, `arrange_workspace`, `fill_form`, `diagnose_click`) that write out the locate, act, verify loop for clients without the plugin skill; they follow the toolsets and add nothing to tools/list. See [Resources and Prompts](docs/TOOLS.md#resources-and-prompts)
-- **Toolsets** - Serve only the tools you want (`WAM_TOOLSETS`, `WAM_EXCLUDE_TOOLS`), or only tools that read (`WAM_READ_ONLY=1`); see [Toolsets](docs/TOOLS.md#toolsets). The default serves 59 of the 82 tools: the browser actions and scripts, the visual waits, the window batches, OCR and the nine deprecated tools are opt-in
+- **Toolsets** - Serve only the tools you want (`WAM_TOOLSETS`, `WAM_EXCLUDE_TOOLS`), or only tools that read (`WAM_READ_ONLY=1`); see [Toolsets](docs/TOOLS.md#toolsets). The default serves 61 of the 84 tools: the browser actions and scripts, the visual waits, the window batches, OCR and the nine deprecated tools are opt-in
 - **Audit Log** - Every input, element action, dialog answer, close, kill, launch, layout-write (apply, save, delete), clipboard and browser tab or navigation call is recorded, without typed text, values or clipboard content, so you can see afterwards what was sent where; see [Audit log](docs/TOOLS.md#audit-log)
 
 ## Installation
@@ -111,7 +111,7 @@ so `serverInfo.version` shows a different commit SHA (`X.Y.Z+<tag commit>` for t
 `X.Y.Z+<commit before the release commit>` for the plugin exe).
 
 <!-- tools:begin tool-table (generated from tools/list: run the tests with UPDATE_SNAPSHOTS=1, see TESTING.md) -->
-## Available Tools (83)
+## Available Tools (84)
 
 | Category | Tools |
 |----------|-------|
@@ -127,7 +127,7 @@ so `serverInfo.version` shows a different commit SHA (`X.Y.Z+<tag commit>` for t
 | Input Simulation | `click`, `right_click`, `double_click`, `mouse_click`, `drag`, `mouse_move`, `scroll`, `type_text`, `send_keys`, `press_keys` |
 | Input Control | `get_control_status`, `resume_input`, `release_all_input` |
 | Step Sequences | `run_steps` |
-| App Launch | `launch_application`, `list_processes`, `kill_process`, `close_application` |
+| App Launch | `launch_application`, `list_installed_apps`, `list_processes`, `kill_process`, `close_application` |
 | Clipboard | `get_clipboard`, `set_clipboard` |
 | Layout Presets | `list_layouts`, `get_layout`, `save_layout`, `apply_layout`, `delete_layout` |
 | Server Info | `get_server_info` |

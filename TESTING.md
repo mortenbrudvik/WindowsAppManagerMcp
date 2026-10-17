@@ -2095,7 +2095,11 @@ fails until a new kind is named in this list).
   M1.5, `InputTargetGuard`), so a bug in that guard cannot send input to a window outside the fixture;
   `FixtureInputGuardTests` checks the server's guard itself against the fixture.
 - In both tiers, starting a process, registering a global hotkey and reading
-  or writing the clipboard's content are refused. CDP (`ICdpService`, and `ICdpTransport` under it, the only
+  or writing the clipboard's content are refused. One narrow exception (roadmap M6.5): an input-tier scenario may name
+  packaged apps it activates (`E2ESession.Start`'s `allowedActivations`, today only Calculator, which holds none of the
+  user's data); `INativeAppsWrapper.ActivateApplication` then goes through for those AppUserModelIDs only, without
+  arguments, while `StartProcess` (the shell fallback of an elevated server) stays refused, and the scenario ends the app
+  itself by the process ID the launch returned (`PackagedAppLaunchTests`). CDP (`ICdpService`, and `ICdpTransport` under it, the only
   type that opens the network connections, roadmap M5.2) refuses every call, because it talks to a browser's
   debug port over the network, outside the native wrappers, and the fixture's WebView2 window opens no debug
   port. `ServerHarnessTests.EveryRegisteredCdpService_IsRefused` fails when a registered `ICdp*` service is not
@@ -2864,11 +2868,12 @@ typical result over 300 tokens, and tools/list itself, measured in October 2026:
 | `read_screen_text` | The 40 lines OCR reads in a window, each with its bounds (roadmap M6.3) | 1,276 | 1,900 |
 | `find_windows`, `get_all_windows` | 15 windows, each with `visibleBounds` | 1,213 | 1,850 |
 | `read_element_text` | The first page of a 3,000-character e-mail | 802 | 1,200 |
+| `list_installed_apps` | The first 25 of 140 Start menu apps, packaged first, desktop apps with their paths (roadmap M6.5) | 761 | 1,150 |
 | `read_table` | Task Manager's first 50 processes, 5 columns with headers | 643 | 1,000 |
 | `get_server_info` | The default deny list, five host processes, two monitors, the resources and prompts (634 before roadmap M6.9) | 707 | 850 |
 | `get_layout` | A preset of 6 placements, each with the captured window identity | 529 | 800 |
-| tools/list | Every tool's name, title, description, schemas and annotations: 82 tools, 266,245 bytes (`ToolList_StaysWithinItsBudget`; M5.8's six DOM bridge tools added 2,970, 936 of them their window selectors; M5.8's dialog option and the UI Automation browser_handle_dialog 199 more; M6.1a's additive consolidations 405 more: mouse_click's own click checks 249, set_window_bounds' optional pairs 87, get_browser_url's foreground sentence 41, get_monitors' virtualScreen 28; M6.1b's one-line descriptions of the nine deprecated tools and the descriptions that no longer send the agent to them 2,121 fewer; M6.6's list_processes parameters and fields 361 more and get_window_info's integrity fields 31 more; M6.2's run_steps 1,054 more; M6.4's wait_for_visual 1,072 more; M6.3's read_screen_text and find_text_on_screen in the opt-in `ocr` toolset 2,088 more; M6.7's set_window_zorder (522), the `monitor` parameters beside the deprecated monitorIndex, set_window_bounds' percent placement (233), get_monitors' identity fields and get_server_info's pinnedWindows 1,514 more) | 68,076 | 68,112 |
-| Default tools/list | The 60 tools a server serves without WAM_TOOLSETS, WAM_EXCLUDE_TOOLS and WAM_READ_ONLY, 214,551 bytes (`DefaultToolList_StaysWithinItsBudget`, roadmap M6.1; 59,627 before M6.1a, 60,032 after it with 70 tools, 9,027 fewer once M6.1b moved the nine deprecated tools and the three geometry batches to opt-in toolsets, 392 more with M6.6's list_processes and get_window_info fields, 1,055 more with M6.2's run_steps in the `steps` toolset, on by default, 1,187 more with M6.7's set_window_zorder in `windows`, the `monitor` parameters, set_window_bounds' percent placement and the get_monitors and get_server_info fields) | 53,638 | 53,674 |
+| tools/list | Every tool's name, title, description, schemas and annotations: 84 tools, 273,729 bytes (`ToolList_StaysWithinItsBudget`; M5.8's six DOM bridge tools added 2,970, 936 of them their window selectors; M5.8's dialog option and the UI Automation browser_handle_dialog 199 more; M6.1a's additive consolidations 405 more: mouse_click's own click checks 249, set_window_bounds' optional pairs 87, get_browser_url's foreground sentence 41, get_monitors' virtualScreen 28; M6.1b's one-line descriptions of the nine deprecated tools and the descriptions that no longer send the agent to them 2,121 fewer; M6.6's list_processes parameters and fields 361 more and get_window_info's integrity fields 31 more; M6.2's run_steps 1,054 more; M6.4's wait_for_visual 1,072 more; M6.3's read_screen_text and find_text_on_screen in the opt-in `ocr` toolset 2,088 more; M6.7's set_window_zorder (522), the `monitor` parameters beside the deprecated monitorIndex, set_window_bounds' percent placement (233), get_monitors' identity fields and get_server_info's pinnedWindows 1,514 more; M6.5's list_installed_apps and runAsAdmin 357 more) | 68,433 | 68,469 |
+| Default tools/list | The 61 tools a server serves without WAM_TOOLSETS, WAM_EXCLUDE_TOOLS and WAM_READ_ONLY, 215,979 bytes (`DefaultToolList_StaysWithinItsBudget`, roadmap M6.1; 59,627 before M6.1a, 60,032 after it with 70 tools, 9,027 fewer once M6.1b moved the nine deprecated tools and the three geometry batches to opt-in toolsets, 392 more with M6.6's list_processes and get_window_info fields, 1,055 more with M6.2's run_steps in the `steps` toolset, on by default, 1,187 more with M6.7's set_window_zorder in `windows`, the `monitor` parameters, set_window_bounds' percent placement and the get_monitors and get_server_info fields; 357 more with M6.5's list_installed_apps in the `launch` toolset and runAsAdmin) | 53,995 | 54,031 |
 
 Every other typical result is at most 300 tokens. When a change makes a result larger on purpose, raise its
 budget in the same change (the failure message gives the new size); when a change shrinks one a lot, lower it.
@@ -2896,7 +2901,7 @@ were capture_with_elements at 2,396 and element_action at 2,386, so they have ab
 | `elements` | on | 9 | 8,262 | 8,300 |
 | `input` | on | 10 | 14,758 | 14,800 |
 | `clipboard` | on | 2 | 734 | 750 |
-| `launch` | on | 2 | 2,979 | 3,015 |
+| `launch` | on | 3 | 3,336 | 3,372 |
 | `process` | on | 3 | 2,282 | 2,318 |
 | `layouts` | on | 5 | 1,181 | 1,200 |
 | `steps` | on | 1 | 1,055 | 1,091 |
@@ -2920,7 +2925,9 @@ after M6.2 added run_steps (October 2026). M6.4 added the `visual` row
 `monitor`), `monitors` by 49 (get_monitors' identity fields in its description), `server` by 18 (pinnedWindows),
 `capture` by 58, `launch` by 89, `browser` by 41, `visual` by 73, `windows-batch` by 88 and `ocr` by 167 (each tool's
 `monitor` beside the deprecated monitorIndex, whose description shrank to one line), each budget to the measured size plus
-36.
+36. M6.5 (October 2026) raised `launch` by 357 (2,979 before):
+list_installed_apps (about 200), launch_application's runAsAdmin and installed-app wording (about 115) and the batch item's
+runAsAdmin (about 40), and the budget to the measured size plus 36.
 
 A change states its default, per-toolset and all-tools deltas, and raises only the ratchets it moves: a new opt-in
 toolset moves the all-tools figure and its own row, never the default figure.

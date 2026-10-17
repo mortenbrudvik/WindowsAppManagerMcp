@@ -165,7 +165,8 @@ public static class ToolDocCatalog
                    "window_close, scope desktop, allowHostTarget or closing chord (ctrl+w, ctrl+q) in a step. Off with `WAM_TOOLSETS=-steps`."),
         new("App Launch",
         [
-            new("launch_application", "Launch app by path/name/URI", "executable", "arguments", "workingDirectory", "waitForWindow", "placement", "reuseExisting"),
+            new("launch_application", "Launch app by path/name/appId/URI", "executable", "arguments", "workingDirectory", "waitForWindow", "placement", "reuseExisting", "runAsAdmin"),
+            new("list_installed_apps", "List the Start menu's apps: name, appId, packaged, path", "nameFilter", "limit"),
             new("list_processes", "List processes with their windows, parent, start time and integrity", "nameFilter", "processId", "includeWindowless", "sortBy"),
             new("kill_process", "Close or terminate a process", "processId", "confirm", "forceKill", "expectedProcessName"),
             new("close_application", "Close an app's Alt+Tab windows gracefully; reports prompts and what remains", "processName", "processId", "window (or handle)", "timeoutMs"),

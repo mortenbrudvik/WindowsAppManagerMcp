@@ -252,7 +252,26 @@ public enum LaunchErrorCode
     /// The launch would run a script file (.bat, .cmd, .ps1, .vbs, .py, ...), as the target or through explorer.exe, which
     /// opens its argument with the program registered for it (roadmap M3.F8). Nothing was started.
     /// </summary>
-    ScriptFile = 17
+    ScriptFile = 17,
+
+    /// <summary>
+    /// A bare name that is no program on disk is the exact display name of more than one installed app (roadmap M6.5). The
+    /// error lists them; launch one by its appId or path from list_installed_apps. Nothing was started.
+    /// </summary>
+    AmbiguousApp = 18,
+
+    /// <summary>
+    /// Windows could not activate the packaged app (roadmap M6.5): it is not installed for the user, its package is being
+    /// updated, or it failed to start. The error gives the HRESULT. Nothing was started.
+    /// </summary>
+    ActivationFailed = 19,
+
+    /// <summary>
+    /// runAsAdmin on a computer where Windows elevates without asking (User Account Control is off, or administrators are
+    /// not asked for consent), and the user could not be asked to confirm through the client (roadmap M6.5). Nothing was
+    /// started.
+    /// </summary>
+    ElevationNotConfirmed = 20
 }
 
 /// <summary>

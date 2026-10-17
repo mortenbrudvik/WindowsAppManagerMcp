@@ -57,12 +57,15 @@ public sealed partial class WindowWaitService : IWindowWaitService
     public WindowBaseline TakeBaseline()
     {
         var titles = new Dictionary<nint, string>();
+        var cloaked = new HashSet<nint>();
         foreach (var handle in EnumerateTopLevelWindows())
         {
             titles[handle] = _native.GetWindowText(handle) ?? string.Empty;
+            if (_native.IsCloaked(handle))
+                cloaked.Add(handle);
         }
 
-        return new WindowBaseline(titles, _native.GetForegroundWindow());
+        return new WindowBaseline(titles, _native.GetForegroundWindow()) { Cloaked = cloaked };
     }
 
     public async Task<WindowWaitResult> WaitForNewWindowAsync(
@@ -95,10 +98,20 @@ public sealed partial class WindowWaitService : IWindowWaitService
 
             foreach (var handle in present)
             {
-                if (baseline.Contains(handle) || claimedElsewhere.Contains(handle))
+                if (claimedElsewhere.Contains(handle))
                     continue;
 
-                if (IsLaunchWindow(handle, isOwner))
+                // A window of the baseline is new only when it was cloaked then and the started app shows it now (roadmap M6.5)
+                var owns = isOwner;
+                if (baseline.Contains(handle))
+                {
+                    if (options.WasCloakedOwner is not { } startedApp || !baseline.WasCloaked(handle))
+                        continue;
+
+                    owns = candidate => isOwner(candidate) && startedApp(candidate);
+                }
+
+                if (IsLaunchWindow(handle, owns))
                     firstSeen.TryAdd(handle, now);
                 else
                     firstSeen.Remove(handle);

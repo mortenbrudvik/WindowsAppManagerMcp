@@ -142,6 +142,10 @@ public class AuditRecordTests
     [InlineData(@"C:\a#b\app.exe", @"C:\a#b\app.exe")]
     [InlineData(@"\\server\share\app.exe", @"\\server\share\app.exe")]
     [InlineData("file:///C:/x/app.exe?token=secret#frag", @"C:\x\app.exe")]
+    // An installed app's AppUserModelID names the app, bare or through shell:AppsFolder (roadmap M6.5)
+    [InlineData("Microsoft.WindowsCalculator_8wekyb3d8bbwe!App", "Microsoft.WindowsCalculator_8wekyb3d8bbwe!App")]
+    [InlineData(@"shell:AppsFolder\Microsoft.WindowsCalculator_8wekyb3d8bbwe!App", @"shell:AppsFolder\Microsoft.WindowsCalculator_8wekyb3d8bbwe!App")]
+    [InlineData(@"shell:AppsFolder\MSEdge", @"shell:AppsFolder\MSEdge")]
     public void AProgramPath_IsKept(string executable, string recorded)
     {
         AuditRecord.RedactExecutable(executable).Should().Be(recorded);
@@ -628,5 +632,42 @@ public class AuditRecordTests
             .Should().HaveCount(AuditRecord.MaxWindowsRead);
         AuditRecord.ProcessIds(Arguments(new { processId = 7 })).Should().Equal(7);
         AuditRecord.ProcessIds(Arguments(new { processId = "7" })).Should().BeEmpty();
+    }
+
+    [Fact]
+    public void ALaunchAsAdministrator_IsRecordedWithRunAsAdmin()
+    {
+        // Roadmap M6.5: an elevated start is the launch the audit log most needs to show
+        var entry = Build(Call("launch_application", new { executable = @"C:\Tools\setup-helper.exe", runAsAdmin = true }), null);
+
+        entry.Args!["runAsAdmin"]!.GetValue<bool>().Should().BeTrue();
+        entry.Target!.Executable.Should().Be(@"C:\Tools\setup-helper.exe");
+    }
+
+    [Theory]
+    [InlineData("confirmed")]
+    [InlineData("uacPrompt")]
+    public void ALaunchAsAdministrator_RecordsHowTheElevationWasApproved(string elevation)
+    {
+        // Review M6.5 #8: the user's yes through the client, or Windows' own UAC prompt
+        var entry = Build(Call("launch_application", new { executable = @"C:\Tools\setup-helper.exe", runAsAdmin = true }),
+            Result(new { success = true, processId = 4321, launchStatus = "started", elevation }));
+
+        entry.Args!["runAsAdmin"]!.GetValue<bool>().Should().BeTrue();
+        entry.Result!["elevation"]!.GetValue<string>().Should().Be(elevation);
+    }
+
+    [Fact]
+    public void ABatchItemLaunchedAsAdministrator_RecordsItsElevation()
+    {
+        var call = Call("launch_applications_batch", new { applications = new[] { new { executable = @"C:\Tools\a.exe", runAsAdmin = true } } });
+
+        var entry = Build(call, Result(new
+        {
+            totalRequested = 1, succeeded = 1, failed = 0,
+            results = new[] { new { executable = @"C:\Tools\a.exe", success = true, processId = 7, elevation = "uacPrompt" } }
+        }));
+
+        entry.Items!.Single().Elevation.Should().Be("uacPrompt");
     }
 }
