@@ -221,7 +221,11 @@ public static class WrapperCatalog
                 [nameof(IScreenCaptureWrapper.IsValidWindow)] = WrapperMember.Read,
                 // The capture members without the copy (roadmap M6, polling for OCR and visual change): the same BitBlt of
                 // the screen or PrintWindow into the server's own memory DC, which changes no window and sends no input
-                [nameof(IScreenCaptureWrapper.WithPixels)] = WrapperMember.Read
+                [nameof(IScreenCaptureWrapper.WithPixels)] = WrapperMember.Read,
+                // The pointer (roadmap M7.1): its position, and its shape drawn into a device context of the server's own image;
+                // the pointer is never moved and its shape never changed
+                [nameof(IScreenCaptureWrapper.GetPointer)] = WrapperMember.Read,
+                [nameof(IScreenCaptureWrapper.DrawPointer)] = WrapperMember.Read
             },
             // Windows.Graphics.Capture (roadmap M7.1): one frame of a window as the compositor shows it, copied through a
             // Direct3D device of the server's own; it changes no window and sends no input

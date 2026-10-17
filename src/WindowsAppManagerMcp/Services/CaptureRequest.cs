@@ -56,6 +56,9 @@ public sealed class CaptureException : Exception
 /// <param name="Output">What the capture returns.</param>
 /// <param name="OutputPath">Normalized absolute file path, or null for a generated temp file.</param>
 /// <param name="Overwrite">Whether <paramref name="OutputPath"/> may replace an existing file.</param>
+/// <param name="IncludeCursor">Draw the mouse pointer into the image (roadmap M7.1).</param>
+/// <param name="GridSpacing">Draw a coordinate grid every this many screen pixels; null for none (roadmap M7.1).</param>
+/// <param name="Zoom">Enlarge the image this many times (1-4) before the size limits apply (roadmap M7.1).</param>
 public sealed record CaptureRequest(
     ImageEncoding? Format,
     int Quality,
@@ -63,8 +66,14 @@ public sealed record CaptureRequest(
     int? MaxWidth,
     CaptureOutputMode Output,
     string? OutputPath,
-    bool Overwrite)
+    bool Overwrite,
+    bool IncludeCursor = false,
+    int? GridSpacing = null,
+    double Zoom = 1)
 {
+    /// <summary>The largest zoom a capture takes.</summary>
+    public const double MaxZoom = 4;
+
     internal const string MaxWidthMustBePositive = "maxWidth must be a positive number of pixels.";
     internal const string MaxDimensionOutOfRange = "maxDimension must be 0 (full resolution) or a positive number of pixels.";
 
@@ -98,6 +107,18 @@ public sealed record CaptureRequest(
             (outputPath, format) = ResolveOutputPath(options.OutputPath, format, options.Overwrite);
         }
 
+        if (!double.IsFinite(options.Zoom) || options.Zoom < 1 || options.Zoom > MaxZoom)
+        {
+            throw new CaptureException(ScreenshotErrorCode.InvalidImageSize,
+                $"zoom must be 1-{MaxZoom:0}, but it is {options.Zoom}. Nothing was captured.");
+        }
+
+        if (options.GridSpacing is { } spacing && (spacing < CaptureGrid.MinSpacing || spacing > CaptureGrid.MaxSpacing))
+        {
+            throw new CaptureException(ScreenshotErrorCode.InvalidImageSize,
+                $"gridSpacing must be {CaptureGrid.MinSpacing}-{CaptureGrid.MaxSpacing} screen pixels, but it is {spacing}. Nothing was captured.");
+        }
+
         return new CaptureRequest(
             format,
             Math.Clamp(options.Quality, 1, 100),
@@ -105,7 +126,10 @@ public sealed record CaptureRequest(
             maxWidth,
             output,
             outputPath,
-            options.Overwrite);
+            options.Overwrite,
+            options.IncludeCursor,
+            options.GridSpacing,
+            options.Zoom);
     }
 
     /// <summary>
@@ -126,27 +150,27 @@ public sealed record CaptureRequest(
     }
 
     /// <summary>
-    /// The output size of a <paramref name="width"/> x <paramref name="height"/> capture: as large as
-    /// possible within <see cref="MaxDimension"/> and <see cref="MaxWidth"/>, keeping the aspect ratio.
-    /// A capture that already fits keeps its size; nothing is scaled up. An edge that would round to
-    /// zero pixels (a long, thin strip) keeps one pixel: the image to screen transform has a scale per
-    /// axis, so points still map exactly.
+    /// The output size of a <paramref name="width"/> x <paramref name="height"/> capture: <see cref="Zoom"/> times its size
+    /// (1 unless asked), as large as possible within <see cref="MaxDimension"/> and <see cref="MaxWidth"/>, keeping the
+    /// aspect ratio. Without a zoom a capture that already fits keeps its size; nothing is scaled up. An edge that would
+    /// round to zero pixels (a long, thin strip) keeps one pixel: the image to screen transform has a scale per axis, so
+    /// points still map exactly.
     /// </summary>
     public (int Width, int Height) OutputSize(int width, int height)
     {
-        var scale = 1.0;
+        var scale = Math.Max(1.0, Zoom);
         var longEdge = Math.Max(width, height);
-        if (MaxDimension is int maxDimension && longEdge > maxDimension)
+        if (MaxDimension is int maxDimension && longEdge * scale > maxDimension)
         {
             scale = Math.Min(scale, (double)maxDimension / longEdge);
         }
 
-        if (MaxWidth is int maxWidth && width > maxWidth)
+        if (MaxWidth is int maxWidth && width * scale > maxWidth)
         {
             scale = Math.Min(scale, (double)maxWidth / width);
         }
 
-        if (scale >= 1.0)
+        if (scale == 1.0)
         {
             return (width, height);
         }

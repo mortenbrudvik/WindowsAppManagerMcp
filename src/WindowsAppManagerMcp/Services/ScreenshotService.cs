@@ -969,7 +969,33 @@ public class ScreenshotService : IScreenshotService
         ThrowIfIncomplete(capture);
         AddBlankWarning(capture, warnings);
         var signature = signed && (windowCapture ? window != null : screen != null) ? SignatureOf(capture, windowCapture, window) : null;
-        var rendered = Render(capture, request, annotate: null);
+
+        // The pointer (roadmap M7.1): always where it is, and drawn into the pixels before they are scaled when asked
+        var pointer = _captureWrapper.GetPointer();
+        var drawn = false;
+        Action<Bitmap>? drawPointer = request.IncludeCursor && pointer is { Visible: true }
+            ? bitmap => drawn = DrawPointer(bitmap, capture.ScreenOriginX, capture.ScreenOriginY)
+            : null;
+
+        // The grid (roadmap M7.1): on the returned image, after the scaling, so its lines and labels keep their size
+        Action<Bitmap>? drawGrid = null;
+        if (request.GridSpacing is { } spacing)
+        {
+            var (outputWidth, outputHeight) = request.OutputSize(capture.Width, capture.Height);
+            var scaleX = (double)capture.Width / outputWidth;
+            var scaleY = (double)capture.Height / outputHeight;
+            var effective = CaptureGrid.EffectiveSpacing(spacing, Math.Max(scaleX, scaleY));
+            if (effective != spacing)
+            {
+                warnings.Add(CaptureWarnings.Format(CaptureWarnings.GridWidened,
+                    $"gridSpacing {spacing} would put the lines closer than {CaptureGrid.MinLineGap} pixels in this image, so the grid is " +
+                    $"drawn every {effective} screen pixels."));
+            }
+
+            drawGrid = bitmap => CaptureGrid.Draw(bitmap, capture.ScreenOriginX, capture.ScreenOriginY, scaleX, scaleY, effective);
+        }
+
+        var rendered = Render(capture, request, drawGrid, drawPointer);
 
         var metadata = new ScreenshotResult(
             Success: true,
@@ -987,7 +1013,8 @@ public class ScreenshotService : IScreenshotService
             ByteSize: rendered.Image.Data.LongLength,
             CaptureMethod: capture.Method,
             CoordinateSpace: CoordinateSpaces.PhysicalVirtualScreen,
-            Warnings: warnings.Count > 0 ? warnings : null);
+            Warnings: warnings.Count > 0 ? warnings : null,
+            Cursor: pointer is { } at ? new CursorPosition(at.X, at.Y, at.Visible ? null : true, drawn ? true : null) : null);
         metadata = metadata with
         {
             CaptureId = Register(metadata.Width, metadata.Height, metadata.ImageToScreen!, metadata.CapturedRegion!, windowCapture, window, screen,
@@ -1099,7 +1126,8 @@ public class ScreenshotService : IScreenshotService
     /// file. A failure to build, scale or encode the image is <see cref="ScreenshotErrorCode.EncodeFailed"/>; the file
     /// write reports its own codes.
     /// </summary>
-    private static RenderedImage Render(CaptureResult capture, CaptureRequest request, Action<Bitmap>? annotate)
+    private static RenderedImage Render(CaptureResult capture, CaptureRequest request, Action<Bitmap>? annotate,
+        Action<Bitmap>? beforeScaling = null)
     {
         var (width, height) = request.OutputSize(capture.Width, capture.Height);
         var isScaled = width != capture.Width || height != capture.Height;
@@ -1110,6 +1138,8 @@ public class ScreenshotService : IScreenshotService
         {
             data = WithBitmap(capture, bitmap =>
             {
+                // Drawn at the capture's own scale, so it is scaled with the pixels (the pointer)
+                beforeScaling?.Invoke(bitmap);
                 using var scaled = isScaled ? ResizeImage(bitmap, width, height) : null;
                 var output = scaled ?? bitmap;
                 annotate?.Invoke(output);
@@ -1131,6 +1161,21 @@ public class ScreenshotService : IScreenshotService
             height,
             isScaled,
             filePath);
+    }
+
+    /// <summary>Draws the pointer into <paramref name="bitmap"/>, whose top-left pixel is that screen point; false when it was not drawn.</summary>
+    private bool DrawPointer(Bitmap bitmap, int originX, int originY)
+    {
+        using var graphics = Graphics.FromImage(bitmap);
+        var hdc = graphics.GetHdc();
+        try
+        {
+            return _captureWrapper.DrawPointer(hdc, originX, originY);
+        }
+        finally
+        {
+            graphics.ReleaseHdc(hdc);
+        }
     }
 
     /// <summary>The monitors a screen capture registers, or null when they cannot be read (only the virtual screen is compared then).</summary>

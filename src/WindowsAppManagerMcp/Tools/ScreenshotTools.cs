@@ -54,6 +54,12 @@ public class ScreenshotTools
         "A successful capture can carry warnings, each starting with a code: ImageBlank (one solid color), " +
         "WindowNotResponding (copied from the screen, covering windows show), DpiScaledWindow, RegionClipped and others. ";
 
+    internal const string IncludeCursorDescription =
+        "Draw the mouse pointer into the image (default: false). The result always says where it is (cursor)";
+
+    internal const string GridSpacingDescription =
+        "Draw a grid every this many screen pixels (20-10000), labeled with screen coordinates, to read points off the image";
+
     internal const string CaptureMethodDescription =
         "How the pixels are read: 'auto' (default: PrintWindow, falling back to the compositor), 'printwindow', 'wgc' " +
         "(Windows.Graphics.Capture, for windows that print black) or 'screen' (covering windows included)";
@@ -162,9 +168,17 @@ public class ScreenshotTools
         [Description(MaxWidthDescription)]
         int? maxWidth = null,
         [Description(MonitorSelectorDescriptions.MonitorOrAll)]
-        MonitorSelector? monitor = null)
+        MonitorSelector? monitor = null,
+        [Description(IncludeCursorDescription)]
+        bool includeCursor = false,
+        [Description(GridSpacingDescription)]
+        int? gridSpacing = null)
     {
-        var options = Options(format, quality, maxDimension, output, outputPath, overwrite, saveToFile, maxWidth);
+        var options = Options(format, quality, maxDimension, output, outputPath, overwrite, saveToFile, maxWidth) with
+        {
+            IncludeCursor = includeCursor,
+            GridSpacing = gridSpacing
+        };
         var index = MonitorTargeting.Index(_monitorService, monitorIndex, monitor, allowAll: true, "Nothing was captured.") ??
                     _screenshotService.ListScreens().PrimaryIndex;
         return ToolImages.ToCallToolResult(_screenshotService.CaptureMonitor(index, options));
@@ -199,9 +213,21 @@ public class ScreenshotTools
         [Description(SaveToFileDescription)]
         bool saveToFile = false,
         [Description(MaxWidthDescription)]
-        int? maxWidth = null)
+        int? maxWidth = null,
+        [Description(IncludeCursorDescription)]
+        bool includeCursor = false,
+        [Description(GridSpacingDescription)]
+        int? gridSpacing = null,
+        [Description("Enlarge the image up to this many times (1-4, default 1) to read small text or controls; maxDimension still " +
+                     "caps its long edge, and imageToScreen maps its points back")]
+        double zoom = 1)
     {
-        var options = Options(format, quality, maxDimension, output, outputPath, overwrite, saveToFile, maxWidth);
+        var options = Options(format, quality, maxDimension, output, outputPath, overwrite, saveToFile, maxWidth) with
+        {
+            IncludeCursor = includeCursor,
+            GridSpacing = gridSpacing,
+            Zoom = zoom
+        };
         return ToolImages.ToCallToolResult(_screenshotService.CaptureRegion(x, y, width, height, options));
     }
 
@@ -248,6 +274,10 @@ public class ScreenshotTools
         bool restoreIfMinimized = false,
         [Description(CaptureMethodDescription)]
         WindowCaptureMethod captureMethod = WindowCaptureMethod.Auto,
+        [Description(IncludeCursorDescription)]
+        bool includeCursor = false,
+        [Description(GridSpacingDescription)]
+        int? gridSpacing = null,
         CancellationToken cancellationToken = default)
     {
         var element = ElementToCrop(@ref, padding);
@@ -265,7 +295,9 @@ public class ScreenshotTools
 
         var options = Options(format, quality, maxDimension, output, outputPath, overwrite, saveToFile, maxWidth) with
         {
-            CaptureMethod = captureMethod
+            CaptureMethod = captureMethod,
+            IncludeCursor = includeCursor,
+            GridSpacing = gridSpacing
         };
         var restore = await RestoreIfMinimizedAsync(windowHandle, includeFrame, restoreIfMinimized, options, cancellationToken)
             .ConfigureAwait(false);

@@ -1037,6 +1037,10 @@ public class VisualChangeServiceTests
         public CaptureResult CaptureWindowFromScreen(nint windowHandle, bool includeFrame) => throw new NotSupportedException();
 
         public bool IsValidWindow(nint windowHandle) => true;
+
+        public PointerState? GetPointer() => null;
+
+        public bool DrawPointer(nint hdc, int originX, int originY) => false;
     }
 
     /// <summary>Runs window calls on the calling thread, or refuses them as a runner refuses a window that does not answer.</summary>
