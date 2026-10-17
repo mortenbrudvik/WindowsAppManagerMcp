@@ -50,6 +50,12 @@ namespace WindowsAppManagerMcp.Infrastructure;
 /// and DebugBrowserLifecycle.AbandonTimeout: up to about 5 seconds for the exit and 5 for the delete), and a launch with a
 /// new temporary profile first deletes the ones earlier browsers left; so the longest hold is about 40 seconds.
 /// </para>
+/// <para>
+/// run_steps (roadmap M6.2) holds the gate longer on purpose: for its whole run of steps, so no other call's input or
+/// window change lands between two of them. The run is bounded by its maxDurationMs (30 seconds by default, 60 at most),
+/// its wait steps are cut to what is left of it, and its steps pass the gate it holds through an
+/// <see cref="InputGate.Lease"/> bound to the run's flow; the gate is reentrant for nothing else.
+/// </para>
 /// </remarks>
 public static class InputGateToolFilter
 {
@@ -99,7 +105,11 @@ public static class InputGateToolFilter
     /// it. Each command is held until the browser answers, at most a second or two;
     /// a script's or a page's work after that never holds it. A pause while a click or a typing holds it stops the call
     /// between its commands. browser_screenshot takes it only to bring a tab that is not shown to the front. The actions
-    /// refuse at once while input is paused; browser_screenshot only when it would bring a tab to the front.
+    /// refuse at once while input is paused; browser_screenshot only when it would bring a tab to the front. run_steps
+    /// (roadmap M6.2) checks its steps and resolves its window without the gate, then holds it for the whole run with
+    /// <see cref="HoldAsync"/> (at most its maxDurationMs, 60 seconds): its own steps pass the gate it holds, through this
+    /// filter and through the input services, and every other call waits, or gets InputBusy after
+    /// <see cref="GateWaitTimeout"/>.
     /// </summary>
     public static IReadOnlySet<string> SelfGatedTools { get; } = new HashSet<string>(StringComparer.Ordinal)
     {
@@ -112,7 +122,9 @@ public static class InputGateToolFilter
         "activate_tab", "browser_navigate",
         // Find the tab and the element without the gate; take it only for the commands that change the page, or that bring a
         // tab to the front for a capture (roadmap M5.8)
-        "browser_click", "browser_type", "browser_handle_dialog", "browser_evaluate", "browser_screenshot"
+        "browser_click", "browser_type", "browser_handle_dialog", "browser_evaluate", "browser_screenshot",
+        // Holds the gate for its whole run through a lease its own steps pass (roadmap M6.2)
+        "run_steps"
     };
 
     /// <summary>
@@ -140,7 +152,9 @@ public static class InputGateToolFilter
         // An element's place on the screen: a DOM query and the window's UI Automation tree, read only (roadmap M5.8)
         "browser_element_rect",
         // Read the screen's text with Windows OCR; a minimized window is refused, never restored (roadmap M6.3)
-        "read_screen_text", "find_text_on_screen"
+        "read_screen_text", "find_text_on_screen",
+        // A wait of up to a minute on a window's, region's or monitor's pixels; returns rectangles only (roadmap M6.4)
+        "wait_for_visual"
     };
 
     /// <summary>
@@ -191,17 +205,31 @@ public static class InputGateToolFilter
     /// <see cref="GateWaitTimeout"/>) is InputBusy. Either way nothing has been done.
     /// </summary>
     /// <exception cref="ToolErrorException">Input is paused, or the gate is busy.</exception>
-    public static async Task<IDisposable> EnterAsync(IInputSession? session, CancellationToken cancellationToken, TimeSpan? timeout = null)
+    public static Task<IDisposable> EnterAsync(IInputSession? session, CancellationToken cancellationToken, TimeSpan? timeout = null) =>
+        WaitForGateAsync(session, cancellationToken, timeout, InputGate.TryEnterAsync);
+
+    /// <summary>
+    /// For run_steps (roadmap M6.2): waits for the input gate as <see cref="EnterAsync"/> does, with the same refusals, and
+    /// holds it for the whole run through a <see cref="InputGate.Lease"/>, which the caller binds to its own flow
+    /// (<see cref="InputGate.Lease.Bind"/>) so that the run's steps pass the gate it holds. Disposing the lease releases it.
+    /// </summary>
+    /// <exception cref="ToolErrorException">Input is paused, or the gate is busy.</exception>
+    public static Task<InputGate.Lease> HoldAsync(IInputSession? session, CancellationToken cancellationToken, TimeSpan? timeout = null) =>
+        WaitForGateAsync(session, cancellationToken, timeout, InputGate.TryHoldAsync);
+
+    private static async Task<TGate> WaitForGateAsync<TGate>(
+        IInputSession? session, CancellationToken cancellationToken, TimeSpan? timeout, Func<TimeSpan, CancellationToken, Task<TGate?>> take)
+        where TGate : class, IDisposable
     {
         ThrowIfPaused(session);
         var wait = timeout ?? GateWaitTimeout;
 
-        IDisposable? gate;
+        TGate? gate;
         using (var waiting = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, session?.PauseToken ?? CancellationToken.None))
         {
             try
             {
-                gate = await InputGate.TryEnterAsync(wait, waiting.Token).ConfigureAwait(false);
+                gate = await take(wait, waiting.Token).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
             {

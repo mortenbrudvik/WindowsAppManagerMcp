@@ -95,7 +95,9 @@ public class ToolAnnotationContractTests
             // browser_navigate replaces the tab's page, and what was typed into it (roadmap M5.5)
             "browser_navigate",
             // The DOM bridge's actions click, type, answer a dialog (Leave discards input) and run any script in a page (roadmap M5.8)
-            "browser_click", "browser_type", "browser_handle_dialog", "browser_evaluate"
+            "browser_click", "browser_type", "browser_handle_dialog", "browser_evaluate",
+            // A run of those steps: it types, clicks and acts on elements like the input tools it calls (roadmap M6.2)
+            "run_steps"
         ];
 
         var tools = await ToolSurface.ListToolsAsync();
@@ -127,7 +129,9 @@ public class ToolAnnotationContractTests
             "browser_element_rect",
             // The screen's text through Windows OCR: they return no image and write no file, and refuse a minimized window
             // instead of restoring it (roadmap M6.3)
-            "read_screen_text", "find_text_on_screen"
+            "read_screen_text", "find_text_on_screen",
+            // A wait on a window's, region's or monitor's pixels that returns rectangles only, never an image or a file (roadmap M6.4)
+            "wait_for_visual"
         ]);
 
         // browser_screenshot brings a tab that is not shown to the front first (roadmap M5.8)

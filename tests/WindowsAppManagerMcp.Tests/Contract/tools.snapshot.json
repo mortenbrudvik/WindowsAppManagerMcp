@@ -4677,7 +4677,7 @@
     {
       "name": "get_window_info",
       "title": "Get Window Info",
-      "description": "Read one window, named by handle or by a window selector, without listing every window. detail 'compact' gives handle, title, process and state; 'standard' (default) what find_windows reports, visibleBounds (the frame you see) included; 'full' adds clientBounds (the client area on screen), isForeground, zOrder (position among all top-level windows, hidden ones included, front to back; not window.index, and isForeground tells what is in front), isTopmost, isEnabled (false: a modal dialog takes its input), isResponding (false: Windows reports it hung) and dpi (96 is 100%). Untitled, cloaked and tool windows are read too when named by handle. errorCode InvalidHandle: the handle is no window; WindowNotFound, AmbiguousWindow (with candidates) or HandleMismatch: the selector named no single window.",
+      "description": "Read one window, named by handle or by a window selector, without listing every window. detail 'compact' gives handle, title, process and state; 'standard' (default) what find_windows reports, visibleBounds (the frame you see) included; 'full' adds clientBounds (the client area on screen), isForeground, zOrder (position among all top-level windows, hidden ones included, front to back; not window.index, and isForeground tells what is in front), isTopmost, isEnabled (false: a modal dialog takes its input), isResponding (false: Windows reports it hung), dpi (96 is 100%), and its process's integrityLevel and elevated, with aboveServer: true when it runs above this server (TargetElevated). Untitled, cloaked and tool windows are read too when named by handle. errorCode InvalidHandle: the handle is no window; WindowNotFound, AmbiguousWindow (with candidates) or HandleMismatch: the selector named no single window.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -5383,7 +5383,7 @@
     {
       "name": "list_processes",
       "title": "List Processes",
-      "description": "List currently running processes with optional filtering by name. Returns process info including ID, name, window count, and memory usage. By default only processes with a visible, titled window are listed, including windows on other virtual desktops and tool windows; pass includeWindowless=true to list every process, for example to confirm that a process has exited.",
+      "description": "List running processes, by name unless sortBy says otherwise. Each has processId, name, executablePath, memoryUsageMB, parentProcessId (left out when unknown: the parent exited, or a start time cannot be read), startTime (UTC), integrityLevel and elevated, aboveServer: true when it runs above this server (input and UI Automation to its windows are refused: TargetElevated), windowCount and windows (handle and title of up to 10, front to back). Only processes with a visible, titled window are listed, including windows on other virtual desktops and tool windows (a UWP app's window also counts for ApplicationFrameHost); includeWindowless=true lists every process, so processId with includeWindowless=true confirms that a process has exited.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -5396,7 +5396,46 @@
             "default": null
           },
           "includeWindowless": {
-            "description": "Also list processes without a visible, titled window (default: false). windowCount is then 0 for every process.",
+            "description": "Also list processes without a visible, titled window (default: false)",
+            "type": "boolean",
+            "default": false
+          },
+          "processId": {
+            "description": "Only the process with this ID",
+            "type": [
+              "integer",
+              "null"
+            ],
+            "default": null
+          },
+          "pathContains": {
+            "description": "Only processes whose executable path contains this text (case-insensitive); a process whose path cannot be read is left out",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "sortBy": {
+            "description": "Order: 'name' (default), 'memory' (largest first) or 'startTime' (newest first)",
+            "default": "name",
+            "type": "string",
+            "enum": [
+              "name",
+              "memory",
+              "startTime"
+            ]
+          },
+          "limit": {
+            "description": "Return at most this many processes, the first in sortBy order (at least 1; default: all)",
+            "type": [
+              "integer",
+              "null"
+            ],
+            "default": null
+          },
+          "includeCommandLine": {
+            "description": "Also return each process's commandLine, cut to 500 characters (default: false); only with processId, or with nameFilter and a limit of at most 20. Values that look secret (password=, --token, Bearer, a URL's password) become *** with commandLineRedacted: true, but this is a heuristic. Left out when it cannot be read or the user's policy denies the process",
             "type": "boolean",
             "default": false
           }
@@ -7039,6 +7078,162 @@
       },
       "annotations": {
         "title": "Right-Click",
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      }
+    },
+    {
+      "name": "run_steps",
+      "title": "Run Steps",
+      "description": "Run up to 50 steps on one window in one call instead of one call each: a form fill (element_action set_value, toggle, select, invoke), a key sequence, a dialog to wait for and answer. A step is a tool of the list with that tool's own args, as a direct call takes them. Every step is checked first: a wrong one refuses the run (InvalidArguments) and nothing is done. A step that names no window gets window; a step may act only on window, its dialogs and its process's windows (get_focused_element and wait_for_window only read, anywhere). The run holds the input gate (no other call's input lands between steps) for at most maxDurationMs, and stops at the first failed step unless it is optional; the rest are skipped, and nothing is undone. It also stops on a pause (PausedByUser), when maxDurationMs runs out (OperationTimedOut), and when another window takes the front after window or its dialog had it (TargetNotForeground: it never takes it back). Check a state with wait_for_window (condition foreground) or wait_for_element, timeoutMs 0. Refused in a step: paste (type_text types, unicode or keys), file output, window_close, scope desktop, allowHostTarget, and keys that close, quit or lock (ctrl+w, ctrl+q); other keys act in window as in a direct call (ctrl+s saves). A whole value \"$steps.<id>.<path>\" takes an earlier step's ref, handle, captureId or clickPoint.x/y, e.g. \"$steps.find.elements[0].ref\". Returns success, ran, total, stoppedBy, and steps (status ok, failed or skipped, errorCode, elapsedMs; result for a failed step, the last step and return: true), with at most 2 images. Each step is audited as its own call.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "window": {
+            "description": "The run's window: a selector with find_windows' filters, or {\"handle\": n}, resolved to exactly one window before the run; not {\"foreground\": true} alone",
+            "type": "object",
+            "properties": {
+              "handle": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "titleContains": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "titleEquals": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "titleRegex": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "processName": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "processNameContains": {
+                "type": "boolean"
+              },
+              "processId": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "className": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "foreground": {
+                "type": "boolean"
+              },
+              "index": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "includeCloaked": {
+                "type": "boolean"
+              },
+              "includeUntitled": {
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": false
+          },
+          "steps": {
+            "description": "The steps, 1-50, run in order",
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "tool": {
+                  "description": "The tool to call",
+                  "type": "string",
+                  "enum": [
+                    "focus_window",
+                    "find_ui_elements",
+                    "element_action",
+                    "type_text",
+                    "send_keys",
+                    "press_keys",
+                    "mouse_click",
+                    "drag",
+                    "mouse_move",
+                    "scroll",
+                    "wait_for_window",
+                    "wait_for_element",
+                    "get_focused_element",
+                    "capture_window"
+                  ]
+                },
+                "args": {
+                  "description": "The tool's own arguments, as a direct call takes them. A string \"$steps.<id>.<path>\" is an earlier step's ref, handle, captureId or clickPoint x/y",
+                  "type": [
+                    "object",
+                    "null"
+                  ],
+                  "default": null
+                },
+                "id": {
+                  "description": "A name for the step ([A-Za-z0-9_-], at most 32), unique in the run: later steps refer to its result by it",
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "default": null
+                },
+                "optional": {
+                  "description": "True: the run goes on when this step fails (a dialog that may not appear). Default false: a failure stops the run",
+                  "type": "boolean",
+                  "default": false
+                },
+                "return": {
+                  "description": "True: the step's whole result (and its image) is returned, not only its status",
+                  "type": "boolean",
+                  "default": false
+                }
+              },
+              "required": [
+                "tool"
+              ]
+            }
+          },
+          "maxDurationMs": {
+            "description": "How long the run may hold the input gate, in milliseconds (default: 30000, min: 1000, max: 60000); a wait step's timeoutMs is cut to what is left",
+            "type": "integer",
+            "default": 30000
+          },
+          "delayBetweenStepsMs": {
+            "description": "The pause between two steps, in milliseconds (default: 50, min: 0, max: 2000)",
+            "type": "integer",
+            "default": 50
+          }
+        },
+        "required": [
+          "window",
+          "steps"
+        ]
+      },
+      "annotations": {
+        "title": "Run Steps",
         "destructiveHint": true,
         "idempotentHint": false,
         "openWorldHint": false,
@@ -8771,6 +8966,190 @@
       },
       "annotations": {
         "title": "Wait for UI Element",
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "wait_for_visual",
+      "title": "Wait for Visual Change",
+      "description": "Wait on the server until a window, screen region or monitor changes on screen, or stops changing, when UI Automation has nothing to wait on (canvas apps, games, remote desktops, rendering). Frames are compared by a hash per 16-pixel tile; the result has rectangles, never an image. One target: handle or window (read as capture_window reads it, covering windows do not count), x/y/width/height or monitorIndex (copied from the screen; windows the user's policy denies are left out and listed in maskedWindows), or since alone. condition changed (default) compares with since's capture, else with the wait's first frame, which misses a change made before it: before you act, capture the target with output 'metadata' and pass its captureId as since. stable waits until no frame differs from the one before for stableMs. A text caret the app reports is left out. Returns reason (pixels, resized, closed, minimized, hidden), changedPercent, changedRegions (screen pixels, at most 8) and captureId (the last frame, since for the next wait). Not satisfied: WaitTimedOut (timedOut, changedRegions as last seen). Captures keep what since compares with only while this tool is served (else CaptureNotFound). Only reads; other tools run meanwhile.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "condition": {
+            "description": "changed (default) or stable",
+            "default": "changed",
+            "type": "string",
+            "enum": [
+              "changed",
+              "stable"
+            ]
+          },
+          "handle": {
+            "description": "Window handle (as integer) from find_windows. Pass handle or window, not both",
+            "type": [
+              "integer",
+              "null"
+            ],
+            "default": null
+          },
+          "window": {
+            "description": "Alternative to handle: a window selector with find_windows' filters (processName is the whole name; plus foreground, index), resolved to exactly one window or refused (AmbiguousWindow lists candidates).",
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "handle": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "titleContains": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "titleEquals": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "titleRegex": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "processName": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "processNameContains": {
+                "type": "boolean"
+              },
+              "processId": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "className": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "foreground": {
+                "type": "boolean"
+              },
+              "index": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "includeCloaked": {
+                "type": "boolean"
+              },
+              "includeUntitled": {
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": false,
+            "default": null
+          },
+          "includeFrame": {
+            "description": "With a window: whether the frame (title bar, borders) is watched too. Default: true",
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "default": null
+          },
+          "x": {
+            "description": "Region: X of its left edge in screen pixels; with y, width and height",
+            "type": [
+              "integer",
+              "null"
+            ],
+            "default": null
+          },
+          "y": {
+            "description": "Region: Y of its top edge",
+            "type": [
+              "integer",
+              "null"
+            ],
+            "default": null
+          },
+          "width": {
+            "description": "Region: width in pixels",
+            "type": [
+              "integer",
+              "null"
+            ],
+            "default": null
+          },
+          "height": {
+            "description": "Region: height in pixels",
+            "type": [
+              "integer",
+              "null"
+            ],
+            "default": null
+          },
+          "monitorIndex": {
+            "description": "A monitor (0-based, as get_monitors lists them), or -1 for all of them (at most 32 megapixels)",
+            "type": [
+              "integer",
+              "null"
+            ],
+            "default": null
+          },
+          "since": {
+            "description": "A captureId from a capture taken before you acted (output 'metadata' costs no image): the baseline, and the target (its window, region or monitor). Alone, not with another target",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "timeoutMs": {
+            "description": "How long to wait in milliseconds (default: 10000, min: 0, max: 60000); 0 compares once, with since",
+            "type": "integer",
+            "default": 10000
+          },
+          "pollMs": {
+            "description": "Milliseconds from one frame to the next (default: 200, min: 100, max: 2000)",
+            "type": "integer",
+            "default": 200
+          },
+          "stableMs": {
+            "description": "stable only: how long nothing may change, in milliseconds (default: 500, min: 0, max: 10000; at most timeoutMs)",
+            "type": [
+              "integer",
+              "null"
+            ],
+            "default": null
+          },
+          "minChangedPercent": {
+            "description": "A frame counts as changed only when more than this share of its tiles changed, in percent (default: 0, any tile; min: 0, below 100): raise it a little to ignore a clock or a spinner",
+            "type": "number",
+            "default": 0
+          }
+        }
+      },
+      "annotations": {
+        "title": "Wait for Visual Change",
         "destructiveHint": false,
         "idempotentHint": true,
         "openWorldHint": false,

@@ -359,6 +359,108 @@ public class WindowFinderToolsTests
         result.Title.Should().Be(CutTitle);
     }
 
+    // get_window_info detail 'full': the integrity of the window's process (roadmap M6.6)
+
+    private readonly Mock<IProcessSecurityProbe> _mockSecurityProbe = new();
+
+    private static ProcessIntegrity Integrity(int processId, IntegrityLevel level) => level switch
+    {
+        IntegrityLevel.Medium => new(processId, level, ProcessIntegrity.MediumRid, false, null),
+        IntegrityLevel.High => new(processId, level, ProcessIntegrity.HighRid, true, null),
+        _ => new(processId, level, null, null, "access denied")
+    };
+
+    /// <summary>A medium-integrity server; the processes at these levels, Medium for any other.</summary>
+    private WindowFinderTools CreateSutWithProbe(IReadOnlyDictionary<int, IntegrityLevel>? levels = null)
+    {
+        _mockSecurityProbe.Setup(p => p.ServerIntegrity).Returns(Integrity(9_999, IntegrityLevel.Medium));
+        _mockSecurityProbe.Setup(p => p.GetIntegrity(It.IsAny<int>()))
+            .Returns<int>(id => Integrity(id, levels != null && levels.TryGetValue(id, out var level) ? level : IntegrityLevel.Medium));
+        return new WindowFinderTools(_mockWindowService.Object, securityProbe: _mockSecurityProbe.Object);
+    }
+
+    private WindowInfo UseWindow(WindowInfo window)
+    {
+        _mockWindowService.Setup(w => w.IsValidWindow(window.Handle)).Returns(true);
+        _mockWindowService.Setup(w => w.GetWindowInfo(window.Handle)).Returns(window);
+        _mockWindowService.Setup(w => w.GetWindowDetails(window.Handle)).Returns(new WindowDetails(window, false, 3, false, true, true, 96));
+        return window;
+    }
+
+    [Theory]
+    [InlineData(IntegrityLevel.Medium, false, null)]
+    [InlineData(IntegrityLevel.High, true, true)]
+    [InlineData(IntegrityLevel.LikelyElevated, null, true)]
+    [InlineData(IntegrityLevel.Restricted, null, null)]
+    public void GetWindowInfo_Full_ReportsTheIntegrityOfTheWindowsProcess_AndAboveServerOnlyWhenTrue(
+        IntegrityLevel level, bool? elevated, bool? aboveServer)
+    {
+        // Arrange
+        var window = UseWindow(TestDataFactory.CreateWindowInfo(0x100, "Administrator: Windows PowerShell", "powershell", 4_242));
+        var sut = CreateSutWithProbe(new Dictionary<int, IntegrityLevel> { [4_242] = level });
+
+        // Act
+        var result = sut.GetWindowInfo(handle: window.Handle, detail: WindowDetail.Full);
+
+        // Assert
+        result.IntegrityLevel.Should().Be(level);
+        result.Elevated.Should().Be(elevated);
+        result.AboveServer.Should().Be(aboveServer);
+    }
+
+    [Fact]
+    public void GetWindowInfo_Full_OfAUwpWindow_ReportsTheAppsIntegrity_AndAboveServerWhenEitherProcessIsAbove()
+    {
+        // Arrange - the window reports the app's process; ApplicationFrameHost owns the frame
+        var window = UseWindow(TestDataFactory.CreateWindowInfo(0x200, "Calculator", "CalculatorApp", 500) with
+        {
+            HostProcessName = "ApplicationFrameHost",
+            HostProcessId = 400
+        });
+        var sut = CreateSutWithProbe(new Dictionary<int, IntegrityLevel> { [400] = IntegrityLevel.High });
+
+        // Act
+        var result = sut.GetWindowInfo(handle: window.Handle, detail: WindowDetail.Full);
+
+        // Assert
+        result.IntegrityLevel.Should().Be(IntegrityLevel.Medium);
+        result.AboveServer.Should().BeTrue("Windows drops input to the frame window, which the host process owns");
+    }
+
+    [Theory]
+    [InlineData(WindowDetail.Compact)]
+    [InlineData(WindowDetail.Standard)]
+    public void GetWindowInfo_BelowFull_ReportsNoIntegrity_AndReadsNone(WindowDetail detail)
+    {
+        // Arrange
+        var window = UseWindow(TestDataFactory.CreateWindowInfo(0x100));
+        var sut = CreateSutWithProbe();
+
+        // Act
+        var result = sut.GetWindowInfo(handle: window.Handle, detail: detail);
+
+        // Assert
+        result.IntegrityLevel.Should().BeNull();
+        result.Elevated.Should().BeNull();
+        result.AboveServer.Should().BeNull();
+        _mockSecurityProbe.Verify(p => p.GetIntegrity(It.IsAny<int>()), Times.Never);
+    }
+
+    [Fact]
+    public void GetWindowInfo_Full_WithoutASecurityProbe_LeavesTheIntegrityOut()
+    {
+        // Arrange
+        var window = UseWindow(TestDataFactory.CreateWindowInfo(0x100));
+
+        // Act
+        var result = CreateSut().GetWindowInfo(handle: window.Handle, detail: WindowDetail.Full);
+
+        // Assert
+        result.Success.Should().BeTrue();
+        result.IntegrityLevel.Should().BeNull();
+        result.AboveServer.Should().BeNull();
+    }
+
     [Fact]
     public void GetOwnedWindows_CutsALongTitle()
     {

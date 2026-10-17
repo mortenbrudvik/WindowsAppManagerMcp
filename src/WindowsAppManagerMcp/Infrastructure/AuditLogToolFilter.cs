@@ -31,7 +31,9 @@ public static class AuditLogToolFilter
     /// shows or navigates a browser tab (activate_tab, browser_navigate with its URL's scheme and host only), or acts on a
     /// browser's page through CDP (browser_click, browser_type, browser_evaluate with what they were given as lengths, and
     /// browser_screenshot, which may bring a tab to the front) or answers its JavaScript dialog through UI Automation
-    /// (browser_handle_dialog, with its promptText's length only);
+    /// (browser_handle_dialog, with its promptText's length only); runs steps (run_steps, roadmap M6.2: the run's line counts
+    /// its steps, and every audited step writes its own line as a direct call would, with the request id
+    /// "&lt;run's id&gt;#&lt;step&gt;");
     /// and get_clipboard, the one read that can return the user's own clipboard (after their yes, or with
     /// WAM_ALLOW_USER_CLIPBOARD), recorded with its format, origin and length, never its content. Other read-only tools are
     /// never audited. The captures are left out: they are destructive only through overwrite:true of an image file, and
@@ -58,7 +60,10 @@ public static class AuditLogToolFilter
         "activate_tab", "browser_navigate",
         // The DOM bridge's actions (roadmap M5.8): a script, a text, a selector or a name as its length only, never the value
         // or the script's result; a capture that may bring a tab to the front
-        "browser_click", "browser_type", "browser_handle_dialog", "browser_evaluate", "browser_screenshot"
+        "browser_click", "browser_type", "browser_handle_dialog", "browser_evaluate", "browser_screenshot",
+        // A run of steps (roadmap M6.2): one line for the run (its window, the number of steps, how it ended), and each audited
+        // step's own line under the request id "<run's id>#<step>"
+        "run_steps"
     };
 
     /// <summary>Registers <see cref="Filter"/> in the call-tool pipeline of the MCP server.</summary>

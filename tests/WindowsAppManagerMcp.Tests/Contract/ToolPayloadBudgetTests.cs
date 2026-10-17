@@ -69,6 +69,7 @@ public class ToolPayloadBudgetTests
         ["take_screenshot"] = 150, // 131
         ["capture_region"] = 150, // 118
         ["capture_window"] = 150, // 126
+        ["wait_for_visual"] = 150, // 103: two changed regions and the last frame's captureId, no image (roadmap M6.4)
         ["capture_with_elements"] = 2_150, // 1,416: the legend of the typical tree's 120 elements, one line each (roadmap M3.11; was 6,544 with the elements list, now detail full), and markPrefix (roadmap M3.F38)
         ["read_screen_text"] = 1_900, // 1,276: the 40 lines OCR reads in the typical window, each with its bounds (roadmap M6.3)
         ["find_text_on_screen"] = 190, // 125: one match with its line, bounds, clickPoint and imagePoint (roadmap M6.3)
@@ -129,9 +130,12 @@ public class ToolPayloadBudgetTests
         ["resume_input"] = 100, // 14
         ["release_all_input"] = 100, // 21
 
+        // Step Sequences: a five-step form fill with each step's status and the last step's own result (roadmap M6.2)
+        ["run_steps"] = 300, // 181
+
         // App Launch
         ["launch_application"] = 160, // 103 (with the window it found)
-        ["list_processes"] = 2_000, // 1,328: 40 processes
+        ["list_processes"] = 4_500, // 2,976: 40 processes, each with its parent, start time, integrity and windows (1,328 before M6.6)
         ["kill_process"] = 100, // 28
         ["close_application"] = 100, // 49: one Notepad window
 
@@ -143,7 +147,7 @@ public class ToolPayloadBudgetTests
         ["delete_layout"] = 100, // 4
 
         // Server Info: the default deny list, five host processes, two monitors
-        ["get_server_info"] = 850, // 634
+        ["get_server_info"] = 850, // 702 (634 before M6.9 listed the resources and prompts)
     };
 
     /// <summary>
@@ -152,11 +156,13 @@ public class ToolPayloadBudgetTests
     /// measured size (58,758 tokens, 235,029 bytes for 68 tools, October 2026, after M3.F32's screenshotMarks and observe on six action tools, M3.F8's launch arguments description, M3.F38's markPrefix, M4.2's CursorClamped and mouse buttons, and M4.1's key grammar, send_keys' delayMs and keysSent, and type_text's controlChars, M4.3's mouse_click, drag and press_keys, M4.4's type_text method and paste, and M5.2's targetId on get_browser_url and get_browser_content, +110 after the three cdpPort descriptions were shortened, less after get_active_browser_url's requireCdp stopped naming targetId, M5.7's get_browser_url description, M5.1's launch_browser_with_debug executablePath, port 0 and launch results, and M5.1's readiness sentence (cdpReady, cdpEndpoint, browserVersion, the 10-second wait) in its description, M5.3's useCdp on the three reading tools and their found debug port, and M5.6's paged get_browser_content (offset, selector, the page fields in its description, and offset's 'a uia page continues with useCdp=false'), and M5.4's close_debug_browser and launch_browser_with_debug's profile, reuseIfRunning and placement (launch_application's placement schema, about 420 tokens of the 791), with its cleanup advice shortened to close_debug_browser; then 60,504 tokens, 242,016 bytes for 72 tools after M5.5's list_tabs, activate_tab, browser_navigate and wait_for_browser, each with handle, the window selector and cdpPort; then 63,474 tokens, 253,893 bytes for 78 tools after M5.8's DOM bridge, browser_element_rect, browser_click, browser_type, browser_handle_dialog, browser_screenshot and browser_evaluate, each with handle, the window selector (156 tokens each), cdpPort and targetId; then 63,673 tokens, 254,692 bytes after M5.8's dialog option (dialog and promptText on browser_click, browser_type and browser_navigate) and browser_handle_dialog through UI Automation (window only, accept optional); then 64,078 tokens, 256,309 bytes after M6.1a's virtualScreen on get_monitors (+28), set_window_bounds' optional x/y and width/height pairs and nullable bringToFront (+87), get_browser_url's bare foreground selector (+41) and mouse_click's own click checks instead of 'as for click' (+249); then 61,957 tokens, 247,825 bytes after M6.1b cut the
     /// nine deprecated tools' descriptions to one line that names the replacement, sent take_screenshot, the
     /// handle parameters and drag to get_monitors, find_windows and mouse_click instead of the deprecated tools, and added
-    /// get_server_info's moved field to its description (-2,121 in all); then 64,044 tokens, 256,174 bytes for 80 tools after M6.3's read_screen_text and find_text_on_screen in the opt-in ocr toolset (+2,087, sharing their target and result descriptions); DefaultToolListTokenBudget measures the 58 tools served by default), so every addition to the surface is a decision. When a change
+    /// get_server_info's moved field to its description (-2,121 in all); then 62,348 tokens, 249,390 bytes after M6.6's
+    /// list_processes parameters (processId, pathContains, sortBy, limit, includeCommandLine) and result fields in its
+    /// description (+361) and get_window_info's integrity fields (+31); then 63,402 tokens, 253,608 bytes for 79 tools after M6.2's run_steps, its description and the step item schema with the tool list; then 64,474 tokens, 257,896 bytes for 80 tools after M6.4's wait_for_visual in the opt-in visual toolset; then 66,562 tokens, 266,245 bytes for 82 tools after M6.3's read_screen_text and find_text_on_screen in the opt-in ocr toolset (+2,088, sharing their target and result descriptions); DefaultToolListTokenBudget measures the tools served by default), so every addition to the surface is a decision. When a change
     /// adds to the surface on purpose, raise it in the same change by what the failure message measures; when a change
     /// trims descriptions, lower it.
     /// </summary>
-    public const int ToolListTokenBudget = 64_080;
+    public const int ToolListTokenBudget = 66_598;
 
     /// <summary>
     /// The token budget of the default tools/list (roadmap M6.1): the tools a server started without WAM_TOOLSETS,
@@ -167,10 +173,12 @@ public class ToolPayloadBudgetTests
     /// click checks (+249); then 51,005 tokens (204,020 bytes, 58 tools) after M6.1b moved the nine deprecated tools (click,
     /// right_click, double_click, move_window, resize_window, get_all_windows, get_primary_monitor, list_screens,
     /// get_active_browser_url) to the opt-in deprecated toolset and the three geometry batches to the opt-in windows-batch
-    /// toolset (-9,027), October 2026. A tool in a toolset that is off by default never moves it; a change to the default
+    /// toolset (-9,027); then 51,397 tokens (205,585 bytes) after M6.6's list_processes parameters and fields (+361) and
+    /// get_window_info's integrity fields (+31), October 2026; then 52,451 tokens (209,803 bytes, 59 tools) after M6.2's run_steps in the steps
+    /// toolset, on by default. A tool in a toolset that is off by default never moves it; a change to the default
     /// surface raises it by what the failure message measures, in the same change, or lowers it.
     /// </summary>
-    public const int DefaultToolListTokenBudget = 51_041;
+    public const int DefaultToolListTokenBudget = 52_487;
 
     /// <summary>
     /// The most tokens one tool object (name, title, description, input schema, annotations) may cost in tools/list (roadmap
@@ -190,22 +198,33 @@ public class ToolPayloadBudgetTests
     private static readonly IReadOnlyDictionary<string, int> ToolsetTokenBudgets = new Dictionary<string, int>(StringComparer.Ordinal)
     {
         ["server"] = 1_050, // 1,038
-        ["windows"] = 9_950, // 9,921: 12 tools, 10 of them with the window selector (13,724 before M6.1b moved six out)
+        ["windows"] = 9_988, // 9,952: 12 tools, 10 of them with the window selector (13,724 before M6.1b moved six out; 9,921 before M6.6's get_window_info integrity fields)
         ["monitors"] = 150, // 118: get_monitors alone since M6.1b (314 with get_primary_monitor and list_screens)
         ["capture"] = 5_900, // 5,856
         ["elements"] = 8_300, // 8,262
         ["input"] = 14_800, // 14,758: 10 tools (19,415 with the click trio before M6.1b)
         ["clipboard"] = 750, // 734
         ["launch"] = 2_900, // 2,890
-        ["process"] = 1_950, // 1,921
+        ["process"] = 2_318, // 2,282 (1,921 before M6.6's list_processes parameters and fields)
         ["layouts"] = 1_200, // 1,181
+        ["steps"] = 1_091, // 1,055: run_steps alone (roadmap M6.2), its description and the steps' item schema with the tool list
         ["browser"] = 4_350, // 4,315 (4,674 with get_active_browser_url before M6.1b)
         ["browser-actions"] = 3_600, // 3,577 (off by default)
         ["browser-script"] = 500, // 468 (off by default)
+        ["visual"] = 1_108, // 1,072 (off by default): wait_for_visual with handle, the window selector, a region, monitorIndex and since (roadmap M6.4)
         ["windows-batch"] = 2_000, // 1,978 (off by default since M6.1b)
         ["deprecated"] = 4_950, // 4,925 (off by default since M6.1b): nine one-line descriptions, but their full parameters
         ["ocr"] = 2_123, // 2,087 (off by default, roadmap M6.3): read_screen_text and find_text_on_screen
     };
+
+    /// <summary>
+    /// The token budget of resources/list, resources/templates/list and prompts/list together (roadmap M6.9), outside tools/list:
+    /// clients list them when they connect, but Claude Code shows them to the user (as @-mentions and slash commands) rather
+    /// than loading them into the model's context. A ratchet like <see cref="ToolListTokenBudget"/>, just above the measured
+    /// size: 646 tokens for two resources, one template and four prompts (October 2026). A change that adds a resource or
+    /// prompt, or lengthens their descriptions, raises it by what the failure message measures.
+    /// </summary>
+    public const int ResourcesAndPromptsListTokenBudget = 655;
 
     public static TheoryData<string> ServedTools() => EveryToolContractTests.ServedTools();
 
@@ -232,6 +251,19 @@ public class ToolPayloadBudgetTests
         tokens.Should().BeLessThanOrEqualTo(ToolListTokenBudget,
             "tools/list is about {0} tokens ({1} bytes, {2} tools; budget {3}); if the surface grew on purpose, raise the budget",
             tokens, bytes, tools.Count, ToolListTokenBudget);
+    }
+
+    [Fact]
+    public async Task ResourcesAndPromptsLists_StayWithinTheirBudget()
+    {
+        // Act - the three lists as a client receives them, serialized as the SDK writes them
+        var lists = await ResourceSurface.ListAsync();
+        var tokens = ResourceSurface.Tokens(lists);
+
+        // Assert
+        tokens.Should().BeLessThanOrEqualTo(ResourcesAndPromptsListTokenBudget,
+            "resources/list, resources/templates/list and prompts/list are about {0} tokens (budget {1}); if they grew on purpose, " +
+            "raise the budget", tokens, ResourcesAndPromptsListTokenBudget);
     }
 
     [Fact]

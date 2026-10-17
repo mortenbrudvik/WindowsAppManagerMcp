@@ -1,7 +1,7 @@
 # Windows App Manager - MCP Tools Reference
 
 <!-- tools:begin summary (generated from tools/list: run the tests with UPDATE_SNAPSHOTS=1, see TESTING.md) -->
-A comprehensive guide to all 80 MCP tools for managing Windows applications, windows, and layouts.
+A comprehensive guide to all 82 MCP tools for managing Windows applications, windows, and layouts.
 
 ## Quick Reference
 
@@ -11,13 +11,14 @@ A comprehensive guide to all 80 MCP tools for managing Windows applications, win
 | [Window Control](#window-control) | [move_window](#move_window), [resize_window](#resize_window), [set_window_bounds](#set_window_bounds), [set_window_state](#set_window_state), [focus_window](#focus_window), [close_window](#close_window), [snap_window](#snap_window), [move_window_to_monitor](#move_window_to_monitor) | 8 |
 | [Batch Operations](#batch-operations) | [set_windows_bounds_batch](#set_windows_bounds_batch), [snap_windows_batch](#snap_windows_batch), [set_windows_state_batch](#set_windows_state_batch), [close_windows_batch](#close_windows_batch), [launch_applications_batch](#launch_applications_batch) | 5 |
 | [Monitor Info](#monitor-info) | [get_monitors](#get_monitors), [get_primary_monitor](#get_primary_monitor) | 2 |
-| [Screenshot](#screenshot) | [list_screens](#list_screens), [take_screenshot](#take_screenshot), [capture_region](#capture_region), [capture_window](#capture_window), [capture_with_elements](#capture_with_elements), [read_screen_text](#read_screen_text), [find_text_on_screen](#find_text_on_screen) | 7 |
+| [Screenshot](#screenshot) | [list_screens](#list_screens), [take_screenshot](#take_screenshot), [capture_region](#capture_region), [capture_window](#capture_window), [capture_with_elements](#capture_with_elements), [read_screen_text](#read_screen_text), [find_text_on_screen](#find_text_on_screen), [wait_for_visual](#wait_for_visual) | 8 |
 | [UI Automation](#ui-automation) | [get_desktop_state](#get_desktop_state), [get_ui_elements](#get_ui_elements), [find_ui_elements](#find_ui_elements), [element_action](#element_action), [respond_to_dialog](#respond_to_dialog), [file_dialog](#file_dialog), [get_focused_element](#get_focused_element), [get_element_at_point](#get_element_at_point), [get_active_popups](#get_active_popups), [read_element_text](#read_element_text), [read_table](#read_table), [wait_for_element](#wait_for_element) | 12 |
 | [Browser Reading](#browser-reading) | [get_browser_url](#get_browser_url), [get_active_browser_url](#get_active_browser_url), [get_browser_content](#get_browser_content), [launch_browser_with_debug](#launch_browser_with_debug), [close_debug_browser](#close_debug_browser) | 5 |
 | [Browser Tabs and Navigation](#browser-tabs-and-navigation) | [list_tabs](#list_tabs), [activate_tab](#activate_tab), [browser_navigate](#browser_navigate), [wait_for_browser](#wait_for_browser) | 4 |
 | [Browser Page (DOM Bridge)](#browser-page-(dom-bridge)) | [browser_element_rect](#browser_element_rect), [browser_click](#browser_click), [browser_type](#browser_type), [browser_handle_dialog](#browser_handle_dialog), [browser_screenshot](#browser_screenshot), [browser_evaluate](#browser_evaluate) | 6 |
 | [Input Simulation](#input-simulation) | [click](#click), [right_click](#right_click), [double_click](#double_click), [mouse_click](#mouse_click), [drag](#drag), [mouse_move](#mouse_move), [scroll](#scroll), [type_text](#type_text), [send_keys](#send_keys), [press_keys](#press_keys) | 10 |
 | [Input Control](#input-control) | [get_control_status](#get_control_status), [resume_input](#resume_input), [release_all_input](#release_all_input) | 3 |
+| [Step Sequences](#step-sequences) | [run_steps](#run_steps) | 1 |
 | [App Launch](#app-launch) | [launch_application](#launch_application), [list_processes](#list_processes), [kill_process](#kill_process), [close_application](#close_application) | 4 |
 | [Clipboard](#clipboard) | [get_clipboard](#get_clipboard), [set_clipboard](#set_clipboard) | 2 |
 | [Layout Presets](#layout-presets) | [list_layouts](#list_layouts), [get_layout](#get_layout), [save_layout](#save_layout), [apply_layout](#apply_layout), [delete_layout](#delete_layout) | 5 |
@@ -84,7 +85,7 @@ automatically, what to run in parallel and what to ask the user about:
 | Hint | Tools |
 |------|-------|
 | `readOnlyHint: true` | The find, get and list tools (get_desktop_state and get_active_popups among them), the text and table reads (read_element_text, read_table), the waits (wait_for_window, wait_for_element), the browser reads (get_browser_url, get_active_browser_url, get_browser_content, list_tabs, wait_for_browser), get_control_status, get_server_info and get_clipboard (it may ask the user, which changes nothing). They change nothing, write no file and run without the input gate; [read-only mode](#toolsets) serves exactly these |
-| `destructiveHint: true` | close_window, close_windows_batch, close_application, kill_process, delete_layout, save_layout (it replaces a preset of the same name), click, right_click, double_click, mouse_click, drag, type_text, send_keys and press_keys (input can confirm, delete, move or send anything), element_action, respond_to_dialog and file_dialog (they press buttons, set values and choose menu items, answer dialogs and save files), scroll (the wheel over a combo box, slider or number box changes its value), set_clipboard (it replaces what the user copied), launch_application and launch_applications_batch (they start any program with its arguments; a command interpreter or script host only without arguments, and no script, see [Commands and scripts](#commands-and-scripts)), launch_browser_with_debug (its debug port lets any program on the computer control that browser), close_debug_browser (it closes a whole browser, every page open in it, and can delete a named profile's sign-ins), browser_navigate (it replaces the tab's page and anything typed into it), and the four captures (with `overwrite: true` they replace the image file at `outputPath`) |
+| `destructiveHint: true` | close_window, close_windows_batch, close_application, kill_process, delete_layout, save_layout (it replaces a preset of the same name), click, right_click, double_click, mouse_click, drag, type_text, send_keys and press_keys (input can confirm, delete, move or send anything), element_action, respond_to_dialog and file_dialog (they press buttons, set values and choose menu items, answer dialogs and save files), scroll (the wheel over a combo box, slider or number box changes its value), set_clipboard (it replaces what the user copied), launch_application and launch_applications_batch (they start any program with its arguments; a command interpreter or script host only without arguments, and no script, see [Commands and scripts](#commands-and-scripts)), launch_browser_with_debug (its debug port lets any program on the computer control that browser), close_debug_browser (it closes a whole browser, every page open in it, and can delete a named profile's sign-ins), browser_navigate (it replaces the tab's page and anything typed into it), run_steps (its steps type, click and act on elements), and the four captures (with `overwrite: true` they replace the image file at `outputPath`) |
 | `idempotentHint: true` | The read-only tools, and the changes that end in the same place when repeated: move, resize, bounds, snap and move-to-monitor (and their batches), focus_window, mouse_move, save_layout, delete_layout, resume_input, release_all_input, set_clipboard and activate_tab |
 | `openWorldHint: true` | launch_application, launch_applications_batch and launch_browser_with_debug (they start any program or open any URI), apply_layout (with `launchMissing: true` it runs the launch commands in the preset file, with launch_application's checks), get_browser_content and wait_for_browser (they read what a website wrote), and browser_navigate (it loads any web page) |
 
@@ -133,10 +134,14 @@ to do anything for it, and cannot turn it off.
   scroll, element_action, respond_to_dialog, file_dialog, close_window, close_windows_batch, close_application, kill_process,
   close_debug_browser, launch_application, launch_applications_batch, launch_browser_with_debug, apply_layout, save_layout, delete_layout, set_clipboard,
   activate_tab, browser_navigate, browser_click, browser_type, browser_handle_dialog, browser_evaluate, browser_screenshot (it may bring
-  a tab to the front) and get_clipboard (the one read that can return the user's own clipboard; its line keeps `format` and the result's
+  a tab to the front), run_steps and get_clipboard (the one read that can return the user's own clipboard; its line keeps `format` and the result's
   `origin` and `length`, never the content).
   A call is logged whatever its outcome: refused by the input guard or a pause, failed, cancelled (some input may have
   been sent) or done. The other read-only tools are never logged, and neither are the captures.
+- **run_steps (roadmap M6.2):** the run writes one line when it ends (its window, `stepsCount`, `maxDurationMs`, and the
+  numbers of its result: `ran`, `total`, `elapsedMs`; its `errorCode`), and every audited step writes its own line as a
+  direct call would, while the run goes on, with the request id `<run's id>#<step>` (the first step 1). A step that is
+  not audited on its own (focus_window, a read) writes none.
 - **Never logged:** typed text, keys, clipboard text, URL paths, queries and credentials, working directories,
   command-line arguments or any result text. The arguments are checked against the tool's declared parameters:
   - A string argument is recorded as its length (`textLength`, `keysLength`, `urlLength`), and an array as its count
@@ -266,7 +271,7 @@ A tool that can take long stops when the client cancels the request (`notificati
 | [get_focused_element](#get_focused_element), [get_element_at_point](#get_element_at_point) | The wait for UI Automation | - |
 | [get_desktop_state](#get_desktop_state), [find_ui_elements](#find_ui_elements), [get_active_popups](#get_active_popups), [read_element_text](#read_element_text), [read_table](#read_table) | The UI Automation reads and the search | - |
 | [element_action](#element_action), [respond_to_dialog](#respond_to_dialog), [file_dialog](#file_dialog) | The wait for the input gate, the search and reads, and the wait for an action to return; an action, press or keys already sent stand | - |
-| [wait_for_window](#wait_for_window), [wait_for_element](#wait_for_element) | The wait, at once | About once a second: the milliseconds waited of `timeoutMs`, and what the last read saw |
+| [wait_for_window](#wait_for_window), [wait_for_element](#wait_for_element), [wait_for_visual](#wait_for_visual) | The wait, at once | About once a second: the milliseconds waited of `timeoutMs`, and what the last read saw |
 | [launch_application](#launch_application), [launch_browser_with_debug](#launch_browser_with_debug) | Before the start, the launch; after it, the wait for the window, and launch_browser_with_debug's wait for its DevTools port and endpoint (launch_application's program keeps running, and no result names it: find it with list_processes; launch_browser_with_debug ends the browser it started, since no result names its unauthenticated port, and deletes its temporary profile, roadmap M5.4) | - |
 | [close_debug_browser](#close_debug_browser) | The wait for the user's answer, and the wait for the browser to exit; a Browser.close or an end already sent stands | - |
 | [launch_applications_batch](#launch_applications_batch) | The applications not started yet, and the wait for the windows | As each application is done (refused, started, or its window wait ended): `i of n` and its outcome |
@@ -275,12 +280,13 @@ A tool that can take long stops when the client cancels the request (`notificati
 | [kill_process](#kill_process) | The wait for the process to exit; the close request or termination already sent stands | - |
 | [type_text](#type_text), [send_keys](#send_keys), [press_keys](#press_keys) | The keys not sent yet (see [Input guard](#input-guard)); a chord press_keys holds is released; a paste whose Ctrl+V went out still waits and puts the clipboard back | - |
 | [get_browser_url](#get_browser_url), [get_browser_content](#get_browser_content), [get_active_browser_url](#get_active_browser_url) | The CDP requests | - |
+| [run_steps](#run_steps) | The step that is running, as a cancelled direct call of its tool, and the steps after it; the steps that ran stand. The input gate it holds is free at once | After each step: `step i of n` and its tool and outcome; a step's own progress is not sent |
 
 The launch, layout and window batch tools run inside the input gate (see [Window Control](#window-control)), so cancelling one also lets the input and window calls waiting for it go ahead at once (launch_browser_with_debug once it has ended the browser it started and deleted its temporary profile, up to about 10 seconds). kill_process and the close tools hold the gate only while they send, so their wait for the process or window never holds it.
 
 A client that sends a progress token with the call (`_meta.progressToken`) gets `notifications/progress` messages before the result: `progress` counts what is done and only grows, `total` is the number of items when it is known (not for a UI Automation walk), and `message` says what was just done. A client may use them to show progress or to keep a long call from timing out.
 
-A `timeoutMs` outside the range its tool's section gives is clamped to that range, without an error, by the [UI Automation](#ui-automation) tools other than wait_for_element, by [capture_with_elements](#capture_with_elements) and by the [Browser Reading](#browser-reading) tools; [wait_for_window](#wait_for_window), [wait_for_element](#wait_for_element) and [close_application](#close_application) refuse it with `InvalidArguments` and do nothing.
+A `timeoutMs` outside the range its tool's section gives is clamped to that range, without an error, by the [UI Automation](#ui-automation) tools other than wait_for_element, by [capture_with_elements](#capture_with_elements) and by the [Browser Reading](#browser-reading) tools; [wait_for_window](#wait_for_window), [wait_for_element](#wait_for_element), [wait_for_visual](#wait_for_visual) and [close_application](#close_application) refuse it with `InvalidArguments` and do nothing.
 
 ---
 
@@ -298,41 +304,44 @@ Every tool the server serves sits in the agent's context on every turn, and a lo
 | Toolset | Default | Tokens | What it covers | Tools |
 |---------|---------|--------|----------------|-------|
 | `server` | always on | about 1,000 | The server's build, environment and toolsets, and the user's control over its input: whether input is paused, resuming it with the user's consent, releasing stuck keys. | [get_server_info](#get_server_info), [get_control_status](#get_control_status), [resume_input](#resume_input), [release_all_input](#release_all_input) |
-| `windows` | on | about 9,900 | Find, wait for, focus, move, resize, snap, minimize, maximize and close windows, and close several at once. | [find_windows](#find_windows), [get_foreground_window](#get_foreground_window), [focus_window](#focus_window), [set_window_bounds](#set_window_bounds), [set_window_state](#set_window_state), [snap_window](#snap_window), [move_window_to_monitor](#move_window_to_monitor), [close_window](#close_window), [close_windows_batch](#close_windows_batch), [get_owned_windows](#get_owned_windows), [get_window_info](#get_window_info), [wait_for_window](#wait_for_window) |
+| `windows` | on | about 10,000 | Find, wait for, focus, move, resize, snap, minimize, maximize and close windows, and close several at once. | [find_windows](#find_windows), [get_foreground_window](#get_foreground_window), [focus_window](#focus_window), [set_window_bounds](#set_window_bounds), [set_window_state](#set_window_state), [snap_window](#snap_window), [move_window_to_monitor](#move_window_to_monitor), [close_window](#close_window), [close_windows_batch](#close_windows_batch), [get_owned_windows](#get_owned_windows), [get_window_info](#get_window_info), [wait_for_window](#wait_for_window) |
 | `monitors` | on | about 100 | The monitors: bounds, work areas, scale factors, and the virtual screen they make up. | [get_monitors](#get_monitors) |
 | `capture` | on | about 5,900 | Screenshots of monitors, regions and windows, as image content. | [take_screenshot](#take_screenshot), [capture_region](#capture_region), [capture_window](#capture_window), [capture_with_elements](#capture_with_elements) |
 | `elements` | on | about 8,300 | UI Automation: one-call desktop observations, element trees, searches that return element refs (also in menus, dropdowns and dialogs), waits for elements, the focused element, the element at a point, an app's open popups, an element's text and a table's cells. | [get_desktop_state](#get_desktop_state), [get_ui_elements](#get_ui_elements), [find_ui_elements](#find_ui_elements), [get_focused_element](#get_focused_element), [get_element_at_point](#get_element_at_point), [get_active_popups](#get_active_popups), [read_element_text](#read_element_text), [read_table](#read_table), [wait_for_element](#wait_for_element) |
 | `input` | on | about 14,800 | Guarded mouse and keyboard input to a named window (clicks of any button with modifiers, drags, key chords), and actions on UI elements through UI Automation patterns: menu paths, answering dialogs, completing Open and Save As dialogs. | [mouse_click](#mouse_click), [drag](#drag), [mouse_move](#mouse_move), [scroll](#scroll), [type_text](#type_text), [send_keys](#send_keys), [press_keys](#press_keys), [element_action](#element_action), [respond_to_dialog](#respond_to_dialog), [file_dialog](#file_dialog) |
 | `clipboard` | on | about 700 | Read what the agent copied, put text on the clipboard to paste it; the user's own clipboard only with their consent. | [get_clipboard](#get_clipboard), [set_clipboard](#set_clipboard) |
 | `launch` | on | about 2,900 | Start applications, optionally waiting for their window. | [launch_application](#launch_application), [launch_applications_batch](#launch_applications_batch) |
-| `process` | on | about 1,900 | List processes and close or end one, or close an application's windows gracefully. | [list_processes](#list_processes), [kill_process](#kill_process), [close_application](#close_application) |
+| `process` | on | about 2,300 | List processes and close or end one, or close an application's windows gracefully. | [list_processes](#list_processes), [kill_process](#kill_process), [close_application](#close_application) |
 | `layouts` | on | about 1,200 | Save, apply and manage window layout presets. | [list_layouts](#list_layouts), [get_layout](#get_layout), [save_layout](#save_layout), [apply_layout](#apply_layout), [delete_layout](#delete_layout) |
+| `steps` | on | about 1,100 | Run several steps (element actions, keys, clicks, waits) on one window in one call, under one input gate hold, stopping at the first failure. | [run_steps](#run_steps) |
 | `browser` | on | about 4,300 | Read the URL and text of browser pages, list a debug browser's tabs and wait for a page; start and close a browser with a DevTools port. | [get_browser_url](#get_browser_url), [get_browser_content](#get_browser_content), [launch_browser_with_debug](#launch_browser_with_debug), [close_debug_browser](#close_debug_browser), [list_tabs](#list_tabs), [wait_for_browser](#wait_for_browser) |
 | `browser-actions` | off | about 3,600 | Act on a debug browser's pages through CDP: show and navigate tabs (with a load wait), click and type in a page without the real mouse or keyboard, answer its JavaScript dialogs, place its elements on the screen, capture it. | [activate_tab](#activate_tab), [browser_navigate](#browser_navigate), [browser_element_rect](#browser_element_rect), [browser_click](#browser_click), [browser_type](#browser_type), [browser_handle_dialog](#browser_handle_dialog), [browser_screenshot](#browser_screenshot) |
 | `browser-script` | off | about 500 | Run JavaScript in a debug browser's page through CDP, with the page's rights. | [browser_evaluate](#browser_evaluate) |
+| `visual` | off | about 1,100 | Wait until a window, region or monitor changes on screen or stops changing, compared tile by tile, without image tokens. | [wait_for_visual](#wait_for_visual) |
 | `windows-batch` | off | about 2,000 | Place, snap, or minimize, maximize and restore several windows in one call, each with its own placement or state. | [set_windows_bounds_batch](#set_windows_bounds_batch), [snap_windows_batch](#snap_windows_batch), [set_windows_state_batch](#set_windows_state_batch) |
 | `ocr` | off | about 2,100 | Read and find text on the screen with Windows OCR where UI Automation exposes none (canvas apps, games, remote desktops, rendered PDFs), with click points for the mouse tools. | [read_screen_text](#read_screen_text), [find_text_on_screen](#find_text_on_screen) |
 | `deprecated` | off | about 4,900 | Tools replaced in 2.2.0 and removed in 3.0.0, unchanged until then and each served only with the toolset it came from: use mouse_click, set_window_bounds, find_windows, get_monitors and get_browser_url instead. | [click](#click), [right_click](#right_click), [double_click](#double_click), [move_window](#move_window), [resize_window](#resize_window), [get_all_windows](#get_all_windows), [get_primary_monitor](#get_primary_monitor), [list_screens](#list_screens), [get_active_browser_url](#get_active_browser_url) |
 
-The default surface (the toolsets that are on) is about 51,000 tokens, and every tool together about 64,000.
+The default surface (the toolsets that are on) is about 52,500 tokens, and every tool together about 66,600.
 <!-- tools:end toolsets -->
 
 **Tokens** is what the toolset's tools cost in tools/list, to the nearest 100: their names, titles, descriptions, input schemas and annotations as the server sends them, estimated at 4 bytes of JSON per token (roadmap M6.1). It is what turning the toolset on adds to the context a client loads up front, and what turning it off saves. The two totals under the table are measured the same way and generated with it. Contract tests hold each toolset, the default surface, the whole list and every single tool (at most 2,500 tokens) to a budget, so a change that makes them larger is a decision; see TESTING.md.
 
-**The default.** Every toolset is on by default except five, so a server without these variables serves 58 of the 80 tools:
+**The default.** Every toolset is on by default except six, so a server without these variables serves 59 of the 82 tools:
 
 - `browser-actions` (activate_tab and browser_navigate, roadmap M5.5, and the DOM bridge's browser_element_rect, browser_click, browser_type, browser_handle_dialog and browser_screenshot, roadmap M5.8): `WAM_TOOLSETS=+browser-actions` adds them.
 - `browser-script` (browser_evaluate, roadmap M5.8): `+browser-script` adds it. It runs any script with a page's rights (cookies scripts can read, storage, requests with the user's sign-in) and leaves no trace on the screen, so it is kept apart: turning on clicks and typing does not turn it on.
+- `visual` (wait_for_visual, roadmap M6.4): `+visual` adds it. It reads a window's or the screen's pixels again and again for up to a minute, and most waits have a UI Automation condition to wait on instead ([wait_for_element](#wait_for_element), [wait_for_window](#wait_for_window)). While it is on, every capture also keeps a small visual signature of its pixels for wait_for_visual's `since`; while it is off, captures cost what they did.
 - `windows-batch` (set_windows_bounds_batch, snap_windows_batch and set_windows_state_batch, roadmap M6.1): `+windows-batch` adds them. Each item takes its own placement or state, so they stay tools of their own, but most work places one window at a time with [set_window_bounds](#set_window_bounds), [snap_window](#snap_window) and [set_window_state](#set_window_state). [close_windows_batch](#close_windows_batch) and [launch_applications_batch](#launch_applications_batch) stay in the default.
 - `ocr` ([read_screen_text](#read_screen_text) and [find_text_on_screen](#find_text_on_screen), roadmap M6.3): `+ocr` adds them. Windows OCR is the fallback for text UI Automation does not expose (canvas apps, games, remote desktops, rendered PDFs); where UI Automation works, its element tools are exact and cheaper. Both only read.
 - `deprecated` (the nine tools that 2.2.0 replaced, roadmap M6.1): `+deprecated` adds them until 3.0.0 removes them; see [Moved and deprecated tools](#moved-and-deprecated-tools).
 
-Of the tools later milestones add, the niche or heavy ones come in toolsets that are off by default (`ocr` above, `visual`), and small everyday steps (installed apps, z-order, step sequences) join toolsets that are on, so the default stays a core of finding, acting, waiting, windows, captures, guarded input, launching, reading browsers and the server's state. `WAM_TOOLSETS=all` serves every tool, the deprecated ones included, so `all` keeps meaning everything.
+Of the tools later milestones add, the niche or heavy ones come in toolsets that are off by default (`ocr` above, and `visual` since roadmap M6.4), and small everyday steps (installed apps, z-order, and step sequences: run_steps in its own `steps` toolset, roadmap M6.2) join toolsets that are on, so the default stays a core of finding, acting, waiting, windows, captures, guarded input, launching, reading browsers and the server's state. `WAM_TOOLSETS=all` serves every tool, the deprecated ones included, so `all` keeps meaning everything.
 
 **Read-only mode** serves the tools that only read, of the toolsets in force: windows, monitors, UI elements, browser pages, processes, layouts, the server's own state and get_clipboard (which then returns only what the user allows, since nothing the agent did can have filled the clipboard). The capture tools can write image files (`outputPath`), so they are not read-only (the OCR tools, which write none, are), and neither is anything that sends input, changes or closes windows, starts or ends processes, or writes or deletes layouts. Which tool counts as read-only is the tool's own annotation (`readOnlyHint`), and contract tests check that every tool annotated read-only is one the input gate also treats as read-only and is none of the tools that write files (save_layout, delete_layout, the captures). The list below is generated from the annotations:
 
 <!-- tools:begin read-only (generated from the readOnlyHint annotations: run the tests with UPDATE_SNAPSHOTS=1, see TESTING.md) -->
-Read-only mode serves these 25 tools: [find_windows](#find_windows), [get_foreground_window](#get_foreground_window), [get_owned_windows](#get_owned_windows), [get_window_info](#get_window_info), [wait_for_window](#wait_for_window), [get_monitors](#get_monitors), [get_desktop_state](#get_desktop_state), [get_ui_elements](#get_ui_elements), [find_ui_elements](#find_ui_elements), [get_focused_element](#get_focused_element), [get_element_at_point](#get_element_at_point), [get_active_popups](#get_active_popups), [read_element_text](#read_element_text), [read_table](#read_table), [wait_for_element](#wait_for_element), [get_browser_url](#get_browser_url), [get_browser_content](#get_browser_content), [list_tabs](#list_tabs), [wait_for_browser](#wait_for_browser), [get_control_status](#get_control_status), [list_processes](#list_processes), [get_clipboard](#get_clipboard), [list_layouts](#list_layouts), [get_layout](#get_layout), [get_server_info](#get_server_info). With their opt-in toolset turned on it also serves [get_all_windows](#get_all_windows) (`deprecated`), [get_primary_monitor](#get_primary_monitor) (`deprecated`), [list_screens](#list_screens) (`deprecated`), [read_screen_text](#read_screen_text) (`ocr`), [find_text_on_screen](#find_text_on_screen) (`ocr`), [get_active_browser_url](#get_active_browser_url) (`deprecated`), [browser_element_rect](#browser_element_rect) (`browser-actions`).
+Read-only mode serves these 25 tools: [find_windows](#find_windows), [get_foreground_window](#get_foreground_window), [get_owned_windows](#get_owned_windows), [get_window_info](#get_window_info), [wait_for_window](#wait_for_window), [get_monitors](#get_monitors), [get_desktop_state](#get_desktop_state), [get_ui_elements](#get_ui_elements), [find_ui_elements](#find_ui_elements), [get_focused_element](#get_focused_element), [get_element_at_point](#get_element_at_point), [get_active_popups](#get_active_popups), [read_element_text](#read_element_text), [read_table](#read_table), [wait_for_element](#wait_for_element), [get_browser_url](#get_browser_url), [get_browser_content](#get_browser_content), [list_tabs](#list_tabs), [wait_for_browser](#wait_for_browser), [get_control_status](#get_control_status), [list_processes](#list_processes), [get_clipboard](#get_clipboard), [list_layouts](#list_layouts), [get_layout](#get_layout), [get_server_info](#get_server_info). With their opt-in toolset turned on it also serves [get_all_windows](#get_all_windows) (`deprecated`), [get_primary_monitor](#get_primary_monitor) (`deprecated`), [list_screens](#list_screens) (`deprecated`), [read_screen_text](#read_screen_text) (`ocr`), [find_text_on_screen](#find_text_on_screen) (`ocr`), [wait_for_visual](#wait_for_visual) (`visual`), [get_active_browser_url](#get_active_browser_url) (`deprecated`), [browser_element_rect](#browser_element_rect) (`browser-actions`).
 <!-- tools:end read-only -->
 
 **When tools are off**, the server instructions every client gets end with one more line that names the toolsets, the read-only mode and the excluded tools the user turned off, and tells the agent to skip the steps whose tools it does not see and to tell the user instead of working around them.
@@ -352,14 +361,14 @@ Read-only mode serves these 25 tools: [find_windows](#find_windows), [get_foregr
 
 | Profile | `env` | What the agent can do |
 |---------|-------|------------------------|
-| Observer | `"WAM_READ_ONLY": "1"` | Look only: list and read windows, monitors, elements, pages, processes and layouts (the read-only tools listed above, without the opt-in toolsets' unless `WAM_TOOLSETS` adds them). No input, no window changes, no captures, no layout writes |
+| Observer | `"WAM_READ_ONLY": "1"` | Look only: list and read windows, monitors, elements, pages, processes and layouts (the read-only tools listed above, without the opt-in toolsets' unless `WAM_TOOLSETS` adds them). No input, no window changes, no captures, no layout writes. With `"WAM_TOOLSETS": "+visual"` it also serves [wait_for_visual](#wait_for_visual), which returns rectangles of change, never an image or a file |
 | Arranger | `"WAM_TOOLSETS": "windows,windows-batch,monitors,layouts,launch"` | Find, arrange (one window or several at once), launch and close windows and use layouts; no input, captures, processes or browser |
 | No process control | `"WAM_TOOLSETS": "-process"` | Everything except listing processes, ending them and closing whole applications (close_window still closes single windows) |
-| Default | not set | Every toolset that is on by default: every tool but the opt-in `browser-actions` (activate_tab, browser_navigate and the DOM bridge but browser_evaluate), `browser-script` (browser_evaluate), `windows-batch` (the three geometry batches), `ocr` (the two OCR tools) and `deprecated` (the nine replaced tools); the opt-in toolsets of later milestones stay off |
+| Default | not set | Every toolset that is on by default: every tool but the opt-in `browser-actions` (activate_tab, browser_navigate and the DOM bridge but browser_evaluate), `browser-script` (browser_evaluate), `visual` (wait_for_visual), `windows-batch` (the three geometry batches), `ocr` (the two OCR tools) and `deprecated` (the nine replaced tools); the opt-in toolsets of later milestones stay off |
 | Browser automation | `"WAM_TOOLSETS": "+browser-actions"` | The default and a debug browser's tabs, navigation, clicks, typing, dialogs, element rects and page captures through CDP; no scripts |
 | Browser automation with scripts | `"WAM_TOOLSETS": "+browser-actions,+browser-script"` | The above and [browser_evaluate](#browser_evaluate), which runs any script with a page's rights |
 | Text UI Automation cannot read | `"WAM_TOOLSETS": "+ocr"` | The default and [read_screen_text](#read_screen_text) and [find_text_on_screen](#find_text_on_screen) for canvas apps, games, remote desktops and rendered PDFs |
-| Everything | `"WAM_TOOLSETS": "all"` | Every tool, `browser-script`, `windows-batch`, `ocr` and `deprecated` included, and the opt-in toolsets of later milestones |
+| Everything | `"WAM_TOOLSETS": "all"` | Every tool, `browser-script`, `visual`, `windows-batch`, `ocr` and `deprecated` included, and the opt-in toolsets of later milestones |
 | 2.1 surface | `"WAM_TOOLSETS": "+windows-batch,+deprecated"` | The default and the twelve tools 2.2.0 took off it, for a client or prompt that still calls click, move_window or get_all_windows; the deprecated ones only until 3.0.0 |
 
 ### Moved and deprecated tools
@@ -736,7 +745,7 @@ Read one window, named by `handle` or by a [window selector](#window-selectors),
 |--------|--------|
 | `compact` | `handle`, `title`, `processName`, `processId`, `state` |
 | `standard` (default) | What [find_windows](#find_windows) reports for the window: also `bounds` (the window rect), `isVisible`, `monitorIndex`, `className`, `isCloaked`, `visibleBounds` (the visible frame, without the invisible resize borders; see [Window Discovery](#window-discovery)), and `ownerHandle`, `hostProcessName`, `hostProcessId` and `isAgentHost` when they apply |
-| `full` | Standard, plus `clientBounds` (the client area on screen), `isForeground`, `zOrder` (its place among all top-level windows, hidden ones included, front to back from 0; left out for a child window), `isTopmost`, `isEnabled` (false: it is disabled, usually by a modal dialog; [get_owned_windows](#get_owned_windows) names it), `isResponding` (false: Windows reports it hung) and `dpi` (96 is 100%) |
+| `full` | Standard, plus `clientBounds` (the client area on screen), `isForeground`, `zOrder` (its place among all top-level windows, hidden ones included, front to back from 0; left out for a child window), `isTopmost`, `isEnabled` (false: it is disabled, usually by a modal dialog; [get_owned_windows](#get_owned_windows) names it), `isResponding` (false: Windows reports it hung), `dpi` (96 is 100%), and `integrityLevel` and `elevated` of the window's process (for a UWP window the app's), as [list_processes](#list_processes) reports them, with `aboveServer: true` when it or the frame host runs above this server, so input to the window is refused with `TargetElevated` (roadmap M6.6) |
 
 A window named by its handle is read whatever the listing filter would say: untitled, cloaked, tool and child windows too. No value waits for the window's application, so a hung window is read too.
 
@@ -771,7 +780,9 @@ A window named by its handle is read whatever the listing filter would say: unti
   "isTopmost": false,
   "isEnabled": true,
   "isResponding": true,
-  "dpi": 120
+  "dpi": 120,
+  "integrityLevel": "Medium",
+  "elevated": false
 }
 ```
 
@@ -2480,6 +2491,129 @@ Then click it through the capture, so the click is refused if the window moved s
 **Matches.** Each match has the matched `text` as OCR read it, the `line` it is in, its `bounds` in screen pixels (the words it covers; part of a word is boxed by its share of the word's width, since OCR gives no box per character), `clickPoint` (the centre on the screen) and `imagePoint` (the same point in the capture: pass it as `x`, `y` to [mouse_click](#mouse_click) with `captureId`). Matches are ordered top to bottom, then left to right; `maxResults` (default 20, at most 100) keeps the first, `matchCount` counts them all and `truncated` says some were left out. No match is a success with `matches: []` and a `hint`: OCR may have read the text differently (try `contains` with a shorter part, or read the window with [read_screen_text](#read_screen_text) to see what OCR read).
 
 > **Note:** A click point from OCR is only as good as OCR's box: prefer an element ref ([find_ui_elements](#find_ui_elements), [element_action](#element_action)) whenever UI Automation shows the element, and check the outcome of the click.
+
+---
+
+### wait_for_visual
+
+> In the `visual` toolset, off by default (roadmap M6.4): `WAM_TOOLSETS=+visual` serves it.
+
+Wait on the server until a window, a screen region or a monitor changes on screen, or stops changing, for when UI Automation has nothing to wait on: a canvas app, a game, a remote desktop, a chart that renders, a page that settles. It costs no image tokens: the server compares the frames itself and returns rectangles of where they changed, never an image or a file. Read-only: it runs outside the input gate (input and window calls go ahead while it waits), and it keeps working while input is paused. When there is an element or a window to wait on, [wait_for_element](#wait_for_element) and [wait_for_window](#wait_for_window) say more, and say it exactly.
+
+<!-- tools:begin params:wait_for_visual -->
+**Parameters:**
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| condition | string (one of: `"changed"`, `"stable"`) | No | "changed" | changed (default) or stable |
+| handle | integer | No | - | Window handle (as integer) from find_windows. Pass handle or window, not both |
+| window | object | No | - | Alternative to handle: a window selector with find_windows' filters (processName is the whole name; plus foreground, index), resolved to exactly one window or refused (AmbiguousWindow lists candidates). |
+| includeFrame | boolean | No | - | With a window: whether the frame (title bar, borders) is watched too. Default: true |
+| x | integer | No | - | Region: X of its left edge in screen pixels; with y, width and height |
+| y | integer | No | - | Region: Y of its top edge |
+| width | integer | No | - | Region: width in pixels |
+| height | integer | No | - | Region: height in pixels |
+| monitorIndex | integer | No | - | A monitor (0-based, as get_monitors lists them), or -1 for all of them (at most 32 megapixels) |
+| since | string | No | - | A captureId from a capture taken before you acted (output 'metadata' costs no image): the baseline, and the target (its window, region or monitor). Alone, not with another target |
+| timeoutMs | integer | No | 10000 | How long to wait in milliseconds (default: 10000, min: 0, max: 60000); 0 compares once, with since |
+| pollMs | integer | No | 200 | Milliseconds from one frame to the next (default: 200, min: 100, max: 2000) |
+| stableMs | integer | No | - | stable only: how long nothing may change, in milliseconds (default: 500, min: 0, max: 10000; at most timeoutMs) |
+| minChangedPercent | number | No | 0 | A frame counts as changed only when more than this share of its tiles changed, in percent (default: 0, any tile; min: 0, below 100): raise it a little to ignore a clock or a spinner |
+<!-- tools:end params:wait_for_visual -->
+
+**One target.** Pass exactly one of these, or the call is `InvalidArguments`:
+
+| Target | Read as | Refused with |
+|--------|---------|--------------|
+| `handle` or `window` (with `includeFrame`) | As [capture_window](#capture_window) reads it: the window draws itself (PrintWindow), so windows that cover it do not count, cut to its visible frame (or its client area with `includeFrame: false`). A window that stops answering is copied from the screen for the rest of the wait (`captureMethod: "ScreenBitBlt"`, warning `WindowNotResponding`) | `TargetDeniedByPolicy` (the user's [target policy](#target-policy) denies its app), `InvalidHandle`, `WindowMinimized`, `WindowHidden`, `Cloaked` (at the start; later, see the reasons below) |
+| `x`, `y`, `width`, `height` | As [capture_region](#capture_region) reads it: copied from the screen, cut to the screen (warning `RegionClipped`) | `InvalidRegion`, `RegionOffScreen` |
+| `monitorIndex` | As [take_screenshot](#take_screenshot) reads it; `-1` is every monitor | `InvalidMonitorIndex` |
+| `since` alone | The target of the capture with that `captureId`: its window (with the capture's `includeFrame`), or its screen rectangle for a monitor or region capture. The capture is also the baseline (see below) | `CaptureNotFound`; `TargetDeniedByPolicy` for a window |
+
+A region or monitor (also through `since`) is at most 32 megapixels (one 8K monitor; `InvalidRegion` otherwise), since every check reads all of it: watch a monitor, a window or a part of the screen rather than a large virtual screen.
+
+**Windows the policy denies, over a region or monitor** (owner decision D8). A screen read shows whatever is there, so every window the user's [target policy](#target-policy) denies (or whose process cannot be named while the policy denies anything) that lies over the area during the wait is left out of the comparison, with its whole window rectangle, and listed in `maskedWindows` (`handle`, `x`, `y`, `width`, `height`). Nothing it shows counts as a change, and a rectangle it had once stays left out for the rest of the wait, so a denied window that moves shows at neither place. Windows that cover a denied one lose that part too. A capture's signature keeps the rectangles it left out, so a `since` on a region or monitor capture (or on a wait's last frame) leaves them out too, even after the denied window closed or moved. A window target of a denied app is refused instead; a window target that stops answering, and so is copied from the screen, leaves out the denied windows over it in the same way.
+
+**How frames compare.** Each check keeps a hash of every 16 x 16 tile of the frame (its blue, green and red), not the pixels, and two frames of the same size compare tile by tile, so any changed pixel counts: a hover color of the same brightness, or one word replaced by another. `changedPercent` is the share of the tiles compared that changed, and `changedRegions` the changed tiles merged into at most 8 rectangles of touching tiles, in screen pixels, largest first (the last one joins the smallest when there are more). A frame counts as changed when more than `minChangedPercent` of its tiles changed (default 0: any tile); raise it a little to ignore a clock or a spinner in a corner. The text caret the window's thread reports (the target window's, or for a region or monitor the window in front's) is left out with a 2-pixel margin where it is in both frames compared, so a blinking caret is no change, but text typed at it, which moves it, is; WPF and Chromium report theirs too, though they draw it themselves. Against a capture (`since`), whose caret is unknown, the caret is left out where it is now. In a window that Windows scales for its DPI the reported caret can be off its drawn place (warning `DpiScaledWindow`). A window that moved without resizing compares by content.
+
+| `condition` | Satisfied when | `reason` |
+|-------------|----------------|----------|
+| `changed` (default) | A frame differs from the baseline by more than `minChangedPercent`: from `since`'s capture, or without `since` from the wait's first frame. A window that resized (or an area whose size changed) is a change of 100 %; a window that closed, was minimized, hidden or cloaked counts as a change too: a visible effect of the action (a frame of one color that would count as a change is checked against the window first, so a minimize right before a read reads as `minimized`) | `pixels`, `resized`, `closed`, `minimized` or `hidden` |
+| `stable` | No frame differed from the one before it (by more than `minChangedPercent`) for `stableMs` (default 500), counted from the wait's first frame, which is compared with the next; with `since`, its capture is that first frame, so `stableMs: 0` needs one frame. A resize starts the time again; a window that closes, is minimized, hidden or cloaked ends the wait with its code (`InvalidHandle`, `WindowMinimized`, `WindowHidden`, `Cloaked`) | - (`stableForMs` says how long) |
+
+**Catching the change your action makes.** Without `since`, the baseline is the wait's first frame, taken after your action: a change that is already on the screen is part of the baseline, and the wait times out. Capture the target before you act with `output: "metadata"` (no image, no image tokens) and pass its `captureId` as `since`:
+
+1. `capture_window` with `handle` and `output: "metadata"`: `captureId` `c7-3fa91c`.
+2. Act: `mouse_click`, `press_keys`, ...
+3. `wait_for_visual` with `since: "c7-3fa91c"`.
+
+A capture keeps what `since` compares with (its visual signature) only when it was taken while wait_for_visual is served (owner decision D9), of a whole window, region or monitor (not a [capture_window](#capture_window) crop to a `ref`, nor a capture of a window that `restoreIfMinimized` restored, which is minimized again after it), for as long as its `captureId` lives (10 minutes, the 32 most recent). The signatures together take at most 16 MB: past that, the least recently used captures lose their signatures but keep their `captureId` for the mouse tools. A `since` without a signature is `CaptureNotFound`, and `error` says why. `timeoutMs: 0` with `since` compares once, as a comparison of two captures would; `timeoutMs: 0` without `since` is `InvalidArguments`.
+
+**The last frame.** The result's `captureId` is the wait's last frame, registered as a capture without an image (`capturedRegion`, a 1:1 transform): pass it as the next wait's `since` to wait for the next change, or to [mouse_click](#mouse_click) with an image point of the frame (the point in screen pixels less `capturedRegion`'s corner). It counts as one of the 32 captures kept, so many waits can push out a capture you meant to click on; a wait whose last frame shows what `since`'s capture showed returns `since`'s `captureId` instead and registers nothing. A window that closed, was minimized or hidden has none, and neither has a screen frame whose monitors could not be read.
+
+**Timing.** A frame is read every `pollMs` (default 200, 100 to 2000) until the condition holds or `timeoutMs` (default 10000, at most 60000) has passed; a frame that takes longer to read than `pollMs` is followed by the next at once. `stableMs` is 0 to 10000 and at most `timeoutMs`, and only for `stable`; a `stable` wait counts `timeoutMs` from its first frame, so a `stableMs` as long as `timeoutMs` can be met. Out-of-range values are refused (`InvalidArguments`), never clamped. A client that sends a progress token gets a progress notification about once a second (`progress` is the milliseconds waited, `total` is `timeoutMs`), and a cancelled call stops before its next frame (see [Cancellation and progress](#cancellation-and-progress)).
+
+**Warnings** (each starts with its code): `WindowNotResponding` (the window is copied from the screen from then on, so a window that covers it shows), `DpiScaledWindow` (Windows scales the window, so the frames can show it at its unscaled size and `changedRegions` can be offset from the screen; watch its region instead), `RegionClipped`, and `ImageBlank` when every pixel of the last frame has one color: GPU or protected content this read cannot see, or a window that has not painted yet. Such a target never changes, so `stable` is satisfied as soon as `stableMs` has passed and means little. `BaselineReset` when the wait starts again from a frame because it was read another way than its baseline (a window that stopped answering is copied from the screen, or `since`'s capture was, and the two reads differ where nothing changed): a change made before that frame is missed.
+
+**Outcomes.** A wait that is not satisfied is a failure (`success: false`, so the call goes out with `isError: true`, see [Tool errors](#tool-errors)); the result still says what was seen.
+
+| Outcome | errorCode | Result |
+|---------|-----------|--------|
+| Satisfied | - | `success` and `satisfied` `true`, `condition`, `elapsedMs`, `checks`; for `changed` `reason`, and for `pixels` and `resized` `changedPercent` and `changedRegions` (the window's last place for `closed`, `minimized` and `hidden`); for `stable` `stableForMs`; `captureId`, `capturedRegion` and `captureMethod` of the last frame; `maskedWindows` and `warnings` when there are any |
+| Timed out | `WaitTimedOut` | `timedOut` `true`. `changed`: `changedPercent` of the last frame (0 when nothing changed) and the `changedRegions` of a change too small to count. `stable`: the `changedPercent` and `changedRegions` of the last change, what kept moving. `captureId` of the last frame. `error` says what was seen and, for `changed`, how to catch a change made before the wait |
+| The target cannot be watched | `TargetDeniedByPolicy`, `InvalidHandle`, `WindowMinimized`, `WindowHidden`, `Cloaked`, `InvalidRegion`, `RegionOffScreen`, `InvalidMonitorIndex`, `CaptureNotFound`, `StaleCapture` (`since`'s region or monitor is no longer all on the screen) | At the start; nothing was waited for. During a `stable` wait the window codes end it |
+| The pixels cannot be read | `CaptureFailed` | Windows could not read the window or the screen (a secure desktop, a window over the capture budget); `error` has the reason |
+| An argument that cannot be used | `InvalidArguments` (tool error) | No target or two, half a region, `includeFrame` without a window, an empty `since`, `timeoutMs` outside 0-60000, `pollMs` outside 100-2000, `stableMs` outside 0-10000, over `timeoutMs` or with `changed`, `minChangedPercent` outside 0 to below 100, or `timeoutMs: 0` without `since`. A window selector that names no single window: `WindowNotFound`, `AmbiguousWindow` |
+
+**Example:**
+> "Click Render, then wait until the chart has changed."
+
+```json
+{
+  "name": "wait_for_visual",
+  "arguments": { "since": "c7-3fa91c" }
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "satisfied": true,
+  "timedOut": false,
+  "condition": "changed",
+  "elapsedMs": 412,
+  "checks": 3,
+  "reason": "pixels",
+  "changedPercent": 0.42,
+  "changedRegions": [
+    { "x": 288, "y": 116, "width": 64, "height": 48 },
+    { "x": 1040, "y": 948, "width": 192, "height": 16 }
+  ],
+  "captureId": "c9-3fa91c",
+  "capturedRegion": { "x": 0, "y": 100, "width": 1600, "height": 900 },
+  "captureMethod": "PrintWindow"
+}
+```
+
+A `stable` wait that timed out on a spinner (`isError: true`):
+
+```json
+{
+  "success": false,
+  "satisfied": false,
+  "timedOut": true,
+  "condition": "stable",
+  "elapsedMs": 3000,
+  "checks": 16,
+  "changedPercent": 0.21,
+  "changedRegions": [ { "x": 784, "y": 532, "width": 32, "height": 32 } ],
+  "captureId": "c10-3fa91c",
+  "capturedRegion": { "x": 0, "y": 100, "width": 1600, "height": 900 },
+  "captureMethod": "PrintWindow",
+  "error": "The target kept changing for 3000 ms (16 checks); changedRegions shows the last change. Raise minChangedPercent to ignore a small animation, or watch a smaller region.",
+  "errorCode": "WaitTimedOut"
+}
+```
 
 ---
 
@@ -5730,6 +5864,127 @@ Release keys and mouse buttons that are stuck down. Sends the up event of every 
 
 `stillHeld` lists what could not be released (`SendInputFailed`, for example while a UAC prompt has the input); ask the user to press and release those keys. `modifiersDown` lists the modifier keys still down after the call.
 
+## Step Sequences
+
+Several steps on one window in one call (roadmap M6.2): a form fill, a key sequence, a dialog to wait for and answer. One round trip instead of one per step, and no other call's input or window change lands between two of the steps. [run_steps](#run_steps) is in the `steps` toolset, on by default (`WAM_TOOLSETS=-steps` turns it off). It is not a workflow engine: no loops, no branches, no assertions of its own.
+
+### run_steps
+
+Run 1 to 50 steps, in order, on the run's `window`. A step is `{tool, args, id, optional, return}`: `tool` is one of the tools below and `args` are that tool's own arguments, exactly as a direct call takes them, so each tool's own section documents them. The steps are called through the server's own call pipeline, so each one gets what a direct call gets: its own [audit log](#audit-log) line (request id `<run's id>#<step>`, the first step 1), the refusal of an argument it does not declare, its own error results and its guards ([Input guard](#input-guard), [target policy](#target-policy), the host window). A step tool that the [toolsets](#toolsets), `WAM_EXCLUDE_TOOLS` or `WAM_READ_ONLY` leave out cannot be a step either. run_steps is destructive, audited and not served in read-only mode.
+
+**The step tools.** [focus_window](#focus_window), [find_ui_elements](#find_ui_elements), [element_action](#element_action), [type_text](#type_text), [send_keys](#send_keys), [press_keys](#press_keys), [mouse_click](#mouse_click), [drag](#drag), [mouse_move](#mouse_move), [scroll](#scroll), [wait_for_window](#wait_for_window), [wait_for_element](#wait_for_element), [get_focused_element](#get_focused_element) and [capture_window](#capture_window). Nothing that asks the user, closes a window, ends or starts a process, or writes the clipboard, a file or a layout; no browser tool; not the deprecated click, right_click and double_click (use mouse_click); not respond_to_dialog and file_dialog (press a dialog's buttons with element_action, and wait for it with wait_for_window); and not run_steps itself. There are no assert steps: [wait_for_window](#wait_for_window) with `condition: "foreground"` and [wait_for_element](#wait_for_element) with `timeoutMs: 0` check a state once, and fail the run when it does not hold (mark the step `optional` when it may not).
+
+**Checked before anything runs.** Every step is checked first, and a wrong one refuses the whole run with `InvalidArguments` ("Nothing was done", naming the step): more than 50 steps or none; an `id` that is not 1-32 letters, digits, `_` or `-`, or that an earlier step has; a tool the server does not serve; an argument its tool does not declare (with the name it most likely meant); more than 20,000 characters in all the steps' strings together; a reference that is wrong (below); and what a step may not do: `allowHostTarget: true`, type_text's `method` `paste` or `auto` (auto pastes a long text), element_action's `mode: "paste"` and `action: "window_close"`, capture_window's `outputPath`, `saveToFile`, `overwrite` and `output` `file` or `both`, `scope: "desktop"` on element_action, find_ui_elements and wait_for_element (it searches every window), and send_keys' or press_keys' `keys` with a chord that closes, quits or locks: the destructive chords of the [input guard](#input-guard) (Alt+F4, Ctrl+W, Ctrl+Q, Ctrl+F4, Ctrl+Shift+Esc, Win+L by default, and those of `WAM_DESTRUCTIVE_CHORDS`). A step's keyboard tool always gets a window, so its own check, which refuses those chords only without one, would let them through. No argument a step may use writes the clipboard or a file, closes a window or finds one outside the run's window and its dialogs. The keys a step sends act inside the run's window as a direct call's would: `ctrl+s` saves and `ctrl+c` copies, as the app does them. type_text in a step types with `method: "unicode"` unless it says `keys` (also when it says `null`).
+
+**The run's window.** `window` is a selector (or `{"handle": n}`) resolved to exactly one window before the run; `{"foreground": true}` alone is refused, and the agent's own host window is `TargetIsAgentHost`. A step that names no window (none of `handle`, `windowHandle`, `window`, `ref`, `withinRef`, `listRef`) gets the run's window under the name its tool takes: `windowHandle` for the input tools, `handle` for focus_window, find_ui_elements, element_action and capture_window, `window: {"handle": n}` for wait_for_element. An argument that is `null` counts as not given, and an empty selector or `{"foreground": true}` alone names no window, so such a step gets the run's window too, never the one in front. wait_for_window never gets it: its `window` is what it waits for. A step may act only on the run's window, a window it owns (its dialogs, also those of another process) or another window of its process, except for File Explorer's and the packaged apps' frame host's (explorer, ApplicationFrameHost), whose windows are unrelated (the taskbar, other folders, other apps): there only the run's window and the windows it owns count. A step that names any other window, by handle, `toWindowHandle`, selector or element ref, is not run (`InvalidArguments`) and stops the run. A step's selector is resolved when the step runs and passed to its tool as `{"handle": n}`, so the tool acts on the window that was checked; a selector that matches no window or several is not run, with its code (`WindowNotFound`, `AmbiguousWindow`). get_focused_element and wait_for_window only read, and may read outside the run's window. Once the run holds the input gate, which it may have waited 30 seconds for, it reads its window again: a window that closed (or whose handle now names another process's window) refuses the run with `InvalidHandle`, and the agent's host with `TargetIsAgentHost`; nothing was done.
+
+**References.** A string argument that is exactly `"$steps.<id>.<path>"` takes a value from the result of the earlier step with that `id`: `"$steps.find.elements[0].ref"`, `"$steps.find.elements[0].clickPoint.x"`, `"$steps.dialog.window.handle"`, `"$steps.shot.captureId"`. The path is property names with optional `[n]` indexes, and it must end with an identifier: `ref`, `handle`, `captureId`, or `clickPoint.x` and `clickPoint.y`. A value keeps its type (a handle stays a number). Text a window shows (a name, a value, a title) is never passed on: untrusted text must not flow into input without the agent reading it. A reference to a step that failed (an optional one) fails its own step.
+
+**One gate, one budget.** The run waits for the input gate (at most 30 seconds, as any input call; `InputBusy`, or `PausedByUser` while input is paused), then holds it for the whole run: its own steps pass it, and every other input or window call waits for the run to end, or gets `InputBusy` after 30 seconds. `maxDurationMs` (default 30000, 1000-60000) bounds how long the run holds it. A wait step's `timeoutMs` is cut to what is left of it (less 250 ms), so with `maxDurationMs` at its default a wait without `timeoutMs` waits at most what is left, not its own default; a step still running when the time runs out is cancelled. `delayBetweenStepsMs` (default 50, at most 2000) waits between two steps.
+
+**When the run stops.** The steps run in order until one fails; the steps after it are `skipped`, and nothing that ran is undone. A step with `optional: true` may fail without stopping the run (a dialog that may not appear). Before each step after the first the run also checks:
+
+| `stoppedBy` | `errorCode` | When |
+|-------------|-------------|------|
+| `stepFailed` | the failed step's own code | A step that is not optional failed: its tool reported an error, or the run did not call it (a reference to a failed step, a window that is not the run's) |
+| `paused` | `PausedByUser` | The user pressed the [pause hotkey](#pause-hotkey) before a step, during the wait between two, or during a step (which then stops as a direct call does). Stop and ask the user; never resume input yourself |
+| `timedOut` | `OperationTimedOut` | `maxDurationMs` ran out before a step, or during one (the step is cancelled, or a wait the run cut to the time left ran out) |
+| `foregroundMoved` | `TargetNotForeground` | Once the run's window or one of its windows (above) has been in front, another window is in front before a step: the user (or another program) took the foreground. The run stops instead of taking it back; look at the screen and ask the user. A run whose window never comes to the front (element_action through patterns only, with the agent's terminal in front) is never stopped by this |
+
+A client that cancels the call stops the step that is running; the request gets no result, and what ran stays done. Each step releases the keys and buttons it pressed, as a direct call does, and the run releases anything still held when it ends.
+
+**What it returns.** `success` (true when every step that is not optional ran and succeeded), `ran` and `total`, `elapsedMs`, and `steps`: per step its `tool`, `id`, `status` (`ok`, `failed` or `skipped`), `elapsedMs` and, for a failed one, `errorCode`. A step's whole result (its JSON, as a direct call returns it) is in `result` only for a failed step, the last step that ran, and a step with `return: true`, within 24,000 characters for all of them together: the failed and the last step's come first, then the others in step order, and a step whose result did not fit has `resultOmitted: true` instead. The run returns at most 2 images, of those steps' captures or observations: the last step's first, then in step order. A run that stopped also has `stoppedBy`, `errorCode` and `error`, which names the step and says what to do. A run that did not succeed has `isError: true`. Progress: with a progress token, one notification per step (`step i of n: <tool> ok` or `failed`); a step's own progress is not sent.
+
+<!-- tools:begin params:run_steps -->
+**Parameters:**
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| window | object | Yes | - | The run's window: a selector with find_windows' filters, or {"handle": n}, resolved to exactly one window before the run; not {"foreground": true} alone |
+| steps | object[] | Yes | - | The steps, 1-50, run in order |
+| maxDurationMs | integer | No | 30000 | How long the run may hold the input gate, in milliseconds (default: 30000, min: 1000, max: 60000); a wait step's timeoutMs is cut to what is left |
+| delayBetweenStepsMs | integer | No | 50 | The pause between two steps, in milliseconds (default: 50, min: 0, max: 2000) |
+
+Each item of `steps` contains:
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| tool | string (one of: `"focus_window"`, `"find_ui_elements"`, `"element_action"`, `"type_text"`, `"send_keys"`, `"press_keys"`, `"mouse_click"`, `"drag"`, `"mouse_move"`, `"scroll"`, `"wait_for_window"`, `"wait_for_element"`, `"get_focused_element"`, `"capture_window"`) | Yes | - | The tool to call |
+| args | object | No | - | The tool's own arguments, as a direct call takes them. A string "$steps.<id>.<path>" is an earlier step's ref, handle, captureId or clickPoint x/y |
+| id | string | No | - | A name for the step ([A-Za-z0-9_-], at most 32), unique in the run: later steps refer to its result by it |
+| optional | boolean | No | false | True: the run goes on when this step fails (a dialog that may not appear). Default false: a failure stops the run |
+| return | boolean | No | false | True: the step's whole result (and its image) is returned, not only its status |
+<!-- tools:end params:run_steps -->
+
+**Example:**
+> "Fill in the name, accept the terms and save, in the form (handle 1706796)"
+
+```json
+{
+  "name": "run_steps",
+  "arguments": {
+    "window": { "handle": 1706796 },
+    "steps": [
+      { "tool": "focus_window" },
+      { "tool": "find_ui_elements", "id": "name", "args": { "automationId": "nameBox" } },
+      { "tool": "element_action", "args": { "ref": "$steps.name.elements[0].ref", "action": "set_value", "value": "Ada Lovelace" } },
+      { "tool": "element_action", "args": { "automationId": "agree", "action": "toggle", "value": "on" } },
+      { "tool": "element_action", "args": { "automationId": "saveButton", "action": "invoke" } },
+      { "tool": "wait_for_element", "args": { "automationId": "status", "condition": "name_equals", "expected": "Saved", "timeoutMs": 5000 } }
+    ]
+  }
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "ran": 6,
+  "total": 6,
+  "elapsedMs": 812,
+  "steps": [
+    { "tool": "focus_window", "status": "ok", "elapsedMs": 64 },
+    { "tool": "find_ui_elements", "status": "ok", "id": "name", "elapsedMs": 120 },
+    { "tool": "element_action", "status": "ok", "elapsedMs": 98 },
+    { "tool": "element_action", "status": "ok", "elapsedMs": 87 },
+    { "tool": "element_action", "status": "ok", "elapsedMs": 140 },
+    { "tool": "wait_for_element", "status": "ok", "elapsedMs": 210,
+      "result": { "success": true, "satisfied": true, "elapsedMs": 205, "polls": 2,
+                  "element": { "ref": "w4120035e40", "name": "Saved", "controlType": "Text" } } }
+  ]
+}
+```
+
+**Error Response:** the Save button was not found, so the wait was skipped.
+```json
+{
+  "success": false,
+  "ran": 5,
+  "total": 6,
+  "elapsedMs": 1406,
+  "steps": [
+    { "tool": "focus_window", "status": "ok", "elapsedMs": 64 },
+    { "tool": "find_ui_elements", "status": "ok", "id": "name", "elapsedMs": 120 },
+    { "tool": "element_action", "status": "ok", "elapsedMs": 98 },
+    { "tool": "element_action", "status": "ok", "elapsedMs": 87 },
+    { "tool": "element_action", "status": "failed", "elapsedMs": 1030, "errorCode": "ElementNotFound",
+      "result": { "success": false, "action": "invoke", "windowHandle": 1706796, "errorCode": "ElementNotFound", "error": "No element matches the criteria. ..." } },
+    { "tool": "wait_for_element", "status": "skipped" }
+  ],
+  "stoppedBy": "stepFailed",
+  "errorCode": "ElementNotFound",
+  "error": "Step 5 (element_action) failed with ElementNotFound: No element matches the criteria. ... Step 6 was skipped; the steps before it ran and are not undone."
+}
+```
+
+| Code | Meaning | What to do |
+|------|---------|------------|
+| `InvalidArguments` | A step is wrong (above), or `maxDurationMs` or `delayBetweenStepsMs` is out of range, or `window` is `{"foreground": true}` alone; nothing was done (a tool error). In a step's result: the run did not call the step | Fix the step it names |
+| `TargetIsAgentHost` | `window` is your own terminal or chat window; nothing was done (a tool error) | Name the window you mean |
+| `InvalidHandle` | `window` names a window that is gone; nothing was done (a tool error) | Find the window again |
+| `PausedByUser`, `InputBusy` | Before the first step, as for any input call; nothing was done (a tool error) | As for any input call |
+| A step's code | The step failed (`stoppedBy: "stepFailed"`), as its own section describes | Read the failed step's `result` |
+| `PausedByUser`, `OperationTimedOut`, `TargetNotForeground` | The run stopped (`stoppedBy` above) | See the table above |
+
 ---
 
 ## App Launch
@@ -5979,26 +6234,48 @@ The program is recognised by the name asked for and by the file it resolves to (
 
 ### list_processes
 
-List running processes with optional filtering.
+List running processes with optional filtering: which process an app runs as, which windows it owns, who started it and when, and whether this server can drive it (roadmap M6.6).
 
 <!-- tools:begin params:list_processes -->
 **Parameters:**
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| nameFilter | string | No | - | Filter by process name (partial match) |
-| includeWindowless | boolean | No | false | Also list processes without a visible, titled window; `windowCount` is then 0 for every process |
+| nameFilter | string | No | - | Filter by process name (partial match, case-insensitive) |
+| includeWindowless | boolean | No | false | Also list processes without a visible, titled window |
+| processId | integer | No | - | Only the process with this ID |
+| pathContains | string | No | - | Only processes whose executable path contains this text (case-insensitive); a process whose path cannot be read (another account's, a system process) is left out |
+| sortBy | string (one of: `"name"`, `"memory"`, `"startTime"`) | No | "name" | `name` (case-insensitive, then `processId`), `memory` (largest working set first) or `startTime` (newest first, so the process just launched comes first); a value that cannot be read sorts last |
+| limit | integer | No | - | Return at most this many processes, the first in `sortBy` order (at least 1, else `InvalidArguments`); without it every match is returned |
+| includeCommandLine | boolean | No | false | Also return `commandLine`, redacted and cut to 500 characters. Only with `processId`, or with `nameFilter` and a `limit` of at most 20 (else `InvalidArguments`); see below |
 <!-- tools:end params:list_processes -->
 
-By default only processes with at least one visible, titled top-level window are listed. Unlike [find_windows](#find_windows), this counts every such window: windows on other virtual desktops (cloaked), tool windows and the desktop shell's windows too, so a process does not disappear from the list only because its window is not on the current desktop. `windowCount` is the number of those windows. A Store (UWP) app's window counts for the app's own process and for its `ApplicationFrameHost` host. To check whether a process has exited, use `includeWindowless: true`, which lists every running process.
+By default only processes with at least one visible, titled top-level window are listed. Unlike [find_windows](#find_windows), this counts every such window: windows on other virtual desktops (cloaked), tool windows and the desktop shell's windows too, so a process does not disappear from the list only because its window is not on the current desktop. `windowCount` is the number of those windows, with `includeWindowless: true` too (it used to be 0 there), and `windows` gives the handle and title of the first 10, front to back (left out when there are none; [find_windows](#find_windows) with `processId` lists the rest). A Store (UWP) app's window counts for the app's own process and for its `ApplicationFrameHost` host. To check whether a process has exited, use `processId` with `includeWindowless: true`: an empty list means it is gone. `limit` never hides a process from that check, since the PID names it alone.
+
+Each process has:
+
+| Field | Meaning |
+|-------|---------|
+| `processId`, `name`, `executablePath` | The process; `executablePath` is left out when the process cannot be opened (another account's, a system process) |
+| `windowCount`, `windows` | Its visible, titled windows, as above: `[{handle, title}]`, titles cut to 200 characters |
+| `memoryUsageMB` | The working set, to 0.1 MB; left out when it cannot be read |
+| `parentProcessId` | The process that started it; left out when it is unknown: that process has exited, either start time cannot be read, a later process took the parent's PID (it started after the child), or the process snapshot cannot be read |
+| `startTime` | When it started, UTC, to the second (`"2026-10-16T07:05:09Z"`); left out when it cannot be read |
+| `integrityLevel`, `elevated` | Its integrity level, as [get_server_info](#get_server_info) reports the server's own (`Medium`, `High`, `System`, `Low`, `LikelyElevated`, `Restricted`, `Unknown`), and whether its token is elevated (left out when the token cannot be read) |
+| `aboveServer` | `true` when it runs at a higher integrity level than this server (a `High` or `System` process, or `LikelyElevated`) by the input guard's own test: input to its windows is refused with `TargetElevated` and UI Automation sees little of them. Left out otherwise. `Restricted` (another account's process, or one with a hardened DACL) does not count, since its level is unknown |
+| `commandLine`, `commandLineRedacted` | Only with `includeCommandLine`, below |
+
+**Command lines.** `includeCommandLine: true` reads the command line of each process returned, and only with `processId`, or with `nameFilter` and a `limit` of at most 20, so a call never puts more than 20 processes' arguments in front of the agent (a name filter alone bounds nothing: `e` matches most processes). Sort by `startTime` to get the newest matches first. Values that look secret are replaced with `***` and `commandLineRedacted: true` says so: switches named like a password, token, key, secret, signature or credential (`--password=x`, `--api-key x`, `/p:Password=x`), connection-string passwords, `Authorization:`, `Bearer` and `Basic` credentials, a URL's password and secret query parameters (`sig=`), curl's `-u user:password`, and the password switches of the MySQL and SQL Server tools. The masking is a heuristic: a secret in another shape (a positional password, a base64 blob) passes through. The command line is left out of a process the user's target policy denies (it is never read), of one that cannot be read (an elevated or another account's process), and when the PID may have passed to another process since the list was taken (the process at the PID now runs another program, or its start time cannot be read or changed while the command line was read), since the policy check did not cover that process. No command line reaches the audit log: list_processes is not audited.
 
 **Example:**
-> "Show all Chrome processes"
+> "Which Notepad did I just start, and can you type into it?"
 
 ```json
 {
   "name": "list_processes",
   "arguments": {
-    "nameFilter": "chrome"
+    "nameFilter": "notepad",
+    "sortBy": "startTime",
+    "limit": 2
   }
 }
 ```
@@ -6008,20 +6285,32 @@ By default only processes with at least one visible, titled top-level window are
 [
   {
     "processId": 12456,
-    "name": "chrome",
-    "executablePath": "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
-    "windowCount": 5,
-    "memoryUsageMB": 512.8
+    "name": "notepad",
+    "executablePath": "C:\Windows\System32\notepad.exe",
+    "windowCount": 1,
+    "memoryUsageMB": 18.2,
+    "parentProcessId": 9120,
+    "startTime": "2026-10-16T07:05:09Z",
+    "integrityLevel": "Medium",
+    "elevated": false,
+    "windows": [{ "handle": 2558020, "title": "notes.txt - Notepad" }]
   },
   {
     "processId": 12460,
-    "name": "chrome",
-    "executablePath": "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
-    "windowCount": 0,
-    "memoryUsageMB": 128.4
+    "name": "notepad",
+    "executablePath": "C:\Windows\System32\notepad.exe",
+    "windowCount": 1,
+    "memoryUsageMB": 17.9,
+    "parentProcessId": 9120,
+    "startTime": "2026-10-16T07:01:44Z",
+    "integrityLevel": "LikelyElevated",
+    "aboveServer": true,
+    "windows": [{ "handle": 3410090, "title": "hosts - Notepad" }]
   }
 ]
 ```
+
+The second Notepad was started as administrator (its token could not be read, so `elevated` is left out): this server cannot click or type into its window, so ask the user to do that step.
 
 ---
 
@@ -6825,7 +7114,9 @@ Reports the server's build and the environment its tools work in, in one read-on
     "moved": [
       "In the windows-batch toolset, which is off (WAM_TOOLSETS=+windows-batch serves it): set_windows_bounds_batch, snap_windows_batch, set_windows_state_batch.",
       "In the deprecated toolset, which is off (WAM_TOOLSETS=+deprecated serves it): click (use mouse_click), right_click (use mouse_click with button 'secondary'), double_click (use mouse_click with clickCount 2), move_window (use set_window_bounds with x and y), resize_window (use set_window_bounds with width and height), get_all_windows (use find_windows), get_primary_monitor (use get_monitors), list_screens (use get_monitors), get_active_browser_url (use get_browser_url with window {\"foreground\": true})."
-    ]
+    ],
+    "resources": ["wam://layouts/{name}", "wam://monitors", "wam://windows"],
+    "prompts": ["arrange_workspace", "automate_app", "diagnose_click", "fill_form"]
   },
   "uiAutomation": { "engine": "Uia3", "source": "default", "connectionTimeoutMs": 1000, "transactionTimeoutMs": 5000 }
 }
@@ -6842,11 +7133,44 @@ Reports the server's build and the environment its tools work in, in one read-on
 | `input` | Whether the user paused input with the pause hotkey (`paused`, `pausedBy`, `pausedAt`), the `hotkey` (as in [get_control_status](#get_control_status)) and `sharedPause` |
 | `safety` | The [target policy](#target-policy) (`deniedProcesses`, `denyListSource`, `allowedProcesses` when the user set an allow list) the `destructiveChords` that need `windowHandle`, `userClipboardAllowed` (`WAM_ALLOW_USER_CLIPBOARD`: whether get_clipboard returns the user's clipboard without asking) and `allowedProtocols` (the URI schemes launch_application opens, the built-in ones first, then those `WAM_ALLOWED_PROTOCOLS` adds; an entry it ignored is named in `warnings`) |
 | `paths` | `layouts`, the [layout presets](#layout-presets) folder, and `auditLog`, the folder of the [audit log](#audit-log) |
-| `toolsets` | The [toolsets](#toolsets) served (`enabled`) and not served (`disabled`), where the choice came from (`source`: `default`, `WAM_TOOLSETS`, `all`, or `WAM_EXCLUDE_TOOLS` when an entry it could not read left only the `server` toolset on), `readOnly` mode, the `excludedTools`, how many tools are served (`servedTools`), and `moved`: where the tools that moved out of a toolset in force went (roadmap M6.1), one sentence per toolset that is off, each tool with its replacement, if any (see [Moved and deprecated tools](#moved-and-deprecated-tools)). A tool the user excluded, or whose former toolset is off too, is left out; `moved` is left out when nothing is out of reach |
+| `toolsets` | The [toolsets](#toolsets) served (`enabled`) and not served (`disabled`), where the choice came from (`source`: `default`, `WAM_TOOLSETS`, `all`, or `WAM_EXCLUDE_TOOLS` when an entry it could not read left only the `server` toolset on), `readOnly` mode, the `excludedTools`, how many tools are served (`servedTools`), and `moved`: where the tools that moved out of a toolset in force went (roadmap M6.1), one sentence per toolset that is off, each tool with its replacement, if any (see [Moved and deprecated tools](#moved-and-deprecated-tools)). A tool the user excluded, or whose former toolset is off too, is left out; `moved` is left out when nothing is out of reach; `resources` and `prompts` name the [resources and prompts](#resources-and-prompts) served (roadmap M6.9), each left out when none is |
 | `uiAutomation` | The [UI Automation](#ui-automation) engine of the element tools: `engine` is `Uia3` (the COM client, the default) or `Uia2` (the managed client, `WAM_UIA_ENGINE=uia2`), `source` is `default` or `WAM_UIA_ENGINE`, and `connectionTimeoutMs` and `transactionTimeoutMs` are the per-call limits of the Uia3 engine (left out for Uia2, which has none) |
 | `warnings` | One sentence for each thing that will make tools fail or coordinates wrong: a DPI awareness that can scale coordinates (anything but `PerMonitorV2` or `PerMonitor`), a locked session or unreachable input desktop, a server below medium integrity, input paused by the user, a pause hotkey that is not registered or does not pause this server, an [audit log](#audit-log) that cannot be written, every `WAM_TOOLSETS`, `WAM_EXCLUDE_TOOLS` or `WAM_READ_ONLY` entry that was ignored, moved tools that their toolset holds but does not serve because the toolset they came from is off, the deprecated tools that are served (with their replacements), a `WAM_ALLOW_USER_CLIPBOARD` value that was not understood, a `WAM_UIA_ENGINE` value that is not `uia3` or `uia2`, and the `WAM_ALLOWED_PROTOCOLS` entries that were ignored. Left out when there is nothing to warn about |
 
 A value that cannot be read is `Unknown`, null or left out, and a warning says what that means. If a source the report reads throws instead (the monitor list or the layouts folder, say), the call fails with a tool error, as any tool does.
+
+---
+
+## Resources and Prompts
+
+Besides its tools, the server serves three read-only MCP resources and four prompts (roadmap M6.9). Tools stay the API an agent works with: a resource returns exactly what a tool returns, and a prompt is a recipe of tool calls. They are for MCP clients that show them to the user: Claude Code lists both under `/mcp`, offers the resources as `@` mentions and the prompts as slash commands (`/mcp__<server>__automate_app`, with the server name it shows), and the MCP Inspector lists them too. They add nothing to tools/list, and their own lists cost about 650 tokens in all.
+
+<!-- tools:begin resources (generated from ResourcesAndPrompts: run the tests with UPDATE_SNAPSHOTS=1, see TESTING.md) -->
+| Resource | The JSON of | What it holds |
+|----------|-------------|---------------|
+| `wam://monitors` | [get_monitors](#get_monitors) | The monitors as get_monitors returns them: bounds, work areas, scale factors, the primary monitor and the virtual screen. |
+| `wam://windows` | [find_windows](#find_windows) | The user-facing app windows, front to back, as find_windows with no filter returns them: handle, title, process, class, bounds, visible frame and state. |
+| `wam://layouts/{name}` | [get_layout](#get_layout) | A saved layout preset as get_layout returns it: each placement's window, monitor and position. A name no preset has is an error. |
+
+| Prompt | Arguments | Served while these tools are | What it does |
+|--------|-----------|------------------------------|--------------|
+| `automate_app` | `app`, `goal` | [get_desktop_state](#get_desktop_state), [find_ui_elements](#find_ui_elements), [element_action](#element_action) | Do a task in a Windows app with the locate, act and verify loop: find its window and elements, act through element refs, check each step. |
+| `arrange_workspace` | `description` | [find_windows](#find_windows), [set_window_bounds](#set_window_bounds) | Arrange windows on the user's monitors as described: find each window, then snap, place, move or maximize it, and check the result. |
+| `fill_form` | `window`, `fields` | [find_ui_elements](#find_ui_elements), [element_action](#element_action) | Fill in a form in a window with the values given: find each field's element, set it through UI Automation, read it back, and submit only when asked. |
+| `diagnose_click` | `window`, `symptom` | [find_ui_elements](#find_ui_elements), [get_element_at_point](#get_element_at_point) | Find out why a click did nothing or hit the wrong thing: input paused, a blocking dialog, a covered or wrong point, a disabled control. Reads first, acts again only once the cause is known. |
+<!-- tools:end resources -->
+
+**Resources.** Every resource is `application/json` text written by the same code as the tool it mirrors, so it has that tool's fields and changes with it: `wam://monitors` is [get_monitors](#get_monitors)' result, `wam://windows` is [find_windows](#find_windows)' result with no argument (the user-facing app windows, front to back), and `wam://layouts/{name}` is [get_layout](#get_layout)'s result for the preset `name`, percent-encoded in the URI (`wam://layouts/work%20setup`). A resource is read when the client reads it; there are no subscriptions or update notifications. A client can complete the `name` of `wam://layouts/{name}` (`completion/complete`): the server offers the preset names that start with what was typed.
+
+- A name no preset has is the error the server sends for a URI that no resource matches, with get_layout's `PresetNotFound` message: `-32002` (resource not found) on the revisions up to 2025-11-25, and `-32602` (invalid params) on 2026-07-28. An unusable layouts folder is an error with get_layout's `StorageUnavailable` message.
+- `wam://windows` lists a window of an app the [target policy](#target-policy) denies, as find_windows does (its title, process and bounds); the policy refuses reading that window's content and acting on it. No resource holds pixels: a screenshot is only ever in the result of the call that took it.
+- A resource is served exactly while the tool it mirrors is: `WAM_TOOLSETS=-monitors` hides `wam://monitors`, and `WAM_EXCLUDE_TOOLS=find_windows` hides `wam://windows`. Read-only mode serves all three, since their tools only read.
+
+**Prompts.** Each prompt returns one user message: a recipe of about 400 tokens that writes out the plugin skill's loop (locate, activate and verify, act, verify), the untrusted-content rule and the error codes that mean stop, for one kind of task. Every argument is required text. The recipe quotes it as a JSON string and says it is data, so the user's text cannot end the quote or add a line of its own; an empty argument is an invalid-params error.
+
+- A prompt is served only while every tool in its **Served while these tools are** column is, and its recipe leaves out each step whose tool is not served (turned off by `WAM_TOOLSETS`, `WAM_EXCLUDE_TOOLS` or `WAM_READ_ONLY`), so it never sends the agent to a tool it does not have. Read-only mode serves only `diagnose_click`, which reads until the cause is known.
+
+**Not tool calls.** A resource read or a prompt request passes none of the tool-call checks (the [audit log](#audit-log), the refusal of undeclared arguments, the input gate), and nothing acts. The server logs one line per request to stderr, in the call log: the resource's URI or the prompt's name (its line breaks as spaces; never a prompt's arguments), the duration and the outcome. An unexpected exception is an error that names its type and message. [get_server_info](#get_server_info) lists the served resources and prompts in `toolsets.resources` and `toolsets.prompts`.
 
 ---
 
@@ -7009,6 +7333,24 @@ type_text { "text": "This is my message", "windowHandle": 12345 }
 send_keys { "keys": "{ENTER}", "windowHandle": 12345 }
 
 // 6. Verify the result, for example with get_ui_elements or a capture
+```
+
+The same form in one call with [run_steps](#run_steps) (roadmap M6.2): the steps name no window, so each gets the run's, the run holds the input gate so nothing else is typed between them, and it stops at the first step that fails.
+
+```
+run_steps {
+  "window": { "handle": 12345 },
+  "steps": [
+    { "tool": "focus_window" },
+    { "tool": "mouse_click", "args": { "x": 500, "y": 100 } },
+    { "tool": "type_text", "args": { "text": "John Doe" } },
+    { "tool": "press_keys", "args": { "keys": "tab" } },
+    { "tool": "type_text", "args": { "text": "john@example.com" } },
+    { "tool": "press_keys", "args": { "keys": "tab" } },
+    { "tool": "type_text", "args": { "text": "This is my message" } },
+    { "tool": "press_keys", "args": { "keys": "enter" } }
+  ]
+}
 ```
 
 ---
@@ -7819,6 +8161,42 @@ the new tools; their sections have the rest.
   .NET 8 Desktop Runtime the exe exits at startup and the client lists none of its tools. The tools, their input
   schemas and their results are unchanged; [get_server_info](#get_server_info)'s `server.runtime` reports
   `.NET 10.0.x`.
+- **list_processes: windows, parent, start time, integrity, filters and order (roadmap M6.6).** Every process now has
+  `parentProcessId`, `startTime` (UTC, to the second), `integrityLevel` and `elevated`, `windows` (the handle and title
+  of up to 10 of its windows, front to back) and, only when true, `aboveServer` (input to it is refused with
+  `TargetElevated`); fields that cannot be read are left out. **Changed:** `windowCount` is the real count with
+  `includeWindowless: true` too (it was 0 for every process), and the list is sorted by name, then `processId` (it came
+  in the system's order). New optional parameters: `processId`, `pathContains`, `sortBy` (`name`, `memory` largest first,
+  `startTime` newest first), `limit` (at least 1, no default, so the result is still the whole array; below 1 is
+  `InvalidArguments`) and `includeCommandLine`, which returns the command line with secret-looking values masked as
+  `***` (`commandLineRedacted: true`), cut to 500 characters, never for a process the user's policy denies, and only
+  with `processId`, or `nameFilter` and a `limit` of at most 20 (else `InvalidArguments`). [get_window_info](#get_window_info) with
+  `detail: "full"` reports the window's `integrityLevel`, `elevated` and `aboveServer` too; its other details and
+  find_windows are unchanged.
+- **Resources and prompts (roadmap M6.9).** The server also serves three read-only MCP resources, `wam://monitors`,
+  `wam://windows` and `wam://layouts/{name}`, with the JSON of get_monitors, find_windows with no argument and
+  get_layout, and four prompts, `automate_app`, `arrange_workspace`, `fill_form` and `diagnose_click`, recipes that
+  name only the tools the server serves; see [Resources and Prompts](#resources-and-prompts). The `initialize` (and
+  `server/discover`) result now advertises the `resources`, `prompts` and `completions` capabilities (completion offers
+  layout names). Each follows the tools it rests on: `WAM_TOOLSETS`, `WAM_EXCLUDE_TOOLS` and `WAM_READ_ONLY` hide it
+  with them. [get_server_info](#get_server_info) lists them in `toolsets.resources` and `toolsets.prompts`. tools/list
+  is unchanged.
+- **Several steps in one call (roadmap M6.2).** A new tool, [run_steps](#run_steps), in a new `steps` toolset that is on
+  by default (59 tools by default; `WAM_TOOLSETS=-steps` turns it off). It runs up to 50 steps on one window, each a
+  tool of an allow list with that tool's own arguments, under one hold of the input gate, and stops at the first
+  failure. Nothing else changes for a client that does not call it, except that while a run holds the input gate (at
+  most its `maxDurationMs`, 60 seconds), another input or window call waits for it, or gets `InputBusy` after 30
+  seconds, as behind a slow launch. Each step writes its own [audit log](#audit-log) line under the request id
+  `<run's id>#<step>`, besides the run's own line.
+- **wait_for_visual (roadmap M6.4).** A new read-only tool in the new `visual` toolset, off by default
+  (`WAM_TOOLSETS=+visual`): [wait_for_visual](#wait_for_visual) waits until a window, a region or a monitor changes on
+  screen (`changed`, against a capture's `captureId` given as `since`, or the wait's first frame) or stops changing
+  (`stable`), and returns where as rectangles, never an image. Frames are compared by a hash per 16 x 16 tile, a
+  blinking text caret is left out, and over a region or monitor the windows the target policy denies are left out and
+  listed in `maskedWindows`. The default surface is unchanged. While the toolset is on, captures (take_screenshot,
+  capture_region, capture_window without `ref`, capture_with_elements) also keep a visual signature of their pixels with
+  their `captureId`, at most 16 MB together, dropped before any `captureId` is; their results do not change. Read-only
+  mode serves it when `visual` is on.
 - **Text from pixels: read_screen_text and find_text_on_screen (roadmap M6.3).** Two new read-only tools in the new
   `ocr` toolset, off by default (`WAM_TOOLSETS=+ocr`), so the default surface does not change; tools/list with every
   toolset grows by about 2,100 tokens. They read a window, a region or a monitor with Windows OCR
@@ -7928,7 +8306,7 @@ table, it gives more detail.
 | `CannotTerminateHost` | [kill_process](#kill_process), [close_debug_browser](#close_debug_browser) | The PID belongs to the agent's host (an ancestor of this server such as its terminal or editor, the process that shows its console or the console server behind it, or the app in front when it started), or, with `forceKill`, one of its child processes does |
 | `CannotTerminateSelf` | [kill_process](#kill_process) | The PID is this server |
 | `CaptureFailed` | [Screenshot](#screenshot) tools | Windows could not capture the pixels: PrintWindow and the copy of the window's device context both failed, the window (or the virtual screen, `monitorIndex: -1`) is over the 64-megapixel budget, or it closed during the capture; for [read_screen_text](#read_screen_text) and [find_text_on_screen](#find_text_on_screen) also a window the user's policy denies that is on screen but cannot be placed, so it could not be blacked out (nothing was read; try again); `error` has the reason |
-| `CaptureNotFound` | [click](#click), right_click, double_click, [mouse_click](#mouse_click), [drag](#drag), mouse_move, [scroll](#scroll) | The `captureId` names no capture: mistyped, from an earlier run of the server, older than 10 minutes, or 32 newer captures pushed it out; nothing was sent. Capture again (see [Coordinate spaces for the mouse tools](#coordinate-spaces-for-the-mouse-tools)) |
+| `CaptureNotFound` | [click](#click), right_click, double_click, [mouse_click](#mouse_click), [drag](#drag), mouse_move, [scroll](#scroll), [wait_for_visual](#wait_for_visual) (`since`) | The `captureId` names no capture: mistyped, from an earlier run of the server, older than 10 minutes, or 32 newer captures pushed it out; nothing was sent. Capture again (see [Coordinate spaces for the mouse tools](#coordinate-spaces-for-the-mouse-tools)). wait_for_visual: also a capture without a visual signature (taken while the `visual` toolset was off, a crop to a `ref`, or its signature dropped to stay within 16 MB); take a new capture with `output: "metadata"` before you act |
 | `CdpDialogOpen` | [Browser Reading](#browser-reading) tools, [Browser Tabs and Navigation](#browser-tabs-and-navigation) tools, [DOM bridge](#browser-page-dom-bridge) tools | The page has a JavaScript dialog open, which DevTools cannot answer. Read it with [browser_handle_dialog](#browser_handle_dialog) on the browser window (no `accept`) and answer it deliberately (browser_handle_dialog with `accept`), or ask the user, then retry (never press Enter). Next time pass `dialog` to the action that opens it (browser_click, browser_type, browser_navigate) |
 | `CdpEvaluationFailed` | [Browser Reading](#browser-reading) tools, [wait_for_browser](#wait_for_browser) (a `selector` that is not valid CSS), [browser_evaluate](#browser_evaluate), [DOM bridge](#browser-page-dom-bridge) tools | The page threw (get_browser_content's `selector` is not valid CSS), or the browser rejected the script. browser_evaluate: the script threw or its promise was rejected (`exception`), or its value cannot be returned as JSON; the DOM bridge: a `selector` that is not valid CSS |
 | `CdpPortOwnerMismatch` | [Browser Reading](#browser-reading) tools, [Browser Tabs and Navigation](#browser-tabs-and-navigation) tools | The CDP port belongs to a different process than the window, or its owner cannot be read |
@@ -7982,7 +8360,7 @@ table, it gives more detail.
 | `GracefulCloseTimedOut` | [kill_process](#kill_process) | Graceful mode: the process was still running after the timeout and was left running |
 | `HandleMismatch` | [close_window](#close_window) (`force` after the user's yes), [close_windows_batch](#close_windows_batch), [close_application](#close_application) (per window); every tool that takes a `window` selector (tool error; per item in the window batches; in the result of the [Input Simulation](#input-simulation) tools, and of [wait_for_window](#wait_for_window) when `title_changed`'s selector names a reused handle as the call starts) | After the user confirmed, the window's handle belonged to another process than the one in the question (the window closed and its handle was reused), or to a new window although it was no window when the user was asked; close_application: to another process than when the window was listed, asked or not; it was not closed. A selector's `handle` came with `processId`, `processName`, a title or `className` that the window no longer matches (its handle was most likely reused), or the selector's window no longer matched it once the call held the input gate (the window and input tools check it again just before they act or send); nothing was done |
 | `HtmlRequiresCdp` | [get_browser_content](#get_browser_content) | `textOnly: false` was requested, but CDP could not be used |
-| `InputBusy` | [Input Simulation](#input-simulation) tools, [element_action](#element_action), [respond_to_dialog](#respond_to_dialog), [file_dialog](#file_dialog); tool error from every tool that changes windows or starts or stops processes ([Window Control](#window-control), [Batch Operations](#batch-operations), [close_application](#close_application), [apply_layout](#apply_layout), [launch_application](#launch_application), [kill_process](#kill_process), [launch_browser_with_debug](#launch_browser_with_debug)), from [set_clipboard](#set_clipboard), from [activate_tab](#activate_tab) and [browser_navigate](#browser_navigate) (in browser_navigate's result, with the new tab's `targetId`, when `newTab` opened one), from the [DOM bridge](#browser-page-dom-bridge)'s browser_click, browser_type, browser_handle_dialog, browser_evaluate and browser_screenshot, and from [capture_window](#capture_window) and [capture_with_elements](#capture_with_elements) with `restoreIfMinimized` | Another input or window call held the input gate for 30 seconds, so nothing was sent or done; retry when it has finished |
+| `InputBusy` | [Input Simulation](#input-simulation) tools, [element_action](#element_action), [run_steps](#run_steps) (tool error, before its first step), [respond_to_dialog](#respond_to_dialog), [file_dialog](#file_dialog); tool error from every tool that changes windows or starts or stops processes ([Window Control](#window-control), [Batch Operations](#batch-operations), [close_application](#close_application), [apply_layout](#apply_layout), [launch_application](#launch_application), [kill_process](#kill_process), [launch_browser_with_debug](#launch_browser_with_debug)), from [set_clipboard](#set_clipboard), from [activate_tab](#activate_tab) and [browser_navigate](#browser_navigate) (in browser_navigate's result, with the new tab's `targetId`, when `newTab` opened one), from the [DOM bridge](#browser-page-dom-bridge)'s browser_click, browser_type, browser_handle_dialog, browser_evaluate and browser_screenshot, and from [capture_window](#capture_window) and [capture_with_elements](#capture_with_elements) with `restoreIfMinimized` | Another input or window call held the input gate for 30 seconds, so nothing was sent or done; retry when it has finished |
 | `InterpreterWithArguments` | [launch_application](#launch_application), launch_applications_batch | A command interpreter, script host or other program that runs what its command line names (`cmd`, PowerShell, `wscript`, `python`, ...) was given arguments: the server does not run commands or scripts for the agent (see [Commands and scripts](#commands-and-scripts)). Nothing was started; ask the user to run the command |
 | `InvalidArguments` | any tool (tool error); batch items (per item) | A required argument is missing or has the wrong type, so the tool did not run (see [Tool errors](#tool-errors)). Also both `handle` (or `windowHandle`) and `window`, or neither for a tool that needs a window; a `window` selector that is empty, has an unknown field, a `processId` or `handle` below 1, a negative `index`, `index` or `foreground` with `handle`, or a `titleRegex` that is invalid or runs longer than 100 ms (in the result of the [Input Simulation](#input-simulation) tools when it times out in their check inside the input gate); and a [find_windows](#find_windows) `limit` below 1 or a `sort` that is not zorder, title or process. Also a value out of its range: a window `width` or `height` below 1, [get_browser_content](#get_browser_content) `maxLength` below 1, [launch_browser_with_debug](#launch_browser_with_debug) `port` other than 0 or 1024-65535, a `url` that starts with `-` or `/`, a `userDataDir` that is not a full path or is inside a `User Data` folder, or an `executablePath` that is not a full path to the browser's own `chrome.exe`, `msedge.exe` or `brave.exe`, [scroll](#scroll) without a point and `windowHandle`, with only one of `x` and `y`, with `captureId` or a `space` other than `screen` but no point, or with no notches or more than 100, a mouse tool's `space` that is not screen, window, client or image, `space` `image` without `captureId`, a `captureId` with another `space`, `window` or `client` without a window, or a `captureId` of one window with another window as `windowHandle`, [capture_window](#capture_window)'s `padding` without `ref` or outside 0-500, a `ref` that is not an element ref, or a `handle` or `window` that is not the ref's window, [get_clipboard](#get_clipboard) `maxLength` outside 1-1000000, a [set_clipboard](#set_clipboard) `text` that is empty or longer than 1000000 characters, or a batch array that is null; an argument the tool does not declare (see [Undeclared arguments](#undeclared-arguments)). A batch item that is null, or misses its size, fails alone with this code. [type_text](#type_text): typed text with a line break or a tab and no `controlChars`, or `method: "paste"` with `delayMs`; nothing was typed |
 | `InvalidArgumentValue` | [launch_application](#launch_application), launch_applications_batch | An element of `arguments` is null or contains a NUL character. Not the same as `InvalidArguments` |
@@ -7993,14 +8371,14 @@ table, it gives more detail.
 | `InvalidImageSize` | [Screenshot](#screenshot) tools | `maxDimension` is negative or `maxWidth` is not positive |
 | `InvalidKeySpecification` | [send_keys](#send_keys), [press_keys](#press_keys) | The keys string breaks the [syntax](#send_keys), such as a `{` without its `}`, a modifier with no key after it (`100%`; write `100{%}`), an unclosed group or a count outside 1-100; press_keys: a chord with two keys (`ctrl+a+b`), an empty name (`ctrl++`; write `plus`), a modifier named twice, a count outside 1-100, no keys, or more than 200 presses; nothing was sent. Fix the string (an unknown key name is `UnknownKey`) |
 | `InvalidMatchBy` | [apply_layout](#apply_layout) (tool error) | `matchBy` is not process_and_title, process_only or title_only; nothing was arranged |
-| `InvalidMonitorIndex` | [take_screenshot](#take_screenshot), [read_screen_text](#read_screen_text), [find_text_on_screen](#find_text_on_screen), [snap_window](#snap_window), [move_window_to_monitor](#move_window_to_monitor), snap_windows_batch (per window), [apply_layout](#apply_layout) (per placement: its `monitorIndex`), [launch_application](#launch_application) and launch_applications_batch (a `placement`; tool error or per item, nothing launched) | `monitorIndex` is not a monitor; `error` gives the valid range (see [get_monitors](#get_monitors) or [list_screens](#list_screens)). Nothing was changed: the window is never put on another monitor instead |
+| `InvalidMonitorIndex` | [take_screenshot](#take_screenshot), [wait_for_visual](#wait_for_visual), [read_screen_text](#read_screen_text), [find_text_on_screen](#find_text_on_screen), [snap_window](#snap_window), [move_window_to_monitor](#move_window_to_monitor), snap_windows_batch (per window), [apply_layout](#apply_layout) (per placement: its `monitorIndex`), [launch_application](#launch_application) and launch_applications_batch (a `placement`; tool error or per item, nothing launched) | `monitorIndex` is not a monitor; `error` gives the valid range (see [get_monitors](#get_monitors) or [list_screens](#list_screens)). Nothing was changed: the window is never put on another monitor instead |
 | `InvalidName` | [save_layout](#save_layout), [delete_layout](#delete_layout) | The name is empty or longer than 128 characters |
 | `InvalidOutputMode` | [Screenshot](#screenshot) tools | `output` is not image, file, both or metadata (a tool error that lists them), or `outputPath` was given without a file output |
 | `InvalidOutputPath` | [Screenshot](#screenshot) tools | `outputPath` is not an absolute path on a drive letter (network and device paths are refused), does not end in an extension that matches the format, names a folder, or is in a folder that does not exist |
 | `InvalidPath` | [launch_application](#launch_application), launch_applications_batch | The executable or working directory is not a valid path |
 | `InvalidPositioning` | [move_window_to_monitor](#move_window_to_monitor) (tool error) | `positioning` is not center, topleft, topright, bottomleft, bottomright, maximize or restore; nothing was moved |
 | `InvalidProcessId` | [kill_process](#kill_process) | `processId` is not a positive integer |
-| `InvalidRegion` | [capture_region](#capture_region), [read_screen_text](#read_screen_text) and [find_text_on_screen](#find_text_on_screen) (a region) | `width` or `height` is not positive, or the part of the region on screen is over the 64-megapixel budget or 16384 pixels on an edge |
+| `InvalidRegion` | [capture_region](#capture_region), [wait_for_visual](#wait_for_visual), [read_screen_text](#read_screen_text) and [find_text_on_screen](#find_text_on_screen) (a region) | `width` or `height` is not positive, or the part of the region on screen is over the 64-megapixel budget or 16384 pixels on an edge; wait_for_visual: a region or monitor over 32 megapixels, which every check reads |
 | `InvalidSnapPosition` | [snap_window](#snap_window) (tool error), snap_windows_batch (per window), [launch_application](#launch_application) and launch_applications_batch (`placement.snap`; tool error or per item, nothing launched) | `position` (or `placement.snap`) is missing or not a known snap position; `error` lists them |
 | `InvalidState` | [set_window_state](#set_window_state) (tool error), set_windows_state_batch (per window), [launch_application](#launch_application) and launch_applications_batch (`placement.state`; tool error or per item, nothing launched) | `state` is missing or not minimize, maximize or restore (or minimized, maximized, normal); `placement.state` is not normal, maximized or minimized; nothing was changed |
 | `InvalidTimeout` | [kill_process](#kill_process) | `gracefulTimeoutMs` is out of range |
@@ -8027,12 +8405,12 @@ table, it gives more detail.
 | `OcrLanguageNotInstalled` | [read_screen_text](#read_screen_text), [find_text_on_screen](#find_text_on_screen) | `language` is not an installed Windows OCR language; nothing was captured. `installedLanguages` lists the ones there are (pass one of them, or none for the user's), and the error says how the user adds a language. The server never installs one |
 | `OcrUnavailable` | [read_screen_text](#read_screen_text), [find_text_on_screen](#find_text_on_screen) | Windows OCR cannot read here: no OCR language is installed (`installedLanguages` is empty; the error says how the user adds one, the server never installs one), the system has no Windows.Media.Ocr, or the engine failed on the image (`error` has the reason). Nothing was read. Read the text another way: UI Automation, or a capture you look at |
 | `OperationException` | [Browser Reading](#browser-reading) tools, [UI Automation](#ui-automation) tools, [capture_with_elements](#capture_with_elements), [capture_window](#capture_window) (`ref`) | Unexpected error while reading; see `error` |
-| `OperationTimedOut` | [UI Automation](#ui-automation) tools, [capture_with_elements](#capture_with_elements), [capture_window](#capture_window) (`ref`), the UI Automation reads of the [Browser Reading](#browser-reading) tools | UI Automation did not answer in time (the application may be hung). The browser reading tools: the read did not finish within `timeoutMs`; nothing is returned. get_ui_elements returns a partial tree with `truncated: true`, and find_ui_elements the matches found with `truncationReason: Timeout`, when they read some (a read stuck in a UI Automation call is given up 2 s after `timeoutMs`); get_desktop_state lists a part not read by its deadline in `errors`. read_element_text and element_action by criteria: also a search that did not finish (it ran out of time, hit the search limit, skipped parts or left windows of its scope out) with one match or none so far; nothing was read or done. element_action's `menu_path`: the path's time (`timeoutMs` per item, at most 60 s) ran out, or an item's search did not finish; `realize` with `maxScrolls`: the time passed while scrolling. A read that misses its deadline keeps running in the background; while two such reads of one application have not returned, further reads of that application fail at once, and reads of other applications go on (all reads fail at once only while 16 reads are stuck). A Store (UWP) app counts as its own application, not as the `ApplicationFrameHost` that hosts every UWP app's window |
+| `OperationTimedOut` | [UI Automation](#ui-automation) tools, [capture_with_elements](#capture_with_elements), [capture_window](#capture_window) (`ref`), the UI Automation reads of the [Browser Reading](#browser-reading) tools, [run_steps](#run_steps) | run_steps: its `maxDurationMs` ran out (`stoppedBy: "timedOut"`); the steps after it were skipped. Otherwise: UI Automation did not answer in time (the application may be hung). The browser reading tools: the read did not finish within `timeoutMs`; nothing is returned. get_ui_elements returns a partial tree with `truncated: true`, and find_ui_elements the matches found with `truncationReason: Timeout`, when they read some (a read stuck in a UI Automation call is given up 2 s after `timeoutMs`); get_desktop_state lists a part not read by its deadline in `errors`. read_element_text and element_action by criteria: also a search that did not finish (it ran out of time, hit the search limit, skipped parts or left windows of its scope out) with one match or none so far; nothing was read or done. element_action's `menu_path`: the path's time (`timeoutMs` per item, at most 60 s) ran out, or an item's search did not finish; `realize` with `maxScrolls`: the time passed while scrolling. A read that misses its deadline keeps running in the background; while two such reads of one application have not returned, further reads of that application fail at once, and reads of other applications go on (all reads fail at once only while 16 reads are stuck). A Store (UWP) app counts as its own application, not as the `ApplicationFrameHost` that hosts every UWP app's window |
 | `PasteNotAllowed` | [send_keys](#send_keys), [type_text](#type_text) (the SYN character; `method: "paste"` into a terminal, or when the clipboard changed right before Ctrl+V), [right_click](#right_click), and [mouse_click](#mouse_click) and [drag](#drag) with the secondary or middle button (in a terminal, and in any window of VS Code, the editors built on it, Hyper and Tabby), [element_action](#element_action) (`right_click` and `mode: "paste"`) | The input pastes (Ctrl+V, Shift+Insert, Win+V, the SYN character, or a right or middle click in a terminal), and the clipboard holds content [get_clipboard](#get_clipboard) would not return: the user's (not allowed by the user), content marked private, or clipboard history; or the clipboard could not be checked; or the call copies and then pastes, or copy keys sent moments ago have not copied yet. Nothing (more) was sent. Put the text on the clipboard with set_clipboard, or type it; send a copy and its paste in separate calls; see [Clipboard](#clipboard) |
 | `PathTraversal` | [launch_application](#launch_application), launch_applications_batch | A path contains `..` |
 | `PatternNotSupported` | [read_table](#read_table), [element_action](#element_action) | read_table: the element supports neither the Grid pattern nor rows (DataItem, ListItem or TreeItem children, or Custom children holding DataItem cells), so it is no table; nothing was read. Read its text with read_element_text, or find the table inside it. element_action: the element has none of the patterns the action needs (`error` lists the ones it has), and no mouse fallback was allowed; or `mode` `type` or `paste` names an element that is not a text field (a list, grid, pane or button); `focus` on an element that is not keyboard-focusable; a `menu_path` item before the last that has no submenu (it is not invoked). Nothing was done. `fallback: "mouse"` sends a guarded click for `invoke`, `click` and `select` |
 | `PauseChordNotAllowed` | [send_keys](#send_keys), [press_keys](#press_keys) | The keys contain the user's [pause hotkey](#pause-hotkey) chord, which only the user may press; nothing was sent |
-| `PausedByUser` | [Input Simulation](#input-simulation) tools, [element_action](#element_action), [respond_to_dialog](#respond_to_dialog) (with `button`), [file_dialog](#file_dialog), [release_all_input](#release_all_input) (`releaseHeldModifiers`); tool error from every tool that changes windows or starts or stops processes ([Window Control](#window-control), [Batch Operations](#batch-operations), [close_application](#close_application), [apply_layout](#apply_layout), [launch_application](#launch_application), [kill_process](#kill_process), [launch_browser_with_debug](#launch_browser_with_debug)), from [set_clipboard](#set_clipboard), from [activate_tab](#activate_tab) and [browser_navigate](#browser_navigate) (in browser_navigate's result, with the new tab's `targetId`, when `newTab` opened one), from the [DOM bridge](#browser-page-dom-bridge)'s browser_click, browser_type, browser_handle_dialog and browser_evaluate (and browser_screenshot when it would bring a tab to the front; browser_click and browser_type in their result when the pause comes part way, saying what was sent), and from [capture_window](#capture_window) and [capture_with_elements](#capture_with_elements) with `restoreIfMinimized`; [focus_window](#focus_window) when the pause comes during the activation, and [apply_layout](#apply_layout) (named in an `ArrangeFailed` error, see [apply_layout](#apply_layout)) when it comes during a `focus` placement's activation | The user paused the input of the servers on the desktop with the [pause hotkey](#pause-hotkey); nothing (more) was sent, activated or changed. Stop and ask the user; never try to resume input yourself |
+| `PausedByUser` | [Input Simulation](#input-simulation) tools, [element_action](#element_action), [run_steps](#run_steps) (before or during the run: `stoppedBy: "paused"`), [respond_to_dialog](#respond_to_dialog) (with `button`), [file_dialog](#file_dialog), [release_all_input](#release_all_input) (`releaseHeldModifiers`); tool error from every tool that changes windows or starts or stops processes ([Window Control](#window-control), [Batch Operations](#batch-operations), [close_application](#close_application), [apply_layout](#apply_layout), [launch_application](#launch_application), [kill_process](#kill_process), [launch_browser_with_debug](#launch_browser_with_debug)), from [set_clipboard](#set_clipboard), from [activate_tab](#activate_tab) and [browser_navigate](#browser_navigate) (in browser_navigate's result, with the new tab's `targetId`, when `newTab` opened one), from the [DOM bridge](#browser-page-dom-bridge)'s browser_click, browser_type, browser_handle_dialog and browser_evaluate (and browser_screenshot when it would bring a tab to the front; browser_click and browser_type in their result when the pause comes part way, saying what was sent), and from [capture_window](#capture_window) and [capture_with_elements](#capture_with_elements) with `restoreIfMinimized`; [focus_window](#focus_window) when the pause comes during the activation, and [apply_layout](#apply_layout) (named in an `ArrangeFailed` error, see [apply_layout](#apply_layout)) when it comes during a `focus` placement's activation | The user paused the input of the servers on the desktop with the [pause hotkey](#pause-hotkey); nothing (more) was sent, activated or changed. Stop and ask the user; never try to resume input yourself |
 | `PortInUse` | [launch_browser_with_debug](#launch_browser_with_debug) | The explicit port is already in use; leave `port` out (0, the browser picks a free one) or pick another one |
 | `PresetNotFound` | [get_layout](#get_layout) (tool error), [apply_layout](#apply_layout), [delete_layout](#delete_layout) | No preset has that name |
 | `ProcessNameMismatch` | [kill_process](#kill_process) | The PID belongs to a different process than `expectedProcessName`, or, after the user confirmed, to a process that started at another time (its PID was reused); nothing was done |
@@ -8042,7 +8420,7 @@ table, it gives more detail.
 | `PromptShown` | [close_window](#close_window), close_windows_batch (per window), [close_application](#close_application) | The close message was sent, but the window waits behind a prompt such as "Save changes?"; `prompt` gives its handle, title, class, text, buttons and kind. Nothing was answered. Do not answer it yourself: show the user the prompt's text and buttons and ask which to choose (No or Don't Save discards their unsaved work); then answer it as they say with [respond_to_dialog](#respond_to_dialog) and `prompt.handle` as `handle` (an `inWindowDialog` has no window of its own: press its button with [element_action](#element_action)) |
 | `ProtectedProcess` | [kill_process](#kill_process) | Protected system or shell process |
 | `ProtectedWindow` | [close_window](#close_window), close_windows_batch (per window), [close_application](#close_application), the `placement` of [launch_application](#launch_application) and launch_applications_batch | The window is part of the desktop shell or of the agent's own host, and `force` was not true (close_application has no `force`, and refuses the whole application); nothing was sent. A launch placement: the launch's window belongs to the agent's own host, so it was not moved or focused (the launch still succeeded) |
-| `RegionOffScreen` | [capture_region](#capture_region), [read_screen_text](#read_screen_text) and [find_text_on_screen](#find_text_on_screen) (a region) | No part of the region is on the virtual screen (the area of all monitors); nothing was captured. Coordinates are physical virtual-screen pixels: check them against [list_screens](#list_screens) |
+| `RegionOffScreen` | [capture_region](#capture_region), [wait_for_visual](#wait_for_visual), [read_screen_text](#read_screen_text) and [find_text_on_screen](#find_text_on_screen) (a region) | No part of the region is on the virtual screen (the area of all monitors); nothing was captured. Coordinates are physical virtual-screen pixels: check them against [list_screens](#list_screens) |
 | `ResizeFailed` | [resize_window](#resize_window), [set_window_bounds](#set_window_bounds) with `width` and `height` alone (roadmap M6.1) | Windows did not resize the window (`error` gives the Win32 error), or a minimized or maximized window did not return to normal, or is hidden, so it was not resized |
 | `ResumeDeclined` | [resume_input](#resume_input) | The user declined or dismissed the question, or did not answer in time, or paused again while it was open; or another `resume_input` is already waiting for the answer. Input stays paused |
 | `ResumeNeedsUser` | [resume_input](#resume_input) | The MCP client cannot ask the user (no elicitation support), so only the user can resume, with the pause hotkey |
@@ -8050,16 +8428,16 @@ table, it gives more detail.
 | `ScriptFile` | [launch_application](#launch_application), launch_applications_batch, [apply_layout](#apply_layout) (in `LaunchFailed`'s `error`) | The launch would run a script (`.bat`, `.cmd`, `.ps1`, `.vbs`, `.py`, ...), as the target, through a bare name that resolves to one (`code` is `code.cmd`: use `code.exe`) or through `explorer` (see [Commands and scripts](#commands-and-scripts)). Nothing was started; ask the user to run it |
 | `SendInputFailed` | [Input Simulation](#input-simulation) tools, [release_all_input](#release_all_input) | Windows did not accept the input (SendInput failed; send_keys reports `keysSent`, type_text `charactersTyped`, and the keys pressed are released again; after a paste's partial Ctrl+V the text may or may not have been pasted); release_all_input: some keys or buttons could not be released (`stillHeld`). A pointer that could not be moved is `CursorPositionFailed` |
 | `SessionLocked` | [Input Simulation](#input-simulation) tools, [element_action](#element_action), [respond_to_dialog](#respond_to_dialog), [file_dialog](#file_dialog) | The session is locked; nothing was sent |
-| `StaleCapture` | [click](#click), right_click, double_click, [mouse_click](#mouse_click), [drag](#drag), mouse_move, [scroll](#scroll) | The point was given with a `captureId` and what the capture showed changed: the captured window moved or resized by more than 2 pixels, closed, was minimized or its handle now belongs to another process, a client-area capture's client area moved, or the monitors changed since a monitor or region capture; or, with `space` `window` or `client` (or a `captureId`), the window moved while the call waited for the input gate. Nothing was sent. Capture again and use the new `captureId` (see [Coordinate spaces for the mouse tools](#coordinate-spaces-for-the-mouse-tools)) |
+| `StaleCapture` | [click](#click), right_click, double_click, [mouse_click](#mouse_click), [drag](#drag), mouse_move, [scroll](#scroll), [wait_for_visual](#wait_for_visual) (`since` on a region or monitor no longer all on the screen) | The point was given with a `captureId` and what the capture showed changed: the captured window moved or resized by more than 2 pixels, closed, was minimized or its handle now belongs to another process, a client-area capture's client area moved, or the monitors changed since a monitor or region capture; or, with `space` `window` or `client` (or a `captureId`), the window moved while the call waited for the input gate. Nothing was sent. Capture again and use the new `captureId` (see [Coordinate spaces for the mouse tools](#coordinate-spaces-for-the-mouse-tools)) |
 | `StateChangeFailed` | [set_window_state](#set_window_state), set_windows_state_batch (per window) | The window was not seen in the requested state within 300 ms: the application refused or delayed it, or it runs with higher privileges; `error` says the state it is in |
 | `StillOpen` | [close_window](#close_window), close_windows_batch (per window), [close_application](#close_application) | The close message was sent, but the window was still open and visible when the wait (`waitMs`, `timeoutMs`) ended, without a prompt: the app is busy or slow, or ignores the request. Check it, wait longer, or end the app with kill_process |
 | `StorageUnavailable` | [Layout Presets](#layout-presets) tools (tool error from get_layout and list_layouts) | The layouts folder cannot be created or used |
-| `TargetDeniedByPolicy` | [Input Simulation](#input-simulation) tools, [element_action](#element_action), [respond_to_dialog](#respond_to_dialog), [file_dialog](#file_dialog) (also for the prompt its press opened), [Window Control](#window-control) tools ([focus_window](#focus_window), [close_window](#close_window), ...), [Batch Operations](#batch-operations) (per window), [close_application](#close_application), [apply_layout](#apply_layout) (per placement), [kill_process](#kill_process), [close_debug_browser](#close_debug_browser), the `placement` of [launch_application](#launch_application) and launch_applications_batch (in `placement`; the launch itself succeeded), [capture_window](#capture_window), [capture_with_elements](#capture_with_elements), [read_screen_text](#read_screen_text) and [find_text_on_screen](#find_text_on_screen) (a window; in a region or monitor such windows are blacked out instead, `maskedWindows`), the [UI Automation](#ui-automation) reads ([get_ui_elements](#get_ui_elements), [find_ui_elements](#find_ui_elements), [get_focused_element](#get_focused_element), [get_element_at_point](#get_element_at_point), [get_active_popups](#get_active_popups), [read_element_text](#read_element_text), [read_table](#read_table), [wait_for_element](#wait_for_element); [get_desktop_state](#get_desktop_state) in `errors`), the UI Automation reads of the [Browser Reading](#browser-reading) tools, the [Browser Tabs and Navigation](#browser-tabs-and-navigation) tools (also with `cdpPort`) | The server's [target policy](#target-policy) (`WAM_DENY_PROCESSES`, `WAM_ALLOW_PROCESSES`) refuses the window's or the process's app, or, while it denies anything, the window's process cannot be named; get_focused_element and get_element_at_point: also the element's own process. No tool argument (`force`, `forceKill`) changes it, so ask the user. Nothing was done or read, except when a denied dialog of a minimized window appears only after focus_window restored the window (`error` says so) |
+| `TargetDeniedByPolicy` | [Input Simulation](#input-simulation) tools, [element_action](#element_action), [respond_to_dialog](#respond_to_dialog), [file_dialog](#file_dialog) (also for the prompt its press opened), [Window Control](#window-control) tools ([focus_window](#focus_window), [close_window](#close_window), ...), [Batch Operations](#batch-operations) (per window), [close_application](#close_application), [apply_layout](#apply_layout) (per placement), [kill_process](#kill_process), [close_debug_browser](#close_debug_browser), the `placement` of [launch_application](#launch_application) and launch_applications_batch (in `placement`; the launch itself succeeded), [capture_window](#capture_window), [capture_with_elements](#capture_with_elements), [wait_for_visual](#wait_for_visual) (a window target; over a region or monitor a denied window is left out instead), [read_screen_text](#read_screen_text) and [find_text_on_screen](#find_text_on_screen) (a window; in a region or monitor such windows are blacked out instead, `maskedWindows`), the [UI Automation](#ui-automation) reads ([get_ui_elements](#get_ui_elements), [find_ui_elements](#find_ui_elements), [get_focused_element](#get_focused_element), [get_element_at_point](#get_element_at_point), [get_active_popups](#get_active_popups), [read_element_text](#read_element_text), [read_table](#read_table), [wait_for_element](#wait_for_element); [get_desktop_state](#get_desktop_state) in `errors`), the UI Automation reads of the [Browser Reading](#browser-reading) tools, the [Browser Tabs and Navigation](#browser-tabs-and-navigation) tools (also with `cdpPort`) | The server's [target policy](#target-policy) (`WAM_DENY_PROCESSES`, `WAM_ALLOW_PROCESSES`) refuses the window's or the process's app, or, while it denies anything, the window's process cannot be named; get_focused_element and get_element_at_point: also the element's own process. No tool argument (`force`, `forceKill`) changes it, so ask the user. Nothing was done or read, except when a denied dialog of a minimized window appears only after focus_window restored the window (`error` says so) |
 | `TargetElevated` | [Input Simulation](#input-simulation) tools, [element_action](#element_action), [respond_to_dialog](#respond_to_dialog), [file_dialog](#file_dialog) | The window the input would reach runs at a higher integrity level than the server (for example as administrator), so Windows would drop the input; nothing was sent |
 | `TargetInMenuMode` | [type_text](#type_text), [element_action](#element_action) (`focus`, mouse and keyboard paths) | A menu is active in the receiving window, so letters would select menu items; nothing was typed. element_action: a menu stays open in the element's window that activation could not close; nothing was done |
 | `TargetIsAgentHost` | [Input Simulation](#input-simulation) tools, [element_action](#element_action), [respond_to_dialog](#respond_to_dialog), [file_dialog](#file_dialog), [get_desktop_state](#get_desktop_state) (in `errors`), [get_active_popups](#get_active_popups) | The input would reach the agent's own terminal, editor or chat app, which only `windowHandle` (element_action: `ref` or `handle`; the dialog tools: `handle`) naming it with `allowHostTarget: true` allows; nothing was sent. A window of this server's own process (a security warning Windows showed for a launch) is refused even with `allowHostTarget`: ask the user to answer it. get_desktop_state: the window in front, or the focus, is the agent's own host and was not named, so it was not read. get_active_popups: no window was named and the window in front is the agent's own host, so nothing was listed or read |
 | `TargetLostFocus` | [type_text](#type_text), [send_keys](#send_keys), [element_action](#element_action) (keyboard paths) | Another window came to the front after the check and before or while the keys were sent; `charactersTyped` says how much was typed before typing stopped |
-| `TargetNotForeground` | [type_text](#type_text), [send_keys](#send_keys), [element_action](#element_action) (`focus`, mouse and keyboard paths) | The target window could not be brought to the foreground (also a hidden or cloaked one), or no window is in the foreground; nothing was sent |
+| `TargetNotForeground` | [type_text](#type_text), [send_keys](#send_keys), [element_action](#element_action) (`focus`, mouse and keyboard paths), [run_steps](#run_steps) | The target window could not be brought to the foreground (also a hidden or cloaked one), or no window is in the foreground; nothing was sent. run_steps: another window took the foreground during the run, after the run's window had it (`stoppedBy: "foregroundMoved"`); the run stopped instead of taking it back |
 | `TargetOccluded` | [click](#click), right_click, double_click, [mouse_click](#mouse_click), [drag](#drag), mouse_move, [scroll](#scroll), [element_action](#element_action) (mouse paths) | Another window, not the target or a popup of it, is at the point, or no window can be found there; nothing was sent (double_click: the result says when the first click was sent). element_action: also another element of the window covers the element at every point tried (UI Automation's hit test); nothing was clicked |
 | `TerminationException` | [kill_process](#kill_process), [close_debug_browser](#close_debug_browser) (the browser did not close and could not be ended) | Unexpected error |
 | `TerminationNotConfirmed` | [kill_process](#kill_process) | Force mode: the process had not exited when the wait ended |
@@ -8072,8 +8450,8 @@ table, it gives more detail.
 | `UnsupportedBrowser` | [launch_browser_with_debug](#launch_browser_with_debug) (tool error) | `browser` is not chrome, edge or brave |
 | `UrlBarNotFound` | [get_browser_url](#get_browser_url), [get_active_browser_url](#get_active_browser_url) | UI Automation found neither the page's address nor the browser's address bar (roadmap M5.7: looked up by class and structure, never by name) |
 | `UrlExtractionFailed` | [get_browser_url](#get_browser_url), [get_active_browser_url](#get_active_browser_url) | The page gave no address, and the address bar has the keyboard focus (`isEditing`: its text may be typed) or may have it (the browser is not the foreground window, or its focus cannot be read), holds text that is not a URL, or cannot be read (roadmap M5.7) |
-| `WaitTimedOut` | [wait_for_window](#wait_for_window), [wait_for_element](#wait_for_element), [wait_for_browser](#wait_for_browser), [browser_navigate](#browser_navigate) | The condition did not hold within `timeoutMs` (browser_navigate: the page did not reach `waitUntil`, `loadState: "loading"`; it goes on loading; wait_for_browser: the page's `url` and `title` as last seen). The result still carries `satisfied: false`, `timedOut: true`, `elapsedMs` and the window as last seen (still open, not in front, not on screen, not idle, or with its old title), or for wait_for_element `lastObservedState` and the element as last seen (or no `windowHandle` when its window never appeared), and `error` says what was seen. Nothing was changed: wait again with a longer `timeoutMs`, or check the state with a read tool |
+| `WaitTimedOut` | [wait_for_window](#wait_for_window), [wait_for_element](#wait_for_element), [wait_for_browser](#wait_for_browser), [browser_navigate](#browser_navigate), [wait_for_visual](#wait_for_visual) (`changedRegions` as last seen) | The condition did not hold within `timeoutMs` (browser_navigate: the page did not reach `waitUntil`, `loadState: "loading"`; it goes on loading; wait_for_browser: the page's `url` and `title` as last seen). The result still carries `satisfied: false`, `timedOut: true`, `elapsedMs` and the window as last seen (still open, not in front, not on screen, not idle, or with its old title), or for wait_for_element `lastObservedState` and the element as last seen (or no `windowHandle` when its window never appeared), and `error` says what was seen. Nothing was changed: wait again with a longer `timeoutMs`, or check the state with a read tool |
 | `WheelFollowsFocus` | [scroll](#scroll) | Windows sends the wheel to the focused window ("Scroll inactive windows when I hover over them" is off, or the setting cannot be read), and the window at the point is not in front, so the wheel would scroll another window; nothing was sent. Call [focus_window](#focus_window) first |
 | `WindowHidden` | [focus_window](#focus_window), [apply_layout](#apply_layout) (named in an `ArrangeFailed` error, see [apply_layout](#apply_layout)), the [Input Simulation](#input-simulation) tools and [element_action](#element_action) (`windowHandle`, as `TargetNotForeground`), [capture_window](#capture_window), [capture_with_elements](#capture_with_elements) | The window is hidden (no WS_VISIBLE, for example an app's window hidden in the notification area), so it was not activated: keys would go to a window the user cannot see. The captures refuse it too: a hidden window draws nothing |
-| `WindowMinimized` | [capture_window](#capture_window), [capture_with_elements](#capture_with_elements), [read_screen_text](#read_screen_text), [find_text_on_screen](#find_text_on_screen) | The window, or the window it is inside, is minimized: Windows does not draw it, and its elements are offscreen. Nothing was captured. Pass `restoreIfMinimized: true` (the capture tools; the OCR tools only read and restore nothing), or restore it first with [set_window_state](#set_window_state) |
+| `WindowMinimized` | [capture_window](#capture_window), [capture_with_elements](#capture_with_elements), [wait_for_visual](#wait_for_visual) (a window target at the start, or during a `stable` wait), [read_screen_text](#read_screen_text), [find_text_on_screen](#find_text_on_screen) | The window, or the window it is inside, is minimized: Windows does not draw it, and its elements are offscreen. Nothing was captured. Pass `restoreIfMinimized: true` (the capture tools; wait_for_visual and the OCR tools only read and restore nothing), or restore it first with [set_window_state](#set_window_state) |
 | `WindowNotFound` | [apply_layout](#apply_layout), [get_ui_elements](#get_ui_elements), [find_ui_elements](#find_ui_elements), [capture_with_elements](#capture_with_elements); every tool that takes a `window` selector (tool error; per item in the window batches); the `placement` of [launch_application](#launch_application) and launch_applications_batch | apply_layout: no open window that is not given to another placement matched a placement. A launch placement: the launch succeeded but found no window, so nothing was placed (do not launch again; find it with find_windows). get_ui_elements, find_ui_elements and capture_with_elements: the window no longer exists. A tool given an element ref ([capture_window](#capture_window)'s `ref`, element_action, read_element_text, read_table, find_ui_elements' `withinRef`): UI Automation cannot read the ref's window, which is still open; the ref is kept, so try again (a ref whose window closed is `ElementStale`). [wait_for_element](#wait_for_element): its `window`'s window closed during the wait (any condition but `gone`, which that satisfies). [wait_for_window](#wait_for_window): `title_changed`'s selector names no window as the call starts (in its result). [get_active_popups](#get_active_popups): no window is in front and none was named. A `window` selector: no window matches it, or its `index` is past the matches; nothing was done (see [Window selectors](#window-selectors)) |

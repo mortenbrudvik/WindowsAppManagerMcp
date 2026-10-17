@@ -75,6 +75,7 @@ public static class ToolDocCatalog
             new("capture_with_elements", "Capture with numbered marks (element refs) and a legend", "handle", "maxElements", "controlTypes", "detail", "maxDimension"),
             new("read_screen_text", "Read a window's, region's or monitor's text with Windows OCR: lines with screen boxes (toolset ocr)", "window (or handle)", "x", "y", "width", "height", "monitorIndex", "language", "detail", "maxLines"),
             new("find_text_on_screen", "Find text with Windows OCR: click points and a captureId for mouse_click (toolset ocr)", "text", "match", "window (or handle)", "x", "y", "width", "height", "monitorIndex", "language"),
+            new("wait_for_visual", "Wait until a window, region or monitor changes or settles on screen, no image (toolset visual)", "condition", "window (or handle)", "since", "stableMs", "minChangedPercent", "timeoutMs"),
         ],
         SkillNote: "All capture tools also accept `format` (`auto`, `png`, `jpeg`), `quality` (JPEG), `outputPath` and `overwrite` " +
                    "(with output `file` or `both`), and the legacy `saveToFile` and `maxWidth`. read_screen_text and " +
@@ -153,10 +154,18 @@ public static class ToolDocCatalog
             new("resume_input", "Ask the user to resume input after a pause; only their confirmation resumes it"),
             new("release_all_input", "Release stuck keys and mouse buttons", "releaseHeldModifiers"),
         ]),
+        new("Step Sequences",
+        [
+            new("run_steps", "Several steps on one window in one call, under one input gate hold; stops at the first failure",
+                "window", "steps (tool, args, id, optional, return)", "maxDurationMs"),
+        ],
+        SkillNote: "A step is a tool of the list with that tool's own `args`. A step that names no window gets the run's; " +
+                   "`\"$steps.<id>.<path>\"` takes an earlier step's ref, handle, captureId or clickPoint. No paste, file output, " +
+                   "window_close, scope desktop, allowHostTarget or closing chord (ctrl+w, ctrl+q) in a step. Off with `WAM_TOOLSETS=-steps`."),
         new("App Launch",
         [
             new("launch_application", "Launch app by path/name/URI", "executable", "arguments", "workingDirectory", "waitForWindow", "placement", "reuseExisting"),
-            new("list_processes", "List running processes", "nameFilter", "includeWindowless"),
+            new("list_processes", "List processes with their windows, parent, start time and integrity", "nameFilter", "processId", "includeWindowless", "sortBy"),
             new("kill_process", "Close or terminate a process", "processId", "confirm", "forceKill", "expectedProcessName"),
             new("close_application", "Close an app's Alt+Tab windows gracefully; reports prompts and what remains", "processName", "processId", "window (or handle)", "timeoutMs"),
         ]),

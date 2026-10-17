@@ -95,18 +95,30 @@ public static class ServiceRegistration
         services.AddSingleton<ILaunchPlacementService>(sp => new LaunchPlacementService(
             sp.GetRequiredService<IWindowService>(), sp.GetRequiredService<IForegroundService>(), sp.GetRequiredService<IInputSession>()));
         services.AddSingleton<IScreenCaptureWrapper, ScreenCaptureWrapper>();
-        // Captures register under a captureId, and the mouse tools convert image, window and client points (roadmap M3.11)
-        services.AddSingleton<ICaptureRegistry, CaptureRegistry>();
+        // Captures register under a captureId, and the mouse tools convert image, window and client points (roadmap M3.11).
+        // They keep their visual signatures only while wait_for_visual is served (roadmap M6.4, owner decision D9), so the
+        // captures cost nothing more otherwise; without a selection (the tests) every tool is served
+        services.AddSingleton<ICaptureRegistry>(sp => new CaptureRegistry(
+            keepSignatures: sp.GetService<ToolsetSelection>()?.Serves(VisualTools.WaitForVisualTool, readOnlyHint: true) ?? true));
         services.AddSingleton<ICoordinateSpaceResolver, CoordinateSpaceResolver>();
         // The target policy's check of a captured window: the capture tools and the raw pixel reads (roadmap M6) share it
         services.AddSingleton<ICaptureTargetPolicy, CaptureTargetPolicy>();
         services.AddSingleton<IScreenshotService, ScreenshotService>();
+        // wait_for_visual (roadmap M6.4): frames compared by their signatures, with the capture checks, the policy's mask
+        // of region and monitor reads, and the caret left out
+        services.AddSingleton<IVisualChangeService>(sp => new VisualChangeService(
+            sp.GetRequiredService<IScreenCaptureWrapper>(), sp.GetRequiredService<IScreenshotService>(),
+            sp.GetRequiredService<INativeWindowWrapper>(), sp.GetRequiredService<IMonitorService>(),
+            sp.GetRequiredService<ICaptureTargetPolicy>(), sp.GetRequiredService<IWindowCallRunner>(),
+            sp.GetRequiredService<ICaptureRegistry>(), sp.GetRequiredService<INativeThreadInputWrapper>(),
+            sp.GetRequiredService<ITargetPolicy>()));
         // Windows OCR (roadmap M6.3): read_screen_text and find_text_on_screen read the raw pixels above. The wrapper loads
         // WinRT only on its first call, so a server without the ocr toolset never does
         services.AddSingleton<IOcrEngineWrapper, OcrEngineWrapper>();
         services.AddSingleton<IOcrService>(sp => new OcrService(
             sp.GetRequiredService<IScreenshotService>(), sp.GetRequiredService<IOcrEngineWrapper>(),
-            sp.GetRequiredService<INativeWindowWrapper>(), sp.GetRequiredService<IWindowService>()));
+            sp.GetRequiredService<INativeWindowWrapper>(), sp.GetRequiredService<ICaptureTargetPolicy>(),
+            sp.GetRequiredService<ITargetPolicy>()));
         services.AddSingleton<IUIElementService, UIElementService>();
         // UI Automation tree seam (UIElementService) and single-element reads (get_focused_element,
         // get_element_at_point); UiaWorker runs every UI Automation read under a deadline. The engine (roadmap M3.2):
@@ -255,6 +267,7 @@ public static class ServiceRegistration
         services.AddSingleton<BrowserPageTools>();
         services.AddSingleton<ScreenshotTools>();
         services.AddSingleton<OcrTools>();
+        services.AddSingleton<VisualTools>();
         services.AddSingleton<UIElementTools>();
         services.AddSingleton<PopupTools>();
         services.AddSingleton<ElementReadTools>();
@@ -266,6 +279,7 @@ public static class ServiceRegistration
         services.AddSingleton<InputControlTools>();
         services.AddSingleton<ServerInfoTools>();
         services.AddSingleton<ClipboardTools>();
+        services.AddSingleton<StepSequenceTools>();
 
         return services;
     }
@@ -293,8 +307,8 @@ public static class ServiceRegistration
     }
 
     /// <summary>
-    /// Registers the call filters and the server's tools with the MCP server, and serves the ones
-    /// <paramref name="toolsets"/> chooses (roadmap M2.14).
+    /// Registers the call filters and the server's tools, resources and prompts with the MCP server, and serves the ones
+    /// <paramref name="toolsets"/> chooses (roadmap M2.14, M6.9).
     /// </summary>
     /// <param name="builder">The MCP server builder.</param>
     /// <param name="toolsets">
@@ -336,6 +350,7 @@ public static class ServiceRegistration
             .WithServerTools<BrowserPageTools>()
             .WithServerTools<ScreenshotTools>()
             .WithServerTools<OcrTools>()
+            .WithServerTools<VisualTools>()
             .WithServerTools<UIElementTools>()
             .WithServerTools<PopupTools>()
             .WithServerTools<ElementReadTools>()
@@ -347,7 +362,12 @@ public static class ServiceRegistration
             .WithServerTools<InputControlTools>()
             .WithServerTools<ServerInfoTools>()
             .WithServerTools<ClipboardTools>()
-            // Last: removes the tools the user's toolsets, exclusions or read-only mode leave out
+            // run_steps (roadmap M6.2): its steps call the tools above through these same filters
+            .WithServerTools<StepSequenceTools>()
+            // The wam:// resources and the prompts (roadmap M6.9), with their own request log
+            .AddWindowsAppManagerResourcesAndPrompts()
+            // Last: removes the tools the user's toolsets, exclusions or read-only mode leave out, and the resources and
+            // prompts whose tools are then not served
             .WithToolsets(toolsets ?? ToolsetSelection.All());
     }
 }

@@ -3,7 +3,9 @@ using System.Drawing;
 namespace WindowsAppManagerMcp.Tests.Unit.Services;
 
 /// <summary>
-/// The areas of windows the target policy denies, blacked out of a screen copy before OCR (roadmap M6.3, M6 decision D8).
+/// The policy's mask of screen reads (owner decision D8): the areas of the windows the target policy denies, blacked out of a
+/// screen copy before OCR (roadmap M6.3, Read and Apply) and left out of what wait_for_visual compares (roadmap M6.4, Over),
+/// with one verdict per window and process.
 /// </summary>
 public class DeniedWindowMaskTests
 {
@@ -27,7 +29,7 @@ public class DeniedWindowMaskTests
         bool Gone = false,
         bool PolicyThrows = false);
 
-    public static (Mock<INativeWindowWrapper> Native, Mock<IWindowService> Windows) Desktop(params FakeWindow[] windows)
+    public static (Mock<INativeWindowWrapper> Native, Mock<ICaptureTargetPolicy> Policy) Desktop(params FakeWindow[] windows)
     {
         var native = new Mock<INativeWindowWrapper>();
         native.Setup(n => n.EnumWindows(It.IsAny<Func<nint, bool>>())).Callback((Func<nint, bool> visit) =>
@@ -53,17 +55,19 @@ public class DeniedWindowMaskTests
         native.Setup(n => n.HasWindowRegion(It.IsAny<nint>())).Returns((nint h) => Of(h).Shaped);
         native.Setup(n => n.IsWindow(It.IsAny<nint>())).Returns((nint h) => !Of(h).Gone);
 
-        var service = new Mock<IWindowService>();
-        service.Setup(s => s.EvaluateTargetPolicy(It.IsAny<nint>())).Returns((nint h) =>
+        native.Setup(n => n.GetWindowThreadProcessId(It.IsAny<nint>())).Returns((nint h) => (uint)h + 1000);
+
+        var policy = new Mock<ICaptureTargetPolicy>();
+        policy.Setup(p => p.Check(It.IsAny<nint>())).Returns((nint h) =>
             Of(h).PolicyThrows ? throw new InvalidOperationException("the window is gone")
-            : Of(h).Denied ? TargetPolicyVerdict.Deny("KeePass", "it is on the deny list") : TargetPolicyVerdict.Allow);
-        return (native, service);
+            : Of(h).Denied ? new CaptureRefusal(ScreenshotErrorCode.TargetDeniedByPolicy, "KeePass is on the deny list") : null);
+        return (native, policy);
     }
 
     private static IReadOnlyList<DeniedWindowArea> Read(params FakeWindow[] windows)
     {
-        var (native, service) = Desktop(windows);
-        return new DeniedWindowMask(native.Object, service.Object).Read();
+        var (native, policy) = Desktop(windows);
+        return new DeniedWindowMask(native.Object, policy.Object, null).Read();
     }
 
     [Fact]
@@ -176,11 +180,11 @@ public class DeniedWindowMaskTests
     [Fact]
     public void Read_AskedNothingOfThePolicy_ForWindowsThatAreNotDrawn()
     {
-        var (native, service) = Desktop(new FakeWindow(3, new Rectangle(0, 0, 10, 10), Visible: false));
+        var (native, policy) = Desktop(new FakeWindow(3, new Rectangle(0, 0, 10, 10), Visible: false));
 
-        new DeniedWindowMask(native.Object, service.Object).Read();
+        new DeniedWindowMask(native.Object, policy.Object, null).Read();
 
-        service.Verify(s => s.EvaluateTargetPolicy(It.IsAny<nint>()), Times.Never);
+        policy.Verify(p => p.Check(It.IsAny<nint>()), Times.Never);
     }
 
     [Fact]
@@ -225,4 +229,117 @@ public class DeniedWindowMaskTests
         parts.Sum(p => p.Width * p.Height).Should().Be(100 - 4 - 16);
         parts.Should().OnlyContain(p => !p.IntersectsWith(new Rectangle(2, 2, 2, 2)) && !p.IntersectsWith(new Rectangle(6, 6, 10, 10)));
     }
+
+    #region Over (roadmap M6.4)
+
+    private readonly Mock<INativeWindowWrapper> _windows = new();
+    private readonly Mock<ICaptureTargetPolicy> _policy = new();
+    private readonly List<nint> _all = [];
+
+    public DeniedWindowMaskTests()
+    {
+        _windows.Setup(w => w.EnumWindows(It.IsAny<Func<nint, bool>>())).Callback((Func<nint, bool> visit) =>
+        {
+            foreach (var window in _all)
+            {
+                if (!visit(window))
+                {
+                    break;
+                }
+            }
+        });
+    }
+
+    private nint Add(int handle, (int, int, int, int) rect, bool denied = true, bool visible = true, bool minimized = false, bool cloaked = false)
+    {
+        var window = (nint)handle;
+        _all.Add(window);
+        _windows.Setup(w => w.IsWindowVisible(window)).Returns(visible);
+        _windows.Setup(w => w.IsIconic(window)).Returns(minimized);
+        _windows.Setup(w => w.IsCloaked(window)).Returns(cloaked);
+        _windows.Setup(w => w.GetWindowRect(window)).Returns(rect);
+        _windows.Setup(w => w.GetWindowThreadProcessId(window)).Returns((uint)handle + 1);
+        _policy.Setup(p => p.Check(window)).Returns(denied ? new CaptureRefusal(ScreenshotErrorCode.TargetDeniedByPolicy, "denied") : null);
+        return window;
+    }
+
+    private DeniedWindowMask CreateSut() => new(_windows.Object, _policy.Object, new TargetPolicy(TargetPolicySettings.Default));
+
+    [Fact]
+    public void Over_ListsTheDeniedWindowsOnTheScreen_ClippedToTheArea()
+    {
+        Add(1, (-100, 50, 200, 150));
+        Add(2, (300, 300, 400, 400), denied: false);
+        Add(3, (0, 0, 50, 50), visible: false);
+        Add(4, (0, 0, 50, 50), minimized: true);
+        Add(5, (0, 0, 50, 50), cloaked: true);
+        Add(6, (1000, 1000, 1100, 1100));
+
+        var masked = CreateSut().Over(new Rectangle(0, 0, 500, 500));
+
+        masked.Should().Equal(new MaskedWindow(1, 0, 50, 200, 100));
+    }
+
+    [Fact]
+    public void Over_AsksThePolicyOncePerWindowAndProcess()
+    {
+        var window = Add(1, (0, 0, 100, 100));
+        var sut = CreateSut();
+
+        sut.Over(new Rectangle(0, 0, 500, 500));
+        sut.Over(new Rectangle(0, 0, 500, 500));
+        _windows.Setup(w => w.GetWindowThreadProcessId(window)).Returns(77u); // the handle was reused by another process
+        sut.Over(new Rectangle(0, 0, 500, 500));
+
+        _policy.Verify(p => p.Check(window), Times.Exactly(2));
+    }
+
+    [Fact]
+    public void Over_WithAPolicyThatDeniesNothing_ListsNoWindow()
+    {
+        Add(1, (0, 0, 100, 100));
+        var sut = new DeniedWindowMask(_windows.Object, _policy.Object, new TargetPolicy(new TargetPolicySettings([], null, "test")));
+
+        sut.Over(new Rectangle(0, 0, 500, 500)).Should().BeEmpty();
+        _windows.Verify(w => w.EnumWindows(It.IsAny<Func<nint, bool>>()), Times.Never);
+    }
+
+    [Fact]
+    public void Over_ADeniedWindowThatCannotBePlaced_MasksTheWholeArea()
+    {
+        // Fail-closed without throwing: a wait or a capture's signature then compares nothing of the area
+        var (native, policy) = Desktop(new FakeWindow(1, new Rectangle(0, 0, 400, 100), Denied: true, RectUnreadable: true));
+
+        var masked = new DeniedWindowMask(native.Object, policy.Object, null).Over(new Rectangle(-50, 10, 500, 300));
+
+        masked.Should().Equal(new MaskedWindow(1, -50, 10, 500, 300));
+    }
+
+    [Fact]
+    public void Over_LeavesOutWhatAnOpaqueWindowCovers_AndBoxesTheRest()
+    {
+        // An opaque window over the denied one's middle: it shows on both sides, so its box is the band
+        var (native, policy) = Desktop(
+            new FakeWindow(2, new Rectangle(100, 0, 200, 100)),
+            new FakeWindow(1, new Rectangle(0, 0, 400, 100), Denied: true),
+            new FakeWindow(3, new Rectangle(0, 200, 100, 100), Denied: true),
+            new FakeWindow(4, new Rectangle(0, 200, 100, 100)));
+
+        var masked = new DeniedWindowMask(native.Object, policy.Object, null).Over(new Rectangle(0, 0, 350, 1000));
+
+        // Window 1 shows at x 0-100 and 300-350 of the area: one box around both
+        masked.Should().Equal(new MaskedWindow(1, 0, 0, 350, 100), new MaskedWindow(3, 0, 200, 100, 100));
+    }
+
+    [Fact]
+    public void Over_AWindowThatIsCoveredWhole_IsNotMasked()
+    {
+        var (native, policy) = Desktop(
+            new FakeWindow(2, new Rectangle(0, 0, 1000, 1000)),
+            new FakeWindow(1, new Rectangle(0, 0, 400, 100), Denied: true));
+
+        new DeniedWindowMask(native.Object, policy.Object, null).Over(new Rectangle(0, 0, 500, 500)).Should().BeEmpty();
+    }
+
+    #endregion
 }

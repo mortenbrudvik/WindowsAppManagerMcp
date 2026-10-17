@@ -145,6 +145,23 @@ public enum WindowSort
     Process
 }
 
+/// <summary>The order list_processes lists the processes in (roadmap M6.6). Ties go by name, then by process ID.</summary>
+[ToolEnum(WindowsAppManagerMcp.Infrastructure.ToolErrorReporting.InvalidArgumentsErrorCode, "sort order", NullMeans = "name")]
+public enum ProcessSort
+{
+    /// <summary>By process name, ignoring case.</summary>
+    [JsonStringEnumMemberName("name")]
+    Name,
+
+    /// <summary>By working set, largest first; a process whose working set cannot be read last.</summary>
+    [JsonStringEnumMemberName("memory")]
+    Memory,
+
+    /// <summary>By start time, newest first, so the process just launched comes first; one whose start time cannot be read last.</summary>
+    [JsonStringEnumMemberName("startTime")]
+    StartTime
+}
+
 /// <summary>How much get_window_info reports about a window (roadmap M2.4).</summary>
 [ToolEnum(WindowsAppManagerMcp.Infrastructure.ToolErrorReporting.InvalidArgumentsErrorCode, "detail level", NullMeans = "standard")]
 public enum WindowDetail

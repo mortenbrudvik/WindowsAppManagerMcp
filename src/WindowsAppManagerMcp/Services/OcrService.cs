@@ -40,17 +40,23 @@ public sealed class OcrService : IOcrService
 
     private readonly IScreenshotService _screenshots;
     private readonly IOcrEngineWrapper _engine;
-    private readonly DeniedWindowMask _mask;
+    private readonly INativeWindowWrapper _windows;
+    private readonly ICaptureTargetPolicy _capturePolicy;
+    private readonly ITargetPolicy? _policy;
 
     /// <param name="screenshots">The raw pixel seam and the capture registry (CapturePixels, RegisterRaw).</param>
     /// <param name="engine">Windows OCR.</param>
-    /// <param name="windows">Lists the top-level windows for the mask.</param>
-    /// <param name="windowService">The target policy's verdict on each window for the mask.</param>
-    public OcrService(IScreenshotService screenshots, IOcrEngineWrapper engine, INativeWindowWrapper windows, IWindowService windowService)
+    /// <param name="windows">Lists the top-level windows for the mask of denied windows.</param>
+    /// <param name="capturePolicy">The policy's check of each window for the mask, capture_window's.</param>
+    /// <param name="policy">The policy itself: one that denies nothing masks nothing. Null: every window is checked.</param>
+    public OcrService(IScreenshotService screenshots, IOcrEngineWrapper engine, INativeWindowWrapper windows,
+        ICaptureTargetPolicy capturePolicy, ITargetPolicy? policy)
     {
         _screenshots = screenshots ?? throw new ArgumentNullException(nameof(screenshots));
         _engine = engine ?? throw new ArgumentNullException(nameof(engine));
-        _mask = new DeniedWindowMask(windows, windowService);
+        _windows = windows ?? throw new ArgumentNullException(nameof(windows));
+        _capturePolicy = capturePolicy ?? throw new ArgumentNullException(nameof(capturePolicy));
+        _policy = policy;
     }
 
     /// <inheritdoc />
@@ -173,7 +179,8 @@ public sealed class OcrService : IOcrService
 
         // The denied windows as they are just before the capture, and again just after it: a window that moves meanwhile is
         // blacked out where it was and where it is
-        var deniedBefore = ReadMask();
+        var mask = new DeniedWindowMask(_windows, _capturePolicy, _policy);
+        var deniedBefore = ReadMask(mask);
         RawCapture capture;
         try
         {
@@ -184,7 +191,7 @@ public sealed class OcrService : IOcrService
             throw new OcrFailure(ex.Code.ToString(), ex.Message);
         }
 
-        var masked = capture.Pixels.Method == PrintWindowMethod ? 0 : DeniedWindowMask.Apply(capture.Pixels, deniedBefore, ReadMask());
+        var masked = capture.Pixels.Method == PrintWindowMethod ? 0 : DeniedWindowMask.Apply(capture.Pixels, deniedBefore, ReadMask(mask));
         warnings.InsertRange(0, capture.Warnings);
 
         var pixels = capture.Pixels;
@@ -243,11 +250,11 @@ public sealed class OcrService : IOcrService
 
     /// <summary>The denied windows' areas, or the read refused when one of them cannot be placed (fail-closed).</summary>
     /// <exception cref="OcrFailure">A denied window is on screen but its rectangle cannot be read.</exception>
-    private IReadOnlyList<DeniedWindowArea> ReadMask()
+    private static IReadOnlyList<DeniedWindowArea> ReadMask(DeniedWindowMask mask)
     {
         try
         {
-            return _mask.Read();
+            return mask.Read();
         }
         catch (DeniedWindowUnlocatedException ex)
         {

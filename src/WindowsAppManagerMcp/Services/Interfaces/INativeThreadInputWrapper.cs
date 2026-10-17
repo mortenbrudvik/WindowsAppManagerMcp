@@ -1,3 +1,5 @@
+using WindowsAppManagerMcp.Models;
+
 namespace WindowsAppManagerMcp.Services.Interfaces;
 
 /// <summary>
@@ -32,7 +34,7 @@ public interface INativeThreadInputWrapper
 
     /// <summary>
     /// The GUI state of thread <paramref name="threadId"/> (GetGUIThreadInfo): its active, focus,
-    /// capture and menu owner windows, and whether it is in menu mode. Null when it cannot be read,
+    /// capture and menu owner windows, whether it is in menu mode, and where its caret is. Null when it cannot be read,
     /// for example when the thread has exited or has no GUI.
     /// </summary>
     GuiThreadInfo? GetGuiThreadInfo(uint threadId);
@@ -46,12 +48,20 @@ public interface INativeThreadInputWrapper
 /// <param name="FocusWindow">The window with keyboard focus, or 0.</param>
 /// <param name="CaptureWindow">The window that has captured the mouse, or 0.</param>
 /// <param name="MenuOwnerWindow">The window that owns an active menu, or 0.</param>
+/// <param name="CaretWindow">The window that shows the thread's text caret, or 0.</param>
+/// <param name="Caret">
+/// The caret's rectangle on the screen, in physical pixels (rcCaret mapped from <paramref name="CaretWindow"/>'s client
+/// area); null without a caret (roadmap M6.4: a blinking caret is no visual change). Apps that draw their own caret (WPF,
+/// Chromium) still place a system caret there for screen readers.
+/// </param>
 public readonly record struct GuiThreadInfo(
     uint Flags,
     nint ActiveWindow,
     nint FocusWindow,
     nint CaptureWindow,
-    nint MenuOwnerWindow)
+    nint MenuOwnerWindow,
+    nint CaretWindow = 0,
+    WindowRect? Caret = null)
 {
     /// <summary>GUI_INMENUMODE: the thread's active window is in menu mode (a menu bar or menu is active).</summary>
     public const uint InMenuModeFlag = 0x0004;

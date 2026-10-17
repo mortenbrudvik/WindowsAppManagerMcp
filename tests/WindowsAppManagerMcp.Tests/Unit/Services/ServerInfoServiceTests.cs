@@ -232,8 +232,9 @@ public sealed class ServerInfoServiceTests : IDisposable
 
         info.Toolsets.Enabled.Should().NotContain("browser").And.Contain(Toolsets.ServerToolset);
         // browser-actions and browser-script are off by default (roadmap M5.5, M5.8), so "-browser" leaves every browser toolset
-        // off; windows-batch and deprecated are off by default too (roadmap M6.1), and so is ocr (roadmap M6.3)
-        info.Toolsets.Disabled.Should().Equal("browser", "browser-actions", "browser-script", "windows-batch", "ocr", "deprecated");
+        // off; windows-batch and deprecated are off by default too (roadmap M6.1), and so are visual (roadmap M6.4) and ocr
+        // (roadmap M6.3)
+        info.Toolsets.Disabled.Should().Equal("browser", "browser-actions", "browser-script", "visual", "windows-batch", "ocr", "deprecated");
         info.Toolsets.Source.Should().Be(ToolsetSelection.ToolsetsVariable);
         info.Toolsets.ExcludedTools.Should().Equal("kill_process");
         info.Toolsets.ReadOnly.Should().BeFalse();

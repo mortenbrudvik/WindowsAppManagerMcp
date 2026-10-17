@@ -2106,7 +2106,9 @@ tests use (`InProcessMcpServer`) lives in `WindowsAppManagerMcp.Tests.Infrastruc
 MCP pipeline (argument binding, filters, result serialization) too; `HarnessTests/InProcessMcpServerTests` runs it with
 a fake tool. A scenario that hosts the server's own tools through it (roadmap M6.2) must pass them the harness's guarded
 services (`configureServices`), never the defaults of `AddWindowsAppManagerServices`, which would put unguarded native
-wrappers behind the tools.
+wrappers behind the tools: `ServerHarness.StartMcpServerAsync` does, with the server's tools and call filters over the
+harness's own instances (one input session, element registry and audit log for the harness and the host) and none of its
+hosted services (no pause hotkey is registered). `FixtureRunStepsTests` runs run_steps through it.
 
 UI Automation elements come back from the wrapper as objects that services only read: NativeCallGuardTests
 forbids acting pattern calls outside the Native wrappers and the two UI Automation engine adapters, and the
@@ -2197,11 +2199,13 @@ being ignored.
 | `FixtureVirtualizedListTests` | Both | searchVirtualized in the no-input tier, element_action realize in the input tier (M3.10) |
 | `FixtureCaptureIdTests`, `FixtureSetOfMarksTests` | No input | captureId points, Set-of-Marks marks and legend centres, capture_window's ref crop (M3.11) |
 | `FixtureDesktopStateTests` | No input | get_desktop_state (M3.12) |
+| `FixtureVisualWaitTests` | No input | wait_for_visual (M6.4): a changed wait on the main window sees the change panel (`--change-after-ms`) where the fixture reports it and nothing else; a metadata capture before the change is a `since` satisfied at the first check; a still window times out with 0 % changed (no caret or noise), also against a wait's own last frame; a stable wait ends only after the spinner (`--animate-for-ms`) stopped, and times out over the spinner while it turns; a region around the panel (a screen copy) sees the change |
 | `FixtureWebViewTests` | No input | The accessibility warm-up of the WebView2 window's live Chromium content: host WebView2, status Ready, the page read, and no second wait (M3.3, M3.F4); skipped without the WebView2 runtime |
 | `FixtureOtherScaleMonitorTests` | No input | The fixture on a monitor whose scale differs from the primary's (`--other-scale-monitor`): it opens at that monitor's DPI and leaves the agent's host in front, get_ui_elements' bounds and capture_window's client area match what the fixture draws (M3.F30); skipped without such a monitor (`MonitorAtAnotherScale`) |
 | `FixturePlacementTests` | Input | The launch tools' placement of a window (M3.13) |
 | `FixtureMouseTests` | Input | click, right_click, double_click and mouse_move land on the exact pixel aimed at (the corners and centres of the swatches), on the primary and on a monitor at another scale (skipped without one); click presses the user's primary button and right_click the secondary one, as the fixture's `mouseDown` events record them after Windows applied the user's swap; a double click is one press with `clickCount` 1 and one with 2 (M4.2) |
 | `FixtureMouseClickDragTests` | Input | mouse_click: a Ctrl+Shift click reaches the fixture with both modifiers down and neither stays down (a plain click after it sees none); the middle, X1 and X2 buttons arrive as themselves; a triple click is three presses with `clickCount` 1, 2 and 3 at the pixel. drag: a Ctrl+drag presses on one swatch and releases on another, with Ctrl down at both and no other press or release between them, and leaves nothing held; a drop point right of the fixture window is refused before anything is pressed (M4.3). The fixture logs presses and releases with their modifiers (`mouseDown`, `mouseUp`) |
+| `FixtureRunStepsTests` | Input | run_steps through the real MCP pipeline (`ServerHarness.StartMcpServerAsync`, M6.2): a form fill (focus, a click at a found element's clickPoint by `$steps` reference, ctrl+a, typing, a toggle, a wait that verifies the text) in one call, the fixture's events in step order, one audit line per audited step under `<run's id>#<step>`, no modifier left down; a failed step stops the run and the step after it does nothing; a direct element_action made during the run waits for the gate and lands after the run's last step; a pause between steps stops the run with `PausedByUser`; a wait longer than `maxDurationMs` stops it with `OperationTimedOut`; a second fixture, a process of its own, taking the foreground stops it with `TargetNotForeground` and keeps the foreground (the terminal is never touched) |
 | `FixtureOcrTests` | Both | read_screen_text and find_text_on_screen on the canvas window (M6.3): every line read inside its drawn rectangle at both scales, a find's click point on its word and back through the captureId, a regex; in the input tier a covered canvas still reads, a minimized one is `WindowMinimized`, a click through the captureId lands on the word and is `StaleCapture` once the canvas moved, and a canvas a policy denies is blacked out of a region read. Skipped without an OCR language |
 
 **Running them.** Locally only with an opt-in, as above. On GitHub, `.github/workflows/e2e.yml`
@@ -2639,6 +2643,86 @@ Not yet run on a real desktop. Before the release that carries it, the owner che
 Not checkable here, and so untested: RDP and Citrix sessions, games, and GPU or protected windows that PrintWindow draws
 black (they come back with `ImageBlank` and no lines).
 
+### Desktop check: M6.9 resources and prompts
+
+The resources and prompts are tested in-process (`ResourceContractTests`, `PromptContractTests`, the resources snapshot
+and `ServerInfoToolContractTests`). Run on the built exe so far (October 2026, no window, no input):
+`scripts/Test-ToolsSnapshot.ps1` passes on a Debug build (78 tools, 7 resources, templates and prompts) and fails on a
+snapshot with a changed title and a renamed prompt; and prompts/get over stdio rendered the four recipes with the
+default toolsets, the one with `WAM_READ_ONLY=1` (diagnose_click without capture_window and the steps that act) and
+the three with `WAM_TOOLSETS=-input`. Before the release that carries it, the owner checks, reading only:
+
+1. **MCP Inspector** on the built exe with `WAM_LAYOUTS_PATH` set to a fresh temp folder (so the owner's own presets are
+   neither read nor seeded): initialize advertises `resources`, `prompts` and `completions`; the three lists match
+   `Contract/resources.snapshot.json`; `wam://layouts/work-setup` (a seeded sample) reads, `wam://layouts/nope` is a
+   not-found error with the PresetNotFound message, and completion offers the sample names.
+2. **wam://windows and wam://monitors against the tools**: with the WamFixtureApp window the harness started, read
+   `wam://windows` and call find_windows at once (same handle, title and bounds), and compare `wam://monitors` with
+   get_monitors; on a mixed-DPI machine the negative coordinates and scale factors match.
+3. **Claude Code** with the plugin built from the branch: `/mcp` lists the resources and prompts, a prompt runs as a
+   `/mcp__<server>__diagnose_click` command and expands with its arguments quoted, and an `@` mention of `wam://windows`
+   attaches the JSON.
+
+No check applies a layout, sends input or closes anything but the fixture window the harness started, by its PID.
+
+### Desktop check: M6.2 run_steps
+
+run_steps is tested over fakes (`StepRunnerTests`: the checks before a run, the arguments each step gets, when a run
+stops, the input gate held for the whole run; `InputGateTests`: the lease) and through the real MCP pipeline with mocked
+services (`RunStepsContractTests`: one audit line per audited step under `<run's id>#<step>`, the toolsets and
+read-only mode, a direct call that waits for the run, a cancelled run that frees the gate, run-level progress only). Not
+yet run on a real desktop; before the release that carries it, the owner checks:
+
+1. **The fixture scenarios.** `FixtureRunStepsTests` with `WAM_ALLOW_DESKTOP_TESTS=1` (input tier), with the terminal
+   that runs the tests in front and untouched: the form fill, a failed step, a direct call during a run, a pause between
+   steps, a run out of time, and a second fixture taking the foreground. The harness closes only the fixtures it started.
+2. **Notepad, by hand, in a real client** (no window the check did not open): launch a new Notepad with
+   launch_application and `waitForWindow`, and note its handle and processId. On that handle, run_steps with
+   `type_text`, `press_keys` `ctrl+s` and `wait_for_window` for the Save As dialog it owns; then answer the dialog with
+   file_dialog, a direct call, to a file under `%TEMP%\wam-m62`. Check that the file holds the text, close Notepad with
+   close_window by the noted handle only, and delete the file. Never close or act on a window by its title.
+3. **The pause hotkey, by hand:** during a run of many type_text steps into that Notepad, press the pause hotkey. The
+   run reports `PausedByUser`, nothing more is typed, and the user resumes; the agent never does.
+4. **Taking the foreground, by hand:** during a run with `delayBetweenStepsMs: 2000` on that Notepad, click a second
+   Notepad the check opened. The run stops with `TargetNotForeground` and the second Notepad stays in front.
+
+### Desktop check: M6.4 visual waits
+
+wait_for_visual is tested over fakes: the signature and the comparison in `VisualSignatureTests` and `VisualDiffTests`
+(a hue change of the same brightness, the undefined 4th byte, odd edges, a crop with its parent's stride, at most 8
+regions, excluded rectangles where either frame had them), the waits in `VisualChangeServiceTests` (scripted frames on a
+manual clock: changed against the first frame and against `since`, resize, close, minimize and hide, stable after an
+animation and its timeout, the policy's refusal and mask (also kept with a frame for since, and over a window copied from
+the screen), the caret, a window that does not answer (from the start or mid-wait), the area cap, cancellation and
+progress), the signatures in `CaptureRegistryTests` (kept only while the registry keeps them, the 16 MB
+cap drops signatures and keeps the captures), `ScreenshotCaptureIdTests` (the full-size pixels, before
+capture_with_elements' marks; none for a ref crop; the denied windows over a screen capture) and `CaptureHealthTests` (none
+for a window restoreIfMinimized restored), the mask in `DeniedWindowMaskTests`, the arguments in
+`WaitForVisualToolTests` (one target; a value out of range refused, never clamped), the signatures kept only while the
+tool is served in `DependencyInjectionTests`, and the tool over MCP in the contract tests. `Scenarios/FixtureVisualWaitTests` (no-input tier, the fixture's `--change-after-ms` and
+`--animate-for-ms`) checks them on a real window. Not yet run on a real desktop; before the release that carries it, the
+owner runs that class and checks:
+
+1. **The scenarios.** `WAM_ALLOW_DESKTOP_NOINPUT_TESTS=1 dotnet test tests/WindowsAppManagerMcp.E2ETests --filter
+   FullyQualifiedName~FixtureVisualWaitTests`. The harness owns and closes the fixture; nothing is clicked or typed. The
+   output logs every result's regions, method and warnings. The region scenario reads the screen, so it needs the
+   fixture's change panel uncovered (the fixture comes up in front); the window scenarios do not.
+2. **The caret.** In `Changed_Since_TheLastFrame_OfAStillWindow_TimesOut` the fixture's text box has keyboard focus. When
+   the fixture is the active window (its caret blinks), the waits must still time out with 0 % changed: WPF places a
+   system caret for screen readers, which the wait leaves out. If they report a change at the text box, record whether
+   GetGUIThreadInfo's `rcCaret` matches the drawn caret.
+3. **Another scale** (optional, `MonitorAtAnotherScale`): run a changed wait on a fixture started with
+   `--other-scale-monitor --change-after-ms 1500` and compare `changedRegions` with the `panelChanged` rect.
+4. **Cost** (no input): a `stable` wait on one monitor (`monitorIndex`) at the default `pollMs` 200 for 30 s, with nothing
+   opened or closed, while the owner watches the mouse cursor for flicker (CAPTUREBLT on repeated screen copies) and notes
+   the server's CPU and working set. Then the same on a maximized window of a GPU app the check opened itself (a throwaway
+   debug browser from launch_browser_with_debug on a local page, closed with close_debug_browser by its processId, never
+   by title), to measure PrintWindow per check.
+5. **Real clients** (no input): with the built exe and `WAM_TOOLSETS=+visual`, `/mcp` lists wait_for_visual, and a
+   wait with `since` set to the `captureId` of a `capture_window` with `output: "metadata"` of a window the check opened
+   compares with that capture (`checks` 1 with `timeoutMs` 0 when nothing changed: `WaitTimedOut` and 0 %); without
+   `+visual` the tool is not listed.
+
 ### Tool surface snapshot
 
 `Contract/ToolSurfaceSnapshotTests` tests the server the way an agent sees it. It lists the tools of an
@@ -2652,6 +2736,10 @@ client's first request on each protocol revision into `Contract/initialize.snaps
 `serverInfo.version` masked. A client acts on more than the tool list (the negotiated revision, the capabilities object,
 the instructions), so an SDK upgrade that starts advertising a capability, or drops a revision, fails here too. The
 whole tool surface is snapshotted: `AddWindowsAppManagerTools()` without a toolset selection serves every toolset.
+The resources and prompts (roadmap M6.9) are surface too: `Contract/resources.snapshot.json` holds the
+resources/list, resources/templates/list and prompts/list results, each sorted, and fails the same way. Since M6.9 the
+initialize snapshot advertises `resources`, `prompts` (both `listChanged: true`, as `tools` has) and `completions` on
+every revision, and never resource subscriptions.
 
 When a change to the tool surface is intended (a new tool or parameter, a new default, a description, an
 annotation, an SDK upgrade that changes the schemas), regenerate the snapshot and the generated docs in one
@@ -2670,7 +2758,7 @@ git diff
 UPDATE_SNAPSHOTS=1 dotnet test --filter "FullyQualifiedName~ToolSurfaceSnapshotTests|FullyQualifiedName~GeneratedToolDocsTests"
 ```
 
-`UPDATE_SNAPSHOTS=1` only makes these tests rewrite their files instead of failing: the two snapshots, and the
+`UPDATE_SNAPSHOTS=1` only makes these tests rewrite their files instead of failing: the three snapshots, and the
 generated regions of README.md, docs/TOOLS.md and SKILL.md. It changes nothing else about a run (desktop
 tests stay skipped). Without it, CI fails on a stale snapshot or table. A run where `CI`, `GITHUB_ACTIONS` or
 `TF_BUILD` is set to anything but `false` or `0` refuses it (the tests fail with a message), because there it would turn the guards into rewrites
@@ -2681,7 +2769,9 @@ half written. Set the variable after any `env -u` options: `env -u WAM_ALLOW_DES
 its sources define. `.github/workflows/build.yml` therefore runs `scripts/Test-ToolsSnapshot.ps1`, which
 starts an exe (with `WAM_PAUSE_HOTKEY=none`, `WAM_TOOLSETS=all` and neither `WAM_EXCLUDE_TOOLS` nor `WAM_READ_ONLY`,
 so it serves the whole surface), sends `initialize` and `tools/list` over stdio, closes it, and compares every tool
-object with the snapshot. It asks for the newest revision with the `initialize` handshake (`-ProtocolVersion`,
+object with the snapshot. It then lists the resources, resource templates and prompts and compares each item with
+`Contract/resources.snapshot.json` (`-ResourcesSnapshotPath`), so an exe that serves stale resources or prompts fails
+too. It asks for the newest revision with the `initialize` handshake (`-ProtocolVersion`,
 default `2025-11-25`, the one Claude Code most likely negotiates); `ProtocolRevisionContractTests` checks that this is
 the revision the SDK answers an unknown request with, and `ToolSurfaceSnapshotTests` that the script still asks for
 it, so an SDK upgrade cannot leave the guard on a stale revision. Relative `-ExePath` and `-SnapshotPath` values are
@@ -2704,6 +2794,7 @@ The tool tables of the docs are generated into marked regions, between `<!-- too
 | docs/TOOLS.md | `toolsets` | The toolsets of `Toolsets.Server`: default, description and tools (generated from the catalog, not from tools/list) |
 | docs/TOOLS.md | `read-only` | The tools served in read-only mode (generated from the readOnlyHint annotations) |
 | docs/TOOLS.md | `params:TOOL` | The parameter table of each tool, and a field table for each array-of-objects parameter |
+| docs/TOOLS.md | `resources` | The resources and prompts (roadmap M6.9): each resource's URI, mirrored tool and description, and each prompt's arguments, needed tools and description (generated from `ResourcesAndPrompts` and the attributes, not from the lists) |
 | SKILL.md | `count` | The sentence with the tool count |
 | SKILL.md | `tool-tables` | The whole "Available Tools" section: a table per category with summaries and key parameters |
 
@@ -2763,17 +2854,17 @@ typical result over 300 tokens, and tools/list itself, measured in October 2026:
 |------|----------------|-------:|-------:|
 | `get_ui_elements` | 120 elements at the default depth, each with its ref | 6,000 | 8,500 |
 | `get_browser_content` | A 15,000-character article | 3,815 | 6,000 |
+| `list_processes` | 40 processes, each with its parent, start time, integrity and up to two windows (1,328 before roadmap M6.6) | 2,976 | 4,500 |
 | `get_desktop_state` | 15 window rows, the focused element, 2 popups and 80 element lines with refs (roadmap M3.12) | 2,129 | 3,200 |
 | `capture_with_elements` | Metadata with the legend of 120 marks, one line each, and the tags' `markPrefix` (the image is budgeted separately; roadmap M3.11, M3.F38) | 1,416 | 2,150 |
 | `read_screen_text` | The 40 lines OCR reads in a window, each with its bounds (roadmap M6.3) | 1,276 | 1,900 |
-| `list_processes` | 40 processes | 1,328 | 2,000 |
 | `find_windows`, `get_all_windows` | 15 windows, each with `visibleBounds` | 1,213 | 1,850 |
 | `read_element_text` | The first page of a 3,000-character e-mail | 802 | 1,200 |
 | `read_table` | Task Manager's first 50 processes, 5 columns with headers | 643 | 1,000 |
-| `get_server_info` | The default deny list, five host processes, two monitors | 634 | 850 |
+| `get_server_info` | The default deny list, five host processes, two monitors, the resources and prompts (634 before roadmap M6.9) | 702 | 850 |
 | `get_layout` | A preset of 6 placements, each with the captured window identity | 529 | 800 |
-| tools/list | Every tool's name, title, description, schemas and annotations: 80 tools, 256,174 bytes (`ToolList_StaysWithinItsBudget`; M5.8's six DOM bridge tools added 2,970, 936 of them their window selectors; M5.8's dialog option and the UI Automation browser_handle_dialog 199 more; M6.1a's additive consolidations 405 more: mouse_click's own click checks 249, set_window_bounds' optional pairs 87, get_browser_url's foreground sentence 41, get_monitors' virtualScreen 28; M6.1b's one-line descriptions of the nine deprecated tools and the descriptions that no longer send the agent to them 2,121 fewer; M6.3's read_screen_text and find_text_on_screen in the opt-in `ocr` toolset 2,087 more) | 64,044 | 64,080 |
-| Default tools/list | The 58 tools a server serves without WAM_TOOLSETS, WAM_EXCLUDE_TOOLS and WAM_READ_ONLY, 204,020 bytes (`DefaultToolList_StaysWithinItsBudget`, roadmap M6.1; 59,627 before M6.1a, 60,032 after it with 70 tools, 9,027 fewer once M6.1b moved the nine deprecated tools and the three geometry batches to opt-in toolsets) | 51,005 | 51,041 |
+| tools/list | Every tool's name, title, description, schemas and annotations: 82 tools, 266,245 bytes (`ToolList_StaysWithinItsBudget`; M5.8's six DOM bridge tools added 2,970, 936 of them their window selectors; M5.8's dialog option and the UI Automation browser_handle_dialog 199 more; M6.1a's additive consolidations 405 more: mouse_click's own click checks 249, set_window_bounds' optional pairs 87, get_browser_url's foreground sentence 41, get_monitors' virtualScreen 28; M6.1b's one-line descriptions of the nine deprecated tools and the descriptions that no longer send the agent to them 2,121 fewer; M6.6's list_processes parameters and fields 361 more and get_window_info's integrity fields 31 more; M6.2's run_steps 1,054 more; M6.4's wait_for_visual 1,072 more; M6.3's read_screen_text and find_text_on_screen in the opt-in `ocr` toolset 2,088 more) | 66,562 | 66,598 |
+| Default tools/list | The 59 tools a server serves without WAM_TOOLSETS, WAM_EXCLUDE_TOOLS and WAM_READ_ONLY, 209,803 bytes (`DefaultToolList_StaysWithinItsBudget`, roadmap M6.1; 59,627 before M6.1a, 60,032 after it with 70 tools, 9,027 fewer once M6.1b moved the nine deprecated tools and the three geometry batches to opt-in toolsets, 392 more with M6.6's list_processes and get_window_info fields, 1,055 more with M6.2's run_steps in the `steps` toolset, on by default) | 52,451 | 52,487 |
 
 Every other typical result is at most 300 tokens. When a change makes a result larger on purpose, raise its
 budget in the same change (the failure message gives the new size); when a change shrinks one a lot, lower it.
@@ -2795,25 +2886,31 @@ were capture_with_elements at 2,396 and element_action at 2,386, so they have ab
 | Toolset | Default | Tools | Tokens | Budget |
 |---------|---------|------:|-------:|-------:|
 | `server` | always on | 4 | 1,038 | 1,050 |
-| `windows` | on | 12 | 9,921 | 9,950 |
+| `windows` | on | 12 | 9,952 | 9,988 |
 | `monitors` | on | 1 | 118 | 150 |
 | `capture` | on | 4 | 5,856 | 5,900 |
 | `elements` | on | 9 | 8,262 | 8,300 |
 | `input` | on | 10 | 14,758 | 14,800 |
 | `clipboard` | on | 2 | 734 | 750 |
 | `launch` | on | 2 | 2,890 | 2,900 |
-| `process` | on | 3 | 1,921 | 1,950 |
+| `process` | on | 3 | 2,282 | 2,318 |
 | `layouts` | on | 5 | 1,181 | 1,200 |
+| `steps` | on | 1 | 1,055 | 1,091 |
 | `browser` | on | 6 | 4,315 | 4,350 |
 | `browser-actions` | off | 7 | 3,577 | 3,600 |
 | `browser-script` | off | 1 | 468 | 500 |
+| `visual` | off | 1 | 1,072 | 1,108 |
 | `windows-batch` | off | 3 | 1,978 | 2,000 |
 | `deprecated` | off | 9 | 4,925 | 4,950 |
 | `ocr` | off | 2 | 2,087 | 2,123 |
 
 The rows are measured after M6.1b (October 2026), which moved six tools out of `windows`, two out of `monitors`, three
 out of `input` and one out of `browser` into the opt-in `windows-batch` and `deprecated` toolsets. The deprecated tools'
-one-line descriptions keep their full parameters, which are most of the `deprecated` row. The `ocr` row is M6.3's two tools
+one-line descriptions keep their full parameters, which are most of the `deprecated` row. M6.6 (October 2026) raised
+`process` by 361 (list_processes' five parameters and its result fields in the description; 1,921 before) and
+`windows` by 31 (get_window_info's integrity fields in 'full'; 9,921 before), each budget to the measured size plus 36. The `steps` row is measured
+after M6.2 added run_steps (October 2026). M6.4 added the `visual` row
+(wait_for_visual: handle, the window selector, a region, monitorIndex and since). The `ocr` row is M6.3's two tools
 (October 2026), which share their target and result descriptions.
 
 A change states its default, per-toolset and all-tools deltas, and raises only the ratchets it moves: a new opt-in
@@ -2822,6 +2919,30 @@ toolset moves the all-tools figure and its own row, never the default figure.
 (a million-character document of English, Cyrillic, CJK, emoji or quotes, a 1000 x 100 grid of long, short or empty
 cells in English, Cyrillic or CJK, read end to end through the real read service over a fake tree) at 16,000 tokens:
 the reads bound a page in bytes of JSON, not only in characters.
+
+The resources and prompts (roadmap M6.9) cost nothing in tools/list. `ResourcesAndPromptsLists_StayWithinTheirBudget`
+holds resources/list, resources/templates/list and prompts/list together to a ratchet of 655 tokens (646 measured,
+October 2026, for two resources, one template and four prompts), and `Contract/PromptContractTests` holds each prompt's
+text, every step served and with sample arguments, to 480 tokens (automate_app 464, arrange_workspace 393, fill_form 375,
+diagnose_click 447).
+
+### Resources and prompts
+
+`Contract/ResourceContractTests` reads the three wam:// resources over MCP with the contract services, on every revision:
+each is `application/json` text equal to the result of the tool it mirrors (`get_monitors`, `find_windows` with no
+argument, `get_layout`), the windows resource asks the window service the same query as find_windows, a window of an
+app the target policy denies is listed as find_windows lists it, a non-ASCII layout name round-trips without escapes,
+and a name no preset has gets the error code the SDK sends for a URI no resource matches on that revision (`-32002`
+up to 2025-11-25, `-32602` on 2026-07-28). It also checks the call-log line of each read, the error that names an
+unexpected exception, the completion of layout names, and that a resource is served exactly while the tool it
+mirrors is (toolsets, exclusions, read-only mode), with the code of an unknown URI when it is not, even when no
+resource is served at all. A cancellation the client did not send (a wait given up) is logged as cancelled, not as a
+failure, and a URI with line breaks is logged on one line. `Contract/PromptContractTests` gets every served prompt
+under ten selections (default, all, read-only, toolsets off, tools excluded) and checks that every tool name in its
+text is served, that its steps are numbered without a gap where a step was left out, and that a prompt is served
+only while the tools it needs are; that arguments are required, quoted as JSON strings and never logged; that an
+empty or missing argument, and a prompt that is not served, is an invalid-params error; and that a name with line
+breaks is logged on one line.
 
 ### Protocol revisions, progress and cancellation
 
@@ -2870,10 +2991,10 @@ cancellation tests check the wire with `server.AssertNoResponseSentAsync(id)` (n
 fixture catalog that has an opt-in toolset: `WAM_TOOLSETS`, `WAM_EXCLUDE_TOOLS` and `WAM_READ_ONLY` decide what
 tools/list lists, and a call to a tool that is not served is an unknown tool. Against the production catalog it
 checks that every served tool is in exactly one toolset, that the default serves every toolset except the opt-in
-`browser-actions`, `browser-script`, `windows-batch` and `deprecated`, that browser_evaluate is served only with `browser-script` (turning on
+`browser-actions`, `browser-script`, `visual`, `windows-batch` and `deprecated`, that browser_evaluate is served only with `browser-script` (turning on
 `browser-actions` does not serve it, and `browser-script` alone serves none of the other DOM bridge tools), that read-only
 mode serves exactly the tools annotated `readOnlyHint: true` (browser_element_rect only once `browser-actions` is on,
-browser_evaluate never), and that each of those is a read-only tool of the input
+wait_for_visual only once `visual` is on, browser_evaluate never), and that each of those is a read-only tool of the input
 gate. `Unit/Infrastructure/ToolsetSelectionTests` covers the parsing, and over a fixture catalog with moved tools the
 rules of roadmap M6.1: a moved tool is served only while the toolset it came from is on too, a toolset's name in
 `WAM_EXCLUDE_TOOLS` also excludes the tools that moved out of it, excluding a tool that is not served is no error (no

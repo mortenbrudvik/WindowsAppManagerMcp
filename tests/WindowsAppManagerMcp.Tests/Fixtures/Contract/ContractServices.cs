@@ -115,6 +115,9 @@ public sealed class ContractServices : IDisposable
     public Mock<IWindowCloseVerifier> CloseVerifier { get; } = new();
     public Mock<IWindowWaitService> WindowWait { get; } = new();
     public Mock<IElementWaitService> ElementWait { get; } = new();
+
+    /// <summary>wait_for_visual's waits (roadmap M6.4): a panel of Notepad's window changed (Typical), or nothing did (Failing).</summary>
+    public Mock<IVisualChangeService> VisualChanges { get; } = new();
     public Mock<ILaunchPlacementService> Placement { get; } = new();
 
     /// <summary>
@@ -179,6 +182,7 @@ public sealed class ContractServices : IDisposable
         services.AddSingleton(CloseVerifier.Object);
         services.AddSingleton(WindowWait.Object);
         services.AddSingleton(ElementWait.Object);
+        services.AddSingleton(VisualChanges.Object);
         services.AddSingleton(Placement.Object);
         services.AddSingleton(DebugBrowsers.Object);
         services.AddSingleton(Foreground.Object);
@@ -203,10 +207,14 @@ public sealed class ContractServices : IDisposable
         services.AddSingleton(Input.Object);
         services.AddSingleton(Clipboard.Object);
         services.AddSingleton(Hotkey.Object);
+        // get_window_info's detail 'full' reads the window's integrity (roadmap M6.6)
+        services.AddSingleton(SecurityProbe.Object);
         services.AddSingleton<IInputSession>(Session);
         services.AddSingleton(Screenshots);
         services.AddSingleton<IOcrEngineWrapper>(Ocr);
-        services.AddSingleton<IOcrService>(_ => new OcrService(Screenshots, Ocr, NativeWindows.Object, Windows.Object));
+        var ocrPolicy = new TargetPolicy(TargetPolicySettings.Default);
+        services.AddSingleton<IOcrService>(_ => new OcrService(Screenshots, Ocr, NativeWindows.Object,
+            new CaptureTargetPolicy(Windows.Object, ocrPolicy), ocrPolicy));
         services.AddSingleton<ICaptureRegistry>(Captures);
         services.AddSingleton<ICoordinateSpaceResolver>(new CoordinateSpaceResolver(
             Captures, _capturedWindows.Object, Mock.Of<INativeHitTestWrapper>(), Screen.Object));
@@ -243,6 +251,8 @@ public sealed class ContractServices : IDisposable
         SystemInfo.Setup(s => s.GetForegroundLockTimeout()).Returns(typical ? 200_000 : null);
         SystemInfo.Setup(s => s.GetSessionId()).Returns(1);
         SecurityProbe.Setup(p => p.ServerIntegrity).Returns(new ProcessIntegrity(31_000, IntegrityLevel.Medium, ProcessIntegrity.MediumRid, false, null));
+        SecurityProbe.Setup(p => p.GetIntegrity(It.IsAny<int>()))
+            .Returns((int id) => new ProcessIntegrity(id, IntegrityLevel.Medium, ProcessIntegrity.MediumRid, false, null));
         SecurityProbe.Setup(p => p.IsInputDesktopAvailable()).Returns(typical);
         SecurityProbe.Setup(p => p.IsSessionLocked()).Returns(!typical);
 
@@ -333,6 +343,12 @@ public sealed class ContractServices : IDisposable
             }, IsDialog: true, IsBlocking: true)
         ]);
         CloseVerifier.Setup(v => v.ShownWindows(It.IsAny<IReadOnlyList<nint>>())).Returns((IReadOnlyList<nint> handles) => handles.ToHashSet());
+        // wait_for_visual (roadmap M6.4): two spots of Notepad's 1600 x 900 window changed after a click
+        VisualChanges.Setup(v => v.WaitAsync(It.IsAny<VisualWaitRequest>(), It.IsAny<IProgress<OperationProgress>?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new VisualWaitResult(Success: true, Satisfied: true, TimedOut: false, Condition: "changed", ElapsedMs: 412, Checks: 3,
+                Reason: "pixels", ChangedPercent: 0.42,
+                ChangedRegions: [new BoundsDto(288, 116, 64, 48), new BoundsDto(1040, 948, 192, 16)],
+                CaptureId: "c3-3fa91c", CapturedRegion: new CapturedRegion(0, 100, 1600, 900), CaptureMethod: "PrintWindow"));
         // wait_for_window (roadmap M3.7): Notepad's Save As dialog opened and stayed
         WindowWait.Setup(w => w.WaitForConditionAsync(It.IsAny<WindowConditionRequest>(), It.IsAny<IProgress<OperationProgress>?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new WindowConditionResult
@@ -385,7 +401,7 @@ public sealed class ContractServices : IDisposable
         // A launch that waited for its window found it: the launch tools return the whole window
         Processes.Setup(p => p.LaunchApplicationAsync(It.IsAny<LaunchRequest>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((LaunchRequest _, bool wait, int _, CancellationToken _) => TypicalLaunch(wait, notepad, TypicalDesktop.NotepadProcessId));
-        Processes.Setup(p => p.GetRunningProcesses(It.IsAny<string?>(), It.IsAny<bool>())).Returns(TypicalDesktop.Processes);
+        Processes.Setup(p => p.GetRunningProcesses(It.IsAny<ProcessQuery>())).Returns(TypicalDesktop.Processes);
         Processes.Setup(p => p.KillProcessAsync(It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<KillSafeguards?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((int id, bool _, bool _, int _, string? _, KillSafeguards? _, CancellationToken _) =>
                 new KillResult(true, id, ProcessName: "notepad", CloseRequested: true, Exited: true));
@@ -611,6 +627,10 @@ public sealed class ContractServices : IDisposable
             .Returns((nint handle, bool _) => new WindowCloseResult(handle, false, WindowErrorCode.InvalidHandle, invalid));
         Windows.Setup(w => w.GetApplicationWindows()).Returns([]);
         Windows.Setup(w => w.GetOwnedWindows(It.IsAny<nint>(), It.IsAny<bool>())).Returns([]);
+        VisualChanges.Setup(v => v.WaitAsync(It.IsAny<VisualWaitRequest>(), It.IsAny<IProgress<OperationProgress>?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new VisualWaitResult(Success: false, Satisfied: false, TimedOut: true, Condition: "changed", ElapsedMs: 10_000, Checks: 51,
+                ChangedPercent: 0, CaptureId: "c4-3fa91c", CapturedRegion: new CapturedRegion(0, 100, 1600, 900), CaptureMethod: "PrintWindow",
+                Error: "Nothing changed within 10000 ms (51 checks).", ErrorCode: nameof(WindowErrorCode.WaitTimedOut)));
         WindowWait.Setup(w => w.WaitForConditionAsync(It.IsAny<WindowConditionRequest>(), It.IsAny<IProgress<OperationProgress>?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new WindowConditionResult
             {
@@ -641,7 +661,7 @@ public sealed class ContractServices : IDisposable
 
         Processes.Setup(p => p.LaunchApplicationAsync(It.IsAny<string>(), It.IsAny<string[]?>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new LaunchResult(false, ErrorMessage: "The executable was not found", ErrorCode: "ExecutableNotFound"));
-        Processes.Setup(p => p.GetRunningProcesses(It.IsAny<string?>(), It.IsAny<bool>())).Returns([]);
+        Processes.Setup(p => p.GetRunningProcesses(It.IsAny<ProcessQuery>())).Returns([]);
         Processes.Setup(p => p.KillProcessAsync(It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<KillSafeguards?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((int id, bool _, bool _, int _, string? _, KillSafeguards? _, CancellationToken _) =>
                 new KillResult(false, id, ErrorMessage: "No process with that ID", ErrorCode: nameof(ProcessErrorCode.ProcessNotFound)));

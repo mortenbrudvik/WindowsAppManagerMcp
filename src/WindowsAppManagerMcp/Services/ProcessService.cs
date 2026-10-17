@@ -29,10 +29,12 @@ public class ProcessService : IProcessService
     private readonly DebugBrowserLocator _debugBrowserLocator;
     private readonly IDebugBrowserReadiness? _debugBrowserReadiness;
     private readonly DebugBrowserProfiles _debugBrowserProfiles;
+    private readonly IProcessSecurityProbe? _securityProbe;
 
     /// <param name="targetPolicy">
-    /// The server's target policy, which kill_process enforces (roadmap M1.12). The server always passes
-    /// it; without it no process is refused by policy.
+    /// The server's target policy, which kill_process enforces (roadmap M1.12), and which keeps list_processes from
+    /// reading a denied process's command line (roadmap M6.6). The server always passes it; without it no process is
+    /// refused by policy.
     /// </param>
     /// <param name="hostGuard">
     /// The agent's host as recorded at server start (roadmap M1.1/M1.7): kill_process refuses its
@@ -53,6 +55,8 @@ public class ProcessService : IProcessService
     /// reports success (roadmap M5.1); without it the launch is reported once the browser's port is known.</param>
     /// <param name="debugBrowserProfiles">Where a debug launch's new temporary profile goes, and deletes it again (roadmap
     /// M5.4); default the server's folders under %TEMP% and %LOCALAPPDATA%.</param>
+    /// <param name="securityProbe">Reads the listed processes' integrity (roadmap M6.6). The server always passes it; without
+    /// it list_processes reports no integrity.</param>
     public ProcessService(
         IWindowService windowService,
         IInputValidationService validationService,
@@ -66,7 +70,8 @@ public class ProcessService : IProcessService
         InterpreterGuard? interpreterGuard = null,
         DebugBrowserLocator? debugBrowserLocator = null,
         IDebugBrowserReadiness? debugBrowserReadiness = null,
-        DebugBrowserProfiles? debugBrowserProfiles = null)
+        DebugBrowserProfiles? debugBrowserProfiles = null,
+        IProcessSecurityProbe? securityProbe = null)
     {
         _windowService = windowService;
         _validationService = validationService;
@@ -81,6 +86,7 @@ public class ProcessService : IProcessService
         _debugBrowserLocator = debugBrowserLocator ?? new DebugBrowserLocator();
         _debugBrowserReadiness = debugBrowserReadiness;
         _debugBrowserProfiles = debugBrowserProfiles ?? DebugBrowserProfiles.FromEnvironment();
+        _securityProbe = securityProbe;
     }
 
     /// <summary>
@@ -945,8 +951,12 @@ public class ProcessService : IProcessService
         return windowsByProcess;
     }
 
-    public IReadOnlyList<ProcessInfo> GetRunningProcesses(string? nameFilter = null, bool includeWindowless = false)
+    public IReadOnlyList<ProcessInfo> GetRunningProcesses(ProcessQuery query)
     {
+        ArgumentNullException.ThrowIfNull(query);
+        if (query.Limit is < 1)
+            throw new ArgumentOutOfRangeException(nameof(query), query.Limit, "The limit must be at least 1.");
+
         // An empty list would read as "no such process is running" and let a "has it exited?" check pass when nothing
         // was read, so an unreadable list is an error, as it was before the process seam
         var processes = _processWrapper.ListRunningProcesses()
@@ -955,23 +965,26 @@ public class ProcessService : IProcessService
         // Built in both modes, so that windowCount is real with includeWindowless as well (D-PAL-20)
         var windowsByProcess = MapWindowsToProcesses();
 
-        var listed = new List<(RunningProcess Process, int WindowCount)>();
+        var listed = new List<(RunningProcess Process, List<WindowInfo>? Windows)>();
         foreach (var process in processes)
         {
-            if (!string.IsNullOrEmpty(nameFilter) && !process.Name.Contains(nameFilter, StringComparison.OrdinalIgnoreCase))
+            if (query.ProcessId is { } processId && process.ProcessId != processId)
+                continue;
+            if (!string.IsNullOrEmpty(query.NameFilter) && !process.Name.Contains(query.NameFilter, StringComparison.OrdinalIgnoreCase))
                 continue;
 
-            var windowCount = windowsByProcess.TryGetValue(process.ProcessId, out var windows) ? windows.Count : 0;
-            if (!includeWindowless && windowCount == 0)
+            var windows = windowsByProcess.GetValueOrDefault(process.ProcessId);
+            if (!query.IncludeWindowless && windows == null)
                 continue;
 
-            listed.Add((process, windowCount));
+            listed.Add((process, windows));
         }
 
         if (listed.Count == 0)
             return [];
 
-        // Each process is opened once, and only when it is listed or is the parent of one that is
+        // Each process is opened once for its path and start time: here only when the path filter or the start-time
+        // order needs them, else once it is returned (or is the parent of one that is)
         var details = new Dictionary<int, ProcessDetails?>();
         ProcessDetails? DetailsOf(int processId)
         {
@@ -983,29 +996,85 @@ public class ProcessService : IProcessService
             return read;
         }
 
+        IEnumerable<(RunningProcess Process, List<WindowInfo>? Windows)> rows = listed;
+        if (!string.IsNullOrEmpty(query.PathContains))
+        {
+            rows = rows.Where(r => DetailsOf(r.Process.ProcessId)?.ImagePath?.Contains(query.PathContains, StringComparison.OrdinalIgnoreCase) == true);
+        }
+
+        DateTime? StartOf((RunningProcess Process, List<WindowInfo>? Windows) row) => DetailsOf(row.Process.ProcessId)?.StartTime;
+        var ordered = query.Sort switch
+        {
+            // Largest or newest first; what cannot be read last
+            ProcessSort.Memory => rows.OrderBy(r => r.Process.WorkingSetBytes == null).ThenByDescending(r => r.Process.WorkingSetBytes),
+            ProcessSort.StartTime => rows.OrderBy(r => StartOf(r) == null).ThenByDescending(StartOf),
+            _ => rows.OrderBy(r => r.Process.Name, StringComparer.OrdinalIgnoreCase)
+        };
+        rows = ordered.ThenBy(r => r.Process.Name, StringComparer.OrdinalIgnoreCase).ThenBy(r => r.Process.ProcessId);
+        if (query.Limit is { } limit)
+        {
+            rows = rows.Take(limit);
+        }
+
+        var returned = rows.ToList();
+
         // The parents come from a second snapshot (Toolhelp), so a process can be in one list and not the other: a
         // parent that is not in it is not running, and is not reported
         var parentByProcessId = _processWrapper.GetProcessList()?.ToDictionary(p => p.Key, p => p.Value.ParentProcessId);
+        var serverIntegrity = _securityProbe?.ServerIntegrity;
 
-        var result = new List<ProcessInfo>(listed.Count);
-        foreach (var (process, windowCount) in listed)
+        var result = new List<ProcessInfo>(returned.Count);
+        foreach (var (process, windows) in returned)
         {
             var processDetails = DetailsOf(process.ProcessId);
             var parent = parentByProcessId == null
                 ? null
                 : NativeProcessWrapper.FindParent(process.ProcessId, parentByProcessId, id => DetailsOf(id)?.StartTime);
+            var integrity = _securityProbe?.GetIntegrity(process.ProcessId);
+            var commandLine = query.IncludeCommandLine ? ReadCommandLine(process, processDetails) : null;
 
             result.Add(new ProcessInfo(
                 ProcessId: process.ProcessId,
                 Name: process.Name,
                 ExecutablePath: processDetails?.ImagePath,
-                WindowCount: windowCount,
+                WindowCount: windows?.Count ?? 0,
                 MemoryUsageMB: process.WorkingSetBytes / (1024.0 * 1024.0),
                 ParentProcessId: parent,
-                StartTime: processDetails?.StartTime));
+                StartTime: processDetails?.StartTime,
+                Windows: windows?.Take(ProcessInfo.MaxWindows).ToList() ?? [],
+                Integrity: integrity,
+                AboveServer: integrity != null && serverIntegrity != null && integrity.IsMorePrivilegedThan(serverIntegrity),
+                CommandLine: commandLine?.Text,
+                CommandLineRedacted: commandLine?.Redacted == true));
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// A listed process's command line, redacted and cut to <see cref="ProcessInfo.MaxCommandLineLength"/>; null when the
+    /// user's target policy denies the process (it is then never read) and when it cannot be read. The policy decides by the
+    /// listed name, so the command line is read only when the process <paramref name="details"/> describes still bears it
+    /// (its image file is that name) and is still the one at the PID once the command line is read (same start time): a
+    /// PID reused at any point after the listing gives no command line, rather than one of a process the policy check did
+    /// not cover. Without a start time or a path the PID cannot be pinned, so none is read either.
+    /// </summary>
+    private RedactedCommandLine? ReadCommandLine(RunningProcess process, ProcessDetails? details)
+    {
+        if (details is not { StartTime: { } startTime, ImagePath: { } imagePath })
+            return null;
+
+        var imageName = Path.GetFileNameWithoutExtension(imagePath);
+        if (!string.Equals(imageName, process.Name, StringComparison.OrdinalIgnoreCase) ||
+            _targetPolicy?.Evaluate([process.Name, imageName]) is { Allowed: false })
+            return null;
+
+        var commandLine = _processWrapper.GetProcessCommandLine(process.ProcessId);
+        if (commandLine == null || _processWrapper.ReadProcessDetails(process.ProcessId)?.StartTime != startTime)
+            return null;
+
+        var redacted = CommandLineRedactor.Redact(commandLine);
+        return redacted with { Text = AppText.Cut(redacted.Text, ProcessInfo.MaxCommandLineLength) };
     }
 
     public string? GetProcessName(int processId)

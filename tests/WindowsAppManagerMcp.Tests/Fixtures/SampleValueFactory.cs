@@ -68,6 +68,8 @@ public static class SampleValueFactory
         else if (type == typeof(object)) value = "sample";
         // A JSON value a result passes through as it is (browser_evaluate's value, roadmap M5.8); default(JsonElement) cannot be written
         else if (type == typeof(System.Text.Json.JsonElement)) value = System.Text.Json.JsonSerializer.SerializeToElement(new { sample = 7 });
+        // A step's own result, passed on as its JSON (run_steps, roadmap M6.2)
+        else if (typeof(System.Text.Json.Nodes.JsonNode).IsAssignableFrom(type)) value = System.Text.Json.Nodes.JsonNode.Parse("""{ "sample": 7 }""");
         else if (type.IsEnum)
         {
             var values = Enum.GetValues(type);

@@ -187,12 +187,12 @@ public class FixtureOcrTests
         using var e2e = E2ESession.Start(DesktopTier.Input, _output, new FixtureLaunchOptions { OpenCanvas = true });
         var canvas = OpenedCanvas(e2e);
         BringToFront(e2e, canvas.WindowHandle);
-        var policy = new Mock<IWindowService>();
-        policy.Setup(p => p.EvaluateTargetPolicy(It.IsAny<nint>())).Returns((nint handle) => handle == canvas.WindowHandle
-            ? TargetPolicyVerdict.Deny("WamFixtureApp", "the scenario denies it")
-            : TargetPolicyVerdict.Allow);
+        var policy = new Mock<ICaptureTargetPolicy>();
+        policy.Setup(p => p.Check(It.IsAny<nint>())).Returns((nint handle) => handle == canvas.WindowHandle
+            ? new CaptureRefusal(ScreenshotErrorCode.TargetDeniedByPolicy, "the scenario denies WamFixtureApp")
+            : null);
         var ocr = new OcrService(e2e.Server.Screenshots, e2e.Server.Get<IOcrEngineWrapper>(), e2e.Server.Get<INativeWindowWrapper>(),
-            policy.Object);
+            policy.Object, null);
         var lines = canvas.Lines.Select(l => l.Rect).ToList();
         var region = new CaptureTarget.Region(
             lines.Min(r => r.X), lines.Min(r => r.Y),

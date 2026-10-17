@@ -124,10 +124,11 @@ public sealed class ToolsetCatalog
 /// <summary>
 /// The server's toolsets (roadmap M2.14). Each tool the server serves is in exactly one of them (ToolsetCatalogTests),
 /// and docs/TOOLS.md lists them in a generated region. Every toolset is on by default except browser-actions (roadmap
-/// M5.5, M5.8), browser-script (roadmap M5.8), windows-batch and deprecated (roadmap M6.1), and ocr (roadmap M6.3). Of
-/// the tools M6 adds, the niche or heavy ones come in toolsets that are off by default (ocr, visual, windows-batch), and
-/// the small everyday steps (list_installed_apps, set_window_zorder, run_steps) join toolsets that are on (owner decision
-/// D2, October 2026).
+/// M5.5, M5.8), browser-script (roadmap M5.8), visual (roadmap M6.4), windows-batch and deprecated (roadmap M6.1), and ocr
+/// (roadmap M6.3). Of the tools M6 adds, the niche or heavy ones come in toolsets that are off by default (ocr, visual,
+/// windows-batch), and the small everyday steps (list_installed_apps, set_window_zorder, run_steps) join toolsets that are on
+/// (owner decision D2, October 2026): run_steps in a toolset of its own, steps (roadmap M6.2), so WAM_TOOLSETS=-steps drops
+/// it alone.
 /// </summary>
 public static class Toolsets
 {
@@ -180,6 +181,11 @@ public static class Toolsets
             new("layouts", OnByDefault: true,
                 "Save, apply and manage window layout presets.",
                 ["list_layouts", "get_layout", "save_layout", "apply_layout", "delete_layout"]),
+            // Roadmap M6.2: a run's steps call the tools of the toolsets above, and only those the server serves
+            new("steps", OnByDefault: true,
+                "Run several steps (element actions, keys, clicks, waits) on one window in one call, under one input gate hold, " +
+                "stopping at the first failure.",
+                ["run_steps"]),
             new("browser", OnByDefault: true,
                 "Read the URL and text of browser pages, list a debug browser's tabs and wait for a page; start and close a browser with a DevTools port.",
                 ["get_browser_url", "get_browser_content", "launch_browser_with_debug", "close_debug_browser", "list_tabs", "wait_for_browser"]),
@@ -195,6 +201,11 @@ public static class Toolsets
             new("browser-script", OnByDefault: false,
                 "Run JavaScript in a debug browser's page through CDP, with the page's rights.",
                 ["browser_evaluate"]),
+            // Off by default (roadmap M6.4, owner decisions D2 and D10): a wait polls pixels for up to a minute, and most waits
+            // have a UI Automation condition to wait on instead. Only reads; captures keep visual signatures only while it is on
+            new("visual", OnByDefault: false,
+                "Wait until a window, region or monitor changes on screen or stops changing, compared tile by tile, without image tokens.",
+                ["wait_for_visual"]),
             // Off by default (roadmap M6.1, owner decision D4): each item takes its own placement or state, so they stay tools
             // of their own, but most sessions place one window at a time. Closing and launching several stay in the default
             new("windows-batch", OnByDefault: false,
@@ -238,7 +249,8 @@ public static class Toolsets
     /// <summary>
     /// Serves only the tools <paramref name="selection"/> chooses: registers the selection (get_server_info reports it)
     /// and removes every other tool from the server's tool collection once the registrations are complete, so tools/list
-    /// leaves them out and a call to one is an unknown tool. When the user turned off tools the default serves, the
+    /// leaves them out and a call to one is an unknown tool, and then the resources and prompts that rest on a removed tool
+    /// (<see cref="ResourcesAndPrompts.RemoveUnserved"/>). When the user turned off tools the default serves, the
     /// server instructions get one more line that says which (<see cref="ToolsetSelection.InstructionsNote"/>). Program.cs reads the selection from the environment before
     /// the tool registrations (<see cref="ServiceRegistration.AddWindowsAppManagerTools"/>).
     /// </summary>
@@ -263,17 +275,15 @@ public static class Toolsets
                 : options.ServerInstructions + "\n" + note;
         }
 
-        if (options.ToolCollection is not { } tools)
-        {
-            return;
-        }
-
-        foreach (var tool in tools.ToArray())
+        foreach (var tool in options.ToolCollection?.ToArray() ?? [])
         {
             if (!selection.Serves(tool.ProtocolTool.Name, tool.ProtocolTool.Annotations?.ReadOnlyHint == true))
             {
-                tools.Remove(tool);
+                options.ToolCollection!.Remove(tool);
             }
         }
+
+        // The resources and prompts follow the tools they rest on (roadmap M6.9)
+        ResourcesAndPrompts.RemoveUnserved(options);
     }
 }

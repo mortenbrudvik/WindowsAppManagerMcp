@@ -30,7 +30,8 @@ An MCP (Model Context Protocol) server that enables AI assistants like Claude to
 - **Process Management** - List running processes, close a whole application gracefully, terminate processes safely
 - **Layout Presets** - Save and restore window arrangements
 - **Server Info and Instructions** - `get_server_info` reports the build, the DPI awareness, the desktop state, the agent's host windows, the pause and the toolsets in force, with warnings; every MCP client gets usage instructions in the handshake, with or without the plugin skill
-- **Toolsets** - Serve only the tools you want (`WAM_TOOLSETS`, `WAM_EXCLUDE_TOOLS`), or only tools that read (`WAM_READ_ONLY=1`); see [Toolsets](docs/TOOLS.md#toolsets). The default serves 58 of the 80 tools: the browser actions and scripts, the window batches, OCR and the nine deprecated tools are opt-in
+- **Resources and Prompts** - Three read-only MCP resources (`wam://monitors`, `wam://windows`, `wam://layouts/{name}`) with the JSON of get_monitors, find_windows and get_layout, and four prompts (`automate_app`, `arrange_workspace`, `fill_form`, `diagnose_click`) that write out the locate, act, verify loop for clients without the plugin skill; they follow the toolsets and add nothing to tools/list. See [Resources and Prompts](docs/TOOLS.md#resources-and-prompts)
+- **Toolsets** - Serve only the tools you want (`WAM_TOOLSETS`, `WAM_EXCLUDE_TOOLS`), or only tools that read (`WAM_READ_ONLY=1`); see [Toolsets](docs/TOOLS.md#toolsets). The default serves 59 of the 82 tools: the browser actions and scripts, the visual waits, the window batches, OCR and the nine deprecated tools are opt-in
 - **Audit Log** - Every input, element action, dialog answer, close, kill, launch, layout-write (apply, save, delete), clipboard and browser tab or navigation call is recorded, without typed text, values or clipboard content, so you can see afterwards what was sent where; see [Audit log](docs/TOOLS.md#audit-log)
 
 ## Installation
@@ -110,7 +111,7 @@ so `serverInfo.version` shows a different commit SHA (`X.Y.Z+<tag commit>` for t
 `X.Y.Z+<commit before the release commit>` for the plugin exe).
 
 <!-- tools:begin tool-table (generated from tools/list: run the tests with UPDATE_SNAPSHOTS=1, see TESTING.md) -->
-## Available Tools (80)
+## Available Tools (82)
 
 | Category | Tools |
 |----------|-------|
@@ -118,13 +119,14 @@ so `serverInfo.version` shows a different commit SHA (`X.Y.Z+<tag commit>` for t
 | Window Control | `move_window`, `resize_window`, `set_window_bounds`, `set_window_state`, `focus_window`, `close_window`, `snap_window`, `move_window_to_monitor` |
 | Batch Operations | `set_windows_bounds_batch`, `snap_windows_batch`, `set_windows_state_batch`, `close_windows_batch`, `launch_applications_batch` |
 | Monitor Info | `get_monitors`, `get_primary_monitor` |
-| Screenshot | `list_screens`, `take_screenshot`, `capture_region`, `capture_window`, `capture_with_elements`, `read_screen_text`, `find_text_on_screen` |
+| Screenshot | `list_screens`, `take_screenshot`, `capture_region`, `capture_window`, `capture_with_elements`, `read_screen_text`, `find_text_on_screen`, `wait_for_visual` |
 | UI Automation | `get_desktop_state`, `get_ui_elements`, `find_ui_elements`, `element_action`, `respond_to_dialog`, `file_dialog`, `get_focused_element`, `get_element_at_point`, `get_active_popups`, `read_element_text`, `read_table`, `wait_for_element` |
 | Browser Reading | `get_browser_url`, `get_active_browser_url`, `get_browser_content`, `launch_browser_with_debug`, `close_debug_browser` |
 | Browser Tabs and Navigation | `list_tabs`, `activate_tab`, `browser_navigate`, `wait_for_browser` |
 | Browser Page (DOM Bridge) | `browser_element_rect`, `browser_click`, `browser_type`, `browser_handle_dialog`, `browser_screenshot`, `browser_evaluate` |
 | Input Simulation | `click`, `right_click`, `double_click`, `mouse_click`, `drag`, `mouse_move`, `scroll`, `type_text`, `send_keys`, `press_keys` |
 | Input Control | `get_control_status`, `resume_input`, `release_all_input` |
+| Step Sequences | `run_steps` |
 | App Launch | `launch_application`, `list_processes`, `kill_process`, `close_application` |
 | Clipboard | `get_clipboard`, `set_clipboard` |
 | Layout Presets | `list_layouts`, `get_layout`, `save_layout`, `apply_layout`, `delete_layout` |
@@ -155,7 +157,7 @@ server configuration). No tool argument can change them.
 | `WAM_DESTRUCTIVE_CHORDS` | `%{F4} ^w ^q ^{F4} ^+{ESC} #l` | `send_keys` chords that need `windowHandle` (`DestructiveChordNeedsTarget`) |
 | `WAM_LAYOUTS_PATH` | `%LOCALAPPDATA%\WindowsAppManagerMcp\layouts` | Folder of the [layout presets](docs/TOOLS.md#layout-presets) |
 | `WAM_AUDIT_PATH` | `%LOCALAPPDATA%\WindowsAppManagerMcp\audit` | Folder of the [audit log](docs/TOOLS.md#audit-log): one JSON line per input, element action, dialog answer, file dialog, close, kill, launch, layout-write (apply, save, delete), browser tab activation or navigation call (the URL as its scheme and host only), browser page click, typing, dialog answer, script or capture (a script, a text or a selector as its length only, never a script's value) and per clipboard read or write, one file per day, kept 7 days |
-| `WAM_TOOLSETS` | the default toolsets (all but `browser-actions`, `browser-script`, `windows-batch`, `ocr` and `deprecated`) | The [toolsets](docs/TOOLS.md#toolsets) to serve, such as `windows,monitors,layouts`; `all` (every toolset, `deprecated` included), `default`, `+name` and `-name` (`-browser`) also work. The `server` toolset is always served. A moved or deprecated tool is served only while the toolset it came from is on too. A name that is not a toolset never serves more than you asked for: an unknown `-name`, or unknown plain names with no valid one, serve only the `server` toolset (an unknown `+name` is just ignored) |
+| `WAM_TOOLSETS` | the default toolsets (all but `browser-actions`, `browser-script`, `visual`, `windows-batch`, `ocr` and `deprecated`) | The [toolsets](docs/TOOLS.md#toolsets) to serve, such as `windows,monitors,layouts`; `all` (every toolset, `deprecated` included), `default`, `+name` and `-name` (`-browser`) also work. The `server` toolset is always served. A moved or deprecated tool is served only while the toolset it came from is on too. A name that is not a toolset never serves more than you asked for: an unknown `-name`, or unknown plain names with no valid one, serve only the `server` toolset (an unknown `+name` is just ignored) |
 | `WAM_EXCLUDE_TOOLS` | not set | Tools to leave out by name, such as `kill_process`, or every tool of a toolset by the toolset's name (`process`, which also leaves out the tools that moved out of it). Naming a tool that is not served anyway, such as the deprecated `click`, is no error. `get_server_info` is always served. A name that is neither a tool nor a toolset serves only the `server` toolset, so a typo never leaves on a tool you meant to turn off |
 | `WAM_READ_ONLY` | not set | `1` serves only the tools annotated read-only (an observer profile: no input, element actions, dialog answers, window changes, captures, layout writes, clipboard writes or process control) |
 | `WAM_ALLOWED_PROTOCOLS` | not set | More URI schemes `launch_application` may open, such as `vscode,ms-teams,spotify` (built in: `http`, `https`, `mailto`, `tel`, `ms-settings` and `shell:AppsFolder\<AppUserModelID>`). Listing a scheme trusts its app with whatever the agent puts in the URI. `javascript`, `vbscript`, `data`, `mshta`, the shells, `shell:`, `ms-appinstaller`, `ms-officecmd` and the help schemes stay blocked. See [launch_application](docs/TOOLS.md#launch_application) |

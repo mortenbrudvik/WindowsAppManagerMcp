@@ -267,7 +267,7 @@ public static class ToolErrorReporting
     /// exception was thrown: the first frame outside the runtime, System.Text.Json and the shared
     /// throw helpers must belong to <see cref="AIFunctionFactory"/>, which binds the arguments.
     /// </summary>
-    private static bool IsArgumentBindingFailure(Exception exception)
+    internal static bool IsArgumentBindingFailure(Exception exception)
     {
         if (exception is not (ArgumentException or JsonException))
         {
@@ -300,7 +300,7 @@ public static class ToolErrorReporting
         return false;
     }
 
-    private static Exception Unwrap(Exception exception)
+    internal static Exception Unwrap(Exception exception)
     {
         while (true)
         {

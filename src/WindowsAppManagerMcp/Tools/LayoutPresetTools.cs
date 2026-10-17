@@ -43,31 +43,9 @@ public class LayoutPresetTools
         ThrowIfStorageUnavailable();
 
         var preset = _layoutService.GetPreset(name)
-            ?? throw new ToolErrorException(
-                nameof(LayoutErrorCode.PresetNotFound),
-                $"Layout preset '{name}' was not found. Call list_layouts to see the available presets.");
+            ?? throw new ToolErrorException(nameof(LayoutErrorCode.PresetNotFound), PresetNotFoundMessage(name));
 
-        return new LayoutDetailDto(
-            Name: preset.Name,
-            Description: preset.Description,
-            Placements: preset.Placements.Select(p => new PlacementDto(
-                ProcessName: p.Matcher.ProcessName,
-                TitleContains: p.Matcher.TitleContains,
-                MonitorIndex: p.MonitorIndex,
-                Position: new PositionDto(p.Position.X, p.Position.Y, p.Position.Width, p.Position.Height),
-                LaunchCommand: p.LaunchCommand,
-                Focus: p.Focus,
-                Order: p.Order,
-                ExactProcessName: p.Matcher.ExactProcessName ? true : null,
-                ClassName: p.Matcher.ClassName,
-                TitlePattern: p.Matcher.TitlePattern,
-                ExePath: p.Matcher.ExePath,
-                Ordinal: p.Matcher.Ordinal,
-                State: p.State?.ToString().ToLowerInvariant()
-            )).ToList(),
-            CreatedAt: preset.CreatedAt.ToString("O"),
-            UpdatedAt: preset.UpdatedAt.ToString("O")
-        );
+        return ToDetailDto(preset);
     }
 
     [McpServerTool(Name = "save_layout", Title = "Save Layout", ReadOnly = false, Destructive = true, Idempotent = true, OpenWorld = false)]
@@ -159,6 +137,36 @@ public class LayoutPresetTools
         if (storageError != null)
             throw new ToolErrorException(nameof(LayoutErrorCode.StorageUnavailable), storageError);
     }
+
+    /// <summary>What get_layout and the wam://layouts/{name} resource (roadmap M6.9) say about a name no preset has.</summary>
+    internal static string PresetNotFoundMessage(string name) =>
+        $"Layout preset '{name}' was not found. Call list_layouts to see the available presets.";
+
+    /// <summary>
+    /// get_layout's result, which the wam://layouts/{name} resource returns too (roadmap M6.9), so a change to one changes
+    /// both.
+    /// </summary>
+    internal static LayoutDetailDto ToDetailDto(LayoutPreset preset) => new(
+        Name: preset.Name,
+        Description: preset.Description,
+        Placements: preset.Placements.Select(p => new PlacementDto(
+            ProcessName: p.Matcher.ProcessName,
+            TitleContains: p.Matcher.TitleContains,
+            MonitorIndex: p.MonitorIndex,
+            Position: new PositionDto(p.Position.X, p.Position.Y, p.Position.Width, p.Position.Height),
+            LaunchCommand: p.LaunchCommand,
+            Focus: p.Focus,
+            Order: p.Order,
+            ExactProcessName: p.Matcher.ExactProcessName ? true : null,
+            ClassName: p.Matcher.ClassName,
+            TitlePattern: p.Matcher.TitlePattern,
+            ExePath: p.Matcher.ExePath,
+            Ordinal: p.Matcher.Ordinal,
+            State: p.State?.ToString().ToLowerInvariant()
+        )).ToList(),
+        CreatedAt: preset.CreatedAt.ToString("O"),
+        UpdatedAt: preset.UpdatedAt.ToString("O")
+    );
 }
 
 public record LayoutSummaryDto(

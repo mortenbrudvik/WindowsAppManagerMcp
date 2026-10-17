@@ -1,9 +1,14 @@
+using System.ComponentModel;
 using System.Globalization;
+using System.Reflection;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
+using ModelContextProtocol.Server;
 using WindowsAppManagerMcp.Infrastructure;
+using WindowsAppManagerMcp.Prompts;
+using WindowsAppManagerMcp.Resources;
 
 namespace WindowsAppManagerMcp.Tests.Fixtures;
 
@@ -27,7 +32,8 @@ public sealed record GeneratedDoc(string Name, string[] RelativePath)
 /// Region ids: README.md has <c>tool-table</c> (heading with the tool count, and the category table); docs/TOOLS.md
 /// has <c>summary</c> (introduction with the count, and the quick reference), <c>toolsets</c> (the toolsets of
 /// <see cref="Toolsets.Server"/>, roadmap M2.14), <c>read-only</c> (the tools annotated readOnlyHint, which read-only
-/// mode serves) and <c>params:TOOL</c> in each tool's section; SKILL.md has
+/// mode serves), <c>params:TOOL</c> in each tool's section and <c>resources</c> (the resources and prompts of
+/// <see cref="ResourcesAndPrompts"/>, roadmap M6.9); SKILL.md has
 /// <c>count</c> (the sentence with the tool count) and <c>tool-tables</c> (the whole "Available Tools" section).
 /// <para>
 /// A <c>params:TOOL</c> region is the tool's parameter table, and a field table for each parameter that is an
@@ -71,7 +77,7 @@ public static partial class ToolDocGenerator
 
         if (doc == ToolsReference)
         {
-            return ["summary", "toolsets", "read-only", .. ToolDocCatalog.AllTools.Select(t => ParamsRegionId(t.Name))];
+            return ["summary", "toolsets", "read-only", .. ToolDocCatalog.AllTools.Select(t => ParamsRegionId(t.Name)), "resources"];
         }
 
         throw new ArgumentException($"Unknown generated doc {doc}.", nameof(doc));
@@ -92,6 +98,7 @@ public static partial class ToolDocGenerator
             ("docs/TOOLS.md", "summary") => ToolsSummary(count),
             ("docs/TOOLS.md", "toolsets") => ToolsetsTable(Toolsets.Server, tools),
             ("docs/TOOLS.md", "read-only") => ReadOnlyTools(tools),
+            ("docs/TOOLS.md", "resources") => ResourcesAndPromptsTables(),
             ("docs/TOOLS.md", _) when id.StartsWith(ParamsPrefix, StringComparison.Ordinal) =>
                 ParameterTables(ToolSurface.Tool(tools, id[ParamsPrefix.Length..]), current),
             ("SKILL.md", "count") =>
@@ -185,6 +192,41 @@ public static partial class ToolDocGenerator
             ? sentence
             : sentence + " With their opt-in toolset turned on it also serves " +
               string.Join(", ", optIn.Select(name => $"[{name}](#{name}) (`{Toolsets.Server.ToolsetOf(name)!.Name}`)")) + ".";
+    }
+
+    /// <summary>
+    /// The resources and prompts (roadmap M6.9), in catalog order, from their attributes: each resource's URI, the tool whose
+    /// JSON it returns and its description; each prompt's name, arguments, the tools it needs and its description.
+    /// </summary>
+    private static string ResourcesAndPromptsTables()
+    {
+        var resources = typeof(DesktopResources).GetMethods()
+            .Select(m => (Attribute: m.GetCustomAttribute<McpServerResourceAttribute>(), Description: m.GetCustomAttribute<DescriptionAttribute>()?.Description))
+            .Where(r => r.Attribute != null)
+            .ToDictionary(r => r.Attribute!.UriTemplate!, r => r.Description ?? string.Empty);
+        var prompts = typeof(WorkflowPrompts).GetMethods()
+            .Select(m => (Method: m, Attribute: m.GetCustomAttribute<McpServerPromptAttribute>()))
+            .Where(p => p.Attribute != null)
+            .ToDictionary(p => p.Attribute!.Name!, p => p.Method);
+
+        var lines = new List<string>
+        {
+            "| Resource | The JSON of | What it holds |",
+            "|----------|-------------|---------------|"
+        };
+        lines.AddRange(ResourcesAndPrompts.Resources.Select(r =>
+            $"| `{r.UriTemplate}` | [{r.Mirrors}](#{r.Mirrors}) | {Cell(resources[r.UriTemplate])} |"));
+        lines.Add("");
+        lines.Add("| Prompt | Arguments | Served while these tools are | What it does |");
+        lines.Add("|--------|-----------|------------------------------|--------------|");
+        lines.AddRange(ResourcesAndPrompts.Prompts.Select(p =>
+        {
+            var method = prompts[p.Name];
+            var arguments = method.GetParameters().Where(a => a.ParameterType == typeof(string)).Select(a => $"`{a.Name}`");
+            return $"| `{p.Name}` | {string.Join(", ", arguments)} | {string.Join(", ", p.Needs.Select(t => $"[{t}](#{t})"))} | " +
+                   $"{Cell(method.GetCustomAttribute<DescriptionAttribute>()?.Description ?? string.Empty)} |";
+        }));
+        return string.Join('\n', lines);
     }
 
     private static string SkillToolTables(int count)
