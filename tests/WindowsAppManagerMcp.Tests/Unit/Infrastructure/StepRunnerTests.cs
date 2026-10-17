@@ -734,6 +734,101 @@ public class StepRunnerTests
         returned.Should().OnlyContain(s => s.ResultOmitted == null);
     }
 
+    // ---- Takeover detection (roadmap M7.4) ----
+
+    private Task<StepRunOutcome> RunWatchedAsync(StubTakeoverMonitor monitor, TimeSpan delayBetweenSteps, params RunStep[] steps)
+    {
+        var runner = new StepRunner(_session.Object, _windows.Object, _elements.Object, takeover: monitor);
+        return runner.RunAsync((nint)Window, runner.Check(steps, _dispatcher), _dispatcher, Long, delayBetweenSteps, null,
+            CancellationToken.None);
+    }
+
+    [Fact]
+    public async Task ModeStop_TheUsersInputDuringAStep_StopsTheRunBeforeTheNext_WithUserInterrupted()
+    {
+        // Arrange - the user takes the mouse while step 1 (a click: one batch, not watched itself) runs
+        var monitor = new StubTakeoverMonitor(TakeoverMode.Stop);
+        _dispatcher.OnCall = call =>
+        {
+            if (call.Number == 1)
+            {
+                monitor.Last!.Signal();
+            }
+        };
+
+        // Act
+        var run = await RunWatchedAsync(monitor, TimeSpan.Zero,
+            Step(StepTool.MouseClick, """{ "x": 10, "y": 10 }"""), Step(StepTool.TypeText, """{ "text": "b" }"""));
+
+        // Assert
+        run.Result.StoppedBy.Should().Be(StepStopReason.UserInterrupted);
+        run.Result.ErrorCode.Should().Be("UserInterrupted");
+        run.Result.Error.Should().Contain("before step 2").And.Contain("WAM_TAKEOVER_DETECTION=stop");
+        run.Result.Steps[0].Status.Should().Be(StepStatus.Ok);
+        run.Result.Steps[1].Status.Should().Be(StepStatus.Skipped);
+        _dispatcher.Calls.Should().ContainSingle();
+        monitor.Watches.Should().Be(1);
+        monitor.Last!.Disposed.Should().BeTrue("the watch ends with the run");
+    }
+
+    [Fact]
+    public async Task ModeStop_TheUsersInputDuringTheWaitBetweenSteps_EndsTheWait()
+    {
+        // Arrange - a 20-second wait between steps would hold the gate long after the user took over
+        var monitor = new StubTakeoverMonitor(TakeoverMode.Stop);
+        _dispatcher.OnCall = _ => monitor.Last!.Signal();
+
+        // Act
+        var run = await RunWatchedAsync(monitor, TimeSpan.FromSeconds(20),
+            Step(StepTool.TypeText, """{ "text": "a" }"""), Step(StepTool.TypeText, """{ "text": "b" }"""));
+
+        // Assert
+        run.Result.StoppedBy.Should().Be(StepStopReason.UserInterrupted);
+        run.Result.ElapsedMs.Should().BeLessThan(10_000);
+        run.Result.Steps[1].Status.Should().Be(StepStatus.Skipped);
+    }
+
+    [Fact]
+    public async Task AStepTheUsersInputStopped_StopsTheRun_EvenWhenItIsOptional()
+    {
+        // A type_text step watches itself and returns UserInterrupted
+        _dispatcher.Failures["type_text"] = "UserInterrupted";
+
+        var run = await RunWatchedAsync(new StubTakeoverMonitor(TakeoverMode.Stop), TimeSpan.Zero,
+            Step(StepTool.TypeText, """{ "text": "a" }""", optional: true), Step(StepTool.PressKeys, """{ "keys": "enter" }"""));
+
+        run.Result.StoppedBy.Should().Be(StepStopReason.UserInterrupted);
+        run.Result.Error.Should().Contain("during step 1");
+        _dispatcher.Calls.Should().ContainSingle();
+    }
+
+    [Fact]
+    public async Task ModeWarn_TheUsersInput_LetsTheRunFinish_WithAWarning()
+    {
+        // Arrange
+        var monitor = new StubTakeoverMonitor(TakeoverMode.Warn);
+        _dispatcher.OnCall = _ => monitor.Last!.Signal();
+
+        // Act
+        var run = await RunWatchedAsync(monitor, TimeSpan.Zero,
+            Step(StepTool.TypeText, """{ "text": "a" }"""), Step(StepTool.TypeText, """{ "text": "b" }"""));
+
+        // Assert
+        run.Result.Success.Should().BeTrue();
+        run.Result.StoppedBy.Should().BeNull();
+        run.Result.Warning.Should().Contain("WAM_TAKEOVER_DETECTION=warn").And.Contain("the steps ran");
+        _dispatcher.Calls.Should().HaveCount(2);
+    }
+
+    [Fact]
+    public async Task WithoutTheUsersInput_TheWatchedRunHasNoWarning()
+    {
+        var run = await RunWatchedAsync(new StubTakeoverMonitor(TakeoverMode.Warn), TimeSpan.Zero, Step(StepTool.TypeText, """{ "text": "a" }"""));
+
+        run.Result.Success.Should().BeTrue();
+        run.Result.Warning.Should().BeNull();
+    }
+
     private sealed class SynchronousProgress(Action<OperationProgress> report) : IProgress<OperationProgress>
     {
         public void Report(OperationProgress value) => report(value);

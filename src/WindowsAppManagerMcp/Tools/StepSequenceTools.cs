@@ -25,10 +25,12 @@ public class StepSequenceTools
     /// <param name="windows">Resolves the run's window and reads what is in front.</param>
     /// <param name="elements">The windows of the element refs a step names.</param>
     /// <param name="keyGuard">The server's destructive chords, which a step's keys may not contain; null for the defaults.</param>
-    public StepSequenceTools(IInputSession session, IWindowService windows, IElementRegistry elements, InputGuardOptions? keyGuard = null)
+    /// <param name="takeover">Takeover detection (roadmap M7.4), which watches the run; the server always registers it.</param>
+    public StepSequenceTools(IInputSession session, IWindowService windows, IElementRegistry elements, InputGuardOptions? keyGuard = null,
+        ITakeoverMonitor? takeover = null)
     {
         _windows = windows;
-        _runner = new StepRunner(session, windows, elements, keyGuard);
+        _runner = new StepRunner(session, windows, elements, keyGuard, takeover: takeover);
     }
 
     [McpServerTool(Name = "run_steps", Title = "Run Steps", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = false)]

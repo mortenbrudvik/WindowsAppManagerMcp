@@ -324,6 +324,9 @@ public sealed record HeldInputStatus(
 /// </param>
 /// <param name="HeldInput">Keys and buttons that are down.</param>
 /// <param name="Message">What this means for the agent.</param>
+/// <param name="Takeover">
+/// Takeover detection (roadmap M7.4): off, warn or stop, and whether its hooks work. Null when the server has none.
+/// </param>
 public sealed record ControlStatusResult(
     bool Paused,
     string? PausedBy,
@@ -333,7 +336,8 @@ public sealed record ControlStatusResult(
     PauseHotkeyStatus Hotkey,
     bool SharedPause,
     HeldInputStatus HeldInput,
-    string Message);
+    string Message,
+    TakeoverStatus? Takeover = null);
 
 /// <summary>Result of resume_input.</summary>
 /// <param name="Success">True when input is running after the call.</param>

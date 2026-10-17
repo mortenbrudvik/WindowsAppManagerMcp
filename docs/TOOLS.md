@@ -5213,6 +5213,7 @@ How a drag runs:
 - Refused before the press: nothing was sent (`pressed: false`).
 - The to point refused right before the drop, the pointer kept off it (`CursorClamped`), or the request cancelled after the press: the pointer goes back to the from point and the button and the modifiers are released there, in one batch, where a drop usually changes nothing (an item returns to its place, a slider to its value). The error says so; look at the window before you try again. A cancelled request gets no result.
 - The user's [pause hotkey](#pause-hotkey): the server releases the button and the modifiers at once, where the pointer is, which may drop there. Nothing more is sent (no move back: input is paused), and the call returns `PausedByUser` with `pressed: true`.
+- With [takeover detection](#takeover-detection) set to `stop`, the user's keyboard or mouse input from the press on stops the drag (`UserInterrupted`). Input is not paused, so it ends as a refused drop does: the pointer goes back to the from point and the button and the modifiers are released there, where a drop usually changes nothing; a release where the user moved the pointer would drop there unchecked. With `warn` the drag goes on and the result has a `warning`.
 - SendInput refuses a move or the drop (`SendInputFailed`): what is down is released at once, where the pointer is; the error says which batch failed.
 - Anything else: whatever is still down is released when the call ends.
 
@@ -5511,7 +5512,7 @@ A Windows line break (`\r\n`) and a lone `\r` count as one `\n`, and `length` an
 }
 ```
 
-When another window comes to the front while typing, the call stops with `TargetLostFocus`; when a modal dialog of the target opens (such as a "Save changes?" prompt), it stops with `BlockedByModal` and the dialog in `blockingWindow`. `charactersTyped` says how many characters were typed (into the window that was in front) before it stopped. The user's [pause hotkey](#pause-hotkey) stops typing between batches (`PausedByUser`), and so does a modifier key going down (`ModifiersHeld`); cancelling the request stops it too. An empty `text` returns `EmptyText`, and typed text with a line break or tab but no `controlChars` returns `InvalidArguments`.
+When another window comes to the front while typing, the call stops with `TargetLostFocus`; when a modal dialog of the target opens (such as a "Save changes?" prompt), it stops with `BlockedByModal` and the dialog in `blockingWindow`. `charactersTyped` says how many characters were typed (into the window that was in front) before it stopped. The user's [pause hotkey](#pause-hotkey) stops typing between batches (`PausedByUser`), and so does a modifier key going down (`ModifiersHeld`); cancelling the request stops it too. With [takeover detection](#takeover-detection) set to `stop`, the user's keyboard or mouse input stops typing between batches (`UserInterrupted`, with `charactersTyped`); with `warn` the typing goes on and the result has a `warning`. A paste is one batch and is not watched. An empty `text` returns `EmptyText`, and typed text with a line break or tab but no `controlChars` returns `InvalidArguments`.
 
 #### Typing or pasting
 
@@ -5872,11 +5873,24 @@ For example, in the MCP server configuration: `"env": { "WAM_PAUSE_HOTKEY": "Ctr
 
 If another program already uses the chord, Windows refuses to register it: [get_control_status](#get_control_status) reports `hotkey.state` `Failed` with the reason, and the server logs a warning when it starts. The server tries again every 2 seconds; to use another chord, set `WAM_PAUSE_HOTKEY` and restart the server. If registering fails in another way (Windows refuses the chord for another reason, or the registration throws), the server does not try again, and any key of the chord it had registered is freed, so the hotkey never works while its state says `Failed`. A server that registered the chord marks itself as the chord's holder, so other servers report `OtherServer`; if that mark cannot be made, the hotkey still works and stays `Registered`, and only a server started later reports `Failed` instead of `OtherServer`. Servers configured with different chords each register their own, and every one of those chords pauses all of them. The shared pause is a named event in the user's logon session: a server running as administrator and one that is not may be unable to share it, and then each one keeps its own pause and only its own chord pauses it (`sharedPause: false`, and a warning in its log).
 
-When the server stops, including when the MCP client closes its standard input, it releases any key or button it still holds. A server process that is killed outright cannot release anything. The server does not watch for the user taking over the mouse or keyboard on their own; the hotkey is the way to stop it. A hotkey cannot tell an injected key press from the user's, and the shared pause is a named event any program of the user can open: a program the agent started before the pause could press the chord or resume the shared pause. While input is paused the agent cannot start programs (`launch_application` returns `PausedByUser`).
+When the server stops, including when the MCP client closes its standard input, it releases any key or button it still holds. A server process that is killed outright cannot release anything. The hotkey is the way to stop the server; [takeover detection](#takeover-detection), off by default, can also stop its long input operations when the user takes the mouse or keyboard. A hotkey cannot tell an injected key press from the user's, and the shared pause is a named event any program of the user can open: a program the agent started before the pause could press the chord or resume the shared pause. While input is paused the agent cannot start programs (`launch_application` returns `PausedByUser`).
+
+### Takeover detection
+
+Off by default. When the user turns it on, the server watches for the user's own keyboard and mouse input while a long input operation runs, and stops it (or warns about it) instead of typing or dragging on while the user works (roadmap M7.4). It complements the [pause hotkey](#pause-hotkey), which stays the way to stop the server.
+
+| Variable | Default | Meaning |
+|----------|---------|---------|
+| `WAM_TAKEOVER_DETECTION` | `off` | `off`: nothing is watched. `warn`: the operation goes on, and its result has a `warning` that the user used the keyboard or mouse meanwhile. `stop` (also `on`, `true`, `1`): the operation stops between two batches or steps with `UserInterrupted`, says how far it got, and releases what it held. Any other value is taken as `stop`, and the reason is shown in [get_control_status](#get_control_status) |
+
+- **What is watched.** [type_text](#type_text)'s typing (not a paste), [drag](#drag) from the press to the drop, and [run_steps](#run_steps) from the moment it holds the input gate (a run stops before its next step, or when a step stops for it; a step that is running is not cut off). Short calls (a click, a key chord) are one batch and are not watched.
+- **What counts.** A key, mouse button or wheel going down, or the mouse moving (a burst of at least 4 moves within 300 ms, so a nudge of the desk does not count), when it was not injected. Injected input (SendInput by this server or any other program, the on-screen keyboard among them) never counts. Releasing a key does not count, so letting go of the Enter that sent the prompt does not stop the agent. The pause hotkey's press counts too, but a pause wins: the call returns `PausedByUser`.
+- **What is kept.** Only whether the user acted: never which key or button, never where the pointer was. The server installs low-level keyboard and mouse hooks (`WH_KEYBOARD_LL`, `WH_MOUSE_LL`) on a thread of its own only while one of these operations runs, removes them when the last one ends, and passes all input on unchanged. Input in the first moments of an operation, before the hooks are in, can be missed.
+- **What the agent should do.** After `UserInterrupted`, do not try again at once: the user is using the computer. Ask the user before going on.
 
 ### get_control_status
 
-Whether the user has paused the server's input (and how and since when), whether the pause hotkey is registered, and which keys and buttons are down. Reads only.
+Whether the user has paused the server's input (and how and since when), whether the pause hotkey is registered, which keys and buttons are down, and takeover detection's mode. Reads only.
 
 <!-- tools:begin params:get_control_status -->
 **Parameters:** None
@@ -5913,6 +5927,7 @@ Whether the user has paused the server's input (and how and since when), whether
 | `hotkey` | `chord`, `state` (`Registered`; `OtherServer` when another Windows App Manager server on the desktop has registered the chord, whose presses pause this server too; `Failed`; `Disabled` when `WAM_PAUSE_HOTKEY` is `none`; `NotStarted`), `source` (`default` or `WAM_PAUSE_HOTKEY`) and `error` (why it is not registered, or why the configured chord was not used) |
 | `sharedPause` | `true` when the pause is shared by every Windows App Manager server on the desktop: any server's chord pauses and resumes this one, and so does a confirmed `resume_input` in any of them |
 | `heldInput` | `serverHeld`: keys and buttons the server pressed and could not release (normally empty); `modifiersDown`: modifier keys that are down now, the user's or stuck; `lastRelease`: the last release that sent something (`at`, `reason`, `released`, `stillHeld`) |
+| `takeover` | [Takeover detection](#takeover-detection): `mode` (`Off`, `Warn` or `Stop`), `state` (`Off`; `Ready`: on, with no operation watched, so no hook is installed; `Watching`: an operation is watched now; `Unavailable`: Windows did not install the hooks, so nothing is detected), `source` (`default` or `WAM_TAKEOVER_DETECTION`) and `error` (why the configured value was not used, or why the hooks are not working) |
 | `message` | What this means for the agent |
 
 ---
@@ -6015,6 +6030,7 @@ Run 1 to 50 steps, in order, on the run's `window`. A step is `{tool, args, id, 
 | `stepFailed` | the failed step's own code | A step that is not optional failed: its tool reported an error, or the run did not call it (a reference to a failed step, a window that is not the run's) |
 | `paused` | `PausedByUser` | The user pressed the [pause hotkey](#pause-hotkey) before a step, during the wait between two, or during a step (which then stops as a direct call does). Stop and ask the user; never resume input yourself |
 | `timedOut` | `OperationTimedOut` | `maxDurationMs` ran out before a step, or during one (the step is cancelled, or a wait the run cut to the time left ran out) |
+| `userInterrupted` | `UserInterrupted` | With [takeover detection](#takeover-detection) set to `stop`: the user used the keyboard or mouse during the run, seen before a step or during the wait between two, or a step stopped for it (or failed while the user was at the controls). Do not try again at once; ask the user. With `warn` the run goes on and the result has a `warning` |
 | `foregroundMoved` | `TargetNotForeground` | Once the run's window or one of its windows (above) has been in front, another window is in front before a step: the user (or another program) took the foreground. The run stops instead of taking it back; look at the screen and ask the user. A run whose window never comes to the front (element_action through patterns only, with the agent's terminal in front) is never stopped by this |
 
 A client that cancels the call stops the step that is running; the request gets no result, and what ran stays done. Each step releases the keys and buttons it pressed, as a direct call does, and the run releases anything still held when it ends.
@@ -6109,7 +6125,7 @@ Each item of `steps` contains:
 | `InvalidHandle` | `window` names a window that is gone; nothing was done (a tool error) | Find the window again |
 | `PausedByUser`, `InputBusy` | Before the first step, as for any input call; nothing was done (a tool error) | As for any input call |
 | A step's code | The step failed (`stoppedBy: "stepFailed"`), as its own section describes | Read the failed step's `result` |
-| `PausedByUser`, `OperationTimedOut`, `TargetNotForeground` | The run stopped (`stoppedBy` above) | See the table above |
+| `PausedByUser`, `OperationTimedOut`, `TargetNotForeground`, `UserInterrupted` | The run stopped (`stoppedBy` above) | See the table above |
 
 ---
 
@@ -8568,6 +8584,11 @@ the new tools; their sections have the rest.
   `C:app.exe`, or a command line such as `cmd.exe /c x`) with `InvalidPath`, and start nothing. Such a path was found
   from the server's current folder or drive, which the client does not choose, with only a warning. Full paths, network
   paths (`\\server\share\app.exe`, still with a warning), bare names, URIs and AppUserModelIDs are unchanged.
+- **Takeover detection (roadmap M7.4), opt-in.** New environment variable `WAM_TAKEOVER_DETECTION` (`off` by default,
+  `warn` or `stop`). With `stop`, type_text's typing, drag and run_steps stop with the new error code `UserInterrupted`
+  (run_steps: `stoppedBy` `userInterrupted`) when the user uses the keyboard or mouse meanwhile; with `warn` they go on and
+  the result has a `warning` (new on drag and run_steps). get_control_status reports `takeover` (mode and state). Nothing
+  changes while it is off.
 - **Windows on other virtual desktops (roadmap M7.3).** find_windows rows and get_window_info's `standard` and `full`
   detail carry `isOnOtherDesktop: true` for a cloaked window on another virtual desktop, and leave it out otherwise.
   `Cloaked` errors from focus_window and the capture tools now say whether the window is on another virtual desktop
@@ -8818,6 +8839,7 @@ table, it gives more detail.
 | `UnsupportedBrowser` | [launch_browser_with_debug](#launch_browser_with_debug) (tool error) | `browser` is not chrome, edge or brave |
 | `UrlBarNotFound` | [get_browser_url](#get_browser_url), [get_active_browser_url](#get_active_browser_url) | UI Automation found neither the page's address nor the browser's address bar (roadmap M5.7: looked up by class and structure, never by name) |
 | `UrlExtractionFailed` | [get_browser_url](#get_browser_url), [get_active_browser_url](#get_active_browser_url) | The page gave no address, and the address bar has the keyboard focus (`isEditing`: its text may be typed) or may have it (the browser is not the foreground window, or its focus cannot be read), holds text that is not a URL, or cannot be read (roadmap M5.7) |
+| `UserInterrupted` | [type_text](#type_text), [drag](#drag), [run_steps](#run_steps) | With [takeover detection](#takeover-detection) set to `stop` (`WAM_TAKEOVER_DETECTION`): the user used the keyboard or mouse while the operation ran, so it stopped between two batches or steps and released what it held; the result says how far it got (`charactersTyped`, `pressed`, the steps that ran). Do not try again at once: ask the user before you go on |
 | `WaitTimedOut` | [wait_for_window](#wait_for_window), [wait_for_element](#wait_for_element), [wait_for_browser](#wait_for_browser), [browser_navigate](#browser_navigate), [wait_for_visual](#wait_for_visual) (`changedRegions` as last seen) | The condition did not hold within `timeoutMs` (browser_navigate: the page did not reach `waitUntil`, `loadState: "loading"`; it goes on loading; wait_for_browser: the page's `url` and `title` as last seen). The result still carries `satisfied: false`, `timedOut: true`, `elapsedMs` and the window as last seen (still open, not in front, not on screen, not idle, or with its old title), or for wait_for_element `lastObservedState` and the element as last seen (or no `windowHandle` when its window never appeared), and `error` says what was seen. Nothing was changed: wait again with a longer `timeoutMs`, or check the state with a read tool |
 | `WheelFollowsFocus` | [scroll](#scroll) | Windows sends the wheel to the focused window ("Scroll inactive windows when I hover over them" is off, or the setting cannot be read), and the window at the point is not in front, so the wheel would scroll another window; nothing was sent. Call [focus_window](#focus_window) first |
 | `WindowHidden` | [focus_window](#focus_window), [apply_layout](#apply_layout) (named in an `ArrangeFailed` error, see [apply_layout](#apply_layout)), the [Input Simulation](#input-simulation) tools and [element_action](#element_action) (`windowHandle`, as `TargetNotForeground`), [capture_window](#capture_window), [capture_with_elements](#capture_with_elements) | The window is hidden (no WS_VISIBLE, for example an app's window hidden in the notification area), so it was not activated: keys would go to a window the user cannot see. The captures refuse it too: a hidden window draws nothing |

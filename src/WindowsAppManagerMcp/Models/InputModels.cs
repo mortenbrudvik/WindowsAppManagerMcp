@@ -531,7 +531,16 @@ public enum InputErrorCode
     /// back afterwards (formatted text, an image, files, an application's own data, content marked private, or very long
     /// text), or it could not be opened, read or written. Nothing was pasted, and the clipboard is as it was.
     /// </summary>
-    ClipboardUnavailable = 50
+    ClipboardUnavailable = 50,
+
+    // Takeover detection (roadmap M7.4). Input may have been sent before the stop.
+
+    /// <summary>
+    /// type_text, drag and run_steps with WAM_TAKEOVER_DETECTION=stop: the user used the keyboard or mouse while the operation
+    /// ran, so it stopped between two batches (or two steps) and released what it held. The result says how far it got. Do
+    /// not retry at once: the user is using the computer; ask the user before you go on.
+    /// </summary>
+    UserInterrupted = 51
 }
 
 /// <summary>

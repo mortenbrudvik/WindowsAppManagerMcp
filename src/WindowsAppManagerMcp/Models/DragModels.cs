@@ -113,4 +113,10 @@ public record DragResult(
 
     /// <inheritdoc cref="ClickResult.Observed"/>
     public DesktopState? Observed { get; init; }
+
+    /// <summary>
+    /// With WAM_TAKEOVER_DETECTION=warn: the user used the keyboard or mouse while the drag ran (roadmap M7.4), so it may
+    /// have gone elsewhere. Null otherwise.
+    /// </summary>
+    public string? Warning { get; init; }
 }

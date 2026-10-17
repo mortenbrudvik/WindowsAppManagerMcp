@@ -25,12 +25,17 @@ public class InputControlTools
     private readonly IInputSession _session;
     private readonly IPauseHotkey _hotkey;
     private readonly TimeSpan _answerTimeout;
+    private readonly ITakeoverMonitor? _takeover;
 
     /// <param name="session">The input session.</param>
     /// <param name="hotkey">The pause hotkey.</param>
     /// <param name="answerTimeout">How long resume_input waits for the user; default <see cref="DefaultAnswerTimeout"/>.</param>
-    public InputControlTools(IInputSession session, IPauseHotkey hotkey, TimeSpan? answerTimeout = null)
+    /// <param name="takeover">
+    /// Takeover detection (roadmap M7.4), whose mode and state get_control_status reports; the server always registers it.
+    /// </param>
+    public InputControlTools(IInputSession session, IPauseHotkey hotkey, TimeSpan? answerTimeout = null, ITakeoverMonitor? takeover = null)
     {
+        _takeover = takeover;
         _session = session ?? throw new ArgumentNullException(nameof(session));
         _hotkey = hotkey ?? throw new ArgumentNullException(nameof(hotkey));
         _answerTimeout = answerTimeout ?? DefaultAnswerTimeout;
@@ -38,7 +43,8 @@ public class InputControlTools
 
     [McpServerTool(Name = "get_control_status", Title = "Get Input Control Status", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
     [Description("Whether the user has paused the server's input with the pause hotkey (and how and since when), whether the pause hotkey " +
-                 "is registered, and which keys or mouse buttons are held down. Reads only. While paused is true, every input tool " +
+                 "is registered, which keys or mouse buttons are held down, and takeover detection's mode (off, warn or stop: " +
+                 "whether type_text, drag and run_steps stop when the user uses the keyboard or mouse). Reads only. While paused is true, every input tool " +
                  "(mouse_click, type_text, send_keys, ...) and every tool that changes windows or starts or stops processes return " +
                  "PausedByUser: stop, tell the user, and wait for them. Never try to resume input yourself.")]
     public ControlStatusResult GetControlStatus()
@@ -84,7 +90,8 @@ public class InputControlTools
             hotkey,
             shared,
             new HeldInputStatus(serverHeld, modifiersDown, _session.LastRelease),
-            message);
+            message,
+            _takeover?.Status);
     }
 
     [McpServerTool(Name = "resume_input", Title = "Resume Input (Asks the User)", ReadOnly = false, Destructive = false, Idempotent = true, OpenWorld = false)]

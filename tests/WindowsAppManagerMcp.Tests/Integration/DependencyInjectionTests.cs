@@ -156,6 +156,21 @@ public class DependencyInjectionTests : IDisposable
     }
 
     [Fact]
+    public void TypeTextDragRunStepsAndTheControlStatus_GetTheTakeoverMonitor()
+    {
+        // Takeover detection (roadmap M7.4): built without it, WAM_TAKEOVER_DETECTION=stop would silently stop nothing
+        var monitor = _serviceProvider.GetRequiredService<ITakeoverMonitor>();
+        static object? Field(object service, string name) =>
+            service.GetType().GetField(name, BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(service);
+
+        Field(_serviceProvider.GetRequiredService<IInputSimulationService>(), "_takeover").Should().BeSameAs(monitor);
+        Field(_serviceProvider.GetRequiredService<InputControlTools>(), "_takeover").Should().BeSameAs(monitor);
+        var runner = Field(_serviceProvider.GetRequiredService<StepSequenceTools>(), "_runner")!;
+        Field(runner, "_takeover").Should().BeSameAs(monitor);
+        monitor.Mode.Should().Be(TakeoverMode.Off, "the tests run without WAM_TAKEOVER_DETECTION, and off is the default");
+    }
+
+    [Fact]
     public void TheDialogAndMenuPathServices_ActOnlyThroughTheOneElementActionService_AndTheirToolsResolve()
     {
         // respond_to_dialog, file_dialog and menu_path (roadmap M3.5, M3.14) press, set and expand through element_action's
