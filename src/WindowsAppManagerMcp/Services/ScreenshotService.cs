@@ -38,11 +38,21 @@ public class ScreenshotService : IScreenshotService
         "captured. An app that hid its window in the notification area has to show it first; ask the user, or find the " +
         "visible window with find_windows.";
 
-    /// <summary>The Cloaked message.</summary>
+    /// <summary>The Cloaked message when the virtual desktop manager cannot say why the window is cloaked.</summary>
     public const string CloakedMessage =
         "The window is cloaked: it is on another virtual desktop, it is a suspended Store app, or its app hid it. Windows " +
         "does not draw it, so it was not captured. Ask the user to switch to its desktop, or find the visible window with " +
         "find_windows.";
+
+    /// <summary>The Cloaked message for a window on another virtual desktop (roadmap M7.3).</summary>
+    public const string OtherDesktopMessage =
+        "The window is on another virtual desktop, so Windows does not draw it and it was not captured. The server does not " +
+        "switch desktops: ask the user to switch to its desktop, or capture a window on this desktop.";
+
+    /// <summary>The Cloaked message for a cloaked window on no virtual desktop (roadmap M7.3).</summary>
+    public const string NoDesktopMessage =
+        "The window is cloaked and on no virtual desktop: it is the frame of a suspended or prelaunched Store app, or its app " +
+        "hid it. Windows does not draw it, so it was not captured. Find the visible window with find_windows.";
 
     /// <summary>How long a window restored for a capture may take to stop painting (two equal frames).</summary>
     public static readonly TimeSpan DefaultRestoreSettleTimeout = TimeSpan.FromMilliseconds(1500);
@@ -70,6 +80,7 @@ public class ScreenshotService : IScreenshotService
     private readonly ICaptureRegistry? _captureRegistry;
     private readonly ICaptureTargetPolicy? _capturePolicy;
     private readonly ITargetPolicy? _targetPolicy;
+    private readonly INativeVirtualDesktopWrapper? _virtualDesktops;
 
     // The windows restoreIfMinimized has restored for a capture, by how many restores: they are minimized again afterwards,
     // so their captures keep no visual signature (roadmap M6.4)
@@ -105,6 +116,10 @@ public class ScreenshotService : IScreenshotService
     /// The user's target policy, so the visual signature of a screen capture lists the denied windows over it only when the
     /// policy denies anything (roadmap M6.4, owner decision D8). Null: every window over it is checked.
     /// </param>
+    /// <param name="virtualDesktops">
+    /// The shell's virtual desktop manager (roadmap M7.3): a Cloaked refusal says whether the window is on another virtual
+    /// desktop. The server always passes it; without it the refusal names every cause.
+    /// </param>
     public ScreenshotService(
         IScreenCaptureWrapper captureWrapper,
         IMonitorService monitorService,
@@ -114,8 +129,10 @@ public class ScreenshotService : IScreenshotService
         TimeSpan? restoreStateTimeout = null,
         ICaptureRegistry? captureRegistry = null,
         ICaptureTargetPolicy? capturePolicy = null,
-        ITargetPolicy? targetPolicy = null)
+        ITargetPolicy? targetPolicy = null,
+        INativeVirtualDesktopWrapper? virtualDesktops = null)
     {
+        _virtualDesktops = virtualDesktops;
         _capturePolicy = capturePolicy;
         _targetPolicy = targetPolicy;
         _captureRegistry = captureRegistry;
@@ -549,7 +566,12 @@ public class ScreenshotService : IScreenshotService
         var root = Root(windowHandle);
         if (_windows.IsCloaked(windowHandle) || (root != windowHandle && _windows.IsCloaked(root)))
         {
-            return new CaptureRefusal(ScreenshotErrorCode.Cloaked, CloakedMessage);
+            return new CaptureRefusal(ScreenshotErrorCode.Cloaked, VirtualDesktops.PlacementOf(_virtualDesktops, root) switch
+            {
+                VirtualDesktopPlacement.OtherDesktop => OtherDesktopMessage,
+                VirtualDesktopPlacement.NoDesktop => NoDesktopMessage,
+                _ => CloakedMessage
+            });
         }
 
         if (FindMinimizedWindow(windowHandle) != null)

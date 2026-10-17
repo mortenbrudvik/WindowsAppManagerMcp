@@ -142,6 +142,20 @@ public class DependencyInjectionTests : IDisposable
     }
 
     [Fact]
+    public void TheWindowListingsFocusAndCapture_GetTheVirtualDesktopManager()
+    {
+        // isOnOtherDesktop and the Cloaked messages that name another virtual desktop (roadmap M7.3). Built without it,
+        // the field would silently be left out and the messages would name every cause
+        var desktops = _serviceProvider.GetRequiredService<INativeVirtualDesktopWrapper>();
+        static object? Field(object service, string name) =>
+            service.GetType().GetField(name, BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(service);
+
+        Field(_serviceProvider.GetRequiredService<WindowFinderTools>(), "_virtualDesktops").Should().BeSameAs(desktops);
+        Field(_serviceProvider.GetRequiredService<IForegroundService>(), "_virtualDesktops").Should().BeSameAs(desktops);
+        Field(_serviceProvider.GetRequiredService<IScreenshotService>(), "_virtualDesktops").Should().BeSameAs(desktops);
+    }
+
+    [Fact]
     public void TheDialogAndMenuPathServices_ActOnlyThroughTheOneElementActionService_AndTheirToolsResolve()
     {
         // respond_to_dialog, file_dialog and menu_path (roadmap M3.5, M3.14) press, set and expand through element_action's

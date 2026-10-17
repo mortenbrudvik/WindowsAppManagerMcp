@@ -310,7 +310,7 @@
 | Phase 10: Screenshot Capture | ██████████ 100% |
 | Phase 11: Enhanced Visual Tools | ███████░░░ 67% (2 of 3; 3 moved to Phase 13) |
 | Phase 12: Advanced Automation | ██████████ 100% |
-| Phase 13: Automation Roadmap | █████████░ 90% (M0-M5 done, M6 in progress: 71 of 78 items) |
+| Phase 13: Automation Roadmap | █████████░ 92% (M0-M5 done, M6 done but for M6.1's 3.0.0 removals, M7 in progress: 72 of 78 items) |
 
 **Core Implementation: ~98%**
 **With Screenshot: 100%**
@@ -728,7 +728,7 @@ M3 is complete on the integration branch `m3-semantic-find-act-wait` (PR #6) and
 |---|------|--------|----------|--------|-------|
 | M7.1 | Windows.Graphics.Capture backend, cursor, grid and zoom | ⏳ Pending | P3 | L | PrintWindow returns black frames for some DirectComposition, WinUI and UWP surfaces, and its fallback captures whatever window is covering the target. The model also cannot see the cursor or a coordinate grid. |
 | M7.2 | Window event journal | ⏳ Pending | P3 | L | Answer 'did a dialog pop up, did focus move, did the title change' in one cheap call, catch transient popups that polling misses, and let waits wake on events. |
-| M7.3 | Virtual desktop awareness (detection only) | ⏳ Pending | P3 | S | Windows on other virtual desktops show up unmarked, and snapping or capturing them silently does nothing useful. |
+| M7.3 | Virtual desktop awareness (detection only) | ✅ Complete | P3 | S | Branch `m7-3-virtual-desktops`. Built on the read-only INativeVirtualDesktopWrapper (IsWindowOnCurrentVirtualDesktop and GetWindowDesktopId on an MTA thread with a 1 s deadline; MoveWindowToDesktop is not declared) that close_application's otherDesktopWindows already used. find_windows and get_window_info (standard, full) mark a cloaked window on another desktop with isOnOtherDesktop: true, asking the manager once per listing and only about cloaked rows. focus_window's and the capture tools' Cloaked refusals say whether the window is on another desktop (activating it would switch the user's desktop), a suspended or prelaunched Store frame, or unknown. Listings already showed only the current desktop; includeCloaked stays the way to widen them, so the roadmap's includeOtherDesktops parameter was not added (schema budget). No desktop switching or moves. Not run on a real desktop with a second virtual desktop. |
 | M7.4 | User-takeover detection (opt-in, warning-first) | ⏳ Pending | P3 | S | Long injections keep going after the user grabs the mouse. This complements the M1.10 pause hotkey, which remains the primary control. |
 | M7.5 | Workspace snapshot and restore (best effort) | ⏳ Pending | P3 | L | 'Restore my morning workspace' should reopen the right files, folders and URLs, not only the window rectangles. |
 | M7.6 | Scenario evaluation harness with a round-trip metric | ⏳ Pending | P3 | M | A repeatable suite of real desktop tasks that measures success rate, tool calls per task and response size, so automation improvements can be quantified. |

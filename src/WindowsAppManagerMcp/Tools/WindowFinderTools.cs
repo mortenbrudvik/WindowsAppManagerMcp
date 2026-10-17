@@ -15,6 +15,7 @@ public partial class WindowFinderTools
     private readonly INativeHitTestWrapper? _hitTest;
     private readonly IWindowWaitService? _windowWait;
     private readonly IProcessSecurityProbe? _securityProbe;
+    private readonly INativeVirtualDesktopWrapper? _virtualDesktops;
 
     /// <param name="windowService">Window reads and the window selectors.</param>
     /// <param name="hitTest">The client-area read of get_window_info's detail 'full'; without it clientBounds is left out.</param>
@@ -23,12 +24,18 @@ public partial class WindowFinderTools
     /// The integrity read of get_window_info's detail 'full' (roadmap M6.6); the server always registers it. Without it
     /// integrityLevel, elevated and aboveServer are left out.
     /// </param>
+    /// <param name="virtualDesktops">
+    /// The shell's virtual desktop manager, which marks a cloaked window on another virtual desktop with isOnOtherDesktop
+    /// (roadmap M7.3); the server always registers it. Without it isOnOtherDesktop is left out.
+    /// </param>
     public WindowFinderTools(
         IWindowService windowService,
         INativeHitTestWrapper? hitTest = null,
         IWindowWaitService? windowWait = null,
-        IProcessSecurityProbe? securityProbe = null)
+        IProcessSecurityProbe? securityProbe = null,
+        INativeVirtualDesktopWrapper? virtualDesktops = null)
     {
+        _virtualDesktops = virtualDesktops;
         _windowService = windowService;
         _hitTest = hitTest;
         _windowWait = windowWait;
@@ -60,7 +67,7 @@ public partial class WindowFinderTools
         bool visibleOnly = true,
         [Description("Exact window class name to match (case-insensitive), e.g. 'Notepad', '#32770' for a dialog or 'Shell_TrayWnd' for the taskbar. Skips the user-facing filter, so untitled and shell windows of that class are found too")]
         string? className = null,
-        [Description("Also return cloaked windows: windows on other virtual desktops and suspended apps, which are not on screen (default: false)")]
+        [Description("Also return cloaked windows: windows on other virtual desktops (isOnOtherDesktop: true) and suspended apps, which are not on screen (default: false)")]
         bool includeCloaked = false,
         [Description("Also return tool windows: floating palettes and helper windows that are kept out of the taskbar and Alt+Tab (default: false)")]
         bool includeToolWindows = false,
@@ -111,7 +118,7 @@ public partial class WindowFinderTools
                 Limit = limit
             });
 
-            return results.Select(ToDto).ToList();
+            return MarkOtherDesktops(results.Select(ToDto).ToList());
         }
         catch (RegexMatchTimeoutException)
         {
@@ -147,13 +154,31 @@ public partial class WindowFinderTools
             }
 
             var (integrity, aboveServer) = ReadIntegrity(details.Window);
-            return WindowDetailsResult.Full(details, _hitTest?.GetClientAreaOnScreen(hwnd), integrity, aboveServer);
+            return MarkOtherDesktop(WindowDetailsResult.Full(details, _hitTest?.GetClientAreaOnScreen(hwnd), integrity, aboveServer));
         }
 
         return _windowService.GetWindowInfo(hwnd) is { } info
-            ? detail == WindowDetail.Compact ? WindowDetailsResult.Compact(info) : WindowDetailsResult.Standard(info)
+            ? detail == WindowDetail.Compact ? WindowDetailsResult.Compact(info) : MarkOtherDesktop(WindowDetailsResult.Standard(info))
             : WindowDetailsResult.InvalidHandle(hwnd);
     }
+
+    /// <summary>
+    /// Marks the cloaked windows the shell's virtual desktop manager puts on another virtual desktop (roadmap M7.3), asked
+    /// in one call; a listing without cloaked windows does not ask it.
+    /// </summary>
+    private List<WindowInfoDto> MarkOtherDesktops(List<WindowInfoDto> windows)
+    {
+        var cloaked = windows.Where(w => w.IsCloaked).Select(w => (nint)w.Handle).Distinct().ToList();
+        var elsewhere = VirtualDesktops.OnOtherDesktops(_virtualDesktops, cloaked);
+        return elsewhere.Count == 0
+            ? windows
+            : windows.Select(w => elsewhere.Contains((nint)w.Handle) ? w with { IsOnOtherDesktop = true } : w).ToList();
+    }
+
+    private WindowDetailsResult MarkOtherDesktop(WindowDetailsResult result) =>
+        result.IsCloaked == true && VirtualDesktops.OnOtherDesktops(_virtualDesktops, [(nint)result.Handle]).Count > 0
+            ? result with { IsOnOtherDesktop = true }
+            : result;
 
     /// <summary>
     /// The integrity of the window's process (for a UWP frame, the app's), and whether it or the frame host runs above the
@@ -267,7 +292,9 @@ public partial class WindowFinderTools
 /// right and bottom); VisibleBounds is the visible frame, the rect set_window_bounds, move_window and the geometry
 /// results use (omitted when DWM cannot report it). Title is cut to <see cref="AppText.MaxLength"/> characters, the
 /// ellipsis of a cut one included (roadmap M3.F14); the filters compare the whole title. IsTopmost is true for a topmost
-/// window and omitted for every other (roadmap M6.7).
+/// window and omitted for every other (roadmap M6.7). IsOnOtherDesktop is true for a cloaked window the shell's virtual
+/// desktop manager puts on another virtual desktop, and omitted for every other (roadmap M7.3); the server never switches
+/// desktops or moves a window between them.
 /// </summary>
 public record WindowInfoDto(
     long Handle,
@@ -285,14 +312,15 @@ public record WindowInfoDto(
     int? HostProcessId = null,
     bool? IsAgentHost = null,
     BoundsDto? VisibleBounds = null,
-    bool? IsTopmost = null
+    bool? IsTopmost = null,
+    bool? IsOnOtherDesktop = null
 );
 
 /// <summary>
 /// get_window_info's result (roadmap M2.4): one window at the detail asked for. Compact has handle, title, processName,
 /// processId and state; standard adds what find_windows reports (VisibleBounds included); full adds the fields after
 /// VisibleBounds, the integrity of the window's process among them (roadmap M6.6; AboveServer only when true). Fields a
-/// detail level does not report are left out.
+/// detail level does not report are left out. IsOnOtherDesktop (standard and full) is as find_windows reports it.
 /// </summary>
 public sealed record WindowDetailsResult(
     bool Success,
@@ -321,6 +349,7 @@ public sealed record WindowDetailsResult(
     IntegrityLevel? IntegrityLevel = null,
     bool? Elevated = null,
     bool? AboveServer = null,
+    bool? IsOnOtherDesktop = null,
     string? Error = null,
     string? ErrorCode = null)
 {

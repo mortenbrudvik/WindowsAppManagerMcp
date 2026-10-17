@@ -822,6 +822,30 @@ public class ScreenshotServiceTests
         _mockCaptureWrapper.Verify(c => c.CaptureWindowFromScreen(It.IsAny<nint>(), It.IsAny<bool>()), Times.Never);
     }
 
+    [Theory]
+    [InlineData(VirtualDesktopPlacement.OtherDesktop, ScreenshotService.OtherDesktopMessage)]
+    [InlineData(VirtualDesktopPlacement.NoDesktop, ScreenshotService.NoDesktopMessage)]
+    [InlineData(VirtualDesktopPlacement.Unknown, ScreenshotService.CloakedMessage)]
+    public void CaptureWindow_OfACloakedWindow_SaysWhetherItIsOnAnotherVirtualDesktop(
+        VirtualDesktopPlacement placement, string message)
+    {
+        // Arrange - roadmap M7.3: the virtual desktop manager tells a window on another desktop from a hidden one
+        _windows.Setup(w => w.IsWindow(It.IsAny<nint>())).Returns(true);
+        _windows.Setup(w => w.IsCloaked(PixelWindow)).Returns(true);
+        var desktops = new Mock<INativeVirtualDesktopWrapper>();
+        desktops.Setup(d => d.GetPlacements(It.IsAny<IReadOnlyList<nint>>())).Returns([placement]);
+        var sut = new ScreenshotService(_mockCaptureWrapper.Object, _mockMonitorService.Object, _windows.Object, _calls.Object,
+            virtualDesktops: desktops.Object);
+
+        // Act
+        var result = sut.CaptureWindow(PixelWindow, includeFrame: true, FullResolution).Metadata;
+
+        // Assert
+        result.ErrorCode.Should().Be(nameof(ScreenshotErrorCode.Cloaked));
+        result.Error.Should().Be(message);
+        _mockCaptureWrapper.Verify(c => c.CaptureWindow(It.IsAny<nint>(), It.IsAny<bool>()), Times.Never);
+    }
+
     [Fact]
     public void CapturePixels_OfAWindowWithFrame_IsCutToTheVisibleFrame_AsCaptureWindowIs()
     {
