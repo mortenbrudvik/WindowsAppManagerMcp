@@ -199,7 +199,7 @@ public static class WrapperCatalog
             },
             // Windows OCR (roadmap M6.3): recognizes text in pixels the server already holds, through the WinRT projection of
             // Windows.Media.Ocr. It reads no window or screen, sends no input and changes nothing; the capture it reads went through
-            // IScreenCaptureWrapper above. NativeCallGuardTests cannot see WinRT calls, so WinRtProjectionGuardTests keeps them here
+            // IScreenCaptureWrapper above. NativeCallGuardTests cannot see WinRT calls through P/Invoke, so its WinRtProjection tests keep them in OcrEngineWrapper
             [typeof(IOcrEngineWrapper)] = new Dictionary<string, WrapperMember>
             {
                 [nameof(IOcrEngineWrapper.GetCapabilities)] = WrapperMember.Read,

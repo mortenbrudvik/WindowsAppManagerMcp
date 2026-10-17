@@ -88,6 +88,40 @@ public class OcrTextMatcherTests
     }
 
     [Fact]
+    public void ContainsAndExact_IgnoreTheSpacesOcrPutsBetweenJapaneseWords()
+    {
+        // Windows OCR joins the words of a Japanese or Chinese line with spaces: "保存 する" for 保存する
+        var line = "保存 する";
+        (int, int)[] words = [(0, 2), (3, 5)];
+
+        var contains = Matcher("保存する").Find(line, words);
+        var exact = Matcher("保存する", OcrTextMatch.Exact).Find(line, words);
+        var partial = Matcher("存す", OcrTextMatch.Exact).Find(line, words);
+
+        contains.Should().Equal((0, 5));
+        exact.Should().Equal((0, 5));
+        partial.Should().BeEmpty("存す starts inside the word 保存");
+    }
+
+    [Fact]
+    public void ASpaceBetweenLatinAndJapanese_StillCounts()
+    {
+        Find(Matcher("Save保存"), "Save 保存").Should().BeEmpty();
+        Find(Matcher("Save 保存"), "Save 保存").Should().Equal("Save 保存");
+    }
+
+    [Fact]
+    public void Regex_ThatUsesUpTheBudgetOfTheWholeSearch_Throws()
+    {
+        // 100 ms per line, but a pattern that takes 90 ms on each of 300 lines must not hold the call for half a minute
+        var matcher = OcrTextMatcher.TryCreate("a", OcrTextMatch.Regex, false, out _, regexBudget: TimeSpan.Zero)!;
+
+        var act = () => matcher.Find("a line", Words("a line"));
+
+        act.Should().Throw<RegexMatchTimeoutException>();
+    }
+
+    [Fact]
     public void Regex_RunsOnTheLineAsRead_IgnoringCaseUnlessCaseSensitive()
     {
         Find(Matcher(@"alpha\s+\d+", OcrTextMatch.Regex), "Canvas ALPHA 4711, alpha 42").Should().Equal("ALPHA 4711", "alpha 42");

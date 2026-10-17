@@ -9,9 +9,11 @@ namespace WindowsAppManagerMcp.Services;
 /// into text an agent can log and search, so a monitor or region read blacks them out before OCR, as a window target is
 /// refused. Read from the drawn top-level windows (visible, not minimized, not cloaked) in z-order: a denied window's
 /// rectangle, less what opaque windows above it cover. Over-masking is the safe side: a denied window's rectangle includes
-/// its invisible resize borders; only a window that is neither layered nor click-through counts as opaque, and only by its
-/// visible frame; and a window the policy cannot check is denied (fail-closed). Masking by rectangle cannot hide denied
-/// content another app draws (a remote desktop, a screen share).
+/// its invisible resize borders; only a window that is neither layered, click-through nor drawn through DirectComposition
+/// counts as opaque, and only by its visible frame; a window the policy cannot check is denied, and a denied window that
+/// cannot be placed refuses the read (fail-closed). Masking by rectangle cannot hide denied content another app draws (a
+/// remote desktop, a screen share), a denied process's child window inside an allowed window, or what shows through a
+/// window shaped with a region or with blur-behind, which counts as opaque.
 /// </summary>
 public sealed class DeniedWindowMask
 {
@@ -27,6 +29,9 @@ public sealed class DeniedWindowMask
     }
 
     /// <summary>The screen areas of the denied windows as the screen shows them now, per window, in screen pixels.</summary>
+    /// <exception cref="DeniedWindowUnlocatedException">
+    /// A drawn window the policy denies has no rectangle to read, so its area cannot be blacked out (fail-closed).
+    /// </exception>
     public IReadOnlyList<DeniedWindowArea> Read()
     {
         var topLevel = new List<nint>();
@@ -40,9 +45,19 @@ public sealed class DeniedWindowMask
         var covered = new List<Rectangle>();
         foreach (var handle in topLevel)
         {
-            if (!_windows.IsWindowVisible(handle) || _windows.IsIconic(handle) || _windows.IsCloaked(handle) ||
-                _windows.GetWindowRect(handle) is not { } rect)
+            if (!_windows.IsWindowVisible(handle) || _windows.IsIconic(handle) || _windows.IsCloaked(handle))
             {
+                continue;
+            }
+
+            if (_windows.GetWindowRect(handle) is not { } rect)
+            {
+                // A window that cannot be placed hides nothing; one the policy denies cannot be blacked out
+                if (!_windowService.EvaluateTargetPolicy(handle).Allowed)
+                {
+                    throw new DeniedWindowUnlocatedException(handle);
+                }
+
                 continue;
             }
 
@@ -140,11 +155,13 @@ public sealed class DeniedWindowMask
     }
 
     /// <summary>
-    /// Whether the window paints all of its visible frame: a layered window can be partly or wholly transparent, and a
-    /// click-through (WS_EX_TRANSPARENT) one is usually an overlay, so neither hides what is below it.
+    /// Whether the window paints all of its visible frame: a layered window can be partly or wholly transparent, a
+    /// click-through (WS_EX_TRANSPARENT) one is usually an overlay, and one drawn through DirectComposition
+    /// (WS_EX_NOREDIRECTIONBITMAP: Windows Terminal, UWP frames) can be translucent, so none of them hides what is below it.
     /// </summary>
     private bool IsOpaque(nint handle) =>
-        ((long)_windows.GetWindowLongPtr(handle, NativeEnums.GWL_EXSTYLE) & (NativeEnums.WS_EX_LAYERED | NativeEnums.WS_EX_TRANSPARENT)) == 0;
+        ((long)_windows.GetWindowLongPtr(handle, NativeEnums.GWL_EXSTYLE) &
+         (NativeEnums.WS_EX_LAYERED | NativeEnums.WS_EX_TRANSPARENT | NativeEnums.WS_EX_NOREDIRECTIONBITMAP)) == 0;
 
     /// <summary>The visible frame (without the invisible resize borders), or the window rectangle when DWM has none.</summary>
     private Rectangle VisibleFrame(nint handle, Rectangle bounds) =>
@@ -155,3 +172,11 @@ public sealed class DeniedWindowMask
 
 /// <summary>The parts of the screen a denied window shows on, in screen pixels.</summary>
 public sealed record DeniedWindowArea(nint Window, IReadOnlyList<Rectangle> Areas);
+
+/// <summary>A drawn window the user's policy denies whose rectangle could not be read, so it cannot be blacked out.</summary>
+public sealed class DeniedWindowUnlocatedException(nint window)
+    : Exception($"A window the user's policy denies (0x{window:X}) is on screen, but its place could not be read, so it cannot be blacked out.")
+{
+    /// <summary>The window.</summary>
+    public nint Window { get; } = window;
+}

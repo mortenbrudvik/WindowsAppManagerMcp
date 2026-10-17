@@ -74,6 +74,26 @@ public class OcrImageTests
         }
     }
 
+    [Theory]
+    [InlineData(25_000, 3_000, 10_000)]
+    [InlineData(12_000, 1_000, 10_000)]
+    public void Tiles_AWordAsWideAsTheOverlap_WithItsCentreInACore_LiesWholeInThatTile(int width, int height, int max)
+    {
+        var tiles = OcrImage.Tiles(width, height, max);
+        const int half = OcrImage.TileOverlap / 2;
+
+        // A word of TileOverlap pixels centred on the first and the last column of each core (the worst cases)
+        foreach (var tile in tiles)
+        {
+            foreach (var centre in new[] { tile.Core.Left, tile.Core.Right - 1 })
+            {
+                var (left, right) = (Math.Max(0, centre - half), Math.Min(width, centre + half));
+                (left >= tile.Area.Left && right <= tile.Area.Right).Should().BeTrue(
+                    $"a word at {left}-{right} centred in the core {tile.Core} must lie in the tile {tile.Area}");
+            }
+        }
+    }
+
     [Fact]
     public void Crop_CopiesTheRowsOfTheArea()
     {

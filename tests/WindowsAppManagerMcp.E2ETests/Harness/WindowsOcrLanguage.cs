@@ -30,3 +30,13 @@ public sealed class WindowsOcrLanguage : IDesktopTestRequirement
         }
     }
 }
+
+/// <summary>
+/// A monitor at another scale (<see cref="MonitorAtAnotherScale"/>) and an installed Windows OCR language
+/// (<see cref="WindowsOcrLanguage"/>): an OCR scenario on that monitor needs both, and <c>Requires</c> takes one type.
+/// </summary>
+public sealed class MonitorAtAnotherScaleAndOcrLanguage : IDesktopTestRequirement
+{
+    /// <inheritdoc />
+    public string? MissingReason => new MonitorAtAnotherScale().MissingReason ?? new WindowsOcrLanguage().MissingReason;
+}

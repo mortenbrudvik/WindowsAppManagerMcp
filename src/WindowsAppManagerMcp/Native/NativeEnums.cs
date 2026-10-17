@@ -62,6 +62,7 @@ internal static class NativeEnums
     public const long WS_EX_TOOLWINDOW = 0x00000080;
     public const long WS_EX_APPWINDOW = 0x00040000;
     public const long WS_EX_LAYERED = 0x00080000;
+    public const long WS_EX_NOREDIRECTIONBITMAP = 0x00200000;
     public const long WS_EX_NOACTIVATE = 0x08000000;
 
     // DwmGetWindowAttribute attributes

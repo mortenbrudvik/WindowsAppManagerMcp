@@ -46,10 +46,10 @@ public class FixtureOcrTests
         AssertEveryCanvasLineIsRead(canvas, result);
     }
 
-    [DesktopNoInputFact(Requires = typeof(MonitorAtAnotherScale))]
+    [DesktopNoInputFact(Requires = typeof(MonitorAtAnotherScaleAndOcrLanguage))]
     public async Task ReadScreenText_OnAMonitorAtAnotherScale_ReadsEveryCanvasLine_InsideItsRectangle()
     {
-        // Arrange - the canvas follows --other-scale-monitor; an OCR language is needed too (OcrUnavailable says so)
+        // Arrange - the canvas follows --other-scale-monitor
         using var e2e = E2ESession.Start(DesktopTier.NoInput, _output,
             new FixtureLaunchOptions { OpenCanvas = true, OtherScaleMonitor = true });
         var canvas = OpenedCanvas(e2e);
@@ -231,13 +231,21 @@ public class FixtureOcrTests
             .Should().BeTrue($"focus_window reported isForeground={focus.IsForeground} ({focus.ErrorCode}: {focus.Error})");
     }
 
-    /// <summary>Each canvas line is an OCR line with the same words, whose box (and each word's) lies in the drawn cell.</summary>
+    /// <summary>
+    /// Each canvas line is an OCR line with the same words, whose box (and each word's) lies in the drawn cell. The large dark
+    /// lines must be read exactly; the 9-point and the light-on-dark lines with look-alike characters folded (O and 0, l, I
+    /// and 1), since OCR has no way to tell those apart and the desktop check records such misreads rather than fails on them.
+    /// </summary>
     private void AssertEveryCanvasLineIsRead(FixtureCanvas canvas, ScreenTextResult result)
     {
         var problems = new List<string>();
         foreach (var drawn in canvas.Lines)
         {
-            var read = result.Lines!.FirstOrDefault(l => Normalize(l.Text) == Normalize(drawn.Text));
+            var style = FixtureContract.CanvasLines.Single(l => l.Text == drawn.Text);
+            var exact = style.FontSize >= 20 && !style.LightOnDark;
+            var read = result.Lines!.FirstOrDefault(l => exact
+                ? Normalize(l.Text) == Normalize(drawn.Text)
+                : Fold(Normalize(l.Text)) == Fold(Normalize(drawn.Text)));
             if (read == null)
             {
                 problems.Add($"'{drawn.Text}' was not read as one line");
@@ -251,7 +259,7 @@ public class FixtureOcrTests
 
             foreach (var word in drawn.Words)
             {
-                var readWord = read.Words?.FirstOrDefault(w => string.Equals(w.Text, word.Text, StringComparison.OrdinalIgnoreCase));
+                var readWord = read.Words?.FirstOrDefault(w => Fold(w.Text.ToUpperInvariant()) == Fold(word.Text.ToUpperInvariant()));
                 if (readWord != null && !Inside(readWord.Bounds, word.Rect))
                 {
                     problems.Add($"'{word.Text}' was read at {readWord.Bounds}, outside its cell {word.Rect}");
@@ -267,6 +275,9 @@ public class FixtureOcrTests
         box.X + box.Width <= cell.X + cell.Width + BoxTolerance && box.Y + box.Height <= cell.Y + cell.Height + BoxTolerance;
 
     private static string Normalize(string text) => Regex.Replace(text.Trim(), @"\s+", " ").ToUpperInvariant();
+
+    /// <summary>Upper-case text with the characters OCR confuses made one: O as 0, and L and I as 1.</summary>
+    private static string Fold(string upper) => upper.Replace('O', '0').Replace('L', '1').Replace('I', '1');
 
     private void Log(ScreenTextResult result) =>
         _output.WriteLine($"{result.ErrorCode} {result.Error} language={result.Language} ocrScale={result.OcrScale} " +

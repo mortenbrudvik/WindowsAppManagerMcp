@@ -286,6 +286,21 @@ public class OcrServiceTests
     }
 
     [Fact]
+    public async Task ReadText_ADeniedWindowThatCannotBeLocated_RefusesTheRead()
+    {
+        var target = new CaptureTarget.Monitor(0);
+        Captures(target, 400, 300, x: 0, y: 0, scale: 2.0, method: "ScreenBitBlt");
+        _desktop = [new DeniedWindowMaskTests.FakeWindow(1, new Rectangle(100, 50, 100, 50), Denied: true, RectUnreadable: true)];
+
+        var result = await CreateSut().ReadTextAsync(Request(target), OcrDetail.Lines, 150, null, CancellationToken.None);
+
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(nameof(ScreenshotErrorCode.CaptureFailed));
+        result.Error.Should().Contain("denies");
+        _engine.Recognitions.Should().BeEmpty();
+    }
+
+    [Fact]
     public async Task ReadText_AWindowThatDrewItself_IsNotMasked()
     {
         Captures(WindowTarget, 400, 300, x: 0, y: 0, scale: 2.0, method: "PrintWindow");
@@ -331,7 +346,7 @@ public class OcrServiceTests
                 .ToArray();
             return new OcrPage(null, inside);
         };
-        foreach (var tile in OcrImage.Tiles(1000, 100, _engine.MaxImageDimension))
+        foreach (var tile in OcrImage.Tiles(1000, 100, _engine.MaxImageDimension, OcrImage.OverlapFor(_engine.MaxImageDimension)))
         {
             tiles.Enqueue(tile.Area);
         }
@@ -342,7 +357,7 @@ public class OcrServiceTests
     {
         _engine.MaxImageDimension = 600;
         Captures(WindowTarget, 1000, 100, x: 0, y: 0, scale: 2.0);
-        // Tiles 0-564 and 436-1000 (cores 0-500, 500-1000): "middle" lies in both
+        // Tiles 0-575 and 425-1000 (an overlap of 150, a quarter of 600; cores 0-500, 500-1000): "middle" lies in both
         PlaceWords((100, 10, "left"), (460, 50, "middle"), (800, 10, "right"));
         var progress = new RecordingProgress<OperationProgress>();
 
@@ -360,10 +375,10 @@ public class OcrServiceTests
     {
         _engine.MaxImageDimension = 600;
         Captures(WindowTarget, 1000, 100, x: 0, y: 0, scale: 2.0);
-        // One line of three words at 400-440, 450-490 and 500-540 of the image; both tiles (0-564 and 436-1000) read part of it
+        // One line of three words at 400-440, 450-490 and 500-540 of the image; both tiles (0-575 and 425-1000) read part of it
         _engine.Read = (_, _, _, _) => _engine.Recognitions.Count == 1
             ? new OcrPage(null, [FakeOcrEngine.Line(400, 10, "aaaa", "bbbb", "cccc")])
-            : new OcrPage(null, [FakeOcrEngine.Line(14, 10, "bbbb", "cccc")]);
+            : new OcrPage(null, [FakeOcrEngine.Line(25, 10, "bbbb", "cccc")]);
 
         var result = await CreateSut().ReadTextAsync(Request(WindowTarget), OcrDetail.Words, 150, null, CancellationToken.None);
 
@@ -465,6 +480,18 @@ public class OcrServiceTests
         result.MatchCount.Should().Be(0);
         result.Hint.Should().Contain("read_screen_text");
         result.CaptureId.Should().Be("c7-3fa91c");
+    }
+
+    [Fact]
+    public async Task FindText_CancelledWhileMatching_StopsBeforeTheNextLine()
+    {
+        Captures(WindowTarget, 800, 600, scale: 2.0);
+        using var cancel = new CancellationTokenSource();
+        _engine.OnRecognize = _ => cancel.Cancel();
+
+        var act = () => CreateSut().FindTextAsync(Request(WindowTarget), Matcher("Canvas"), 20, null, cancel.Token);
+
+        await act.Should().ThrowAsync<OperationCanceledException>();
     }
 
     [Fact]

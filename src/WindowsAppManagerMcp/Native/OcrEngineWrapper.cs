@@ -10,7 +10,7 @@ namespace WindowsAppManagerMcp.Native;
 
 /// <summary>
 /// Windows OCR through the slim CsWinRT projection of Windows.Media.Ocr (roadmap M6.3, owner decision D6; see the csproj).
-/// The only server code that uses the projection (WinRtProjectionGuardTests). Nothing is loaded until the first call, so a
+/// The only server code that uses the projection (NativeCallGuardTests' WinRtProjection tests). Nothing is loaded until the first call, so a
 /// server without the ocr toolset never touches WinRT. Engines are created once per language and kept; one recognition runs
 /// at a time, which bounds the memory a burst of calls can take. Every WinRT failure becomes an
 /// <see cref="OcrUnavailableException"/>, so a system without Windows OCR (or with a broken one) fails the call, not the server.
@@ -20,6 +20,10 @@ public sealed class OcrEngineWrapper : IOcrEngineWrapper, IDisposable
     // OcrEngine instances, typed object: a field cannot be guarded by the Windows 10 check (CA1416)
     private readonly ConcurrentDictionary<string, object> _engines = new(StringComparer.OrdinalIgnoreCase);
     private readonly SemaphoreSlim _recognition = new(1, 1);
+
+    // The last capabilities read: the profile language is asked for again only when the installed languages changed, since
+    // asking creates an engine
+    private OcrCapabilities? _capabilities;
 
     /// <inheritdoc />
     public OcrCapabilities GetCapabilities()
@@ -38,6 +42,11 @@ public sealed class OcrEngineWrapper : IOcrEngineWrapper, IDisposable
         try
         {
             var languages = OcrEngine.AvailableRecognizerLanguages.Select(language => language.LanguageTag).ToArray();
+            if (Volatile.Read(ref _capabilities) is { } known && known.Languages.SequenceEqual(languages, StringComparer.OrdinalIgnoreCase))
+            {
+                return known;
+            }
+
             var profile = OcrEngine.TryCreateFromUserProfileLanguages();
             var profileTag = profile?.RecognizerLanguage.LanguageTag;
             if (profile != null && profileTag != null)
@@ -45,7 +54,9 @@ public sealed class OcrEngineWrapper : IOcrEngineWrapper, IDisposable
                 _engines.TryAdd(profileTag, profile);
             }
 
-            return new OcrCapabilities(languages, profileTag, (int)OcrEngine.MaxImageDimension);
+            var capabilities = new OcrCapabilities(languages, profileTag, (int)OcrEngine.MaxImageDimension);
+            Volatile.Write(ref _capabilities, capabilities);
+            return capabilities;
         }
         catch (Exception ex) when (IsWinRtFailure(ex))
         {
@@ -85,7 +96,18 @@ public sealed class OcrEngineWrapper : IOcrEngineWrapper, IDisposable
                 // Ignore: the 4th byte of a GDI capture is not alpha
                 var buffer = CryptographicBuffer.CreateFromByteArray(bgra);
                 using var bitmap = SoftwareBitmap.CreateCopyFromBuffer(buffer, BitmapPixelFormat.Bgra8, width, height, BitmapAlphaMode.Ignore);
-                result = await engine.RecognizeAsync(bitmap).AsTask(cancellationToken).ConfigureAwait(false);
+                var operation = engine.RecognizeAsync(bitmap);
+                try
+                {
+                    result = await operation.AsTask(cancellationToken).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    // AsTask cancels the operation but returns before it has stopped: wait for that, so the bitmap and the
+                    // one-recognition-at-a-time lock outlive it
+                    await WhileRunningAsync(operation).ConfigureAwait(false);
+                    throw;
+                }
             }
             catch (Exception ex) when (IsWinRtFailure(ex))
             {
@@ -110,6 +132,21 @@ public sealed class OcrEngineWrapper : IOcrEngineWrapper, IDisposable
 
     public void Dispose() => _recognition.Dispose();
 
+    /// <summary>The longest a cancelled recognition is waited for before the call returns anyway.</summary>
+    private static readonly TimeSpan CancelledRecognitionWait = TimeSpan.FromSeconds(5);
+
+    /// <summary>Waits until <paramref name="operation"/> has stopped running, for at most <see cref="CancelledRecognitionWait"/>.</summary>
+    [SupportedOSPlatform("windows10.0.10240")]
+    private static async Task WhileRunningAsync(Windows.Foundation.IAsyncInfo operation)
+    {
+        var started = System.Diagnostics.Stopwatch.GetTimestamp();
+        while (operation.Status == Windows.Foundation.AsyncStatus.Started &&
+               System.Diagnostics.Stopwatch.GetElapsedTime(started) < CancelledRecognitionWait)
+        {
+            await Task.Delay(10).ConfigureAwait(false);
+        }
+    }
+
     /// <summary>Windows.Media.Ocr, SoftwareBitmap and CryptographicBuffer came with Windows 10 (build 10240).</summary>
     [SupportedOSPlatformGuard("windows10.0.10240")]
     private static bool IsWindows10 => OperatingSystem.IsWindowsVersionAtLeast(10, 0, 10240);
@@ -130,7 +167,8 @@ public sealed class OcrEngineWrapper : IOcrEngineWrapper, IDisposable
         {
             engine = OcrEngine.TryCreateFromLanguage(new Language(languageTag));
         }
-        catch (Exception ex) when (IsWinRtFailure(ex))
+        // ArgumentException: Windows refuses the tag as a language
+        catch (Exception ex) when (IsWinRtFailure(ex) || ex is ArgumentException)
         {
             throw new OcrUnavailableException($"Windows OCR has no engine for '{languageTag}': {ex.Message}", ex);
         }
@@ -141,11 +179,13 @@ public sealed class OcrEngineWrapper : IOcrEngineWrapper, IDisposable
     }
 
     /// <summary>
-    /// What a missing or broken Windows OCR throws: a COM error from the API, a projection that cannot load its types, or an
-    /// argument WinRT refuses. Cancellation and the server's own bugs pass through.
+    /// What a missing or broken Windows OCR throws: a COM error from the API (also access denied), or a projection that cannot
+    /// load its types or entry points. Argument, cast and other errors are the server's own bugs (it checks the image and
+    /// asks only for installed languages), so they pass through as such instead of reading as "OCR is unavailable"; so does
+    /// cancellation.
     /// </summary>
     private static bool IsWinRtFailure(Exception ex) =>
         ex is System.Runtime.InteropServices.COMException or TypeInitializationException or TypeLoadException or
-            DllNotFoundException or EntryPointNotFoundException or InvalidCastException or UnauthorizedAccessException or
-            ArgumentException or NotSupportedException or System.Runtime.InteropServices.SEHException;
+            DllNotFoundException or EntryPointNotFoundException or UnauthorizedAccessException or
+            System.Runtime.InteropServices.SEHException;
 }

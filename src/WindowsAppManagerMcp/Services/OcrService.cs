@@ -105,6 +105,7 @@ public sealed class OcrService : IOcrService
         var matches = new List<OcrMatchDto>();
         foreach (var line in screen.Lines)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var spans = line.Words.Select(w => (w.Start, w.End)).ToArray();
             foreach (var (start, end) in matcher.Find(line.Text, spans))
             {
@@ -172,7 +173,7 @@ public sealed class OcrService : IOcrService
 
         // The denied windows as they are just before the capture, and again just after it: a window that moves meanwhile is
         // blacked out where it was and where it is
-        var deniedBefore = _mask.Read();
+        var deniedBefore = ReadMask();
         RawCapture capture;
         try
         {
@@ -183,7 +184,7 @@ public sealed class OcrService : IOcrService
             throw new OcrFailure(ex.Code.ToString(), ex.Message);
         }
 
-        var masked = capture.Pixels.Method == PrintWindowMethod ? 0 : DeniedWindowMask.Apply(capture.Pixels, deniedBefore, _mask.Read());
+        var masked = capture.Pixels.Method == PrintWindowMethod ? 0 : DeniedWindowMask.Apply(capture.Pixels, deniedBefore, ReadMask());
         warnings.InsertRange(0, capture.Warnings);
 
         var pixels = capture.Pixels;
@@ -193,7 +194,7 @@ public sealed class OcrService : IOcrService
             : 1;
         var image = scale == 2 ? OcrImage.Upscale2x(pixels.Bgra, pixels.Width, pixels.Height) : pixels.Bgra;
         var (width, height) = (pixels.Width * scale, pixels.Height * scale);
-        var tiles = OcrImage.Tiles(width, height, capabilities.MaxImageDimension);
+        var tiles = OcrImage.Tiles(width, height, capabilities.MaxImageDimension, OcrImage.OverlapFor(capabilities.MaxImageDimension));
         if (tiles.Count > 1)
         {
             warnings.Add(CaptureWarnings.Format(CaptureWarnings.OcrTiled,
@@ -230,6 +231,20 @@ public sealed class OcrService : IOcrService
         // OCR took does not hide a change made during it
         var captureId = _screenshots.RegisterRaw(capture);
         return new Screen(capture, language, scale, textAngle, lines, masked, warnings, captureId);
+    }
+
+    /// <summary>The denied windows' areas, or the read refused when one of them cannot be placed (fail-closed).</summary>
+    /// <exception cref="OcrFailure">A denied window is on screen but its rectangle cannot be read.</exception>
+    private IReadOnlyList<DeniedWindowArea> ReadMask()
+    {
+        try
+        {
+            return _mask.Read();
+        }
+        catch (DeniedWindowUnlocatedException ex)
+        {
+            throw new OcrFailure(nameof(ScreenshotErrorCode.CaptureFailed), $"{ex.Message} Nothing was read; try again.");
+        }
     }
 
     /// <summary>

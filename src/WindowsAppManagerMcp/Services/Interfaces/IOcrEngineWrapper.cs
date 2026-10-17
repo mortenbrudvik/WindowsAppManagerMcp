@@ -2,7 +2,7 @@ namespace WindowsAppManagerMcp.Services.Interfaces;
 
 /// <summary>
 /// Windows OCR (Windows.Media.Ocr, roadmap M6.3) on pixels the server already holds: it reads no screen and no window,
-/// and changes nothing. The only seam to the WinRT projection (WinRtProjectionGuardTests), so the OCR service is tested
+/// and changes nothing. The only seam to the WinRT projection (NativeCallGuardTests' WinRtProjection tests), so the OCR service is tested
 /// over a fake. The server never installs an OCR language: <see cref="GetCapabilities"/> reports the ones the user
 /// installed.
 /// </summary>

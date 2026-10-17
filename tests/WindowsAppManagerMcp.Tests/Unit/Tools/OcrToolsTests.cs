@@ -134,7 +134,7 @@ public class OcrToolsTests
         var error = await RefusedAsync(() => CreateSut().FindTextOnScreen("^(a+)+$", OcrTextMatch.Regex, handle: Handle));
 
         error.ErrorCode.Should().Be(ToolErrorReporting.InvalidArgumentsErrorCode);
-        error.Message.Should().Contain("took longer than 100 ms");
+        error.Message.Should().Contain("100 ms").And.Contain("2 s");
     }
 
     [Fact]

@@ -10,6 +10,7 @@ public class DeniedWindowMaskTests
     private const int GwlExStyle = -20;
     private const long WsExTransparent = 0x20;
     private const long WsExLayered = 0x80000;
+    private const long WsExNoRedirectionBitmap = 0x200000;
 
     /// <summary>A top-level window of the fake desktop; the list is in z-order, topmost first.</summary>
     public sealed record FakeWindow(
@@ -20,7 +21,8 @@ public class DeniedWindowMaskTests
         bool Minimized = false,
         bool Cloaked = false,
         long ExStyle = 0,
-        Rectangle? Frame = null);
+        Rectangle? Frame = null,
+        bool RectUnreadable = false);
 
     public static (Mock<INativeWindowWrapper> Native, Mock<IWindowService> Windows) Desktop(params FakeWindow[] windows)
     {
@@ -39,8 +41,9 @@ public class DeniedWindowMaskTests
         native.Setup(n => n.IsWindowVisible(It.IsAny<nint>())).Returns((nint h) => Of(h).Visible);
         native.Setup(n => n.IsIconic(It.IsAny<nint>())).Returns((nint h) => Of(h).Minimized);
         native.Setup(n => n.IsCloaked(It.IsAny<nint>())).Returns((nint h) => Of(h).Cloaked);
-        native.Setup(n => n.GetWindowRect(It.IsAny<nint>())).Returns((nint h) =>
-            (Of(h).Bounds.Left, Of(h).Bounds.Top, Of(h).Bounds.Right, Of(h).Bounds.Bottom));
+        native.Setup(n => n.GetWindowRect(It.IsAny<nint>())).Returns((nint h) => Of(h).RectUnreadable
+            ? null
+            : (Of(h).Bounds.Left, Of(h).Bounds.Top, Of(h).Bounds.Right, Of(h).Bounds.Bottom));
         native.Setup(n => n.GetExtendedFrameBounds(It.IsAny<nint>())).Returns((nint h) =>
             Of(h).Frame is { } f ? (f.Left, f.Top, f.Right, f.Bottom) : null);
         native.Setup(n => n.GetWindowLongPtr(It.IsAny<nint>(), GwlExStyle)).Returns((nint h, int _) => (nint)Of(h).ExStyle);
@@ -80,7 +83,8 @@ public class DeniedWindowMaskTests
     [Theory]
     [InlineData(WsExLayered)]
     [InlineData(WsExTransparent)]
-    public void Read_ALayeredOrClickThroughWindowAbove_HidesNothing(long exStyle)
+    [InlineData(WsExNoRedirectionBitmap)] // drawn through DirectComposition, which can be translucent (Windows Terminal)
+    public void Read_ALayeredClickThroughOrCompositedWindowAbove_HidesNothing(long exStyle)
     {
         var areas = Read(
             new FakeWindow(2, new Rectangle(0, 0, 1000, 1000), ExStyle: exStyle),
@@ -141,6 +145,24 @@ public class DeniedWindowMaskTests
         new DeniedWindowMask(native.Object, service.Object).Read();
 
         service.Verify(s => s.EvaluateTargetPolicy(It.IsAny<nint>()), Times.Never);
+    }
+
+    [Fact]
+    public void Read_ADeniedWindowWhoseRectangleCannotBeRead_FailsClosed()
+    {
+        var act = () => Read(new FakeWindow(1, new Rectangle(0, 0, 400, 100), Denied: true, RectUnreadable: true));
+
+        act.Should().Throw<DeniedWindowUnlocatedException>().Which.Window.Should().Be(1);
+    }
+
+    [Fact]
+    public void Read_AnAllowedWindowWhoseRectangleCannotBeRead_IsSkipped()
+    {
+        var areas = Read(
+            new FakeWindow(2, new Rectangle(0, 0, 1000, 1000), RectUnreadable: true),
+            new FakeWindow(1, new Rectangle(0, 0, 400, 100), Denied: true));
+
+        areas.Should().ContainSingle().Which.Areas.Should().Equal(new Rectangle(0, 0, 400, 100));
     }
 
     [Fact]

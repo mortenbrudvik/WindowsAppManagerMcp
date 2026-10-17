@@ -17,7 +17,7 @@
     Windows OCR (roadmap M6.3, owner decision D6): no Windows SDK TFM, whose 25 MB Microsoft.Windows.SDK.NET.dll a
     framework-dependent single file cannot trim, and so no new minimum OS. The CsWinRT package generates a projection of
     only the WinRT types Native/OcrEngineWrapper uses into this assembly (about 0.3 MB), and the publish bundles
-    WinRT.Runtime.dll (about 0.5 MB). WinRtProjectionGuardTests pins the projected namespaces and keeps every use of them
+    WinRT.Runtime.dll (about 0.5 MB). NativeCallGuardTests (WinRtProjection_*) pins the projected namespaces and keeps every use of them
     in that wrapper.
     The Windows metadata comes from the Microsoft.Windows.SDK.Contracts package, downloaded by restore and never
     referenced (PackageDownload), instead of an installed Windows SDK: a build machine or CI runner needs no Windows Kits.

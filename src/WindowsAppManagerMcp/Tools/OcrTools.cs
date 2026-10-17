@@ -36,7 +36,7 @@ public class OcrTools
         "(TargetDeniedByPolicy), and such windows are blacked out of a region or monitor before OCR (maskedWindows). ";
 
     internal const string OcrResultDescription =
-        "Boxes are screen pixels; below 150% scale the pixels are read at 2x (ocrScale). The captureId registers the read 1:1: " +
+        "Boxes are screen pixels; below 150% scale (up to 5 MP) the pixels are read at 2x (ocrScale). The captureId registers the read 1:1: " +
         "mouse_click with it takes x, y = a screen point minus capturedRegion's corner, and refuses once the window moved " +
         "(StaleCapture). OCR has no confidence and can misread l/I/1 and O/0, so check the outcome of a click. language: an " +
         "installed OCR language (default: the user's); OcrLanguageNotInstalled lists them, OcrUnavailable says how the user " +
@@ -152,8 +152,9 @@ public class OcrTools
         catch (RegexMatchTimeoutException)
         {
             throw new ToolErrorException(ToolErrorReporting.InvalidArgumentsErrorCode,
-                $"text '{text}' (match regex) took longer than {WindowTitles.RegexTimeout.TotalMilliseconds:0} ms on a line, so the " +
-                "search was stopped. Use a simpler pattern, or match contains.");
+                $"text '{text}' (match regex) took too long ({WindowTitles.RegexTimeout.TotalMilliseconds:0} ms on a match, " +
+                $"{OcrTextMatcher.RegexBudget.TotalSeconds:0} s for the whole search), so the search was stopped. Use a simpler " +
+                "pattern, or match contains.");
         }
     }
 

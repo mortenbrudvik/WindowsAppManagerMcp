@@ -10,10 +10,14 @@ namespace WindowsAppManagerMcp.Services;
 public static class OcrImage
 {
     /// <summary>
-    /// How far tiles overlap, in pixels of the image OCR reads: more than the height of a large line of text, so every
-    /// word lies whole in the tile whose core holds its centre.
+    /// How far tiles overlap, in pixels of the image OCR reads. A word whose centre lies in a tile's core is whole in that
+    /// tile when it is at most this wide (half of it on each side of the centre, and half the overlap between the core's
+    /// edge and the tile's): 512 pixels hold a long word in a large font, and a line height many times over.
     /// </summary>
-    public const int TileOverlap = 128;
+    public const int TileOverlap = 512;
+
+    /// <summary>The overlap for tiles of at most <paramref name="maxDimension"/>: <see cref="TileOverlap"/>, or a quarter of the tile (even, so the cores meet).</summary>
+    public static int OverlapFor(int maxDimension) => Math.Min(TileOverlap, maxDimension / 4) & ~1;
 
     /// <summary>
     /// The image twice as wide and twice as high, each new pixel interpolated from its four nearest source pixels
@@ -61,24 +65,24 @@ public static class OcrImage
 
     /// <summary>
     /// The tiles OCR reads an image in: the whole image when both edges are at most <paramref name="maxDimension"/>, otherwise
-    /// a grid of tiles at most that large that overlap by <see cref="TileOverlap"/>. The cores (each tile less half the
-    /// overlap on every inner edge) cover the image exactly once, so a word kept only by the tile whose core holds its centre
-    /// is kept once.
+    /// a grid of tiles at most that large that overlap by <paramref name="overlap"/> (default <see cref="TileOverlap"/>). The
+    /// cores (each tile less half the overlap on every inner edge) cover the image exactly once, so a word kept only by the
+    /// tile whose core holds its centre is kept once.
     /// </summary>
-    public static IReadOnlyList<OcrTile> Tiles(int width, int height, int maxDimension)
+    public static IReadOnlyList<OcrTile> Tiles(int width, int height, int maxDimension, int overlap = TileOverlap)
     {
         if (width <= 0 || height <= 0)
         {
             throw new ArgumentException($"An image of {width}x{height} pixels has nothing to read.");
         }
 
-        if (maxDimension <= 2 * TileOverlap)
+        if (overlap < 2 || maxDimension <= 2 * overlap)
         {
-            throw new ArgumentOutOfRangeException(nameof(maxDimension), maxDimension, $"Tiles must be larger than {2 * TileOverlap} pixels.");
+            throw new ArgumentOutOfRangeException(nameof(maxDimension), maxDimension, $"Tiles must be larger than {2 * overlap} pixels.");
         }
 
-        var columns = Spans(width, maxDimension);
-        var rows = Spans(height, maxDimension);
+        var columns = Spans(width, maxDimension, overlap);
+        var rows = Spans(height, maxDimension, overlap);
         return rows.SelectMany(row => columns.Select(column => new OcrTile(
                 new Rectangle(column.Start, row.Start, column.Length, row.Length),
                 Rectangle.FromLTRB(column.CoreStart, row.CoreStart, column.CoreEnd, row.CoreEnd))))
@@ -88,23 +92,23 @@ public static class OcrImage
     private sealed record Span(int Start, int Length, int CoreStart, int CoreEnd);
 
     /// <summary>Overlapping spans of at most <paramref name="max"/> along one edge, and their cores.</summary>
-    private static List<Span> Spans(int length, int max)
+    private static List<Span> Spans(int length, int max, int overlap)
     {
         if (length <= max)
         {
             return [new Span(0, length, 0, length)];
         }
 
-        // Each tile after the first starts TileOverlap before the end of the one before it
-        var count = (int)Math.Ceiling((double)(length - TileOverlap) / (max - TileOverlap));
-        var step = (int)Math.Ceiling((double)(length - TileOverlap) / count);
+        // Each tile after the first starts the overlap before the end of the one before it
+        var count = (int)Math.Ceiling((double)(length - overlap) / (max - overlap));
+        var step = (int)Math.Ceiling((double)(length - overlap) / count);
         var spans = new List<Span>(count);
         for (var i = 0; i < count; i++)
         {
             var start = i * step;
-            var end = i == count - 1 ? length : Math.Min(length, start + step + TileOverlap);
-            var coreStart = i == 0 ? 0 : start + TileOverlap / 2;
-            var coreEnd = i == count - 1 ? length : end - TileOverlap / 2;
+            var end = i == count - 1 ? length : Math.Min(length, start + step + overlap);
+            var coreStart = i == 0 ? 0 : start + overlap / 2;
+            var coreEnd = i == count - 1 ? length : end - overlap / 2;
             spans.Add(new Span(start, end - start, coreStart, coreEnd));
         }
 
