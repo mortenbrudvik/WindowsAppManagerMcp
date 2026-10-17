@@ -119,6 +119,33 @@ public class OcrTextMatcherTests
         partial.Should().BeEmpty("存す starts inside the word 保存");
     }
 
+    [Theory]
+    [InlineData("Glyph quartz 471 1 km", "4711km", "471 1 km")]
+    [InlineData("Glyph quartz 471 1 km", "4711 km", "471 1 km")]
+    [InlineData("Small print 314 1pt", "3141pt", "314 1pt")]
+    [InlineData("Total 1 2 3", "123", "1 2 3")]
+    public void ContainsAndExact_IgnoreTheSpacesOcrPutsInsideANumber_AndBeforeItsUnit(string line, string text, string expected)
+    {
+        // Real Windows OCR reads "4711km" as "471 1 km" and "3141pt" as "314 1pt" (roadmap M6.3 desktop run)
+        Find(Matcher(text), line).Should().Equal(expected);
+        Find(Matcher(text, OcrTextMatch.Exact), line).Should().Equal(expected);
+    }
+
+    [Fact]
+    public void ASpaceBetweenWordsAndNumbers_OtherwiseStillCounts()
+    {
+        Find(Matcher("Windows 11 Pro"), "Windows 11 Pro").Should().Equal("Windows 11 Pro");
+        Find(Matcher("Windows11"), "Windows 11 Pro").Should().BeEmpty("a space after a word and before a number counts");
+        Find(Matcher("4711"), "Glyph quartz 471 1 km").Should().Equal("471 1");
+    }
+
+    [Fact]
+    public void Regex_RunsOnTheLineAsRead_WithItsSpacesInsideNumbers()
+    {
+        Find(Matcher(@"\d{4}km", OcrTextMatch.Regex), "Glyph quartz 471 1 km").Should().BeEmpty();
+        Find(Matcher(@"\d(\s?\d){3}\s?km", OcrTextMatch.Regex), "Glyph quartz 471 1 km").Should().Equal("471 1 km");
+    }
+
     [Fact]
     public void ASpaceBetweenLatinAndJapanese_StillCounts()
     {
