@@ -6678,7 +6678,9 @@ Reports the server's build and the environment its tools work in, in one read-on
     "moved": [
       "In the windows-batch toolset, which is off (WAM_TOOLSETS=+windows-batch serves it): set_windows_bounds_batch, snap_windows_batch, set_windows_state_batch.",
       "In the deprecated toolset, which is off (WAM_TOOLSETS=+deprecated serves it): click (use mouse_click), right_click (use mouse_click with button 'secondary'), double_click (use mouse_click with clickCount 2), move_window (use set_window_bounds with x and y), resize_window (use set_window_bounds with width and height), get_all_windows (use find_windows), get_primary_monitor (use get_monitors), list_screens (use get_monitors), get_active_browser_url (use get_browser_url with window {\"foreground\": true})."
-    ]
+    ],
+    "resources": ["wam://layouts/{name}", "wam://monitors", "wam://windows"],
+    "prompts": ["arrange_workspace", "automate_app", "diagnose_click", "fill_form"]
   },
   "uiAutomation": { "engine": "Uia3", "source": "default", "connectionTimeoutMs": 1000, "transactionTimeoutMs": 5000 }
 }
@@ -6695,11 +6697,44 @@ Reports the server's build and the environment its tools work in, in one read-on
 | `input` | Whether the user paused input with the pause hotkey (`paused`, `pausedBy`, `pausedAt`), the `hotkey` (as in [get_control_status](#get_control_status)) and `sharedPause` |
 | `safety` | The [target policy](#target-policy) (`deniedProcesses`, `denyListSource`, `allowedProcesses` when the user set an allow list) the `destructiveChords` that need `windowHandle`, `userClipboardAllowed` (`WAM_ALLOW_USER_CLIPBOARD`: whether get_clipboard returns the user's clipboard without asking) and `allowedProtocols` (the URI schemes launch_application opens, the built-in ones first, then those `WAM_ALLOWED_PROTOCOLS` adds; an entry it ignored is named in `warnings`) |
 | `paths` | `layouts`, the [layout presets](#layout-presets) folder, and `auditLog`, the folder of the [audit log](#audit-log) |
-| `toolsets` | The [toolsets](#toolsets) served (`enabled`) and not served (`disabled`), where the choice came from (`source`: `default`, `WAM_TOOLSETS`, `all`, or `WAM_EXCLUDE_TOOLS` when an entry it could not read left only the `server` toolset on), `readOnly` mode, the `excludedTools`, how many tools are served (`servedTools`), and `moved`: where the tools that moved out of a toolset in force went (roadmap M6.1), one sentence per toolset that is off, each tool with its replacement, if any (see [Moved and deprecated tools](#moved-and-deprecated-tools)). A tool the user excluded, or whose former toolset is off too, is left out; `moved` is left out when nothing is out of reach |
+| `toolsets` | The [toolsets](#toolsets) served (`enabled`) and not served (`disabled`), where the choice came from (`source`: `default`, `WAM_TOOLSETS`, `all`, or `WAM_EXCLUDE_TOOLS` when an entry it could not read left only the `server` toolset on), `readOnly` mode, the `excludedTools`, how many tools are served (`servedTools`), and `moved`: where the tools that moved out of a toolset in force went (roadmap M6.1), one sentence per toolset that is off, each tool with its replacement, if any (see [Moved and deprecated tools](#moved-and-deprecated-tools)). A tool the user excluded, or whose former toolset is off too, is left out; `moved` is left out when nothing is out of reach; `resources` and `prompts` name the [resources and prompts](#resources-and-prompts) served (roadmap M6.9), each left out when none is |
 | `uiAutomation` | The [UI Automation](#ui-automation) engine of the element tools: `engine` is `Uia3` (the COM client, the default) or `Uia2` (the managed client, `WAM_UIA_ENGINE=uia2`), `source` is `default` or `WAM_UIA_ENGINE`, and `connectionTimeoutMs` and `transactionTimeoutMs` are the per-call limits of the Uia3 engine (left out for Uia2, which has none) |
 | `warnings` | One sentence for each thing that will make tools fail or coordinates wrong: a DPI awareness that can scale coordinates (anything but `PerMonitorV2` or `PerMonitor`), a locked session or unreachable input desktop, a server below medium integrity, input paused by the user, a pause hotkey that is not registered or does not pause this server, an [audit log](#audit-log) that cannot be written, every `WAM_TOOLSETS`, `WAM_EXCLUDE_TOOLS` or `WAM_READ_ONLY` entry that was ignored, moved tools that their toolset holds but does not serve because the toolset they came from is off, the deprecated tools that are served (with their replacements), a `WAM_ALLOW_USER_CLIPBOARD` value that was not understood, a `WAM_UIA_ENGINE` value that is not `uia3` or `uia2`, and the `WAM_ALLOWED_PROTOCOLS` entries that were ignored. Left out when there is nothing to warn about |
 
 A value that cannot be read is `Unknown`, null or left out, and a warning says what that means. If a source the report reads throws instead (the monitor list or the layouts folder, say), the call fails with a tool error, as any tool does.
+
+---
+
+## Resources and Prompts
+
+Besides its tools, the server serves three read-only MCP resources and four prompts (roadmap M6.9). Tools stay the API an agent works with: a resource returns exactly what a tool returns, and a prompt is a recipe of tool calls. They are for MCP clients that show them to the user: Claude Code lists both under `/mcp`, offers the resources as `@` mentions and the prompts as slash commands (`/mcp__<server>__automate_app`, with the server name it shows), and the MCP Inspector lists them too. They add nothing to tools/list, and their own lists cost about 650 tokens in all.
+
+<!-- tools:begin resources (generated from ResourcesAndPrompts: run the tests with UPDATE_SNAPSHOTS=1, see TESTING.md) -->
+| Resource | The JSON of | What it holds |
+|----------|-------------|---------------|
+| `wam://monitors` | [get_monitors](#get_monitors) | The monitors as get_monitors returns them: bounds, work areas, scale factors, the primary monitor and the virtual screen. |
+| `wam://windows` | [find_windows](#find_windows) | The user-facing app windows, front to back, as find_windows with no filter returns them: handle, title, process, class, bounds, visible frame and state. |
+| `wam://layouts/{name}` | [get_layout](#get_layout) | A saved layout preset as get_layout returns it: each placement's window, monitor and position. A name no preset has is an error. |
+
+| Prompt | Arguments | Served while these tools are | What it does |
+|--------|-----------|------------------------------|--------------|
+| `automate_app` | `app`, `goal` | [get_desktop_state](#get_desktop_state), [find_ui_elements](#find_ui_elements), [element_action](#element_action) | Do a task in a Windows app with the locate, act and verify loop: find its window and elements, act through element refs, check each step. |
+| `arrange_workspace` | `description` | [find_windows](#find_windows), [set_window_bounds](#set_window_bounds) | Arrange windows on the user's monitors as described: find each window, then snap, place, move or maximize it, and check the result. |
+| `fill_form` | `window`, `fields` | [find_ui_elements](#find_ui_elements), [element_action](#element_action) | Fill in a form in a window with the values given: find each field's element, set it through UI Automation, read it back, and submit only when asked. |
+| `diagnose_click` | `window`, `symptom` | [find_ui_elements](#find_ui_elements), [get_element_at_point](#get_element_at_point) | Find out why a click did nothing or hit the wrong thing: input paused, a blocking dialog, a covered or wrong point, a disabled control. Reads first, acts again only once the cause is known. |
+<!-- tools:end resources -->
+
+**Resources.** Every resource is `application/json` text written by the same code as the tool it mirrors, so it has that tool's fields and changes with it: `wam://monitors` is [get_monitors](#get_monitors)' result, `wam://windows` is [find_windows](#find_windows)' result with no argument (the user-facing app windows, front to back), and `wam://layouts/{name}` is [get_layout](#get_layout)'s result for the preset `name`, percent-encoded in the URI (`wam://layouts/work%20setup`). A resource is read when the client reads it; there are no subscriptions or update notifications. A client can complete the `name` of `wam://layouts/{name}` (`completion/complete`): the server offers the preset names that start with what was typed.
+
+- A name no preset has is the error the server sends for a URI that no resource matches, with get_layout's `PresetNotFound` message: `-32002` (resource not found) on the revisions up to 2025-11-25, and `-32602` (invalid params) on 2026-07-28. An unusable layouts folder is an error with get_layout's `StorageUnavailable` message.
+- `wam://windows` lists a window of an app the [target policy](#target-policy) denies, as find_windows does (its title, process and bounds); the policy refuses reading that window's content and acting on it. No resource holds pixels: a screenshot is only ever in the result of the call that took it.
+- A resource is served exactly while the tool it mirrors is: `WAM_TOOLSETS=-monitors` hides `wam://monitors`, and `WAM_EXCLUDE_TOOLS=find_windows` hides `wam://windows`. Read-only mode serves all three, since their tools only read.
+
+**Prompts.** Each prompt returns one user message: a recipe of about 400 tokens that writes out the plugin skill's loop (locate, activate and verify, act, verify), the untrusted-content rule and the error codes that mean stop, for one kind of task. Every argument is required text. The recipe quotes it as a JSON string and says it is data, so the user's text cannot end the quote or add a line of its own; an empty argument is an invalid-params error.
+
+- A prompt is served only while every tool in its **Served while these tools are** column is, and its recipe leaves out each step whose tool is not served (turned off by `WAM_TOOLSETS`, `WAM_EXCLUDE_TOOLS` or `WAM_READ_ONLY`), so it never sends the agent to a tool it does not have. Read-only mode serves only `diagnose_click`, which reads until the cause is known.
+
+**Not tool calls.** A resource read or a prompt request passes none of the tool-call checks (the [audit log](#audit-log), the refusal of undeclared arguments, the input gate), and nothing acts. The server logs one line per request to stderr, in the call log: the resource's URI or the prompt's name (its line breaks as spaces; never a prompt's arguments), the duration and the outcome. An unexpected exception is an error that names its type and message. [get_server_info](#get_server_info) lists the served resources and prompts in `toolsets.resources` and `toolsets.prompts`.
 
 ---
 
@@ -7672,6 +7707,14 @@ the new tools; their sections have the rest.
   .NET 8 Desktop Runtime the exe exits at startup and the client lists none of its tools. The tools, their input
   schemas and their results are unchanged; [get_server_info](#get_server_info)'s `server.runtime` reports
   `.NET 10.0.x`.
+- **Resources and prompts (roadmap M6.9).** The server also serves three read-only MCP resources, `wam://monitors`,
+  `wam://windows` and `wam://layouts/{name}`, with the JSON of get_monitors, find_windows with no argument and
+  get_layout, and four prompts, `automate_app`, `arrange_workspace`, `fill_form` and `diagnose_click`, recipes that
+  name only the tools the server serves; see [Resources and Prompts](#resources-and-prompts). The `initialize` (and
+  `server/discover`) result now advertises the `resources`, `prompts` and `completions` capabilities (completion offers
+  layout names). Each follows the tools it rests on: `WAM_TOOLSETS`, `WAM_EXCLUDE_TOOLS` and `WAM_READ_ONLY` hide it
+  with them. [get_server_info](#get_server_info) lists them in `toolsets.resources` and `toolsets.prompts`. tools/list
+  is unchanged.
 
 ## Error Codes
 

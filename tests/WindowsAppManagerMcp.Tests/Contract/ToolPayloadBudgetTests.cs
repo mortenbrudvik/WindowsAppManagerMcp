@@ -141,7 +141,7 @@ public class ToolPayloadBudgetTests
         ["delete_layout"] = 100, // 4
 
         // Server Info: the default deny list, five host processes, two monitors
-        ["get_server_info"] = 850, // 634
+        ["get_server_info"] = 850, // 702 (634 before M6.9 listed the resources and prompts)
     };
 
     /// <summary>
@@ -204,6 +204,15 @@ public class ToolPayloadBudgetTests
         ["deprecated"] = 4_950, // 4,925 (off by default since M6.1b): nine one-line descriptions, but their full parameters
     };
 
+    /// <summary>
+    /// The token budget of resources/list, resources/templates/list and prompts/list together (roadmap M6.9), outside tools/list:
+    /// clients list them when they connect, but Claude Code shows them to the user (as @-mentions and slash commands) rather
+    /// than loading them into the model's context. A ratchet like <see cref="ToolListTokenBudget"/>, just above the measured
+    /// size: 646 tokens for two resources, one template and four prompts (October 2026). A change that adds a resource or
+    /// prompt, or lengthens their descriptions, raises it by what the failure message measures.
+    /// </summary>
+    public const int ResourcesAndPromptsListTokenBudget = 655;
+
     public static TheoryData<string> ServedTools() => EveryToolContractTests.ServedTools();
 
     public static TheoryData<string> ToolsetNames()
@@ -229,6 +238,19 @@ public class ToolPayloadBudgetTests
         tokens.Should().BeLessThanOrEqualTo(ToolListTokenBudget,
             "tools/list is about {0} tokens ({1} bytes, {2} tools; budget {3}); if the surface grew on purpose, raise the budget",
             tokens, bytes, tools.Count, ToolListTokenBudget);
+    }
+
+    [Fact]
+    public async Task ResourcesAndPromptsLists_StayWithinTheirBudget()
+    {
+        // Act - the three lists as a client receives them, serialized as the SDK writes them
+        var lists = await ResourceSurface.ListAsync();
+        var tokens = ResourceSurface.Tokens(lists);
+
+        // Assert
+        tokens.Should().BeLessThanOrEqualTo(ResourcesAndPromptsListTokenBudget,
+            "resources/list, resources/templates/list and prompts/list are about {0} tokens (budget {1}); if they grew on purpose, " +
+            "raise the budget", tokens, ResourcesAndPromptsListTokenBudget);
     }
 
     [Fact]

@@ -231,7 +231,8 @@ public static class Toolsets
     /// <summary>
     /// Serves only the tools <paramref name="selection"/> chooses: registers the selection (get_server_info reports it)
     /// and removes every other tool from the server's tool collection once the registrations are complete, so tools/list
-    /// leaves them out and a call to one is an unknown tool. When the user turned off tools the default serves, the
+    /// leaves them out and a call to one is an unknown tool, and then the resources and prompts that rest on a removed tool
+    /// (<see cref="ResourcesAndPrompts.RemoveUnserved"/>). When the user turned off tools the default serves, the
     /// server instructions get one more line that says which (<see cref="ToolsetSelection.InstructionsNote"/>). Program.cs reads the selection from the environment before
     /// the tool registrations (<see cref="ServiceRegistration.AddWindowsAppManagerTools"/>).
     /// </summary>
@@ -256,17 +257,15 @@ public static class Toolsets
                 : options.ServerInstructions + "\n" + note;
         }
 
-        if (options.ToolCollection is not { } tools)
-        {
-            return;
-        }
-
-        foreach (var tool in tools.ToArray())
+        foreach (var tool in options.ToolCollection?.ToArray() ?? [])
         {
             if (!selection.Serves(tool.ProtocolTool.Name, tool.ProtocolTool.Annotations?.ReadOnlyHint == true))
             {
-                tools.Remove(tool);
+                options.ToolCollection!.Remove(tool);
             }
         }
+
+        // The resources and prompts follow the tools they rest on (roadmap M6.9)
+        ResourcesAndPrompts.RemoveUnserved(options);
     }
 }

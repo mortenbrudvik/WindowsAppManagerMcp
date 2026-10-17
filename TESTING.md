@@ -2585,6 +2585,28 @@ desktop; before the release that carries it, the owner checks:
    58 (it does not fail closed); and get_server_info's `toolsets.moved` names the deprecated and windows-batch toolsets.
    The in-process contract tests (`DeprecatedToolsContractTests`) cover all of it except the client's own rendering.
 
+### Desktop check: M6.9 resources and prompts
+
+The resources and prompts are tested in-process (`ResourceContractTests`, `PromptContractTests`, the resources snapshot
+and `ServerInfoToolContractTests`). Run on the built exe so far (October 2026, no window, no input):
+`scripts/Test-ToolsSnapshot.ps1` passes on a Debug build (78 tools, 7 resources, templates and prompts) and fails on a
+snapshot with a changed title and a renamed prompt; and prompts/get over stdio rendered the four recipes with the
+default toolsets, the one with `WAM_READ_ONLY=1` (diagnose_click without capture_window and the steps that act) and
+the three with `WAM_TOOLSETS=-input`. Before the release that carries it, the owner checks, reading only:
+
+1. **MCP Inspector** on the built exe with `WAM_LAYOUTS_PATH` set to a fresh temp folder (so the owner's own presets are
+   neither read nor seeded): initialize advertises `resources`, `prompts` and `completions`; the three lists match
+   `Contract/resources.snapshot.json`; `wam://layouts/work-setup` (a seeded sample) reads, `wam://layouts/nope` is a
+   not-found error with the PresetNotFound message, and completion offers the sample names.
+2. **wam://windows and wam://monitors against the tools**: with the WamFixtureApp window the harness started, read
+   `wam://windows` and call find_windows at once (same handle, title and bounds), and compare `wam://monitors` with
+   get_monitors; on a mixed-DPI machine the negative coordinates and scale factors match.
+3. **Claude Code** with the plugin built from the branch: `/mcp` lists the resources and prompts, a prompt runs as a
+   `/mcp__<server>__diagnose_click` command and expands with its arguments quoted, and an `@` mention of `wam://windows`
+   attaches the JSON.
+
+No check applies a layout, sends input or closes anything but the fixture window the harness started, by its PID.
+
 ### Tool surface snapshot
 
 `Contract/ToolSurfaceSnapshotTests` tests the server the way an agent sees it. It lists the tools of an
@@ -2598,6 +2620,10 @@ client's first request on each protocol revision into `Contract/initialize.snaps
 `serverInfo.version` masked. A client acts on more than the tool list (the negotiated revision, the capabilities object,
 the instructions), so an SDK upgrade that starts advertising a capability, or drops a revision, fails here too. The
 whole tool surface is snapshotted: `AddWindowsAppManagerTools()` without a toolset selection serves every toolset.
+The resources and prompts (roadmap M6.9) are surface too: `Contract/resources.snapshot.json` holds the
+resources/list, resources/templates/list and prompts/list results, each sorted, and fails the same way. Since M6.9 the
+initialize snapshot advertises `resources`, `prompts` (both `listChanged: true`, as `tools` has) and `completions` on
+every revision, and never resource subscriptions.
 
 When a change to the tool surface is intended (a new tool or parameter, a new default, a description, an
 annotation, an SDK upgrade that changes the schemas), regenerate the snapshot and the generated docs in one
@@ -2616,7 +2642,7 @@ git diff
 UPDATE_SNAPSHOTS=1 dotnet test --filter "FullyQualifiedName~ToolSurfaceSnapshotTests|FullyQualifiedName~GeneratedToolDocsTests"
 ```
 
-`UPDATE_SNAPSHOTS=1` only makes these tests rewrite their files instead of failing: the two snapshots, and the
+`UPDATE_SNAPSHOTS=1` only makes these tests rewrite their files instead of failing: the three snapshots, and the
 generated regions of README.md, docs/TOOLS.md and SKILL.md. It changes nothing else about a run (desktop
 tests stay skipped). Without it, CI fails on a stale snapshot or table. A run where `CI`, `GITHUB_ACTIONS` or
 `TF_BUILD` is set to anything but `false` or `0` refuses it (the tests fail with a message), because there it would turn the guards into rewrites
@@ -2627,7 +2653,9 @@ half written. Set the variable after any `env -u` options: `env -u WAM_ALLOW_DES
 its sources define. `.github/workflows/build.yml` therefore runs `scripts/Test-ToolsSnapshot.ps1`, which
 starts an exe (with `WAM_PAUSE_HOTKEY=none`, `WAM_TOOLSETS=all` and neither `WAM_EXCLUDE_TOOLS` nor `WAM_READ_ONLY`,
 so it serves the whole surface), sends `initialize` and `tools/list` over stdio, closes it, and compares every tool
-object with the snapshot. It asks for the newest revision with the `initialize` handshake (`-ProtocolVersion`,
+object with the snapshot. It then lists the resources, resource templates and prompts and compares each item with
+`Contract/resources.snapshot.json` (`-ResourcesSnapshotPath`), so an exe that serves stale resources or prompts fails
+too. It asks for the newest revision with the `initialize` handshake (`-ProtocolVersion`,
 default `2025-11-25`, the one Claude Code most likely negotiates); `ProtocolRevisionContractTests` checks that this is
 the revision the SDK answers an unknown request with, and `ToolSurfaceSnapshotTests` that the script still asks for
 it, so an SDK upgrade cannot leave the guard on a stale revision. Relative `-ExePath` and `-SnapshotPath` values are
@@ -2650,6 +2678,7 @@ The tool tables of the docs are generated into marked regions, between `<!-- too
 | docs/TOOLS.md | `toolsets` | The toolsets of `Toolsets.Server`: default, description and tools (generated from the catalog, not from tools/list) |
 | docs/TOOLS.md | `read-only` | The tools served in read-only mode (generated from the readOnlyHint annotations) |
 | docs/TOOLS.md | `params:TOOL` | The parameter table of each tool, and a field table for each array-of-objects parameter |
+| docs/TOOLS.md | `resources` | The resources and prompts (roadmap M6.9): each resource's URI, mirrored tool and description, and each prompt's arguments, needed tools and description (generated from `ResourcesAndPrompts` and the attributes, not from the lists) |
 | SKILL.md | `count` | The sentence with the tool count |
 | SKILL.md | `tool-tables` | The whole "Available Tools" section: a table per category with summaries and key parameters |
 
@@ -2715,7 +2744,7 @@ typical result over 300 tokens, and tools/list itself, measured in October 2026:
 | `find_windows`, `get_all_windows` | 15 windows, each with `visibleBounds` | 1,213 | 1,850 |
 | `read_element_text` | The first page of a 3,000-character e-mail | 802 | 1,200 |
 | `read_table` | Task Manager's first 50 processes, 5 columns with headers | 643 | 1,000 |
-| `get_server_info` | The default deny list, five host processes, two monitors | 634 | 850 |
+| `get_server_info` | The default deny list, five host processes, two monitors, the resources and prompts (634 before roadmap M6.9) | 702 | 850 |
 | `get_layout` | A preset of 6 placements, each with the captured window identity | 529 | 800 |
 | tools/list | Every tool's name, title, description, schemas and annotations: 78 tools, 247,825 bytes (`ToolList_StaysWithinItsBudget`; M5.8's six DOM bridge tools added 2,970, 936 of them their window selectors; M5.8's dialog option and the UI Automation browser_handle_dialog 199 more; M6.1a's additive consolidations 405 more: mouse_click's own click checks 249, set_window_bounds' optional pairs 87, get_browser_url's foreground sentence 41, get_monitors' virtualScreen 28; M6.1b's one-line descriptions of the nine deprecated tools and the descriptions that no longer send the agent to them 2,121 fewer) | 61,957 | 61,993 |
 | Default tools/list | The 58 tools a server serves without WAM_TOOLSETS, WAM_EXCLUDE_TOOLS and WAM_READ_ONLY, 204,020 bytes (`DefaultToolList_StaysWithinItsBudget`, roadmap M6.1; 59,627 before M6.1a, 60,032 after it with 70 tools, 9,027 fewer once M6.1b moved the nine deprecated tools and the three geometry batches to opt-in toolsets) | 51,005 | 51,041 |
@@ -2765,6 +2794,30 @@ toolset moves the all-tools figure and its own row, never the default figure.
 (a million-character document of English, Cyrillic, CJK, emoji or quotes, a 1000 x 100 grid of long, short or empty
 cells in English, Cyrillic or CJK, read end to end through the real read service over a fake tree) at 16,000 tokens:
 the reads bound a page in bytes of JSON, not only in characters.
+
+The resources and prompts (roadmap M6.9) cost nothing in tools/list. `ResourcesAndPromptsLists_StayWithinTheirBudget`
+holds resources/list, resources/templates/list and prompts/list together to a ratchet of 655 tokens (646 measured,
+October 2026, for two resources, one template and four prompts), and `Contract/PromptContractTests` holds each prompt's
+text, every step served and with sample arguments, to 480 tokens (automate_app 464, arrange_workspace 393, fill_form 375,
+diagnose_click 447).
+
+### Resources and prompts
+
+`Contract/ResourceContractTests` reads the three wam:// resources over MCP with the contract services, on every revision:
+each is `application/json` text equal to the result of the tool it mirrors (`get_monitors`, `find_windows` with no
+argument, `get_layout`), the windows resource asks the window service the same query as find_windows, a window of an
+app the target policy denies is listed as find_windows lists it, a non-ASCII layout name round-trips without escapes,
+and a name no preset has gets the error code the SDK sends for a URI no resource matches on that revision (`-32002`
+up to 2025-11-25, `-32602` on 2026-07-28). It also checks the call-log line of each read, the error that names an
+unexpected exception, the completion of layout names, and that a resource is served exactly while the tool it
+mirrors is (toolsets, exclusions, read-only mode), with the code of an unknown URI when it is not, even when no
+resource is served at all. A cancellation the client did not send (a wait given up) is logged as cancelled, not as a
+failure, and a URI with line breaks is logged on one line. `Contract/PromptContractTests` gets every served prompt
+under ten selections (default, all, read-only, toolsets off, tools excluded) and checks that every tool name in its
+text is served, that its steps are numbered without a gap where a step was left out, and that a prompt is served
+only while the tools it needs are; that arguments are required, quoted as JSON strings and never logged; that an
+empty or missing argument, and a prompt that is not served, is an invalid-params error; and that a name with line
+breaks is logged on one line.
 
 ### Protocol revisions, progress and cancellation
 

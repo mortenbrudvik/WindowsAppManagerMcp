@@ -125,6 +125,44 @@ public static class ToolJson
             : McpServerTool.Create(method, request => CreateTarget(request.Services, toolType), CreateOptions(services));
     }
 
+    /// <summary>
+    /// Registers every [McpServerResource] method of <typeparamref name="T"/> (roadmap M6.9), as WithResources&lt;T&gt;() does
+    /// (a new instance of <typeparamref name="T"/> from the request's services for every read), but with
+    /// <see cref="SerializerOptions"/> and <see cref="SchemaOptions"/>: the SDK's WithResources&lt;T&gt;() takes no serializer
+    /// options.
+    /// </summary>
+    public static IMcpServerBuilder WithServerResources<T>(this IMcpServerBuilder builder) where T : class
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+
+        foreach (var method in MethodsWith<McpServerResourceAttribute>(typeof(T)))
+        {
+            builder.Services.AddSingleton(services => method.IsStatic
+                ? McpServerResource.Create(method, target: null, ResourceOptions(services))
+                : McpServerResource.Create(method, request => CreateTarget(request.Services, typeof(T)), ResourceOptions(services)));
+        }
+
+        return builder;
+    }
+
+    /// <summary>
+    /// Registers every [McpServerPrompt] method of <typeparamref name="T"/> (roadmap M6.9), as WithPrompts&lt;T&gt;() does, but
+    /// with <see cref="SerializerOptions"/> and <see cref="SchemaOptions"/>, as <see cref="WithServerTools{T}()"/> registers tools.
+    /// </summary>
+    public static IMcpServerBuilder WithServerPrompts<T>(this IMcpServerBuilder builder) where T : class
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+
+        foreach (var method in MethodsWith<McpServerPromptAttribute>(typeof(T)))
+        {
+            builder.Services.AddSingleton(services => method.IsStatic
+                ? McpServerPrompt.Create(method, target: null, PromptOptions(services))
+                : McpServerPrompt.Create(method, request => CreateTarget(request.Services, typeof(T)), PromptOptions(services)));
+        }
+
+        return builder;
+    }
+
     private static McpServerToolCreateOptions CreateOptions(IServiceProvider? services) => new()
     {
         Services = services,
@@ -132,9 +170,25 @@ public static class ToolJson
         SchemaCreateOptions = SchemaOptions
     };
 
-    private static IEnumerable<MethodInfo> ToolMethods(Type toolType) =>
-        toolType.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance)
-            .Where(m => m.IsDefined(typeof(McpServerToolAttribute), inherit: false));
+    private static McpServerResourceCreateOptions ResourceOptions(IServiceProvider? services) => new()
+    {
+        Services = services,
+        SerializerOptions = SerializerOptions,
+        SchemaCreateOptions = SchemaOptions
+    };
+
+    private static McpServerPromptCreateOptions PromptOptions(IServiceProvider? services) => new()
+    {
+        Services = services,
+        SerializerOptions = SerializerOptions,
+        SchemaCreateOptions = SchemaOptions
+    };
+
+    private static IEnumerable<MethodInfo> ToolMethods(Type toolType) => MethodsWith<McpServerToolAttribute>(toolType);
+
+    private static IEnumerable<MethodInfo> MethodsWith<TAttribute>(Type type) where TAttribute : Attribute =>
+        type.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance)
+            .Where(m => m.IsDefined(typeof(TAttribute), inherit: false));
 
     private static object CreateTarget(IServiceProvider? services, Type toolType) =>
         services != null ? ActivatorUtilities.CreateInstance(services, toolType) : Activator.CreateInstance(toolType)!;
