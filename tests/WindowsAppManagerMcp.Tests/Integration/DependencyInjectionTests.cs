@@ -262,6 +262,16 @@ public class DependencyInjectionTests : IDisposable
     }
 
     [Fact]
+    public void WindowCaptures_GetWindowsGraphicsCapture()
+    {
+        // Roadmap M7.1: built without it, a window that prints black or does not answer would silently fall back to the screen
+        var graphics = _serviceProvider.GetRequiredService<IGraphicsCaptureWrapper>();
+        graphics.Should().BeOfType<NativeGraphicsCaptureWrapper>();
+        typeof(ScreenshotService).GetField("_graphicsCapture", BindingFlags.NonPublic | BindingFlags.Instance)!
+            .GetValue(_serviceProvider.GetRequiredService<IScreenshotService>()).Should().BeSameAs(graphics);
+    }
+
+    [Fact]
     public void TheWindowWait_WakesOnTheServersWindowEvents()
     {
         // Roadmap M3.F22: one window event source, over the native hooks; resolving it installs no hook (the first wait

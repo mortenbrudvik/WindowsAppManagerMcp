@@ -154,6 +154,15 @@ public class NativeCallGuardTests
         ["Apps.SHGetPropertyStoreForWindow"] = "gets a window's property store; the wrapper declares IPropertyStore without " +
                                                "SetValue and Commit, so it can only read it",
         ["Apps.PropVariantClear"] = "frees a PROPVARIANT the server read into its own memory",
+
+        // Windows.Graphics.Capture (NativeGraphicsCaptureWrapper, roadmap M7.1): one frame of a window as the compositor shows
+        // it, read through a Direct3D device of the server's own. The capture session only reads; the wrapper never changes
+        // the window, and sets only its own session's flags (no pointer, no border)
+        ["GraphicsCapture.RoGetActivationFactory"] = "gets the factory of a WinRT capture class",
+        ["GraphicsCapture.WindowsCreateString"] = "makes the class name's HSTRING, in the server's own memory",
+        ["GraphicsCapture.WindowsDeleteString"] = "frees that HSTRING",
+        ["GraphicsCapture.D3D11CreateDevice"] = "creates a Direct3D 11 device of the server's own, which renders nothing on screen",
+        ["GraphicsCapture.CreateDirect3D11DeviceFromDXGIDevice"] = "wraps that device for WinRT",
     };
 
     /// <summary>
@@ -203,6 +212,8 @@ public class NativeCallGuardTests
             "reads the foreground lock timeout (SPI_GETFOREGROUNDLOCKTIMEOUT) and the mouse wheel routing " +
             "(SPI_GETMOUSEWHEELROUTING) and nothing else; a SET action would change a system setting " +
             "(SystemParametersInfoActions_AreAllGetActions)",
+        [("WindowsAppManagerMcp.Native.NativeGraphicsCaptureWrapper", "Dwmapi.DwmGetWindowAttribute")] =
+            "reads the visible frame (DWMWA_EXTENDED_FRAME_BOUNDS) a Windows.Graphics.Capture frame starts at (roadmap M7.1)",
     };
 
     /// <summary>
@@ -666,6 +677,24 @@ public class NativeCallGuardTests
             "installing low-level input hooks and running their thread's message loop must go through INativeLowLevelInputWrapper so tests can fake it");
         Unexpected(hookCallers, typeof(NativeLowLevelInputWrapper), NativeMethodsType).Should().BeEmpty(
             "SetWindowsHookExW, UnhookWindowsHookEx and CallNextHookEx are declared only in NativeMethods.LowLevelHooks");
+    }
+
+    [Fact]
+    public void GraphicsCaptureCalls_AreOnlyMadeByNativeGraphicsCaptureWrapper()
+    {
+        // Arrange - the capture classes, a Direct3D device and the GPU copy (roadmap M7.1) stay behind the seam the
+        // screenshot tests replace with a fake, so no unit test creates a device or captures a window
+        var captureType = NativeMethodsType.GetNestedType("GraphicsCapture", BindingFlags.NonPublic | BindingFlags.Public);
+        captureType.Should().NotBeNull();
+
+        // Act
+        var callers = FindCallers(callee => callee.DeclaringType == captureType);
+
+        // Assert
+        callers.Keys.Should().Contain(typeof(NativeGraphicsCaptureWrapper), "the scan must see the wrapper's own calls");
+        callers[typeof(NativeGraphicsCaptureWrapper)].Should().Contain(c => c.EndsWith("GraphicsCapture.D3D11CreateDevice"));
+        Unexpected(callers, typeof(NativeGraphicsCaptureWrapper), NativeMethodsType).Should().BeEmpty(
+            "Windows.Graphics.Capture must go through IGraphicsCaptureWrapper so tests can fake it");
     }
 
     [Fact]

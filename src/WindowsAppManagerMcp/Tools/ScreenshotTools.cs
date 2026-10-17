@@ -54,6 +54,10 @@ public class ScreenshotTools
         "A successful capture can carry warnings, each starting with a code: ImageBlank (one solid color), " +
         "WindowNotResponding (copied from the screen, covering windows show), DpiScaledWindow, RegionClipped and others. ";
 
+    internal const string CaptureMethodDescription =
+        "How the pixels are read: 'auto' (default: PrintWindow, falling back to the compositor), 'printwindow', 'wgc' " +
+        "(Windows.Graphics.Capture, for windows that print black) or 'screen' (covering windows included)";
+
     internal const string RestoreIfMinimizedDescription =
         "Restore a minimized window (or the minimized window it is inside) for the capture without activating it, wait " +
         "until it has painted, capture, then minimize it again without activating another window. Default: false, which " +
@@ -205,7 +209,7 @@ public class ScreenshotTools
     [Description("Capture a specific window, even when other windows cover it. A minimized window fails with WindowMinimized " +
                  "(or pass restoreIfMinimized), a hidden one with WindowHidden, one on another virtual desktop with Cloaked, " +
                  "and a window of an app the user's policy denies with TargetDeniedByPolicy. A window that is not responding " +
-                 "is copied from the screen (captureMethod ScreenBitBlt, warning WindowNotResponding). " +
+                 "is captured as the compositor last showed it, or copied from the screen (warning WindowNotResponding). " +
                  ImageResultDescription + WarningsDescription +
                  "capturedRegion and imageToScreen use the window's real screen position: the visible frame's corner, or the client area's corner when includeFrame is false. " +
                  "With ref, the image is cropped to that element (plus padding) for a small, sharp view of one control; the crop's corner is its origin. " +
@@ -242,6 +246,8 @@ public class ScreenshotTools
         int? maxWidth = null,
         [Description(RestoreIfMinimizedDescription)]
         bool restoreIfMinimized = false,
+        [Description(CaptureMethodDescription)]
+        WindowCaptureMethod captureMethod = WindowCaptureMethod.Auto,
         CancellationToken cancellationToken = default)
     {
         var element = ElementToCrop(@ref, padding);
@@ -257,7 +263,10 @@ public class ScreenshotTools
             return WindowFailure(refusal.Code.ToString(), refusal.Message);
         }
 
-        var options = Options(format, quality, maxDimension, output, outputPath, overwrite, saveToFile, maxWidth);
+        var options = Options(format, quality, maxDimension, output, outputPath, overwrite, saveToFile, maxWidth) with
+        {
+            CaptureMethod = captureMethod
+        };
         var restore = await RestoreIfMinimizedAsync(windowHandle, includeFrame, restoreIfMinimized, options, cancellationToken)
             .ConfigureAwait(false);
         if (restore.Refusal is { } refused)
@@ -377,10 +386,15 @@ public class ScreenshotTools
         int? maxWidth = null,
         [Description(RestoreIfMinimizedDescription)]
         bool restoreIfMinimized = false,
+        [Description(CaptureMethodDescription)]
+        WindowCaptureMethod captureMethod = WindowCaptureMethod.Auto,
         IProgress<ProgressNotificationValue>? progress = null,
         CancellationToken cancellationToken = default)
     {
-        var options = Options(format, quality, maxDimension, output, outputPath, overwrite, saveToFile, maxWidth);
+        var options = Options(format, quality, maxDimension, output, outputPath, overwrite, saveToFile, maxWidth) with
+        {
+            CaptureMethod = captureMethod
+        };
         var windowHandle = WindowTargeting.Require(_windowService, handle, window);
         var reported = windowHandle.ToInt64();
 

@@ -1288,7 +1288,7 @@
     {
       "name": "capture_window",
       "title": "Capture Window",
-      "description": "Capture a specific window, even when other windows cover it. A minimized window fails with WindowMinimized (or pass restoreIfMinimized), a hidden one with WindowHidden, one on another virtual desktop with Cloaked, and a window of an app the user's policy denies with TargetDeniedByPolicy. A window that is not responding is copied from the screen (captureMethod ScreenBitBlt, warning WindowNotResponding). Returns the image as image content you can see, followed by JSON metadata (size, capturedRegion, imageToScreen, filePath, captureId). By default the image is JPEG (PNG when its long edge is at most 512 pixels) scaled to at most 1568 pixels on the long edge. A successful capture can carry warnings, each starting with a code: ImageBlank (one solid color), WindowNotResponding (copied from the screen, covering windows show), DpiScaledWindow, RegionClipped and others. capturedRegion and imageToScreen use the window's real screen position: the visible frame's corner, or the client area's corner when includeFrame is false. With ref, the image is cropped to that element (plus padding) for a small, sharp view of one control; the crop's corner is its origin. Image pixels are not screen pixels: to click a point (imageX, imageY) seen in the image, pass it to the mouse tools with this captureId (valid 10 minutes; refused with StaleCapture once a captured window moved), or convert it yourself: screenX = imageToScreen.offsetX + imageX * imageToScreen.scaleX and screenY = imageToScreen.offsetY + imageY * imageToScreen.scaleY. scaleFactor is the monitor's DPI scale, for information only; never multiply by it.",
+      "description": "Capture a specific window, even when other windows cover it. A minimized window fails with WindowMinimized (or pass restoreIfMinimized), a hidden one with WindowHidden, one on another virtual desktop with Cloaked, and a window of an app the user's policy denies with TargetDeniedByPolicy. A window that is not responding is captured as the compositor last showed it, or copied from the screen (warning WindowNotResponding). Returns the image as image content you can see, followed by JSON metadata (size, capturedRegion, imageToScreen, filePath, captureId). By default the image is JPEG (PNG when its long edge is at most 512 pixels) scaled to at most 1568 pixels on the long edge. A successful capture can carry warnings, each starting with a code: ImageBlank (one solid color), WindowNotResponding (copied from the screen, covering windows show), DpiScaledWindow, RegionClipped and others. capturedRegion and imageToScreen use the window's real screen position: the visible frame's corner, or the client area's corner when includeFrame is false. With ref, the image is cropped to that element (plus padding) for a small, sharp view of one control; the crop's corner is its origin. Image pixels are not screen pixels: to click a point (imageX, imageY) seen in the image, pass it to the mouse tools with this captureId (valid 10 minutes; refused with StaleCapture once a captured window moved), or convert it yourself: screenX = imageToScreen.offsetX + imageX * imageToScreen.scaleX and screenY = imageToScreen.offsetY + imageY * imageToScreen.scaleY. scaleFactor is the monitor's DPI scale, for information only; never multiply by it.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -1457,6 +1457,17 @@
             "description": "Restore a minimized window (or the minimized window it is inside) for the capture without activating it, wait until it has painted, capture, then minimize it again without activating another window. Default: false, which refuses a minimized window with WindowMinimized. While the window is restored the call holds the input gate, so it fails with PausedByUser while input is paused, and it is refused with TargetDeniedByPolicy when the policy denies a window the restore would show. A hidden or cloaked window is not restored. A window that was maximized before it was minimized is captured at its normal size and may restore un-maximized afterwards.",
             "type": "boolean",
             "default": false
+          },
+          "captureMethod": {
+            "description": "How the pixels are read: 'auto' (default: PrintWindow, falling back to the compositor), 'printwindow', 'wgc' (Windows.Graphics.Capture, for windows that print black) or 'screen' (covering windows included)",
+            "default": "auto",
+            "type": "string",
+            "enum": [
+              "auto",
+              "printwindow",
+              "wgc",
+              "screen"
+            ]
           }
         }
       },
@@ -1689,6 +1700,17 @@
             "description": "Restore a minimized window (or the minimized window it is inside) for the capture without activating it, wait until it has painted, capture, then minimize it again without activating another window. Default: false, which refuses a minimized window with WindowMinimized. While the window is restored the call holds the input gate, so it fails with PausedByUser while input is paused, and it is refused with TargetDeniedByPolicy when the policy denies a window the restore would show. A hidden or cloaked window is not restored. A window that was maximized before it was minimized is captured at its normal size and may restore un-maximized afterwards.",
             "type": "boolean",
             "default": false
+          },
+          "captureMethod": {
+            "description": "How the pixels are read: 'auto' (default: PrintWindow, falling back to the compositor), 'printwindow', 'wgc' (Windows.Graphics.Capture, for windows that print black) or 'screen' (covering windows included)",
+            "default": "auto",
+            "type": "string",
+            "enum": [
+              "auto",
+              "printwindow",
+              "wgc",
+              "screen"
+            ]
           }
         }
       },

@@ -81,6 +81,7 @@ public class ScreenshotService : IScreenshotService
     private readonly ICaptureTargetPolicy? _capturePolicy;
     private readonly ITargetPolicy? _targetPolicy;
     private readonly INativeVirtualDesktopWrapper? _virtualDesktops;
+    private readonly IGraphicsCaptureWrapper? _graphicsCapture;
 
     // The windows restoreIfMinimized has restored for a capture, by how many restores: they are minimized again afterwards,
     // so their captures keep no visual signature (roadmap M6.4)
@@ -120,6 +121,10 @@ public class ScreenshotService : IScreenshotService
     /// The shell's virtual desktop manager (roadmap M7.3): a Cloaked refusal says whether the window is on another virtual
     /// desktop. The server always passes it; without it the refusal names every cause.
     /// </param>
+    /// <param name="graphicsCapture">
+    /// Windows.Graphics.Capture (roadmap M7.1): window captures fall back to it (method auto) or use it (method wgc). The server
+    /// always passes it; without it a window capture reads with PrintWindow or from the screen, as before.
+    /// </param>
     public ScreenshotService(
         IScreenCaptureWrapper captureWrapper,
         IMonitorService monitorService,
@@ -130,9 +135,11 @@ public class ScreenshotService : IScreenshotService
         ICaptureRegistry? captureRegistry = null,
         ICaptureTargetPolicy? capturePolicy = null,
         ITargetPolicy? targetPolicy = null,
-        INativeVirtualDesktopWrapper? virtualDesktops = null)
+        INativeVirtualDesktopWrapper? virtualDesktops = null,
+        IGraphicsCaptureWrapper? graphicsCapture = null)
     {
         _virtualDesktops = virtualDesktops;
+        _graphicsCapture = graphicsCapture;
         _capturePolicy = capturePolicy;
         _targetPolicy = targetPolicy;
         _captureRegistry = captureRegistry;
@@ -183,7 +190,7 @@ public class ScreenshotService : IScreenshotService
         Run("region", options, request => Complete(Acquire(new CaptureTarget.Region(x, y, width, height)), request));
 
     public ScreenCapture<ScreenshotResult> CaptureWindow(nint windowHandle, bool includeFrame, CaptureOptions options) =>
-        Run("window", options, request => Complete(Acquire(new CaptureTarget.Window(windowHandle, includeFrame)), request));
+        Run("window", options, request => Complete(Acquire(new CaptureTarget.Window(windowHandle, includeFrame, options.CaptureMethod)), request));
 
     /// <inheritdoc />
     public RawCapture CapturePixels(CaptureTarget target)
@@ -256,7 +263,7 @@ public class ScreenshotService : IScreenshotService
         {
             CaptureTarget.Monitor monitor => AcquireMonitor(monitor.Index),
             CaptureTarget.Region region => AcquireRegion(region.X, region.Y, region.Width, region.Height),
-            CaptureTarget.Window window => AcquireWindow(window.Handle, window.IncludeFrame),
+            CaptureTarget.Window window => AcquireWindow(window.Handle, window.IncludeFrame, window.Method),
             _ => throw new ArgumentException($"Unknown capture target {target.GetType().Name}", nameof(target))
         };
 
@@ -383,12 +390,12 @@ public class ScreenshotService : IScreenshotService
     /// (<see cref="ReadCapturedWindow"/>, with the client area the capture shows), its pixels (<see cref="CaptureWindowPixels"/>)
     /// and the DPI warning of its monitor. A window without a monitor reports scale 1.
     /// </summary>
-    private Acquired AcquireWindow(nint windowHandle, bool includeFrame)
+    private Acquired AcquireWindow(nint windowHandle, bool includeFrame, WindowCaptureMethod method)
     {
         ThrowIfRefused(CheckWindow(windowHandle));
         var window = ReadCapturedWindow(windowHandle, includeFrame);
         var warnings = new List<string>();
-        var capture = CaptureWindowPixels(windowHandle, includeFrame, warnings);
+        var capture = CaptureWindowPixels(windowHandle, includeFrame, warnings, method);
         var monitor = _monitorService.GetMonitorForWindow(windowHandle);
         AddDpiWarning(windowHandle, monitor, warnings);
         return new Acquired(capture, monitor?.Index, monitor?.ScaleFactor ?? 1.0, warnings, WindowCapture: true,
@@ -401,7 +408,7 @@ public class ScreenshotService : IScreenshotService
         return Run("window area", options, request =>
         {
             // The client area is the one before the crop: a click on the crop checks that the client area is still there
-            var acquired = Acquire(new CaptureTarget.Window(windowHandle, includeFrame));
+            var acquired = Acquire(new CaptureTarget.Window(windowHandle, includeFrame, options.CaptureMethod));
             var capture = acquired.Capture;
 
             // Only what the window capture shows can be cropped to: the visible frame, or the client area without it
@@ -445,7 +452,7 @@ public class ScreenshotService : IScreenshotService
 
             var warnings = new List<string>();
             var captureStopwatch = Stopwatch.StartNew();
-            var capture = CaptureWindowPixels(windowHandle, includeFrame, warnings);
+            var capture = CaptureWindowPixels(windowHandle, includeFrame, warnings, options.CaptureMethod);
             var captureMs = captureStopwatch.Elapsed.TotalMilliseconds;
             window = WithClientArea(window, capture);
 
@@ -700,8 +707,30 @@ public class ScreenshotService : IScreenshotService
     /// Windows reports hung, or that does not answer in time, is copied from the screen with a warning instead. A
     /// frame capture is then cut to the visible frame.
     /// </summary>
-    private CaptureResult CaptureWindowPixels(nint windowHandle, bool includeFrame, List<string> warnings)
+    private CaptureResult CaptureWindowPixels(nint windowHandle, bool includeFrame, List<string> warnings,
+        WindowCaptureMethod method = WindowCaptureMethod.Auto)
     {
+        switch (method)
+        {
+            case WindowCaptureMethod.Screen:
+            {
+                var copied = _captureWrapper.CaptureWindowFromScreen(windowHandle, includeFrame);
+                ThrowIfIncomplete(copied);
+                return includeFrame ? CropToVisibleFrame(windowHandle, copied) : copied;
+            }
+
+            case WindowCaptureMethod.Wgc:
+            {
+                // Already the visible frame, or the client area
+                var composed = GraphicsCapture(windowHandle, includeFrame, out var why) ?? throw new CaptureException(
+                    ScreenshotErrorCode.CaptureFailed,
+                    $"captureMethod wgc could not capture the window: {why} Nothing was captured; leave captureMethod out (auto) " +
+                    "or use printwindow or screen.");
+                ThrowIfIncomplete(composed);
+                return composed;
+            }
+        }
+
         CaptureResult capture;
         try
         {
@@ -709,6 +738,16 @@ public class ScreenshotService : IScreenshotService
         }
         catch (WindowNotRespondingException ex)
         {
+            // The compositor still has the window as it was last drawn, without the windows that cover it (roadmap M7.1)
+            if (method == WindowCaptureMethod.Auto && GraphicsCapture(windowHandle, includeFrame, out _) is { } composed)
+            {
+                ThrowIfIncomplete(composed);
+                warnings.Add(CaptureWarnings.Format(CaptureWarnings.WindowNotResponding,
+                    "the window could not be asked to draw itself, so the image is the window as the desktop compositor last " +
+                    $"showed it (captureMethod WindowsGraphicsCapture); it may be out of date. Reason: {ex.Message}"));
+                return composed;
+            }
+
             // The runner also refuses at once while too many calls to other applications are stuck, so the warning
             // gives its reason rather than blaming this window's application
             capture = _captureWrapper.CaptureWindowFromScreen(windowHandle, includeFrame);
@@ -718,7 +757,42 @@ public class ScreenshotService : IScreenshotService
         }
 
         ThrowIfIncomplete(capture);
-        return includeFrame ? CropToVisibleFrame(windowHandle, capture) : capture;
+        capture = includeFrame ? CropToVisibleFrame(windowHandle, capture) : capture;
+
+        // A window drawn by the GPU, DirectComposition, WinUI or UWP often prints as one solid color (black): the compositor
+        // has its real pixels (roadmap M7.1). A window that really is one color stays as PrintWindow read it
+        if (method == WindowCaptureMethod.Auto && BlankColor(capture) != null &&
+            GraphicsCapture(windowHandle, includeFrame, out _) is { } recaptured &&
+            recaptured.Bgra.LongLength >= (long)recaptured.Width * recaptured.Height * 4 && BlankColor(recaptured) == null)
+        {
+            return recaptured;
+        }
+
+        return capture;
+    }
+
+    /// <summary>
+    /// The window through Windows.Graphics.Capture (roadmap M7.1), or null with <paramref name="why"/> when there is no
+    /// such capture here or it failed.
+    /// </summary>
+    private CaptureResult? GraphicsCapture(nint windowHandle, bool includeFrame, out string why)
+    {
+        if (_graphicsCapture is not { IsSupported: true } graphics)
+        {
+            why = "Windows.Graphics.Capture is not available on this computer (it needs Windows 10 1903 or later and Direct3D 11).";
+            return null;
+        }
+
+        try
+        {
+            why = string.Empty;
+            return graphics.CaptureWindow(windowHandle, includeFrame);
+        }
+        catch (GraphicsCaptureException ex)
+        {
+            why = ex.Message;
+            return null;
+        }
     }
 
     /// <summary>

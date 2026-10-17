@@ -118,6 +118,30 @@ public enum LayoutMatchBy
     TitleOnly
 }
 
+/// <summary>How a window capture reads the window's pixels (roadmap M7.1).</summary>
+[ToolEnum(nameof(ScreenshotErrorCode.CaptureFailed), "capture method", NullMeans = "auto")]
+public enum WindowCaptureMethod
+{
+    /// <summary>
+    /// PrintWindow (the window draws itself); Windows.Graphics.Capture when that image is one solid color and the compositor's
+    /// is not, or when the window does not answer; a copy of the screen when neither works.
+    /// </summary>
+    [JsonStringEnumMemberName("auto")]
+    Auto,
+
+    /// <summary>PrintWindow only (a window that does not answer is copied from the screen), as before roadmap M7.1.</summary>
+    [JsonStringEnumMemberName("printwindow")]
+    PrintWindow,
+
+    /// <summary>Windows.Graphics.Capture only: the window as the desktop compositor shows it; CaptureFailed when it cannot.</summary>
+    [JsonStringEnumMemberName("wgc")]
+    Wgc,
+
+    /// <summary>A copy of the screen over the window: what the user sees, covering windows included.</summary>
+    [JsonStringEnumMemberName("screen")]
+    Screen
+}
+
 /// <summary>The image format of a capture.</summary>
 [ToolEnum(nameof(ScreenshotErrorCode.InvalidFormat), "image format", NullMeans = "auto")]
 public enum CaptureFormat

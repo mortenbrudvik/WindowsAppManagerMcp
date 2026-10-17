@@ -18,8 +18,8 @@ public abstract record CaptureTarget
     /// <summary>A rectangle of the screen in physical virtual-screen pixels; the part off the screen is cut off.</summary>
     public sealed record Region(int X, int Y, int Width, int Height) : CaptureTarget;
 
-    /// <summary>A window, with its visible frame or only its client area.</summary>
-    public sealed record Window(nint Handle, bool IncludeFrame) : CaptureTarget;
+    /// <summary>A window, with its visible frame or only its client area, read with <paramref name="Method"/> (roadmap M7.1).</summary>
+    public sealed record Window(nint Handle, bool IncludeFrame, WindowCaptureMethod Method = WindowCaptureMethod.Auto) : CaptureTarget;
 }
 
 /// <summary>
