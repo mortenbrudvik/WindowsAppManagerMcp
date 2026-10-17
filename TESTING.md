@@ -2813,7 +2813,7 @@ The rows are measured after M6.1b (October 2026), which moved six tools out of `
 out of `input` and one out of `browser` into the opt-in `windows-batch` and `deprecated` toolsets. The deprecated tools'
 one-line descriptions keep their full parameters, which are most of the `deprecated` row. M6.6 (October 2026) raised
 `process` by 361 (list_processes' five parameters and its result fields in the description; 1,921 before) and
-`windows` by 31 (get_window_info's integrity fields in 'full'; 9,921 before), each budget to the measured size plus 36. The `steps` row is measured
+`windows` by 31 (get_window_info's integrity fields in 'full'; 9,921 before), each budget to the measured size plus 36. The `steps` row is measured
 after M6.2 added run_steps (October 2026).
 
 A change states its default, per-toolset and all-tools deltas, and raises only the ratchets it moves: a new opt-in
