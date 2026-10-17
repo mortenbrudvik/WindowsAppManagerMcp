@@ -39,7 +39,7 @@ public class ToolResultSerializationTests
     {
         // The theories below run over the catalog, so it must be exactly what the production
         // registration serves: a served tool missing from it would never be checked.
-        ServerToolCatalog.ServedToolNames.Should().Contain("launch_browser_with_debug").And.Contain("move_window");
+        ServerToolCatalog.ServedToolNames.Should().Contain("launch_browser_with_debug").And.Contain("set_window_bounds");
         ToolMethods.Keys.Should().BeEquivalentTo(ServerToolCatalog.ServedToolNames,
             "every tool the server serves must have its result type checked");
     }

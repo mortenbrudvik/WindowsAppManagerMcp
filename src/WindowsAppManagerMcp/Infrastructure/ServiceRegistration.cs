@@ -362,6 +362,8 @@ public static class ServiceRegistration
             // it is outside it: its call log includes the wait for the gate and the calls the gate filter
             // refuses while input is paused
             .AddToolErrorReporting()
+            // A call to a tool 3.0.0 removed is refused with the tool to call instead (owner decision D1), reported as a tool error
+            .AddRemovedToolRefusal()
             // Every tool refuses an argument it does not declare (roadmap M3.F42). Inside the two filters above, so the refusal
             // is audited and reported as a tool error; outside the gate filter, so it never waits for the gate
             .AddUndeclaredArgumentRefusal()

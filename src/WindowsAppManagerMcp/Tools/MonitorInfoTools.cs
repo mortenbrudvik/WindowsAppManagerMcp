@@ -13,7 +13,7 @@ public class MonitorInfoTools
     private readonly IScreenCaptureWrapper _screen;
 
     /// <param name="monitorService">The monitors.</param>
-    /// <param name="screen">The virtual screen's bounds, read as list_screens and the captures read them (roadmap M6.1).</param>
+    /// <param name="screen">The virtual screen's bounds, read as the captures read them (roadmap M6.1).</param>
     public MonitorInfoTools(IMonitorService monitorService, IScreenCaptureWrapper screen)
     {
         _monitorService = monitorService;
@@ -26,10 +26,6 @@ public class MonitorInfoTools
                  "right, above or below the primary); a monitor parameter takes its index, id or name. virtualScreen: the bounds of " +
                  "all monitors together, which take_screenshot captures with monitor 'all'.")]
     public MonitorsResult GetMonitors() => ReadMonitors(_monitorService, _screen);
-
-    [McpServerTool(Name = "get_primary_monitor", Title = "Get Primary Monitor", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
-    [Description("Deprecated, removed in 3.0.0: use get_monitors instead (the monitor with isPrimary). Returns the primary monitor.")]
-    public MonitorInfoDto GetPrimaryMonitor() => ToDto(_monitorService.GetPrimaryMonitor());
 
     /// <summary>
     /// get_monitors' result, which the wam://monitors resource returns too (roadmap M6.9), so a change to one changes both.
@@ -49,7 +45,7 @@ public class MonitorInfoTools
     }
 
     /// <summary>
-    /// A monitor as get_monitors, get_primary_monitor and the wam://monitors resource return it, with its identity and DPI
+    /// A monitor as get_monitors and the wam://monitors resource return it, with its identity and DPI
     /// (roadmap M6.7) and, given the <paramref name="primary"/>, where it is from it.
     /// </summary>
     internal static MonitorInfoDto ToDto(MonitorInfo monitor, MonitorInfo? primary = null) => new(

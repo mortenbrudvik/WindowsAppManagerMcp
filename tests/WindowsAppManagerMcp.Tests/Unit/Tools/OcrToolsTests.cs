@@ -58,7 +58,7 @@ public class OcrToolsTests
         await sut.ReadScreenText(x: -1920, y: 100, width: 800, height: 600);
         _request!.Target.Should().Be(new CaptureTarget.Region(-1920, 100, 800, 600));
 
-        await sut.ReadScreenText(monitorIndex: -1);
+        await sut.ReadScreenText(monitor: MonitorSelector.OfIndex(-1));
         _request!.Target.Should().Be(new CaptureTarget.Monitor(-1));
     }
 
@@ -81,7 +81,7 @@ public class OcrToolsTests
         var error = await RefusedAsync(() => CreateSut().ReadScreenText(
             handle: window ? Handle : null,
             x: region ? 0 : null, y: region ? 0 : null, width: region ? 10 : null, height: region ? 10 : null,
-            monitorIndex: monitor ? 0 : null));
+            monitor: monitor ? MonitorSelector.OfIndex(0) : null));
 
         error.ErrorCode.Should().Be(ToolErrorReporting.InvalidArgumentsErrorCode);
         error.Message.Should().Contain("one target");

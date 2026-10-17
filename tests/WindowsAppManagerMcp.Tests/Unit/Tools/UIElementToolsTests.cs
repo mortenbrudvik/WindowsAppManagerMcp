@@ -93,7 +93,7 @@ public class UIElementToolsTests
         var sut = CreateSut();
 
         // Act
-        var result = await sut.GetUIElements(handle: 12345);
+        var result = await sut.GetUIElements(handle: 12345, format: UIElementFormat.Tree);
 
         // Assert
         result.Should().Be(expectedResult);
@@ -507,7 +507,7 @@ public class UIElementToolsTests
         var sut = CreateSut();
 
         // Act - the shortest timeout (1000 ms)
-        var result = await sut.GetUIElements(handle: 12345, timeoutMs: 1);
+        var result = await sut.GetUIElements(handle: 12345, timeoutMs: 1, format: UIElementFormat.Tree);
 
         // Assert
         result.Should().BeSameAs(truncated);
@@ -567,7 +567,7 @@ public class UIElementToolsTests
         var sut = CreateSut();
 
         // Act
-        var result = await sut.GetUIElements(handle: 12345);
+        var result = await sut.GetUIElements(handle: 12345, format: UIElementFormat.Tree);
 
         // Assert
         result.Success.Should().BeFalse();
@@ -590,7 +590,7 @@ public class UIElementToolsTests
         var sut = CreateSut();
 
         // Act
-        var result = await sut.GetUIElements(handle: 12345);
+        var result = await sut.GetUIElements(handle: 12345, format: UIElementFormat.Tree);
 
         // Assert
         result.Success.Should().BeTrue();
@@ -642,11 +642,26 @@ public class UIElementToolsTests
     }
 
     [Fact]
-    public async Task GetUIElements_TreeFormat_IsTheDefault_AndNestsTheElements()
+    public async Task GetUIElements_TextFormat_IsTheDefault()
+    {
+        // Owner decision D3 (3.0.0): the compact text costs the fewest tokens
+        ReturnTree();
+
+        var defaulted = await CreateSut().GetUIElements(handle: 12345);
+        var text = await CreateSut().GetUIElements(handle: 12345, format: UIElementFormat.Text);
+
+        defaulted.Elements.Should().BeNull();
+        defaulted.Text.Should().NotBeNullOrEmpty().And.Be(text.Text);
+        typeof(UIElementTools).GetMethod(nameof(UIElementTools.GetUIElements))!.GetParameters().Single(p => p.Name == "format")
+            .DefaultValue.Should().Be(UIElementFormat.Text);
+    }
+
+    [Fact]
+    public async Task GetUIElements_TreeFormat_NestsTheElements()
     {
         ReturnTree();
 
-        var result = await CreateSut().GetUIElements(handle: 12345);
+        var result = await CreateSut().GetUIElements(handle: 12345, format: UIElementFormat.Tree);
 
         result.Elements!.Select(e => e.Name).Should().Equal("Tools", null);
         result.Elements![0].Children.Should().HaveCount(2);
@@ -885,7 +900,7 @@ public class UIElementToolsTests
             .ReturnsAsync(expected);
 
         // Act
-        var result = await CreateSut().GetUIElements(handle: 100);
+        var result = await CreateSut().GetUIElements(handle: 100, format: UIElementFormat.Tree);
 
         // Assert
         result.Should().BeSameAs(expected);

@@ -8,7 +8,7 @@ namespace WindowsAppManagerMcp.Tests.Contract;
 /// Contract: roadmap M6.1's additive consolidations as an MCP client sees them, through an in-process server with the
 /// production registrations over <see cref="ContractServices"/> (mocks: nothing real moves, no browser is read).
 /// get_monitors reports virtualScreen; set_window_bounds takes either pair alone, and refuses half a pair before any
-/// window is touched; get_browser_url with a bare foreground selector is get_active_browser_url.
+/// window is touched; get_browser_url with a bare foreground selector reads the browser in front.
 /// </summary>
 public class AdditiveConsolidationContractTests
 {
@@ -36,23 +36,6 @@ public class AdditiveConsolidationContractTests
         var screen = Payload(result).GetProperty("virtualScreen");
         (screen.GetProperty("x").GetInt32(), screen.GetProperty("y").GetInt32(), screen.GetProperty("width").GetInt32(),
             screen.GetProperty("height").GetInt32()).Should().Be((-1920, 0, 4480, 1440));
-    }
-
-    [Fact]
-    public async Task GetMonitors_ReportsTheVirtualScreen_ListScreensReports()
-    {
-        // Arrange - one server, so both tools read the virtual screen of the same desktop
-        var services = new ContractServices(ContractMode.Typical);
-        using var _ = services;
-        await using var server = await InProcessMcpServer.StartAsync(
-            [], builder => builder.AddWindowsAppManagerTools(), configureServices: services.Register);
-
-        // Act
-        var monitors = Payload(await server.CallToolAsync("get_monitors", new Dictionary<string, object?>()));
-        var screens = Payload(await server.CallToolAsync("list_screens", new Dictionary<string, object?>()));
-
-        // Assert - docs/TOOLS.md promises the same rectangle
-        monitors.GetProperty("virtualScreen").GetRawText().Should().Be(screens.GetProperty("virtualScreen").GetRawText());
     }
 
     [Fact]

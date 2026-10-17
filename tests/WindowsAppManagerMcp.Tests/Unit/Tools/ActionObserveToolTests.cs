@@ -28,14 +28,11 @@ public class ActionObserveToolTests
     public ActionObserveToolTests()
     {
         var notepad = new WindowSummary(Notepad, "notes.txt - Notepad", "notepad", 4242);
-        _input.Setup(s => s.Click(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<InputTarget>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+        _input.Setup(s => s.MouseClick(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<MouseButton>(), It.IsAny<int>(),
+                It.IsAny<IReadOnlyList<MouseModifier>>(), It.IsAny<InputTarget>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .Callback(() => _order.Add("click"))
-            .Returns((int x, int y, InputTarget _, bool _, CancellationToken _) => new ClickResult(true, x, y, "left") { ReceivingWindow = notepad });
-        _input.Setup(s => s.RightClick(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<InputTarget>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
-            .Returns((int x, int y, InputTarget _, bool _, CancellationToken _) => new ClickResult(true, x, y, "right") { ReceivingWindow = notepad });
-        _input.Setup(s => s.DoubleClick(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<InputTarget>(), It.IsAny<bool>(),
-                It.IsAny<CancellationToken>()))
-            .Returns((int x, int y, InputTarget _, bool _, CancellationToken _) => new ClickResult(true, x, y, "double") { ReceivingWindow = notepad });
+            .Returns((int x, int y, MouseButton button, int _, IReadOnlyList<MouseModifier> _, InputTarget _, bool _, CancellationToken _) =>
+                new ClickResult(true, x, y, button.ToString()) { ReceivingWindow = notepad });
         _input.Setup(s => s.TypeTextAsync(It.IsAny<string>(), It.IsAny<int>(), It.IsAny<InputTarget>(), It.IsAny<bool>(), It.IsAny<TextControlChars?>(), It.IsAny<TextInputMethod>(), It.IsAny<CancellationToken>()))
             .Callback(() => _order.Add("type"))
             .ReturnsAsync((string text, int _, InputTarget _, bool _, TextControlChars? _, TextInputMethod _, CancellationToken _) =>
@@ -68,7 +65,7 @@ public class ActionObserveToolTests
     [Fact]
     public async Task WithoutObserve_TheResultIsTheInputsAlone()
     {
-        var result = await CreateInputSut().Click(100, 200, windowHandle: Notepad);
+        var result = await CreateInputSut().MouseClick(100, 200, windowHandle: Notepad);
 
         result.Content.Should().ContainSingle();
         result.IsError.Should().NotBe(true);
@@ -79,9 +76,9 @@ public class ActionObserveToolTests
     }
 
     [Fact]
-    public async Task Click_WithObserveState_ObservesTheTargetWindow_AfterTheClick()
+    public async Task MouseClick_WithObserveState_ObservesTheTargetWindow_AfterTheClick()
     {
-        var result = await CreateInputSut().Click(100, 200, windowHandle: Notepad, observe: ObserveMode.State);
+        var result = await CreateInputSut().MouseClick(100, 200, windowHandle: Notepad, observe: ObserveMode.State);
 
         _order.Should().Equal("click", $"observe {Notepad}");
         _observed!.Include.Should().BeEquivalentTo(DesktopStateRequest.DefaultInclude);
@@ -90,17 +87,17 @@ public class ActionObserveToolTests
     }
 
     [Fact]
-    public async Task Click_WithoutATarget_ObservesTheWindowTheClickWentTo()
+    public async Task MouseClick_WithoutATarget_ObservesTheWindowTheClickWentTo()
     {
-        await CreateInputSut().Click(100, 200, observe: ObserveMode.State);
+        await CreateInputSut().MouseClick(100, 200, observe: ObserveMode.State);
 
         _observed!.Window.Should().Be(Notepad);
     }
 
     [Fact]
-    public async Task Click_WithObserveScreenshot_PutsTheCaptureFirst()
+    public async Task MouseClick_WithObserveScreenshot_PutsTheCaptureFirst()
     {
-        var result = await CreateInputSut().Click(100, 200, windowHandle: Notepad, observe: ObserveMode.Screenshot);
+        var result = await CreateInputSut().MouseClick(100, 200, windowHandle: Notepad, observe: ObserveMode.Screenshot);
 
         _observed!.Include.Should().Contain(DesktopStateSection.Screenshot);
         result.Content.Should().HaveCount(2);
@@ -114,7 +111,7 @@ public class ActionObserveToolTests
         // The click closed the window (a dialog's OK): what the agent sees next is the window in front
         _windows.Setup(w => w.IsValidWindow(Notepad)).Returns(false);
 
-        await CreateInputSut().Click(100, 200, windowHandle: Notepad, observe: ObserveMode.State);
+        await CreateInputSut().MouseClick(100, 200, windowHandle: Notepad, observe: ObserveMode.State);
 
         _observed!.Window.Should().BeNull();
     }
@@ -125,13 +122,14 @@ public class ActionObserveToolTests
     public async Task AnInputRefusedForItsWindow_DoesNotObserveThatWindowByName(InputErrorCode refusal)
     {
         // The agent asked for input, not a read of a denied app or its own terminal: the default rules apply
-        _input.Setup(s => s.Click(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<InputTarget>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+        _input.Setup(s => s.MouseClick(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<MouseButton>(), It.IsAny<int>(),
+                It.IsAny<IReadOnlyList<MouseModifier>>(), It.IsAny<InputTarget>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .Returns(new ClickResult(false, 100, 200, "left", "Refused.", refusal)
             {
                 ReceivingWindow = new WindowSummary(Notepad, "notes.txt - Notepad", "notepad", 4242)
             });
 
-        var result = await CreateInputSut().Click(100, 200, windowHandle: Notepad, observe: ObserveMode.State);
+        var result = await CreateInputSut().MouseClick(100, 200, windowHandle: Notepad, observe: ObserveMode.State);
 
         result.IsError.Should().BeTrue();
         result.Payload<ClickResult>().ErrorCode.Should().Be(refusal);
@@ -141,10 +139,11 @@ public class ActionObserveToolTests
     [Fact]
     public async Task AFailedInput_IsStillObserved_AndStaysAnError()
     {
-        _input.Setup(s => s.Click(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<InputTarget>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+        _input.Setup(s => s.MouseClick(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<MouseButton>(), It.IsAny<int>(),
+                It.IsAny<IReadOnlyList<MouseModifier>>(), It.IsAny<InputTarget>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .Returns(new ClickResult(false, 100, 200, "left", "Covered.", InputErrorCode.TargetOccluded));
 
-        var result = await CreateInputSut().Click(100, 200, windowHandle: Notepad, observe: ObserveMode.State);
+        var result = await CreateInputSut().MouseClick(100, 200, windowHandle: Notepad, observe: ObserveMode.State);
 
         result.IsError.Should().BeTrue();
         result.Payload<ClickResult>().Observed.Should().NotBeNull("what covers the window helps after TargetOccluded");
@@ -152,10 +151,10 @@ public class ActionObserveToolTests
     }
 
     [Fact]
-    public async Task RightAndDoubleClick_AreObserved()
+    public async Task ASecondaryAndADoubleClick_AreObserved()
     {
-        var right = await CreateInputSut().RightClick(100, 200, windowHandle: Notepad, observe: ObserveMode.State);
-        var twice = await CreateInputSut().DoubleClick(100, 200, windowHandle: Notepad, observe: ObserveMode.State);
+        var right = await CreateInputSut().MouseClick(100, 200, MouseButton.Secondary, windowHandle: Notepad, observe: ObserveMode.State);
+        var twice = await CreateInputSut().MouseClick(100, 200, clickCount: 2, windowHandle: Notepad, observe: ObserveMode.State);
 
         right.Payload<ClickResult>().Observed!.WindowHandle.Should().Be(Notepad);
         twice.Payload<ClickResult>().Observed!.WindowHandle.Should().Be(Notepad);
@@ -200,7 +199,7 @@ public class ActionObserveToolTests
     {
         _desktopState.Setup(s => s.StateUnavailable()).Returns("observe returns get_desktop_state's observation.");
 
-        var click = await RefusedAsync(() => CreateInputSut().Click(100, 200, windowHandle: Notepad, observe: observe));
+        var click = await RefusedAsync(() => CreateInputSut().MouseClick(100, 200, windowHandle: Notepad, observe: observe));
         var keys = await RefusedAsync(() => CreateInputSut().SendKeys("{ENTER}", windowHandle: Notepad, observe: observe));
         var dialog = await RefusedAsync(() => CreateDialogSut().RespondToDialog("ok", handle: Dialog, observe: observe));
 
@@ -260,9 +259,7 @@ public class ActionObserveToolTests
     }
 
     [Theory]
-    [InlineData(typeof(InputSimulationTools), nameof(InputSimulationTools.Click))]
-    [InlineData(typeof(InputSimulationTools), nameof(InputSimulationTools.RightClick))]
-    [InlineData(typeof(InputSimulationTools), nameof(InputSimulationTools.DoubleClick))]
+    [InlineData(typeof(InputSimulationTools), nameof(InputSimulationTools.MouseClick))]
     [InlineData(typeof(InputSimulationTools), nameof(InputSimulationTools.TypeText))]
     [InlineData(typeof(InputSimulationTools), nameof(InputSimulationTools.SendKeys))]
     [InlineData(typeof(DialogTools), nameof(DialogTools.RespondToDialog))]

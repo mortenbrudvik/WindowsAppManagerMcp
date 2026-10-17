@@ -124,7 +124,7 @@ public class UIElementToolContractTests
 
         // Act
         var json = Json(await server.CallToolAsync("get_ui_elements",
-            new Dictionary<string, object?> { ["handle"] = (long)Handle, ["controlTypes"] = "Button" }));
+            new Dictionary<string, object?> { ["handle"] = (long)Handle, ["controlTypes"] = "Button", ["format"] = "tree" }));
 
         // Assert
         json.GetProperty("success").GetBoolean().Should().BeTrue();
@@ -136,6 +136,22 @@ public class UIElementToolContractTests
         json.TryGetProperty("truncationReason", out _).Should().BeFalse("null members are left out");
         json.GetProperty("elements")[0].TryGetProperty("bounds", out _).Should().BeFalse(
             "an element without geometry has no bounds instead of int.MinValue coordinates");
+    }
+
+    [Fact]
+    public async Task GetUIElements_WithoutAFormat_ReturnsText()
+    {
+        // Owner decision D3 (3.0.0): text is the default (RemovedToolsContractTests: a null format, with the production
+        // argument binding)
+        _tree.WithWindow(Handle, new FakeUiaNode("Window", "Editor").With(new FakeUiaNode("Button", "Save")));
+        await using var server = await StartServerAsync();
+        var arguments = new Dictionary<string, object?> { ["handle"] = (long)Handle };
+
+        var json = Json(await server.CallToolAsync("get_ui_elements", arguments));
+
+        json.GetProperty("success").GetBoolean().Should().BeTrue();
+        json.GetProperty("text").GetString().Should().Contain("Button 'Save'");
+        json.TryGetProperty("elements", out _).Should().BeFalse();
     }
 
     [Fact]

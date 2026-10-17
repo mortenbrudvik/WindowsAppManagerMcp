@@ -7,8 +7,8 @@ namespace WindowsAppManagerMcp.Models;
 
 /// <summary>
 /// The tools a run_steps step may call (roadmap M6.2, owner decision D7): the window, element, wait, input and capture tools
-/// of a form fill or a keyboard sequence, by their own names, after roadmap M6.1 (mouse_click, not the deprecated click
-/// trio). No tool that asks the user, closes, kills, launches, or writes the clipboard, a file or a layout; no browser tool,
+/// of a form fill or a keyboard sequence, by their own names, after roadmap M6.1 (mouse_click, not the click trio 3.0.0
+/// removed). No tool that asks the user, closes, kills, launches, or writes the clipboard, a file or a layout; no browser tool,
 /// and not run_steps itself. Some arguments of the tools on the list are refused in a step too (StepRunner.Check): pasting,
 /// file output, closing a window through a pattern or a closing chord, a search of every window (scope desktop), and
 /// allowHostTarget. The keys a step sends otherwise act in the run's window as a direct call's do (ctrl+s saves).

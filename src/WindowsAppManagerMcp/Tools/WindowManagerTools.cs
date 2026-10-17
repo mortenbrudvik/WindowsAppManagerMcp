@@ -95,59 +95,6 @@ public class WindowManagerTools
         _monitorService = monitorService;
     }
 
-    [McpServerTool(Name = "move_window", Title = "Move Window", ReadOnly = false, Destructive = false, Idempotent = true, OpenWorld = false)]
-    [Description("Deprecated, removed in 3.0.0: use set_window_bounds with x and y instead. Moves a window's visible frame to x, y and keeps its size.")]
-    public async Task<WindowOperationResult> MoveWindow(
-        [Description("X coordinate of the visible frame's left edge")]
-        int x,
-        [Description("Y coordinate of the visible frame's top edge")]
-        int y,
-        [Description(HandleDescription)]
-        long? handle = null,
-        [Description(WindowTargeting.WindowDescription)]
-        WindowSelector? window = null,
-        [Description(BringToFrontDescription)]
-        bool bringToFront = true,
-        [Description(SettleDescription)]
-        int settleMs = 0,
-        CancellationToken cancellationToken = default)
-    {
-        var hwnd = Target(handle, window);
-        using (await EnterGateAsync(cancellationToken).ConfigureAwait(false))
-        {
-            WindowTargeting.ThrowIfChanged(_windowService, window, hwnd);
-            return Precheck(hwnd) ?? Change(hwnd, () => _windowService.MoveWindow(hwnd, x, y, bringToFront), settleMs);
-        }
-    }
-
-    [McpServerTool(Name = "resize_window", Title = "Resize Window", ReadOnly = false, Destructive = false, Idempotent = true, OpenWorld = false)]
-    [Description("Deprecated, removed in 3.0.0: use set_window_bounds with width and height instead. Resizes a window's visible frame and keeps its top-left corner.")]
-    public async Task<WindowOperationResult> ResizeWindow(
-        [Description("New width of the visible frame in pixels (at least 1)")]
-        int width,
-        [Description("New height of the visible frame in pixels (at least 1)")]
-        int height,
-        [Description(HandleDescription)]
-        long? handle = null,
-        [Description(WindowTargeting.WindowDescription)]
-        WindowSelector? window = null,
-        [Description(SettleDescription)]
-        int settleMs = 0,
-        CancellationToken cancellationToken = default)
-    {
-        if (SizeRefusal(width, height) is { } invalid)
-        {
-            return invalid;
-        }
-
-        var hwnd = Target(handle, window);
-        using (await EnterGateAsync(cancellationToken).ConfigureAwait(false))
-        {
-            WindowTargeting.ThrowIfChanged(_windowService, window, hwnd);
-            return Precheck(hwnd) ?? Change(hwnd, () => _windowService.ResizeWindow(hwnd, width, height), settleMs);
-        }
-    }
-
     [McpServerTool(Name = "set_window_bounds", Title = "Set Window Bounds", ReadOnly = false, Destructive = false, Idempotent = true, OpenWorld = false)]
     [Description("Move, resize, or move and resize a window in a single operation: x, y, width and height are its visible frame. " +
                  "Pass x and y to move it (it keeps its size), width and height to resize it (its top-left corner stays), or all four." +
@@ -192,7 +139,7 @@ public class WindowManagerTools
         }
 
         var hwnd = Target(handle, window);
-        var choice = percent ? MonitorTargeting.Choose(_monitorService, null, monitor, allowAll: false, NothingChanged) : default;
+        var choice = percent ? MonitorTargeting.Choose(_monitorService, monitor, allowAll: false, NothingChanged) : default;
         using (await EnterGateAsync(cancellationToken).ConfigureAwait(false))
         {
             WindowTargeting.ThrowIfChanged(_windowService, window, hwnd);
@@ -271,9 +218,9 @@ public class WindowManagerTools
         _monitorService ?? throw new InvalidOperationException("No monitor service is registered.");
 
     /// <summary>
-    /// set_window_bounds' change (roadmap M6.1): both pairs place the visible frame in one SetWindowPos; a position alone is
-    /// move_window's move (it keeps the size) and a size alone resize_window's resize (it keeps the corner and, unless asked,
-    /// the z-order), so each keeps its own error code and the second placement after a DPI change.
+    /// set_window_bounds' change (roadmap M6.1): both pairs place the visible frame in one SetWindowPos; a position alone is a
+    /// move (it keeps the size) and a size alone a resize (it keeps the corner and, unless asked, the z-order), as the
+    /// move_window and resize_window that 3.0.0 removed did, so each keeps its own error code and the second placement after a DPI change.
     /// </summary>
     private Func<WindowChangeResult> BoundsChange(nint hwnd, int? x, int? y, int? width, int? height, bool? bringToFront) =>
         (x, y, width, height) switch
@@ -993,8 +940,6 @@ public class WindowManagerTools
         long? handle = null,
         [Description(WindowTargeting.WindowDescription)]
         WindowSelector? window = null,
-        [Description(MonitorSelectorDescriptions.DeprecatedIndex)]
-        int? monitorIndex = null,
         [Description(MonitorSelectorDescriptions.Monitor + " Default: the window's own.")]
         MonitorSelector? monitor = null,
         [Description(BringToFrontDescription)]
@@ -1004,7 +949,7 @@ public class WindowManagerTools
         CancellationToken cancellationToken = default)
     {
         var hwnd = Target(handle, window);
-        var choice = MonitorTargeting.Choose(_monitorService, monitorIndex, monitor, allowAll: false, NothingChanged);
+        var choice = MonitorTargeting.Choose(_monitorService, monitor, allowAll: false, NothingChanged);
         using (await EnterGateAsync(cancellationToken).ConfigureAwait(false))
         {
             WindowTargeting.ThrowIfChanged(_windowService, window, hwnd);
@@ -1026,8 +971,8 @@ public class WindowManagerTools
                  "it did not return to normal from minimized or maximized, or it is not on that monitor afterwards (with 'maximize': not " +
                  "maximized there). An unknown positioning fails with InvalidPositioning.")]
     public async Task<WindowOperationResult> MoveWindowToMonitor(
-        [Description(MonitorSelectorDescriptions.DeprecatedIndex)]
-        int? monitorIndex = null,
+        [Description(MonitorSelectorDescriptions.Monitor)]
+        MonitorSelector monitor,
         [Description(HandleDescription)]
         long? handle = null,
         [Description(WindowTargeting.WindowDescription)]
@@ -1038,17 +983,17 @@ public class WindowManagerTools
         bool bringToFront = true,
         [Description(SettleDescription)]
         int settleMs = 0,
-        [Description(MonitorSelectorDescriptions.Monitor)]
-        MonitorSelector? monitor = null,
         CancellationToken cancellationToken = default)
     {
-        var hwnd = Target(handle, window);
-        var choice = MonitorTargeting.Choose(_monitorService, monitorIndex, monitor, allowAll: false, NothingChanged);
-        if (choice.Index == null)
+        if (monitor == null)
         {
+            // A JSON null binds; it is the caller's argument error, not the server's
             throw new ToolErrorException(ToolErrorReporting.InvalidArgumentsErrorCode,
-                $"Pass monitor, the monitor to move the window to. {NothingChanged}");
+                $"Pass monitor, the monitor to move the window to (an index or a name). {NothingChanged}");
         }
+
+        var hwnd = Target(handle, window);
+        var choice = MonitorTargeting.Choose(_monitorService, monitor, allowAll: false, NothingChanged);
 
         using (await EnterGateAsync(cancellationToken).ConfigureAwait(false))
         {
@@ -1186,7 +1131,7 @@ public class WindowManagerTools
                 return new WindowResultItem(t.Handle.ToInt64(), false, Error: $"Item {i}: {error}", ErrorCode: nameof(InvalidSnapPosition));
 
             // The item's monitor, resolved before the gate (roadmap M6.7); one that names no single monitor fails the item alone
-            return MonitorTargeting.TryChoose(_monitorService, placements[i].MonitorIndex, placements[i].Monitor, allowAll: false,
+            return MonitorTargeting.TryChoose(_monitorService, placements[i].Monitor, allowAll: false,
                 $"{nameof(placements)}[{i}].", out monitors[i], out var monitorCode, out var monitorError)
                 ? null
                 : new WindowResultItem(t.Handle.ToInt64(), false, Error: $"Item {i}: {monitorError}", ErrorCode: monitorCode);

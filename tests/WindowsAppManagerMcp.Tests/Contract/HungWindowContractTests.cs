@@ -66,7 +66,7 @@ public sealed class HungWindowContractTests : IDisposable
         var stopwatch = Stopwatch.StartNew();
 
         // Act
-        var result = await server.CallToolAsync("move_window", Arguments(Hung), timeout: Long);
+        var result = await server.CallToolAsync("set_window_bounds", Arguments(Hung), timeout: Long);
 
         // Assert - the call gave up at the deadline, not when the application answered
         stopwatch.Elapsed.Should().BeLessThan(Long / 2);
@@ -94,7 +94,7 @@ public sealed class HungWindowContractTests : IDisposable
         }, timeout: Long);
         var hung = Payload(await hungCall);
         var responsive = Payload(await responsiveCall);
-        var again = Payload(await server.CallToolAsync("move_window", Arguments(Hung), timeout: Long));
+        var again = Payload(await server.CallToolAsync("set_window_bounds", Arguments(Hung), timeout: Long));
 
         // Assert - nothing waited for the application; the second call to it failed at once
         stopwatch.Elapsed.Should().BeLessThan(Long / 2);

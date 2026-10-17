@@ -155,7 +155,7 @@ public class LaunchPlacementServiceTests
     [Fact]
     public async Task Snap_PlacesTheWindow_WatchesItUntilItStaysPut_AndReportsWhereItIs()
     {
-        var outcome = await PlaceOneAsync(Code, new LaunchPlacement(Snap: "left_half", MonitorIndex: 1));
+        var outcome = await PlaceOneAsync(Code, new LaunchPlacement(Snap: "left_half", Monitor: MonitorSelector.OfIndex(1)));
 
         outcome.Success.Should().BeTrue();
         outcome.Reapplied.Should().BeFalse("the app left the window where it was put");
@@ -462,7 +462,7 @@ public class LaunchPlacementServiceTests
     [InlineData(null, null, "monitor 2 Center")]
     public async Task MonitorIndexWithoutSnap_MovesTheWindowToThatMonitor(string? snap, string? state, string expected)
     {
-        await PlaceOneAsync(Code, new LaunchPlacement(Snap: snap, MonitorIndex: 2, State: state));
+        await PlaceOneAsync(Code, new LaunchPlacement(Snap: snap, Monitor: MonitorSelector.OfIndex(2), State: state));
 
         _calls.First().Should().Be(expected);
     }
@@ -658,7 +658,7 @@ public class LaunchPlacementServiceTests
             Id = "m-0a1b2c3d"
         };
         _monitors.Setup(m => m.ResolveMonitor(It.Is<MonitorSelector>(s => s.Name == "m-0a1b2c3d"))).Returns(MonitorResolution.Found(2, moved));
-        var plan = Plan(new LaunchPlacement(Snap: "left_half", MonitorIndex: 1)) with { MonitorKey = "m-0a1b2c3d" };
+        var plan = Plan(new LaunchPlacement(Snap: "left_half", Monitor: MonitorSelector.OfIndex(1))) with { MonitorKey = "m-0a1b2c3d" };
 
         var outcome = (await CreateSut().PlaceAsync([(Code, plan)])).Single();
 
@@ -671,7 +671,7 @@ public class LaunchPlacementServiceTests
     {
         _monitors.Setup(m => m.ResolveMonitor(It.IsAny<MonitorSelector>()))
             .Returns(MonitorResolution.Failed(nameof(WindowErrorCode.MonitorNotFound), "No monitor has the id 'm-0a1b2c3d' now. Nothing was done."));
-        var plan = Plan(new LaunchPlacement(Snap: "left_half", MonitorIndex: 1, Focus: true)) with { MonitorKey = "m-0a1b2c3d" };
+        var plan = Plan(new LaunchPlacement(Snap: "left_half", Monitor: MonitorSelector.OfIndex(1), Focus: true)) with { MonitorKey = "m-0a1b2c3d" };
 
         var outcome = (await CreateSut().PlaceAsync([(Code, plan)])).Single();
 
@@ -685,7 +685,7 @@ public class LaunchPlacementServiceTests
     [Fact]
     public async Task APlainIndex_IsUsedAsGiven()
     {
-        var outcome = await PlaceOneAsync(Code, new LaunchPlacement(Snap: "left_half", MonitorIndex: 1));
+        var outcome = await PlaceOneAsync(Code, new LaunchPlacement(Snap: "left_half", Monitor: MonitorSelector.OfIndex(1)));
 
         outcome.Success.Should().BeTrue();
         _monitors.Verify(m => m.ResolveMonitor(It.IsAny<MonitorSelector>()), Times.Never);

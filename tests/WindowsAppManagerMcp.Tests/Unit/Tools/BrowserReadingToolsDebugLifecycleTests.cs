@@ -165,7 +165,7 @@ public class BrowserReadingToolsDebugLifecycleTests
     [InlineData(null, 5, "InvalidMonitorIndex")]
     public async Task Launch_ABadPlacement_IsRefused_BeforeAnythingIsLaunched(string? snap, int? monitorIndex, string errorCode)
     {
-        var act = () => CreateSut().LaunchBrowserWithDebug(placement: new LaunchPlacement(Snap: snap, MonitorIndex: monitorIndex));
+        var act = () => CreateSut().LaunchBrowserWithDebug(placement: new LaunchPlacement(Snap: snap, Monitor: monitorIndex is { } index ? MonitorSelector.OfIndex(index) : null));
 
         (await act.Should().ThrowAsync<ToolErrorException>()).Which.ErrorCode.Should().Be(errorCode);
         VerifyNothingLaunched();

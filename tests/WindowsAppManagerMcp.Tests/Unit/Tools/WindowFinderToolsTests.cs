@@ -219,56 +219,6 @@ public class WindowFinderToolsTests
 
     #endregion
 
-    #region GetAllWindows Tests
-
-    [Fact]
-    public void GetAllWindows_CallsServiceWithIncludeMinimized()
-    {
-        // Arrange
-        _mockWindowService.Setup(w => w.GetAllWindows(It.IsAny<bool>()))
-            .Returns(new List<WindowInfo>());
-        var sut = CreateSut();
-
-        // Act
-        sut.GetAllWindows(includeMinimized: false);
-
-        // Assert
-        _mockWindowService.Verify(w => w.GetAllWindows(false), Times.Once);
-    }
-
-    [Fact]
-    public void GetAllWindows_DefaultsToIncludeMinimized()
-    {
-        // Arrange
-        _mockWindowService.Setup(w => w.GetAllWindows(It.IsAny<bool>()))
-            .Returns(new List<WindowInfo>());
-        var sut = CreateSut();
-
-        // Act
-        sut.GetAllWindows();
-
-        // Assert
-        _mockWindowService.Verify(w => w.GetAllWindows(true), Times.Once);
-    }
-
-    [Fact]
-    public void GetAllWindows_ReturnsMultipleWindows()
-    {
-        // Arrange
-        var windows = TestDataFactory.CreateTypicalWindowSet();
-        _mockWindowService.Setup(w => w.GetAllWindows(It.IsAny<bool>()))
-            .Returns(windows);
-        var sut = CreateSut();
-
-        // Act
-        var result = sut.GetAllWindows();
-
-        // Assert
-        result.Should().HaveCount(windows.Count);
-    }
-
-    #endregion
-
     #region GetForegroundWindow Tests
 
     [Fact]
@@ -347,13 +297,11 @@ public class WindowFinderToolsTests
     }
 
     [Fact]
-    public void GetAllWindows_AndGetForegroundWindow_CutALongTitle()
+    public void GetForegroundWindow_CutsALongTitle()
     {
         var window = TestDataFactory.CreateWindowInfo(title: LongTitle);
-        _mockWindowService.Setup(w => w.GetAllWindows(It.IsAny<bool>())).Returns([window]);
         _mockWindowService.Setup(w => w.GetForegroundWindow()).Returns(window);
 
-        CreateSut().GetAllWindows().Single().Title.Should().Be(CutTitle);
         CreateSut().GetForegroundWindow().Title.Should().Be(CutTitle);
     }
 

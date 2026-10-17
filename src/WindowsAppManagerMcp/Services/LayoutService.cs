@@ -652,7 +652,7 @@ public class LayoutService : ILayoutService
             .OrderBy(t => t.Placement.Order)
             .ToList();
 
-        // One snapshot of the windows get_all_windows lists; every placement is matched against it, so a window is
+        // One snapshot of the user-facing windows, as find_windows lists them; every placement is matched against it, so a window is
         // given to at most one placement. A subset is planned with the whole preset, so each of its placements gets the
         // window it would get in a full apply
         var snapshot = _windowService.GetAllWindows(includeMinimized: true);

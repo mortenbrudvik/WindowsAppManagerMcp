@@ -25,32 +25,10 @@ public class InputSimulationToolsTests
     {
         var mock = new Mock<IInputSimulationService>();
 
-        mock.Setup(s => s.Click(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<InputTarget>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
-            .Returns((int x, int y, InputTarget _, bool _, CancellationToken _) => new ClickResult(
-                Success: success,
-                X: x,
-                Y: y,
-                ClickType: "left",
-                Error: error,
-                ErrorCode: errorCode));
-
-        mock.Setup(s => s.RightClick(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<InputTarget>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
-            .Returns((int x, int y, InputTarget _, bool _, CancellationToken _) => new ClickResult(
-                Success: success,
-                X: x,
-                Y: y,
-                ClickType: "right",
-                Error: error,
-                ErrorCode: errorCode));
-
-        mock.Setup(s => s.DoubleClick(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<InputTarget>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
-            .Returns((int x, int y, InputTarget _, bool _, CancellationToken _) => new ClickResult(
-                Success: success,
-                X: x,
-                Y: y,
-                ClickType: "double",
-                Error: error,
-                ErrorCode: errorCode));
+        mock.Setup(s => s.MouseClick(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<MouseButton>(), It.IsAny<int>(),
+                It.IsAny<IReadOnlyList<MouseModifier>>(), It.IsAny<InputTarget>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Returns((int x, int y, MouseButton button, int _, IReadOnlyList<MouseModifier> _, InputTarget _, bool _, CancellationToken _) =>
+                new ClickResult(Success: success, X: x, Y: y, ClickType: button.ToString(), Error: error, ErrorCode: errorCode));
 
         mock.Setup(s => s.MoveMouse(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<InputTarget>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .Returns((int x, int y, InputTarget _, bool _, CancellationToken _) => new MouseMoveResult(
@@ -83,176 +61,6 @@ public class InputSimulationToolsTests
 
         return mock;
     }
-
-    #region Click Tests
-
-    [Fact]
-    public async Task Click_CallsServiceWithCorrectCoordinates()
-    {
-        // Arrange
-        var sut = CreateSut();
-
-        // Act
-        await sut.Click(100, 200);
-
-        // Assert
-        _mockInputService.Verify(s => s.Click(100, 200, InputTarget.None, false, It.IsAny<CancellationToken>()), Times.Once);
-    }
-
-    [Fact]
-    public async Task Click_ReturnsServiceResult()
-    {
-        // Arrange
-        var expectedResult = new ClickResult(true, 100, 200, "left");
-        _mockInputService.Setup(s => s.Click(100, 200, InputTarget.None, false, It.IsAny<CancellationToken>())).Returns(expectedResult);
-        var sut = CreateSut();
-
-        // Act
-        var result = await sut.Click(100, 200).Payload<ClickResult>();
-
-        // Assert
-        result.Should().Be(expectedResult);
-    }
-
-    [Fact]
-    public async Task Click_WithNegativeCoordinates_PassesToService()
-    {
-        // Arrange
-        var sut = CreateSut();
-
-        // Act
-        await sut.Click(-100, -200);
-
-        // Assert
-        _mockInputService.Verify(s => s.Click(-100, -200, InputTarget.None, false, It.IsAny<CancellationToken>()), Times.Once);
-    }
-
-    [Fact]
-    public async Task Click_WhenServiceReturnsError_ReturnsError()
-    {
-        // Arrange
-        var errorResult = new ClickResult(
-            Success: false,
-            X: 5000,
-            Y: 5000,
-            ClickType: "left",
-            Error: "Coordinates are outside screen bounds",
-            ErrorCode: InputErrorCode.CoordinatesOutOfBounds);
-        _mockInputService.Setup(s => s.Click(5000, 5000, InputTarget.None, false, It.IsAny<CancellationToken>())).Returns(errorResult);
-        var sut = CreateSut();
-
-        // Act
-        var result = await sut.Click(5000, 5000).Payload<ClickResult>();
-
-        // Assert
-        result.Success.Should().BeFalse();
-        result.ErrorCode.Should().Be(InputErrorCode.CoordinatesOutOfBounds);
-    }
-
-    #endregion
-
-    #region RightClick Tests
-
-    [Fact]
-    public async Task RightClick_CallsServiceWithCorrectCoordinates()
-    {
-        // Arrange
-        var sut = CreateSut();
-
-        // Act
-        await sut.RightClick(300, 400);
-
-        // Assert
-        _mockInputService.Verify(s => s.RightClick(300, 400, InputTarget.None, false, It.IsAny<CancellationToken>()), Times.Once);
-    }
-
-    [Fact]
-    public async Task RightClick_ReturnsServiceResult()
-    {
-        // Arrange
-        var expectedResult = new ClickResult(true, 300, 400, "right");
-        _mockInputService.Setup(s => s.RightClick(300, 400, InputTarget.None, false, It.IsAny<CancellationToken>())).Returns(expectedResult);
-        var sut = CreateSut();
-
-        // Act
-        var result = await sut.RightClick(300, 400).Payload<ClickResult>();
-
-        // Assert
-        result.Should().Be(expectedResult);
-    }
-
-    [Fact]
-    public async Task RightClick_WhenServiceReturnsError_ReturnsError()
-    {
-        // Arrange
-        var errorResult = new ClickResult(
-            Success: false,
-            X: 300,
-            Y: 400,
-            ClickType: "right",
-            Error: "SendInput failed",
-            ErrorCode: InputErrorCode.SendInputFailed);
-        _mockInputService.Setup(s => s.RightClick(300, 400, InputTarget.None, false, It.IsAny<CancellationToken>())).Returns(errorResult);
-        var sut = CreateSut();
-
-        // Act
-        var result = await sut.RightClick(300, 400).Payload<ClickResult>();
-
-        // Assert
-        result.Success.Should().BeFalse();
-        result.ErrorCode.Should().Be(InputErrorCode.SendInputFailed);
-    }
-
-    #endregion
-
-    #region DoubleClick Tests
-
-    [Fact]
-    public async Task DoubleClick_CallsServiceWithCorrectCoordinates()
-    {
-        // Arrange
-        var sut = CreateSut();
-
-        // Act
-        await sut.DoubleClick(500, 600);
-
-        // Assert
-        _mockInputService.Verify(s => s.DoubleClick(500, 600, InputTarget.None, false, It.IsAny<CancellationToken>()), Times.Once);
-    }
-
-    [Theory]
-    [InlineData(1)]
-    [InlineData(100)]
-    [InlineData(1000)]
-    public async Task DoubleClick_DelayMs_IsAcceptedAndIgnored(int delayMs)
-    {
-        // Arrange - roadmap M4.2: both clicks go in one batch, so there is no delay to pass; the parameter stays declared, so
-        // a call that passes it is not refused as an undeclared argument
-        var sut = CreateSut();
-
-        // Act
-        await sut.DoubleClick(500, 600, delayMs: delayMs);
-
-        // Assert
-        _mockInputService.Verify(s => s.DoubleClick(500, 600, InputTarget.None, false, It.IsAny<CancellationToken>()), Times.Once);
-    }
-
-    [Fact]
-    public async Task DoubleClick_ReturnsServiceResult()
-    {
-        // Arrange
-        var expectedResult = new ClickResult(true, 500, 600, "double");
-        _mockInputService.Setup(s => s.DoubleClick(500, 600, InputTarget.None, false, It.IsAny<CancellationToken>())).Returns(expectedResult);
-        var sut = CreateSut();
-
-        // Act
-        var result = await sut.DoubleClick(500, 600).Payload<ClickResult>();
-
-        // Assert
-        result.Should().Be(expectedResult);
-    }
-
-    #endregion
 
     #region MouseMove Tests
 
@@ -321,24 +129,6 @@ public class InputSimulationToolsTests
     #endregion
 
     #region Result Coordinate Verification Tests
-
-    [Theory]
-    [InlineData(0, 0)]
-    [InlineData(100, 200)]
-    [InlineData(1920, 1080)]
-    [InlineData(-100, -200)]
-    public async Task Click_ResultContainsCorrectCoordinates(int x, int y)
-    {
-        // Arrange
-        var sut = CreateSut();
-
-        // Act
-        var result = await sut.Click(x, y).Payload<ClickResult>();
-
-        // Assert
-        result.X.Should().Be(x);
-        result.Y.Should().Be(y);
-    }
 
     [Theory]
     [InlineData(0, 0)]
@@ -610,15 +400,12 @@ public class InputSimulationToolsTests
         var sut = CreateSut();
 
         // Act
-        await sut.Click(1, 2, releaseHeldModifiers: true, cancellationToken: request.Token);
-        await sut.RightClick(1, 2, releaseHeldModifiers: true, cancellationToken: request.Token);
-        await sut.DoubleClick(1, 2, releaseHeldModifiers: true, cancellationToken: request.Token);
+        await sut.MouseClick(1, 2, releaseHeldModifiers: true, cancellationToken: request.Token);
         sut.MouseMove(1, 2, releaseHeldModifiers: true, cancellationToken: request.Token);
 
         // Assert
-        _mockInputService.Verify(s => s.Click(1, 2, InputTarget.None, true, request.Token), Times.Once);
-        _mockInputService.Verify(s => s.RightClick(1, 2, InputTarget.None, true, request.Token), Times.Once);
-        _mockInputService.Verify(s => s.DoubleClick(1, 2, InputTarget.None, true, request.Token), Times.Once);
+        _mockInputService.Verify(s => s.MouseClick(1, 2, MouseButton.Primary, 1, It.IsAny<IReadOnlyList<MouseModifier>>(), InputTarget.None, true,
+            request.Token), Times.Once);
         _mockInputService.Verify(s => s.MoveMouse(1, 2, InputTarget.None, true, request.Token), Times.Once);
     }
 

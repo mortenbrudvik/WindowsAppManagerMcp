@@ -50,8 +50,8 @@ public enum DesktopStateScope
 
 /// <summary>
 /// What an action tool returns about the desktop after it acted (roadmap M3.12): nothing, get_desktop_state's observation, or
-/// that observation with a capture of the window. element_action has it, and so do click, right_click, double_click,
-/// type_text, send_keys and respond_to_dialog (roadmap M3.F32), and mouse_click, drag and press_keys (roadmap M4.3).
+/// that observation with a capture of the window. element_action has it, and so do type_text,
+/// send_keys and respond_to_dialog (roadmap M3.F32), and mouse_click, drag and press_keys (roadmap M4.3).
 /// </summary>
 [ToolEnum(ToolErrorReporting.InvalidArgumentsErrorCode, "observe value", NullMeans = "none")]
 public enum ObserveMode

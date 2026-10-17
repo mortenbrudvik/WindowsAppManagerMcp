@@ -255,16 +255,6 @@ public partial class WindowFinderTools
         return (integrity, aboveServer);
     }
 
-    [McpServerTool(Name = "get_all_windows", Title = "List All Windows", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
-    [Description("Deprecated, removed in 3.0.0: use find_windows instead. Lists the visible user-facing app windows, as find_windows with no filter does.")]
-    public IReadOnlyList<WindowInfoDto> GetAllWindows(
-        [Description("Include minimized windows (default: true)")]
-        bool includeMinimized = true)
-    {
-        var results = _windowService.GetAllWindows(includeMinimized);
-        return results.Select(ToDto).ToList();
-    }
-
     [McpServerTool(Name = "get_foreground_window", Title = "Get Foreground Window", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
     [Description("Get information about the currently focused (foreground) window. Untitled windows such as menus, popups and the taskbar are reported too, with an empty title and their className. When no window is in the foreground (for a moment while windows switch, or while a UAC prompt or the lock screen is shown), the call fails with errorCode NoForegroundWindow: call it again shortly.")]
     public WindowInfoDto GetForegroundWindow()
@@ -343,7 +333,7 @@ public partial class WindowFinderTools
 /// omitted when null: an unowned window, or a window that is not a UWP frame. IsAgentHost is true for
 /// the agent's own host window (its terminal, editor or chat app, or a window it owns) and omitted
 /// for every other window. Bounds is the window rect (GetWindowRect, with the invisible resize borders of about 7 px left,
-/// right and bottom); VisibleBounds is the visible frame, the rect set_window_bounds, move_window and the geometry
+/// right and bottom); VisibleBounds is the visible frame, the rect set_window_bounds and the geometry
 /// results use (omitted when DWM cannot report it). Title is cut to <see cref="AppText.MaxLength"/> characters, the
 /// ellipsis of a cut one included (roadmap M3.F14); the filters compare the whole title. IsTopmost is true for a topmost
 /// window and omitted for every other (roadmap M6.7). IsOnOtherDesktop is true for a cloaked window the shell's virtual

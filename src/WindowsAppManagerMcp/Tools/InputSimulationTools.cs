@@ -56,7 +56,7 @@ public class InputSimulationTools
     private const string ClickTargetNote =
         " Pass windowHandle with the window you mean. Without it the click goes to whatever window is at that point (check it with get_foreground_window and get_element_at_point first), " +
         "and is refused when that is the agent's own host (terminal, editor or chat app; TargetIsAgentHost), or in the cases below." +
-        " To act on an element, element_action with its ref needs no point; to click one, take find_ui_elements' clickPoint, the centre of its get_ui_elements bounds, or its capture_with_elements legend centre with that capture's captureId (any point you see on a capture works so: the server converts it)." +
+        " To act on an element, element_action with its ref needs no point; to click one, take find_ui_elements' clickPoint, the centre of its get_ui_elements box (@x,y wxh), or its capture_with_elements legend centre with that capture's captureId (any point you see on a capture works so: the server converts it)." +
         " The button is pressed exactly at the checked point; if the pointer does not stay there (it is confined to a window, or the user is moving the mouse), nothing is clicked (CursorNotAtPoint)." +
         " If it is elsewhere right after, the click was sent but may have landed there (CursorClamped)." +
         " Refused while a mouse button is held down or another window has captured the mouse (MouseInUse): the press would go there. " +
@@ -100,116 +100,6 @@ public class InputSimulationTools
         _windowService = windowService;
         _coordinates = coordinates;
         _desktopState = desktopState;
-    }
-
-    [McpServerTool(Name = "click", Title = "Click", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = false)]
-    [Description("Deprecated, removed in 3.0.0: use mouse_click instead. Clicks the primary (left) button once at x, y, with mouse_click's checks.")]
-    [ToolResultPayload(typeof(ClickResult))]
-    public async Task<CallToolResult> Click(
-        [Description(XDescription)]
-        int x,
-        [Description(YDescription)]
-        int y,
-        [Description(MouseWindowHandleDescription)]
-        long? windowHandle = null,
-        [Description(WindowTargeting.InputWindowDescription)]
-        WindowSelector? window = null,
-        [Description(AllowHostTargetDescription)]
-        bool allowHostTarget = false,
-        [Description(ReleaseHeldModifiersDescription)]
-        bool releaseHeldModifiers = false,
-        [Description(SpaceDescription)]
-        CoordinateSpace? space = null,
-        [Description(CaptureIdDescription)]
-        string? captureId = null,
-        [Description(ActionObservation.ObserveDescription)]
-        ObserveMode observe = ObserveMode.None,
-        CancellationToken cancellationToken = default)
-    {
-        ActionObservation.Check(_desktopState, observe, NothingSent);
-        var point = Point(x, y, space, captureId, windowHandle, window, allowHostTarget);
-        if (point.Failure is { } failure)
-        {
-            return await ObserveAsync(new ClickResult(false, x, y, "left", failure.Error, failure.ErrorCode) { Requested = point.Requested },
-                point.Target, observe, cancellationToken).ConfigureAwait(false);
-        }
-
-        return await ObserveAsync(Echo(_inputService.Click(point.X, point.Y, point.Target, releaseHeldModifiers, cancellationToken),
-            point.Requested), point.Target, observe, cancellationToken).ConfigureAwait(false);
-    }
-
-    [McpServerTool(Name = "right_click", Title = "Right-Click", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = false)]
-    [Description("Deprecated, removed in 3.0.0: use mouse_click with button 'secondary' instead. Clicks the secondary (right) button at x, y, with mouse_click's checks.")]
-    [ToolResultPayload(typeof(ClickResult))]
-    public async Task<CallToolResult> RightClick(
-        [Description(XDescription)]
-        int x,
-        [Description(YDescription)]
-        int y,
-        [Description(MouseWindowHandleDescription)]
-        long? windowHandle = null,
-        [Description(WindowTargeting.InputWindowDescription)]
-        WindowSelector? window = null,
-        [Description(AllowHostTargetDescription)]
-        bool allowHostTarget = false,
-        [Description(ReleaseHeldModifiersDescription)]
-        bool releaseHeldModifiers = false,
-        [Description(SpaceDescription)]
-        CoordinateSpace? space = null,
-        [Description(CaptureIdDescription)]
-        string? captureId = null,
-        [Description(ActionObservation.ObserveDescription)]
-        ObserveMode observe = ObserveMode.None,
-        CancellationToken cancellationToken = default)
-    {
-        ActionObservation.Check(_desktopState, observe, NothingSent);
-        var point = Point(x, y, space, captureId, windowHandle, window, allowHostTarget);
-        if (point.Failure is { } failure)
-        {
-            return await ObserveAsync(new ClickResult(false, x, y, "right", failure.Error, failure.ErrorCode) { Requested = point.Requested },
-                point.Target, observe, cancellationToken).ConfigureAwait(false);
-        }
-
-        return await ObserveAsync(Echo(_inputService.RightClick(point.X, point.Y, point.Target, releaseHeldModifiers, cancellationToken),
-            point.Requested), point.Target, observe, cancellationToken).ConfigureAwait(false);
-    }
-
-    [McpServerTool(Name = "double_click", Title = "Double-Click", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = false)]
-    [Description("Deprecated, removed in 3.0.0: use mouse_click with clickCount 2 instead. Double-clicks the primary button at x, y, with mouse_click's checks.")]
-    [ToolResultPayload(typeof(ClickResult))]
-    public async Task<CallToolResult> DoubleClick(
-        [Description(XDescription)]
-        int x,
-        [Description(YDescription)]
-        int y,
-        [Description("Ignored: both clicks go in one batch, always within the double-click time. Kept so older calls still work")]
-        int delayMs = 50,
-        [Description(MouseWindowHandleDescription)]
-        long? windowHandle = null,
-        [Description(WindowTargeting.InputWindowDescription)]
-        WindowSelector? window = null,
-        [Description(AllowHostTargetDescription)]
-        bool allowHostTarget = false,
-        [Description(ReleaseHeldModifiersDescription)]
-        bool releaseHeldModifiers = false,
-        [Description(SpaceDescription)]
-        CoordinateSpace? space = null,
-        [Description(CaptureIdDescription)]
-        string? captureId = null,
-        [Description(ActionObservation.ObserveDescription)]
-        ObserveMode observe = ObserveMode.None,
-        CancellationToken cancellationToken = default)
-    {
-        ActionObservation.Check(_desktopState, observe, NothingSent);
-        var point = Point(x, y, space, captureId, windowHandle, window, allowHostTarget);
-        if (point.Failure is { } failure)
-        {
-            return await ObserveAsync(new ClickResult(false, x, y, "double", failure.Error, failure.ErrorCode) { Requested = point.Requested },
-                point.Target, observe, cancellationToken).ConfigureAwait(false);
-        }
-
-        return await ObserveAsync(Echo(_inputService.DoubleClick(point.X, point.Y, point.Target,
-            releaseHeldModifiers, cancellationToken), point.Requested), point.Target, observe, cancellationToken).ConfigureAwait(false);
     }
 
     [McpServerTool(Name = "mouse_click", Title = "Mouse Click", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = false)]

@@ -65,7 +65,7 @@ public partial class BrowserReadingTools
     private const string RequireCdpDescription =
         "If true, return the CDP error (for example CdpTimeout, CdpDialogOpen, CdpTargetNotFound) instead of falling back to UI Automation. Needs a debug port; implied by targetId. Default: false.";
 
-    // get_active_browser_url takes no targetId, so its description does not mention one
+    // The browser in front (get_browser_url with a bare foreground selector) takes no targetId, so this does not mention one
     private const string ActiveRequireCdpDescription =
         "If true, return the CDP error (for example CdpTimeout, CdpDialogOpen, CdpTargetNotFound) instead of falling back to UI Automation. Needs a debug port. Default: false.";
 
@@ -106,7 +106,8 @@ public partial class BrowserReadingTools
         var cdp = new CdpOptions(cdpPort, requireCdp, timeoutMs, targetId, useCdp);
         if (handle == null && WindowTargeting.IsBareForeground(window))
         {
-            // Roadmap M6.1: the selector that only says "the window in front" is get_active_browser_url, with its
+            // Roadmap M6.1: the selector that only says "the window in front" reads the active browser (get_active_browser_url's
+            // read before 3.0.0 removed it), with its
             // NoBrowserInForeground when that window is not a browser (or there is none)
             return ToDto(await _browserReadingService.GetActiveBrowserUrlAsync(cdp, cancellationToken));
         }
@@ -171,25 +172,6 @@ public partial class BrowserReadingTools
             MaxLength: Math.Min(maxLength, BrowserContentOptions.MaxMaxLength), TextOnly: textOnly, Offset: offset, Selector: selector);
         var result = await _browserReadingService.GetBrowserContentAsync(
             windowHandle, options, new CdpOptions(cdpPort, requireCdp, timeoutMs, targetId, useCdp), cancellationToken);
-        return ToDto(result);
-    }
-
-    [McpServerTool(Name = "get_active_browser_url", Title = "Get Active Browser URL", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
-    [Description("Deprecated, removed in 3.0.0: use get_browser_url with window {\"foreground\": true} instead. Reads the URL of the browser in front.")]
-    public async Task<BrowserUrlResultDto> GetActiveBrowserUrl(
-        [Description(CdpPortDescription)]
-        int? cdpPort = null,
-        [Description(ActiveRequireCdpDescription)]
-        bool requireCdp = false,
-        [Description(TimeoutDescription)]
-        int timeoutMs = CdpOptions.DefaultTimeoutMs,
-        [Description(UseCdpDescription)]
-        bool useCdp = true,
-        CancellationToken cancellationToken = default)
-    {
-        RefuseCdpWithoutCdp(useCdp, cdpPort, targetId: null, requireCdp);
-        var result = await _browserReadingService.GetActiveBrowserUrlAsync(
-            new CdpOptions(cdpPort, requireCdp, timeoutMs, UseCdp: useCdp), cancellationToken);
         return ToDto(result);
     }
 

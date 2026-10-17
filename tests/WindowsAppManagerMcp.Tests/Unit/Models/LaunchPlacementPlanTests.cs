@@ -15,7 +15,7 @@ public class LaunchPlacementPlanTests
     [Fact]
     public void ASnapWithAMonitorAndFocus_IsParsed()
     {
-        var (plan, errorCode, _) = Check(new LaunchPlacement(Snap: "Left-Half", MonitorIndex: 1, Focus: true));
+        var (plan, errorCode, _) = Check(new LaunchPlacement(Snap: "Left-Half", Monitor: MonitorSelector.OfIndex(1), Focus: true));
 
         errorCode.Should().BeNull();
         plan.Should().Be(new LaunchPlacementPlan(SnapPosition.LeftHalf, 1, null, null, true));
@@ -64,13 +64,13 @@ public class LaunchPlacementPlanTests
     public static TheoryData<LaunchPlacement, string, string> Contradictions() => new()
     {
         { new LaunchPlacement(Snap: "left_half", Bounds: new BoundsDto(0, 0, 10, 10)), "InvalidArguments", "snap or bounds" },
-        { new LaunchPlacement(Bounds: new BoundsDto(0, 0, 10, 10), MonitorIndex: 1), "InvalidArguments", "monitorIndex" },
+        { new LaunchPlacement(Bounds: new BoundsDto(0, 0, 10, 10), Monitor: MonitorSelector.OfIndex(1)), "InvalidArguments", "leave out monitor" },
         { new LaunchPlacement(Bounds: new BoundsDto(0, 0, 10, 10), Monitor: MonitorSelector.Of("left")), "InvalidArguments", "leave out monitor" },
         { new LaunchPlacement(Bounds: new BoundsDto(0, 0, 0, 10)), "InvalidArguments", "at least 1 pixel" },
         { new LaunchPlacement(Snap: "left_half", State: "maximized"), "InvalidArguments", "maximized" },
         { new LaunchPlacement(Bounds: new BoundsDto(0, 0, 10, 10), State: "maximized"), "InvalidArguments", "maximized" },
         { new LaunchPlacement(State: "minimized", Focus: true), "InvalidArguments", "minimized" },
-        { new LaunchPlacement(MonitorIndex: -1), "InvalidMonitorIndex", "start at 0" },
+        { new LaunchPlacement(Monitor: MonitorSelector.OfIndex(-1)), "InvalidMonitorIndex", "start at 0" },
         { new LaunchPlacement(), "InvalidArguments", "asks for nothing" },
         { new LaunchPlacement(Focus: false), "InvalidArguments", "asks for nothing" },
     };
@@ -89,6 +89,6 @@ public class LaunchPlacementPlanTests
     [Fact]
     public void MonitorIndexWithMaximized_IsAllowed()
     {
-        Check(new LaunchPlacement(MonitorIndex: 1, State: "maximized")).Plan.Should().NotBeNull();
+        Check(new LaunchPlacement(Monitor: MonitorSelector.OfIndex(1), State: "maximized")).Plan.Should().NotBeNull();
     }
 }

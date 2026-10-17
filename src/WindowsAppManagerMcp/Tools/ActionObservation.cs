@@ -8,7 +8,7 @@ namespace WindowsAppManagerMcp.Tools;
 /// <summary>
 /// observe on the action tools (roadmap M3.12, M3.F32): get_desktop_state's default observation of the desktop after the
 /// action, returned as the result's <c>observed</c>, and with 'screenshot' a capture of the window as image content before
-/// the JSON. element_action has it, and so do click, right_click, double_click, mouse_click, drag, type_text, send_keys,
+/// the JSON. element_action has it, and so do mouse_click, drag, type_text, send_keys,
 /// press_keys and respond_to_dialog.
 /// </summary>
 /// <remarks>

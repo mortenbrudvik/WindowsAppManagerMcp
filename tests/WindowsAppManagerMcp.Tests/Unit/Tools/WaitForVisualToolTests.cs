@@ -62,7 +62,7 @@ public class WaitForVisualToolTests
         await tools.WaitForVisual(x: -10, y: 20, width: 300, height: 200);
         _request!.Target.Should().Be(new VisualTarget.Region(-10, 20, 300, 200));
 
-        await tools.WaitForVisual(monitorIndex: -1);
+        await tools.WaitForVisual(monitor: MonitorSelector.OfIndex(-1));
         _request!.Target.Should().Be(new VisualTarget.Monitor(-1));
 
         await tools.WaitForVisual(since: " c7-3fa91c ");
@@ -93,11 +93,11 @@ public class WaitForVisualToolTests
     public static TheoryData<string, Func<VisualTools, Task>> InvalidCalls => new()
     {
         { "one target", tools => tools.WaitForVisual() },
-        { "one target only", tools => tools.WaitForVisual(handle: Notepad, monitorIndex: 0) },
+        { "one target only", tools => tools.WaitForVisual(handle: Notepad, monitor: MonitorSelector.OfIndex(0)) },
         { "one target only", tools => tools.WaitForVisual(since: "c7-3fa91c", handle: Notepad) },
-        { "one target only", tools => tools.WaitForVisual(x: 0, y: 0, width: 10, height: 10, monitorIndex: 0) },
+        { "one target only", tools => tools.WaitForVisual(x: 0, y: 0, width: 10, height: 10, monitor: MonitorSelector.OfIndex(0)) },
         { "x, y, width and height", tools => tools.WaitForVisual(x: 0, y: 0, width: 10) },
-        { "includeFrame", tools => tools.WaitForVisual(monitorIndex: 0, includeFrame: true) },
+        { "includeFrame", tools => tools.WaitForVisual(monitor: MonitorSelector.OfIndex(0), includeFrame: true) },
         { "includeFrame", tools => tools.WaitForVisual(since: "c7-3fa91c", includeFrame: false) },
         { "since", tools => tools.WaitForVisual(since: "  ") },
         { "timeoutMs", tools => tools.WaitForVisual(handle: Notepad, timeoutMs: -1) },

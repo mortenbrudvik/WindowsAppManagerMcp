@@ -32,7 +32,7 @@ public class CaptureToolResultContractTests
         await using var server = await StartServerAsync();
 
         // Act
-        var result = await server.CallToolAsync("take_screenshot", new Dictionary<string, object?> { ["monitorIndex"] = 0 });
+        var result = await server.CallToolAsync("take_screenshot", new Dictionary<string, object?> { ["monitor"] = 0 });
 
         // Assert
         result.IsError.Should().NotBe(true, "the call failed with: {0}", TextOf(result));

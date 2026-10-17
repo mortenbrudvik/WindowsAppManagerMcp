@@ -53,7 +53,7 @@ public class InputGateToolFilterTests
     [InlineData("close_debug_browser")] // asks the user, then takes the gate for Browser.close and an end (roadmap M5.4)
     [InlineData("close_window")] // sends inside the gate it takes itself, and waits for the window outside it (roadmap M2.5)
     [InlineData("focus_window")] // resolves its window selector before it takes the gate itself (roadmap M2.4)
-    [InlineData("move_window")]
+    [InlineData("set_window_bounds")]
     [InlineData("set_window_state")]
     [InlineData("set_windows_bounds_batch")]
     [InlineData("launch_application")] // asks about an elevation Windows would not ask about, then takes the gate (roadmap M6.5)
@@ -107,7 +107,7 @@ public class InputGateToolFilterTests
     [InlineData("take_screenshot")]
     [InlineData("get_ui_elements")]
     [InlineData("type_text")] // takes the gate itself; taking it here too would deadlock
-    [InlineData("click")]
+    [InlineData("mouse_click")]
     [InlineData("get_control_status")]
     [InlineData("resume_input")] // waits for the user's answer, and must not hold up other tools meanwhile
     [InlineData("release_all_input")] // a release must never be queued behind a long input call
@@ -212,7 +212,7 @@ public class InputGateToolFilterTests
 
     [Theory]
     [InlineData("take_screenshot")]
-    [InlineData("get_all_windows")]
+    [InlineData("find_windows")]
     [InlineData("get_control_status")]
     public async Task WhilePaused_AReadOnlyTool_StillRuns(string tool)
     {

@@ -1754,157 +1754,6 @@
       }
     },
     {
-      "name": "click",
-      "title": "Click",
-      "description": "Deprecated, removed in 3.0.0: use mouse_click instead. Clicks the primary (left) button once at x, y, with mouse_click's checks.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "x": {
-            "description": "X coordinate: physical virtual-desktop pixels (negative left of the primary monitor), or as space says",
-            "type": "integer"
-          },
-          "y": {
-            "description": "Y coordinate: physical virtual-desktop pixels (negative above the primary monitor), or as space says",
-            "type": "integer"
-          },
-          "windowHandle": {
-            "description": "The window the input is for (handle from find_windows). Strongly recommended: the input is sent only if the point is on this window or a popup or dialog of it (otherwise errorCode TargetOccluded) and the window is not disabled by a modal dialog (BlockedByModal). A child window's handle stands for its top-level window. Default: none",
-            "type": [
-              "integer",
-              "null"
-            ],
-            "default": null
-          },
-          "window": {
-            "description": "Alternative to windowHandle: a window selector with find_windows' filters (processName is the whole name; plus foreground, index), resolved to exactly one window and then used as windowHandle. {\"foreground\": true} alone counts as no windowHandle, and allowHostTarget needs the window named by handle. A window that no longer matches the selector once the call's turn comes (another document or tab) gets nothing (HandleMismatch).",
-            "type": [
-              "object",
-              "null"
-            ],
-            "properties": {
-              "handle": {
-                "type": [
-                  "integer",
-                  "null"
-                ]
-              },
-              "titleContains": {
-                "type": [
-                  "string",
-                  "null"
-                ]
-              },
-              "titleEquals": {
-                "type": [
-                  "string",
-                  "null"
-                ]
-              },
-              "titleRegex": {
-                "type": [
-                  "string",
-                  "null"
-                ]
-              },
-              "processName": {
-                "type": [
-                  "string",
-                  "null"
-                ]
-              },
-              "processNameContains": {
-                "type": "boolean"
-              },
-              "processId": {
-                "type": [
-                  "integer",
-                  "null"
-                ]
-              },
-              "className": {
-                "type": [
-                  "string",
-                  "null"
-                ]
-              },
-              "foreground": {
-                "type": "boolean"
-              },
-              "index": {
-                "type": [
-                  "integer",
-                  "null"
-                ]
-              },
-              "includeCloaked": {
-                "type": "boolean"
-              },
-              "includeUntitled": {
-                "type": "boolean"
-              }
-            },
-            "additionalProperties": false,
-            "default": null
-          },
-          "allowHostTarget": {
-            "description": "Allow input to the agent's own host window: the terminal, editor or chat app this server was started from. Works only together with windowHandle (or window.handle) naming that window; set it only when the user explicitly asked for input there. Default: false",
-            "type": "boolean",
-            "default": false
-          },
-          "releaseHeldModifiers": {
-            "description": "Release modifier keys (Shift, Ctrl, Alt, Windows) that are down before the input is sent, instead of refusing with ModifiersHeld. Set it only when nobody is pressing them (a stuck key) or the user asked. Nothing is released while a modifier of the user's pause hotkey is down. Default: false",
-            "type": "boolean",
-            "default": false
-          },
-          "space": {
-            "description": "What x and y are measured in: 'screen' (physical virtual-desktop pixels), 'window' (from the top-left corner of the windowHandle window's rectangle, find_windows' bounds), 'client' (from the top-left corner of its client area) or 'image' (pixels of the image a capture returned, with captureId). The server converts the point; the result's x and y are the screen point and requested echoes what was given. Default: 'image' with captureId, else 'screen'",
-            "default": null,
-            "type": [
-              "string",
-              "null"
-            ],
-            "enum": [
-              "screen",
-              "window",
-              "client",
-              "image",
-              null
-            ]
-          },
-          "captureId": {
-            "description": "The captureId of a take_screenshot, capture_region, capture_window or capture_with_elements result: x and y are then pixels of that image as returned, converted through its imageToScreen. A window capture's window is the input's target (another windowHandle is refused). Nothing is sent when the captured window moved or resized by more than 2 pixels, closed or was minimized since, or the monitors changed (StaleCapture), or when the id is unknown or older than 10 minutes (CaptureNotFound): capture again. Default: none",
-            "type": [
-              "string",
-              "null"
-            ],
-            "default": null
-          },
-          "observe": {
-            "description": "'state' adds get_desktop_state's observation of the window acted on (else of the window in front) after the action, as observed; 'screenshot' also a capture of it as image content. Default: 'none'.",
-            "default": "none",
-            "type": "string",
-            "enum": [
-              "none",
-              "state",
-              "screenshot"
-            ]
-          }
-        },
-        "required": [
-          "x",
-          "y"
-        ]
-      },
-      "annotations": {
-        "title": "Click",
-        "destructiveHint": true,
-        "idempotentHint": false,
-        "openWorldHint": false,
-        "readOnlyHint": false
-      }
-    },
-    {
       "name": "close_application",
       "title": "Close Application",
       "description": "Close an application gracefully: send WM_CLOSE to each of its windows the user can switch to (the Alt+Tab set: visible, not owned, not tool windows; never hidden helper or tray windows), then wait up to timeoutMs. It never forces: apps may ask to save, and kill_process is the way to end an app that will not close. Name the app by exactly one of handle (one of its windows), window (a selector for one of its windows), processId or processName (every process with that name that has such a window). A packaged (UWP) app is closed through its frame window, and its processId is the app's own (as find_windows reports it), not ApplicationFrameHost's; a frame whose app cannot be told is closed only by its own handle, alone. Of the shell's process (explorer) only File Explorer windows are closed. Returns status closed (every window on the current virtual desktop gone; exited says whether the processes ended, runningProcessIds lists those that keep running, for example in the notification area or with otherDesktopWindows: its windows on other virtual desktops, which are not closed), promptShown (errorCode PromptShown, promptDetected, and prompt with its handle, title, text and buttons. Nothing was answered. Do not answer it yourself: show the user the prompt's text and buttons and ask which to choose (No or Don't Save discards their unsaved work), then answer it as they say with respond_to_dialog, handle: prompt.handle (inWindowDialog, which has no window of its own: element_action on its button).) or stillOpen (errorCode StillOpen), with windows (each window's status) and remainingWindows; timeoutMs 0 only sends (status requested). Refused before anything is sent, with nothing closed: NoClosableWindow (no such window), ProtectedWindow (the agent's own host or the desktop shell; there is no force), TargetDeniedByPolicy, InvalidHandle, InvalidArguments. More than 3 windows need a confirmation as close_windows_batch does (ConfirmationDeclined, ConfirmationRequired), and a window that changed hands meanwhile is not closed (HandleMismatch).",
@@ -2331,162 +2180,6 @@
         "title": "Delete Layout",
         "destructiveHint": true,
         "idempotentHint": true,
-        "openWorldHint": false,
-        "readOnlyHint": false
-      }
-    },
-    {
-      "name": "double_click",
-      "title": "Double-Click",
-      "description": "Deprecated, removed in 3.0.0: use mouse_click with clickCount 2 instead. Double-clicks the primary button at x, y, with mouse_click's checks.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "x": {
-            "description": "X coordinate: physical virtual-desktop pixels (negative left of the primary monitor), or as space says",
-            "type": "integer"
-          },
-          "y": {
-            "description": "Y coordinate: physical virtual-desktop pixels (negative above the primary monitor), or as space says",
-            "type": "integer"
-          },
-          "delayMs": {
-            "description": "Ignored: both clicks go in one batch, always within the double-click time. Kept so older calls still work",
-            "type": "integer",
-            "default": 50
-          },
-          "windowHandle": {
-            "description": "The window the input is for (handle from find_windows). Strongly recommended: the input is sent only if the point is on this window or a popup or dialog of it (otherwise errorCode TargetOccluded) and the window is not disabled by a modal dialog (BlockedByModal). A child window's handle stands for its top-level window. Default: none",
-            "type": [
-              "integer",
-              "null"
-            ],
-            "default": null
-          },
-          "window": {
-            "description": "Alternative to windowHandle: a window selector with find_windows' filters (processName is the whole name; plus foreground, index), resolved to exactly one window and then used as windowHandle. {\"foreground\": true} alone counts as no windowHandle, and allowHostTarget needs the window named by handle. A window that no longer matches the selector once the call's turn comes (another document or tab) gets nothing (HandleMismatch).",
-            "type": [
-              "object",
-              "null"
-            ],
-            "properties": {
-              "handle": {
-                "type": [
-                  "integer",
-                  "null"
-                ]
-              },
-              "titleContains": {
-                "type": [
-                  "string",
-                  "null"
-                ]
-              },
-              "titleEquals": {
-                "type": [
-                  "string",
-                  "null"
-                ]
-              },
-              "titleRegex": {
-                "type": [
-                  "string",
-                  "null"
-                ]
-              },
-              "processName": {
-                "type": [
-                  "string",
-                  "null"
-                ]
-              },
-              "processNameContains": {
-                "type": "boolean"
-              },
-              "processId": {
-                "type": [
-                  "integer",
-                  "null"
-                ]
-              },
-              "className": {
-                "type": [
-                  "string",
-                  "null"
-                ]
-              },
-              "foreground": {
-                "type": "boolean"
-              },
-              "index": {
-                "type": [
-                  "integer",
-                  "null"
-                ]
-              },
-              "includeCloaked": {
-                "type": "boolean"
-              },
-              "includeUntitled": {
-                "type": "boolean"
-              }
-            },
-            "additionalProperties": false,
-            "default": null
-          },
-          "allowHostTarget": {
-            "description": "Allow input to the agent's own host window: the terminal, editor or chat app this server was started from. Works only together with windowHandle (or window.handle) naming that window; set it only when the user explicitly asked for input there. Default: false",
-            "type": "boolean",
-            "default": false
-          },
-          "releaseHeldModifiers": {
-            "description": "Release modifier keys (Shift, Ctrl, Alt, Windows) that are down before the input is sent, instead of refusing with ModifiersHeld. Set it only when nobody is pressing them (a stuck key) or the user asked. Nothing is released while a modifier of the user's pause hotkey is down. Default: false",
-            "type": "boolean",
-            "default": false
-          },
-          "space": {
-            "description": "What x and y are measured in: 'screen' (physical virtual-desktop pixels), 'window' (from the top-left corner of the windowHandle window's rectangle, find_windows' bounds), 'client' (from the top-left corner of its client area) or 'image' (pixels of the image a capture returned, with captureId). The server converts the point; the result's x and y are the screen point and requested echoes what was given. Default: 'image' with captureId, else 'screen'",
-            "default": null,
-            "type": [
-              "string",
-              "null"
-            ],
-            "enum": [
-              "screen",
-              "window",
-              "client",
-              "image",
-              null
-            ]
-          },
-          "captureId": {
-            "description": "The captureId of a take_screenshot, capture_region, capture_window or capture_with_elements result: x and y are then pixels of that image as returned, converted through its imageToScreen. A window capture's window is the input's target (another windowHandle is refused). Nothing is sent when the captured window moved or resized by more than 2 pixels, closed or was minimized since, or the monitors changed (StaleCapture), or when the id is unknown or older than 10 minutes (CaptureNotFound): capture again. Default: none",
-            "type": [
-              "string",
-              "null"
-            ],
-            "default": null
-          },
-          "observe": {
-            "description": "'state' adds get_desktop_state's observation of the window acted on (else of the window in front) after the action, as observed; 'screenshot' also a capture of it as image content. Default: 'none'.",
-            "default": "none",
-            "type": "string",
-            "enum": [
-              "none",
-              "state",
-              "screenshot"
-            ]
-          }
-        },
-        "required": [
-          "x",
-          "y"
-        ]
-      },
-      "annotations": {
-        "title": "Double-Click",
-        "destructiveHint": true,
-        "idempotentHint": false,
         "openWorldHint": false,
         "readOnlyHint": false
       }
@@ -3242,14 +2935,6 @@
             ],
             "default": null
           },
-          "monitorIndex": {
-            "description": "Deprecated, removed in 3.0.0: use monitor.",
-            "type": [
-              "integer",
-              "null"
-            ],
-            "default": null
-          },
           "includeFrame": {
             "description": "For a window: read its frame (title bar) too. Default: true",
             "type": "boolean",
@@ -3703,46 +3388,6 @@
       }
     },
     {
-      "name": "get_active_browser_url",
-      "title": "Get Active Browser URL",
-      "description": "Deprecated, removed in 3.0.0: use get_browser_url with window {\"foreground\": true} instead. Reads the URL of the browser in front.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "cdpPort": {
-            "description": "DevTools port of the window's browser (launch_browser_with_debug returns it); found from its command line when omitted.",
-            "type": [
-              "integer",
-              "null"
-            ],
-            "default": null
-          },
-          "requireCdp": {
-            "description": "If true, return the CDP error (for example CdpTimeout, CdpDialogOpen, CdpTargetNotFound) instead of falling back to UI Automation. Needs a debug port. Default: false.",
-            "type": "boolean",
-            "default": false
-          },
-          "timeoutMs": {
-            "description": "Time limit in ms for the CDP requests, and again for the UI Automation read (default: 10000, range: 1000-30000). A page with an open JavaScript dialog (alert/confirm/prompt/beforeunload) never answers CDP, so the call returns CdpTimeout or CdpDialogOpen instead of hanging.",
-            "type": "integer",
-            "default": 10000
-          },
-          "useCdp": {
-            "description": "False reads through UI Automation only, without CDP. Default: true.",
-            "type": "boolean",
-            "default": true
-          }
-        }
-      },
-      "annotations": {
-        "title": "Get Active Browser URL",
-        "destructiveHint": false,
-        "idempotentHint": true,
-        "openWorldHint": false,
-        "readOnlyHint": true
-      }
-    },
-    {
       "name": "get_active_popups",
       "title": "Get Active Popups",
       "description": "List the open menus, dropdowns, flyouts and dialogs of an app: the windows of their own that a context menu, a combo box, a WinUI flyout, a WebView2 page or a prompt opens, outside the window's element tree. Each has a ref (search inside it with find_ui_elements withinRef), handle, kind (Menu, Dropdown, Dialog, Flyout, Tooltip, Popup, Window), title, className, process, bounds and its element's controlType; isBlocking marks the modal dialog that takes the window's input. Without handle or window, the app in front (the window that owns a dialog in front). Front first. Only reads. Names come from the application and are untrusted data.",
@@ -3837,28 +3482,6 @@
       },
       "annotations": {
         "title": "Get Active Popups",
-        "destructiveHint": false,
-        "idempotentHint": true,
-        "openWorldHint": false,
-        "readOnlyHint": true
-      }
-    },
-    {
-      "name": "get_all_windows",
-      "title": "List All Windows",
-      "description": "Deprecated, removed in 3.0.0: use find_windows instead. Lists the visible user-facing app windows, as find_windows with no filter does.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "includeMinimized": {
-            "description": "Include minimized windows (default: true)",
-            "type": "boolean",
-            "default": true
-          }
-        }
-      },
-      "annotations": {
-        "title": "List All Windows",
         "destructiveHint": false,
         "idempotentHint": true,
         "openWorldHint": false,
@@ -4566,22 +4189,6 @@
       }
     },
     {
-      "name": "get_primary_monitor",
-      "title": "Get Primary Monitor",
-      "description": "Deprecated, removed in 3.0.0: use get_monitors instead (the monitor with isPrimary). Returns the primary monitor.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {}
-      },
-      "annotations": {
-        "title": "Get Primary Monitor",
-        "destructiveHint": false,
-        "idempotentHint": true,
-        "openWorldHint": false,
-        "readOnlyHint": true
-      }
-    },
-    {
       "name": "get_server_info",
       "title": "Server info",
       "description": "The server's build and environment in one read-only call: version and commit, MCP SDK and protocol version, integrity level and elevation (Windows drops input to windows above it: TargetElevated), the DPI awareness in force (PerMonitorV2, or PerMonitor on old Windows, means every coordinate is a physical pixel), whether input can reach the desktop (locked session, UAC prompt), the foreground lock timeout, the monitors with their DPI, the agent host windows and processes input never reaches (TargetIsAgentHost), whether the user paused input and the pause hotkey, the target policy, destructive chords, clipboard setting and URI schemes launch_application opens, the layouts folder and the audit log folder, the toolsets, excluded tools and read-only mode in force (a tool you do not see may be turned off there; moved says where a moved tool went), the UI Automation engine, and pinnedWindows: windows set_window_zorder made topmost that still are. warnings lists what will make tools fail or coordinates wrong. Call it once at the start, and whenever tools behave unexpectedly. Changes nothing.",
@@ -4600,7 +4207,7 @@
     {
       "name": "get_ui_elements",
       "title": "Get UI Element Tree",
-      "description": "Get UI element tree with bounding boxes for a window. Returns each element's ref (for element_action and the other element tools), control name, type, automation ID and coordinates. Use this as a lightweight alternative to screenshots when only element coordinates are needed. The walk is breadth first and stops at maxElements (default 300) or the timeout with what it has read, truncated=true and truncationReason saying why (OperationTimedOut when no element matching the filters was found yet). format 'text' gives one compact line per element and costs the fewest tokens. A window that does not respond is not read (NotResponding).",
+      "description": "Get UI element tree with bounding boxes for a window. Returns each element's ref (for element_action and the other element tools), control name, type, automation ID and coordinates. Use this as a lightweight alternative to screenshots when only element coordinates are needed. The walk is breadth first and stops at maxElements (default 300) or the timeout with what it has read, truncated=true and truncationReason saying why (OperationTimedOut when no element matching the filters was found yet). The default format, 'text', gives one compact line per element and costs the fewest tokens; 'tree' and 'flat' return the elements as JSON. A window that does not respond is not read (NotResponding).",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -4733,8 +4340,8 @@
             "default": 300
           },
           "format": {
-            "description": "Shape of the result: 'tree' (default) nests each element's children under it; 'flat' lists every element once in reading order with depth (1 = under the window) and parent (index in the list); 'text' leaves elements out and returns text, one line per element indented by depth, such as \"w4120035e17 Button 'Save' aid=SaveBtn @812,44 80x24 [disabled]\" (the element's ref first, for element_action and withinRef; then type, name, aid=, fw= where the UI framework changes, @x,y wxh bounds in physical screen pixels, flags [disabled], [offscreen]).",
-            "default": "tree",
+            "description": "Shape of the result: 'text' (default) leaves elements out and returns text, one line per element indented by depth, such as \"w4120035e17 Button 'Save' aid=SaveBtn @812,44 80x24 [disabled]\" (the element's ref first, for element_action and withinRef; then type, name, aid=, fw= where the UI framework changes, @x,y wxh bounds in physical screen pixels, flags [disabled], [offscreen]); 'tree' nests each element's children under it; 'flat' lists every element once in reading order with depth (1 = under the window) and parent (index in the list).",
+            "default": "text",
             "type": "string",
             "enum": [
               "tree",
@@ -5072,14 +4679,6 @@
                   null
                 ]
               },
-              "monitorIndex": {
-                "description": "Deprecated, removed in 3.0.0: use monitor.",
-                "type": [
-                  "integer",
-                  "null"
-                ],
-                "default": null
-              },
               "bounds": {
                 "description": "The visible frame to place the window at: x, y, width and height in physical virtual-screen pixels, as set_window_bounds takes them; not together with snap",
                 "type": [
@@ -5139,6 +4738,7 @@
                 ]
               }
             },
+            "additionalProperties": false,
             "default": null
           },
           "reuseExisting": {
@@ -5259,14 +4859,6 @@
                         null
                       ]
                     },
-                    "monitorIndex": {
-                      "description": "Deprecated, removed in 3.0.0: use monitor.",
-                      "type": [
-                        "integer",
-                        "null"
-                      ],
-                      "default": null
-                    },
                     "bounds": {
                       "description": "The visible frame to place the window at: x, y, width and height in physical virtual-screen pixels, as set_window_bounds takes them; not together with snap",
                       "type": [
@@ -5326,6 +4918,7 @@
                       ]
                     }
                   },
+                  "additionalProperties": false,
                   "default": null
                 },
                 "reuseExisting": {
@@ -5463,14 +5056,6 @@
                   null
                 ]
               },
-              "monitorIndex": {
-                "description": "Deprecated, removed in 3.0.0: use monitor.",
-                "type": [
-                  "integer",
-                  "null"
-                ],
-                "default": null
-              },
               "bounds": {
                 "description": "The visible frame to place the window at: x, y, width and height in physical virtual-screen pixels, as set_window_bounds takes them; not together with snap",
                 "type": [
@@ -5530,6 +5115,7 @@
                 ]
               }
             },
+            "additionalProperties": false,
             "default": null
           }
         }
@@ -5658,22 +5244,6 @@
       }
     },
     {
-      "name": "list_screens",
-      "title": "List Screens",
-      "description": "Deprecated, removed in 3.0.0: use get_monitors instead (its virtualScreen too). Lists the monitors and the virtual screen's bounds.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {}
-      },
-      "annotations": {
-        "title": "List Screens",
-        "destructiveHint": false,
-        "idempotentHint": true,
-        "openWorldHint": false,
-        "readOnlyHint": true
-      }
-    },
-    {
       "name": "list_tabs",
       "title": "List Browser Tabs",
       "description": "List a debug browser's tabs (targetId, title, url, windowId). With a window, its tabs come first (inWindow) and shownTargetId is the one it shows when its title tells. CDP only: a browser with a debug port (launch_browser_with_debug).",
@@ -5780,7 +5350,7 @@
     {
       "name": "mouse_click",
       "title": "Mouse Click",
-      "description": "Click any mouse button 1-3 times at a point, or at a point of a capture's image (space), with modifier keys held if asked: ctrl+click, shift+click, a right or middle click, a double click, a triple click (selects a line), x1/x2 (Back/Forward). The modifier key-downs, the move, the clicks and the key-ups go in one batch, so nothing stays held. A right or middle click in a terminal (console, Windows Terminal, PuTTY, and anywhere in VS Code) pastes, so there it follows send_keys' paste rule (PasteNotAllowed). Pass windowHandle with the window you mean. Without it the click goes to whatever window is at that point (check it with get_foreground_window and get_element_at_point first), and is refused when that is the agent's own host (terminal, editor or chat app; TargetIsAgentHost), or in the cases below. To act on an element, element_action with its ref needs no point; to click one, take find_ui_elements' clickPoint, the centre of its get_ui_elements bounds, or its capture_with_elements legend centre with that capture's captureId (any point you see on a capture works so: the server converts it). The button is pressed exactly at the checked point; if the pointer does not stay there (it is confined to a window, or the user is moving the mouse), nothing is clicked (CursorNotAtPoint). If it is elsewhere right after, the click was sent but may have landed there (CursorClamped). Refused while a mouse button is held down or another window has captured the mouse (MouseInUse): the press would go there. MouseInUse also when the capture cannot be read (a window just closed): retry. Refused, with nothing sent, for windows of apps running as administrator (TargetElevated), apps the user's policy denies (TargetDeniedByPolicy), a locked session (SessionLocked) or a UAC prompt (DesktopUnavailable). The result reports receivingWindow (where the input went) and foregroundAfter. While the user has paused input with the pause hotkey, nothing is sent (PausedByUser): stop and ask the user, and never try to resume. Refused while a modifier key is held down (ModifiersHeld) unless releaseHeldModifiers is true, and after waiting 30 s for another call (InputBusy). With windowHandle the point must be on that window or a popup or dialog of it (TargetOccluded), and the window not disabled by a modal dialog (BlockedByModal).",
+      "description": "Click any mouse button 1-3 times at a point, or at a point of a capture's image (space), with modifier keys held if asked: ctrl+click, shift+click, a right or middle click, a double click, a triple click (selects a line), x1/x2 (Back/Forward). The modifier key-downs, the move, the clicks and the key-ups go in one batch, so nothing stays held. A right or middle click in a terminal (console, Windows Terminal, PuTTY, and anywhere in VS Code) pastes, so there it follows send_keys' paste rule (PasteNotAllowed). Pass windowHandle with the window you mean. Without it the click goes to whatever window is at that point (check it with get_foreground_window and get_element_at_point first), and is refused when that is the agent's own host (terminal, editor or chat app; TargetIsAgentHost), or in the cases below. To act on an element, element_action with its ref needs no point; to click one, take find_ui_elements' clickPoint, the centre of its get_ui_elements box (@x,y wxh), or its capture_with_elements legend centre with that capture's captureId (any point you see on a capture works so: the server converts it). The button is pressed exactly at the checked point; if the pointer does not stay there (it is confined to a window, or the user is moving the mouse), nothing is clicked (CursorNotAtPoint). If it is elsewhere right after, the click was sent but may have landed there (CursorClamped). Refused while a mouse button is held down or another window has captured the mouse (MouseInUse): the press would go there. MouseInUse also when the capture cannot be read (a window just closed): retry. Refused, with nothing sent, for windows of apps running as administrator (TargetElevated), apps the user's policy denies (TargetDeniedByPolicy), a locked session (SessionLocked) or a UAC prompt (DesktopUnavailable). The result reports receivingWindow (where the input went) and foregroundAfter. While the user has paused input with the pause hotkey, nothing is sent (PausedByUser): stop and ask the user, and never try to resume. Refused while a modifier key is held down (ModifiersHeld) unless releaseHeldModifiers is true, and after waiting 30 s for another call (InputBusy). With windowHandle the point must be on that window or a popup or dialog of it (TargetOccluded), and the window not disabled by a modal dialog (BlockedByModal).",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -6104,137 +5674,18 @@
       }
     },
     {
-      "name": "move_window",
-      "title": "Move Window",
-      "description": "Deprecated, removed in 3.0.0: use set_window_bounds with x and y instead. Moves a window's visible frame to x, y and keeps its size.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "x": {
-            "description": "X coordinate of the visible frame's left edge",
-            "type": "integer"
-          },
-          "y": {
-            "description": "Y coordinate of the visible frame's top edge",
-            "type": "integer"
-          },
-          "handle": {
-            "description": "Window handle (as integer) from find_windows. Pass handle or window, not both.",
-            "type": [
-              "integer",
-              "null"
-            ],
-            "default": null
-          },
-          "window": {
-            "description": "Alternative to handle: a window selector with find_windows' filters (processName is the whole name; plus foreground, index), resolved to exactly one window or refused (AmbiguousWindow lists candidates).",
-            "type": [
-              "object",
-              "null"
-            ],
-            "properties": {
-              "handle": {
-                "type": [
-                  "integer",
-                  "null"
-                ]
-              },
-              "titleContains": {
-                "type": [
-                  "string",
-                  "null"
-                ]
-              },
-              "titleEquals": {
-                "type": [
-                  "string",
-                  "null"
-                ]
-              },
-              "titleRegex": {
-                "type": [
-                  "string",
-                  "null"
-                ]
-              },
-              "processName": {
-                "type": [
-                  "string",
-                  "null"
-                ]
-              },
-              "processNameContains": {
-                "type": "boolean"
-              },
-              "processId": {
-                "type": [
-                  "integer",
-                  "null"
-                ]
-              },
-              "className": {
-                "type": [
-                  "string",
-                  "null"
-                ]
-              },
-              "foreground": {
-                "type": "boolean"
-              },
-              "index": {
-                "type": [
-                  "integer",
-                  "null"
-                ]
-              },
-              "includeCloaked": {
-                "type": "boolean"
-              },
-              "includeUntitled": {
-                "type": "boolean"
-              }
-            },
-            "additionalProperties": false,
-            "default": null
-          },
-          "bringToFront": {
-            "description": "Raise the window to the top of the z-order without activating it: keyboard input does not move to it (use focus_window for that). Default: true",
-            "type": "boolean",
-            "default": true
-          },
-          "settleMs": {
-            "description": "Wait up to this many milliseconds (0-5000, default 0) for the window to stop moving before it is read: until two reads 20 ms apart agree. Use it for an app that animates or re-applies its own size after the change.",
-            "type": "integer",
-            "default": 0
-          }
-        },
-        "required": [
-          "x",
-          "y"
-        ]
-      },
-      "annotations": {
-        "title": "Move Window",
-        "destructiveHint": false,
-        "idempotentHint": true,
-        "openWorldHint": false,
-        "readOnlyHint": false
-      }
-    },
-    {
       "name": "move_window_to_monitor",
       "title": "Move Window to Monitor",
       "description": "Move a window to a specific monitor, optionally positioning it. The window keeps its normal size, made smaller when needed so that it fits the monitor's work area. To a monitor with other scaling it is moved first, and sized after the app has rescaled itself. success requires the window to be on that monitor afterwards. Coordinates are physical virtual-screen pixels (negative left of or above the primary monitor) of the visible frame (find_windows' visibleBounds, not its bounds). A minimized or maximized window is restored to normal first, without activating it; one its app hid (in the notification area) is not shown, and the change fails. Returns success and the window as it is afterwards, also when the change failed: bounds (its visible frame), outerBounds (its window rect with the invisible resize borders, about 7 px left, right and bottom at 100%; find_windows reports this rect as bounds, and the visible frame as visibleBounds), state (normal, minimized or maximized; a minimized window has no bounds) and monitorIndex. errorCode: InvalidHandle; TargetDeniedByPolicy (the user's policy denies the app: nothing is changed, ask the user); AccessDenied (Windows blocked the change: the window belongs to an app running as administrator; ask the user); NotResponding (the window's app is hung or did not answer within 5 s, or an earlier call to it, or 8 calls to apps that do not answer, are still blocked; a minimized window may already have been restored, and a call that timed out can still take effect once the app answers, so check the window before acting on it). InvalidMonitorIndex, MonitorNotFound, AmbiguousMonitor (two stacked monitors): monitor names no single monitor (nothing changed). MoveFailed: Windows did not place it, it did not return to normal from minimized or maximized, or it is not on that monitor afterwards (with 'maximize': not maximized there). An unknown positioning fails with InvalidPositioning.",
       "inputSchema": {
         "type": "object",
         "properties": {
-          "monitorIndex": {
-            "description": "Deprecated, removed in 3.0.0: use monitor.",
+          "monitor": {
+            "description": "A monitor: index, 'primary', 'left', 'right', 'current' (the foreground window's, maybe your own terminal's), or an id or name from get_monitors.",
             "type": [
               "integer",
-              "null"
-            ],
-            "default": null
+              "string"
+            ]
           },
           "handle": {
             "description": "Window handle (as integer) from find_windows. Pass handle or window, not both.",
@@ -6338,17 +5789,11 @@
             "description": "Wait up to this many milliseconds (0-5000, default 0) for the window to stop moving before it is read: until two reads 20 ms apart agree. Use it for an app that animates or re-applies its own size after the change.",
             "type": "integer",
             "default": 0
-          },
-          "monitor": {
-            "description": "A monitor: index, 'primary', 'left', 'right', 'current' (the foreground window's, maybe your own terminal's), or an id or name from get_monitors.",
-            "default": null,
-            "type": [
-              "integer",
-              "string",
-              "null"
-            ]
           }
-        }
+        },
+        "required": [
+          "monitor"
+        ]
       },
       "annotations": {
         "title": "Move Window to Monitor",
@@ -6787,14 +6232,6 @@
             ],
             "default": null
           },
-          "monitorIndex": {
-            "description": "Deprecated, removed in 3.0.0: use monitor.",
-            "type": [
-              "integer",
-              "null"
-            ],
-            "default": null
-          },
           "includeFrame": {
             "description": "For a window: read its frame (title bar) too. Default: true",
             "type": "boolean",
@@ -6901,119 +6338,6 @@
       },
       "annotations": {
         "title": "Release Stuck Keys and Buttons",
-        "destructiveHint": false,
-        "idempotentHint": true,
-        "openWorldHint": false,
-        "readOnlyHint": false
-      }
-    },
-    {
-      "name": "resize_window",
-      "title": "Resize Window",
-      "description": "Deprecated, removed in 3.0.0: use set_window_bounds with width and height instead. Resizes a window's visible frame and keeps its top-left corner.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "width": {
-            "description": "New width of the visible frame in pixels (at least 1)",
-            "type": "integer"
-          },
-          "height": {
-            "description": "New height of the visible frame in pixels (at least 1)",
-            "type": "integer"
-          },
-          "handle": {
-            "description": "Window handle (as integer) from find_windows. Pass handle or window, not both.",
-            "type": [
-              "integer",
-              "null"
-            ],
-            "default": null
-          },
-          "window": {
-            "description": "Alternative to handle: a window selector with find_windows' filters (processName is the whole name; plus foreground, index), resolved to exactly one window or refused (AmbiguousWindow lists candidates).",
-            "type": [
-              "object",
-              "null"
-            ],
-            "properties": {
-              "handle": {
-                "type": [
-                  "integer",
-                  "null"
-                ]
-              },
-              "titleContains": {
-                "type": [
-                  "string",
-                  "null"
-                ]
-              },
-              "titleEquals": {
-                "type": [
-                  "string",
-                  "null"
-                ]
-              },
-              "titleRegex": {
-                "type": [
-                  "string",
-                  "null"
-                ]
-              },
-              "processName": {
-                "type": [
-                  "string",
-                  "null"
-                ]
-              },
-              "processNameContains": {
-                "type": "boolean"
-              },
-              "processId": {
-                "type": [
-                  "integer",
-                  "null"
-                ]
-              },
-              "className": {
-                "type": [
-                  "string",
-                  "null"
-                ]
-              },
-              "foreground": {
-                "type": "boolean"
-              },
-              "index": {
-                "type": [
-                  "integer",
-                  "null"
-                ]
-              },
-              "includeCloaked": {
-                "type": "boolean"
-              },
-              "includeUntitled": {
-                "type": "boolean"
-              }
-            },
-            "additionalProperties": false,
-            "default": null
-          },
-          "settleMs": {
-            "description": "Wait up to this many milliseconds (0-5000, default 0) for the window to stop moving before it is read: until two reads 20 ms apart agree. Use it for an app that animates or re-applies its own size after the change.",
-            "type": "integer",
-            "default": 0
-          }
-        },
-        "required": [
-          "width",
-          "height"
-        ]
-      },
-      "annotations": {
-        "title": "Resize Window",
         "destructiveHint": false,
         "idempotentHint": true,
         "openWorldHint": false,
@@ -7185,157 +6509,6 @@
         "title": "Resume Input (Asks the User)",
         "destructiveHint": false,
         "idempotentHint": true,
-        "openWorldHint": false,
-        "readOnlyHint": false
-      }
-    },
-    {
-      "name": "right_click",
-      "title": "Right-Click",
-      "description": "Deprecated, removed in 3.0.0: use mouse_click with button 'secondary' instead. Clicks the secondary (right) button at x, y, with mouse_click's checks.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "x": {
-            "description": "X coordinate: physical virtual-desktop pixels (negative left of the primary monitor), or as space says",
-            "type": "integer"
-          },
-          "y": {
-            "description": "Y coordinate: physical virtual-desktop pixels (negative above the primary monitor), or as space says",
-            "type": "integer"
-          },
-          "windowHandle": {
-            "description": "The window the input is for (handle from find_windows). Strongly recommended: the input is sent only if the point is on this window or a popup or dialog of it (otherwise errorCode TargetOccluded) and the window is not disabled by a modal dialog (BlockedByModal). A child window's handle stands for its top-level window. Default: none",
-            "type": [
-              "integer",
-              "null"
-            ],
-            "default": null
-          },
-          "window": {
-            "description": "Alternative to windowHandle: a window selector with find_windows' filters (processName is the whole name; plus foreground, index), resolved to exactly one window and then used as windowHandle. {\"foreground\": true} alone counts as no windowHandle, and allowHostTarget needs the window named by handle. A window that no longer matches the selector once the call's turn comes (another document or tab) gets nothing (HandleMismatch).",
-            "type": [
-              "object",
-              "null"
-            ],
-            "properties": {
-              "handle": {
-                "type": [
-                  "integer",
-                  "null"
-                ]
-              },
-              "titleContains": {
-                "type": [
-                  "string",
-                  "null"
-                ]
-              },
-              "titleEquals": {
-                "type": [
-                  "string",
-                  "null"
-                ]
-              },
-              "titleRegex": {
-                "type": [
-                  "string",
-                  "null"
-                ]
-              },
-              "processName": {
-                "type": [
-                  "string",
-                  "null"
-                ]
-              },
-              "processNameContains": {
-                "type": "boolean"
-              },
-              "processId": {
-                "type": [
-                  "integer",
-                  "null"
-                ]
-              },
-              "className": {
-                "type": [
-                  "string",
-                  "null"
-                ]
-              },
-              "foreground": {
-                "type": "boolean"
-              },
-              "index": {
-                "type": [
-                  "integer",
-                  "null"
-                ]
-              },
-              "includeCloaked": {
-                "type": "boolean"
-              },
-              "includeUntitled": {
-                "type": "boolean"
-              }
-            },
-            "additionalProperties": false,
-            "default": null
-          },
-          "allowHostTarget": {
-            "description": "Allow input to the agent's own host window: the terminal, editor or chat app this server was started from. Works only together with windowHandle (or window.handle) naming that window; set it only when the user explicitly asked for input there. Default: false",
-            "type": "boolean",
-            "default": false
-          },
-          "releaseHeldModifiers": {
-            "description": "Release modifier keys (Shift, Ctrl, Alt, Windows) that are down before the input is sent, instead of refusing with ModifiersHeld. Set it only when nobody is pressing them (a stuck key) or the user asked. Nothing is released while a modifier of the user's pause hotkey is down. Default: false",
-            "type": "boolean",
-            "default": false
-          },
-          "space": {
-            "description": "What x and y are measured in: 'screen' (physical virtual-desktop pixels), 'window' (from the top-left corner of the windowHandle window's rectangle, find_windows' bounds), 'client' (from the top-left corner of its client area) or 'image' (pixels of the image a capture returned, with captureId). The server converts the point; the result's x and y are the screen point and requested echoes what was given. Default: 'image' with captureId, else 'screen'",
-            "default": null,
-            "type": [
-              "string",
-              "null"
-            ],
-            "enum": [
-              "screen",
-              "window",
-              "client",
-              "image",
-              null
-            ]
-          },
-          "captureId": {
-            "description": "The captureId of a take_screenshot, capture_region, capture_window or capture_with_elements result: x and y are then pixels of that image as returned, converted through its imageToScreen. A window capture's window is the input's target (another windowHandle is refused). Nothing is sent when the captured window moved or resized by more than 2 pixels, closed or was minimized since, or the monitors changed (StaleCapture), or when the id is unknown or older than 10 minutes (CaptureNotFound): capture again. Default: none",
-            "type": [
-              "string",
-              "null"
-            ],
-            "default": null
-          },
-          "observe": {
-            "description": "'state' adds get_desktop_state's observation of the window acted on (else of the window in front) after the action, as observed; 'screenshot' also a capture of it as image content. Default: 'none'.",
-            "default": "none",
-            "type": "string",
-            "enum": [
-              "none",
-              "state",
-              "screenshot"
-            ]
-          }
-        },
-        "required": [
-          "x",
-          "y"
-        ]
-      },
-      "annotations": {
-        "title": "Right-Click",
-        "destructiveHint": true,
-        "idempotentHint": false,
         "openWorldHint": false,
         "readOnlyHint": false
       }
@@ -8888,14 +8061,6 @@
             "additionalProperties": false,
             "default": null
           },
-          "monitorIndex": {
-            "description": "Deprecated, removed in 3.0.0: use monitor.",
-            "type": [
-              "integer",
-              "null"
-            ],
-            "default": null
-          },
           "monitor": {
             "description": "A monitor: index, 'primary', 'left', 'right', 'current' (the foreground window's, maybe your own terminal's), or an id or name from get_monitors. Default: the window's own.",
             "default": null,
@@ -8961,14 +8126,6 @@
                   ]
                 },
                 "handle": {
-                  "type": [
-                    "integer",
-                    "null"
-                  ],
-                  "default": null
-                },
-                "monitorIndex": {
-                  "description": "Deprecated, removed in 3.0.0: use monitor.",
                   "type": [
                     "integer",
                     "null"
@@ -9060,7 +8217,8 @@
               },
               "required": [
                 "position"
-              ]
+              ],
+              "additionalProperties": false
             }
           },
           "delayBetweenMs": {
@@ -9088,14 +8246,6 @@
       "inputSchema": {
         "type": "object",
         "properties": {
-          "monitorIndex": {
-            "description": "Deprecated, removed in 3.0.0: use monitor.",
-            "type": [
-              "integer",
-              "null"
-            ],
-            "default": null
-          },
           "format": {
             "description": "Image format: 'auto' (default: JPEG, or PNG when the image's long edge is at most 512 pixels), 'png' (lossless, larger) or 'jpeg' ('jpg' is accepted too). With outputPath, 'auto' follows the file extension. Any other value is rejected with InvalidFormat.",
             "default": "auto",
@@ -9813,14 +8963,6 @@
           },
           "height": {
             "description": "Region: height in pixels",
-            "type": [
-              "integer",
-              "null"
-            ],
-            "default": null
-          },
-          "monitorIndex": {
-            "description": "Deprecated, removed in 3.0.0: use monitor.",
             "type": [
               "integer",
               "null"

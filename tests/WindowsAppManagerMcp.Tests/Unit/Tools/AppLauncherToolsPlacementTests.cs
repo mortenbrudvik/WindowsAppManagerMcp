@@ -101,7 +101,7 @@ public class AppLauncherToolsPlacementTests
     [InlineData("left_half", 5, "InvalidMonitorIndex")]
     public async Task AnInvalidPlacement_IsAToolError_AndNothingIsLaunched(string snap, int? monitorIndex, string expected)
     {
-        var call = async () => await CreateSut().LaunchApplication("code", placement: new LaunchPlacement(Snap: snap, MonitorIndex: monitorIndex));
+        var call = async () => await CreateSut().LaunchApplication("code", placement: new LaunchPlacement(Snap: snap, Monitor: monitorIndex is { } index ? MonitorSelector.OfIndex(index) : null));
 
         var error = (await call.Should().ThrowAsync<ToolErrorException>()).Which;
         error.ErrorCode.Should().Be(expected);
@@ -183,18 +183,6 @@ public class AppLauncherToolsPlacementTests
 
         // Assert
         (await call.Should().ThrowAsync<ToolErrorException>()).Which.ErrorCode.Should().Be(nameof(WindowErrorCode.InvalidMonitorIndex));
-        VerifyNothingLaunched();
-    }
-
-    [Fact]
-    public async Task APlacementWithMonitorAndMonitorIndex_IsInvalidArguments()
-    {
-        // Act
-        var call = async () => await CreateSut().LaunchApplication("code",
-            placement: new LaunchPlacement(MonitorIndex: 0, Monitor: MonitorSelector.OfIndex(1)));
-
-        // Assert
-        (await call.Should().ThrowAsync<ToolErrorException>()).Which.ErrorCode.Should().Be(ToolErrorReporting.InvalidArgumentsErrorCode);
         VerifyNothingLaunched();
     }
 

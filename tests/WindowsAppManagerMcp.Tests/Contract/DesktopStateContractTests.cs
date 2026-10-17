@@ -162,9 +162,6 @@ public class DesktopStateContractTests
     }
 
     [Theory]
-    [InlineData("click")]
-    [InlineData("right_click")]
-    [InlineData("double_click")]
     [InlineData("mouse_click")]
     [InlineData("drag")]
     [InlineData("type_text")]
@@ -191,7 +188,7 @@ public class DesktopStateContractTests
     }
 
     [Theory]
-    [InlineData("click")]
+    [InlineData("mouse_click")]
     [InlineData("type_text")]
     [InlineData("send_keys")]
     [InlineData("respond_to_dialog")]

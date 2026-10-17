@@ -16,7 +16,7 @@ namespace WindowsAppManagerMcp.Tests.Contract;
 public class InputToolGuardContractTests
 {
     private static readonly string[] InputTools =
-        ["click", "right_click", "double_click", "mouse_click", "drag", "mouse_move", "scroll", "type_text", "send_keys", "press_keys"];
+        ["mouse_click", "drag", "mouse_move", "scroll", "type_text", "send_keys", "press_keys"];
 
     private static readonly nint Terminal = 0x100;
     private static readonly nint Notepad = 0x200;
@@ -283,7 +283,7 @@ public class InputToolGuardContractTests
         await using var server = await StartServerAsync();
 
         // Act
-        var payload = ParsePayload(await server.CallToolAsync("click", new Dictionary<string, object?>
+        var payload = ParsePayload(await server.CallToolAsync("mouse_click", new Dictionary<string, object?>
         {
             ["x"] = 400,
             ["y"] = 300,
@@ -306,7 +306,7 @@ public class InputToolGuardContractTests
         await using var server = await StartServerAsync();
 
         // Act
-        var payload = ParsePayload(await server.CallToolAsync("click", new Dictionary<string, object?>
+        var payload = ParsePayload(await server.CallToolAsync("mouse_click", new Dictionary<string, object?>
         {
             ["x"] = 400,
             ["y"] = 300,
@@ -327,7 +327,7 @@ public class InputToolGuardContractTests
         await using var server = await StartServerAsync();
 
         // Act
-        var payload = ParsePayload(await server.CallToolAsync("click", new Dictionary<string, object?>
+        var payload = ParsePayload(await server.CallToolAsync("mouse_click", new Dictionary<string, object?>
         {
             ["x"] = 400,
             ["y"] = 300,

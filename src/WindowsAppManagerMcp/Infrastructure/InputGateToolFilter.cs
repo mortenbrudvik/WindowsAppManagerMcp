@@ -17,11 +17,10 @@ namespace WindowsAppManagerMcp.Infrastructure;
 /// <remarks>
 /// A tool that is in none of <see cref="InputTools"/>, <see cref="ReadOnlyTools"/>, <see cref="ControlTools"/> and
 /// <see cref="SelfGatedTools"/> runs inside the gate, so a new tool is serialized until it is reviewed onto another
-/// list. A contract test checks that every tool the server serves is in exactly one of the five lists. The tools roadmap M6.1
-/// deprecated (click, right_click, double_click, move_window, resize_window, get_all_windows, get_primary_monitor,
-/// list_screens, get_active_browser_url) and the geometry batches it moved to windows-batch keep their places on the lists:
-/// toolsets that are off by default serve them, and when they are served they are gated exactly as before. A name the server does not
-/// serve passes straight through, so the SDK reports it as a protocol error at once: a call that runs nothing
+/// list. A contract test checks that every tool the server serves is in exactly one of the five lists. The geometry
+/// batches roadmap M6.1 moved to windows-batch keep their places on the lists: a toolset that is off by default serves
+/// them, and when they are served they are gated exactly as before. A name the server does not serve (a tool 3.0.0
+/// removed is refused before this filter, RemovedTools) passes straight through, so the SDK reports it as a protocol error at once: a call that runs nothing
 /// cannot change which window is in front.
 /// <para>
 /// While the user has paused input (roadmap M1.10), the same tools return PausedByUser without running: they
@@ -60,12 +59,11 @@ namespace WindowsAppManagerMcp.Infrastructure;
 public static class InputGateToolFilter
 {
     /// <summary>
-    /// The input tools. They hold the gate themselves (InputSimulationService), not through this filter. click, right_click and
-    /// double_click are in the opt-in deprecated toolset since roadmap M6.1, and the server instructions name only the others.
+    /// The input tools. They hold the gate themselves (InputSimulationService), not through this filter.
     /// </summary>
     public static IReadOnlySet<string> InputTools { get; } = new HashSet<string>(StringComparer.Ordinal)
     {
-        "click", "right_click", "double_click", "mouse_click", "drag", "mouse_move", "scroll", "type_text", "send_keys", "press_keys"
+        "mouse_click", "drag", "mouse_move", "scroll", "type_text", "send_keys", "press_keys"
     };
 
     /// <summary>
@@ -87,7 +85,7 @@ public static class InputGateToolFilter
     /// (roadmap M2.5) also send their close messages inside the gate and release it before they wait for the windows to
     /// close, and kill_process sends its close request or termination inside it and releases it before it waits for the
     /// process to exit: a slow app or a prompt must not hold up every input and window call for the whole wait. The window tools
-    /// (move, resize, bounds, state, focus, snap, move to a monitor and the three window batches) resolve their window
+    /// (bounds, state, focus, snap, move to a monitor, z-order and the three window batches) resolve their window
     /// selector (roadmap M2.4) before they take the gate, and act inside it. element_action (roadmap M3.6) searches for its
     /// element before it takes the gate, acts on it inside the gate, and releases the gate before its mouse or keyboard path,
     /// which takes it again through the input service, and before it waits for the state after the action. respond_to_dialog
@@ -118,7 +116,7 @@ public static class InputGateToolFilter
     public static IReadOnlySet<string> SelfGatedTools { get; } = new HashSet<string>(StringComparer.Ordinal)
     {
         "kill_process", "close_window", "close_windows_batch", "close_application", "close_debug_browser",
-        "move_window", "resize_window", "set_window_bounds", "set_window_state", "focus_window",
+        "set_window_bounds", "set_window_state", "focus_window",
         "snap_window", "move_window_to_monitor", "set_windows_bounds_batch", "snap_windows_batch", "set_windows_state_batch",
         "set_window_zorder",
         "element_action", "respond_to_dialog", "file_dialog",
@@ -148,9 +146,9 @@ public static class InputGateToolFilter
     /// </summary>
     public static IReadOnlySet<string> ReadOnlyTools { get; } = new HashSet<string>(StringComparer.Ordinal)
     {
-        "find_windows", "get_all_windows", "get_foreground_window", "get_monitors", "get_primary_monitor",
+        "find_windows", "get_foreground_window", "get_monitors",
         "list_processes", "list_installed_apps", "list_layouts", "get_layout", "save_layout", "delete_layout", "save_workspace", "get_browser_url",
-        "get_browser_content", "get_active_browser_url", "list_screens", "take_screenshot", "capture_region",
+        "get_browser_content", "take_screenshot", "capture_region",
         "capture_window", "capture_with_elements", "get_ui_elements", "find_ui_elements", "get_focused_element", "get_element_at_point",
         "get_active_popups",
         "get_control_status", "get_server_info", "get_owned_windows", "get_clipboard", "get_window_info",

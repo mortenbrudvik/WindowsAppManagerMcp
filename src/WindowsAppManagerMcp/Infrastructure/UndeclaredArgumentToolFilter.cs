@@ -81,6 +81,7 @@ public static class UndeclaredArgumentToolFilter
         var named = unknown.Select(name =>
             !AuditRecord.IsIdentifier(name) ? "an argument whose name is not a parameter name"
             : Hints.TryGetValue((tool, name), out var hint) ? $"'{name}' ({hint})"
+            : name == "monitorIndex" && declared.Contains("monitor") ? $"'{name}' (removed in 3.0.0: use 'monitor', which takes the index too)"
             : Nearest(name, declared) is { } meant ? $"'{name}' (did you mean '{meant}'?)"
             : $"'{name}'");
         var list = unknown.Count == 1 ? named.Single() : string.Join(", ", named.SkipLast(1)) + " or " + named.Last();

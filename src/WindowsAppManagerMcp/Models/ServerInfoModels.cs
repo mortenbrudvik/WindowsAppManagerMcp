@@ -158,7 +158,7 @@ public sealed record ServerPathsInfo(string Layouts, string? AuditLog = null);
 /// <param name="ServedTools">How many tools tools/list lists.</param>
 /// <param name="Moved">
 /// Where the tools that moved out of a toolset in force went (roadmap M6.1), one sentence per toolset that is off: for
-/// example click, which the deprecated toolset holds and mouse_click replaces. Null when none is out of reach.
+/// example the window batches, which the windows-batch toolset holds. Null when none is out of reach.
 /// </param>
 /// <param name="Resources">
 /// The URIs (or URI templates) of the resources served (roadmap M6.9), so an agent whose client shows resources only to the

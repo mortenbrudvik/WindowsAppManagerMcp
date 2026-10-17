@@ -153,7 +153,7 @@ public class RunStepsContractTests
     [Theory]
     [InlineData("""{ "tool": "type_text", "args": { "text": "a", "method": "paste" } }""")]
     [InlineData("""{ "tool": "capture_window", "args": { "outputPath": "C:\\Users\\user\\a.png" } }""")]
-    [InlineData("""{ "tool": "click", "args": { "x": 1, "y": 2 } }""")]
+    [InlineData("""{ "tool": "click", "args": { "x": 1, "y": 2 } }""")] // removed in 3.0.0
     [InlineData("""{ "tool": "set_clipboard", "args": { "text": "a" } }""")]
     [InlineData("""{ "tool": "close_window" }""")]
     [InlineData("""{ "tool": "run_steps" }""")]
@@ -386,10 +386,11 @@ public class RunStepsContractTests
         var options = server.Services.GetRequiredService<Microsoft.Extensions.Options.IOptions<McpServerOptions>>().Value;
         var filters = options.Filters.Request.CallToolFilters.ToList();
 
-        // The test's own filter first (it records the run's id), then the four production filters in production order
+        // The test's own filter first (it records the run's id), then the five production filters in production order
         filters.Skip(1).Should().Equal(
             (McpRequestFilter<CallToolRequestParams, CallToolResult>)AuditLogToolFilter.Filter,
             (McpRequestFilter<CallToolRequestParams, CallToolResult>)ToolErrorReporting.Filter,
+            (McpRequestFilter<CallToolRequestParams, CallToolResult>)RemovedTools.Filter,
             (McpRequestFilter<CallToolRequestParams, CallToolResult>)UndeclaredArgumentToolFilter.Filter,
             (McpRequestFilter<CallToolRequestParams, CallToolResult>)InputGateToolFilter.Filter);
     }
@@ -397,12 +398,12 @@ public class RunStepsContractTests
     // ---- The step allow list ----
 
     [Fact]
-    public void TheStepTools_AreServedTools_NoneDeprecated_AndNoneThatAsksClosesLaunchesOrWritesTheClipboard()
+    public void TheStepTools_AreServedTools_NoneRemoved_AndNoneThatAsksClosesLaunchesOrWritesTheClipboard()
     {
         var steps = Enum.GetValues<StepTool>().Select(StepRunner.ToolName).ToList();
 
         steps.Should().BeSubsetOf(ServerToolCatalog.ServedToolNames);
-        steps.Should().NotIntersectWith(Toolsets.Server.Find(Toolsets.DeprecatedToolset)!.Tools, "deprecated tools are never steps (owner decision D1)");
+        steps.Should().NotIntersectWith(RemovedTools.Replacements.Keys, "a removed tool is never a step (owner decision D1)");
         steps.Should().NotIntersectWith(InputGateToolFilter.WindowChangingTools, "a step launches nothing and writes no clipboard or layout");
         // Nothing that asks the user either: a question inside a held gate would stall every input call while the user reads it
         steps.Should().NotContain(["run_steps", "close_window", "close_windows_batch", "close_application", "kill_process", "set_clipboard",

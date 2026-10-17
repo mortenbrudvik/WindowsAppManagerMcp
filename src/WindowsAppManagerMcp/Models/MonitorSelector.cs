@@ -46,7 +46,7 @@ public sealed record MonitorSelector
     public override string ToString() => Index?.ToString(CultureInfo.InvariantCulture) ?? Name!;
 }
 
-/// <summary>The descriptions of the `monitor` parameters and of the monitorIndex parameters they replace (roadmap M6.7).</summary>
+/// <summary>The descriptions of the `monitor` parameters (roadmap M6.7).</summary>
 public static class MonitorSelectorDescriptions
 {
     /// <summary>The description of every `monitor` parameter.</summary>
@@ -56,9 +56,6 @@ public static class MonitorSelectorDescriptions
 
     /// <summary>The description of a `monitor` parameter that also takes every monitor in one image.</summary>
     public const string MonitorOrAll = Monitor + " 'all' (or -1): every monitor in one image.";
-
-    /// <summary>The description of every deprecated monitorIndex parameter (owner decision D1: removed in 3.0.0).</summary>
-    public const string DeprecatedIndex = "Deprecated, removed in 3.0.0: use monitor.";
 }
 
 /// <summary>Reads a <see cref="MonitorSelector"/> from a JSON integer or string, and writes it back as given.</summary>
