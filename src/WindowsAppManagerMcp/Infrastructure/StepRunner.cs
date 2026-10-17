@@ -47,8 +47,10 @@ public sealed record StepRunOutcome(RunStepsResult Result, IReadOnlyList<ImageCo
 /// <para><b>During the run</b>, before each step after the first: a pause stops it (PausedByUser), maxDurationMs running out
 /// stops it (OperationTimedOut; a wait step's timeoutMs is cut to what is left, and a step still running then is
 /// cancelled), and once the run's window (or its dialog) has been in front, a window outside it in front stops it
-/// (TargetNotForeground): the user took the foreground, and the run does not take it back. A failed step stops the run,
-/// unless it is optional; the steps after it are skipped. A step is never undone.</para>
+/// (TargetNotForeground): the user took the foreground, and the run does not take it back. With WAM_TAKEOVER_DETECTION=stop,
+/// the user's keyboard or mouse input since the run held the gate stops it too (UserInterrupted, roadmap M7.4), as does a
+/// step that stopped for it; with warn the run goes on and its result has a warning. A failed step stops the run, unless it
+/// is optional; the steps after it are skipped. A step is never undone.</para>
 /// </remarks>
 public sealed partial class StepRunner
 {
@@ -118,14 +120,17 @@ public sealed partial class StepRunner
     private readonly IElementRegistry _elements;
     private readonly InputGuardOptions _keyGuard;
     private readonly TimeProvider _time;
+    private readonly ITakeoverMonitor? _takeover;
 
     /// <param name="keyGuard">
     /// The server's destructive chords (WAM_DESTRUCTIVE_CHORDS): a step's keys may contain none of them, nor any of the
     /// default ones, whatever the variable says. Null: the defaults.
     /// </param>
+    /// <param name="takeover">Takeover detection (roadmap M7.4); without it the run is not watched.</param>
     public StepRunner(IInputSession session, IWindowService windows, IElementRegistry elements, InputGuardOptions? keyGuard = null,
-        TimeProvider? time = null)
+        TimeProvider? time = null, ITakeoverMonitor? takeover = null)
     {
+        _takeover = takeover;
         _session = session;
         _windows = windows;
         _elements = elements;
@@ -239,6 +244,7 @@ public sealed partial class StepRunner
         var ran = new List<Ran>(steps.Count);
         StepStopReason? stop = null;
         string? stopCode = null, stopError = null;
+        var userActed = false;
 
         using (var lease = await InputGateToolFilter.HoldAsync(_session, cancellationToken).ConfigureAwait(false))
         {
@@ -248,6 +254,10 @@ public sealed partial class StepRunner
             var held = _time.GetTimestamp();
             using var budget = new CancellationTokenSource(maxDuration, _time);
             using var run = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, budget.Token);
+
+            // Takeover detection (roadmap M7.4) watches the whole run; its token ends only the waits between steps, so a step
+            // that runs is never cut off by it (an input step watches itself)
+            using var takeover = _takeover?.Watch() ?? TakeoverWatch.None;
             var foregroundWasOurs = false;
             try
             {
@@ -256,7 +266,7 @@ public sealed partial class StepRunner
                     var step = steps[i];
                     if (i > 0 && delayBetweenSteps > TimeSpan.Zero)
                     {
-                        await DelayAsync(delayBetweenSteps, run.Token).ConfigureAwait(false);
+                        await DelayAsync(delayBetweenSteps, run.Token, takeover.Token).ConfigureAwait(false);
                     }
 
                     cancellationToken.ThrowIfCancellationRequested();
@@ -264,6 +274,13 @@ public sealed partial class StepRunner
                     if (_session.IsPaused)
                     {
                         (stop, stopCode, stopError) = (StepStopReason.Paused, nameof(WindowErrorCode.PausedByUser), Paused(step, during: false));
+                        break;
+                    }
+
+                    if (takeover.Interrupted)
+                    {
+                        (stop, stopCode, stopError) = (StepStopReason.UserInterrupted, nameof(InputErrorCode.UserInterrupted),
+                            UserInterrupted(step, during: false));
                         break;
                     }
 
@@ -325,6 +342,12 @@ public sealed partial class StepRunner
                     {
                         (stop, stopCode, stopError) = (StepStopReason.Paused, nameof(WindowErrorCode.PausedByUser), Paused(step, during: true));
                     }
+                    else if (last.ErrorCode == nameof(InputErrorCode.UserInterrupted) || takeover.Interrupted)
+                    {
+                        // An input step that stopped for the user's input, or any failure while the user was at the controls
+                        (stop, stopCode, stopError) = (StepStopReason.UserInterrupted, nameof(InputErrorCode.UserInterrupted),
+                            UserInterrupted(step, during: true));
+                    }
                     else if (budget.IsCancellationRequested || (waitCut && last.ErrorCode == nameof(WindowErrorCode.WaitTimedOut)))
                     {
                         // A wait the run cut to its time left ran out: the run's time, not the wait the step asked for
@@ -342,24 +365,30 @@ public sealed partial class StepRunner
                 var next = steps[ran.Count];
                 (stop, stopCode, stopError) = _session.IsPaused
                     ? (StepStopReason.Paused, nameof(WindowErrorCode.PausedByUser), Paused(next, during: false))
-                    : (StepStopReason.TimedOut, TimedOutCode, TimedOut(next, maxDuration, during: false));
+                    : takeover.Interrupted
+                        ? (StepStopReason.UserInterrupted, nameof(InputErrorCode.UserInterrupted), UserInterrupted(next, during: false))
+                        : (StepStopReason.TimedOut, TimedOutCode, TimedOut(next, maxDuration, during: false));
             }
             finally
             {
                 // Every input call releases what it pressed itself; this only makes sure nothing outlives the run
                 _session.ReleaseHeldInput("the end of run_steps");
+                userActed = takeover.Warns;
             }
         }
 
-        return Outcome(steps, ran, stop, stopCode, stopError, _time.GetElapsedTime(started));
+        var outcome = Outcome(steps, ran, stop, stopCode, stopError, _time.GetElapsedTime(started));
+        return userActed
+            ? outcome with { Result = outcome.Result with { Warning = TakeoverMessages.Warning("the steps ran") } }
+            : outcome;
     }
 
     /// <summary>The code of a run that ran out of time: the one the UI Automation and browser reads use for theirs.</summary>
     private const string TimedOutCode = nameof(UIElementErrorCode.OperationTimedOut);
 
-    private async Task DelayAsync(TimeSpan delay, CancellationToken run)
+    private async Task DelayAsync(TimeSpan delay, CancellationToken run, CancellationToken takeover)
     {
-        using var waiting = CancellationTokenSource.CreateLinkedTokenSource(run, _session.PauseToken);
+        using var waiting = CancellationTokenSource.CreateLinkedTokenSource(run, _session.PauseToken, takeover);
         await Task.Delay(delay, _time, waiting.Token).ConfigureAwait(false);
     }
 
@@ -920,6 +949,11 @@ public sealed partial class StepRunner
     private static string Paused(CheckedStep step, bool during) =>
         $"The user paused input with the pause hotkey {(during ? "during" : "before")} {Label(step, capital: false)}; " +
         "the run stopped and the steps after it were skipped. Stop and ask the user how to continue; never resume input yourself.";
+
+    private static string UserInterrupted(CheckedStep step, bool during) =>
+        $"The user used the keyboard or mouse {(during ? "during" : "before")} {Label(step, capital: false)}, so takeover " +
+        "detection (WAM_TAKEOVER_DETECTION=stop) stopped the run and the steps after it were skipped; the steps before it ran " +
+        "and are not undone. Do not try again at once: the user is using the computer. Ask the user before you go on.";
 
     private static string TimedOut(CheckedStep step, TimeSpan maxDuration, bool during) =>
         $"maxDurationMs ({maxDuration.TotalMilliseconds:0}) ran out {(during ? "during" : "before")} " +

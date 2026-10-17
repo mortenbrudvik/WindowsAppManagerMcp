@@ -32,6 +32,8 @@ public class WrapperCatalogTests
             typeof(IDesktopPauseFlag),
             // The window events of wait_for_window's wake-ups (roadmap M3.F22)
             typeof(INativeWinEventWrapper),
+            // Takeover detection's low-level input hooks (roadmap M7.4)
+            typeof(INativeLowLevelInputWrapper),
             typeof(IUiaTree),
             // The pattern objects the engine adapters hand out (roadmap M3.2)
             typeof(IUiaInvokePattern),

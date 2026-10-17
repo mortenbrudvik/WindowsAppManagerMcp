@@ -58,7 +58,7 @@ public class NativeCallGuardTests
     [
         typeof(NativeWindowWrapper), typeof(NativeInputWrapper), typeof(NativeProcessWrapper),
         typeof(NativeThreadInputWrapper), typeof(NativeHotkeyWrapper), typeof(NativeClipboardWrapper),
-        typeof(NativeWinEventWrapper)
+        typeof(NativeWinEventWrapper), typeof(NativeLowLevelInputWrapper)
     ];
 
     /// <summary>
@@ -640,6 +640,32 @@ public class NativeCallGuardTests
             "installing WinEvent hooks and running their thread's message loop must go through INativeWinEventWrapper so tests can fake it");
         Unexpected(hookCallers, typeof(NativeWinEventWrapper), NativeMethodsType).Should().BeEmpty(
             "SetWinEventHook and UnhookWinEvent are declared only in NativeMethods.WinEvents");
+    }
+
+    [Fact]
+    public void LowLevelInputHooks_AreOnlyInstalledByNativeLowLevelInputWrapper()
+    {
+        // Arrange - a low-level keyboard or mouse hook sees all input on the desktop before any window does (roadmap M7.4:
+        // takeover detection, opt-in). Installing, removing and pumping must stay behind the seam UserTakeoverMonitor's tests
+        // replace with a fake, so no test installs a real hook. The declarations live in their own class
+        var hooksType = NativeMethodsType.GetNestedType("LowLevelHooks", BindingFlags.NonPublic | BindingFlags.Public);
+        hooksType.Should().NotBeNull();
+
+        // Act
+        var callers = FindCallers(callee => callee.DeclaringType == hooksType);
+        var hookCallers = FindCallers(callee =>
+            callee.DeclaringType != null && OutermostType(callee.DeclaringType) == NativeMethodsType &&
+            callee.Name is "SetWindowsHookExW" or "UnhookWindowsHookEx" or "CallNextHookEx");
+
+        // Assert
+        callers.Keys.Should().Contain(typeof(NativeLowLevelInputWrapper),
+            "the scan must see the wrapper's own SetWindowsHookEx and GetMessage calls");
+        callers[typeof(NativeLowLevelInputWrapper)].Should().Contain(c => c.EndsWith("LowLevelHooks.SetWindowsHookExW"))
+            .And.Contain(c => c.EndsWith("LowLevelHooks.UnhookWindowsHookEx"));
+        Unexpected(callers, typeof(NativeLowLevelInputWrapper), NativeMethodsType).Should().BeEmpty(
+            "installing low-level input hooks and running their thread's message loop must go through INativeLowLevelInputWrapper so tests can fake it");
+        Unexpected(hookCallers, typeof(NativeLowLevelInputWrapper), NativeMethodsType).Should().BeEmpty(
+            "SetWindowsHookExW, UnhookWindowsHookEx and CallNextHookEx are declared only in NativeMethods.LowLevelHooks");
     }
 
     [Fact]

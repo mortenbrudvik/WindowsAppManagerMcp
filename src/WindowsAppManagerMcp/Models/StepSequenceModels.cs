@@ -106,7 +106,11 @@ public enum StepStopReason
 
     /// <summary>A window outside the run's window took the foreground after the run's window had it (TargetNotForeground).</summary>
     [JsonStringEnumMemberName("foregroundMoved")]
-    ForegroundMoved
+    ForegroundMoved,
+
+    /// <summary>With WAM_TAKEOVER_DETECTION=stop: the user used the keyboard or mouse during the run (UserInterrupted).</summary>
+    [JsonStringEnumMemberName("userInterrupted")]
+    UserInterrupted
 }
 
 /// <summary>What one step of a run did.</summary>
@@ -139,6 +143,9 @@ public record StepOutcome(
 /// <param name="StoppedBy">Why the run stopped before its last step; null when it ran them all.</param>
 /// <param name="ErrorCode">The code of what stopped the run (the failed step's own code).</param>
 /// <param name="Error">What stopped the run, and what that means for the steps after it.</param>
+/// <param name="Warning">
+/// With WAM_TAKEOVER_DETECTION=warn: the user used the keyboard or mouse during the run (roadmap M7.4). Null otherwise.
+/// </param>
 public record RunStepsResult(
     bool Success,
     int Ran,
@@ -147,5 +154,6 @@ public record RunStepsResult(
     IReadOnlyList<StepOutcome> Steps,
     StepStopReason? StoppedBy = null,
     string? ErrorCode = null,
-    string? Error = null
+    string? Error = null,
+    string? Warning = null
 );

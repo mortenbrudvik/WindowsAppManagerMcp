@@ -257,6 +257,12 @@ public static class ServiceRegistration
         services.AddSingleton<IInputSession, InputSession>();
         services.AddHostedService<InputSessionStartup>(); // starts the hotkey; releases held input when the server stops
 
+        // Takeover detection (roadmap M7.4, opt-in with WAM_TAKEOVER_DETECTION): low-level keyboard and mouse hooks on their own
+        // thread, installed only while type_text, drag or run_steps runs; nothing is started with mode off
+        services.AddSingleton(_ => TakeoverOptions.FromEnvironment());
+        services.AddSingleton<INativeLowLevelInputWrapper, NativeLowLevelInputWrapper>();
+        services.AddSingleton<ITakeoverMonitor, UserTakeoverMonitor>();
+
         // The clipboard (roadmap M2.16): get_clipboard returns only what the agent put there unless the user allows more
         // (WAM_ALLOW_USER_CLIPBOARD, or a yes when asked); the input service tells the origin about the agent's copies
         // (and the window they went to, which must be in front when the copy happens), and pastes only what

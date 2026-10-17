@@ -4124,7 +4124,7 @@
     {
       "name": "get_control_status",
       "title": "Get Input Control Status",
-      "description": "Whether the user has paused the server's input with the pause hotkey (and how and since when), whether the pause hotkey is registered, and which keys or mouse buttons are held down. Reads only. While paused is true, every input tool (mouse_click, type_text, send_keys, ...) and every tool that changes windows or starts or stops processes return PausedByUser: stop, tell the user, and wait for them. Never try to resume input yourself.",
+      "description": "Whether the user has paused the server's input with the pause hotkey (and how and since when), whether the pause hotkey is registered, which keys or mouse buttons are held down, and takeover detection's mode (off, warn or stop: whether type_text, drag and run_steps stop when the user uses the keyboard or mouse). Reads only. While paused is true, every input tool (mouse_click, type_text, send_keys, ...) and every tool that changes windows or starts or stops processes return PausedByUser: stop, tell the user, and wait for them. Never try to resume input yourself.",
       "inputSchema": {
         "type": "object",
         "properties": {}

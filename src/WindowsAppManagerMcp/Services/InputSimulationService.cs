@@ -53,6 +53,7 @@ public partial class InputSimulationService : IInputSimulationService
     private readonly INativeKeyboardLayoutWrapper? _keyboardLayout;
     private readonly IPasteClipboard? _pasteClipboard;
     private readonly TimeSpan _pasteSettleTime;
+    private readonly ITakeoverMonitor? _takeover;
 
     /// <param name="monitorService">The monitors, for coordinate checks.</param>
     /// <param name="inputWrapper">The native input layer, for cursor reads; input itself goes through <paramref name="session"/>.</param>
@@ -80,6 +81,10 @@ public partial class InputSimulationService : IInputSimulationService
     /// types, and method paste cannot be used.
     /// </param>
     /// <param name="pasteSettleTime">How long a paste keeps the text on the clipboard after Ctrl+V; default <see cref="PasteSettleTime"/>.</param>
+    /// <param name="takeover">
+    /// Takeover detection (roadmap M7.4): type_text's typing and drag stop (mode stop) or warn (mode warn) when the user uses
+    /// the keyboard or mouse meanwhile. The server always passes it; without it nothing is watched.
+    /// </param>
     public InputSimulationService(
         IMonitorService monitorService,
         INativeInputWrapper inputWrapper,
@@ -92,8 +97,10 @@ public partial class InputSimulationService : IInputSimulationService
         IClipboardPasteGuard? pasteGuard = null,
         INativeKeyboardLayoutWrapper? keyboardLayout = null,
         IPasteClipboard? pasteClipboard = null,
-        TimeSpan? pasteSettleTime = null)
+        TimeSpan? pasteSettleTime = null,
+        ITakeoverMonitor? takeover = null)
     {
+        _takeover = takeover;
         _monitorService = monitorService;
         _inputWrapper = inputWrapper;
         _guard = guard ?? throw new ArgumentNullException(nameof(guard));
@@ -604,7 +611,9 @@ public partial class InputSimulationService : IInputSimulationService
                 {
                     Method = typingMethod,
                     ClipboardRestored = back?.Restored,
-                    Warning = notPasted == null ? null : $"Typed instead of pasted: {notPasted}.{(back?.Warning is { } lost ? " " + lost : string.Empty)}"
+                    Warning = TakeoverMessages.Combine(
+                        notPasted == null ? null : $"Typed instead of pasted: {notPasted}.{(back?.Warning is { } lost ? " " + lost : string.Empty)}",
+                        result.Warning)
                 });
             }
             catch (OperationCanceledException) when (call.IsPaused)
@@ -627,6 +636,17 @@ public partial class InputSimulationService : IInputSimulationService
     /// every batch. Reports how many characters went in when it stops part way, at the user's pause too.
     /// </summary>
     private async Task<TypeTextResult> TypeCharactersAsync(List<InputEvent[]> characters, int delayBetweenKeysMs,
+        InputGuardResult approved, InputCall call)
+    {
+        // Takeover detection (roadmap M7.4) watches the typing itself: from the first batch on
+        call.WatchForTakeover(_takeover);
+        var result = await TypeCharactersWatchedAsync(characters, delayBetweenKeysMs, approved, call).ConfigureAwait(false);
+        return call.TakeoverWarns
+            ? result with { Warning = TakeoverMessages.Combine(result.Warning, TakeoverMessages.Warning("the text was typed")) }
+            : result;
+    }
+
+    private async Task<TypeTextResult> TypeCharactersWatchedAsync(List<InputEvent[]> characters, int delayBetweenKeysMs,
         InputGuardResult approved, InputCall call)
     {
         var length = characters.Count;
@@ -696,6 +716,11 @@ public partial class InputSimulationService : IInputSimulationService
         {
             return Finish(new TypeTextResult(false, length, charactersTyped,
                 PausedMessage(TypedSoFar(length, charactersTyped, approved)), InputErrorCode.PausedByUser), approved);
+        }
+        catch (OperationCanceledException) when (call.Interrupted)
+        {
+            return Finish(new TypeTextResult(false, length, charactersTyped,
+                TakeoverMessages.Interrupted(TypedSoFar(length, charactersTyped, approved)), InputErrorCode.UserInterrupted), approved);
         }
     }
 
@@ -1640,23 +1665,57 @@ public partial class InputSimulationService : IInputSimulationService
     private sealed class InputCall : IDisposable
     {
         private readonly IInputSession _session;
+        private readonly CancellationToken _requestToken;
         private readonly CancellationToken _pauseToken;
-        private readonly CancellationTokenSource _linked;
+        private CancellationTokenSource _linked;
+        private CancellationTokenSource? _beforeWatch;
+        private TakeoverWatch _takeover = TakeoverWatch.None;
 
         public InputCall(IInputSession session, CancellationToken requestToken)
         {
             _session = session;
+            _requestToken = requestToken;
             _pauseToken = session.PauseToken;
             _linked = CancellationTokenSource.CreateLinkedTokenSource(requestToken, _pauseToken);
         }
 
-        /// <summary>Cancelled when the request is cancelled or the user pauses input.</summary>
+        /// <summary>
+        /// Cancelled when the request is cancelled or the user pauses input, and once <see cref="WatchForTakeover"/> ran with
+        /// mode stop, when the user uses the keyboard or mouse.
+        /// </summary>
         public CancellationToken Token => _linked.Token;
 
         /// <summary>True when the user has paused input (since before or during this call).</summary>
         public bool IsPaused => _pauseToken.IsCancellationRequested || _session.IsPaused;
 
-        public void Dispose() => _linked.Dispose();
+        /// <summary>True when takeover detection stopped the call (mode stop), and the user did not pause input.</summary>
+        public bool Interrupted => _takeover.Interrupted && !IsPaused;
+
+        /// <summary>True when the user used the keyboard or mouse during the watched part with mode warn.</summary>
+        public bool TakeoverWarns => _takeover.Warns;
+
+        /// <summary>
+        /// Watches for the user's input from now on (roadmap M7.4): with mode stop, <see cref="Token"/> is cancelled too when
+        /// the user acts. Only the long operations call it (type_text's typing, drag's press to drop), right before they send.
+        /// </summary>
+        public void WatchForTakeover(ITakeoverMonitor? monitor)
+        {
+            if (monitor == null || monitor.Mode == TakeoverMode.Off || _beforeWatch != null)
+            {
+                return;
+            }
+
+            _takeover = monitor.Watch();
+            _beforeWatch = _linked;
+            _linked = CancellationTokenSource.CreateLinkedTokenSource(_requestToken, _pauseToken, _takeover.Token);
+        }
+
+        public void Dispose()
+        {
+            _takeover.Dispose();
+            _linked.Dispose();
+            _beforeWatch?.Dispose();
+        }
     }
 
     /// <summary>The held-input check before a call's input, and the modifiers it reported or released.</summary>

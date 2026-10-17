@@ -191,6 +191,20 @@ public static class WrapperCatalog
                 [nameof(INativeWinEventWrapper.PostUpdateMessage)] = WrapperMember.Read,
                 [nameof(INativeWinEventWrapper.PostStopMessage)] = WrapperMember.Read
             },
+            [typeof(INativeLowLevelInputWrapper)] = new Dictionary<string, WrapperMember>
+            {
+                // Takeover detection (roadmap M7.4): low-level keyboard and mouse hooks that only look whether input was
+                // injected and always pass it on unchanged (CallNextHookEx), so they change no input and no window; the
+                // monitor thread's queue, message loop and its own update and stop messages change nothing outside the server
+                [nameof(INativeLowLevelInputWrapper.GetCurrentThreadId)] = WrapperMember.Read,
+                [nameof(INativeLowLevelInputWrapper.CreateMessageQueue)] = WrapperMember.Read,
+                [nameof(INativeLowLevelInputWrapper.SetKeyboardHook)] = WrapperMember.Read,
+                [nameof(INativeLowLevelInputWrapper.SetMouseHook)] = WrapperMember.Read,
+                [nameof(INativeLowLevelInputWrapper.Unhook)] = WrapperMember.Read,
+                [nameof(INativeLowLevelInputWrapper.WaitForMessage)] = WrapperMember.Read,
+                [nameof(INativeLowLevelInputWrapper.PostUpdateMessage)] = WrapperMember.Read,
+                [nameof(INativeLowLevelInputWrapper.PostStopMessage)] = WrapperMember.Read
+            },
             [typeof(IUIAutomationWrapper)] = new Dictionary<string, WrapperMember>
             {
                 // The browser reads moved onto IUiaTree (roadmap M3.F24), whose members are classified below.
