@@ -124,7 +124,9 @@ public class ToolAnnotationContractTests
             // A debug browser's tabs and a wait on its page (roadmap M5.5)
             "list_tabs", "wait_for_browser",
             // An element's place on the screen: a DOM query and the window's UI Automation tree (roadmap M5.8)
-            "browser_element_rect"
+            "browser_element_rect",
+            // A wait on a window's, region's or monitor's pixels that returns rectangles only, never an image or a file (roadmap M6.4)
+            "wait_for_visual"
         ]);
 
         // browser_screenshot brings a tab that is not shown to the front first (roadmap M5.8)

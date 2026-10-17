@@ -73,6 +73,7 @@ public static class ToolDocCatalog
             new("capture_region", "Capture screen region", "x", "y", "width", "height", "maxDimension", "output"),
             new("capture_window", "Capture a window, or crop it to one element", "handle", "ref", "padding", "includeFrame", "maxDimension", "output"),
             new("capture_with_elements", "Capture with numbered marks (element refs) and a legend", "handle", "maxElements", "controlTypes", "detail", "maxDimension"),
+            new("wait_for_visual", "Wait until a window, region or monitor changes or settles on screen, no image (toolset visual)", "condition", "window (or handle)", "since", "stableMs", "minChangedPercent", "timeoutMs"),
         ],
         SkillNote: "All capture tools also accept `format` (`auto`, `png`, `jpeg`), `quality` (JPEG), `outputPath` and `overwrite` " +
                    "(with output `file` or `both`), and the legacy `saveToFile` and `maxWidth`."),

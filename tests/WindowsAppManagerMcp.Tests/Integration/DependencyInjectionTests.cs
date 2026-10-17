@@ -552,6 +552,44 @@ public class DependencyInjectionTests : IDisposable
             throw new InvalidOperationException("No connection is expected.");
     }
 
+    /// <summary>
+    /// Captures keep visual signatures only while wait_for_visual is served (roadmap M6.4, owner decision D9), so a server
+    /// without the visual toolset computes and holds none; without a selection (ToolsetSelection.All) every tool is served.
+    /// </summary>
+    [Theory]
+    [InlineData(null, null, null, false)]
+    [InlineData("+visual", null, null, true)]
+    [InlineData("all", null, null, true)]
+    [InlineData("+visual", "wait_for_visual", null, false)]
+    [InlineData("+visual", null, "1", true)]
+    [InlineData(null, null, "1", false)]
+    public void TheCaptureRegistry_KeepsSignatures_OnlyWhileWaitForVisualIsServed(string? toolsets, string? excluded, string? readOnly, bool keeps)
+    {
+        // Arrange
+        var selection = ToolsetSelection.FromEnvironment(name => name switch
+        {
+            ToolsetSelection.ToolsetsVariable => toolsets,
+            ToolsetSelection.ExcludeToolsVariable => excluded,
+            ToolsetSelection.ReadOnlyVariable => readOnly,
+            _ => null
+        }, Toolsets.Server);
+        var services = new ServiceCollection();
+        services.AddWindowsAppManagerServices(() => LayoutStorageOptions.ForPath(_testLayoutPath),
+            () => AuditLogOptions.ForFolder(Path.Combine(_testLayoutPath, "audit")));
+        services.AddMcpServer().AddWindowsAppManagerTools(selection);
+        using var provider = services.BuildServiceProvider();
+
+        // Act & Assert
+        provider.GetRequiredService<ICaptureRegistry>().KeepsSignatures.Should().Be(keeps);
+    }
+
+    [Fact]
+    public void TheCaptureRegistry_KeepsSignatures_WithoutASelection_AsEveryToolIsServed()
+    {
+        _serviceProvider.GetRequiredService<ICaptureRegistry>().KeepsSignatures.Should().BeTrue();
+        _serviceProvider.GetRequiredService<IVisualChangeService>().Should().BeOfType<VisualChangeService>();
+    }
+
     [Fact]
     public void AddWindowsAppManagerServices_RegistersEveryToolClass()
     {

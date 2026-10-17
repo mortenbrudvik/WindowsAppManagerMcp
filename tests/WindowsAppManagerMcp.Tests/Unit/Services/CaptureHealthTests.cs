@@ -601,6 +601,33 @@ public class CaptureHealthTests
     }
 
     [Fact]
+    public void ACapture_OfAWindowRestoredForIt_KeepsNoVisualSignature_UntilTheRestoreIsOver()
+    {
+        // Arrange - the window is minimized again after the capture, so wait_for_visual's since on it would read a
+        // minimized window at once and report a change that nothing made (roadmap M6.4)
+        SimulateMinimizedWindow();
+        _windows.Setup(w => w.GetWindowRect(Window)).Returns((0, 0, 100, 80));
+        _windows.Setup(w => w.GetWindowThreadProcessId(Window)).Returns(4242u);
+        var registry = new CaptureRegistry(keepSignatures: true);
+        var sut = new ScreenshotService(_capture.Object, _monitors.Object, _windows.Object, _calls.Object,
+            restoreSettleTimeout: TimeSpan.FromMilliseconds(200), restoreStateTimeout: TimeSpan.FromMilliseconds(100), captureRegistry: registry);
+
+        // Act
+        string? restored;
+        using (sut.RestoreForCapture(Window, Window, includeFrame: true))
+        {
+            restored = sut.CaptureWindow(Window, includeFrame: true, FullResolution).Metadata.CaptureId;
+        }
+
+        _windows.Object.ShowWindow(Window, SW_SHOWNOACTIVATE); // the user shows it later
+        var shown = sut.CaptureWindow(Window, includeFrame: true, FullResolution).Metadata.CaptureId;
+
+        // Assert
+        registry.Find(restored!)!.Signature.Should().BeNull();
+        registry.Find(shown!)!.Signature.Should().NotBeNull();
+    }
+
+    [Fact]
     public void RestoreForCapture_WaitsForTwoEqualFrames()
     {
         // Arrange - the first two frames differ (still painting), then the window is stable

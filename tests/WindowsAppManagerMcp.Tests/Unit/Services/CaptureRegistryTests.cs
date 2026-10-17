@@ -1,6 +1,9 @@
 namespace WindowsAppManagerMcp.Tests.Unit.Services;
 
-/// <summary>The capture registry (roadmap M3.11): unique ids, a least-recently-used limit and a time to live.</summary>
+/// <summary>
+/// The capture registry (roadmap M3.11): unique ids, a least-recently-used limit and a time to live; and while the visual
+/// toolset is served, the captures' visual signatures under a memory cap that drops signatures, never captures (roadmap M6.4).
+/// </summary>
 public class CaptureRegistryTests
 {
     private static CaptureGeometry Geometry(int offsetX = 0) => new(
@@ -102,5 +105,79 @@ public class CaptureRegistryTests
         // Assert
         ids.Should().OnlyHaveUniqueItems();
         ids.Count(id => registry.Find(id) != null).Should().Be(registry.Capacity);
+    }
+
+    [Fact]
+    public void Register_WithASignature_KeepsItOnlyWhileTheRegistryKeepsSignatures()
+    {
+        // Arrange
+        var signature = new VisualFrames(64, 64).Signature();
+        var keeping = new CaptureRegistry(keepSignatures: true);
+        var notKeeping = new CaptureRegistry();
+
+        // Act
+        var kept = keeping.Register(Geometry(), signature);
+        var dropped = notKeeping.Register(Geometry(), signature);
+
+        // Assert
+        keeping.KeepsSignatures.Should().BeTrue();
+        keeping.Find(kept.CaptureId)!.Signature.Should().BeSameAs(signature);
+        keeping.SignatureBytes.Should().Be(signature.ByteSize);
+        notKeeping.KeepsSignatures.Should().BeFalse();
+        dropped.Signature.Should().BeNull();
+        notKeeping.SignatureBytes.Should().Be(0);
+    }
+
+    [Fact]
+    public void Register_PastTheSignatureCap_DropsTheLeastRecentlyUsedSignatures_AndKeepsTheirCaptures()
+    {
+        // Arrange - room for two signatures
+        var signature = new VisualFrames(160, 160).Signature();
+        var registry = new CaptureRegistry(keepSignatures: true, signatureByteCap: signature.ByteSize * 2);
+        var first = registry.Register(Geometry(1), signature);
+        var second = registry.Register(Geometry(2), signature);
+        registry.Find(first.CaptureId); // used again: the second is now the least recently used
+
+        // Act
+        var third = registry.Register(Geometry(3), signature);
+
+        // Assert
+        registry.Find(second.CaptureId).Should().NotBeNull("the cap drops signatures, never captures");
+        registry.Find(second.CaptureId)!.Signature.Should().BeNull();
+        registry.Find(first.CaptureId)!.Signature.Should().NotBeNull();
+        registry.Find(third.CaptureId)!.Signature.Should().NotBeNull();
+        registry.SignatureBytes.Should().Be(signature.ByteSize * 2);
+    }
+
+    [Fact]
+    public void Register_ASignatureLargerThanTheCap_KeepsTheCaptureWithoutIt()
+    {
+        var signature = new VisualFrames(160, 160).Signature();
+        var registry = new CaptureRegistry(keepSignatures: true, signatureByteCap: signature.ByteSize - 1);
+
+        var capture = registry.Register(Geometry(), signature);
+
+        capture.Signature.Should().BeNull();
+        registry.Find(capture.CaptureId).Should().NotBeNull();
+        registry.SignatureBytes.Should().Be(0);
+    }
+
+    [Fact]
+    public void ACaptureThatLeaves_GivesBackItsSignaturesMemory()
+    {
+        // Arrange
+        var signature = new VisualFrames(64, 64).Signature();
+        var registry = new CaptureRegistry(keepSignatures: true);
+        registry.Register(Geometry(), signature);
+
+        // Act - newer captures without signatures push it out
+        for (var i = 0; i < registry.Capacity; i++)
+        {
+            registry.Register(Geometry());
+        }
+
+        // Assert
+        registry.SignatureBytes.Should().Be(0);
+        CaptureRegistry.SignatureByteCap.Should().Be(16L * 1024 * 1024);
     }
 }

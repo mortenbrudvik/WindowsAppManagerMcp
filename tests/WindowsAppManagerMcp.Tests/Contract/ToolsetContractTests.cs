@@ -122,9 +122,10 @@ public class ToolsetContractTests
 
     /// <summary>
     /// The toolsets that are off by default: browser-actions since roadmap M5.5 (and the DOM bridge of M5.8), browser-script
-    /// since M5.8, windows-batch and deprecated since M6.1 (owner decisions D4 and D1; DeprecatedToolsContractTests).
+    /// since M5.8, windows-batch and deprecated since M6.1 (owner decisions D4 and D1; DeprecatedToolsContractTests), visual
+    /// since M6.4 (owner decisions D2 and D10).
     /// </summary>
-    private static readonly string[] OptInToolsets = ["browser-actions", "browser-script", "windows-batch", "deprecated"];
+    private static readonly string[] OptInToolsets = ["browser-actions", "browser-script", "visual", "windows-batch", "deprecated"];
 
     /// <summary>The DOM bridge's tools (roadmap M5.8) that browser-actions serves: all but browser_evaluate.</summary>
     private static readonly string[] DomBridgeActionTools =
@@ -192,11 +193,13 @@ public class ToolsetContractTests
     [InlineData("+browser-actions")]
     [InlineData("+browser-script")]
     [InlineData("+deprecated")]
+    [InlineData("+visual")]
     [InlineData("all")]
     public async Task ReadOnlyMode_ServesExactlyTheToolsAnnotatedReadOnly_OfTheToolsetsInForce(string? toolsets)
     {
         // Keyed on the [McpServerTool] ReadOnly property, as clients see it (annotations.readOnlyHint). An opt-in toolset's
-        // read-only tool (browser_element_rect in browser-actions, roadmap M5.8) is served only once its toolset is on;
+        // read-only tool (browser_element_rect in browser-actions, roadmap M5.8; wait_for_visual in visual, M6.4) is served only
+        // once its toolset is on;
         // browser_evaluate (browser-script) is destructive, so read-only mode never serves it
         var inForce = ToolsetSelection.FromEnvironment(name => name == ToolsetSelection.ToolsetsVariable ? toolsets : null, Toolsets.Server);
         var annotatedReadOnly = (await ToolSurface.ListToolsAsync()).OfType<JsonObject>()
@@ -218,6 +221,7 @@ public class ToolsetContractTests
 
         tools.Select(t => t.Name).Order(StringComparer.Ordinal).Should().Equal(annotatedReadOnly);
         tools.Select(t => t.Name).Contains("browser_element_rect").Should().Be(toolsets is "all" or "+browser-actions");
+        tools.Select(t => t.Name).Contains("wait_for_visual").Should().Be(toolsets is "all" or "+visual");
         tools.Select(t => t.Name).Should().NotContain("browser_evaluate");
     }
 

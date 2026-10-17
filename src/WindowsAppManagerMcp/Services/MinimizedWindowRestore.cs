@@ -34,6 +34,12 @@ public sealed class MinimizedWindowRestore : IDisposable
         _stateTimeout = stateTimeout;
     }
 
+    /// <summary>
+    /// Called once when the restore is over (disposed, after the window was minimized again), whether or not it was sent:
+    /// the screenshot service keeps no visual signature of a capture taken meanwhile (roadmap M6.4).
+    /// </summary>
+    internal Action? Released { get; set; }
+
     /// <summary>The window that was restored.</summary>
     public nint Window { get; }
 
@@ -102,6 +108,20 @@ public sealed class MinimizedWindowRestore : IDisposable
 
     /// <summary>Minimizes the window again without activating another one, when the restore was sent.</summary>
     public void Dispose()
+    {
+        try
+        {
+            Reminimize();
+        }
+        finally
+        {
+            var released = Released;
+            Released = null;
+            released?.Invoke();
+        }
+    }
+
+    private void Reminimize()
     {
         if (_disposed || !_restoreSent)
         {

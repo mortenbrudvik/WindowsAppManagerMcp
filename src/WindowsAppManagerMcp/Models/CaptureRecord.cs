@@ -66,8 +66,12 @@ public static class CapturedMonitors
         monitors.Select(m => new CapturedMonitor(m.DeviceName, m.Bounds)).OrderBy(m => m.DeviceName, StringComparer.Ordinal).ToList();
 }
 
-/// <summary>A capture the registry keeps: its id, when it was taken, and its geometry.</summary>
+/// <summary>A capture the registry keeps: its id, when it was taken, its geometry and, while kept, its visual signature.</summary>
 /// <param name="CaptureId">The id the capture result reported (for example <c>c7-3fa91c</c>).</param>
 /// <param name="CapturedAt">When the capture was registered.</param>
 /// <param name="Geometry">How its image maps to the screen, and the window it was of.</param>
-public sealed record CaptureRecord(string CaptureId, DateTimeOffset CapturedAt, CaptureGeometry Geometry);
+/// <param name="Signature">
+/// What its pixels looked like at full resolution (roadmap M6.4), for wait_for_visual's since; null when the visual toolset
+/// was off when it was taken, for a crop to a ref, and once the registry dropped it to stay within its memory cap.
+/// </param>
+public sealed record CaptureRecord(string CaptureId, DateTimeOffset CapturedAt, CaptureGeometry Geometry, VisualSignature? Signature = null);

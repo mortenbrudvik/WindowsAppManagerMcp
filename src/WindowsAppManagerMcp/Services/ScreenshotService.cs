@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Drawing2D;
@@ -68,6 +69,11 @@ public class ScreenshotService : IScreenshotService
     private readonly TimeSpan _restoreStateTimeout;
     private readonly ICaptureRegistry? _captureRegistry;
     private readonly ICaptureTargetPolicy? _capturePolicy;
+    private readonly ITargetPolicy? _targetPolicy;
+
+    // The windows restoreIfMinimized has restored for a capture, by how many restores: they are minimized again afterwards,
+    // so their captures keep no visual signature (roadmap M6.4)
+    private readonly ConcurrentDictionary<nint, int> _restoredForCapture = new();
 
     /// <summary>take_screenshot's monitorIndex for the whole virtual screen: every monitor in one image (roadmap M3.11).</summary>
     public const int VirtualScreenIndex = -1;
@@ -95,6 +101,10 @@ public class ScreenshotService : IScreenshotService
     /// <see cref="CapturePixels"/> refuses every window. The capture tools check the policy themselves, so the capture
     /// members that return images do not ask it. The server always passes it.
     /// </param>
+    /// <param name="targetPolicy">
+    /// The user's target policy, so the visual signature of a screen capture lists the denied windows over it only when the
+    /// policy denies anything (roadmap M6.4, owner decision D8). Null: every window over it is checked.
+    /// </param>
     public ScreenshotService(
         IScreenCaptureWrapper captureWrapper,
         IMonitorService monitorService,
@@ -103,9 +113,11 @@ public class ScreenshotService : IScreenshotService
         TimeSpan? restoreSettleTimeout = null,
         TimeSpan? restoreStateTimeout = null,
         ICaptureRegistry? captureRegistry = null,
-        ICaptureTargetPolicy? capturePolicy = null)
+        ICaptureTargetPolicy? capturePolicy = null,
+        ITargetPolicy? targetPolicy = null)
     {
         _capturePolicy = capturePolicy;
+        _targetPolicy = targetPolicy;
         _captureRegistry = captureRegistry;
         _captureWrapper = captureWrapper;
         _monitorService = monitorService;
@@ -194,7 +206,8 @@ public class ScreenshotService : IScreenshotService
         ArgumentNullException.ThrowIfNull(capture);
         var pixels = capture.Pixels;
         return Register(pixels.Width, pixels.Height, new ImageToScreenTransform(pixels.ScreenOriginX, pixels.ScreenOriginY, 1, 1),
-            CapturedRegionOf(pixels), windowCapture: capture.Target is CaptureTarget.Window, capture.Window, capture.Screen);
+            CapturedRegionOf(pixels), windowCapture: capture.Target is CaptureTarget.Window, capture.Window, capture.Screen,
+            SignatureOf(pixels, capture.Target is CaptureTarget.Window, capture.Window));
     }
 
     /// <summary>
@@ -392,7 +405,8 @@ public class ScreenshotService : IScreenshotService
                 acquired = acquired with { Capture = Crop(capture, crop) };
             }
 
-            return Complete(acquired, request);
+            // A crop to a ref keeps no signature: wait_for_visual's since watches a whole window, region or monitor
+            return Complete(acquired, request, signed: false);
         });
     }
 
@@ -464,6 +478,8 @@ public class ScreenshotService : IScreenshotService
                     annotation.Ref == null ? null : ElementMarkRenderer.TagText(annotation.Ref, markPrefix)))
                 .ToList();
 
+            // Before the marks: at full size they are drawn on the captured pixels themselves
+            var signature = window != null ? SignatureOf(capture, windowCapture: true, window) : null;
             var rendered = Render(capture, request, overlays.Draw
                 ? bitmap => ElementMarkRenderer.Draw(bitmap, marks, overlays.Labels)
                 : null);
@@ -494,7 +510,8 @@ public class ScreenshotService : IScreenshotService
                 MarkPrefix: markPrefix);
             metadata = metadata with
             {
-                CaptureId = Register(metadata.Width, metadata.Height, metadata.ImageToScreen!, metadata.CapturedRegion!, windowCapture: true, window, screen: null)
+                CaptureId = Register(metadata.Width, metadata.Height, metadata.ImageToScreen!, metadata.CapturedRegion!, windowCapture: true, window,
+                    screen: null, signature)
             };
 
             return new ScreenCapture<AnnotatedScreenshotResult>(metadata, request.ReturnsImage ? rendered.Image : null);
@@ -577,7 +594,27 @@ public class ScreenshotService : IScreenshotService
     public MinimizedWindowRestore RestoreForCapture(nint minimizedWindow, nint captureWindow, bool includeFrame)
     {
         var restore = new MinimizedWindowRestore(minimizedWindow, _windows, _windowCalls, _restoreStateTimeout);
-        restore.Restore();
+        _restoredForCapture.AddOrUpdate(captureWindow, 1, (_, restores) => restores + 1);
+        var released = 0;
+        restore.Released = () =>
+        {
+            if (Interlocked.Exchange(ref released, 1) == 0 &&
+                _restoredForCapture.AddOrUpdate(captureWindow, 0, (_, restores) => restores - 1) <= 0)
+            {
+                _restoredForCapture.TryRemove(KeyValuePair.Create(captureWindow, 0));
+            }
+        };
+
+        try
+        {
+            restore.Restore();
+        }
+        catch
+        {
+            restore.Released();
+            throw;
+        }
+
         if (restore.Failure == null && !WaitForTwoEqualFrames(captureWindow, includeFrame))
         {
             restore.StillPainting(_restoreSettleTimeout);
@@ -827,13 +864,15 @@ public class ScreenshotService : IScreenshotService
 
     /// <summary>
     /// The metadata and image of a successful capture, registered under its captureId. The window is the captured window
-    /// as it was before the capture (<see cref="ReadCapturedWindow"/>) for a window capture.
+    /// as it was before the capture (<see cref="ReadCapturedWindow"/>) for a window capture. With <paramref name="signed"/>,
+    /// the registration keeps the capture's visual signature while the registry keeps signatures (roadmap M6.4).
     /// </summary>
-    private ScreenCapture<ScreenshotResult> Complete(Acquired acquired, CaptureRequest request)
+    private ScreenCapture<ScreenshotResult> Complete(Acquired acquired, CaptureRequest request, bool signed = true)
     {
         var (capture, monitorIndex, scaleFactor, warnings, windowCapture, window, screen) = acquired;
         ThrowIfIncomplete(capture);
         AddBlankWarning(capture, warnings);
+        var signature = signed && (windowCapture ? window != null : screen != null) ? SignatureOf(capture, windowCapture, window) : null;
         var rendered = Render(capture, request, annotate: null);
 
         var metadata = new ScreenshotResult(
@@ -855,7 +894,8 @@ public class ScreenshotService : IScreenshotService
             Warnings: warnings.Count > 0 ? warnings : null);
         metadata = metadata with
         {
-            CaptureId = Register(metadata.Width, metadata.Height, metadata.ImageToScreen!, metadata.CapturedRegion!, windowCapture, window, screen)
+            CaptureId = Register(metadata.Width, metadata.Height, metadata.ImageToScreen!, metadata.CapturedRegion!, windowCapture, window, screen,
+                signature)
         };
 
         return new ScreenCapture<ScreenshotResult>(metadata, request.ReturnsImage ? rendered.Image : null);
@@ -891,18 +931,46 @@ public class ScreenshotService : IScreenshotService
     /// <paramref name="screen"/>, the virtual screen and the monitors as they were read right after its pixels (not as they
     /// are now, which may be seconds later for <see cref="RegisterRaw"/>), a window capture with <paramref name="window"/>.
     /// Null without a registry, for a window capture whose window could not be read, and for a screen capture without its
-    /// screen layout: a click could not tell whether the monitors changed since its pixels.
+    /// screen layout: a click could not tell whether the monitors changed since its pixels. <paramref name="signature"/>, the
+    /// capture's visual signature (<see cref="SignatureOf"/>), is registered with it.
     /// </summary>
     private string? Register(int width, int height, ImageToScreenTransform transform, CapturedRegion region, bool windowCapture,
-        CapturedWindow? window, CapturedScreen? screen)
+        CapturedWindow? window, CapturedScreen? screen, VisualSignature? signature = null)
     {
         if (_captureRegistry == null || (windowCapture ? window == null : screen == null))
         {
             return null;
         }
 
-        return _captureRegistry.Register(new CaptureGeometry(width, height, transform, region, window,
-            windowCapture ? null : screen!.VirtualScreen, windowCapture ? null : screen!.Monitors)).CaptureId;
+        var geometry = new CaptureGeometry(width, height, transform, region, window,
+            windowCapture ? null : screen!.VirtualScreen, windowCapture ? null : screen!.Monitors);
+        return (signature == null ? _captureRegistry.Register(geometry) : _captureRegistry.Register(geometry, signature)).CaptureId;
+    }
+
+    /// <summary>
+    /// The visual signature of a capture's full-resolution pixels, which wait_for_visual's since compares with (roadmap M6.4);
+    /// null unless the registry keeps signatures, which it does only while wait_for_visual is served (owner decision D9), so
+    /// the captures cost nothing more otherwise. Null too for a window restoreIfMinimized restored for the capture: it is
+    /// minimized again afterwards, so a since on it would read a minimized window. A screen capture's signature leaves out
+    /// the windows the policy denies over it (owner decision D8), so a since on it leaves them out even after they closed.
+    /// </summary>
+    private VisualSignature? SignatureOf(CaptureResult capture, bool windowCapture, CapturedWindow? window)
+    {
+        if (_captureRegistry is not { KeepsSignatures: true } ||
+            (windowCapture && (window == null || _restoredForCapture.ContainsKey((nint)window.Handle))))
+        {
+            return null;
+        }
+
+        var signature = VisualSignature.Of(PixelView.Of(capture));
+        if (windowCapture || _capturePolicy == null)
+        {
+            return signature;
+        }
+
+        var masked = new DeniedWindowMask(_windows, _capturePolicy, _targetPolicy)
+            .Over(new Rectangle(capture.ScreenOriginX, capture.ScreenOriginY, capture.Width, capture.Height));
+        return masked.Count == 0 ? signature : signature.WithExcluded(masked.Select(w => new Rectangle(w.X, w.Y, w.Width, w.Height)).ToList());
     }
 
     /// <summary>

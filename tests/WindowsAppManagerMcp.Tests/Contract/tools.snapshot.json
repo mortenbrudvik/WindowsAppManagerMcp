@@ -8439,6 +8439,190 @@
       }
     },
     {
+      "name": "wait_for_visual",
+      "title": "Wait for Visual Change",
+      "description": "Wait on the server until a window, screen region or monitor changes on screen, or stops changing, when UI Automation has nothing to wait on (canvas apps, games, remote desktops, rendering). Frames are compared by a hash per 16-pixel tile; the result has rectangles, never an image. One target: handle or window (read as capture_window reads it, covering windows do not count), x/y/width/height or monitorIndex (copied from the screen; windows the user's policy denies are left out and listed in maskedWindows), or since alone. condition changed (default) compares with since's capture, else with the wait's first frame, which misses a change made before it: before you act, capture the target with output 'metadata' and pass its captureId as since. stable waits until no frame differs from the one before for stableMs. A text caret the app reports is left out. Returns reason (pixels, resized, closed, minimized, hidden), changedPercent, changedRegions (screen pixels, at most 8) and captureId (the last frame, since for the next wait). Not satisfied: WaitTimedOut (timedOut, changedRegions as last seen). Captures keep what since compares with only while this tool is served (else CaptureNotFound). Only reads; other tools run meanwhile.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "condition": {
+            "description": "changed (default) or stable",
+            "default": "changed",
+            "type": "string",
+            "enum": [
+              "changed",
+              "stable"
+            ]
+          },
+          "handle": {
+            "description": "Window handle (as integer) from find_windows. Pass handle or window, not both",
+            "type": [
+              "integer",
+              "null"
+            ],
+            "default": null
+          },
+          "window": {
+            "description": "Alternative to handle: a window selector with find_windows' filters (processName is the whole name; plus foreground, index), resolved to exactly one window or refused (AmbiguousWindow lists candidates).",
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "handle": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "titleContains": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "titleEquals": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "titleRegex": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "processName": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "processNameContains": {
+                "type": "boolean"
+              },
+              "processId": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "className": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "foreground": {
+                "type": "boolean"
+              },
+              "index": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "includeCloaked": {
+                "type": "boolean"
+              },
+              "includeUntitled": {
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": false,
+            "default": null
+          },
+          "includeFrame": {
+            "description": "With a window: whether the frame (title bar, borders) is watched too. Default: true",
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "default": null
+          },
+          "x": {
+            "description": "Region: X of its left edge in screen pixels; with y, width and height",
+            "type": [
+              "integer",
+              "null"
+            ],
+            "default": null
+          },
+          "y": {
+            "description": "Region: Y of its top edge",
+            "type": [
+              "integer",
+              "null"
+            ],
+            "default": null
+          },
+          "width": {
+            "description": "Region: width in pixels",
+            "type": [
+              "integer",
+              "null"
+            ],
+            "default": null
+          },
+          "height": {
+            "description": "Region: height in pixels",
+            "type": [
+              "integer",
+              "null"
+            ],
+            "default": null
+          },
+          "monitorIndex": {
+            "description": "A monitor (0-based, as get_monitors lists them), or -1 for all of them (at most 32 megapixels)",
+            "type": [
+              "integer",
+              "null"
+            ],
+            "default": null
+          },
+          "since": {
+            "description": "A captureId from a capture taken before you acted (output 'metadata' costs no image): the baseline, and the target (its window, region or monitor). Alone, not with another target",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "timeoutMs": {
+            "description": "How long to wait in milliseconds (default: 10000, min: 0, max: 60000); 0 compares once, with since",
+            "type": "integer",
+            "default": 10000
+          },
+          "pollMs": {
+            "description": "Milliseconds from one frame to the next (default: 200, min: 100, max: 2000)",
+            "type": "integer",
+            "default": 200
+          },
+          "stableMs": {
+            "description": "stable only: how long nothing may change, in milliseconds (default: 500, min: 0, max: 10000; at most timeoutMs)",
+            "type": [
+              "integer",
+              "null"
+            ],
+            "default": null
+          },
+          "minChangedPercent": {
+            "description": "A frame counts as changed only when more than this share of its tiles changed, in percent (default: 0, any tile; min: 0, below 100): raise it a little to ignore a clock or a spinner",
+            "type": "number",
+            "default": 0
+          }
+        }
+      },
+      "annotations": {
+        "title": "Wait for Visual Change",
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      }
+    },
+    {
       "name": "wait_for_window",
       "title": "Wait for Window",
       "description": "Wait on the server until a window condition holds, instead of sleeping or calling find_windows again and again: after a launch, a click that opens a dialog, a close or a save. window is a selector as in find_windows (an untitled dialog needs className or includeUntitled). condition: exists (default: a matching window is open, minimized included), gone (none is open any more; by handle: it closed), foreground (a matching window is in front), visible (on screen: not minimized, hidden or cloaked), title_changed (the one window named has a title other than previousTitle) or input_idle (best effort: the window is not hung and its process reports input idle, which Windows answers only once per process, right after it starts, and never for console programs; Store apps and programs started through a launcher are checked on the window's own process, not the launcher's). The condition must hold for stableMs, which skips splash screens and dialogs that close and reopen. To catch the window your last action opened, pass the matching handles you saw before it as excludeHandles. Returns satisfied, elapsedMs and window; when several windows satisfy it, window is left out and matchCount and candidates list them. Not satisfied is a tool error: WaitTimedOut after timeoutMs (timedOut true, window as last seen: the one still open, not in front or with the old title); InvalidHandle when the named window closed and cannot match any more; AmbiguousWindow, with candidates, when title_changed or input_idle match several windows; WindowNotFound when title_changed names none. Only reads windows, and other tools run meanwhile.",

@@ -57,6 +57,7 @@ public class EveryToolContractTests
             ["take_screenshot"] = Args("{}"),
             ["capture_region"] = Args("""{ "x": 100, "y": 100, "width": 800, "height": 600 }"""),
             ["capture_window"] = Args("""{ "handle": 1706796 }"""),
+            ["wait_for_visual"] = Args("""{ "since": "c2-3fa91c" }"""),
             ["capture_with_elements"] = Args("""{ "handle": 1706796 }"""),
             ["get_desktop_state"] = Args("""{ "handle": 1706796 }"""),
             ["get_ui_elements"] = Args("""{ "handle": 1706796 }"""),

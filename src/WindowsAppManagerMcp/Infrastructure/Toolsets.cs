@@ -124,7 +124,7 @@ public sealed class ToolsetCatalog
 /// <summary>
 /// The server's toolsets (roadmap M2.14). Each tool the server serves is in exactly one of them (ToolsetCatalogTests),
 /// and docs/TOOLS.md lists them in a generated region. Every toolset is on by default except browser-actions (roadmap
-/// M5.5, M5.8), browser-script (roadmap M5.8), windows-batch and deprecated (roadmap M6.1). Of the tools M6 adds, the niche
+/// M5.5, M5.8), browser-script (roadmap M5.8), visual (roadmap M6.4), windows-batch and deprecated (roadmap M6.1). Of the tools M6 adds, the niche
 /// or heavy ones come in toolsets that are off by default (ocr, visual, windows-batch), and the small everyday steps
 /// (list_installed_apps, set_window_zorder, run_steps) join toolsets that are on (owner decision D2, October 2026).
 /// </summary>
@@ -194,6 +194,11 @@ public static class Toolsets
             new("browser-script", OnByDefault: false,
                 "Run JavaScript in a debug browser's page through CDP, with the page's rights.",
                 ["browser_evaluate"]),
+            // Off by default (roadmap M6.4, owner decisions D2 and D10): a wait polls pixels for up to a minute, and most waits
+            // have a UI Automation condition to wait on instead. Only reads; captures keep visual signatures only while it is on
+            new("visual", OnByDefault: false,
+                "Wait until a window, region or monitor changes on screen or stops changing, compared tile by tile, without image tokens.",
+                ["wait_for_visual"]),
             // Off by default (roadmap M6.1, owner decision D4): each item takes its own placement or state, so they stay tools
             // of their own, but most sessions place one window at a time. Closing and launching several stay in the default
             new("windows-batch", OnByDefault: false,
