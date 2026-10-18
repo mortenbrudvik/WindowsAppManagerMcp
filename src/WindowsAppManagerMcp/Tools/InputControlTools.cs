@@ -55,8 +55,12 @@ public class InputControlTools
         var serverHeld = _session.ServerHeld.Select(h => h.Name).ToList();
         var modifiersDown = _session.ReadModifiersDown().Select(k => k.Name).ToList();
 
+        // The server's own pause, when the shared one could not be read, is not the user's: the agent must not say it is
+        var pausedHow = state.PausedBy == InputControlSources.SharedPauseUnreadable
+            ? $"by this server ({state.PausedBy}{Since(state.PausedAt)}): {InputControlSources.PauseCause(state.PausedBy, null)}"
+            : $"by the user ({state.PausedBy}{Since(state.PausedAt)})";
         var message = state.Paused
-            ? $"Input is paused by the user ({state.PausedBy}{Since(state.PausedAt)}). Every input tool and every tool that changes windows " +
+            ? $"Input is paused {pausedHow}. Every input tool and every tool that changes windows " +
               "or starts or stops processes returns PausedByUser. Stop and ask the user how to continue. Only the user can resume: " +
               $"{(hotkey.Chord is { } chord ? $"{chord} again, or " : string.Empty)}by confirming resume_input when you call it at the user's request."
             : hotkey.State switch

@@ -584,6 +584,32 @@ public class InputSessionTests
     }
 
     [Fact]
+    public void AHotkeyPress_WhileTheServerPausedItselfForAnUnreadableFlag_KeepsThePause_AsTheUsersOwn()
+    {
+        // Arrange - nobody told the user the server paused itself, so a press of the hotkey asks for a pause: resuming
+        // would turn the user's stop control into a go (review F4)
+        var flag = new FakeDesktopPauseFlag { ReadFails = new IOException("the handle broke") };
+        using var sut = CreateSut();
+        sut.ShareDesktopPause(flag);
+        _time.Advance(InputSession.HotkeyResumeDelay * 2);
+
+        // Act
+        sut.TogglePauseByHotkey();
+
+        // Assert
+        sut.IsPaused.Should().BeTrue();
+        sut.PauseState.PausedBy.Should().Be(InputControlSources.Hotkey, "the pause is the user's own now");
+        sut.PauseState.ResumedBy.Should().BeNull();
+        sut.Send(CtrlC).PausedByUser.Should().BeTrue();
+
+        // And the user's next press resumes, as after any pause they made
+        _time.Advance(InputSession.HotkeyResumeDelay);
+        sut.TogglePauseByHotkey();
+        sut.IsPaused.Should().BeFalse();
+        sut.PauseState.ResumedBy.Should().Be(InputControlSources.Hotkey);
+    }
+
+    [Fact]
     public void ShareDesktopPause_Twice_Throws()
     {
         using var sut = CreateSut();

@@ -1484,7 +1484,7 @@ public partial class InputSimulationService : IInputSimulationService
         "reachable (a UAC prompt, the lock screen or a disconnected session). Try again; if it keeps failing, ask the user.";
 
     private string PausedMessage(string done) =>
-        $"{done} Input is paused: the user pressed the pause hotkey{(_session.PauseChord is { } chord ? $" ({chord})" : string.Empty)}. " +
+        $"{done} Input is paused: {InputControlSources.PauseCause(_session.PauseState?.PausedBy, _session.PauseChord)}. " +
         "Stop and ask the user how to continue. Do not try to resume input yourself: only the user can, with the hotkey or by " +
         "confirming resume_input.";
 
