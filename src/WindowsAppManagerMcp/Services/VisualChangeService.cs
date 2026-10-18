@@ -11,7 +11,9 @@ namespace WindowsAppManagerMcp.Services;
 /// signature (a hash per 16 x 16 tile). A window is read as capture_window reads it: refused by the target policy and the
 /// capture health checks, drawn by itself (PrintWindow under the window-call deadline), copied from the screen for the rest
 /// of the wait once it does not answer, and cut to its visible frame. A region or monitor is copied from the screen, and
-/// the windows the policy denies over it are left out of the comparison and reported (owner decision D8). The text caret
+/// the windows the policy denies over it are left out of the comparison and reported (owner decision D8), as are those
+/// over a window whose pixels can show them (copied from the screen, or from its device context when it refuses
+/// PrintWindow; <see cref="CaptureMethods.ShowsOnlyTheWindow"/>). The text caret
 /// the target's thread reports is left out too, so a blinking caret is no change. The last frame is registered as a capture
 /// without an image, so its captureId can be the next wait's since.
 /// </summary>
@@ -157,9 +159,15 @@ public sealed class VisualChangeService : IVisualChangeService
         public IReadOnlyList<Rectangle> Areas => _areas;
 
         /// <summary>Adds the denied windows over <paramref name="area"/> now; the target window itself is never one.</summary>
-        public void Add(Rectangle area)
+        public void Add(Rectangle area) => Add(Read(area));
+
+        /// <summary>The denied windows over <paramref name="area"/> now, without adding them (see <see cref="Add(IReadOnlyList{MaskedWindow})"/>).</summary>
+        public IReadOnlyList<MaskedWindow> Read(Rectangle area) => _mask.Over(area);
+
+        /// <summary>Adds denied windows <see cref="Read"/> listed; the target window itself is never one.</summary>
+        public void Add(IReadOnlyList<MaskedWindow> windows)
         {
-            foreach (var window in _mask.Over(area))
+            foreach (var window in windows)
             {
                 if (window.Handle == (long)target)
                 {
@@ -194,9 +202,12 @@ public sealed class VisualChangeService : IVisualChangeService
     private sealed class WindowSource(VisualChangeService service, nint handle, bool includeFrame, uint expectedProcessId) : Source
     {
         private bool _fromScreen;
+
+        // Made once a read can show the windows that cover the window: it was copied from the screen, or from its device
+        // context because it refused PrintWindow (BitBltFallback)
         private MaskTracker? _mask;
 
-        /// <summary>Only once the window is copied from the screen: the denied windows that covered it.</summary>
+        /// <summary>Only once a read showed what covers the window: the denied windows that covered it.</summary>
         public override IReadOnlyList<MaskedWindow> Masked => _mask?.Masked ?? [];
 
         public override Frame Read()
@@ -262,15 +273,33 @@ public sealed class VisualChangeService : IVisualChangeService
 
         /// <summary>
         /// The window drawn by itself (PrintWindow under the window-call deadline), or copied from the screen for the rest of
-        /// the wait once it does not answer.
+        /// the wait once it does not answer. A window that refuses PrintWindow has its device context copied (BitBltFallback),
+        /// which shows the windows that cover it: from its first such read on, the denied windows over it are listed before
+        /// and after each read, as for a screen copy (owner decision D8), and that first read, which no listing preceded, is
+        /// made again between two listings.
         /// </summary>
         private (VisualSignature, string) ReadPixels(PixelReader<(VisualSignature, string)> read, (int Left, int Top, int Right, int Bottom)? rect)
         {
+            var area = rect is { } r ? Rectangle.FromLTRB(r.Left, r.Top, r.Right, r.Bottom) : Rectangle.Empty;
             if (!_fromScreen)
             {
                 try
                 {
-                    return service._windowCalls.Run(handle, () => service._capture.WithPixels(new PixelSource.Window(handle, includeFrame), read));
+                    (VisualSignature, string Method) DrawItself() =>
+                        service._windowCalls.Run(handle, () => service._capture.WithPixels(new PixelSource.Window(handle, includeFrame), read));
+
+                    if (_mask == null)
+                    {
+                        var drawn = DrawItself();
+                        if (CaptureMethods.ShowsOnlyTheWindow(drawn.Method))
+                        {
+                            return drawn;
+                        }
+
+                        _mask = new MaskTracker(service, handle);
+                    }
+
+                    return ReadBetweenListings(area, DrawItself);
                 }
                 catch (WindowNotRespondingException ex)
                 {
@@ -281,12 +310,25 @@ public sealed class VisualChangeService : IVisualChangeService
                 }
             }
 
-            // The denied windows over the window's rectangle are listed before and after the copy, as for a region (D8)
             _mask ??= new MaskTracker(service, handle);
-            var area = rect is { } r ? Rectangle.FromLTRB(r.Left, r.Top, r.Right, r.Bottom) : Rectangle.Empty;
-            _mask.Add(area);
-            var pixels = service._capture.WithPixels(new PixelSource.WindowFromScreen(handle, includeFrame), read);
-            _mask.Add(area);
+            return ReadBetweenListings(area, () => service._capture.WithPixels(new PixelSource.WindowFromScreen(handle, includeFrame), read));
+        }
+
+        /// <summary>
+        /// <paramref name="readPixels"/> between two listings of the denied windows over the window's rectangle (D8): a denied
+        /// window that moves or opens meanwhile is left out where it was and where it is. A read that turns out to show only
+        /// the window (it drew itself after all) adds nothing.
+        /// </summary>
+        private (VisualSignature, string) ReadBetweenListings(Rectangle area, Func<(VisualSignature, string Method)> readPixels)
+        {
+            var before = _mask!.Read(area);
+            var pixels = readPixels();
+            if (!CaptureMethods.ShowsOnlyTheWindow(pixels.Method))
+            {
+                _mask.Add(before);
+                _mask.Add(area);
+            }
+
             return pixels;
         }
     }

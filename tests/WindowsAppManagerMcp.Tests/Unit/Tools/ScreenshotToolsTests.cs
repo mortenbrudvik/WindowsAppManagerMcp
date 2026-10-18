@@ -71,7 +71,7 @@ public class ScreenshotToolsTests
         // Arrange
         var sut = CreateSut();
 
-        var expected = Defaults with { Format = "png", Quality = 95 };
+        var expected = Defaults with { Format = CaptureFormat.Png, Quality = 95 };
 
         // Act
         sut.TakeScreenshot(format: CaptureFormat.Png, quality: 95);
@@ -169,7 +169,7 @@ public class ScreenshotToolsTests
         // Arrange
         var sut = CreateSut();
 
-        var expected = Defaults with { Format = "jpeg", Quality = 90 };
+        var expected = Defaults with { Format = CaptureFormat.Jpeg, Quality = 90 };
 
         // Act
         sut.CaptureRegion(0, 0, 400, 300, format: CaptureFormat.Jpeg, quality: 90);
@@ -227,7 +227,7 @@ public class ScreenshotToolsTests
         // Arrange
         var sut = CreateSut();
 
-        var expected = Defaults with { Format = "jpeg", Quality = 50 };
+        var expected = Defaults with { Format = CaptureFormat.Jpeg, Quality = 50 };
 
         // Act
         await sut.CaptureWindow(handle: 99999, includeFrame: false, format: CaptureFormat.Jpeg, quality: 50);
@@ -533,7 +533,7 @@ public class ScreenshotToolsTests
         // Arrange
         var sut = CreateSut();
 
-        var expected = Defaults with { Format = "jpeg", Quality = 70 };
+        var expected = Defaults with { Format = CaptureFormat.Jpeg, Quality = 70 };
 
         // Act
         await sut.CaptureWithElements(handle: 12345, format: CaptureFormat.Jpeg, quality: 70, highlightInteractable: false);

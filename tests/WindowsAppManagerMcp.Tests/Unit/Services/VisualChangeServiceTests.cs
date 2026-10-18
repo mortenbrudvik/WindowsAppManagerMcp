@@ -787,6 +787,118 @@ public class VisualChangeServiceTests
         result.MaskedWindows.Should().Equal(new MaskedWindow((long)denied, 200, 300, 200, 100));
     }
 
+    /// <summary>A denied window 0x7070 over the window, at the rectangle <paramref name="rect"/> gives for each read.</summary>
+    private nint DeniedWindowOver(Func<(int Left, int Top, int Right, int Bottom)> rect, Func<bool>? listed = null)
+    {
+        var denied = (nint)0x7070;
+        _windows.Setup(w => w.EnumWindows(It.IsAny<Func<nint, bool>>())).Callback((Func<nint, bool> visit) =>
+        {
+            if (listed?.Invoke() ?? true)
+            {
+                visit(denied);
+            }
+
+            visit(Window);
+        });
+        _windows.Setup(w => w.IsWindowVisible(It.IsAny<nint>())).Returns(true);
+        _windows.Setup(w => w.GetWindowRect(denied)).Returns(() => rect());
+        _capturePolicy.Setup(p => p.Check(denied)).Returns(new CaptureRefusal(ScreenshotErrorCode.TargetDeniedByPolicy, "denied"));
+        return denied;
+    }
+
+    [Fact]
+    public async Task AWindowThatRefusesPrintWindow_LeavesOutTheDeniedWindowsThatCoverIt_AndListsThem()
+    {
+        // Arrange - the window answers, but refuses PrintWindow: its device context is copied (BitBltFallback), which shows
+        // the denied window that covers part of it, and that window changes
+        _screen.WindowMethod = "BitBltFallback";
+        var denied = DeniedWindowOver(() => (200, 300, 400, 400));
+        var before = WindowFrame();
+        _screen.Frames(before, before.Copy().Paint(120, 120, 40, 40, (0, 0, 0)));
+
+        // Act
+        var result = await CreateSut(new TargetPolicy(TargetPolicySettings.Default)).WaitAsync(Request(TheWindow(), timeoutMs: 400));
+
+        // Assert
+        result.TimedOut.Should().BeTrue("the only change is inside the denied window");
+        result.ChangedPercent.Should().Be(0);
+        result.CaptureMethod.Should().Be("BitBltFallback");
+        result.MaskedWindows.Should().Equal(new MaskedWindow((long)denied, 200, 300, 200, 100));
+        _screen.Sources.Should().AllBeOfType<PixelSource.Window>("the window answers, so it is not copied from the screen");
+        result.Warnings.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task AWindowThatRefusesPrintWindow_ReadsItsFirstFrameAgain_BetweenTwoListingsOfTheDeniedWindows()
+    {
+        // Arrange - the first read shows the denied window at (200, 300); it moves to (500, 500) before anything lists it.
+        // That read cannot be compared: no listing saw the denied window where its pixels show it
+        _screen.WindowMethod = "BitBltFallback";
+        DeniedWindowOver(() => _screen.Sources.Count == 0 ? (200, 300, 400, 400) : (500, 500, 600, 600));
+        _screen.Frames(WindowFrame().Paint(100, 100, 200, 100, (0, 0, 0)), WindowFrame().Paint(400, 300, 100, 100, (0, 0, 0)));
+
+        // Act
+        var result = await CreateSut(new TargetPolicy(TargetPolicySettings.Default)).WaitAsync(Request(TheWindow(), timeoutMs: 400));
+
+        // Assert
+        result.TimedOut.Should().BeTrue("the only change is the denied window, which moved");
+        result.ChangedPercent.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task AWindowThatRefusesPrintWindow_LeavesOutADeniedWindowThatMovesDuringARead_WhereItWas()
+    {
+        // Arrange - the denied window is at (200, 300) when the windows are listed right before a read, and has moved to
+        // (500, 500) when they are listed right after it: that frame shows it at its old place, the next no longer does
+        _screen.WindowMethod = "BitBltFallback";
+        DeniedWindowOver(() => _screen.Sources.Count <= 1 ? (200, 300, 400, 400) : (500, 500, 600, 600));
+        var atOldPlace = WindowFrame().Paint(100, 100, 200, 100, (0, 0, 0));
+        _screen.Frames(atOldPlace, atOldPlace, WindowFrame().Paint(400, 300, 100, 100, (0, 0, 0)));
+
+        // Act
+        var result = await CreateSut(new TargetPolicy(TargetPolicySettings.Default)).WaitAsync(Request(TheWindow(), timeoutMs: 400));
+
+        // Assert
+        result.TimedOut.Should().BeTrue("the only changes are where the denied window was and where it is");
+        result.ChangedPercent.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task AWindowThatRefusesPrintWindow_LeavesOutADeniedWindowThatOpensRightBeforeARead()
+    {
+        // Arrange - the denied window opens after the windows were listed before a read, but before its pixels were copied,
+        // so only the listing after that read sees it
+        _screen.WindowMethod = "BitBltFallback";
+        DeniedWindowOver(() => (200, 300, 400, 400), listed: () => _screen.Sources.Count >= 3);
+        var before = WindowFrame();
+        _screen.Frames(before, before, before.Copy().Paint(100, 100, 200, 100, (0, 0, 0)));
+
+        // Act
+        var result = await CreateSut(new TargetPolicy(TargetPolicySettings.Default)).WaitAsync(Request(TheWindow(), timeoutMs: 400));
+
+        // Assert
+        result.TimedOut.Should().BeTrue("the only change is the denied window itself");
+        result.ChangedPercent.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task AWindowThatDrawsItself_IsNotMasked_ByTheDeniedWindowsOverIt()
+    {
+        // Arrange - PrintWindow: a denied window over the window is not in its pixels, so nothing of the window is left out
+        var denied = DeniedWindowOver(() => (200, 300, 400, 400));
+        var before = WindowFrame();
+        _screen.Frames(before, before.Copy().Paint(120, 120, 40, 40, (0, 0, 0)));
+
+        // Act
+        var result = await CreateSut(new TargetPolicy(TargetPolicySettings.Default)).WaitAsync(Request(TheWindow(), timeoutMs: 400));
+
+        // Assert
+        result.Satisfied.Should().BeTrue("the window itself changed under the denied window");
+        result.CaptureMethod.Should().Be("PrintWindow");
+        result.MaskedWindows.Should().BeNull();
+        _capturePolicy.Verify(p => p.Check(denied), Times.Never(), "a window that draws itself needs no mask");
+    }
+
     [Fact]
     public async Task AWindowTarget_WhoseHandleIsGivenToAnotherProcess_MidWait_IsClosed()
     {
@@ -1017,6 +1129,9 @@ public class VisualChangeServiceTests
 
         public IReadOnlyList<PixelSource> Sources => _sources;
 
+        /// <summary>The method of a window that draws itself: "BitBltFallback" for one that refuses PrintWindow.</summary>
+        public string WindowMethod { get; set; } = "PrintWindow";
+
         /// <summary>One frame per read, the last one repeated.</summary>
         public void Frames(params VisualFrames[] frames) => FrameAt = i => frames[Math.Min(i, frames.Length - 1)];
 
@@ -1024,7 +1139,7 @@ public class VisualChangeServiceTests
         {
             var frame = FrameAt(_sources.Count);
             _sources.Add(source);
-            var method = source is PixelSource.Window ? "PrintWindow" : "ScreenBitBlt";
+            var method = source is PixelSource.Window ? WindowMethod : "ScreenBitBlt";
             return read(PixelView.Of(frame.Capture(method)));
         }
 

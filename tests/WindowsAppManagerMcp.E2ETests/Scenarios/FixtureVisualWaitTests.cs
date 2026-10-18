@@ -68,7 +68,7 @@ public class FixtureVisualWaitTests
     {
         // Arrange - a metadata capture (no image) before the change, then the change, then the wait
         using var e2e = E2ESession.Start(DesktopTier.NoInput, _output, new FixtureLaunchOptions { ChangeAfter = TimeSpan.FromMilliseconds(1500) });
-        var before = e2e.Server.Screenshots.CaptureWindow(e2e.Fixture.MainWindowHandle, includeFrame: true, new CaptureOptions { Output = "metadata" }).Metadata;
+        var before = e2e.Server.Screenshots.CaptureWindow(e2e.Fixture.MainWindowHandle, includeFrame: true, new CaptureOptions { Output = CaptureOutputMode.Metadata }).Metadata;
         before.Success.Should().BeTrue(before.Error);
         var panel = RectOf(e2e.Fixture.WaitForEvent(FixtureContract.Events.PanelChanged));
 

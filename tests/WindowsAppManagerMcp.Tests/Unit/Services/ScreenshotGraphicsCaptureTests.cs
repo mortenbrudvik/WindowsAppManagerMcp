@@ -7,7 +7,7 @@ namespace WindowsAppManagerMcp.Tests.Unit.Services;
 /// </summary>
 public class ScreenshotGraphicsCaptureTests
 {
-    private static readonly CaptureOptions FullResolution = new() { MaxDimension = 0, Format = "png" };
+    private static readonly CaptureOptions FullResolution = new() { MaxDimension = 0, Format = CaptureFormat.Png };
     private static readonly nint Window = new(0x5000);
 
     private readonly Mock<IScreenCaptureWrapper> _capture = TestDataFactory.CreateMockScreenCaptureWrapper(captureWidth: 100, captureHeight: 80);
@@ -22,7 +22,7 @@ public class ScreenshotGraphicsCaptureTests
         _windows.Setup(w => w.IsWindow(It.IsAny<nint>())).Returns(true);
         _calls.Setup(c => c.Run(It.IsAny<nint>(), It.IsAny<Func<CaptureResult>>()))
             .Returns((nint _, Func<CaptureResult> call) => call());
-        _graphics.Setup(g => g.IsSupported).Returns(true);
+        _graphics.Setup(g => g.Availability).Returns(GraphicsCaptureAvailability.Available);
         _graphics.Setup(g => g.CaptureWindow(Window, It.IsAny<bool>()))
             .Returns(new CaptureResult(Pattern(100, 80), 100, 80, 300, 200, IGraphicsCaptureWrapper.Method));
     }
@@ -123,7 +123,7 @@ public class ScreenshotGraphicsCaptureTests
             .Throws(new WindowNotRespondingException(Window, "not responding"));
         _capture.Setup(c => c.CaptureWindowFromScreen(Window, true))
             .Returns(new CaptureResult(Pattern(100, 80), 100, 80, 300, 200, "ScreenBitBlt"));
-        _graphics.Setup(g => g.IsSupported).Returns(false);
+        _graphics.Setup(g => g.Availability).Returns(GraphicsCaptureAvailability.Unsupported);
 
         var metadata = CreateSut().CaptureWindow(Window, includeFrame: true, FullResolution).Metadata;
 
@@ -159,7 +159,8 @@ public class ScreenshotGraphicsCaptureTests
     public void Wgc_WhenItCannotCapture_IsCaptureFailed_WithTheReason(bool supported)
     {
         // Arrange
-        _graphics.Setup(g => g.IsSupported).Returns(supported);
+        _graphics.Setup(g => g.Availability)
+            .Returns(supported ? GraphicsCaptureAvailability.Available : GraphicsCaptureAvailability.Unsupported);
         _graphics.Setup(g => g.CaptureWindow(Window, It.IsAny<bool>())).Throws(new GraphicsCaptureException("the frame did not come"));
 
         // Act
@@ -168,7 +169,32 @@ public class ScreenshotGraphicsCaptureTests
         // Assert
         metadata.Success.Should().BeFalse();
         metadata.ErrorCode.Should().Be(nameof(ScreenshotErrorCode.CaptureFailed));
-        metadata.Error.Should().Contain(supported ? "the frame did not come" : "not available").And.Contain("captureMethod wgc");
+        metadata.Error.Should().Contain(supported ? "the frame did not come" : "not available on this computer").And.Contain("captureMethod wgc");
+        if (!supported)
+        {
+            metadata.Error.Should().Contain("Windows 10 1903");
+        }
+    }
+
+    [Theory]
+    [InlineData(GraphicsCaptureAvailability.Busy, "has not returned")]
+    [InlineData(GraphicsCaptureAvailability.Unknown, "could not be checked")]
+    public void Wgc_WhileWindowsGraphicsCaptureCannotBeAskedNow_SaysToTryAgain_NotThatThisComputerLacksIt(
+        GraphicsCaptureAvailability availability, string reason)
+    {
+        // Arrange - a capture stuck in the graphics driver, or a support check that missed its deadline: this computer has
+        // Windows.Graphics.Capture, it only cannot be asked right now
+        _graphics.Setup(g => g.Availability).Returns(availability);
+
+        // Act
+        var metadata = CreateSut().CaptureWindow(Window, includeFrame: true, With(WindowCaptureMethod.Wgc)).Metadata;
+
+        // Assert
+        metadata.Success.Should().BeFalse();
+        metadata.ErrorCode.Should().Be(nameof(ScreenshotErrorCode.CaptureFailed));
+        metadata.Error.Should().Contain(reason).And.Contain("try again").And.Contain("captureMethod wgc")
+            .And.NotContain("not available on this computer").And.NotContain("1903");
+        _graphics.Verify(g => g.CaptureWindow(It.IsAny<nint>(), It.IsAny<bool>()), Times.Never);
     }
 
     [Fact]

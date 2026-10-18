@@ -1283,7 +1283,7 @@
             "default": null
           },
           "zoom": {
-            "description": "Enlarge the image up to this many times (1-4, default 1) to read small text or controls; maxDimension still caps its long edge, and imageToScreen maps its points back",
+            "description": "Enlarge the image 1-4 times (default 1) to read small text or controls; maxDimension still caps its long edge; an image over 64 megapixels is InvalidImageSize",
             "type": "number",
             "default": 1
           }

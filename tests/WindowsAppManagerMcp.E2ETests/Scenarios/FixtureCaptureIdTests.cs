@@ -21,7 +21,7 @@ public class FixtureCaptureIdTests
         using var e2e = E2ESession.Start(DesktopTier.NoInput, _output);
         var ready = e2e.Fixture.Ready;
         var metadata = e2e.Server.Screenshots.CaptureWindow(
-            e2e.Fixture.MainWindowHandle, includeFrame: false, new CaptureOptions { Format = "png", MaxDimension = 400 }).Metadata;
+            e2e.Fixture.MainWindowHandle, includeFrame: false, new CaptureOptions { Format = CaptureFormat.Png, MaxDimension = 400 }).Metadata;
         metadata.Success.Should().BeTrue(metadata.Error);
         metadata.CaptureId.Should().NotBeNullOrEmpty();
         var transform = metadata.ImageToScreen!;

@@ -18,7 +18,7 @@ public class CaptureAidsTests
 
     private static CaptureOptions Png(Func<CaptureOptions, CaptureOptions>? with = null)
     {
-        var options = new CaptureOptions { Format = "png" };
+        var options = new CaptureOptions { Format = CaptureFormat.Png };
         return with == null ? options : with(options);
     }
 
@@ -35,6 +35,59 @@ public class CaptureAidsTests
         var result = CreateSut().CaptureRegion(0, 0, 100, 50, Png(o => o with { Zoom = zoom }));
 
         result.Metadata.Success.Should().BeFalse();
+        result.Metadata.ErrorCode.Should().Be(nameof(ScreenshotErrorCode.InvalidImageSize));
+        _capture.Verify(c => c.CaptureScreenRegion(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>()), Times.Never);
+    }
+
+    [Fact]
+    public void Zoom_ThatWouldMakeAnImageOverTheBudget_IsInvalidImageSize_AndNothingIsCaptured()
+    {
+        // Arrange - capture_region over a 4K monitor at zoom 4 with maxDimension 0 would be a 15360 x 8640 image: about 530 MB
+        // of pixels in one bitmap, then a resize, an encoding and base64
+        _capture.Setup(c => c.GetVirtualScreenBounds()).Returns((0, 0, 3840, 2160));
+
+        // Act
+        var result = CreateSut().CaptureRegion(0, 0, 3840, 2160, Png(o => o with { Zoom = 4, MaxDimension = 0 }));
+
+        // Assert
+        result.Metadata.Success.Should().BeFalse();
+        result.Metadata.ErrorCode.Should().Be(nameof(ScreenshotErrorCode.InvalidImageSize));
+        result.Metadata.Error.Should().Contain("15360x8640").And.Contain("Nothing was captured");
+        result.Image.Should().BeNull();
+        _capture.Verify(c => c.CaptureScreenRegion(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>()), Times.Never);
+    }
+
+    [Fact]
+    public void Zoom_IsHeldToTheBudget_ByTheRegionOnTheScreen_NotTheRegionAsked()
+    {
+        // Arrange - a 3000 x 3000 region on a 500 x 500 screen is cut to the screen before the budget is checked. Without a
+        // long-edge limit, zoom 4 makes the region asked a 12000 x 12000 image (144 megapixels, over the budget), but the part
+        // on the screen only a 2000 x 2000 one (4 megapixels)
+        _capture.Setup(c => c.GetVirtualScreenBounds()).Returns((0, 0, 500, 500));
+
+        // Act
+        var result = CreateSut().CaptureRegion(0, 0, 3000, 3000, Png(o => o with { Zoom = 4, MaxDimension = 0 }));
+
+        // Assert
+        result.Metadata.Success.Should().BeTrue(result.Metadata.Error);
+        result.Metadata.Width.Should().Be(2000);
+        result.Metadata.Height.Should().Be(2000);
+        _capture.Verify(c => c.CaptureScreenRegion(0, 0, 500, 500), Times.Once);
+    }
+
+    [Fact]
+    public void Zoom_OnAMonitor_IsHeldToTheBudget_BeforeAnythingIsCaptured()
+    {
+        // Arrange - the service also takes a zoom for a monitor; a 4K monitor at zoom 4 without a long-edge limit is too large
+        var monitors = TestDataFactory.CreateMockMonitorService(
+            [new MonitorInfo(0, "DISPLAY1", true, new MonitorRect(0, 0, 3840, 2160), new MonitorRect(0, 0, 3840, 2120), 1.0)]);
+        var sut = new ScreenshotService(_capture.Object, monitors.Object,
+            Mock.Of<INativeWindowWrapper>(w => w.IsWindowVisible(It.IsAny<nint>()) == true));
+
+        // Act
+        var result = sut.CaptureMonitor(0, Png(o => o with { Zoom = 4, MaxDimension = 0 }));
+
+        // Assert
         result.Metadata.ErrorCode.Should().Be(nameof(ScreenshotErrorCode.InvalidImageSize));
         _capture.Verify(c => c.CaptureScreenRegion(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>()), Times.Never);
     }

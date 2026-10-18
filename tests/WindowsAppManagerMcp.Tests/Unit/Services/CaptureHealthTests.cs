@@ -13,7 +13,7 @@ public class CaptureHealthTests
     private const int SW_SHOWMINNOACTIVE = 7;
     private const int SW_RESTORE = 9;
 
-    private static readonly CaptureOptions FullResolution = new() { MaxDimension = 0, Format = "png" };
+    private static readonly CaptureOptions FullResolution = new() { MaxDimension = 0, Format = CaptureFormat.Png };
 
     private readonly Mock<IScreenCaptureWrapper> _capture = TestDataFactory.CreateMockScreenCaptureWrapper(captureWidth: 100, captureHeight: 80);
     private readonly Mock<IMonitorService> _monitors = TestDataFactory.CreateMockMonitorService();
@@ -522,7 +522,7 @@ public class CaptureHealthTests
         _capture.Setup(c => c.CaptureWindow(Window, false)).Returns(new CaptureResult(Pattern(70000, 1), 70000, 1, 0, 0, "PrintWindow"));
 
         // Act
-        var metadata = CreateSut().CaptureWindow(Window, includeFrame: false, new CaptureOptions { MaxDimension = 0, Format = "jpeg" }).Metadata;
+        var metadata = CreateSut().CaptureWindow(Window, includeFrame: false, new CaptureOptions { MaxDimension = 0, Format = CaptureFormat.Jpeg }).Metadata;
 
         // Assert
         metadata.Success.Should().BeFalse();

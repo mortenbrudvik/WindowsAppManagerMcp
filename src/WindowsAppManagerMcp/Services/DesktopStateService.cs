@@ -199,7 +199,7 @@ public sealed class DesktopStateService : IDesktopStateService
             }
             else
             {
-                var options = new CaptureOptions { MaxDimension = request.ScreenshotMaxLongEdge, Output = "image" };
+                var options = new CaptureOptions { MaxDimension = request.ScreenshotMaxLongEdge, Output = CaptureOutputMode.Image };
                 captureTask = marks && elementsTask is { } walkTask
                     ? Start(() => CaptureMarkedAsync(handle, walkTask, walkedWindow, options, partBudget + stopGrace))
                     : Task.Run(() => _screenshots.CaptureWindow(handle, includeFrame: true, options), CancellationToken.None);

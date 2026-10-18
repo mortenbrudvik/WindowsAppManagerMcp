@@ -7,7 +7,8 @@ namespace WindowsAppManagerMcp.Services;
 /// <summary>
 /// read_screen_text and find_text_on_screen (roadmap M6.3, see <see cref="IOcrService"/>). The pipeline: resolve the language
 /// (before anything is captured), read the denied windows' areas, capture the raw pixels, black out the denied windows when
-/// the pixels are a copy of the screen (a monitor, a region, or a window that did not draw itself) as read before and after
+/// the pixels can show them (a monitor, a region, or a window copied from the screen or from its device context; not one that
+/// drew itself or came from the compositor, <see cref="CaptureMethods.ShowsOnlyTheWindow"/>) as read before and after
 /// the capture, enlarge small text 2x, read the image in tiles when it is larger than OCR takes, map the boxes back to
 /// screen pixels, and register the capture.
 /// </summary>
@@ -30,9 +31,6 @@ public sealed class OcrService : IOcrService
         "The user adds one in Settings > Time & language > Language & region (a language with its optical character " +
         "recognition feature), or as an administrator with Add-WindowsCapability -Online -Name " +
         "'Language.OCR~~~en-US~0.0.1.0'. The server never installs one.";
-
-    /// <summary>The method of a capture in which the window drew itself, so no other window shows.</summary>
-    private const string PrintWindowMethod = "PrintWindow";
 
     private const string NoMatchHint =
         "OCR can misread l, I and 1 or O and 0, and splits and joins words its own way: try match 'contains' with a shorter " +
@@ -191,7 +189,10 @@ public sealed class OcrService : IOcrService
             throw new OcrFailure(ex.Code.ToString(), ex.Message);
         }
 
-        var masked = capture.Pixels.Method == PrintWindowMethod ? 0 : DeniedWindowMask.Apply(capture.Pixels, deniedBefore, ReadMask(mask));
+        // A window that drew itself, or the compositor's frame of it, shows no other window: nothing to black out
+        var masked = CaptureMethods.ShowsOnlyTheWindow(capture.Pixels.Method)
+            ? 0
+            : DeniedWindowMask.Apply(capture.Pixels, deniedBefore, ReadMask(mask));
         warnings.InsertRange(0, capture.Warnings);
 
         var pixels = capture.Pixels;

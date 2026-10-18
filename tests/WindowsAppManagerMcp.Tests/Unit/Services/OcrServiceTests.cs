@@ -315,15 +315,56 @@ public class OcrServiceTests
     }
 
     [Fact]
-    public async Task ReadText_AWindowCopiedFromTheScreen_IsMaskedLikeARegion()
+    public async Task ReadText_AWindowFromTheCompositor_IsNotMasked()
     {
-        Captures(WindowTarget, 400, 300, x: 0, y: 0, scale: 2.0, method: "ScreenBitBlt", warnings: "WindowNotResponding: copied");
+        // Windows.Graphics.Capture's frame of a window is the window's own content: the windows that cover it are not in it
+        Captures(WindowTarget, 400, 300, x: 0, y: 0, scale: 2.0, method: IGraphicsCaptureWrapper.Method);
+        _desktop = [new DeniedWindowMaskTests.FakeWindow(1, new Rectangle(100, 50, 100, 50), Denied: true)];
+
+        var result = await CreateSut().ReadTextAsync(Request(WindowTarget), OcrDetail.Lines, 150, null, CancellationToken.None);
+
+        result.MaskedWindows.Should().BeNull("the compositor's frame of a window shows no other window");
+        _engine.Recognitions.Single().Bgra.Should().OnlyContain(b => b == 255);
+    }
+
+    [Theory]
+    [InlineData("ScreenBitBlt")]
+    [InlineData("BitBltFallback")]
+    [InlineData("SomeLaterMethod")]
+    public async Task ReadText_AWindowCopiedFromTheScreen_IsMaskedLikeARegion(string method)
+    {
+        // A screen copy, or the window's device context after it refused PrintWindow, shows the windows that cover it; a
+        // method the server does not know is masked too
+        Captures(WindowTarget, 400, 300, x: 0, y: 0, scale: 2.0, method: method, warnings: "WindowNotResponding: copied");
         _desktop = [new DeniedWindowMaskTests.FakeWindow(1, new Rectangle(100, 50, 100, 50), Denied: true)];
 
         var result = await CreateSut().ReadTextAsync(Request(WindowTarget), OcrDetail.Lines, 150, null, CancellationToken.None);
 
         result.MaskedWindows.Should().Be(1);
         PixelAt(_engine.Recognitions.Single().Bgra, 400, 150, 75).Should().Be(0);
+    }
+
+    [Fact]
+    public async Task ReadText_ADeniedWindowThatMovesDuringTheCapture_IsBlackedOutWhereItWasAndWhereItIs()
+    {
+        // Arrange - the denied window is at (20, 20) when the windows are read before the capture, and at (300, 200) when
+        // they are read after it: the pixels may show it at either place
+        var target = new CaptureTarget.Monitor(0);
+        var raw = Captures(target, 400, 300, x: 0, y: 0, scale: 2.0, method: "ScreenBitBlt");
+        _desktop = [new DeniedWindowMaskTests.FakeWindow(1, new Rectangle(20, 20, 50, 40), Denied: true)];
+        _screenshots.Setup(s => s.CapturePixels(target)).Returns(raw)
+            .Callback(() => _desktop[0] = _desktop[0] with { Bounds = new Rectangle(300, 200, 50, 40) });
+
+        // Act
+        var result = await CreateSut().ReadTextAsync(Request(target), OcrDetail.Lines, 150, null, CancellationToken.None);
+
+        // Assert - one window, blacked out at both places; the rest is as captured
+        result.MaskedWindows.Should().Be(1);
+        var seen = _engine.Recognitions.Single().Bgra;
+        PixelAt(seen, 400, 40, 40).Should().Be(0, "where the window was before the capture");
+        PixelAt(seen, 400, 320, 220).Should().Be(0, "where the window was after the capture");
+        PixelAt(seen, 400, 200, 100).Should().Be(255);
+        PixelAt(seen, 400, 71, 40).Should().Be(255);
     }
 
     private static byte PixelAt(byte[] bgra, int width, int x, int y) => bgra[(y * width + x) * 4];

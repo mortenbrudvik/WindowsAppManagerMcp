@@ -1,5 +1,7 @@
+using System.Globalization;
 using System.Text.Json.Serialization;
 using WindowsAppManagerMcp.Models;
+using WindowsAppManagerMcp.Native;
 
 namespace WindowsAppManagerMcp.Services;
 
@@ -91,9 +93,9 @@ public sealed record CaptureRequest(
     {
         ArgumentNullException.ThrowIfNull(options);
 
-        var format = ParseFormat(options.Format);
+        var format = EncodingOf(options.Format);
         var (maxDimension, maxWidth) = ResolveSizeLimits(options.MaxDimension, options.MaxWidth);
-        var output = ParseOutput(options.Output, options.SaveToFile);
+        var output = ResolveOutput(options.Output, options.SaveToFile);
 
         string? outputPath = null;
         if (!string.IsNullOrEmpty(options.OutputPath))
@@ -181,6 +183,34 @@ public sealed record CaptureRequest(
         return (scaledWidth, scaledHeight);
     }
 
+    /// <summary>
+    /// Refuses a <paramref name="width"/> x <paramref name="height"/> capture whose output image (<see cref="OutputSize"/>) is
+    /// enlarged beyond what a capture may be: <see cref="ScreenCaptureWrapper.MaxCapturePixels"/> (64 megapixels) and
+    /// <see cref="ScreenCaptureWrapper.MaxCaptureSize"/> pixels on an edge. Only <see cref="Zoom"/> makes an image larger than
+    /// its capture, which is held to those limits itself, so an image that is not enlarged passes as it is; zoom enlarges
+    /// each edge up to 4 times, 16 times the pixels, and maxDimension 0 lifts the only cap after it: capture_region over a
+    /// 4K monitor would be a 15360 x 8640 bitmap (about 530 MB) before the resize, the encoding and base64. Called with the
+    /// size on the screen before anything is captured, and again before the image is made.
+    /// </summary>
+    /// <exception cref="CaptureException">InvalidImageSize: the image would be over the budget; nothing was captured.</exception>
+    public void ThrowIfOutputTooLarge(int width, int height)
+    {
+        var (outputWidth, outputHeight) = OutputSize(width, height);
+        if ((outputWidth <= width && outputHeight <= height) ||
+            ((long)outputWidth * outputHeight <= ScreenCaptureWrapper.MaxCapturePixels &&
+             outputWidth <= ScreenCaptureWrapper.MaxCaptureSize && outputHeight <= ScreenCaptureWrapper.MaxCaptureSize))
+        {
+            return;
+        }
+
+        var zoom = Zoom.ToString("0.##", CultureInfo.InvariantCulture);
+        throw new CaptureException(ScreenshotErrorCode.InvalidImageSize,
+            $"At zoom {zoom} the {width}x{height} capture would be a {outputWidth}x{outputHeight} image, more than one image " +
+            $"may hold ({ScreenCaptureWrapper.MaxCapturePixels / (1024 * 1024)} megapixels, {ScreenCaptureWrapper.MaxCaptureSize} " +
+            "pixels on an edge). Nothing was captured. Capture a smaller region, use a lower zoom, or pass a maxDimension " +
+            $"(the default, {CaptureOptions.DefaultMaxDimension}, caps the long edge).");
+    }
+
     /// <summary>The encoding for an output image of this size: <see cref="Format"/>, or the "auto" choice.</summary>
     public ImageEncoding EncodingFor(int outputWidth, int outputHeight) =>
         Format ?? (Math.Max(outputWidth, outputHeight) <= CaptureOptions.AutoPngMaxEdge ? ImageEncoding.Png : ImageEncoding.Jpeg);
@@ -194,12 +224,17 @@ public sealed record CaptureRequest(
     /// <summary>The file extension written for an encoding, with the dot.</summary>
     public static string Extension(ImageEncoding encoding) => encoding == ImageEncoding.Png ? ".png" : ".jpg";
 
-    private static ImageEncoding? ParseFormat(string? format) =>
-        format?.Trim().ToLowerInvariant() switch
+    /// <summary>
+    /// The encoding <paramref name="format"/> asks for, or null for Auto. The tools bind the argument to
+    /// <see cref="CaptureFormat"/> and refuse an unknown name there (InvalidFormat); a value outside the enum is refused
+    /// the same way here.
+    /// </summary>
+    private static ImageEncoding? EncodingOf(CaptureFormat format) =>
+        format switch
         {
-            null or "" or "auto" => null,
-            "png" => ImageEncoding.Png,
-            "jpeg" or "jpg" => ImageEncoding.Jpeg,
+            CaptureFormat.Auto => null,
+            CaptureFormat.Png => ImageEncoding.Png,
+            CaptureFormat.Jpeg => ImageEncoding.Jpeg,
             _ => throw new CaptureException(ScreenshotErrorCode.InvalidFormat,
                 $"Unknown format '{format}'. Use 'auto', 'png' or 'jpeg'.")
         };
@@ -227,20 +262,21 @@ public sealed record CaptureRequest(
         return (longEdge, maxWidth);
     }
 
-    private static CaptureOutputMode ParseOutput(string? output, bool saveToFile)
+    /// <summary>
+    /// <paramref name="output"/> with the legacy saveToFile alias applied. The tools bind the argument to
+    /// <see cref="CaptureOutputMode"/> and refuse an unknown name there (InvalidOutputMode); a value outside the enum is
+    /// refused the same way here.
+    /// </summary>
+    private static CaptureOutputMode ResolveOutput(CaptureOutputMode output, bool saveToFile)
     {
-        var mode = output?.Trim().ToLowerInvariant() switch
+        if (!Enum.IsDefined(output))
         {
-            null or "" or "image" => CaptureOutputMode.Image,
-            "file" => CaptureOutputMode.File,
-            "both" => CaptureOutputMode.Both,
-            "metadata" => CaptureOutputMode.Metadata,
-            _ => throw new CaptureException(ScreenshotErrorCode.InvalidOutputMode,
-                $"Unknown output '{output}'. Use 'image', 'file', 'both' or 'metadata'.")
-        };
+            throw new CaptureException(ScreenshotErrorCode.InvalidOutputMode,
+                $"Unknown output '{output}'. Use 'image', 'file', 'both' or 'metadata'.");
+        }
 
         // The legacy saveToFile flag meant "write a file instead of returning the image".
-        return saveToFile && mode != CaptureOutputMode.Both ? CaptureOutputMode.File : mode;
+        return saveToFile && output != CaptureOutputMode.Both ? CaptureOutputMode.File : output;
     }
 
     private static (string Path, ImageEncoding? Format) ResolveOutputPath(string outputPath, ImageEncoding? format, bool overwrite)

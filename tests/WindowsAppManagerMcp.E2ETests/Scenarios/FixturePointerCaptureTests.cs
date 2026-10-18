@@ -31,7 +31,7 @@ public class FixturePointerCaptureTests
             return;
         }
 
-        var options = new CaptureOptions { Format = "png", MaxDimension = 0 };
+        var options = new CaptureOptions { Format = CaptureFormat.Png, MaxDimension = 0 };
 
         // Act
         var without = screenshots.CaptureRegion(at.X - 32, at.Y - 32, 64, 64, options);

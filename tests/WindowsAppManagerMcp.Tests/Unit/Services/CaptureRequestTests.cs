@@ -43,16 +43,15 @@ public class CaptureRequestTests
     }
 
     [Theory]
-    [InlineData("image", false, CaptureOutputMode.Image)]
-    [InlineData(null, false, CaptureOutputMode.Image)]
-    [InlineData("FILE", false, CaptureOutputMode.File)]
-    [InlineData("both", false, CaptureOutputMode.Both)]
-    [InlineData("metadata", false, CaptureOutputMode.Metadata)]
-    [InlineData("image", true, CaptureOutputMode.File)]
-    [InlineData("metadata", true, CaptureOutputMode.File)]
-    [InlineData("file", true, CaptureOutputMode.File)]
-    [InlineData("both", true, CaptureOutputMode.Both)]
-    public void Resolve_OutputAndTheSaveToFileAlias(string? output, bool saveToFile, CaptureOutputMode expected)
+    [InlineData(CaptureOutputMode.Image, false, CaptureOutputMode.Image)]
+    [InlineData(CaptureOutputMode.File, false, CaptureOutputMode.File)]
+    [InlineData(CaptureOutputMode.Both, false, CaptureOutputMode.Both)]
+    [InlineData(CaptureOutputMode.Metadata, false, CaptureOutputMode.Metadata)]
+    [InlineData(CaptureOutputMode.Image, true, CaptureOutputMode.File)]
+    [InlineData(CaptureOutputMode.Metadata, true, CaptureOutputMode.File)]
+    [InlineData(CaptureOutputMode.File, true, CaptureOutputMode.File)]
+    [InlineData(CaptureOutputMode.Both, true, CaptureOutputMode.Both)]
+    public void Resolve_OutputAndTheSaveToFileAlias(CaptureOutputMode output, bool saveToFile, CaptureOutputMode expected)
     {
         // Act
         var request = CaptureRequest.Resolve(new CaptureOptions { Output = output, SaveToFile = saveToFile });
@@ -85,6 +84,65 @@ public class CaptureRequestTests
     }
 
     [Theory]
+    [InlineData(2048, 2048, 4.0)] // 8192 x 8192: exactly the 64-megapixel budget
+    [InlineData(4096, 10, 4.0)] // 16384 pixels on an edge
+    [InlineData(8192, 8192, 1.0)] // without zoom an image is never larger than its capture
+    [InlineData(70000, 1, 1.0)] // nor checked again: its capture was (only a fake makes this one)
+    public void ThrowIfOutputTooLarge_AnImageWithinTheBudget_Passes(int width, int height, double zoom)
+    {
+        var request = CaptureRequest.Resolve(new CaptureOptions { Zoom = zoom, MaxDimension = 0 });
+
+        request.Invoking(r => r.ThrowIfOutputTooLarge(width, height)).Should().NotThrow();
+    }
+
+    [Theory]
+    [InlineData(3840, 2160, 4.0, "15360x8640")] // a 4K monitor at zoom 4: 133 megapixels, about 530 MB of pixels
+    [InlineData(2049, 2048, 4.0, "8196x8192")] // just over 64 megapixels
+    [InlineData(4097, 10, 4.0, "16388x40")] // within the pixels, but more than 16384 on an edge
+    [InlineData(8192, 8192, 1.5, "12288x12288")]
+    public void ThrowIfOutputTooLarge_AZoomedImageOverTheBudget_IsInvalidImageSize_AndSaysWhatToChange(
+        int width, int height, double zoom, string size)
+    {
+        // Arrange - maxDimension 0 lifts the long-edge cap, so only the budget stands between zoom and gigabytes
+        var request = CaptureRequest.Resolve(new CaptureOptions { Zoom = zoom, MaxDimension = 0 });
+
+        // Act
+        var act = () => request.ThrowIfOutputTooLarge(width, height);
+
+        // Assert
+        var failure = act.Should().Throw<CaptureException>().Which;
+        failure.Code.Should().Be(ScreenshotErrorCode.InvalidImageSize);
+        failure.Message.Should().Contain(size).And.Contain("64 megapixels").And.Contain("Nothing was captured")
+            .And.Contain("smaller region").And.Contain("lower zoom").And.Contain("maxDimension");
+    }
+
+    [Fact]
+    public void ThrowIfOutputTooLarge_AZoomTheLongEdgeLimitCaps_Passes()
+    {
+        // The default maxDimension (1568) keeps a zoomed 4K capture small
+        CaptureRequest.Resolve(new CaptureOptions { Zoom = 4 }).Invoking(r => r.ThrowIfOutputTooLarge(3840, 2160)).Should().NotThrow();
+    }
+
+    [Fact]
+    public void ThrowIfOutputTooLarge_WritesItsNumbers_TheSameInEveryCulture()
+    {
+        var culture = System.Globalization.CultureInfo.CurrentCulture;
+        try
+        {
+            System.Globalization.CultureInfo.CurrentCulture = new System.Globalization.CultureInfo("nb-NO");
+            var request = CaptureRequest.Resolve(new CaptureOptions { Zoom = 2.5, MaxDimension = 0 });
+
+            var act = () => request.ThrowIfOutputTooLarge(8192, 8192);
+
+            act.Should().Throw<CaptureException>().Which.Message.Should().Contain("zoom 2.5");
+        }
+        finally
+        {
+            System.Globalization.CultureInfo.CurrentCulture = culture;
+        }
+    }
+
+    [Theory]
     [InlineData(@"\\server\share\shot.png")]
     [InlineData("//server/share/shot.png")]
     [InlineData(@"\\?\C:\captures\shot.png")]
@@ -94,7 +152,7 @@ public class CaptureRequestTests
     public void Resolve_NetworkOrDeviceOutputPath_IsRejectedBeforeTheFileSystemIsTouched(string outputPath)
     {
         // A capture written to \\attacker\share would leak the screen and the user's NTLM hash
-        var failure = CaptureRequest.Validate(new CaptureOptions { Output = "file", OutputPath = outputPath });
+        var failure = CaptureRequest.Validate(new CaptureOptions { Output = CaptureOutputMode.File, OutputPath = outputPath });
 
         failure.Should().NotBeNull();
         failure!.Code.Should().Be(ScreenshotErrorCode.InvalidOutputPath);
@@ -107,7 +165,7 @@ public class CaptureRequestTests
     public void Resolve_DriveLetterOutputPath_PassesTheNetworkCheck(string outputPath)
     {
         // The folder does not exist, so it fails later, on the folder check, not as a network path
-        var failure = CaptureRequest.Validate(new CaptureOptions { Output = "file", OutputPath = outputPath.Replace("captures", $"no-such-folder-{Guid.NewGuid():N}") });
+        var failure = CaptureRequest.Validate(new CaptureOptions { Output = CaptureOutputMode.File, OutputPath = outputPath.Replace("captures", $"no-such-folder-{Guid.NewGuid():N}") });
 
         failure!.Code.Should().Be(ScreenshotErrorCode.InvalidOutputPath);
         failure.Message.Should().NotContain("drive letter").And.Contain("does not exist");
@@ -126,22 +184,37 @@ public class CaptureRequestTests
     [Fact]
     public void EncodingFor_ExplicitFormat_IgnoresTheSize()
     {
-        CaptureRequest.Resolve(new CaptureOptions { Format = "png" }).EncodingFor(4000, 3000).Should().Be(ImageEncoding.Png);
-        CaptureRequest.Resolve(new CaptureOptions { Format = "jpeg" }).EncodingFor(10, 10).Should().Be(ImageEncoding.Jpeg);
+        CaptureRequest.Resolve(new CaptureOptions { Format = CaptureFormat.Png }).EncodingFor(4000, 3000).Should().Be(ImageEncoding.Png);
+        CaptureRequest.Resolve(new CaptureOptions { Format = CaptureFormat.Jpeg }).EncodingFor(10, 10).Should().Be(ImageEncoding.Jpeg);
     }
 
     [Theory]
-    [InlineData("webp", ScreenshotErrorCode.InvalidFormat)]
-    [InlineData("tiff", ScreenshotErrorCode.InvalidFormat)]
-    public void Validate_RejectsUnknownFormats(string format, ScreenshotErrorCode expected)
+    [InlineData(CaptureFormat.Auto, null)]
+    [InlineData(CaptureFormat.Png, ImageEncoding.Png)]
+    [InlineData(CaptureFormat.Jpeg, ImageEncoding.Jpeg)]
+    public void Resolve_TakesTheToolsFormat(CaptureFormat format, ImageEncoding? expected)
     {
-        CaptureRequest.Validate(new CaptureOptions { Format = format })!.Code.Should().Be(expected);
+        // The tools bind format to CaptureFormat ('jpg' and any case included), so the service takes the enum as it is
+        CaptureRequest.Resolve(new CaptureOptions { Format = format }).Format.Should().Be(expected);
+    }
+
+    [Fact]
+    public void Validate_RejectsAFormatOrOutputNoToolCanBind()
+    {
+        // Fail closed: a value outside the enums is refused, with the codes the tools use for an unknown name
+        var format = CaptureRequest.Validate(new CaptureOptions { Format = (CaptureFormat)42 })!;
+        format.Code.Should().Be(ScreenshotErrorCode.InvalidFormat);
+        format.Message.Should().Contain("'auto', 'png' or 'jpeg'");
+
+        var output = CaptureRequest.Validate(new CaptureOptions { Output = (CaptureOutputMode)42 })!;
+        output.Code.Should().Be(ScreenshotErrorCode.InvalidOutputMode);
+        output.Message.Should().Contain("'image', 'file', 'both' or 'metadata'");
     }
 
     [Fact]
     public void Validate_ReturnsNullForValidOptions()
     {
-        CaptureRequest.Validate(new CaptureOptions { Format = "jpg", Output = "both", MaxDimension = 0 }).Should().BeNull();
+        CaptureRequest.Validate(new CaptureOptions { Format = CaptureFormat.Jpeg, Output = CaptureOutputMode.Both, MaxDimension = 0 }).Should().BeNull();
     }
 
     [Theory]
