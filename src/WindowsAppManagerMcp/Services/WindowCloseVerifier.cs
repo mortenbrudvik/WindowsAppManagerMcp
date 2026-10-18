@@ -232,7 +232,9 @@ public sealed class WindowCloseVerifier : IWindowCloseVerifier
 
     /// <summary>
     /// A modal dialog drawn inside the window (a Window element whose Window pattern is modal, below the window's own
-    /// element), with its text and buttons, or null.
+    /// element), with its text and buttons, or null when the search found none. A search the deadline
+    /// (<paramref name="token"/>) cut short throws OperationCanceledException instead, so the caller says the prompt could not
+    /// be inspected rather than that there is none; one that read <see cref="MaxSearchElements"/> elements ends as complete.
     /// </summary>
     private ClosePrompt? FindInWindowDialog(nint window, CancellationToken token)
     {
@@ -272,6 +274,10 @@ public sealed class WindowCloseVerifier : IWindowCloseVerifier
                     queue.Enqueue((child, depth + 1));
             }
         }
+
+        // Elements left unread because the deadline passed: the window was not fully inspected (review finding F9)
+        if (queue.Count > 0)
+            token.ThrowIfCancellationRequested();
 
         return null;
     }
@@ -359,10 +365,19 @@ public sealed class WindowCloseVerifier : IWindowCloseVerifier
             // Given up on, but a close already under way may still happen
             return null;
         }
-        catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
+        catch (Exception ex)
         {
-            // Not asked (no Window pattern, the window is gone) or failed: the close counts as not sent. Logged, since an
-            // unexpected failure (a COMException) would otherwise leave no trace
+            // A call the caller cancelled ends cancelled, whatever stopped the close
+            cancellationToken.ThrowIfCancellationRequested();
+            if (ex is OperationCanceledException)
+            {
+                // The deadline passed before the close was asked: nothing was sent, and a slow app is no fault of the server
+                _logger?.LogDebug(ex, "The UI Automation close of window {Handle} was not asked in time", window);
+                return false;
+            }
+
+            // Failed: the close counts as not sent. The wrapper handles the failures a close expects (the window is gone, or
+            // is no window), so this one is unexpected (a provider's COMException) and is logged, or it would leave no trace
             _logger?.LogWarning(ex, "The UI Automation close of window {Handle} failed", window);
             return false;
         }

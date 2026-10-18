@@ -110,6 +110,29 @@ public class WindowCloseVerifierDiagnosticsTests
     }
 
     [Fact]
+    public async Task APromptSearchCutShortByTheDeadline_IsStillOpen_WithAWarningThatItsPromptCouldNotBeInspected()
+    {
+        // Arrange - the deadline passes while the window's elements are searched, so the modal dialog further down is never
+        // reached; the read stops on its own within the grace, as the real worker lets it, and returns normally
+        using var deadline = new CancellationTokenSource();
+        var content = new FakeUiaNode("Pane", "Content") { OnRead = deadline.Cancel }
+            .With(new FakeUiaNode("Window", "Save changes?") { IsModal = true });
+        _tree.WithWindow(Editor, new FakeUiaNode("Window", "Editor").With(content));
+        var sut = new WindowCloseVerifier(_windows.Object, _tree, new DeadlineUiaWorker(deadline.Token), _automation.Object,
+            pollInterval: TimeSpan.FromMilliseconds(5), promptCheckInterval: TimeSpan.FromMilliseconds(10),
+            logger: LoggerFactory.Create(b => b.AddProvider(_logs)).CreateLogger<WindowCloseVerifier>());
+
+        // Act
+        var result = await sut.WaitForCloseAsync([Editor], ShownBefore, Short, CancellationToken.None);
+
+        // Assert - "still open, no prompt" would be a guess: the search never got to the prompt
+        var observation = result.Single();
+        observation.Status.Should().Be(CloseStatus.StillOpen);
+        observation.Warning.Should().Contain("prompt could not be inspected");
+        Warnings.Should().BeEmpty("a slow app is no fault of the server");
+    }
+
+    [Fact]
     public async Task CloseWithUiAutomation_ThatThrowsUnexpectedly_IsFalse_AndLogsTheException()
     {
         // Arrange
@@ -122,5 +145,53 @@ public class WindowCloseVerifierDiagnosticsTests
         // Assert
         closed.Should().BeFalse();
         Warnings.Should().ContainSingle(e => ReferenceEquals(e.Exception, failure));
+    }
+
+    [Fact]
+    public async Task CloseWithUiAutomation_StoppedByItsDeadline_IsFalse_ButNoWarningIsLogged()
+    {
+        // Arrange - the read stopped at the deadline before it asked for the close: nothing was sent, and a slow app is no fault
+        _automation.Setup(a => a.CloseWindow(Editor, It.IsAny<CancellationToken>())).Throws(new OperationCanceledException());
+
+        // Act
+        var closed = await CreateSut().CloseWithUiAutomationAsync(Editor, CancellationToken.None);
+
+        // Assert
+        closed.Should().BeFalse();
+        Warnings.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task CloseWithUiAutomation_ThatTheCallerCancelled_IsCancelled_WhateverStoppedIt()
+    {
+        // Arrange
+        using var cancelled = new CancellationTokenSource();
+        cancelled.Cancel();
+        _automation.Setup(a => a.CloseWindow(Editor, It.IsAny<CancellationToken>())).Throws(new COMException("The server threw an exception."));
+
+        // Act
+        var act = () => CreateSut().CloseWithUiAutomationAsync(Editor, cancelled.Token);
+
+        // Assert
+        await act.Should().ThrowAsync<OperationCanceledException>();
+    }
+
+    /// <summary>
+    /// A worker whose read runs under <paramref name="deadline"/> and returns when it stops, as <see cref="UiaWorker"/> returns
+    /// a read that ends within the grace after its deadline.
+    /// </summary>
+    private sealed class DeadlineUiaWorker(CancellationToken deadline) : IUiaWorker
+    {
+        public Task<T> RunAsync<T>(int targetProcessId, Func<CancellationToken, T> read, CancellationToken cancellationToken, TimeSpan grace)
+        {
+            try
+            {
+                return Task.FromResult(read(deadline));
+            }
+            catch (Exception ex)
+            {
+                return Task.FromException<T>(ex);
+            }
+        }
     }
 }
