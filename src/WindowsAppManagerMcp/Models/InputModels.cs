@@ -455,7 +455,9 @@ public enum InputErrorCode
     /// Input is paused: the user pressed the pause hotkey, or the server paused itself because it could not read the pause
     /// it shares with the other servers on the desktop (shared_pause_unreadable; the error says which). Nothing (more) was
     /// sent: a call that was running stopped (CharactersTyped says how much it typed). Only the user resumes input: the
-    /// hotkey again, or resume_input confirmed by the user.
+    /// hotkey again, or resume_input confirmed by the user. After the server paused itself, or while it cannot read the
+    /// shared pause, the hotkey resumes it only in the server that registered the chord (after the server paused itself, at
+    /// the second press): the error names resume_input, and get_control_status says what the hotkey does.
     /// </summary>
     PausedByUser = 34,
 
@@ -476,8 +478,10 @@ public enum InputErrorCode
     PauseChordNotAllowed = 37,
 
     /// <summary>
-    /// resume_input: the MCP client cannot ask the user (it does not support elicitation), so only the user
-    /// can resume input, with the pause hotkey. Input stays paused.
+    /// resume_input: the MCP client cannot ask the user (it does not support elicitation), or the question could not be
+    /// shown, so only the user can resume input: with the pause hotkey, or, after the server paused itself or while it
+    /// cannot read the shared pause, as the error says (a second press, a confirmed resume_input or a restart). Input stays
+    /// paused.
     /// </summary>
     ResumeNeedsUser = 38,
 

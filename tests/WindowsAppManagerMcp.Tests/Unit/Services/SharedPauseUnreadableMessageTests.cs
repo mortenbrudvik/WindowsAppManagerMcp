@@ -46,7 +46,8 @@ public class SharedPauseUnreadableMessageTests : IDisposable
         // Assert
         result.ErrorCode.Should().Be(InputErrorCode.PausedByUser);
         result.Error.Should().Contain("could not read the pause it shares").And.Contain("paused itself")
-            .And.Contain("Stop and ask the user").And.Contain("Do not try to resume").And.NotContain("pressed the pause hotkey");
+            .And.Contain("Stop and ask the user").And.Contain("Do not try to resume").And.NotContain("pressed the pause hotkey")
+            .And.Contain("by confirming resume_input").And.NotContain("with the hotkey");
         _input.Batches.Should().BeEmpty();
     }
 
@@ -74,7 +75,7 @@ public class SharedPauseUnreadableMessageTests : IDisposable
         var payload = System.Text.Json.JsonDocument.Parse(result.Content.OfType<TextContentBlock>().Single().Text).RootElement;
         payload.GetProperty("errorCode").GetString().Should().Be("PausedByUser");
         payload.GetProperty("error").GetString().Should().Contain("could not read the pause it shares").And.Contain("Do not try to resume")
-            .And.NotContain("pressed the pause hotkey");
+            .And.NotContain("pressed the pause hotkey").And.Contain("by confirming resume_input").And.NotContain("with the hotkey");
     }
 
     [Fact]
@@ -89,6 +90,59 @@ public class SharedPauseUnreadableMessageTests : IDisposable
         status.PausedBy.Should().Be(InputControlSources.SharedPauseUnreadable);
         status.Message.Should().Contain("by this server").And.Contain("could not read the pause it shares").And.NotContain("by the user")
             .And.Contain("Stop and ask the user");
+    }
+
+    [Fact]
+    public void GetControlStatus_WhenThisServerHoldsTheHotkey_SaysOnePressDoesNotResume()
+    {
+        // A press keeps the server's own pause (as the user's) and pauses every server; only a second one, 2 s later, resumes
+        var status = StatusWith(PauseHotkeyState.Registered);
+
+        status.Message.Should().NotContain("Ctrl+Alt+Shift+Pause again").And.Contain("by confirming resume_input")
+            .And.Contain("first press keeps the pause").And.Contain("second press more than 2 seconds later resumes");
+    }
+
+    [Fact]
+    public void GetControlStatus_WhenAnotherServerHoldsTheHotkey_SaysTheHotkeyCannotResume()
+    {
+        // That server's presses reach this one only through the shared pause, which this server cannot read
+        var status = StatusWith(PauseHotkeyState.OtherServer);
+
+        status.Message.Should().NotContain("Ctrl+Alt+Shift+Pause again").And.Contain("by confirming resume_input")
+            .And.Contain("The pause hotkey does not resume it").And.Contain("another Windows App Manager server has registered");
+    }
+
+    [Theory]
+    [InlineData(PauseHotkeyState.Failed)]
+    [InlineData(PauseHotkeyState.Disabled)]
+    [InlineData(PauseHotkeyState.NotStarted)]
+    public void GetControlStatus_WithoutTheHotkey_SaysTheHotkeyCannotResume(PauseHotkeyState state)
+    {
+        var status = StatusWith(state);
+
+        status.Message.Should().NotContain("again,").And.Contain("by confirming resume_input")
+            .And.Contain("The pause hotkey does not resume it").And.Contain($"this server has not registered it ({state})");
+    }
+
+    [Fact]
+    public void ReleaseAllInput_WithReleaseHeldModifiers_SaysTheServerPausedItself_NotTheUser()
+    {
+        var result = new InputControlTools(_session, HotkeyWith(PauseHotkeyState.Registered)).ReleaseAllInput(releaseHeldModifiers: true);
+
+        result.ErrorCode.Should().Be(InputErrorCode.PausedByUser);
+        result.Error.Should().Contain("could not read the pause it shares").And.Contain("were left alone")
+            .And.NotContain("paused by the user");
+        _input.Batches.Should().BeEmpty();
+    }
+
+    private ControlStatusResult StatusWith(PauseHotkeyState state) =>
+        new InputControlTools(_session, HotkeyWith(state)).GetControlStatus();
+
+    private static IPauseHotkey HotkeyWith(PauseHotkeyState state)
+    {
+        var hotkey = new Mock<IPauseHotkey>();
+        hotkey.Setup(h => h.Status).Returns(new PauseHotkeyStatus("Ctrl+Alt+Shift+Pause", state, "default"));
+        return hotkey.Object;
     }
 
     [Fact]

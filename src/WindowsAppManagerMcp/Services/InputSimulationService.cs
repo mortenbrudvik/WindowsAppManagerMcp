@@ -1672,10 +1672,13 @@ public partial class InputSimulationService : IInputSimulationService
         $"Windows did not move the mouse pointer to the point (SetCursorPos failed). {done} The input desktop may not be " +
         "reachable (a UAC prompt, the lock screen or a disconnected session). Try again; if it keeps failing, ask the user.";
 
-    private string PausedMessage(string done) =>
-        $"{done} Input is paused: {InputControlSources.PauseCause(_session.PauseState?.PausedBy, _session.PauseChord)}. " +
-        "Stop and ask the user how to continue. Do not try to resume input yourself: only the user can, with the hotkey or by " +
-        "confirming resume_input.";
+    private string PausedMessage(string done)
+    {
+        var pausedBy = _session.PauseState?.PausedBy;
+        return $"{done} Input is paused: {InputControlSources.PauseCause(pausedBy, _session.PauseChord)}. Stop and ask the user " +
+               "how to continue. Do not try to resume input yourself: " +
+               $"{InputControlSources.WhoResumes(pausedBy, _session.IsSharedPauseUnreadable)}.";
+    }
 
     private string BusyMessage(string action) =>
         $"Another input or window call held the input gate for {_gateTimeout.TotalSeconds:0.#} s, so nothing was {action}. Try again " +

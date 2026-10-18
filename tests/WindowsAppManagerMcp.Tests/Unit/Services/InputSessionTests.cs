@@ -614,6 +614,46 @@ public class InputSessionTests
     }
 
     [Fact]
+    public void IsSharedPauseUnreadable_IsTrue_FromAFailedReadUntilOneWorks()
+    {
+        var flag = new FakeDesktopPauseFlag();
+        using var sut = CreateSut();
+        var beforeSharing = sut.IsSharedPauseUnreadable;
+        sut.ShareDesktopPause(flag);
+        var readable = sut.IsSharedPauseUnreadable;
+
+        flag.ReadFails = new IOException("the handle broke");
+        var unreadable = sut.IsSharedPauseUnreadable;
+        flag.ReadFails = null;
+
+        beforeSharing.Should().BeFalse();
+        readable.Should().BeFalse();
+        unreadable.Should().BeTrue();
+        sut.IsSharedPauseUnreadable.Should().BeFalse();
+    }
+
+    [Fact]
+    public void AUsersPauseFromAnotherServer_IsNotResumedByThatServer_WhileTheFlagCannotBeRead()
+    {
+        // Arrange - the user paused with the hotkey another server registered; then the flag cannot be read
+        var flag = new FakeDesktopPauseFlag();
+        using var sut = CreateSut();
+        sut.ShareDesktopPause(flag);
+        flag.SetByAnotherServer();
+        sut.IsPaused.Should().BeTrue();
+        flag.ReadFails = new IOException("the handle broke");
+
+        // Act - that server's next press resumes the shared pause
+        flag.ResetByAnotherServer();
+
+        // Assert - the pause stays the user's (pausedBy hotkey), and this server cannot see the resume
+        sut.IsPaused.Should().BeTrue();
+        sut.IsSharedPauseUnreadable.Should().BeTrue();
+        sut.PauseState.PausedBy.Should().Be(InputControlSources.Hotkey);
+        sut.Send(CtrlC).PausedByUser.Should().BeTrue();
+    }
+
+    [Fact]
     public void ShareDesktopPause_Twice_Throws()
     {
         using var sut = CreateSut();

@@ -318,6 +318,21 @@ public static class InputControlSources
         ? "this server could not read the pause it shares with the other Windows App Manager servers on this desktop, so it " +
           "paused itself in case the user paused input in another one"
         : $"the user pressed the pause hotkey{(chord is null ? string.Empty : $" ({chord})")}";
+
+    /// <summary>
+    /// Who resumes, as the PausedByUser messages tell the agent: only the user, with the hotkey or by confirming
+    /// resume_input. For <see cref="SharedPauseUnreadable"/> a press of the hotkey does not resume: in the server that
+    /// registered the chord the first press makes the pause the user's own and only a second one resumes, and in another
+    /// server the hotkey never does. While the shared pause cannot be read, whoever paused, the hotkey reaches only the
+    /// server that registered the chord. Those messages do not know which server registered it, so in both cases they name
+    /// resume_input and leave the hotkey to get_control_status.
+    /// </summary>
+    /// <param name="pausedBy">How it was paused (<see cref="InputPauseState.PausedBy"/>).</param>
+    /// <param name="sharedPauseUnreadable">The shared pause cannot be read now (<c>IInputSession.IsSharedPauseUnreadable</c>).</param>
+    public static string WhoResumes(string? pausedBy, bool sharedPauseUnreadable) =>
+        pausedBy == SharedPauseUnreadable || sharedPauseUnreadable
+            ? "only the user can, by confirming resume_input (get_control_status says whether the pause hotkey can resume this pause)"
+            : "only the user can, with the hotkey or by confirming resume_input";
 }
 
 /// <summary>Whether the pause hotkey is registered.</summary>

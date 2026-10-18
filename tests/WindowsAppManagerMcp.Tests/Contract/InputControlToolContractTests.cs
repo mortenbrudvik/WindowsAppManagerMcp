@@ -430,6 +430,284 @@ public sealed class InputControlToolContractTests : IDisposable
 
     #endregion
 
+    #region resume_input after the server paused itself (shared_pause_unreadable)
+
+    // The server paused itself because it could not read the shared pause: the user did not pause it, a press of the
+    // hotkey keeps that pause (as the user's own) and only a second one resumes, and only in the server that registered
+    // the chord; when another server holds it, the hotkey never resumes this one
+
+    /// <summary>A session that shares a pause it cannot read, so it paused itself.</summary>
+    private InputSession SelfPausedSession()
+    {
+        var session = new InputSession(_input, PauseHotkeyOptions.Default, _clock);
+        session.ShareDesktopPause(new FakeDesktopPauseFlag { ReadFails = new IOException("the handle broke") });
+        session.PauseState.PausedBy.Should().Be(InputControlSources.SharedPauseUnreadable);
+        return session;
+    }
+
+    [Fact]
+    public async Task ResumeInput_AfterTheServerPausedItself_TheQuestionSaysSo_NotThatTheUserPausedIt()
+    {
+        // Arrange
+        using var session = SelfPausedSession();
+        await using var server = await StartAsync(answer: (_, _) => Answer("decline"), session: session);
+
+        // Act
+        await server.CallToolAsync("resume_input");
+
+        // Assert - and the user learns that, after a resume, a pause made in another server does not reach this one
+        _question!.Message.Should().NotContain("You paused it").And.Contain("paused it itself")
+            .And.Contain("could not read the pause it shares").And.Contain("every Windows App Manager server on this desktop")
+            .And.Contain("After a resume, Ctrl+Alt+Shift+Pause still pauses this server").And.Contain("made in another server does not");
+        session.IsPaused.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task ResumeInput_AfterTheServerPausedItself_WhileAnotherServerHoldsTheHotkey_TheQuestionSaysTheHotkeyWillNotStopIt()
+    {
+        using var session = SelfPausedSession();
+        _hotkey.Status = new PauseHotkeyStatus("Ctrl+Alt+Shift+Pause", PauseHotkeyState.OtherServer, "default", "Another server has it");
+        await using var server = await StartAsync(answer: (_, _) => Answer("decline"), session: session);
+
+        await server.CallToolAsync("resume_input");
+
+        _question!.Message.Should().NotContain("You paused it").And.Contain("paused it itself")
+            .And.Contain("After a resume, the pause hotkey (Ctrl+Alt+Shift+Pause) does not pause this server");
+    }
+
+    [Theory]
+    [MemberData(nameof(Revisions))]
+    public async Task ResumeInput_ClientWithoutElicitation_AfterTheServerPausedItself_SaysASecondPressResumes(string? revision)
+    {
+        using var session = SelfPausedSession();
+        await using var server = await StartAsync(session: session, revision: revision);
+
+        var result = Payload(await server.CallToolAsync("resume_input"));
+
+        result.GetProperty("errorCode").GetString().Should().Be(nameof(InputErrorCode.ResumeNeedsUser));
+        result.GetProperty("error").GetString().Should().NotContain("paused by the user").And.Contain("this server paused itself")
+            .And.NotContain("Ctrl+Alt+Shift+Pause again").And.Contain("the first press keeps the pause")
+            .And.Contain("a second press more than 2 seconds later resumes");
+        session.IsPaused.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task ResumeInput_ClientWithoutElicitation_AfterTheServerPausedItself_WhileAnotherServerHoldsTheHotkey_SaysTheHotkeyCannotResume()
+    {
+        using var session = SelfPausedSession();
+        _hotkey.Status = new PauseHotkeyStatus("Ctrl+Alt+Shift+Pause", PauseHotkeyState.OtherServer, "default", "Another server has it");
+        await using var server = await StartAsync(session: session);
+
+        var result = Payload(await server.CallToolAsync("resume_input"));
+
+        result.GetProperty("errorCode").GetString().Should().Be(nameof(InputErrorCode.ResumeNeedsUser));
+        result.GetProperty("error").GetString().Should().NotContain("paused by the user").And.NotContain("pressing")
+            .And.Contain("The pause hotkey cannot resume it").And.Contain("another Windows App Manager server has registered")
+            .And.Contain("only restarting this server");
+        session.IsPaused.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task ResumeInput_TheUserCannotBeAsked_AfterTheServerPausedItself_DoesNotSayOnePressResumes()
+    {
+        // The client fails the question: the server gets an error instead of an answer
+        using var session = SelfPausedSession();
+        await using var server = await StartAsync(answer: (_, _) => throw new InvalidOperationException("the form could not be shown"),
+            session: session, revision: InProcessMcpServer.InitializeRevision);
+
+        var result = Payload(await server.CallToolAsync("resume_input"));
+
+        result.GetProperty("errorCode").GetString().Should().Be(nameof(InputErrorCode.ResumeNeedsUser));
+        result.GetProperty("error").GetString().Should().Contain("could not be asked")
+            .And.NotContain("Ctrl+Alt+Shift+Pause again").And.Contain("a second press more than 2 seconds later resumes");
+        session.IsPaused.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task ResumeInput_TheUserCannotBeAsked_AfterTheServerPausedItself_WhileAnotherServerHoldsTheHotkey_NamesWhatStillResumes()
+    {
+        // This client can ask, so a later question may work: unlike a client without elicitation, not only a restart resumes
+        using var session = SelfPausedSession();
+        _hotkey.Status = new PauseHotkeyStatus("Ctrl+Alt+Shift+Pause", PauseHotkeyState.OtherServer, "default", "Another server has it");
+        await using var server = await StartAsync(answer: (_, _) => throw new InvalidOperationException("the form could not be shown"),
+            session: session, revision: InProcessMcpServer.InitializeRevision);
+
+        var result = Payload(await server.CallToolAsync("resume_input"));
+
+        result.GetProperty("errorCode").GetString().Should().Be(nameof(InputErrorCode.ResumeNeedsUser));
+        result.GetProperty("error").GetString().Should().Contain("could not be asked").And.Contain("The pause hotkey cannot resume it")
+            .And.Contain("only a resume_input the user confirms, or restarting this server").And.NotContain("with this client");
+        session.IsPaused.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task GetControlStatus_AfterTheServerPausedItself_OnceTheSharedPauseCanBeReadAgain_SaysASecondPressResumes()
+    {
+        // The other server's presses reach this one through the shared pause again: the first pauses every server, and this
+        // one resumes when the second resumes them all
+        var flag = new FakeDesktopPauseFlag { ReadFails = new IOException("the handle broke") };
+        using var session = new InputSession(_input, PauseHotkeyOptions.Default, _clock);
+        session.ShareDesktopPause(flag);
+        flag.ReadFails = null;
+        session.IsSharedPauseUnreadable.Should().BeFalse();
+        _hotkey.Status = new PauseHotkeyStatus("Ctrl+Alt+Shift+Pause", PauseHotkeyState.OtherServer, "default", "Another server has it");
+        await using var server = await StartAsync(session: session);
+
+        var status = Payload(await server.CallToolAsync("get_control_status"));
+
+        status.GetProperty("message").GetString().Should().Contain("by this server").And.NotContain("Ctrl+Alt+Shift+Pause again")
+            .And.Contain("does not resume it at once").And.Contain("a second press more than 2 seconds later resumes")
+            .And.NotContain("cannot read");
+        flag.SetByAnotherServer();
+        session.IsPaused.Should().BeTrue();
+        flag.ResetByAnotherServer();
+        session.IsPaused.Should().BeFalse();
+    }
+
+    #endregion
+
+    #region A pause the user made, while the shared pause cannot be read
+
+    // The user paused input with the hotkey another server registered, and then this server could not read the pause they
+    // share (pausedBy stays hotkey): that server's presses no longer reach this one, so none resumes it, and after a resume
+    // none pauses it. Only this server's own registration of the chord still works
+
+    /// <summary>A session the user paused through the shared pause, which then could not be read.</summary>
+    private InputSession UserPausedUnreadableSession(out FakeDesktopPauseFlag flag)
+    {
+        flag = new FakeDesktopPauseFlag();
+        var session = new InputSession(_input, PauseHotkeyOptions.Default, _clock);
+        session.ShareDesktopPause(flag);
+        flag.SetByAnotherServer();
+        session.IsPaused.Should().BeTrue();
+        flag.ReadFails = new IOException("the handle broke");
+        session.IsSharedPauseUnreadable.Should().BeTrue();
+        session.PauseState.PausedBy.Should().Be(InputControlSources.Hotkey);
+        return session;
+    }
+
+    [Theory]
+    [InlineData(PauseHotkeyState.OtherServer, "another Windows App Manager server has registered Ctrl+Alt+Shift+Pause")]
+    [InlineData(PauseHotkeyState.Failed, "this server has not registered it (Failed)")]
+    public async Task GetControlStatus_AUsersPause_WhileTheSharedPauseCannotBeRead_SaysTheHotkeyCannotResume(PauseHotkeyState state, string why)
+    {
+        // Arrange
+        using var session = UserPausedUnreadableSession(out var flag);
+        _hotkey.Status = new PauseHotkeyStatus("Ctrl+Alt+Shift+Pause", state, "default");
+        await using var server = await StartAsync(session: session);
+
+        // Act
+        var status = Payload(await server.CallToolAsync("get_control_status"));
+
+        // Assert - and the other server's resume does not reach this one
+        status.GetProperty("message").GetString().Should().Contain("by the user").And.NotContain("Ctrl+Alt+Shift+Pause again")
+            .And.Contain("by confirming resume_input").And.Contain("The pause hotkey does not resume it").And.Contain(why);
+        flag.ResetByAnotherServer();
+        session.IsPaused.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task GetControlStatus_AUsersPause_WhileTheSharedPauseCannotBeRead_ThisServerHoldsTheHotkey_SaysAPressResumes()
+    {
+        using var session = UserPausedUnreadableSession(out _);
+        await using var server = await StartAsync(session: session);
+
+        var status = Payload(await server.CallToolAsync("get_control_status"));
+
+        status.GetProperty("message").GetString().Should().Contain("Ctrl+Alt+Shift+Pause again, or by confirming resume_input");
+        _clock.Advance(InputSession.HotkeyResumeDelay);
+        session.TogglePauseByHotkey();
+        session.IsPaused.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task ResumeInput_ClientWithoutElicitation_AUsersPause_WhileTheSharedPauseCannotBeRead_SaysTheHotkeyCannotResume()
+    {
+        using var session = UserPausedUnreadableSession(out _);
+        _hotkey.Status = new PauseHotkeyStatus("Ctrl+Alt+Shift+Pause", PauseHotkeyState.OtherServer, "default", "Another server has it");
+        await using var server = await StartAsync(session: session);
+
+        var result = Payload(await server.CallToolAsync("resume_input"));
+
+        result.GetProperty("errorCode").GetString().Should().Be(nameof(InputErrorCode.ResumeNeedsUser));
+        result.GetProperty("error").GetString().Should().Contain("paused by the user").And.NotContain("pressing")
+            .And.Contain("The pause hotkey cannot resume it").And.Contain("which this server cannot read")
+            .And.Contain("only restarting this server");
+        session.IsPaused.Should().BeTrue();
+    }
+
+    [Theory]
+    [InlineData(PauseHotkeyState.OtherServer, "After a resume, the pause hotkey (Ctrl+Alt+Shift+Pause) does not pause this server")]
+    [InlineData(PauseHotkeyState.Registered, "After a resume, Ctrl+Alt+Shift+Pause still pauses this server, but while it cannot read")]
+    public async Task ResumeInput_AUsersPause_WhileTheSharedPauseCannotBeRead_TheQuestionSaysWhatThePauseHotkeyStillStops(
+        PauseHotkeyState state, string afterResume)
+    {
+        using var session = UserPausedUnreadableSession(out _);
+        _hotkey.Status = new PauseHotkeyStatus("Ctrl+Alt+Shift+Pause", state, "default");
+        await using var server = await StartAsync(answer: (_, _) => Answer("decline"), session: session);
+
+        await server.CallToolAsync("resume_input");
+
+        _question!.Message.Should().Contain("You paused it with Ctrl+Alt+Shift+Pause").And.NotContain("paused it itself")
+            .And.Contain("This server cannot read the pause it shares with the other servers on this desktop now").And.Contain(afterResume);
+        session.IsPaused.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task AUsersPause_WhileTheSharedPauseCannotBeRead_InputAndWindowTools_NameResumeInput_NotTheHotkey()
+    {
+        using var session = UserPausedUnreadableSession(out _);
+        await using var server = await StartAsync(session: session);
+
+        var typed = Payload(await server.CallToolAsync("type_text", new Dictionary<string, object?> { ["text"] = "abc" }));
+        var launched = await server.CallToolAsync("launch_applications_batch");
+
+        typed.GetProperty("errorCode").GetString().Should().Be(nameof(InputErrorCode.PausedByUser));
+        typed.GetProperty("error").GetString().Should().Contain("the user pressed the pause hotkey")
+            .And.Contain("by confirming resume_input (get_control_status says").And.NotContain("with the hotkey");
+        JsonDocument.Parse(launched.Content.OfType<TextContentBlock>().Single().Text).RootElement.GetProperty("error").GetString()
+            .Should().Contain("by confirming resume_input (get_control_status says").And.NotContain("with the hotkey");
+        _windowToolRuns.Should().Be(0);
+        _input.Batches.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task AUsersPause_OnceTheSharedPauseCanBeReadAgain_NamesTheHotkeyAgain()
+    {
+        // The read works again: the user's own pause is resumed by the hotkey again, wherever it was registered
+        using var session = UserPausedUnreadableSession(out var flag);
+        flag.ReadFails = null;
+        _hotkey.Status = new PauseHotkeyStatus("Ctrl+Alt+Shift+Pause", PauseHotkeyState.OtherServer, "default", "Another server has it");
+        await using var server = await StartAsync(session: session);
+
+        var status = Payload(await server.CallToolAsync("get_control_status"));
+        var typed = Payload(await server.CallToolAsync("type_text", new Dictionary<string, object?> { ["text"] = "abc" }));
+
+        status.GetProperty("message").GetString().Should().Contain("Ctrl+Alt+Shift+Pause again, or by confirming resume_input");
+        typed.GetProperty("error").GetString().Should().Contain("with the hotkey or by confirming resume_input");
+        flag.ResetByAnotherServer();
+        session.IsPaused.Should().BeFalse();
+    }
+
+    [Theory]
+    [InlineData(PauseHotkeyState.OtherServer, "this server cannot read the pause they share, so the hotkey does not pause this server")]
+    [InlineData(PauseHotkeyState.Registered, "a pause made in another one does not reach it")]
+    public async Task GetControlStatus_Running_WhileTheSharedPauseCannotBeRead_SaysWhatThePauseHotkeyStillStops(PauseHotkeyState state, string what)
+    {
+        // The user confirmed the resume of the server's own pause: running, but the shared pause still cannot be read
+        using var session = SelfPausedSession();
+        session.Resume(InputControlSources.ResumeInput).Should().BeTrue();
+        _hotkey.Status = new PauseHotkeyStatus("Ctrl+Alt+Shift+Pause", state, "default");
+        await using var server = await StartAsync(session: session);
+
+        var status = Payload(await server.CallToolAsync("get_control_status"));
+
+        status.GetProperty("paused").GetBoolean().Should().BeFalse();
+        status.GetProperty("message").GetString().Should().Contain(what).And.NotContain("it pauses every server");
+    }
+
+    #endregion
+
     #region release_all_input
 
     [Fact]

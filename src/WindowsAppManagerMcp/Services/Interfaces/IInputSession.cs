@@ -51,7 +51,9 @@ public interface IInputSession
 
     /// <summary>
     /// The pause hotkey's action: pauses running input, resumes paused input. A press within
-    /// <c>InputSession.HotkeyResumeDelay</c> of the pause is ignored, so pressing twice to be sure does not resume.
+    /// <c>InputSession.HotkeyResumeDelay</c> of the pause is ignored, so pressing twice to be sure does not resume. A pause the
+    /// server made itself (<see cref="InputControlSources.SharedPauseUnreadable"/>) is kept, as the user's own, and only the
+    /// next press resumes. Only the server that registered the chord runs it; the others follow through the shared pause.
     /// </summary>
     void TogglePauseByHotkey();
 
@@ -64,6 +66,13 @@ public interface IInputSession
 
     /// <summary>True once the pause is shared with the other servers on the desktop.</summary>
     bool SharesDesktopPause { get; }
+
+    /// <summary>
+    /// True while the shared pause cannot be read: from a read that failed until the next one that works. Meanwhile a
+    /// pause or resume another server makes does not reach this one, so the pause hotkey reaches this server only when
+    /// this server registered the chord itself. False while the pause is not shared.
+    /// </summary>
+    bool IsSharedPauseUnreadable { get; }
 
     /// <summary>
     /// True when <paramref name="modifiersDown"/> hold any modifier of the pause hotkey's chord: the user may be
