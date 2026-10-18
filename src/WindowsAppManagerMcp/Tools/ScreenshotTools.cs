@@ -209,8 +209,8 @@ public class ScreenshotTools
         bool includeCursor = false,
         [Description(GridSpacingDescription)]
         int? gridSpacing = null,
-        [Description("Enlarge the image up to this many times (1-4, default 1) to read small text or controls; maxDimension still " +
-                     "caps its long edge, and imageToScreen maps its points back")]
+        [Description("Enlarge the image 1-4 times (default 1) to read small text or controls; maxDimension still caps its long " +
+                     "edge; an image over 64 megapixels is InvalidImageSize")]
         double zoom = 1)
     {
         var options = Options(format, quality, maxDimension, output, outputPath, overwrite, saveToFile, maxWidth) with

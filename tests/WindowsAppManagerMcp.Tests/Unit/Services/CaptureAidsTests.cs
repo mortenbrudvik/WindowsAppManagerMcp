@@ -39,6 +39,53 @@ public class CaptureAidsTests
         _capture.Verify(c => c.CaptureScreenRegion(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>()), Times.Never);
     }
 
+    [Fact]
+    public void Zoom_ThatWouldMakeAnImageOverTheBudget_IsInvalidImageSize_AndNothingIsCaptured()
+    {
+        // Arrange - capture_region over a 4K monitor at zoom 4 with maxDimension 0 would be a 15360 x 8640 image: about 530 MB
+        // of pixels in one bitmap, then a resize, an encoding and base64
+        _capture.Setup(c => c.GetVirtualScreenBounds()).Returns((0, 0, 3840, 2160));
+
+        // Act
+        var result = CreateSut().CaptureRegion(0, 0, 3840, 2160, Png(o => o with { Zoom = 4, MaxDimension = 0 }));
+
+        // Assert
+        result.Metadata.Success.Should().BeFalse();
+        result.Metadata.ErrorCode.Should().Be(nameof(ScreenshotErrorCode.InvalidImageSize));
+        result.Metadata.Error.Should().Contain("15360x8640").And.Contain("Nothing was captured");
+        result.Image.Should().BeNull();
+        _capture.Verify(c => c.CaptureScreenRegion(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>()), Times.Never);
+    }
+
+    [Fact]
+    public void Zoom_IsHeldToTheBudget_ByTheRegionOnTheScreen_NotTheRegionAsked()
+    {
+        // Arrange - a region far larger than the screen is cut to it (1920 x 1080) before the budget is checked
+        // Act
+        var result = CreateSut().CaptureRegion(0, 0, 100_000, 100_000, Png(o => o with { Zoom = 4 }));
+
+        // Assert
+        result.Metadata.Success.Should().BeTrue(result.Metadata.Error);
+        result.Metadata.Width.Should().Be(1568, "the default maxDimension still caps the long edge");
+    }
+
+    [Fact]
+    public void Zoom_OnAMonitor_IsHeldToTheBudget_BeforeAnythingIsCaptured()
+    {
+        // Arrange - the service also takes a zoom for a monitor; a 4K monitor at zoom 4 without a long-edge limit is too large
+        var monitors = TestDataFactory.CreateMockMonitorService(
+            [new MonitorInfo(0, "DISPLAY1", true, new MonitorRect(0, 0, 3840, 2160), new MonitorRect(0, 0, 3840, 2120), 1.0)]);
+        var sut = new ScreenshotService(_capture.Object, monitors.Object,
+            Mock.Of<INativeWindowWrapper>(w => w.IsWindowVisible(It.IsAny<nint>()) == true));
+
+        // Act
+        var result = sut.CaptureMonitor(0, Png(o => o with { Zoom = 4, MaxDimension = 0 }));
+
+        // Assert
+        result.Metadata.ErrorCode.Should().Be(nameof(ScreenshotErrorCode.InvalidImageSize));
+        _capture.Verify(c => c.CaptureScreenRegion(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>()), Times.Never);
+    }
+
     [Theory]
     [InlineData(2.0, null, 200, 100, 0.5)]
     [InlineData(4.0, null, 400, 200, 0.25)]

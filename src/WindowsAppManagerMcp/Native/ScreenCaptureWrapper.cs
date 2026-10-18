@@ -18,7 +18,8 @@ public class ScreenCaptureWrapper : IScreenCaptureWrapper
 
     /// <summary>
     /// The pixel budget of one capture: 64 megapixels (for example 8192 x 8192), 256 MB of pixels. A larger capture
-    /// is refused before any memory is allocated, so a capture can never take gigabytes of the user's memory.
+    /// is refused before any memory is allocated, and so is an image larger than that (a zoom, refused by
+    /// <see cref="Services.CaptureRequest.ThrowIfOutputTooLarge"/>), so a capture can never take gigabytes of the user's memory.
     /// </summary>
     public const long MaxCapturePixels = 64L * 1024 * 1024;
 
