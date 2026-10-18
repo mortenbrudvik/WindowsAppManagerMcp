@@ -1,18 +1,18 @@
 namespace WindowsAppManagerMcp.Tests.Fixtures;
 
-/// <summary>A tool in the generated docs: its one-line summary and the parameters SKILL.md names.</summary>
+/// <summary>A tool in the generated docs: its one-line summary and the parameters the skill's tool tables name.</summary>
 /// <param name="Name">The tool name, as tools/list sends it.</param>
-/// <param name="Summary">The short description in SKILL.md's tool tables.</param>
+/// <param name="Summary">The short description in the skill's tool tables (skills/using-windows-app-manager/tools.md).</param>
 /// <param name="KeyParameters">
-/// The parameters SKILL.md lists, each a real parameter name, optionally followed by a note in parentheses
+/// The parameters the skill's tool tables list, each a real parameter name, optionally followed by a note in parentheses
 /// (for example "confirm (more than 3 windows)"). Empty for "(none)".
 /// </param>
 public sealed record ToolDoc(string Name, string Summary, params string[] KeyParameters);
 
-/// <summary>A category of tools: a row of the README and TOOLS.md tables and a table of SKILL.md.</summary>
+/// <summary>A category of tools: a row of the README and TOOLS.md tables and a table of the skill's tools.md.</summary>
 /// <param name="Name">The category name, also the '## ' heading of its section in docs/TOOLS.md.</param>
 /// <param name="Tools">The tools, in the order of their '### ' sections in docs/TOOLS.md.</param>
-/// <param name="SkillNote">Markdown printed under the category's table in SKILL.md, or null.</param>
+/// <param name="SkillNote">Markdown printed under the category's table in the skill's tools.md, or null.</param>
 public sealed record ToolDocCategory(string Name, IReadOnlyList<ToolDoc> Tools, string? SkillNote = null)
 {
     /// <summary>The GitHub anchor of the category's '## ' heading.</summary>
@@ -21,7 +21,7 @@ public sealed record ToolDocCategory(string Name, IReadOnlyList<ToolDoc> Tools, 
 
 /// <summary>
 /// What the generated tool tables need beyond tools/list: each tool's category, its one-line summary and the
-/// key parameters SKILL.md names. Everything else in the tables (tool names, counts, parameter names, types,
+/// key parameters the skill's tool tables name. Everything else in the tables (tool names, counts, parameter names, types,
 /// required flags and defaults) comes from tools/list. GeneratedToolDocsTests fails when a served tool is missing
 /// here or a key parameter is not a real parameter; a new tool needs an entry before the docs can be generated.
 /// </summary>
@@ -138,7 +138,7 @@ public static class ToolDocCatalog
         ],
         SkillNote: "All seven also take `allowHostTarget` (default false): only for input to your own host window, named as " +
                    "`windowHandle`, when the user asked for it; and `releaseHeldModifiers` (default false): only for a stuck " +
-                   "modifier key (see `ModifiersHeld`)."),
+                   "modifier key (see `ModifiersHeld` in [errors.md](errors.md#input-refusals))."),
         new("Input Control",
         [
             new("get_control_status", "Is input paused by the user, is the pause hotkey registered, which keys are down"),

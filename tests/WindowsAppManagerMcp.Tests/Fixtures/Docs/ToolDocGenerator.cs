@@ -23,8 +23,8 @@ public sealed record GeneratedDoc(string Name, string[] RelativePath)
 }
 
 /// <summary>
-/// Generates the tool tables of README.md, docs/TOOLS.md and SKILL.md from the server's tools/list
-/// (<see cref="ToolSurface"/>) and <see cref="ToolDocCatalog"/>, into the files' marked regions
+/// Generates the tool tables of README.md, docs/TOOLS.md and the plugin skill (its SKILL.md and tools.md) from the
+/// server's tools/list (<see cref="ToolSurface"/>) and <see cref="ToolDocCatalog"/>, into the files' marked regions
 /// (<see cref="MarkdownRegions"/>). GeneratedToolDocsTests fails when a region is out of date, and rewrites it
 /// with UPDATE_SNAPSHOTS=1.
 /// </summary>
@@ -33,8 +33,10 @@ public sealed record GeneratedDoc(string Name, string[] RelativePath)
 /// has <c>summary</c> (introduction with the count, and the quick reference), <c>toolsets</c> (the toolsets of
 /// <see cref="Toolsets.Server"/>, roadmap M2.14), <c>read-only</c> (the tools annotated readOnlyHint, which read-only
 /// mode serves), <c>params:TOOL</c> in each tool's section and <c>resources</c> (the resources and prompts of
-/// <see cref="ResourcesAndPrompts"/>, roadmap M6.9); SKILL.md has
-/// <c>count</c> (the sentence with the tool count) and <c>tool-tables</c> (the whole "Available Tools" section).
+/// <see cref="ResourcesAndPrompts"/>, roadmap M6.9); the skill's SKILL.md has <c>count</c> (the sentence with the tool
+/// count) and its tools.md <c>tool-tables</c> (the whole "Available Tools" section). The tables are in tools.md, not in
+/// SKILL.md, because a client loads SKILL.md whole whenever the skill triggers, and the tables (about 3,600 tokens) are
+/// reference an agent reads only when its task needs them (issue #11).
 /// <para>
 /// A <c>params:TOOL</c> region is the tool's parameter table, and a field table for each parameter that is an
 /// array of objects. Names, order, types, required flags and defaults come from the tool's inputSchema. The
@@ -48,8 +50,11 @@ public static partial class ToolDocGenerator
     public static readonly GeneratedDoc Readme = new("README.md", ["README.md"]);
     public static readonly GeneratedDoc ToolsReference = new("docs/TOOLS.md", ["docs", "TOOLS.md"]);
     public static readonly GeneratedDoc Skill = new("SKILL.md", ["skills", "using-windows-app-manager", "SKILL.md"]);
+    public static readonly GeneratedDoc SkillTools = new(SkillToolsName, ["skills", "using-windows-app-manager", "tools.md"]);
 
-    public static IReadOnlyList<GeneratedDoc> All { get; } = [Readme, ToolsReference, Skill];
+    public static IReadOnlyList<GeneratedDoc> All { get; } = [Readme, ToolsReference, Skill, SkillTools];
+
+    private const string SkillToolsName = "skills/using-windows-app-manager/tools.md";
 
     private const string ParamsPrefix = "params:";
 
@@ -72,7 +77,12 @@ public static partial class ToolDocGenerator
 
         if (doc == Skill)
         {
-            return ["count", "tool-tables"];
+            return ["count"];
+        }
+
+        if (doc == SkillTools)
+        {
+            return ["tool-tables"];
         }
 
         if (doc == ToolsReference)
@@ -103,7 +113,7 @@ public static partial class ToolDocGenerator
                 ParameterTables(ToolSurface.Tool(tools, id[ParamsPrefix.Length..]), current),
             ("SKILL.md", "count") =>
                 $"Windows App Manager provides {count} MCP tools for managing Windows applications, windows, and desktop layouts.",
-            ("SKILL.md", "tool-tables") => SkillToolTables(count),
+            (SkillToolsName, "tool-tables") => SkillToolTables(count),
             _ => throw new ArgumentException($"{doc} has an unknown generated region '{id}'.", nameof(id))
         };
     }
