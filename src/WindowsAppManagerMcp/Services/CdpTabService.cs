@@ -210,7 +210,7 @@ public sealed class CdpTabService : ICdpTabService
             if (listed.Success && listed.Value!.FirstOrDefault(t => t.Id == targetId) is { } opened)
                 return CdpResult<CdpTarget>.Ok(opened);
 
-            // Another program may have the port now: the list is not tried again
+            // A port that changed hands is not listed again (another program may have it now), nor any port once the time is up
             if (listed.ErrorCode == BrowserErrorCode.CdpPortOwnerMismatch || timeout - stopwatch.Elapsed <= NewTabListingDelay)
             {
                 var failed = listed.Success
