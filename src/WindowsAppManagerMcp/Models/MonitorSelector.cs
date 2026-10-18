@@ -99,13 +99,14 @@ public sealed class MonitorSelectorConverter : JsonConverter<MonitorSelector>
 /// <summary>
 /// What a <see cref="MonitorSelector"/> named: the index (passed on as given for an index, which each tool checks against the
 /// monitors itself; <see cref="Services.MonitorSelection.AllMonitors"/> for 'all') and the monitor (null for 'all' and for an
-/// index that is no monitor), or why it names none (MonitorNotFound, AmbiguousMonitor).
+/// index that is no monitor), or why it names none (MonitorNotFound, AmbiguousMonitor). A failed resolution has no index
+/// (null), so it can never be read as -1, every monitor.
 /// </summary>
-public sealed record MonitorResolution(int Index, MonitorInfo? Monitor, string? ErrorCode = null, string? Error = null)
+public sealed record MonitorResolution(int? Index, MonitorInfo? Monitor, string? ErrorCode = null, string? Error = null)
 {
     public bool Succeeded => ErrorCode == null;
 
     public static MonitorResolution Found(int index, MonitorInfo? monitor) => new(index, monitor);
 
-    public static MonitorResolution Failed(string errorCode, string error) => new(-1, null, errorCode, error);
+    public static MonitorResolution Failed(string errorCode, string error) => new(null, null, errorCode, error);
 }

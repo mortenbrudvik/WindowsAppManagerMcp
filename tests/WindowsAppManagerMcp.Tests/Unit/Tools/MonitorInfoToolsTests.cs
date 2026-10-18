@@ -135,9 +135,9 @@ public class MonitorInfoToolsTests
         // Act
         var result = sut.GetMonitors();
 
-        // Assert
+        // Assert - no primary index is made up for a list without monitors
         result.Monitors.Should().BeEmpty();
-        result.PrimaryIndex.Should().Be(0);
+        result.PrimaryIndex.Should().BeNull();
     }
 
     [Fact]
