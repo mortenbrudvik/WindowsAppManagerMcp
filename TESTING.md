@@ -3146,7 +3146,10 @@ Two contracts hold the safety rules for every tool at once, so a new tool cannot
   but must not reuse, place or focus its window), and launch_browser_with_debug is on `CheckedElsewhere`, with the
   unit tests that check it. A tool on none of the lists fails the inventory, also when its schema names no target but
   docs/TOOLS.md links it under "The policy applies to:" (the test reads that list, and a reworded intro line fails it
-  with a message that names the line). The denied fake tree's elements need a name without a colon (the read log
+  with a message that names the line). Such a tool is on `TargetedByPointOrFront` (get_focused_element,
+  get_element_at_point) or on `TargetedByASavedPreset` (restore_workspace, whose windows a workspace saved by
+  save_workspace names: its `Checked` call saves one with the denied app's windows first, and the restore must refuse
+  their placements and do nothing). The denied fake tree's elements need a name without a colon (the read log
   matches by name).
 - `Contract/SelfGatedToolsContractTests` checks the tools on `InputGateToolFilter.SelfGatedTools`, which the filter
   lets run without the input gate because they take it themselves. Every tool on the list needs an entry. A `Work`
