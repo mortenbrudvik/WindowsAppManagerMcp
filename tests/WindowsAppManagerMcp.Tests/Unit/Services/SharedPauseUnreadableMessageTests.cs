@@ -89,6 +89,24 @@ public class SharedPauseUnreadableMessageTests : IDisposable
         status.PausedBy.Should().Be(InputControlSources.SharedPauseUnreadable);
         status.Message.Should().Contain("by this server").And.Contain("could not read the pause it shares").And.NotContain("by the user")
             .And.Contain("Stop and ask the user");
+
+        // The hotkey's first press only makes this pause the user's own (InputSession.TogglePauseByHotkey): "again" is wrong
+        status.Message.Should().Contain("Ctrl+Alt+Shift+Pause twice").And.Contain("the first press makes the pause theirs")
+            .And.NotContain("Ctrl+Alt+Shift+Pause again");
+    }
+
+    [Fact]
+    public void GetControlStatus_AfterTheUsersPause_SaysTheHotkeyAgain_NotTwice()
+    {
+        using var session = new InputSession(_input, PauseHotkeyOptions.Default);
+        session.Pause(InputControlSources.Hotkey);
+        var hotkey = new Mock<IPauseHotkey>();
+        hotkey.Setup(h => h.Status).Returns(new PauseHotkeyStatus("Ctrl+Alt+Shift+Pause", PauseHotkeyState.Registered, "default"));
+
+        var status = new InputControlTools(session, hotkey.Object).GetControlStatus();
+
+        status.Message.Should().Contain("Only the user can resume: Ctrl+Alt+Shift+Pause again, or by confirming resume_input")
+            .And.NotContain("twice");
     }
 
     [Fact]

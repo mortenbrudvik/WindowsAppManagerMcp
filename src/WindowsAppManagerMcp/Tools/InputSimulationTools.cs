@@ -462,7 +462,7 @@ public class InputSimulationTools
                      "spaces, each optionally '*n' (n presses, 1-100); or an array: one chord (['ctrl','shift','t']) or a sequence " +
                      "(['ctrl+a','delete']). Keys: enter, tab, esc, space, backspace, delete, up, down, left, right, home, end, " +
                      "pgup, pgdn, f1-f24, oem_plus, oem_minus, oem_comma, oem_period, oem_1-oem_8, oem_102, abnt_c1, abnt_c2 (VK_OEM " +
-                     "keys, placed by the layout) and send_keys' " +
+                     "and ABNT keys, placed by the layout) and send_keys' " +
                      "other names, or one character (a letter or digit is its key, so 'ctrl+1' " +
                      "works on any layout); write + , * as plus, comma, star.")]
         KeyList keys,

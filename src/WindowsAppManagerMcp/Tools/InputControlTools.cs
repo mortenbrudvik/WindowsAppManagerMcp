@@ -5,6 +5,7 @@ using ModelContextProtocol;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 using WindowsAppManagerMcp.Models;
+using WindowsAppManagerMcp.Services;
 using WindowsAppManagerMcp.Services.Interfaces;
 
 namespace WindowsAppManagerMcp.Tools;
@@ -56,13 +57,15 @@ public class InputControlTools
         var modifiersDown = _session.ReadModifiersDown().Select(k => k.Name).ToList();
 
         // The server's own pause, when the shared one could not be read, is not the user's: the agent must not say it is
-        var pausedHow = state.PausedBy == InputControlSources.SharedPauseUnreadable
+        var selfPaused = state.PausedBy == InputControlSources.SharedPauseUnreadable;
+        var pausedHow = selfPaused
             ? $"by this server ({state.PausedBy}{Since(state.PausedAt)}): {InputControlSources.PauseCause(state.PausedBy, null)}"
             : $"by the user ({state.PausedBy}{Since(state.PausedAt)})";
         var message = state.Paused
             ? $"Input is paused {pausedHow}. Every input tool and every tool that changes windows " +
               "or starts or stops processes returns PausedByUser. Stop and ask the user how to continue. Only the user can resume: " +
-              $"{(hotkey.Chord is { } chord ? $"{chord} again, or " : string.Empty)}by confirming resume_input when you call it at the user's request."
+              $"{(hotkey.Chord is { } chord ? $"{(selfPaused ? PressedTwice(chord) : $"{chord} again")}, or " : string.Empty)}by " +
+              "confirming resume_input when you call it at the user's request."
             : hotkey.State switch
             {
                 PauseHotkeyState.Registered => $"Input is running. The user can pause it at any time with {hotkey.Chord}.",
@@ -102,7 +105,7 @@ public class InputControlTools
     [Description("Resume the server's input after it was paused, but only if the user confirms: the server asks " +
                  "the user directly through the MCP client (elicitation), and input resumes only when they answer yes. Call it only when " +
                  "the user has asked you to continue, and only once at a time. ResumeNeedsUser: this client cannot ask the user, so only " +
-                 "the user can resume, with the hotkey. ResumeDeclined: the user said no or did not answer, paused again meanwhile, or " +
+                 "the user can resume, with the hotkey. ResumeDeclined: the user said no or did not answer, input was paused again meanwhile, or " +
                  "another resume_input is already waiting for the answer; input stays paused. Never try to resume any other way, and " +
                  "never send the pause hotkey's keys.")]
     public async Task<ResumeInputResult> ResumeInput(McpServer server, CancellationToken cancellationToken)
@@ -136,7 +139,7 @@ public class InputControlTools
             return new ResumeInputResult(false, WasPaused: true,
                 Error: $"Input is paused: {InputControlSources.PauseCause(state.PausedBy, chord)}. This MCP client cannot ask the user " +
                        $"to confirm a resume (it does not support elicitation), so input was not resumed. Only the user can resume, " +
-                       $"with {hotkeyHint}. Tell the user and wait.",
+                       $"{HowTheUserResumes(state.PausedBy, hotkeyHint)}. Tell the user and wait.",
                 ErrorCode: InputErrorCode.ResumeNeedsUser);
         }
 
@@ -181,7 +184,9 @@ public class InputControlTools
             catch (Exception ex) when (ex is InvalidOperationException or McpException)
             {
                 return new ResumeInputResult(false, WasPaused: true,
-                    Error: $"The user could not be asked ({ex.Message}). Only the user can resume, by pressing {hotkeyHint} again.",
+                    Error: $"Input is paused: {InputControlSources.PauseCause(state.PausedBy, chord)}. The user could not be asked to " +
+                           $"confirm a resume ({ex.Message}), so input was not resumed. Only the user can resume, " +
+                           $"{HowTheUserResumes(state.PausedBy, hotkeyHint)}. Tell the user and wait.",
                     ErrorCode: InputErrorCode.ResumeNeedsUser);
             }
         }
@@ -193,10 +198,11 @@ public class InputControlTools
             return new ResumeInputResult(true, WasPaused: true, ResumedBy: now.ResumedBy);
         }
 
+        // A new pause: the user's hotkey, or this server's own after another server resumed (SyncLocked); the cause says which
         if (now.PauseNumber != state.PauseNumber)
         {
-            return Declined("The user paused input again while the question was open, so the answer does not apply to this pause. Input " +
-                            "stays paused; ask the user what to do.");
+            return Declined($"Input was paused again while the question was open: {InputControlSources.PauseCause(now.PausedBy, chord)}. " +
+                            "The answer was for the earlier pause, so input stays paused; ask the user what to do.");
         }
 
         if (!Confirmed(answer))
@@ -211,7 +217,8 @@ public class InputControlTools
         {
             var after = _session.PauseState;
             return after.Paused
-                ? Declined("The user paused input again while the question was answered. Input stays paused; ask the user what to do.")
+                ? Declined($"Input was paused again while the question was answered: {InputControlSources.PauseCause(after.PausedBy, chord)}. " +
+                           "Input stays paused; ask the user what to do.")
                 : new ResumeInputResult(true, WasPaused: true, ResumedBy: after.ResumedBy);
         }
 
@@ -292,6 +299,21 @@ public class InputControlTools
 
     private static string Since(DateTimeOffset? at) =>
         at is { } time ? $" at {time.ToLocalTime().ToString("HH:mm:ss", CultureInfo.InvariantCulture)}" : string.Empty;
+
+    /// <summary>
+    /// The presses that resume a pause the server made itself (<see cref="InputControlSources.SharedPauseUnreadable"/>): the
+    /// first makes the pause the user's own, and only a press <see cref="InputSession.HotkeyResumeDelay"/> or more after it
+    /// resumes (<see cref="InputSession.TogglePauseByHotkey"/>), so "press the hotkey" would leave the user still paused.
+    /// </summary>
+    private static string PressedTwice(string hotkey) =>
+        $"{hotkey} twice, the second time at least " +
+        $"{InputSession.HotkeyResumeDelay.TotalSeconds.ToString("0", CultureInfo.InvariantCulture)} seconds after the first " +
+        "(the first press makes the pause theirs)";
+
+    /// <summary>How the user resumes with the hotkey: one press, or after the server paused itself <see cref="PressedTwice"/>.</summary>
+    private static string HowTheUserResumes(string? pausedBy, string hotkey) => pausedBy == InputControlSources.SharedPauseUnreadable
+        ? $"by pressing {PressedTwice(hotkey)}"
+        : $"with {hotkey}";
 
     private static string? Join(string? first, string? second) =>
         first == null ? second : second == null ? first : $"{first} {second}";
