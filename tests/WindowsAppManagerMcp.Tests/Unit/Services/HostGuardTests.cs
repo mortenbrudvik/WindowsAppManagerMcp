@@ -697,5 +697,51 @@ public class HostGuardTests
         _processes.Verify(p => p.GetAncestorProcesses(), Times.Once);
     }
 
+    [Fact]
+    public void AncestorsThatStayUnreadable_AWindowCountsAsTheHostsOnlyWhileUnknown_WhenNothingTheGuardKnowsMakesItSo()
+    {
+        // Arrange - the server's console is shown in the terminal window, so that window is recorded whatever the ancestors
+        var clock = UseAncestorsUnreadableAtStart();
+        _processes.Setup(p => p.GetConsoleWindow()).Returns(ConsoleWindow);
+        var sut = CreateSut(clock);
+
+        // Act & Assert - refusals say "only because the ancestors are unknown" for the windows this is true of, and no other
+        sut.IsHostWindow(TerminalWindow).Should().BeTrue();
+        sut.IsHostWindowOnlyWhileAncestorsUnknown(TerminalWindow).Should().BeFalse("it is the recorded console host window");
+        sut.IsHostWindowOnlyWhileAncestorsUnknown(TerminalDialog).Should().BeFalse("the recorded window owns it");
+        sut.IsHostWindow(OtherWindow).Should().BeTrue();
+        sut.IsHostWindowOnlyWhileAncestorsUnknown(OtherWindow).Should().BeTrue("only its start before the server makes it the host's");
+        sut.IsHostWindowOnlyWhileAncestorsUnknown(LaterWindow).Should().BeFalse("it is not the host's at all");
+        sut.IsHostWindowOnlyWhileAncestorsUnknown(ExplorerFolder).Should().BeFalse("the shell's windows are not the host's");
+    }
+
+    [Fact]
+    public void AncestorsReadAfterAll_NoWindowCountsAsTheHostsOnlyWhileUnknown()
+    {
+        // Arrange
+        var clock = UseAncestorsUnreadableAtStart();
+        var sut = CreateSut(clock);
+        sut.IsHostWindowOnlyWhileAncestorsUnknown(SecondTerminalWindow).Should().BeTrue();
+        _ancestorsReadable = true;
+        clock.Advance(HostGuard.AncestorRetryInterval);
+
+        // Act & Assert - the terminal is a known ancestor now, and the application that started before the server is no host
+        sut.IsHostWindowOnlyWhileAncestorsUnknown(SecondTerminalWindow).Should().BeFalse();
+        sut.IsHostWindow(SecondTerminalWindow).Should().BeTrue();
+        sut.IsHostWindowOnlyWhileAncestorsUnknown(OtherWindow).Should().BeFalse();
+        sut.IsHostWindow(OtherWindow).Should().BeFalse();
+    }
+
+    [Fact]
+    public void KnownAncestors_NoWindowCountsAsTheHostsOnlyWhileUnknown()
+    {
+        var sut = CreateSut();
+
+        sut.IsHostWindowOnlyWhileAncestorsUnknown(TerminalWindow).Should().BeFalse();
+        sut.IsHostWindowOnlyWhileAncestorsUnknown(SecondTerminalWindow).Should().BeFalse();
+        sut.IsHostWindowOnlyWhileAncestorsUnknown(OtherWindow).Should().BeFalse();
+        sut.IsHostWindowOnlyWhileAncestorsUnknown(nint.Zero).Should().BeFalse();
+    }
+
     #endregion
 }

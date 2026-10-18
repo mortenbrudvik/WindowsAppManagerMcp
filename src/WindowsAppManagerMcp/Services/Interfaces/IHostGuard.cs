@@ -58,4 +58,12 @@ public interface IHostGuard
     /// started after the server stays usable.
     /// </summary>
     bool IsHostWindow(nint hWnd);
+
+    /// <summary>
+    /// True when <see cref="IsHostWindow"/> is true for the window only because the ancestors are unknown: no recorded window,
+    /// known ancestor or console host makes it the host's, but its process is not shown to have started after the server.
+    /// A refusal of such a window says so (HostGuard.AncestorsUnknownNote) rather than call it the agent's terminal, and the
+    /// window event journal keeps its title changes, which it leaves out only for the host it knows.
+    /// </summary>
+    bool IsHostWindowOnlyWhileAncestorsUnknown(nint hWnd);
 }

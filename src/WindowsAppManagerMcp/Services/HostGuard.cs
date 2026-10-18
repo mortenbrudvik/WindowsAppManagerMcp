@@ -16,8 +16,13 @@ namespace WindowsAppManagerMcp.Services;
 /// <see cref="AncestorRetryInterval"/> (find_windows checks every window it lists), and records them once a read works,
 /// which also ends get_server_info's warning. Until then <see cref="IsHostWindow"/> fails closed where a cheap check per
 /// window cannot clear it: a window of a process that may be an ancestor, one not shown to have started after the server,
-/// counts as the host's (the desktop shell's excepted, as always), so input, window actions and closes are refused for it,
-/// while a process that started later, such as an app the agent launched, stays usable. A transient failure at start costs
+/// counts as the host's (the desktop shell's excepted, as always), so what the host's windows are refused is refused for it
+/// too: input (TargetIsAgentHost), run_steps' run window and the reads of the window in front, closing it without force and
+/// placing a launch's window (ProtectedWindow). Window changes by handle are not refused for the host (owner decision D14),
+/// so not for these either. A process that started later, such as an app the agent launched, stays usable; a UWP app's frame
+/// belongs to ApplicationFrameHost, which normally started before the server, so it counts. Each such refusal says that the
+/// window counts only because the ancestors are unknown (<see cref="IsHostWindowOnlyWhileAncestorsUnknown"/>,
+/// <see cref="AncestorsUnknownNote"/>), rather than call it the agent's terminal. A transient failure at start costs
 /// at most one interval; a list that stays unreadable keeps the older windows refused. <see cref="IsHostProcess"/> does not
 /// fail closed that way: its callers (kill_process, close_debug_browser) read the ancestors themselves and refuse with
 /// ProcessTreeUnreadable when they cannot, which names the reason. The live check kill_process uses,
@@ -33,12 +38,27 @@ public sealed class HostGuard : IHostGuard
     public static readonly TimeSpan AncestorRetryInterval = TimeSpan.FromSeconds(1);
 
     /// <summary>
-    /// The sentence a host refusal adds while the ancestors are unknown, so the agent is not told that an app is its terminal
-    /// when it only may be: the window counts as the host's because its process started before the server.
+    /// The sentence a host refusal adds for a window that counts as the host's only while the ancestors are unknown
+    /// (<see cref="IsHostWindowOnlyWhileAncestorsUnknown"/>), so the agent is not told that an app is its terminal when it only
+    /// may be. It can reach the user too, in close_window's question about force, so it gives the agent no instruction.
     /// </summary>
     public const string AncestorsUnknownNote =
-        " The server could not read its ancestor processes, so until it can, every window of a program that started before it " +
-        "counts as its host's (get_server_info warns about it).";
+        " It counts as the host's only because the server cannot read its ancestor processes: until it can, every window of a " +
+        "program that started before the server does, so it may be another app's (get_server_info warns about it).";
+
+    /// <summary>
+    /// <see cref="AncestorsUnknownNote"/> for a window read while its being the host's rests only on the ancestors being
+    /// unknown (<see cref="WindowInfo.IsAgentHostOnlyWhileAncestorsUnknown"/>); empty for any other window.
+    /// </summary>
+    public static string AncestorsUnknownNoteFor(WindowInfo window) =>
+        window is { IsAgentHost: true, IsAgentHostOnlyWhileAncestorsUnknown: true } ? AncestorsUnknownNote : string.Empty;
+
+    /// <summary>
+    /// <see cref="AncestorsUnknownNote"/> when one of <paramref name="windows"/> counts as the host's only while the ancestors are
+    /// unknown (<see cref="IHostGuard.IsHostWindowOnlyWhileAncestorsUnknown"/>); empty otherwise, also without a guard.
+    /// </summary>
+    public static string AncestorsUnknownNoteFor(IHostGuard? guard, params nint[] windows) =>
+        guard != null && windows.Any(guard.IsHostWindowOnlyWhileAncestorsUnknown) ? AncestorsUnknownNote : string.Empty;
 
     private readonly INativeWindowWrapper _windows;
     private readonly INativeProcessWrapper _processes;
@@ -132,11 +152,30 @@ public sealed class HostGuard : IHostGuard
         return record.HostProcesses.Any(host => host.ProcessId == processId && IsStillRunningAs(host));
     }
 
-    public bool IsHostWindow(nint hWnd)
+    public bool IsHostWindow(nint hWnd) => Match(hWnd) != HostWindowMatch.None;
+
+    // Known ancestors: no window is the host's only for want of them, and the owner chain need not be read again
+    public bool IsHostWindowOnlyWhileAncestorsUnknown(nint hWnd) =>
+        Current().Host.AncestorsUnknown && Match(hWnd) == HostWindowMatch.MayBeAncestor;
+
+    /// <summary>Why a window is the host's, as <see cref="Match"/> tells it.</summary>
+    private enum HostWindowMatch
+    {
+        /// <summary>It is not.</summary>
+        None,
+
+        /// <summary>A recorded window, or a window of the server, a known ancestor or the console host.</summary>
+        Known,
+
+        /// <summary>Only because the ancestors are unknown: its process is not shown to have started after the server.</summary>
+        MayBeAncestor
+    }
+
+    private HostWindowMatch Match(nint hWnd)
     {
         if (hWnd == nint.Zero)
         {
-            return false;
+            return HostWindowMatch.None;
         }
 
         var record = Current();
@@ -148,18 +187,22 @@ public sealed class HostGuard : IHostGuard
         // Recorded windows by identity, including popups and dialogs they own
         if (candidates.Any(IsRecordedHostWindow))
         {
-            return true;
+            return HostWindowMatch.Known;
         }
 
         // Windows of the server, its ancestors and the console host, except the desktop shell's. The
-        // startup foreground window's process is left out here: only its recorded window counts. While the ancestors are
-        // unknown, a process that may be one counts too (fail closed, see the remarks)
-        return candidates.Any(candidate =>
+        // startup foreground window's process is left out here: only its recorded window counts
+        var processIds = candidates
+            .Select(candidate => (int)_windows.GetWindowThreadProcessId(candidate))
+            .Where(processId => processId != 0 && processId != record.Host.ShellProcessId)
+            .ToList();
+        if (processIds.Any(processId => IsSessionProcess(record, processId)))
         {
-            var processId = (int)_windows.GetWindowThreadProcessId(candidate);
-            return processId != 0 && processId != record.Host.ShellProcessId &&
-                   (IsSessionProcess(record, processId) || record.Host.AncestorsUnknown && MayBeAncestor(processId));
-        });
+            return HostWindowMatch.Known;
+        }
+
+        // While the ancestors are unknown, a process that may be one counts too (fail closed, see the remarks)
+        return record.Host.AncestorsUnknown && processIds.Any(MayBeAncestor) ? HostWindowMatch.MayBeAncestor : HostWindowMatch.None;
     }
 
     /// <summary>

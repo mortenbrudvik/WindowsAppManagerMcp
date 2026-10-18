@@ -515,7 +515,7 @@ public class WindowServiceCloseTests
 
         // Assert
         olderResult.ErrorCode.Should().Be(WindowErrorCode.ProtectedWindow);
-        olderResult.Error.Should().Contain("agent's host").And.Contain("could not read its ancestor processes");
+        olderResult.Error.Should().Contain("agent's host").And.Contain(HostGuard.AncestorsUnknownNote);
         newerResult.Success.Should().BeTrue("a program that started after the server is no ancestor of it");
         VerifyPosted(newer);
         _native.Verify(n => n.PostMessage(older, It.IsAny<uint>(), It.IsAny<nint>(), It.IsAny<nint>()), Times.Never);

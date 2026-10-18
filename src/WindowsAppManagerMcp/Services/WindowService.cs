@@ -1500,8 +1500,8 @@ public class WindowService : IWindowService
 
         if (_hostGuard.IsHostWindow(handle))
         {
-            // While the ancestors are unknown, a window counts as the host's because it may be (HostGuard): the error says so
-            var unknown = _hostGuard.Host?.AncestorsUnknown == true ? HostGuard.AncestorsUnknownNote : string.Empty;
+            // A window that counts as the host's only because the ancestors are unknown (HostGuard): the error says so
+            var unknown = HostGuard.AncestorsUnknownNoteFor(_hostGuard, handle);
             return $"Window {handle} belongs to the agent's host: the terminal, editor or chat app this server was " +
                    $"started from, or a window that one owns.{unknown} Closing it can end the agent's own session. " +
                    "Nothing was sent. Pass force=true only if the user explicitly asked to close this window.";
@@ -1815,6 +1815,7 @@ public class WindowService : IWindowService
         var frame = _nativeWrapper.GetExtendedFrameBounds(hWnd) is { } extended
             ? WindowRect.FromLTRB(extended.Left, extended.Top, extended.Right, extended.Bottom)
             : null;
+        var isAgentHost = _hostGuard.IsHostWindow(hWnd);
 
         return new WindowInfo(
             Handle: hWnd,
@@ -1832,7 +1833,8 @@ public class WindowService : IWindowService
             OwnerHandle = owner == nint.Zero ? null : owner,
             HostProcessName = process.HostProcessId is { } hostId ? session.ProcessName(hostId) : null,
             HostProcessId = process.HostProcessId is { } id ? (int)id : null,
-            IsAgentHost = _hostGuard.IsHostWindow(hWnd),
+            IsAgentHost = isAgentHost,
+            IsAgentHostOnlyWhileAncestorsUnknown = isAgentHost && _hostGuard.IsHostWindowOnlyWhileAncestorsUnknown(hWnd),
             IsTopmost = IsTopmost(hWnd)
         };
     }

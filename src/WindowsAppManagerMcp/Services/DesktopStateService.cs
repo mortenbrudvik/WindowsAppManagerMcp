@@ -151,7 +151,7 @@ public sealed class DesktopStateService : IDesktopStateService
         var readFocus = include.Contains(DesktopStateSection.Focus);
         if (readFocus && ForegroundRefusal(foreground, request.Window) is { } skipped)
         {
-            errors.Add(FocusError(skipped, "the window in front"));
+            errors.Add(FocusError(skipped, "the window in front", HostGuard.AncestorsUnknownNoteFor(foreground!)));
             readFocus = false;
         }
 
@@ -318,8 +318,8 @@ public sealed class DesktopStateService : IDesktopStateService
         {
             return new Target(nint.Zero, null, TargetError(nameof(InputErrorCode.TargetIsAgentHost),
                 $"The window in front is your own host window ('{foreground.Title}', {foreground.ProcessName}), so its elements, " +
-                "popups and capture were not read. Name the window you mean (handle or window, for example from the windows " +
-                "listed here)."));
+                $"popups and capture were not read.{HostGuard.AncestorsUnknownNoteFor(foreground)} Name the window you mean " +
+                "(handle or window, for example from the windows listed here)."));
         }
 
         if (_policy.EvaluateFailClosed(foreground) is { Allowed: false } verdict)
@@ -599,7 +599,8 @@ public sealed class DesktopStateService : IDesktopStateService
 
         if (info.IsAgentHost && !isNamed)
         {
-            return FocusError(nameof(InputErrorCode.TargetIsAgentHost), $"your own host window ('{info.Title}', {info.ProcessName})");
+            return FocusError(nameof(InputErrorCode.TargetIsAgentHost), $"your own host window ('{info.Title}', {info.ProcessName})",
+                HostGuard.AncestorsUnknownNoteFor(info));
         }
 
         return _policy.EvaluateFailClosed(info) is { Allowed: false }
@@ -607,9 +608,9 @@ public sealed class DesktopStateService : IDesktopStateService
             : null;
     }
 
-    private static DesktopStateError FocusError(string code, string window) => new("focus", code,
+    private static DesktopStateError FocusError(string code, string window, string hostNote = "") => new("focus", code,
         code == nameof(InputErrorCode.TargetIsAgentHost)
-            ? $"The keyboard focus is in {window}, which is not read unless you name it, so the focused element was left out."
+            ? $"The keyboard focus is in {window}, which is not read unless you name it, so the focused element was left out.{hostNote}"
             : $"The keyboard focus is in {window}, an app the user's target policy refuses, so the focused element was left out; " +
               "no argument lets you act on it.");
 

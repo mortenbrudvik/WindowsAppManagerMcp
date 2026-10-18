@@ -377,6 +377,24 @@ public class RunStepsContractTests
     }
 
     [Fact]
+    public async Task TheRunsWindow_CountedAsTheHostOnlyWhileTheAncestorsAreUnknown_IsRefused_SayingWhy()
+    {
+        // The server cannot read its ancestors, so a window of a program that started before it counts as the host's
+        using var services = new ContractServices(ContractMode.Typical);
+        services.Windows.Setup(w => w.GetWindowInfo((nint)0x30_0D1E)).Returns(TypicalDesktop.Notepad with
+        {
+            Handle = 0x30_0D1E, IsAgentHost = true, IsAgentHostOnlyWhileAncestorsUnknown = true
+        });
+        await using var server = await StartAsync(services);
+
+        var host = await server.CallToolAsync("run_steps", Run("""[ { "tool": "focus_window" } ]""", window: 0x30_0D1E));
+
+        Body(host)["errorCode"]!.GetValue<string>().Should().Be("TargetIsAgentHost");
+        Body(host)["error"]!.GetValue<string>().Should().Contain(HostGuard.AncestorsUnknownNote).And.Contain("Nothing was done");
+        services.Foreground.Verify(f => f.EnsureForeground(It.IsAny<nint>(), It.IsAny<int>()), Times.Never);
+    }
+
+    [Fact]
     public async Task TheStepDispatcher_RunsStepsThroughTheServersOwnCallFilters_InTheirOrder()
     {
         // The SDK seam M6.2 stands on (spike S0b): the registered call-tool filters are readable from the server's options

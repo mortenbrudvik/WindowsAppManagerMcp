@@ -197,8 +197,9 @@ public sealed class ServerInfoService(
             // guard reads them again (reading the host above did), so this warns only while they still cannot be read
             warnings.Add("The server cannot read its ancestor processes (the process list cannot be read), so it does not know the " +
                          "terminal or editor that started it by its process. Until it can (it tries again at most once a second), " +
-                         "input, window changes and closes are refused for every window of a program that started before the server " +
-                         "(TargetIsAgentHost, ProtectedWindow), except the desktop shell's, and kill_process and close_debug_browser " +
+                         "every window of a program that started before the server, except the desktop shell's, counts as the " +
+                         "agent's host: input to it and run_steps on it are refused (TargetIsAgentHost), and so are closing it " +
+                         "without force and placing it after a launch (ProtectedWindow); kill_process and close_debug_browser " +
                          "refuse (ProcessTreeUnreadable). Tell the user.");
         }
 

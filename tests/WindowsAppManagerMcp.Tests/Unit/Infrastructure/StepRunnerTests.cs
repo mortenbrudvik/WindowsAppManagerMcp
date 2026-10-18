@@ -329,6 +329,26 @@ public class StepRunnerTests
     }
 
     [Fact]
+    public async Task TheRunsWindow_CountedAsTheHostOnlyWhileTheAncestorsAreUnknown_IsRefused_SayingWhy()
+    {
+        // Arrange - once the run holds the gate, the window counts as the host's: the server cannot read its ancestors, and the
+        // window's program started before it
+        var reads = 0;
+        _windows.Setup(w => w.GetWindowInfo((nint)Window)).Returns(() => reads++ == 0
+            ? Info((nint)Window)
+            : Info((nint)Window)! with { IsAgentHost = true, IsAgentHostOnlyWhileAncestorsUnknown = true });
+
+        // Act
+        var act = () => RunAsync(Step(StepTool.FocusWindow));
+
+        // Assert - not called the agent's terminal as fact
+        var refusal = (await act.Should().ThrowAsync<ToolErrorException>()).Which;
+        refusal.ErrorCode.Should().Be("TargetIsAgentHost");
+        refusal.Message.Should().Contain(HostGuard.AncestorsUnknownNote).And.Contain("Nothing was done");
+        _dispatcher.Calls.Should().BeEmpty();
+    }
+
+    [Fact]
     public async Task TypeText_TypesAsUnicode_WhenTheStepNamesNoMethod_OrANullOne_AndKeepsKeys()
     {
         // A null method would otherwise bind to type_text's default, auto, which pastes a long text

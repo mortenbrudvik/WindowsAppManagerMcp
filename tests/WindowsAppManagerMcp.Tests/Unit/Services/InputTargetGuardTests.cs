@@ -204,9 +204,26 @@ public class InputTargetGuardTests
     }
 
     [Fact]
-    public void Keyboard_NoTarget_AWindowCountedAsTheHostWhileTheAncestorsAreUnknown_SaysWhy()
+    public void Keyboard_NoTarget_AWindowCountedAsTheHostOnlyWhileTheAncestorsAreUnknown_SaysWhy()
     {
-        // Arrange - the host guard could not read the server's ancestors: it counts the window as the host's because it may be
+        // Arrange - the host guard cannot read the server's ancestors: it counts the window as the host's because it may be
+        _inFront = Terminal;
+        _hostGuard.Setup(g => g.Host).Returns(new HostSnapshot(ServerPid, [], nint.Zero, null, null, null) { AncestorsUnknown = true });
+        _hostGuard.Setup(g => g.IsHostWindowOnlyWhileAncestorsUnknown(Terminal)).Returns(true);
+
+        // Act
+        var result = CreateSut().CheckKeyboard(InputTarget.None, KeyboardInputKind.Text, null);
+
+        // Assert
+        result.ErrorCode.Should().Be(InputErrorCode.TargetIsAgentHost);
+        result.Error.Should().Contain(HostGuard.AncestorsUnknownNote);
+        VerifyNoActivation();
+    }
+
+    [Fact]
+    public void Keyboard_NoTarget_AWindowTheGuardKnowsAsTheHost_WhileTheAncestorsAreUnknown_IsNotSaidToBeOnlyMaybe()
+    {
+        // Arrange - the ancestors are unknown, but the window is the host's anyway (say, the window that shows the console)
         _inFront = Terminal;
         _hostGuard.Setup(g => g.Host).Returns(new HostSnapshot(ServerPid, [], nint.Zero, null, null, null) { AncestorsUnknown = true });
 
@@ -215,8 +232,7 @@ public class InputTargetGuardTests
 
         // Assert
         result.ErrorCode.Should().Be(InputErrorCode.TargetIsAgentHost);
-        result.Error.Should().Contain("could not read its ancestor processes").And.Contain("started before it");
-        VerifyNoActivation();
+        result.Error.Should().NotContain("ancestor processes");
     }
 
     [Fact]

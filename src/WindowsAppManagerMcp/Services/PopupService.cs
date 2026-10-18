@@ -368,6 +368,23 @@ public sealed class PopupService : IPopupService
         return new DesktopWindowSet(windows, excluded, overLimit);
     }
 
+    /// <summary>
+    /// <see cref="HostGuard.AncestorsUnknownNote"/> when one of the windows counts as the host's only because the ancestors
+    /// are unknown; empty otherwise, also when the guard cannot tell.
+    /// </summary>
+    private string HostNote(params nint[] windows)
+    {
+        try
+        {
+            return HostGuard.AncestorsUnknownNoteFor(_hostGuard, windows);
+        }
+        catch (Exception)
+        {
+            // Only the wording: the window was refused either way
+            return string.Empty;
+        }
+    }
+
     private bool IsHost(nint window)
     {
         try
@@ -513,7 +530,8 @@ public sealed class PopupService : IPopupService
         {
             return new ActivePopupsResult(false, (long)app, null, false, null, Elapsed(stopwatch),
                 Error: "The window in front is your own host window (the terminal, editor or chat app you run in), so its popups " +
-                       "were not listed or read. Name the window you mean (handle or window, for example from find_windows).",
+                       $"were not listed or read.{HostNote(foreground, app)} Name the window you mean (handle or window, for example " +
+                       "from find_windows).",
                 ErrorCode: UIElementErrorCode.TargetIsAgentHost);
         }
 

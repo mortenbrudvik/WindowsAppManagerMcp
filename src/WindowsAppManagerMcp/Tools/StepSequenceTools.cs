@@ -90,8 +90,8 @@ public class StepSequenceTools
         if (target.IsAgentHost)
         {
             throw new ToolErrorException(nameof(InputErrorCode.TargetIsAgentHost),
-                $"The run's window {handle} ({target.ProcessName}) is your own terminal or chat window, or a window it owns. " +
-                "Nothing was done: name the window you mean to act on.");
+                $"The run's window {handle} ({target.ProcessName}) is your own terminal or chat window, or a window it owns." +
+                $"{HostGuard.AncestorsUnknownNoteFor(target)} Nothing was done: name the window you mean to act on.");
         }
 
         var run = await _runner.RunAsync(handle, checkedSteps, dispatcher, TimeSpan.FromMilliseconds(maxDurationMs),

@@ -279,8 +279,8 @@ public sealed class LaunchPlacementService : ILaunchPlacementService
         {
             return WindowChangeResult.Failed(handle, ProtectedWindow,
                 $"The launch's window ({window.ProcessName}, '{window.Title}') belongs to the agent's own host (the terminal or editor " +
-                "this agent runs in), so it was not moved or focused. If you really mean to arrange it, use snap_window, " +
-                "set_window_bounds or focus_window with its handle.");
+                $"this agent runs in), so it was not moved or focused.{HostGuard.AncestorsUnknownNoteFor(window)} If you really mean " +
+                "to arrange it, use snap_window, set_window_bounds or focus_window with its handle.");
         }
 
         return _windows.EvaluateTargetPolicy(handle) is { Allowed: false } verdict

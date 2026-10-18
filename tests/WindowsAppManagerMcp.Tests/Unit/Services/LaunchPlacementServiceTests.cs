@@ -409,7 +409,21 @@ public class LaunchPlacementServiceTests
 
         outcome.ErrorCode.Should().Be(WindowErrorCode.ProtectedWindow);
         outcome.FailedStep.Should().Be(LaunchPlacementStep.Check);
-        outcome.Error.Should().Contain("agent's own host").And.Contain("snap_window");
+        outcome.Error.Should().Contain("agent's own host").And.Contain("snap_window").And.NotContain("ancestor processes");
+        _calls.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task AWindowThatCountsAsTheHostOnlyWhileTheAncestorsAreUnknown_IsNeitherMovedNorFocused_AndTheErrorSaysWhy()
+    {
+        // The server cannot read its ancestors, and the launch's window belongs to a program that started before it (say, a
+        // single-instance app that was already running)
+        _desktop[Terminal] = _desktop[Terminal] with { IsAgentHost = true, IsAgentHostOnlyWhileAncestorsUnknown = true };
+
+        var outcome = await PlaceOneAsync(Terminal, new LaunchPlacement(Snap: "right_half", Focus: true));
+
+        outcome.ErrorCode.Should().Be(WindowErrorCode.ProtectedWindow);
+        outcome.Error.Should().Contain(HostGuard.AncestorsUnknownNote).And.Contain("snap_window");
         _calls.Should().BeEmpty();
     }
 
