@@ -84,9 +84,66 @@ public class CdpTabServiceTests
         var result = await sut.ListTabsAsync(Port, BrowserPid, At("Same - Google Chrome", 0, 0, 800, 600), LongTimeout);
 
         result.Success.Should().BeTrue(result.Error);
-        result.Value!.Shown.Should().BeNull("CDP has no active-tab flag, and the title does not tell");
+        result.Value!.Shown.Should().BeNull("CDP has no active-tab flag, the title does not tell, and which is shown cannot be read");
         result.Value.ShownError.Should().StartWith(nameof(BrowserErrorCode.CdpTargetAmbiguous));
         result.Value.WindowBound.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task ListTabsAsync_ABackgroundTabTitledAsTheWholeWindow_IsNotTheShownTab()
+    {
+        // As the reads pick the tab: a page that sets its title to the window's whole caption does not become the shown tab
+        var browser = new FakeCdpBrowser()
+            .Window(1, 0, 0, 800, 600)
+            .Tab("REAL", "Inbox", 1)
+            .Tab("SPOOF", "Inbox - Google Chrome", 1)
+            .Visibility("REAL", "visible")
+            .Visibility("SPOOF", "hidden");
+        var sut = CreateSut(browser);
+
+        var result = await sut.ListTabsAsync(Port, BrowserPid, At("Inbox - Google Chrome", 0, 0, 800, 600), LongTimeout);
+
+        result.Success.Should().BeTrue(result.Error);
+        result.Value!.Shown!.Id.Should().Be("REAL");
+        result.Value.ShownError.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task ListTabsAsync_TwoTabsOfTheWindowWithItsTitle_TellTheOneThatIsShown()
+    {
+        var browser = new FakeCdpBrowser()
+            .Window(1, 0, 0, 800, 600)
+            .Tab("A", "Same", 1)
+            .Tab("B", "Same", 1)
+            .Visibility("A", "hidden")
+            .Visibility("B", "visible");
+        var sut = CreateSut(browser);
+
+        var result = await sut.ListTabsAsync(Port, BrowserPid, At("Same - Google Chrome", 0, 0, 800, 600), LongTimeout);
+
+        result.Value!.Shown!.Id.Should().Be("B");
+    }
+
+    [Fact]
+    public async Task ListTabsAsync_WhenWhichWindowEachTabIsInCannotBeRead_ATabShownElsewhere_IsNotTheShownTab()
+    {
+        // As the reads: the window is covered (its tab hidden) and another window shows a tab with its title
+        var browser = new FakeCdpBrowser { NotABrowsersVersion = true }
+            .Window(1, 0, 0, 800, 600)
+            .Window(2, 900, 0, 800, 600)
+            .Tab("REAL", "Same", 1)
+            .Tab("OTHER", "Same", 2)
+            .Visibility("REAL", "hidden")
+            .Visibility("OTHER", "visible");
+        var sut = CreateSut(browser);
+
+        var result = await sut.ListTabsAsync(Port, BrowserPid, At("Same - Google Chrome", 0, 0, 800, 600), LongTimeout);
+
+        result.Success.Should().BeTrue(result.Error);
+        result.Value!.WindowBound.Should().BeFalse();
+        result.Value.Shown.Should().BeNull();
+        result.Value.ShownError.Should().StartWith(nameof(BrowserErrorCode.CdpTargetAmbiguous))
+            .And.Contain("which browser window each of them is in could not be read");
     }
 
     [Fact]

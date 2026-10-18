@@ -18,8 +18,9 @@ namespace WindowsAppManagerMcp.Services;
 /// (155) neither report nor answer a dialog that was open before the connection, on any DevTools connection (roadmap M5.8,
 /// dialogs). With a dialog answer, a click or a typing answers the dialog it opens on its own connection
 /// (<see cref="ICdpConnection.AnswerNextDialog"/>). Every call but the dialog's then reads the page in its main frame
-/// (<see cref="BrowserPageScripts.ViewportExpression"/>): its viewport, which an element inside a frame shares, and its
-/// address, refused when it is not a web page (the tab may have navigated since it was listed).
+/// (<see cref="BrowserPageScripts.ViewportExpression"/>, in an isolated world the page's scripts cannot reach,
+/// <see cref="CdpIsolatedWorld"/>): its visibility and viewport, which an element inside a frame shares, and its address,
+/// refused when it is not a web page (the tab may have navigated since it was listed).
 /// </para>
 /// <para>
 /// Elements: a selector or a text is found by one script (<see cref="BrowserPageScripts.BuildFindExpression"/>, its input
@@ -744,21 +745,24 @@ public sealed class CdpPageService : ICdpPageService
     }
 
     /// <summary>
-    /// The page the connection shows (<see cref="BrowserPageScripts.ViewportExpression"/>, in the tab's main frame): its
-    /// viewport, devicePixelRatio, pinch-zoom scale and visibilityState, which an element inside a frame shares (its quads
-    /// are in the main frame's viewport), and its URL and title. BrowserInternalPage when the page is not a web page
-    /// (<see cref="BrowserUrls.IsBrowserOwnPage"/>): the tab may have navigated there after it was listed.
+    /// The page the connection shows (<see cref="BrowserPageScripts.ViewportExpression"/>, in an isolated world of the tab's
+    /// main frame, <see cref="CdpIsolatedWorld"/>): its viewport, devicePixelRatio, pinch-zoom scale and visibilityState,
+    /// which an element inside a frame shares (its quads are in the main frame's viewport), and its URL and title. The
+    /// isolated world keeps the page's scripts from redefining what is read, so a background page cannot pass
+    /// browser_element_rect's check that it is shown, nor move where its element is placed. BrowserInternalPage when the
+    /// page is not a web page (<see cref="BrowserUrls.IsBrowserOwnPage"/>): the tab may have navigated there after it was
+    /// listed.
     /// </summary>
     private static async Task<CdpPageResult<PageView>> ReadPageAsync(
         ICdpConnection connection, CdpTarget target, TimeSpan timeout, Stopwatch stopwatch, CancellationToken cancellationToken)
     {
-        var view = await connection.SendAsync("Runtime.evaluate", new { expression = BrowserPageScripts.ViewportExpression, returnByValue = true },
+        var (method, view) = await CdpIsolatedWorld.EvaluateAsync(connection, BrowserPageScripts.ViewportExpression,
             Bounded(Left(timeout, stopwatch)), cancellationToken).ConfigureAwait(false);
         if (!view.Success)
-            return Unanswered<PageView>("Runtime.evaluate", view, target);
+            return Unanswered<PageView>(method, view, target);
 
-        if (view.Value!.Error is { } fault)
-            return CdpPageResult<PageView>.From(CdpReplies.ToFailure<bool>("Runtime.evaluate", fault));
+        if (view.Value.Error is { } fault)
+            return CdpPageResult<PageView>.From(CdpReplies.ToFailure<bool>(method, fault));
 
         if (ValueOf(view.Value.Result) is not { } page)
         {
@@ -1083,7 +1087,7 @@ public sealed class CdpPageService : ICdpPageService
     /// <summary>What <see cref="BrowserPageScripts.ElementStateFunction"/> read.</summary>
     private sealed record ElementState(BrowserElementInfo Info, bool Disabled);
 
-    /// <summary>What <see cref="BrowserPageScripts.ViewportExpression"/> read of the page, in its main frame.</summary>
+    /// <summary>What <see cref="BrowserPageScripts.ViewportExpression"/> read of the page, in an isolated world of its main frame.</summary>
     private sealed record PageView(
         string Visibility, double ViewportWidth, double ViewportHeight, double DevicePixelRatio, double Scale, string Url, string Title);
 

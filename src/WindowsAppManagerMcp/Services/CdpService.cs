@@ -168,45 +168,30 @@ public class CdpService : ICdpService
         var all = targets.Value!;
 
         // One tab: the title decides, and the binding is asked only when the title does not match (below)
-        var byTitle = all.Count == 1 ? CdpTargetMatcher.Match(window.Title, all) : null;
-        if (byTitle is { Success: true })
-            return byTitle;
+        if (all.Count == 1 && CdpTargetMatcher.Match(window.Title, all) is { Success: true } only)
+            return only;
 
-        CdpTarget? soleInWindow = null;
-        if (window.Geometry is { } geometry && all.Count is >= 1 and <= MaxBoundTabs)
+        // The binding needs the window's bounds to tell its tabs; without them it is still read when several tabs have the
+        // title, as list_tabs reads it, so CdpShownTab can check they are in one browser window (it fails closed without)
+        IReadOnlyDictionary<string, CdpBrowserWindow>? windows = null;
+        if (all.Count is >= 1 and <= MaxBoundTabs &&
+            (window.Geometry != null || CdpTargetMatcher.FindCandidates(window.Title, all) is { Success: true, Value.Count: > 1 }))
         {
             // Best effort, so only a share of the budget: a stalled browser connection leaves the page read its time
-            var windows = await GetBrowserWindowsAsync(port, all, BindingBudget(timeout - stopwatch.Elapsed), cancellationToken)
+            windows = await GetBrowserWindowsAsync(port, all, BindingBudget(timeout - stopwatch.Elapsed), cancellationToken)
                 .ConfigureAwait(false);
-            if (windows is { Count: > 0 })
-            {
-                var ids = CdpWindowBinder.MatchingWindows(geometry, windows.Values);
-                var inWindow = all.Where(t => windows.TryGetValue(t.Id, out var w) && ids.Contains(w.WindowId)).ToList();
-                if (inWindow.Count > 0)
-                {
-                    var bound = CdpTargetMatcher.Match(window.Title, inWindow);
-                    if (bound.Success || bound.ErrorCode == BrowserErrorCode.CdpTargetAmbiguous)
-                        return bound;
-
-                    if (inWindow.Count == 1)
-                        soleInWindow = inWindow[0];
-                }
-            }
         }
 
-        // As before M5.3: the title among all tabs (the binding may have missed, for example on a monitor at another scale)
-        var anywhere = byTitle ?? CdpTargetMatcher.Match(window.Title, all);
-
-        // The window's only tab is the tab it shows when no tab has the window's caption at all: a page that sets
-        // document.title is listed with the new title before Windows shows it in the caption (seen on a real Edge)
-        return anywhere.ErrorCode == BrowserErrorCode.CdpTargetNotFound && soleInWindow != null
-            ? CdpResult<CdpTarget>.Ok(soleInWindow)
-            : anywhere;
+        // The title among the bound window's tabs, else among all; of several, the one shown (read where the page cannot
+        // lie about it), with the same share of what is left, so the page read keeps most of it
+        return await CdpShownTab.PickAsync(_transport, window, all, windows, BindingBudget(timeout - stopwatch.Elapsed), cancellationToken)
+            .ConfigureAwait(false);
     }
 
     /// <summary>
-    /// The time the window binding may take of what is left of the budget: a third, at most two seconds, so the title
-    /// fallback and the page read keep most of it when the browser's connection stalls.
+    /// The time the window binding, and then reading which of several tabs is shown, may each take of what is left of the
+    /// budget: a third, at most two seconds, so the title fallback and the page read keep most of it when the browser's
+    /// connection stalls.
     /// </summary>
     public static TimeSpan BindingBudget(TimeSpan remaining)
     {

@@ -7,27 +7,55 @@ namespace WindowsAppManagerMcp.Tests.Fixtures;
 /// <summary>
 /// An in-memory debug browser for the window binding (roadmap M5.3): /json/version and /json/list over a fake HTTP
 /// handler, and a browser-level WebSocket that answers Browser.getWindowForTarget from the windows its tabs are in, and
-/// Target.activateTarget and Target.createTarget for the tab tools (roadmap M5.5). No network is used.
+/// Target.activateTarget and Target.createTarget for the tab tools (roadmap M5.5). Each connection to a tab's own URL gets
+/// a page socket of its own, which reads the tab's document.visibilityState (<see cref="Visibility"/>) in an isolated world
+/// only; in the main world a page can say what it likes (<see cref="MainWorldVisibility"/>). No network is used.
 /// </summary>
 public sealed class FakeCdpBrowser
 {
+    /// <summary>The execution context id Page.createIsolatedWorld answers with.</summary>
+    public const int IsolatedContextId = 31;
+
     private readonly int _port;
     private readonly List<(string Id, string Title, string Url, int? WindowId)> _tabs = new();
     private readonly Dictionary<int, (int Left, int Top, int Width, int Height, string State)> _windows = new();
+    private readonly Dictionary<string, string> _visibility = new(StringComparer.Ordinal);
+    private readonly List<(string TabId, JsonElement Command)> _pageCommands = new();
 
     public FakeCdpBrowser(int port = 9222)
     {
         _port = port;
         Socket = new FakeCdpWebSocket(Respond);
-        Sockets = new FakeCdpWebSocketFactory(Socket);
+        Sockets = new FakeCdpBrowserSockets(this);
         Http = new FakeCdpHttpHandler(Answer);
     }
 
     /// <summary>The browser-level DevTools connection's socket.</summary>
     public FakeCdpWebSocket Socket { get; }
 
-    /// <summary>Hands out <see cref="Socket"/>.</summary>
-    public FakeCdpWebSocketFactory Sockets { get; }
+    /// <summary>Hands out <see cref="Socket"/> for the browser's URL, and a new page socket for each connection to a tab.</summary>
+    public FakeCdpBrowserSockets Sockets { get; }
+
+    /// <summary>
+    /// What a page that redefines document.visibilityState (Object.defineProperty) reports in its main world; null reports
+    /// the tab's own <see cref="Visibility"/> there too.
+    /// </summary>
+    public string? MainWorldVisibility { get; set; } = "visible";
+
+    /// <summary>The tabs whose page answers nothing on its own connection (a page blocked by a dialog, or busy).</summary>
+    public HashSet<string> PagesUnanswered { get; } = new(StringComparer.Ordinal);
+
+    /// <summary>The commands sent on the tabs' own connections so far, with the tab, in order (a copy).</summary>
+    public IReadOnlyList<(string TabId, JsonElement Command)> PageCommands
+    {
+        get
+        {
+            lock (_pageCommands)
+            {
+                return _pageCommands.ToList();
+            }
+        }
+    }
 
     /// <summary>Answers /json/version and /json/list.</summary>
     public FakeCdpHttpHandler Http { get; }
@@ -77,6 +105,72 @@ public sealed class FakeCdpBrowser
     {
         _tabs.Add((id, title, url ?? $"https://example.com/{id}", windowId));
         return this;
+    }
+
+    /// <summary>
+    /// Gives tab <paramref name="id"/> a page that answers on its own connection: Page.getFrameTree, Page.createIsolatedWorld
+    /// in its main frame, and Runtime.evaluate, which reads <paramref name="state"/> as its visibilityState in that world. A
+    /// tab without one refuses every command on its own connection.
+    /// </summary>
+    public FakeCdpBrowser Visibility(string id, string state)
+    {
+        _visibility[id] = state;
+        return this;
+    }
+
+    /// <summary>The page socket for a new connection to tab <paramref name="tabId"/>'s own URL.</summary>
+    internal FakeCdpWebSocket PageSocket(string tabId) => new((socket, command) => RespondAsPage(tabId, socket, command));
+
+    private void RespondAsPage(string tabId, FakeCdpWebSocket socket, JsonElement command)
+    {
+        lock (_pageCommands)
+        {
+            _pageCommands.Add((tabId, command.Clone()));
+        }
+
+        if (PagesUnanswered.Contains(tabId))
+            return;
+
+        var method = command.GetProperty("method").GetString();
+        if (!_visibility.TryGetValue(tabId, out var visibility))
+        {
+            socket.ReplyError(command, -32601, "'" + method + "' wasn't found");
+            return;
+        }
+
+        var id = command.GetProperty("id").GetInt32();
+        var parameters = command.TryGetProperty("params", out var given) ? given : default;
+        switch (method)
+        {
+            case "Page.getFrameTree":
+                socket.Enqueue(JsonSerializer.Serialize(new
+                {
+                    id,
+                    result = new { frameTree = new { frame = new { id = "F-" + tabId, loaderId = "L-" + tabId, url = $"https://example.com/{tabId}" } } }
+                }));
+                break;
+
+            case "Page.createIsolatedWorld" when parameters.TryGetProperty("frameId", out var frameId) && frameId.GetString() == "F-" + tabId:
+                socket.Enqueue(JsonSerializer.Serialize(new { id, result = new { executionContextId = IsolatedContextId } }));
+                break;
+
+            case "Page.createIsolatedWorld":
+                socket.ReplyError(command, -32602, "No frame for given id found");
+                break;
+
+            case "Runtime.evaluate":
+                var isolated = parameters.TryGetProperty("contextId", out var context) && context.GetInt32() == IsolatedContextId;
+                socket.Enqueue(JsonSerializer.Serialize(new
+                {
+                    id,
+                    result = new { result = new { type = "string", value = isolated ? visibility : MainWorldVisibility ?? visibility } }
+                }));
+                break;
+
+            default:
+                socket.ReplyError(command, -32601, "'" + method + "' wasn't found");
+                break;
+        }
     }
 
     private Task<HttpResponseMessage> Answer(HttpRequestMessage request, CancellationToken cancellationToken)
@@ -184,6 +278,48 @@ public sealed class FakeCdpBrowser
                 bounds = new { left = window.Left, top = window.Top, width = window.Width, height = window.Height, windowState = window.State }
             }
         }));
+    }
+}
+
+/// <summary>
+/// The sockets of a <see cref="FakeCdpBrowser"/>: its browser socket for the browser's own URL (and any other), and a new
+/// page socket for every connection to a tab's URL, as a browser opens one DevTools session per connection.
+/// </summary>
+public sealed class FakeCdpBrowserSockets : ICdpWebSocketFactory
+{
+    private const string PagePath = "/devtools/page/";
+
+    private readonly FakeCdpBrowser _browser;
+    private readonly List<Uri> _connectedUris = new();
+
+    internal FakeCdpBrowserSockets(FakeCdpBrowser browser)
+    {
+        _browser = browser;
+    }
+
+    /// <summary>Every URL connected to, in order.</summary>
+    public IReadOnlyList<Uri> ConnectedUris
+    {
+        get
+        {
+            lock (_connectedUris)
+            {
+                return _connectedUris.ToList();
+            }
+        }
+    }
+
+    public Task<System.Net.WebSockets.WebSocket> ConnectAsync(Uri uri, CancellationToken cancellationToken)
+    {
+        lock (_connectedUris)
+        {
+            _connectedUris.Add(uri);
+        }
+
+        System.Net.WebSockets.WebSocket socket = uri.AbsolutePath.StartsWith(PagePath, StringComparison.Ordinal)
+            ? _browser.PageSocket(uri.AbsolutePath[PagePath.Length..])
+            : _browser.Socket;
+        return Task.FromResult(socket);
     }
 }
 

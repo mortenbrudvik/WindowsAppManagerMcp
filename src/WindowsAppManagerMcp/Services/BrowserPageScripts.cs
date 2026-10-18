@@ -139,9 +139,11 @@ public static class BrowserPageScripts
         "return { editable: true, tag, length: field ? String(a.value).length : String(a.textContent).length }; })()";
 
     /// <summary>
-    /// The script that reads the page around an element, run in the tab's main frame (Runtime.evaluate without a context):
-    /// whether it is shown (visibilityState), its viewport in CSS pixels, devicePixelRatio and pinch-zoom scale, which
-    /// DOM.getContentQuads' coordinates are in also for an element inside a frame, and its URL and title.
+    /// The script that reads the page around an element, run in the tab's main frame, in an isolated world
+    /// (<see cref="CdpIsolatedWorld"/>): whether it is shown (visibilityState), its viewport in CSS pixels, devicePixelRatio
+    /// and pinch-zoom scale, which DOM.getContentQuads' coordinates are in also for an element inside a frame, and its URL
+    /// and title. In the page's own world its scripts could redefine every one of these (Object.defineProperty), and so pass
+    /// browser_element_rect's check that the page is shown, or move where its element is placed.
     /// </summary>
     public const string ViewportExpression =
         "({ visibility: document.visibilityState, vw: window.innerWidth, vh: window.innerHeight, dpr: window.devicePixelRatio, " +
