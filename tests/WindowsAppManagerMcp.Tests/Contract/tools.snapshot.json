@@ -7100,6 +7100,23 @@
             "type": "integer",
             "default": 0
           },
+          "modifiers": {
+            "description": "Modifier keys held down around the wheel: ctrl zooms, shift scrolls sideways. Default: none",
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string",
+              "enum": [
+                "ctrl",
+                "shift",
+                "alt",
+                "win"
+              ]
+            },
+            "default": null
+          },
           "allowHostTarget": {
             "description": "Allow input to the agent's own host window: the terminal, editor or chat app this server was started from. Works only together with windowHandle (or window.handle) naming that window; set it only when the user explicitly asked for input there. Default: false",
             "type": "boolean",

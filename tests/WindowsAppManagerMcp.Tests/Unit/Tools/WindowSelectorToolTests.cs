@@ -585,7 +585,8 @@ public class WindowSelectorToolTests
 
         tools.Scroll(window: NotepadSelector, deltaY: 3);
 
-        input.Verify(i => i.Scroll(null, null, 3, 0, new InputTarget((nint)Notepad, false), false, It.IsAny<CancellationToken>()), Times.Once);
+        input.Verify(i => i.Scroll(null, null, 3, 0, It.Is<IReadOnlyList<MouseModifier>>(m => m.Count == 0), new InputTarget((nint)Notepad, false), false,
+            It.IsAny<CancellationToken>()), Times.Once);
     }
 
     #endregion

@@ -226,6 +226,133 @@ public class InputSimulationServiceScrollTests
 
     #endregion
 
+    #region Modifiers held around the wheel (issue #8)
+
+    private const uint KeyUp = 0x0002;
+    private const ushort VkLControl = 0xA2, VkLShift = 0xA0, VkLMenu = 0xA4;
+
+    private static InputEvent MoveTo(int x, int y)
+    {
+        var (dx, dy) = InputBatchBuilder.ToAbsolute(x, y, new VirtualScreenBounds(0, 0, 1920, 1080));
+        return InputEvent.MouseMoveAbsolute(dx, dy);
+    }
+
+    private void VerifyNothingIsDown()
+    {
+        _session.ServerHeld.Should().BeEmpty();
+        foreach (var key in new ushort[] { VkLControl, VkLShift, VkLMenu, 0x5B, 0x10, 0x11, 0x12 })
+        {
+            _input.IsKeyDown(key).Should().BeFalse($"key 0x{key:X2} must not stay down");
+        }
+    }
+
+    [Fact]
+    public void Scroll_WithModifiers_SendsTheirKeyDowns_TheMove_TheNotches_AndTheKeyUps_InOneBatch()
+    {
+        // Issue #8: Ctrl+wheel zooms (or sizes the font) and Shift+wheel scrolls sideways; no key stays held between calls,
+        // so the modifiers go around the notches in the one batch, as mouse_click's go around its clicks
+        var result = CreateSut().Scroll(500, 300, 2, 0, [MouseModifier.Ctrl, MouseModifier.Shift], NotepadTarget, false, default);
+
+        result.Success.Should().BeTrue(result.Error);
+        result.Modifiers.Should().Equal("ctrl", "shift");
+        _input.Batches.Should().ContainSingle().Which.Should().Equal(
+        [
+            InputEvent.Key(VkLControl, 0), InputEvent.Key(VkLShift, 0), MoveTo(500, 300), .. Wheel(2, -120),
+            InputEvent.Key(VkLShift, KeyUp), InputEvent.Key(VkLControl, KeyUp)
+        ]);
+        VerifyNothingIsDown();
+    }
+
+    [Fact]
+    public void Scroll_WithoutModifiers_ReportsNone_AndReadsNoLayout()
+    {
+        var layouts = new FakeKeyboardLayoutWrapper();
+        var sut = new InputSimulationService(_monitors.Object, _input, _guard.Object, _session, hitTest: _hitTest.Object,
+            systemInfo: _systemInfo.Object, keyboardLayout: layouts);
+
+        var result = sut.Scroll(500, 300, 1, 0, [], NotepadTarget, false, default);
+
+        result.Modifiers.Should().BeNull();
+        layouts.LayoutQueries.Should().BeEmpty();
+        _input.Events.Should().NotContain(e => e.Kind == InputEventKind.VirtualKey);
+    }
+
+    [Fact]
+    public void Scroll_TheModifiers_CarryTheTargetLayoutsScanCodes_AndAreSentOnce()
+    {
+        var layouts = new FakeKeyboardLayoutWrapper { Layout = FakeKeyboardLayoutWrapper.Us };
+        var sut = new InputSimulationService(_monitors.Object, _input, _guard.Object, _session, hitTest: _hitTest.Object,
+            systemInfo: _systemInfo.Object, keyboardLayout: layouts);
+
+        var result = sut.Scroll(500, 300, 0, 3, [MouseModifier.Ctrl, MouseModifier.Ctrl], NotepadTarget, false, default);
+
+        result.Modifiers.Should().Equal("ctrl");
+        _input.Batches.Should().ContainSingle().Which.Where(e => e.Kind == InputEventKind.VirtualKey).Select(e => e.Scan).Should().Equal(0x1D, 0x1D);
+        layouts.LayoutQueries.Should().Equal((nint)0x200);
+    }
+
+    [Fact]
+    public void Scroll_WithAlt_MasksItBeforeItsRelease_SoNoMenuOpens()
+    {
+        CreateSut().Scroll(500, 300, 1, 0, [MouseModifier.Alt], NotepadTarget, false, default).Success.Should().BeTrue();
+
+        _input.Batches.Should().ContainSingle().Which.TakeLast(3).Should().Equal(
+            InputEvent.Key(HeldInputTracker.MaskKey, 0), InputEvent.Key(HeldInputTracker.MaskKey, KeyUp), InputEvent.Key(VkLMenu, KeyUp));
+        VerifyNothingIsDown();
+    }
+
+    [Fact]
+    public void Scroll_WithModifiers_WhileTheUserHoldsOne_IsModifiersHeld_AndSendsNothing()
+    {
+        // The call's own modifiers are not the user's: a key already down is refused as for every input call
+        _input.Press(VkLShift);
+
+        var result = CreateSut().Scroll(500, 300, 1, 0, [MouseModifier.Ctrl], NotepadTarget, false, default);
+
+        result.ErrorCode.Should().Be(InputErrorCode.ModifiersHeld);
+        _input.Batches.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void Scroll_WithModifiers_AndReleaseHeldModifiers_ReleasesTheUsersKeyFirst_ThenScrolls()
+    {
+        // A stuck Windows key (Shift, Ctrl and Alt are the default pause chord's, which are never released for the agent)
+        _input.Press(0x5B);
+
+        var result = CreateSut().Scroll(500, 300, 1, 0, [MouseModifier.Ctrl], NotepadTarget, releaseHeldModifiers: true, default);
+
+        result.Success.Should().BeTrue(result.Error);
+        result.ReleasedModifiers.Should().NotBeNullOrEmpty();
+        _input.Batches.Last().First().Should().Be(InputEvent.Key(VkLControl, 0));
+        VerifyNothingIsDown();
+    }
+
+    [Fact]
+    public void Scroll_WithModifiers_WhilePaused_SendsNothing()
+    {
+        _session.Pause(InputControlSources.Hotkey);
+
+        var result = CreateSut().Scroll(500, 300, 1, 0, [MouseModifier.Ctrl], NotepadTarget, false, default);
+
+        result.ErrorCode.Should().Be(InputErrorCode.PausedByUser);
+        _input.Batches.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void Scroll_ABatchCutShortAfterTheModifiers_ReleasesThem_AndSaysNoNotchWasScrolled()
+    {
+        // SendInput inserts the two modifier key-downs and stops: the session sends them up at once
+        _input.Insert = (events, call) => call == 0 ? 2u : (uint)events.Count;
+
+        var result = CreateSut().Scroll(500, 300, 3, 0, [MouseModifier.Ctrl, MouseModifier.Shift], NotepadTarget, false, default);
+
+        result.ErrorCode.Should().Be(InputErrorCode.SendInputFailed);
+        result.Error.Should().Contain("the modifier keys").And.Contain("0 of 3 notches");
+        VerifyNothingIsDown();
+    }
+
+    #endregion
+
     [Fact]
     public void APartlyInsertedBatch_IsSendInputFailed_WithTheNotchesScrolled()
     {

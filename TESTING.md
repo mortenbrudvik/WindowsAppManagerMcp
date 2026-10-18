@@ -2958,7 +2958,7 @@ were capture_with_elements at 2,396 and element_action at 2,386, so they have ab
 | `monitors` | on | 1 | 167 | 203 |
 | `capture` | on | 4 | 5,914 | 5,950 |
 | `elements` | on | 9 | 8,262 | 8,300 |
-| `input` | on | 10 | 14,758 | 14,800 |
+| `input` | on | 10 | 14,838 | 14,874 |
 | `clipboard` | on | 2 | 734 | 750 |
 | `launch` | on | 3 | 3,336 | 3,372 |
 | `process` | on | 3 | 2,282 | 2,318 |
@@ -2986,7 +2986,8 @@ after M6.2 added run_steps (October 2026). M6.4 added the `visual` row
 `monitor` beside the deprecated monitorIndex, whose description shrank to one line), each budget to the measured size plus
 36. M6.5 (October 2026) raised `launch` by 357 (2,979 before):
 list_installed_apps (about 200), launch_application's runAsAdmin and installed-app wording (about 115) and the batch item's
-runAsAdmin (about 40), and the budget to the measured size plus 36.
+runAsAdmin (about 40), and the budget to the measured size plus 36. Issue #8 (October 2026) raised `input` by 80 (scroll's
+modifiers and press_keys' oem key names; 14,758 before), the budget to the measured size plus 36.
 
 A change states its default, per-toolset and all-tools deltas, and raises only the ratchets it moves: a new opt-in
 toolset moves the all-tools figure and its own row, never the default figure.

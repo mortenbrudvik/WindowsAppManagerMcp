@@ -247,8 +247,24 @@ public partial class InputSimulationService : IInputSimulationService
         }
     }
 
+    /// <summary>scroll without modifier keys.</summary>
     public ScrollResult Scroll(int? x, int? y, int deltaY, int deltaX, InputTarget target = default, bool releaseHeldModifiers = false,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default) =>
+        Scroll(x, y, deltaY, deltaX, [], target, releaseHeldModifiers, cancellationToken);
+
+    public ScrollResult Scroll(int? x, int? y, int deltaY, int deltaX, IReadOnlyList<MouseModifier> modifiers, InputTarget target = default,
+        bool releaseHeldModifiers = false, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(modifiers);
+        var held = modifiers.Distinct().ToList();
+        return ScrollAtPointOrCentre(x, y, deltaY, deltaX, held, target, releaseHeldModifiers, cancellationToken) with
+        {
+            Modifiers = ModifierNames(held)
+        };
+    }
+
+    private ScrollResult ScrollAtPointOrCentre(int? x, int? y, int deltaY, int deltaX, IReadOnlyList<MouseModifier> modifiers,
+        InputTarget target, bool releaseHeldModifiers, CancellationToken cancellationToken)
     {
         if (x.HasValue != y.HasValue || (!x.HasValue && !target.HasWindow))
         {
@@ -290,17 +306,20 @@ public partial class InputSimulationService : IInputSimulationService
                 InputErrorCode.CoordinatesOutOfBounds);
         }
 
-        return ScrollAt(pointX, pointY, deltaY, deltaX, target, releaseHeldModifiers, cancellationToken);
+        return ScrollAt(pointX, pointY, deltaY, deltaX, modifiers, target, releaseHeldModifiers, cancellationToken);
     }
 
     /// <summary>
     /// scroll at a checked point, as a click: the guard checks the window at the point before the pointer moves and
     /// again right before the wheel, together with where Windows sends the wheel. The wheel notches go in one SendInput
     /// call with a move to the checked point (<see cref="InputBatchBuilder"/>), so no other input can come between them; a
-    /// pointer that is not at the point afterwards is CursorClamped.
+    /// pointer that is not at the point afterwards is CursorClamped. <paramref name="modifiers"/> go down before the move and
+    /// up after the notches in the same batch (issue #8: Ctrl+wheel zooms, Shift+wheel scrolls sideways), as mouse_click's go
+    /// around its clicks, so none stays down whatever happens to the call; a key the user holds is refused (ModifiersHeld) as
+    /// for every call, before and right before the batch.
     /// </summary>
-    private ScrollResult ScrollAt(int x, int y, int deltaY, int deltaX, InputTarget target, bool releaseHeldModifiers,
-        CancellationToken cancellationToken)
+    private ScrollResult ScrollAt(int x, int y, int deltaY, int deltaX, IReadOnlyList<MouseModifier> modifiers, InputTarget target,
+        bool releaseHeldModifiers, CancellationToken cancellationToken)
     {
         const string NothingScrolled = "Nothing was scrolled.";
 
@@ -406,7 +425,10 @@ public partial class InputSimulationService : IInputSimulationService
                     return held.Apply(Finish(new ScrollResult(false, x, y, deltaY, deltaX, elsewhereNow, InputErrorCode.WheelFollowsFocus), approved));
                 }
 
-                var sent = Send(NewBatch().MoveTo(x, y).Wheel(deltaY, deltaX).Build(), approved);
+                // The modifiers take the scan codes of the target's layout, as mouse_click's do; a plain scroll reads no layout
+                var batch = NewBatch(modifiers.Count > 0 ? LayoutFor(target) : null)
+                    .ModifiersDown(modifiers).MoveTo(x, y).Wheel(deltaY, deltaX).ModifiersUp(modifiers).Build();
+                var sent = Send(batch, approved);
                 if (sent.PausedByUser)
                 {
                     return held.Apply(Finish(new ScrollResult(false, x, y, deltaY, deltaX, PausedMessage(NothingScrolled), InputErrorCode.PausedByUser), approved));
@@ -414,10 +436,8 @@ public partial class InputSimulationService : IInputSimulationService
 
                 if (!sent.Complete)
                 {
-                    return held.Apply(Finish(new ScrollResult(false, x, y, deltaY, deltaX,
-                        $"SendInput inserted {sent.Inserted} of {sent.Requested} events (the move to the point, then one per notch), so " +
-                        $"{Math.Max(0, sent.Inserted - 1)} of {Math.Abs(deltaY) + Math.Abs(deltaX)} notches were scrolled. Check the window " +
-                        "before scrolling again.", InputErrorCode.SendInputFailed), approved));
+                    return held.Apply(Finish(new ScrollResult(false, x, y, deltaY, deltaX, ScrollBatchCutShort(sent, deltaY, deltaX, modifiers.Count),
+                        InputErrorCode.SendInputFailed), approved));
                 }
 
                 if (PointerAwayAfterBatch(x, y) is { } at)
@@ -438,6 +458,21 @@ public partial class InputSimulationService : IInputSimulationService
                 _session.ReleaseHeldInput("the end of the input call");
             }
         }
+    }
+
+    /// <summary>
+    /// The SendInputFailed message of a scroll batch SendInput inserted only part of: how many of its notches went in. The
+    /// session has already released the modifier keys that went down.
+    /// </summary>
+    private static string ScrollBatchCutShort(InputSendOutcome sent, int deltaY, int deltaX, int modifiers)
+    {
+        var notches = Math.Abs(deltaY) + Math.Abs(deltaX);
+        var scrolled = Math.Clamp(sent.Inserted - modifiers - 1, 0, notches);
+        var events = modifiers == 0
+            ? "the move to the point, then one per notch"
+            : "the modifier keys, the move to the point, one per notch, then the release of the modifier keys, which was sent at once";
+        return $"SendInput inserted {sent.Inserted} of {sent.Requested} events ({events}), so {scrolled} of {notches} notches were " +
+               "scrolled. Check the window before scrolling again.";
     }
 
     /// <summary>
