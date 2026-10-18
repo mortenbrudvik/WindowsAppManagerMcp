@@ -53,6 +53,30 @@ public sealed class FakeKeyboardLayoutWrapper : INativeKeyboardLayoutWrapper
     /// <summary>The windows <see cref="GetKeyboardLayout"/> was asked about, in order (0 is the foreground window).</summary>
     public IReadOnlyList<nint> LayoutQueries => _layoutQueries.ToList();
 
+    /// <summary>
+    /// An accent typed on a dead key that waits for its letter, which Windows keeps in the keyboard layout itself, shared by
+    /// every thread (issue #8: Alt+Shift+\ on a Norwegian keyboard leaves a grave accent waiting in the target). While it is
+    /// set, <see cref="KeyText"/> answers as ToUnicodeEx does then: the composed character when the accent and the key's
+    /// character combine ('`' and 'e' make 'è', and the space bar types the accent itself), otherwise the accent followed by
+    /// the key's character ("`+"), and the same for a second dead key.
+    /// </summary>
+    public char? PendingDeadKey { get; set; }
+
+    /// <summary>
+    /// What <see cref="ReadSystemHotkeys"/> returns: Windows' input-method hotkeys and language-switch toggles; null as a
+    /// read that failed. None by default.
+    /// </summary>
+    public SystemKeyboardHotkeys? SystemHotkeys { get; set; } = SystemKeyboardHotkeys.None;
+
+    /// <summary>How often <see cref="ReadSystemHotkeys"/> was called.</summary>
+    public int SystemHotkeyReads { get; private set; }
+
+    /// <summary>The dead-key compositions the fake knows: (accent, character) to the composed character.</summary>
+    private static readonly Dictionary<(char, char), char> Compositions = new()
+    {
+        [('`', 'e')] = 'è', [('`', 'a')] = 'à', [('´', 'e')] = 'é', [('¨', 'a')] = 'ä', [('^', 'e')] = 'ê', [('~', 'n')] = 'ñ'
+    };
+
     public nint GetKeyboardLayout(nint window)
     {
         _layoutQueries.Add(window);
@@ -95,7 +119,25 @@ public sealed class FakeKeyboardLayoutWrapper : INativeKeyboardLayoutWrapper
         }
 
         var typed = key.Typed(shiftState);
+        if (PendingDeadKey is { } accent)
+        {
+            var character = typed == Dead ? key.DeadChar(shiftState) : typed;
+            return character switch
+            {
+                null => null,
+                ' ' => accent.ToString(),
+                { } c when Compositions.TryGetValue((accent, c), out var composed) => composed.ToString(),
+                { } c => $"{accent}{c}"
+            };
+        }
+
         return typed is null or Dead ? null : typed.Value.ToString();
+    }
+
+    public SystemKeyboardHotkeys? ReadSystemHotkeys()
+    {
+        SystemHotkeyReads++;
+        return SystemHotkeys;
     }
 
     private static Key[] KeysOf(nint layout) => Layouts.TryGetValue(layout, out var keys) ? keys : [];

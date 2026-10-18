@@ -1,3 +1,4 @@
+using WindowsAppManagerMcp.Services;
 using WindowsAppManagerMcp.Services.Interfaces;
 
 namespace WindowsAppManagerMcp.Native;
@@ -51,5 +52,32 @@ public sealed class NativeKeyboardLayoutWrapper : INativeKeyboardLayoutWrapper
         var count = NativeMethods.Keyboard.ToUnicodeEx(virtualKey, scanCode & 0xFF, state, buffer, buffer.Length,
             NativeMethods.Keyboard.ToUnicodeNoStateChange, layout);
         return count > 0 ? new string(buffer, 0, count) : null;
+    }
+
+    public SystemKeyboardHotkeys? ReadSystemHotkeys()
+    {
+        try
+        {
+            var hotkeys = new List<InputMethodHotkey>();
+            using (var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(SystemKeyboardHotkeys.InputMethodHotkeysKey, writable: false))
+            {
+                foreach (var name in key?.GetSubKeyNames() ?? [])
+                {
+                    using var entry = key!.OpenSubKey(name, writable: false);
+                    if (entry != null && InputMethodHotkey.FromRegistry(name, entry.GetValue("Key Modifiers"), entry.GetValue("Virtual Key")) is { } hotkey)
+                    {
+                        hotkeys.Add(hotkey);
+                    }
+                }
+            }
+
+            using var toggle = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(SystemKeyboardHotkeys.ToggleKey, writable: false);
+            return new SystemKeyboardHotkeys(hotkeys, SystemKeyboardHotkeys.TogglesFrom(toggle != null, toggle?.GetValue("Hotkey"),
+                toggle?.GetValue("Language Hotkey"), toggle?.GetValue("Layout Hotkey")));
+        }
+        catch (Exception ex) when (ex is System.Security.SecurityException or UnauthorizedAccessException or IOException)
+        {
+            return null;
+        }
     }
 }

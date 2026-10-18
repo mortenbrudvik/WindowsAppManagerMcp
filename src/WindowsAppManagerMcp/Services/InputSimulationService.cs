@@ -800,9 +800,10 @@ public partial class InputSimulationService : IInputSimulationService
         }
 
         KeySpec spec;
+        var layout = LayoutFor(target);
         try
         {
-            spec = KeySpecParser.Parse(keys, LayoutFor(target));
+            spec = KeySpecParser.Parse(keys, layout);
         }
         catch (KeySyntaxException ex)
         {
@@ -868,7 +869,7 @@ public partial class InputSimulationService : IInputSimulationService
         }
 
         return await SendStepsAsync(keys, spec, target, releaseHeldModifiers, delayMs, holdMs: 0, SendKeysBatchSize,
-            cancellationToken).ConfigureAwait(false);
+            ReportKeys(spec, layout, pressKeys: false), cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -880,10 +881,11 @@ public partial class InputSimulationService : IInputSimulationService
     /// it (the window, the modifiers, the paste rule, then the user's pause), as type_text's are; the paste rule and the
     /// clipboard origin read a batch after the first with the modifiers an earlier batch holds down. With
     /// <paramref name="holdMs"/> a step's leading key-downs go first, and its key-ups follow that much later without a check
-    /// of their own (they only release what went down; the session releases them anyway if the call stops meanwhile).
+    /// of their own (they only release what went down; the session releases them anyway if the call stops meanwhile). A
+    /// call that goes through carries <paramref name="report"/>: how the keys went out on the layout, and its warnings.
     /// </summary>
     private async Task<SendKeysResult> SendStepsAsync(string keys, KeySpec spec, InputTarget target, bool releaseHeldModifiers,
-        int delayMs, int holdMs, int batchSize, CancellationToken cancellationToken)
+        int delayMs, int holdMs, int batchSize, KeyReport report, CancellationToken cancellationToken)
     {
         var inputs = spec.Events;
 
@@ -1019,7 +1021,7 @@ public partial class InputSimulationService : IInputSimulationService
                     keysSent += steps;
                 }
 
-                return held.Apply(Finish(new SendKeysResult(Success: true, Keys: keys) { KeysSent = keysSent }, approved));
+                return held.Apply(Finish(report.ApplyTo(new SendKeysResult(Success: true, Keys: keys) { KeysSent = keysSent }), approved));
             }
             catch (OperationCanceledException) when (call.IsPaused)
             {
@@ -1099,9 +1101,10 @@ public partial class InputSimulationService : IInputSimulationService
         ArgumentOutOfRangeException.ThrowIfGreaterThan(delayBetweenMs, MaxPressKeysDelayMs);
 
         KeySpec spec;
+        var layout = LayoutFor(target);
         try
         {
-            spec = PressKeysParser.Parse(keys, repeat, LayoutFor(target));
+            spec = PressKeysParser.Parse(keys, repeat, layout);
         }
         catch (KeySyntaxException ex)
         {
@@ -1111,7 +1114,8 @@ public partial class InputSimulationService : IInputSimulationService
         {
             return new SendKeysResult(false, keys.Text,
                 $"{ex.Message}. Key names: ctrl, shift, alt, win, enter, tab, esc, space, backspace, delete, up, down, left, right, " +
-                "home, end, pgup, pgdn, f1-f24, plus, comma, star, or a single character. Nothing was sent.", InputErrorCode.UnknownKey);
+                "home, end, pgup, pgdn, f1-f24, plus, comma, star, a punctuation key by its place (oem_plus, oem_minus, oem_comma, " +
+                "oem_period, oem_1 to oem_8, oem_102), or a single character. Nothing was sent.", InputErrorCode.UnknownKey);
         }
 
         var duration = (long)spec.Steps.Count * (holdMs + delayBetweenMs);
@@ -1124,7 +1128,7 @@ public partial class InputSimulationService : IInputSimulationService
 
         // At most MaxPresses presses: without waits they all go in one batch
         return await SendStepsAsync(keys.Text, spec, target, releaseHeldModifiers, delayBetweenMs, holdMs, batchSize: int.MaxValue,
-            cancellationToken).ConfigureAwait(false);
+            ReportKeys(spec, layout, pressKeys: true), cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>

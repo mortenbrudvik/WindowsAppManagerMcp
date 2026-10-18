@@ -453,7 +453,8 @@ public class InputSimulationTools
         [Description("A chord of names joined by '+' (modifiers ctrl, shift, alt, win, then one key), or chords separated by " +
                      "spaces, each optionally '*n' (n presses, 1-100); or an array: one chord (['ctrl','shift','t']) or a sequence " +
                      "(['ctrl+a','delete']). Keys: enter, tab, esc, space, backspace, delete, up, down, left, right, home, end, " +
-                     "pgup, pgdn, f1-f24 and send_keys' other names, or one character (a letter or digit is its key, so 'ctrl+1' " +
+                     "pgup, pgdn, f1-f24, oem_plus, oem_minus, oem_1-oem_8 (a key by its place on any layout) and send_keys' " +
+                     "other names, or one character (a letter or digit is its key, so 'ctrl+1' " +
                      "works on any layout); write + , * as plus, comma, star.")]
         KeyList keys,
         [Description("How often to press the whole sequence, 1-100 (at most 200 presses in all). Default: 1")]

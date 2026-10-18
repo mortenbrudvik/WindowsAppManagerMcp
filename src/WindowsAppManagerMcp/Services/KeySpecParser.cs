@@ -22,7 +22,25 @@ public sealed class KeySpec
 
     /// <summary>Every event of every step, in order.</summary>
     public IReadOnlyList<InputEvent> Events { get; }
+
+    /// <summary>
+    /// press_keys (issue #10): each chord whose character needed a Shift or AltGr the chord does not name, as written, with the
+    /// chord as pressed on the layout ('ctrl+=' to 'ctrl+shift+0' where '=' is Shift+0); null when there is none.
+    /// </summary>
+    public IReadOnlyDictionary<string, string>? ResolvedChords { get; init; }
+
+    /// <summary>
+    /// press_keys (issue #9): the chords whose character went out as Unicode, with no key, each once, in order; null when none
+    /// did. send_keys reads its characters from the events instead.
+    /// </summary>
+    public IReadOnlyList<CharacterWithoutKey>? SentAsCharacters { get; init; }
 }
+
+/// <summary>
+/// A chord (press_keys) or a character (send_keys) that went out as its character alone (KEYEVENTF_UNICODE), with no key and
+/// no scan code (issue #9): <paramref name="Keys"/> as the call wrote it, and the <paramref name="Character"/> sent.
+/// </summary>
+public sealed record CharacterWithoutKey(string Keys, string Character);
 
 /// <summary>
 /// Parses send_keys' key grammar (roadmap M4.1) into input events, mapping every character through a keyboard layout:
@@ -364,10 +382,12 @@ public static class KeySpecParser
                 return;
             }
 
-            // Caps Lock matters only to text: a shortcut is the same key whatever Caps Lock says
+            // Caps Lock matters only to text: a shortcut is the same key whatever Caps Lock says, and its character names the
+            // key even while an accent waits on the layout (issue #8)
             var plain = modifiers.Count == 0 && !_held.Any(KeyTable.IsModifier);
-            var stroke = layout.Map(c, capsLock: plain && _capsLock);
-            if (stroke == null && char.IsAsciiLetterOrDigit(c) && HoldsShortcutModifier(modifiers))
+            var shortcut = HoldsShortcutModifier(modifiers);
+            var stroke = layout.Map(c, capsLock: plain && _capsLock, asKey: shortcut);
+            if (stroke == null && char.IsAsciiLetterOrDigit(c) && shortcut)
             {
                 // A shortcut on a layout without Latin letters (Cyrillic, Greek): the key Windows calls A-Z or 0-9
                 stroke = new KeyStroke(char.ToUpperInvariant(c), char.IsAsciiLetterUpper(c) ? KeyModifiers.Shift : KeyModifiers.None);

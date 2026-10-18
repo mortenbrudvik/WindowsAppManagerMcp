@@ -138,6 +138,21 @@ public class KeySpecParserTests
     }
 
     [Fact]
+    public void WhileAnAccentWaitsOnTheLayout_AShortcutsCharacter_IsStillItsKey_ButTextStaysExact()
+    {
+        // Issue #8: an accent left waiting (a dead key) makes the '+' key type "`+". In a chord the character names the key,
+        // so ^{+} is still Ctrl and that key; as text it stays Unicode, since the key would type the accent too
+        var layout = KeyboardLayout.Of(new FakeKeyboardLayoutWrapper { Layout = FakeKeyboardLayoutWrapper.Norwegian, PendingDeadKey = '`' }, 0,
+            capsLock: false);
+
+        KeySpecParser.Parse("^{+}", layout).Events.Should().Equal(Seq(One(CtrlDown), Tap(0xBB, 0x0C), One(CtrlUp)));
+        KeySpecParser.Parse("{+}", layout).Events.Should().Equal(Unicode('+'));
+        layout.DeadKeyPending.Should().BeTrue();
+        Layout(FakeKeyboardLayoutWrapper.Norwegian).DeadKeyPending.Should().BeFalse();
+        KeyboardLayout.Invariant.DeadKeyPending.Should().BeFalse();
+    }
+
+    [Fact]
     public void ACharacterNotOnTheLayout_IsUnicode()
     {
         Us("€é").Should().Equal(Seq(Unicode('€'), Unicode('é')));

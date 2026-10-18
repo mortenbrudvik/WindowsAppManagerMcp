@@ -14,11 +14,16 @@ namespace WindowsAppManagerMcp.Services;
 /// modifiers go down in the order given, then the key goes down and up, then the modifiers come up, last first.</item>
 /// <item>A letter or digit is its key (A-Z, 0-9), with no Shift of its own, so 'ctrl+t' and 'ctrl+T' are the same chord
 /// and 'ctrl+1' is the shortcut on any layout. Any other character is the key the layout types it with, plus the Shift or
-/// AltGr it needs; Unicode only when no key types it. '+', ',' and '*' are written plus, comma and star.</item>
+/// AltGr it needs; Unicode only when no key types it. '+', ',' and '*' are written plus, comma and star. A key is also named
+/// by its place, whatever it types on the layout: oem_plus, oem_minus, oem_comma, oem_period, oem_1 to oem_8 and oem_102
+/// (<see cref="KeyTable"/>), so 'alt+shift+oem_plus' is Alt+Shift and the key right of 0 on any layout (issue #8).</item>
 /// <item>'chord*n' presses the chord n times (1 to <see cref="MaxRepeat"/>). Chords separated by spaces or commas, or the
 /// items of an array that is not one chord (<see cref="KeyList.IsOneChord"/>), follow each other.</item>
 /// </list>
-/// Each press is one step; repeat repeats the whole sequence. At most <see cref="MaxPresses"/> presses in one call.
+/// Each press is one step; repeat repeats the whole sequence. At most <see cref="MaxPresses"/> presses in one call. The spec
+/// also says how the chords went out on the layout (issues #9, #10): the chords whose character needed a Shift or AltGr the
+/// chord does not name (<see cref="KeySpec.ResolvedChords"/>), and those sent as their character with no key
+/// (<see cref="KeySpec.SentAsCharacters"/>), so the result can tell the agent what the target got.
 /// </summary>
 public static class PressKeysParser
 {
@@ -64,27 +69,106 @@ public static class PressKeysParser
                 $"The keys press {presses} chords (repeats included); one call presses at most {MaxPresses}. Send the rest in another call.");
         }
 
+        // Each chord once: a repeat presses the same keys
+        var pressed = chords.Select(chord => Press(chord, layout)).ToList();
         var steps = new List<IReadOnlyList<InputEvent>>(presses);
         for (var r = 0; r < repeat; r++)
         {
-            foreach (var chord in chords)
+            for (var c = 0; c < chords.Count; c++)
             {
-                var events = Press(chord, layout);
-                for (var n = 0; n < chord.Count; n++)
+                for (var n = 0; n < chords[c].Count; n++)
                 {
-                    steps.Add(events);
+                    steps.Add(pressed[c].Events);
                 }
             }
         }
 
-        return new KeySpec(steps);
+        var resolved = new Dictionary<string, string>(StringComparer.Ordinal);
+        var asCharacters = new List<CharacterWithoutKey>();
+        for (var c = 0; c < chords.Count; c++)
+        {
+            if (pressed[c].Resolved is { } name)
+            {
+                resolved.TryAdd(chords[c].Text, name);
+            }
+
+            if (pressed[c].Character is { } character && !asCharacters.Exists(sent => sent.Keys == chords[c].Text))
+            {
+                asCharacters.Add(new CharacterWithoutKey(chords[c].Text, character.ToString()));
+            }
+        }
+
+        return new KeySpec(steps)
+        {
+            ResolvedChords = resolved.Count == 0 ? null : resolved,
+            SentAsCharacters = asCharacters.Count == 0 ? null : asCharacters
+        };
     }
+
+    /// <summary>
+    /// The name press_keys takes for <paramref name="virtualKey"/>, for the result: a letter or digit as itself ('t', '0'),
+    /// a punctuation key by its place (oem_plus, oem_1, oem_102), another key by its first <see cref="KeyTable"/> name
+    /// (enter, pgup, f4); "vk_0xNN" for a key without one.
+    /// </summary>
+    public static string KeyName(ushort virtualKey)
+    {
+        if (virtualKey is >= 'A' and <= 'Z' or >= '0' and <= '9')
+        {
+            return char.ToLowerInvariant((char)virtualKey).ToString();
+        }
+
+        return ModifierNames.TryGetValue(virtualKey, out var modifier) ? modifier
+            : KeyTable.NameOf(virtualKey) is { } name
+                ? name.StartsWith("OEM", StringComparison.Ordinal) ? "oem_" + name[3..].ToLowerInvariant() : name.ToLowerInvariant()
+                : $"vk_0x{virtualKey:X2}";
+    }
+
+    /// <summary>
+    /// <paramref name="chord"/> as press_keys writes it: its modifiers (ctrl, alt, shift, win), then its key
+    /// (<see cref="KeyName"/>), or the character it sent as Unicode.
+    /// </summary>
+    public static string NameOf(KeyChord chord)
+    {
+        var names = new List<string>();
+        foreach (var (kind, name) in new[]
+                 {
+                     (KeyModifiers.Control, "ctrl"), (KeyModifiers.Alt, "alt"), (KeyModifiers.Shift, "shift"), (KeyModifiers.Windows, "win")
+                 })
+        {
+            if ((chord.Modifiers & kind) != 0)
+            {
+                names.Add(name);
+            }
+        }
+
+        names.Add(chord.Kind == InputEventKind.Unicode ? ((char)chord.Code).ToString() : KeyName(chord.Code));
+        return string.Join("+", names);
+    }
+
+    /// <summary>The modifier keys' names, as a chord takes them.</summary>
+    private static readonly Dictionary<ushort, string> ModifierNames = new()
+    {
+        [NativeEnums.VK_CONTROL] = "ctrl", [NativeEnums.VK_LCONTROL] = "lctrl", [NativeEnums.VK_RCONTROL] = "rctrl",
+        [NativeEnums.VK_MENU] = "alt", [NativeEnums.VK_LMENU] = "lalt", [NativeEnums.VK_RMENU] = "ralt",
+        [NativeEnums.VK_SHIFT] = "shift", [NativeEnums.VK_LSHIFT] = "lshift", [NativeEnums.VK_RSHIFT] = "rshift",
+        [NativeEnums.VK_LWIN] = "win", [NativeEnums.VK_RWIN] = "rwin"
+    };
 
     /// <summary>A key a name stands for: a virtual key, or a character the layout maps.</summary>
     private readonly record struct NamedKey(ushort VirtualKey, char? Character);
 
-    /// <summary>One chord of the sequence: its modifiers in order, its other key (or none), and how often it is pressed.</summary>
-    private sealed record ChordSpec(IReadOnlyList<ushort> Modifiers, NamedKey? Key, int Count);
+    /// <summary>
+    /// One chord of the sequence: its modifiers in order, its other key (or none), how often it is pressed, and the chord as
+    /// written, without its count.
+    /// </summary>
+    private sealed record ChordSpec(IReadOnlyList<ushort> Modifiers, NamedKey? Key, int Count, string Text);
+
+    /// <summary>
+    /// One press of a chord: its events; the chord as pressed (<see cref="KeyName"/>s) when its character needed a Shift or
+    /// AltGr the chord does not name ('ctrl+shift+0' for 'ctrl+=' where '=' is Shift+0), else null; and the character it
+    /// sent as Unicode, with no key, else null.
+    /// </summary>
+    private sealed record Pressed(IReadOnlyList<InputEvent> Events, string? Resolved, char? Character);
 
     private static ChordSpec Chord(string token)
     {
@@ -136,7 +220,7 @@ public static class PressKeysParser
             key = named;
         }
 
-        return new ChordSpec(modifiers, key, count);
+        return new ChordSpec(modifiers, key, count, token);
     }
 
     private static NamedKey? Resolve(string name)
@@ -159,12 +243,15 @@ public static class PressKeysParser
         return KeyTable.Find(name) is { } virtualKey ? new NamedKey(virtualKey, null) : null;
     }
 
-    /// <summary>The events of one press of <paramref name="chord"/>.</summary>
-    private static List<InputEvent> Press(ChordSpec chord, KeyboardLayout layout)
+    /// <summary>One press of <paramref name="chord"/>: its events, and how its character went out.</summary>
+    private static Pressed Press(ChordSpec chord, KeyboardLayout layout)
     {
         var events = new List<InputEvent>();
         var pressed = new List<ushort>();
         var altGrKeys = new List<ushort>();
+        var added = new List<string>();
+        string? resolved = null;
+        char? asCharacter = null;
         foreach (var modifier in chord.Modifiers)
         {
             Down(modifier);
@@ -184,10 +271,13 @@ public static class PressKeysParser
                 break;
 
             case { Character: { } c }:
-                if (layout.Map(c, capsLock: false) is { } stroke)
+                // The character names the key, so an accent waiting on the layout does not turn it into Unicode (issue #8)
+                if (layout.Map(c, capsLock: false, asKey: true) is { } stroke)
                 {
                     if (stroke.IsAltGr)
                     {
+                        added.Add("altgr");
+
                         // As a keyboard sends AltGr, and as send_keys does: tagged, so the chord checks read the pair as a
                         // character; 'lctrl+ralt' named in the chord is not tagged, and counts as Ctrl+Alt
                         if (!Holds(KeyModifiers.Control))
@@ -204,15 +294,21 @@ public static class PressKeysParser
                     if ((stroke.Modifiers & KeyModifiers.Shift) != 0 && !Holds(KeyModifiers.Shift))
                     {
                         Down(NativeEnums.VK_SHIFT);
+                        added.Add("shift");
                     }
 
                     Down(stroke.VirtualKey);
                     Up(stroke.VirtualKey);
+                    if (added.Count > 0)
+                    {
+                        resolved = string.Join("+", chord.Modifiers.Select(KeyName).Concat(added).Append(KeyName(stroke.VirtualKey)));
+                    }
                 }
                 else
                 {
                     events.Add(InputEvent.Unicode(c, NativeEnums.KEYEVENTF_KEYDOWN));
                     events.Add(InputEvent.Unicode(c, NativeEnums.KEYEVENTF_KEYUP));
+                    asCharacter = c;
                 }
 
                 break;
@@ -223,7 +319,7 @@ public static class PressKeysParser
             events.Add(KeyEvent(pressed[k], NativeEnums.KEYEVENTF_KEYUP, altGrKeys.Contains(pressed[k])));
         }
 
-        return events;
+        return new Pressed(events, resolved, asCharacter);
 
         bool Holds(KeyModifiers kind) => pressed.Any(key => SendKeysParser.ModifierOf(key) == kind);
 
