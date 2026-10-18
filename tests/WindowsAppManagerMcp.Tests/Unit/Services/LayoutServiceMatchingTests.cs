@@ -9,7 +9,7 @@ public class LayoutServiceMatchingTests : IDisposable
 {
     private readonly string _layoutsPath = Path.Combine(Path.GetTempPath(), $"LayoutServiceMatchingTests_{Guid.NewGuid():N}");
     private readonly Mock<IWindowService> _windows = TestDataFactory.CreateMockWindowService([]);
-    private readonly Mock<IMonitorService> _monitors = TestDataFactory.CreateMockMonitorService();
+    private readonly Mock<IMonitorService> _monitors = TestDataFactory.CreateMockMonitorService().WithWindowMonitors();
     private readonly Mock<IProcessService> _processes = TestDataFactory.CreateMockProcessService();
     private readonly Mock<IForegroundService> _foreground = TestDataFactory.CreateMockForegroundService();
 

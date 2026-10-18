@@ -10,11 +10,13 @@ public class LayoutServiceCaptureTests : IDisposable
 {
     private readonly string _layoutsPath = Path.Combine(Path.GetTempPath(), $"LayoutServiceCaptureTests_{Guid.NewGuid():N}");
     private readonly Mock<IWindowService> _windows = TestDataFactory.CreateMockWindowService([]);
-    private readonly Mock<IMonitorService> _monitors = TestDataFactory.CreateMockMonitorService(
+    private static readonly MonitorInfo[] Monitors =
     [
         TestDataFactory.CreateMonitorInfo() with { Id = "m-11111111", FriendlyName = "DELL U2720Q" },
         TestDataFactory.CreateMonitorInfo(1, @"\\.\DISPLAY2", false, 1920, 0, 2560, 1440, 1920, 0, 2560, 1400, 1.25)
-    ]);
+    ];
+
+    private readonly Mock<IMonitorService> _monitors = TestDataFactory.CreateMockMonitorService(Monitors);
     private readonly Mock<IProcessService> _processes = TestDataFactory.CreateMockProcessService();
     private readonly Mock<INativeAppsWrapper> _apps = new();
     private readonly Mock<IInstalledAppsService> _installedApps = new();
@@ -40,6 +42,9 @@ public class LayoutServiceCaptureTests : IDisposable
     {
         _windows.Setup(w => w.GetAllWindows(true)).Returns(windows);
         _windows.Setup(w => w.GetAllWindows(false)).Returns(windows.Where(w => w.State != WindowState.Minimized).ToList());
+        // Each window is on the monitor its listing gives it, when the capture looks its monitor up again
+        foreach (var window in windows)
+            _monitors.Setup(m => m.GetMonitorForWindow(window.Handle)).Returns(Monitors[window.MonitorIndex]);
     }
 
     private async Task<WindowPlacement> CaptureOneAsync(bool includeMinimized = false)
@@ -191,6 +196,54 @@ public class LayoutServiceCaptureTests : IDisposable
         result.ErrorCode.Should().Be(nameof(WindowErrorCode.MonitorNotFound));
         result.ErrorMessage.Should().Contain("No monitor could be read").And.Contain("nothing was saved").And.Contain("Try again");
         (await File.ReadAllTextAsync(Path.Combine(_layoutsPath, "captured.json"))).Should().Be(before, "the preset is kept as it was");
+    }
+
+    [Fact]
+    public async Task WhenAWindowsMonitorCannotBeRead_NothingIsSaved_AndThePresetIsKept()
+    {
+        // Final review: the listing gives monitor index 0 also to a window whose monitor could not be read (the displays
+        // changing), while the monitors read after it can be. The capture recorded that window on monitor 0
+        OpenWindows(Window(0x101, "Code", 501, 0, 0, 960, 1040));
+        (await CreateSut().CaptureCurrentLayoutAsync("captured")).Success.Should().BeTrue();
+        var before = await File.ReadAllTextAsync(Path.Combine(_layoutsPath, "captured.json"));
+        var notepad = Window(0x102, "notepad", 502, 2000, 100, 800, 600);
+        OpenWindows(Window(0x101, "Code", 501, 0, 0, 960, 1040), notepad);
+        _monitors.Setup(m => m.GetMonitorForWindow((nint)0x102)).Returns((MonitorInfo?)null);
+        _windows.Setup(w => w.GetWindowInfo((nint)0x102)).Returns(notepad);
+
+        var result = await CreateSut().CaptureCurrentLayoutAsync("captured");
+
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(nameof(WindowErrorCode.MonitorNotFound));
+        result.ErrorMessage.Should().Contain("The monitor of a window of notepad could not be read").And.Contain("nothing was saved")
+            .And.Contain("Try again");
+        (await File.ReadAllTextAsync(Path.Combine(_layoutsPath, "captured.json"))).Should().Be(before, "the preset is kept as it was");
+    }
+
+    [Fact]
+    public async Task AWindowIsRecordedOnTheMonitorItIsOnWhenItsMonitorIsLookedUpAgain_NotOnTheListingsMonitor0()
+    {
+        // The listing could not read the window's monitor and gave it index 0; read again, it is the second monitor
+        OpenWindows(Window(0x101, "Code", 501, 2000, 100, 1280, 700));
+        _monitors.Setup(m => m.GetMonitorForWindow((nint)0x101)).Returns(Monitors[1]);
+
+        var placement = await CaptureOneAsync();
+
+        placement.MonitorIndex.Should().Be(1);
+        placement.Monitor.Should().Be(@"\\.\DISPLAY2");
+        placement.Position.Should().Be(new RelativePosition(80.0 / 2560, 100.0 / 1400, 0.5, 0.5), "measured against that monitor's work area");
+    }
+
+    [Fact]
+    public async Task AWindowThatClosedSinceItWasListed_IsLeftOut()
+    {
+        OpenWindows(Window(0x101, "Code", 501, 0, 0, 960, 1040), Window(0x102, "notepad", 502, 0, 0, 800, 600));
+        _monitors.Setup(m => m.GetMonitorForWindow((nint)0x101)).Returns((MonitorInfo?)null);
+        _windows.Setup(w => w.GetWindowInfo((nint)0x101)).Returns((WindowInfo?)null);
+
+        var placement = await CaptureOneAsync();
+
+        placement.Matcher.ProcessName.Should().Be("notepad");
     }
 
     [Fact]
