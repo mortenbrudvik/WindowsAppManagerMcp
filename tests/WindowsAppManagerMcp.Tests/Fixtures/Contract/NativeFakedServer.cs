@@ -185,11 +185,14 @@ public sealed class NativeFakedServer : IDisposable
     }
 
     /// <summary>
-    /// A member of a seam that changes something, not a read (as the E2E WrapperCatalog classifies them): a window change, a
-    /// process start or stop, attaching thread input, UI Automation's window close, an app's activation, a DevTools command,
-    /// input (SendInput, SetCursorPos), a clipboard write, and a UI Automation action (IUiaTree.SetFocus, and every method of a
-    /// pattern object but its reads). <see cref="Actions"/> counts the mocks' calls with it, and SelfGatedToolsContractTests the
-    /// calls in a service's IL.
+    /// A member of a seam that changes something, not a read: a window change, a process start or stop, attaching thread input,
+    /// UI Automation's window close, an app's activation, a DevTools command, input (SendInput, SetCursorPos), a clipboard
+    /// write, a UI Automation action (IUiaTree.SetFocus, and every method of a pattern object but its reads; a grid's GetItem
+    /// acts, since WPF's grids scroll to the cell), and the pause hotkey's and the shared pause's members (a hotkey, its thread's
+    /// message loop, the chord mark, and opening, setting or resetting the pause every server on the desktop follows).
+    /// <see cref="Actions"/> counts the mocks' calls with it, and SelfGatedToolsContractTests the calls in a service's IL.
+    /// NativeFakedServerTests holds it to the E2E WrapperCatalog: every member the catalog does not call a read is an action
+    /// here, but for the clipboard's read, which the catalog refuses for privacy and which changes nothing.
     /// </summary>
     public static bool IsAction(Type service, MethodInfo method) => method.Name switch
     {
@@ -210,11 +213,18 @@ public sealed class NativeFakedServer : IDisposable
         _ when service == typeof(INativeClipboardWrapper) => method.Name is nameof(INativeClipboardWrapper.WriteText)
             or nameof(INativeClipboardWrapper.ReplaceText),
         _ when service == typeof(IUiaTree) => method.Name is nameof(IUiaTree.SetFocus),
-        // A pattern object: its state reads and text, grid, table and item lookups read; every other method acts
+        // A pattern object: its state reads and text, table and item lookups read; every other method acts, a grid's GetItem
+        // too (WPF's DataGrid and GridView scroll to the cell and realize its row)
         _ when typeof(IUiaPattern).IsAssignableFrom(service) => !IsGetter(method) && method.Name is not (nameof(IUiaTextPattern.GetText)
-            or nameof(IUiaTextPattern.GetSelectedText) or nameof(IUiaTextPattern.GetTextPage) or nameof(IUiaGridPattern.GetItem)
+            or nameof(IUiaTextPattern.GetSelectedText) or nameof(IUiaTextPattern.GetTextPage)
             or nameof(IUiaTablePattern.GetColumnHeaders) or nameof(IUiaTablePattern.GetRowHeaders)
             or nameof(IUiaItemContainerPattern.FindItemByProperty) or nameof(IUiaWindowPattern.WaitForInputIdle)),
+        // The pause hotkey: everything but the thread id and whether a server marked the chord (a system-wide hotkey, its
+        // message loop, the chord mark, and the pause every server on the desktop shares)
+        _ when service == typeof(INativeHotkeyWrapper) => method.Name is not (nameof(INativeHotkeyWrapper.GetCurrentThreadId)
+            or nameof(INativeHotkeyWrapper.IsChordHeldByAServer)),
+        // The shared pause: setting or resetting it pauses or resumes every server on the desktop; its state reads read
+        _ when service == typeof(IDesktopPauseFlag) => method.Name is nameof(IDesktopPauseFlag.Set) or nameof(IDesktopPauseFlag.Reset),
         _ => false
     };
 

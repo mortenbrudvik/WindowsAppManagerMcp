@@ -29,4 +29,9 @@
     <ProjectReference Include="..\WindowsAppManagerMcp.Tests.Infrastructure\WindowsAppManagerMcp.Tests.Infrastructure.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- The E2E guard's classification of every native wrapper member: NativeFakedServer.IsAction is held to it (NativeFakedServerTests) -->
+    <Compile Include="..\WindowsAppManagerMcp.E2ETests\Harness\WrapperCatalog.cs" Link="Fixtures\Contract\WrapperCatalog.cs" />
+  </ItemGroup>
+
 </Project>

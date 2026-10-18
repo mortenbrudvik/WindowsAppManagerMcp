@@ -3160,7 +3160,11 @@ Two contracts hold the safety rules for every tool at once, so a new tool cannot
 Program.cs registers them, with every native seam faked (every `INative*` and `*Wrapper` interface, the interfaces the
 Native types implement, the CDP transport and the executable resolver) over a small desktop of its own
 (`DeniedDesktop`). No hosted service runs, and before any call it walks the container and refuses to start if a
-service holds a real native wrapper.
+service holds a real native wrapper. Its `IsAction`, which says what counts as an action among the fakes' calls and in
+the IL of a self-gated route, is held to the E2E `WrapperCatalog`, which the unit test project compiles in as a linked
+file (`NativeFakedServerTests`): every seam member the catalog does not call a read is an action (a grid's `GetItem`,
+which scrolls a WPF grid, and the pause hotkey's and the shared pause's members too), except the clipboard's read, which
+the catalog refuses for privacy and which changes nothing.
 
 `Contract/ToolPayloadBudgetTests` measures the typical result of every tool on `TypicalDesktop` (two
 monitors, 15 windows, 40 processes, a 120-element UI Automation tree, a 15,000-character article, five layout
