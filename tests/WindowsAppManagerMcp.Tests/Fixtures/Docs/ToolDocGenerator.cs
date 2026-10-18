@@ -23,18 +23,21 @@ public sealed record GeneratedDoc(string Name, string[] RelativePath)
 }
 
 /// <summary>
-/// Generates the tool tables of README.md, docs/TOOLS.md and SKILL.md from the server's tools/list
-/// (<see cref="ToolSurface"/>) and <see cref="ToolDocCatalog"/>, into the files' marked regions
+/// Generates the tool tables of README.md, docs/TOOLS.md and the plugin skill (its SKILL.md and tools.md) from the
+/// server's tools/list (<see cref="ToolSurface"/>) and <see cref="ToolDocCatalog"/>, into the files' marked regions
 /// (<see cref="MarkdownRegions"/>). GeneratedToolDocsTests fails when a region is out of date, and rewrites it
 /// with UPDATE_SNAPSHOTS=1.
 /// </summary>
 /// <remarks>
 /// Region ids: README.md has <c>tool-table</c> (heading with the tool count, and the category table); docs/TOOLS.md
-/// has <c>summary</c> (introduction with the count, and the quick reference), <c>toolsets</c> (the toolsets of
+/// has <c>summary</c> (introduction with the count, and the quick reference), <c>annotations</c> (the tools each of the
+/// four hints marks, from the tools' [McpServerTool] annotations), <c>toolsets</c> (the toolsets of
 /// <see cref="Toolsets.Server"/>, roadmap M2.14), <c>read-only</c> (the tools annotated readOnlyHint, which read-only
 /// mode serves), <c>params:TOOL</c> in each tool's section and <c>resources</c> (the resources and prompts of
-/// <see cref="ResourcesAndPrompts"/>, roadmap M6.9); SKILL.md has
-/// <c>count</c> (the sentence with the tool count) and <c>tool-tables</c> (the whole "Available Tools" section).
+/// <see cref="ResourcesAndPrompts"/>, roadmap M6.9); the skill's SKILL.md has <c>count</c> (the sentence with the tool
+/// count) and its tools.md <c>tool-tables</c> (the whole "Available Tools" section). The tables are in tools.md, not in
+/// SKILL.md, because a client loads SKILL.md whole whenever the skill triggers, and the tables (about 3,600 tokens) are
+/// reference an agent reads only when its task needs them (issue #11).
 /// <para>
 /// A <c>params:TOOL</c> region is the tool's parameter table, and a field table for each parameter that is an
 /// array of objects. Names, order, types, required flags and defaults come from the tool's inputSchema. The
@@ -48,8 +51,11 @@ public static partial class ToolDocGenerator
     public static readonly GeneratedDoc Readme = new("README.md", ["README.md"]);
     public static readonly GeneratedDoc ToolsReference = new("docs/TOOLS.md", ["docs", "TOOLS.md"]);
     public static readonly GeneratedDoc Skill = new("SKILL.md", ["skills", "using-windows-app-manager", "SKILL.md"]);
+    public static readonly GeneratedDoc SkillTools = new(SkillToolsName, ["skills", "using-windows-app-manager", "tools.md"]);
 
-    public static IReadOnlyList<GeneratedDoc> All { get; } = [Readme, ToolsReference, Skill];
+    public static IReadOnlyList<GeneratedDoc> All { get; } = [Readme, ToolsReference, Skill, SkillTools];
+
+    private const string SkillToolsName = "skills/using-windows-app-manager/tools.md";
 
     private const string ParamsPrefix = "params:";
 
@@ -72,12 +78,17 @@ public static partial class ToolDocGenerator
 
         if (doc == Skill)
         {
-            return ["count", "tool-tables"];
+            return ["count"];
+        }
+
+        if (doc == SkillTools)
+        {
+            return ["tool-tables"];
         }
 
         if (doc == ToolsReference)
         {
-            return ["summary", "toolsets", "read-only", .. ToolDocCatalog.AllTools.Select(t => ParamsRegionId(t.Name)), "resources"];
+            return ["summary", "annotations", "toolsets", "read-only", .. ToolDocCatalog.AllTools.Select(t => ParamsRegionId(t.Name)), "resources"];
         }
 
         throw new ArgumentException($"Unknown generated doc {doc}.", nameof(doc));
@@ -96,6 +107,7 @@ public static partial class ToolDocGenerator
         {
             ("README.md", "tool-table") => ReadmeToolTable(count),
             ("docs/TOOLS.md", "summary") => ToolsSummary(count),
+            ("docs/TOOLS.md", "annotations") => AnnotationsTable(tools),
             ("docs/TOOLS.md", "toolsets") => ToolsetsTable(Toolsets.Server, tools),
             ("docs/TOOLS.md", "read-only") => ReadOnlyTools(tools),
             ("docs/TOOLS.md", "resources") => ResourcesAndPromptsTables(),
@@ -103,7 +115,7 @@ public static partial class ToolDocGenerator
                 ParameterTables(ToolSurface.Tool(tools, id[ParamsPrefix.Length..]), current),
             ("SKILL.md", "count") =>
                 $"Windows App Manager provides {count} MCP tools for managing Windows applications, windows, and desktop layouts.",
-            ("SKILL.md", "tool-tables") => SkillToolTables(count),
+            (SkillToolsName, "tool-tables") => SkillToolTables(count),
             _ => throw new ArgumentException($"{doc} has an unknown generated region '{id}'.", nameof(id))
         };
     }
@@ -175,16 +187,78 @@ public static partial class ToolDocGenerator
             .ToString("N0", CultureInfo.InvariantCulture);
 
     /// <summary>
+    /// The four hints of tools/list's annotations, in the order the annotations table lists them, each with what it tells a
+    /// client. Which tools each hint marks is generated from the annotations (<see cref="AnnotationsTable"/>); why a tool
+    /// has a hint is not generated: the hand-written paragraph under the table says it for some of the tools.
+    /// </summary>
+    public static IReadOnlyList<(string Hint, string Says)> AnnotationHints { get; } =
+    [
+        ("readOnlyHint", "They change nothing, write no file and run without the input gate (get_clipboard may ask the user, " +
+                         "which changes nothing); [read-only mode](#toolsets) serves exactly these"),
+        ("destructiveHint", "What they do may not be undone: input that confirms, deletes or sends, a script run in a page, a " +
+                            "window, process or browser closed, a file, preset, clipboard or page replaced or deleted, a program started"),
+        ("idempotentHint", "A second call with the same arguments ends in the same place"),
+        ("openWorldHint", "They reach beyond the windows on the desktop: they start programs, open URIs, folders and web pages, " +
+                          "or act on or read what a website wrote"),
+    ];
+
+    /// <summary>
+    /// The annotations table: for each hint of <see cref="AnnotationHints"/>, what it says and the tools whose
+    /// [McpServerTool] sets it, linked, in catalog order and grouped as the read-only list groups them (<see cref="ToolLinks"/>).
+    /// A hint that marks every read-only tool names them as "the read-only tools" and links only the others.
+    /// </summary>
+    public static string AnnotationsTable(JsonArray tools)
+    {
+        var lines = new List<string>
+        {
+            "| Hint | What it says | Tools |",
+            "|------|--------------|-------|"
+        };
+        var readOnly = ToolsWith(tools, "readOnlyHint");
+        foreach (var (hint, says) in AnnotationHints)
+        {
+            var marked = ToolsWith(tools, hint);
+            var cell = hint != "readOnlyHint" && readOnly.Count > 0 && readOnly.All(marked.Contains)
+                ? "The read-only tools, and " + ToolLinks(marked.Except(readOnly).ToList())
+                : ToolLinks(marked);
+            lines.Add($"| `{hint}: true` | {says} | {cell} |");
+        }
+
+        return string.Join('\n', lines);
+    }
+
+    /// <summary>The tools whose tools/list annotation <paramref name="hint"/> is true, in catalog order.</summary>
+    public static List<string> ToolsWith(JsonArray tools, string hint) =>
+        ToolDocCatalog.AllTools
+            .Select(t => t.Name)
+            .Where(name => ToolSurface.Tool(tools, name)["annotations"]?[hint]?.GetValue<bool>() == true)
+            .ToList();
+
+    /// <summary>
+    /// Links to <paramref name="names"/>: the tools of the toolsets that are on by default first, then those of an opt-in
+    /// toolset with its name, as the read-only list names them.
+    /// </summary>
+    private static string ToolLinks(IReadOnlyList<string> names)
+    {
+        var optIn = names.Where(name => Toolsets.Server.ToolsetOf(name) is { OnByDefault: false }).ToList();
+        var byDefault = string.Join(", ", names.Except(optIn).Select(name => $"[{name}](#{name})"));
+        if (optIn.Count == 0)
+        {
+            return byDefault;
+        }
+
+        var opt = string.Join(", ", optIn.Select(name => $"[{name}](#{name}) (`{Toolsets.Server.ToolsetOf(name)!.Name}`)"));
+        return byDefault.Length == 0 ? $"in toolsets that are off by default: {opt}" : $"{byDefault}; in toolsets that are off by default: {opt}";
+    }
+
+    /// <summary>
     /// The tools annotated readOnlyHint, which read-only mode serves, in catalog order: the Observer profile is exactly
     /// this list, so it cannot drift from the annotations. Those of a toolset that is off by default are named apart: read-only
     /// mode alone does not serve them.
     /// </summary>
     private static string ReadOnlyTools(JsonArray tools)
     {
-        var readOnly = ToolDocCatalog.AllTools
-            .Select(t => t.Name)
-            .Where(name => ToolSurface.Tool(tools, name)["annotations"]?["readOnlyHint"]?.GetValue<bool>() == true)
-            .ToList();
+        var readOnly = ToolsWith(tools, "readOnlyHint");
         var optIn = readOnly.Where(name => Toolsets.Server.ToolsetOf(name) is { OnByDefault: false }).ToList();
         var byDefault = readOnly.Except(optIn).ToList();
         var sentence = $"Read-only mode serves these {byDefault.Count} tools: {string.Join(", ", byDefault.Select(name => $"[{name}](#{name})"))}.";

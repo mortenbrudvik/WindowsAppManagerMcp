@@ -29,6 +29,13 @@ public record MonitorInfo(
     }
 
     /// <summary>
+    /// True when Windows could not report the monitor's DPI (GetDpiForMonitor failed): <see cref="ScaleFactor"/> is then 1 and
+    /// <see cref="Dpi"/> 96 for the arithmetic that needs a scale, but neither was read, so get_monitors leaves both out
+    /// rather than report 100% as fact.
+    /// </summary>
+    public bool DpiUnknown { get; init; }
+
+    /// <summary>
     /// A short stable id, "m-" plus 8 hex digits, hashed from the monitor's device path
     /// (<see cref="WindowsAppManagerMcp.Services.MonitorIdentity.IdOf(string)"/>). It stays the same while the monitor
     /// stays on the same port; moving it to another port or dock gives it a new id. Null when the display configuration

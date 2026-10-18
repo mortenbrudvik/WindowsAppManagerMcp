@@ -24,7 +24,8 @@ public class CdpServiceTests
         Title: "Inbox",
         Url: "https://mail.example/",
         WebSocketDebuggerUrl: "ws://127.0.0.1:9222/devtools/page/TAB1",
-        Port: Port);
+        Port: Port,
+        OwnerProcessId: BrowserPid);
 
     /// <summary>The whole page's text, as get_browser_content's first page asks for it.</summary>
     private static readonly CdpPageRequest TextPage = new(TextOnly: true, Offset: 0, MaxLength: BrowserContentOptions.DefaultMaxLength);
@@ -41,10 +42,12 @@ public class CdpServiceTests
         ICdpWebSocketFactory? sockets = null,
         int? portOwner = BrowserPid,
         CdpTransportLimits? limits = null,
-        bool listenerTableReadable = true) =>
-        new(
-            new CdpTransport(http ?? FakeCdpHttpHandler.Targets(), sockets ?? FakeCdpWebSocketFactory.NeverConnects(), limits),
-            new FakePortOwnerResolver(portOwner, listenerTableReadable));
+        bool listenerTableReadable = true)
+    {
+        var owners = new FakePortOwnerResolver(portOwner, listenerTableReadable);
+        return new CdpService(
+            new CdpTransport(http ?? FakeCdpHttpHandler.Targets(), sockets ?? FakeCdpWebSocketFactory.NeverConnects(), owners, limits), owners);
+    }
 
     /// <summary>A fake page that answers Runtime.evaluate with the given snapshot.</summary>
     private static FakeCdpWebSocket PageAnswering(object snapshot, int? frameSize = null) =>
@@ -317,7 +320,7 @@ public class CdpServiceTests
     public async Task FindTargetForWindowAsync_RefusesAPortOutsideTheRange_BeforeReadingItsOwner(int port)
     {
         var owners = new Mock<ITcpPortOwnerResolver>(MockBehavior.Strict);
-        var sut = new CdpService(new CdpTransport(FakeCdpHttpHandler.Targets(), FakeCdpWebSocketFactory.NeverConnects()), owners.Object);
+        var sut = new CdpService(new CdpTransport(FakeCdpHttpHandler.Targets(), FakeCdpWebSocketFactory.NeverConnects(), owners.Object), owners.Object);
 
         var result = await sut.FindTargetForWindowAsync(port, TitleOnly("Inbox"), LongTimeout);
 
@@ -553,7 +556,10 @@ public class CdpServiceTests
             .Tab("A", "Inbox", 1)
             .Tab("B", "News", 1);
         var sut = CreateSut(browser);
-        var budget = TimeSpan.FromMilliseconds(1500);
+        // A budget whose share for the binding is capped (BindingBudget: at most 2 s of 6 s), so the call that keeps to its
+        // share (about 2 s) and one that lets the stalled binding take the whole budget (6 s) are seconds apart: a test run
+        // under heavy parallel load does not push the first past the bound, and the second still fails it
+        var budget = TimeSpan.FromSeconds(6);
         var stopwatch = Stopwatch.StartNew();
 
         var result = await sut.FindTargetForWindowAsync(Port, At("Inbox - Google Chrome", 0, 0, 1000, 700), budget);
@@ -561,7 +567,8 @@ public class CdpServiceTests
         stopwatch.Stop();
         result.Value!.Id.Should().Be("A");
         browser.WindowQueries.Should().Be(2);
-        stopwatch.Elapsed.Should().BeLessThan(budget * 0.8, "the binding may use only a share of the budget");
+        CdpService.BindingBudget(budget).Should().Be(TimeSpan.FromSeconds(2));
+        stopwatch.Elapsed.Should().BeLessThan(budget * 0.75, "the binding may use only a share of the budget");
     }
 
     [Theory]
@@ -599,6 +606,396 @@ public class CdpServiceTests
 
         oneTab.Sockets.ConnectedUris.Should().BeEmpty();
         twoTabs.Sockets.ConnectedUris.Should().BeEmpty();
+    }
+
+    #endregion
+
+    #region FindTargetForWindowAsync: several tabs with a title the window shows
+
+    [Fact]
+    public async Task FindTargetForWindowAsync_ABackgroundTabTitledAsTheWholeWindow_DoesNotTakeTheShownTabsPlace()
+    {
+        // A page in a background tab sets document.title to the window's whole caption: its title also starts the window's
+        // title, and is longer than the shown tab's. Which one is shown is read where the page cannot lie about it
+        var browser = new FakeCdpBrowser()
+            .Window(1, 0, 0, 1000, 700)
+            .Tab("REAL", "Inbox", 1)
+            .Tab("SPOOF", "Inbox - Google Chrome", 1)
+            .Visibility("REAL", "visible")
+            .Visibility("SPOOF", "hidden");
+        var sut = CreateSut(browser);
+
+        var result = await sut.FindTargetForWindowAsync(Port, At("Inbox - Google Chrome", 0, 0, 1000, 700), LongTimeout);
+
+        result.Success.Should().BeTrue(result.Error);
+        result.Value!.Id.Should().Be("REAL");
+    }
+
+    [Fact]
+    public async Task FindTargetForWindowAsync_ABackgroundTabTitledAsTheEdgeProfileSegment_DoesNotTakeTheShownTabsPlace()
+    {
+        // In Edge the window's title goes on with the profile: 'Inbox - Personal' starts it as 'Inbox' does
+        var browser = new FakeCdpBrowser()
+            .Window(1, 0, 0, 1000, 700)
+            .Tab("REAL", "Inbox", 1)
+            .Tab("SPOOF", "Inbox - Personal", 1)
+            .Visibility("REAL", "visible")
+            .Visibility("SPOOF", "hidden");
+        var sut = CreateSut(browser);
+
+        var result = await sut.FindTargetForWindowAsync(
+            Port, At("Inbox - Personal - Microsoft​ Edge", 0, 0, 1000, 700), LongTimeout);
+
+        result.Success.Should().BeTrue(result.Error);
+        result.Value!.Id.Should().Be("REAL");
+    }
+
+    [Fact]
+    public async Task FindTargetForWindowAsync_TheLongerTitle_IsTakenWhenItIsTheShownTab()
+    {
+        // The legitimate case: 'GitHub - Pull requests' is shown, and 'GitHub' is a tab behind it
+        var browser = new FakeCdpBrowser()
+            .Window(1, 0, 0, 1000, 700)
+            .Tab("A", "GitHub", 1)
+            .Tab("B", "GitHub - Pull requests", 1)
+            .Visibility("A", "hidden")
+            .Visibility("B", "visible");
+        browser.MainWorldVisibility = "hidden";
+        var sut = CreateSut(browser);
+
+        var result = await sut.FindTargetForWindowAsync(Port, At("GitHub - Pull requests - Google Chrome", 0, 0, 1000, 700), LongTimeout);
+
+        result.Success.Should().BeTrue(result.Error);
+        result.Value!.Id.Should().Be("B");
+    }
+
+    [Fact]
+    public async Task FindTargetForWindowAsync_ReadsWhichTabIsShown_InAnIsolatedWorldOfItsMainFrame()
+    {
+        // The page's own scripts can redefine document.visibilityState in its main world, not in an isolated world
+        var browser = new FakeCdpBrowser()
+            .Window(1, 0, 0, 1000, 700)
+            .Tab("A", "GitHub", 1)
+            .Tab("B", "GitHub - Pull requests", 1)
+            .Visibility("A", "hidden")
+            .Visibility("B", "visible");
+        var sut = CreateSut(browser);
+
+        await sut.FindTargetForWindowAsync(Port, At("GitHub - Pull requests - Google Chrome", 0, 0, 1000, 700), LongTimeout);
+
+        foreach (var tab in new[] { "A", "B" })
+        {
+            var sent = browser.PageCommands.Where(c => c.TabId == tab).Select(c => c.Command).ToList();
+            sent.Should().Contain(c => c.GetProperty("method").GetString() == "Page.createIsolatedWorld" &&
+                                       c.GetProperty("params").GetProperty("frameId").GetString() == "F-" + tab);
+            var evaluate = sent.Where(c => c.GetProperty("method").GetString() == "Runtime.evaluate").Should().ContainSingle().Subject;
+            evaluate.GetProperty("params").GetProperty("contextId").GetInt32().Should().Be(FakeCdpBrowser.IsolatedContextId);
+            evaluate.GetProperty("params").GetProperty("expression").GetString().Should().Contain("visibilityState");
+        }
+    }
+
+    [Fact]
+    public async Task FindTargetForWindowAsync_SeveralTabsAndNoneShown_IsAmbiguous_NeverTheLongestTitle()
+    {
+        // A covered or minimized window shows none of its tabs as visible: the title alone would take the spoof
+        var browser = new FakeCdpBrowser()
+            .Window(1, 0, 0, 1000, 700)
+            .Tab("REAL", "Inbox", 1, "https://mail.example/")
+            .Tab("SPOOF", "Inbox - Google Chrome", 1, "https://evil.example/")
+            .Visibility("REAL", "hidden")
+            .Visibility("SPOOF", "hidden");
+        var sut = CreateSut(browser);
+
+        var result = await sut.FindTargetForWindowAsync(Port, At("Inbox - Google Chrome", 0, 0, 1000, 700), LongTimeout);
+
+        result.ErrorCode.Should().Be(BrowserErrorCode.CdpTargetAmbiguous, result.Error);
+        result.Error.Should().Contain("targetId REAL (https://mail.example/)").And.Contain("targetId SPOOF (https://evil.example/)")
+            .And.Contain("focus_window").And.Contain("pass one as targetId to get_browser_url or get_browser_content");
+    }
+
+    [Fact]
+    public async Task FindTargetForWindowAsync_SeveralTabsShown_IsAmbiguous()
+    {
+        var browser = new FakeCdpBrowser()
+            .Window(1, 0, 0, 1000, 700)
+            .Tab("A", "Inbox", 1)
+            .Tab("B", "Inbox", 1)
+            .Visibility("A", "visible")
+            .Visibility("B", "visible");
+        var sut = CreateSut(browser);
+
+        var result = await sut.FindTargetForWindowAsync(Port, At("Inbox - Google Chrome", 0, 0, 1000, 700), LongTimeout);
+
+        result.ErrorCode.Should().Be(BrowserErrorCode.CdpTargetAmbiguous, result.Error);
+        result.Error.Should().Contain("targetId A").And.Contain("targetId B");
+    }
+
+    [Fact]
+    public async Task FindTargetForWindowAsync_TwoTabsWithTheSameTitle_TakesTheOneThatIsShown()
+    {
+        var browser = new FakeCdpBrowser()
+            .Window(1, 0, 0, 1000, 700)
+            .Tab("A", "Inbox", 1)
+            .Tab("B", "Inbox", 1)
+            .Visibility("A", "hidden")
+            .Visibility("B", "visible");
+        var sut = CreateSut(browser);
+
+        var result = await sut.FindTargetForWindowAsync(Port, At("Inbox - Google Chrome", 0, 0, 1000, 700), LongTimeout);
+
+        result.Success.Should().BeTrue(result.Error);
+        result.Value!.Id.Should().Be("B");
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task FindTargetForWindowAsync_AVisibilityThatCannotBeRead_IsAmbiguous_NeverAGuess(bool unanswered)
+    {
+        // Fails closed: the shown tab answers, the other does not (blocked by a dialog) or refuses the isolated world
+        var browser = new FakeCdpBrowser()
+            .Window(1, 0, 0, 1000, 700)
+            .Tab("REAL", "Inbox", 1)
+            .Tab("SPOOF", "Inbox - Google Chrome", 1)
+            .Visibility("REAL", "visible");
+        if (unanswered)
+            browser.PagesUnanswered.Add("SPOOF");
+        var sut = CreateSut(browser);
+        var stopwatch = Stopwatch.StartNew();
+
+        var result = await sut.FindTargetForWindowAsync(Port, At("Inbox - Google Chrome", 0, 0, 1000, 700), TimeSpan.FromSeconds(3));
+
+        stopwatch.Stop();
+        result.ErrorCode.Should().Be(BrowserErrorCode.CdpTargetAmbiguous, result.Error);
+        result.Error.Should().Contain("targetId REAL").And.Contain("targetId SPOOF").And.Contain("could not be read");
+        stopwatch.Elapsed.Should().BeLessThan(HangBound);
+    }
+
+    [Fact]
+    public async Task FindTargetForWindowAsync_WithoutTheWindowsBounds_TheTitleAmongAllTabs_AlsoTakesTheShownTab()
+    {
+        var browser = new FakeCdpBrowser()
+            .Window(1, 0, 0, 1000, 700)
+            .Tab("REAL", "Inbox", 1)
+            .Tab("SPOOF", "Inbox - Google Chrome", 1)
+            .Visibility("REAL", "visible")
+            .Visibility("SPOOF", "hidden");
+        var sut = CreateSut(browser);
+
+        var result = await sut.FindTargetForWindowAsync(Port, TitleOnly("Inbox - Google Chrome"), LongTimeout);
+
+        result.Success.Should().BeTrue(result.Error);
+        result.Value!.Id.Should().Be("REAL");
+        browser.WindowQueries.Should().Be(2, "with several tabs to choose from, which browser window each is in must be known");
+    }
+
+    [Fact]
+    public async Task FindTargetForWindowAsync_WithoutTheWindowsBounds_ShownTabsOfSeveralBrowserWindows_AreAmbiguous()
+    {
+        // Without the window's bounds it is not bound, but the browser windows of the tabs are still read: the tab shown
+        // in another window is not the one this window shows
+        var browser = new FakeCdpBrowser()
+            .Window(1, 0, 0, 1000, 700)
+            .Window(2, 1200, 0, 800, 600)
+            .Tab("REAL", "Inbox", 1)
+            .Tab("OTHER", "Inbox", 2)
+            .Visibility("REAL", "hidden")
+            .Visibility("OTHER", "visible");
+        var sut = CreateSut(browser);
+
+        var result = await sut.FindTargetForWindowAsync(Port, TitleOnly("Inbox - Google Chrome"), LongTimeout);
+
+        result.ErrorCode.Should().Be(BrowserErrorCode.CdpTargetAmbiguous, result.Error);
+        result.Error.Should().Contain("more than one browser window").And.Contain("targetId REAL").And.Contain("targetId OTHER");
+    }
+
+    [Theory]
+    [InlineData(true, "Inbox")]
+    [InlineData(true, "Inbox - Google Chrome")]
+    [InlineData(false, "Inbox")]
+    [InlineData(false, "Inbox - Google Chrome")]
+    public async Task FindTargetForWindowAsync_WhenWhichWindowEachTabIsInCannotBeRead_ATabShownElsewhere_IsNotTaken(
+        bool withBounds, string otherTitle)
+    {
+        // The window asked for is covered, so its own tab is hidden; another window shows a tab with its title (the same
+        // title, or a spoof). Without the binding, 'shown' cannot say which window shows it: fail closed, never a guess
+        var browser = new FakeCdpBrowser { NotABrowsersVersion = true }
+            .Window(1, 0, 0, 1000, 700)
+            .Window(2, 1200, 0, 800, 600)
+            .Tab("REAL", "Inbox", 1)
+            .Tab("OTHER", otherTitle, 2)
+            .Visibility("REAL", "hidden")
+            .Visibility("OTHER", "visible");
+        var sut = CreateSut(browser);
+        var window = withBounds ? At("Inbox - Google Chrome", 0, 0, 1000, 700) : TitleOnly("Inbox - Google Chrome");
+
+        var result = await sut.FindTargetForWindowAsync(Port, window, LongTimeout);
+
+        result.ErrorCode.Should().Be(BrowserErrorCode.CdpTargetAmbiguous, result.Error);
+        result.Error.Should().Contain("which browser window each of them is in could not be read")
+            .And.Contain("targetId REAL").And.Contain("targetId OTHER");
+    }
+
+    [Fact]
+    public async Task FindTargetForWindowAsync_ABindingThatStalls_WithATabShownElsewhere_IsAmbiguous_AndBounded()
+    {
+        // The browser's connection takes the window lookup's whole share: as when it cannot be read at all
+        var browser = new FakeCdpBrowser { Unanswered = null }
+            .Window(1, 0, 0, 1000, 700)
+            .Window(2, 1200, 0, 800, 600)
+            .Tab("REAL", "Inbox", 1)
+            .Tab("OTHER", "Inbox", 2)
+            .Visibility("REAL", "hidden")
+            .Visibility("OTHER", "visible");
+        var sut = CreateSut(browser);
+        var stopwatch = Stopwatch.StartNew();
+
+        var result = await sut.FindTargetForWindowAsync(Port, At("Inbox - Google Chrome", 0, 0, 1000, 700), TimeSpan.FromSeconds(3));
+
+        stopwatch.Stop();
+        result.ErrorCode.Should().Be(BrowserErrorCode.CdpTargetAmbiguous, result.Error);
+        result.Error.Should().Contain("could not be read");
+        stopwatch.Elapsed.Should().BeLessThan(HangBound);
+    }
+
+    [Fact]
+    public async Task FindTargetForWindowAsync_ATabTheBrowserPutsInNoWindow_AmongSeveral_IsAmbiguous()
+    {
+        // A page target that is in no browser window (Browser.getWindowForTarget refuses it) is no tab of this window's
+        // tab strip, so being shown says nothing about this window
+        var browser = new FakeCdpBrowser()
+            .Window(1, 0, 0, 1000, 700)
+            .Tab("REAL", "Inbox", 1)
+            .Tab("LOOSE", "Inbox - Google Chrome", null)
+            .Visibility("REAL", "hidden")
+            .Visibility("LOOSE", "visible");
+        var sut = CreateSut(browser);
+
+        var result = await sut.FindTargetForWindowAsync(Port, TitleOnly("Inbox - Google Chrome"), LongTimeout);
+
+        result.ErrorCode.Should().Be(BrowserErrorCode.CdpTargetAmbiguous, result.Error);
+        result.Error.Should().Contain("could not be read").And.Contain("targetId LOOSE");
+    }
+
+    [Fact]
+    public async Task FindTargetForWindowAsync_AShownTabOfAnotherBrowserWindow_IsNotTakenForTheWindowsOwn()
+    {
+        // Two maximized windows report the same restored bounds, so both are bound: the spoof is shown in the window in
+        // front, and the window asked for is covered. Being shown says which tab its own window shows, not which window
+        var browser = new FakeCdpBrowser()
+            .Window(1, 100, 100, 800, 600, "maximized")
+            .Window(2, 100, 100, 800, 600, "maximized")
+            .Tab("REAL", "Inbox", 1)
+            .Tab("SPOOF", "Inbox - Google Chrome", 2)
+            .Visibility("REAL", "hidden")
+            .Visibility("SPOOF", "visible");
+        var sut = CreateSut(browser);
+
+        var result = await sut.FindTargetForWindowAsync(
+            Port, At("Inbox - Google Chrome", -8, -8, 1936, 1056, CdpWindowState.Maximized), LongTimeout);
+
+        result.ErrorCode.Should().Be(BrowserErrorCode.CdpTargetAmbiguous, result.Error);
+        result.Error.Should().Contain("more than one browser window");
+    }
+
+    [Fact]
+    public async Task FindTargetForWindowAsync_AMinimizedWindow_TakesNoShownTabOfAnotherWindow()
+    {
+        // A minimized window shows none of its tabs; with the binding unreadable, a tab shown elsewhere is not its own
+        var browser = new FakeCdpBrowser { NotABrowsersVersion = true }
+            .Tab("REAL", "Inbox", 1)
+            .Tab("SPOOF", "Inbox - Google Chrome", 2)
+            .Visibility("REAL", "hidden")
+            .Visibility("SPOOF", "visible");
+        var sut = CreateSut(browser);
+
+        var result = await sut.FindTargetForWindowAsync(
+            Port, At("Inbox - Google Chrome", -32000, -32000, 160, 28, CdpWindowState.Minimized), LongTimeout);
+
+        result.ErrorCode.Should().Be(BrowserErrorCode.CdpTargetAmbiguous, result.Error);
+        result.Error.Should().Contain("minimized");
+    }
+
+    /// <summary>CdpService.MaxBoundTabs: the most tabs whose browser windows are all read.</summary>
+    private const int MaxBoundTabs = 200;
+
+    /// <summary>A browser whose window 1 (0, 0, 1000 x 700 DIPs) has <paramref name="count"/> tabs no test window shows.</summary>
+    private static FakeCdpBrowser BrowserWithTabs(int count)
+    {
+        var browser = new FakeCdpBrowser().Window(1, 0, 0, 1000, 700);
+        for (var i = 0; i < count; i++)
+            browser.Tab($"F{i}", $"Filler {i}", 1);
+
+        return browser;
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task FindTargetForWindowAsync_OverTheBoundTabLimit_ReadsTheWindowsOfTheTabsWithTheTitle_AndTakesTheShownOne(
+        bool withBounds)
+    {
+        // Too many tabs to read every one's browser window: those of the tabs with the window's title are still read, as
+        // that is all that tells which of them the window shows
+        var browser = BrowserWithTabs(MaxBoundTabs)
+            .Tab("A", "GitHub", 1)
+            .Tab("B", "GitHub - Pull requests", 1)
+            .Visibility("A", "hidden")
+            .Visibility("B", "visible");
+        var sut = CreateSut(browser);
+        const string title = "GitHub - Pull requests - Google Chrome";
+
+        var result = await sut.FindTargetForWindowAsync(Port, withBounds ? At(title, 0, 0, 1000, 700) : TitleOnly(title), LongTimeout);
+
+        result.Success.Should().BeTrue(result.Error);
+        result.Value!.Id.Should().Be("B");
+        browser.WindowQueries.Should().Be(2, "only the tabs with the window's title are looked up");
+    }
+
+    [Theory]
+    [InlineData(true, "REAL")]
+    [InlineData(false, null)]
+    public async Task FindTargetForWindowAsync_OverTheBoundTabLimit_TellsTabsOfTwoBrowserWindowsApart(bool withBounds, string? expected)
+    {
+        // The window asked for is covered (its tab hidden), and another window shows a tab with its title: bound, its own
+        // tab; not bound, the tabs are known to be in two windows, which is what the ambiguity says
+        var browser = BrowserWithTabs(MaxBoundTabs)
+            .Window(2, 1200, 0, 800, 600)
+            .Tab("REAL", "Inbox", 1)
+            .Tab("OTHER", "Inbox", 2)
+            .Visibility("REAL", "hidden")
+            .Visibility("OTHER", "visible");
+        var sut = CreateSut(browser);
+        const string title = "Inbox - Google Chrome";
+
+        var result = await sut.FindTargetForWindowAsync(Port, withBounds ? At(title, 0, 0, 1000, 700) : TitleOnly(title), LongTimeout);
+
+        if (expected != null)
+        {
+            result.Success.Should().BeTrue(result.Error);
+            result.Value!.Id.Should().Be(expected);
+        }
+        else
+        {
+            result.ErrorCode.Should().Be(BrowserErrorCode.CdpTargetAmbiguous, result.Error);
+            result.Error.Should().Contain("more than one browser window").And.NotContain("could not be read");
+        }
+    }
+
+    [Fact]
+    public async Task FindTargetForWindowAsync_MoreTabsWithTheTitleThanAreLookedUp_SaysSo_NotThatTheirWindowsCouldNotBeRead()
+    {
+        // Their windows are not asked for, so the ambiguity must not say they could not be read
+        var browser = new FakeCdpBrowser().Window(1, 0, 0, 1000, 700);
+        for (var i = 0; i <= MaxBoundTabs; i++)
+            browser.Tab($"I{i}", "Inbox", 1);
+        var sut = CreateSut(browser);
+
+        var result = await sut.FindTargetForWindowAsync(Port, At("Inbox - Google Chrome", 0, 0, 1000, 700), LongTimeout);
+
+        result.ErrorCode.Should().Be(BrowserErrorCode.CdpTargetAmbiguous, result.Error);
+        result.Error.Should().Contain("more than 8 tabs have it").And.NotContain("could not be read");
+        browser.WindowQueries.Should().Be(0);
     }
 
     #endregion

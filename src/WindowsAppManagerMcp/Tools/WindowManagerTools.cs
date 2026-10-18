@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Globalization;
+using Microsoft.Extensions.Logging;
 using ModelContextProtocol.Server;
 using WindowsAppManagerMcp.Infrastructure;
 using WindowsAppManagerMcp.Models;
@@ -13,10 +14,22 @@ namespace WindowsAppManagerMcp.Tools;
 [McpServerToolType]
 public class WindowManagerTools
 {
-    /// <summary>The errors of the single-window change tools (move, resize, bounds, state, snap, move to a monitor).</summary>
+    /// <summary>
+    /// The errors of the single-window geometry tools (set_window_bounds, snap_window, move_window_to_monitor). Windows'
+    /// refusal of a window running as administrator is AccessDenied for a placement; a state change sees it only as a state
+    /// that was not reached, so set_window_state takes <see cref="StateChangeErrors"/> and its own StateChangeFailed.
+    /// </summary>
     private const string WindowChangeErrors =
-        " errorCode: InvalidHandle; TargetDeniedByPolicy (the user's policy denies the app: nothing is changed, ask the user); " +
-        "AccessDenied (Windows blocked the change: the window belongs to an app running as administrator; ask the user); " +
+        PolicyErrors + "AccessDenied (Windows blocked the change: the window belongs to an app running as administrator; ask the user); " +
+        NotRespondingError;
+
+    /// <summary>The errors of set_window_state, which never returns AccessDenied (see <see cref="WindowChangeErrors"/>).</summary>
+    private const string StateChangeErrors = PolicyErrors + NotRespondingError;
+
+    private const string PolicyErrors =
+        " errorCode: InvalidHandle; TargetDeniedByPolicy (the user's policy denies the app: nothing is changed, ask the user); ";
+
+    private const string NotRespondingError =
         "NotResponding (the window's app is hung or did not answer within 5 s, or an earlier call to it, or 8 calls to apps that " +
         "do not answer, are still blocked; a minimized window may already have been restored, and a call that timed out can still " +
         "take effect once the app answers, so check the window before acting on it).";
@@ -42,18 +55,26 @@ public class WindowManagerTools
     private const string NothingChanged = "Nothing was changed.";
 
     private const string SettleDescription =
-        "Wait up to this many milliseconds (0-5000, default 0) for the window to stop moving before it is read: until two reads " +
+        "Wait up to this many milliseconds (clamped to 0-5000, default 0) for the window to stop moving before it is read: until two reads " +
         "20 ms apart agree. Use it for an app that animates or re-applies its own size after the change.";
 
     private const string BringToFrontDescription =
         "Raise the window to the top of the z-order without activating it: keyboard input does not move to it (use focus_window for that). Default: true";
 
-    /// <summary>The per-window errors of the window batches.</summary>
-    private const string BatchErrors =
+    /// <summary>The per-window errors of the geometry batches (set_windows_bounds_batch, snap_windows_batch).</summary>
+    private const string BatchErrors = BatchItemErrors + "AccessDenied, " + BatchItemResult;
+
+    /// <summary>The per-window errors of set_windows_state_batch, which never returns AccessDenied (see <see cref="WindowChangeErrors"/>).</summary>
+    private const string StateBatchErrors = BatchItemErrors + BatchItemResult;
+
+    private const string BatchItemErrors =
         " Each window is handled on its own and has its own success, error and errorCode: InvalidArguments for an item that is " +
-        "null or misses a field, WindowNotFound, AmbiguousWindow (with candidates) or HandleMismatch for an item whose window " +
-        "selector names no single window, InvalidHandle, TargetDeniedByPolicy (the user's policy denies the app; it is not changed), " +
-        "AccessDenied, NotResponding (the window's app does not answer within 5 s). Each item reports its window afterwards, " +
+        "null or misses a field (an unknown member refuses the whole call), WindowNotFound, AmbiguousWindow (with candidates) or " +
+        "HandleMismatch for an item whose window selector names no single window, InvalidHandle, TargetDeniedByPolicy (the user's " +
+        "policy denies the app; it is not changed), ";
+
+    private const string BatchItemResult =
+        "NotResponding (the window's app does not answer within 5 s). Each item reports its window afterwards, " +
         "failed or not: bounds (visible frame), outerBounds, state and monitorIndex.";
 
     private readonly IWindowService _windowService;
@@ -63,6 +84,7 @@ public class WindowManagerTools
     private readonly TimeSpan? _gateWaitTimeout;
     private readonly IWindowCloseVerifier _closeVerifier;
     private readonly IMonitorService? _monitorService;
+    private readonly ILogger<WindowManagerTools>? _logger;
 
     /// <param name="windowService">Reads and changes windows.</param>
     /// <param name="foregroundService">Brings a window to the front (focus_window).</param>
@@ -77,6 +99,7 @@ public class WindowManagerTools
     /// Resolves a `monitor` name (roadmap M6.7) and the monitor set_window_bounds' percentages are of. The server always
     /// passes it; without it a monitor name or unit 'percent' fails.
     /// </param>
+    /// <param name="logger">Logs what goes wrong unexpectedly, such as a close_application window whose close throws.</param>
     public WindowManagerTools(
         IWindowService windowService,
         IForegroundService foregroundService,
@@ -84,7 +107,8 @@ public class WindowManagerTools
         TimeSpan? answerTimeout = null,
         TimeSpan? gateWaitTimeout = null,
         IWindowCloseVerifier? closeVerifier = null,
-        IMonitorService? monitorService = null)
+        IMonitorService? monitorService = null,
+        ILogger<WindowManagerTools>? logger = null)
     {
         _windowService = windowService;
         _foregroundService = foregroundService;
@@ -93,6 +117,7 @@ public class WindowManagerTools
         _gateWaitTimeout = gateWaitTimeout;
         _closeVerifier = closeVerifier ?? new WindowCloseVerifier(windowService);
         _monitorService = monitorService;
+        _logger = logger;
     }
 
     [McpServerTool(Name = "set_window_bounds", Title = "Set Window Bounds", ReadOnly = false, Destructive = false, Idempotent = true, OpenWorld = false)]
@@ -235,7 +260,7 @@ public class WindowManagerTools
     [McpServerTool(Name = "set_window_state", Title = "Minimize, Maximize or Restore Window", ReadOnly = false, Destructive = false, Idempotent = false, OpenWorld = false)]
     [Description("Set the window state (minimize, maximize, restore). success is true only when the window was seen in that state " +
                  "afterwards (within 300 ms); state reports the state it is in (minimized, maximized or normal)." + GeometryResult +
-                 WindowChangeErrors +
+                 StateChangeErrors +
                  " StateChangeFailed: the window did not reach the state (the app refused or delayed it, or it runs as administrator). " +
                  "An unknown state fails with InvalidState and the allowed values.")]
     public async Task<WindowOperationResult> SetWindowState(
@@ -455,11 +480,12 @@ public class WindowManagerTools
                  "are refused per window with errorCode ProtectedWindow unless force is true, and apps the user's policy denies with TargetDeniedByPolicy; " +
                  "the other windows are still closed. An item that is null, or names its window by both handle and window, fails alone " +
                  "with InvalidArguments; an item whose selector names no single window fails alone with WindowNotFound, " +
-                 "AmbiguousWindow (with candidates) or HandleMismatch. InvalidArguments (the whole call): waitMs is outside 0-30000.")]
+                 "AmbiguousWindow (with candidates) or HandleMismatch. InvalidArguments (the whole call): waitMs is outside 0-30000, or an " +
+                 "item has an unknown member.")]
     public async Task<BatchWindowResult> CloseWindowsBatch(
         [Description("Array of windows to close, each with handle or window (a selector, as close_window takes it)")]
         WindowCloseRequest[] windows,
-        [Description("Delay between operations in milliseconds (0-5000, default: 50)")]
+        [Description("Delay between operations in milliseconds (clamped to 0-5000, default: 50)")]
         int delayBetweenMs = 50,
         [Description("Must be true to close more than 3 windows in one batch, or (with force=true) a protected window, when the client cannot ask the user. Check the list (find_windows) first: closing many windows at once can lose unsaved work.")]
         bool confirm = false,
@@ -585,7 +611,7 @@ public class WindowManagerTools
     public async Task<CloseApplicationResult> CloseApplication(
         [Description("A window of the application (as integer); its process is closed")]
         long? handle = null,
-        [Description("Alternative to handle: a window of the application as a window selector (find_windows' filters), resolved to " +
+        [Description("Alternative to handle: a window of the application as a window selector, resolved to " +
                      "exactly one window; its process is closed.")]
         WindowSelector? window = null,
         [Description("The application's process ID")]
@@ -699,6 +725,10 @@ public class WindowManagerTools
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
+                    // Reported for this window alone, as a refusal would be; the exception is logged, since it can be a bug
+                    // (a NullReferenceException) that the message alone would hide
+                    _logger?.LogWarning(ex, "close_application could not send the close to window {Handle} of process {ProcessId}",
+                        target.Handle, target.ProcessId);
                     result = WindowCloseResult.Failed(target.Handle, CloseFailed, $"The close could not be sent: {ex.Message}");
                 }
 
@@ -819,12 +849,17 @@ public class WindowManagerTools
         {
             CloseStatus.Closed or CloseStatus.Hidden or CloseStatus.Requested => (true, CloseNames.Of(observation.Status), null, null, null),
             CloseStatus.PromptShown => (false, CloseNames.Of(CloseStatus.PromptShown), ClosePromptDto.From(observation.Prompt),
-                $"The window did not close: it shows a prompt (see prompt) that waits for an answer. {PromptAdvice}", nameof(PromptShown)),
+                $"The window did not close: it shows a prompt (see prompt) that waits for an answer. {PromptAdvice}" + WarningOf(observation),
+                nameof(PromptShown)),
             _ => (false, CloseNames.Of(CloseStatus.StillOpen), null,
                 $"The close message was sent, but the window was still open after {waitMs} ms and shows no prompt: the app may be busy " +
                 "or slow, or ignore the request (a window that was already hidden or on another virtual desktop counts as open too). " +
-                "Check it with find_windows, or wait longer.", nameof(StillOpen))
+                "Check it with find_windows, or wait longer." + WarningOf(observation), nameof(StillOpen))
         };
+
+    /// <summary>The verifier's warning (a prompt it could not inspect), as a sentence to add to an error; empty without one.</summary>
+    private static string WarningOf(CloseObservation observation) =>
+        observation.Warning is { Length: > 0 } warning ? " " + warning : string.Empty;
 
     /// <summary>No windows: the shown-before set of a close that is not waited for.</summary>
     private static readonly IReadOnlySet<nint> EmptyHandles = new HashSet<nint>();
@@ -1061,24 +1096,25 @@ public class WindowManagerTools
     }
 
     [McpServerTool(Name = "set_windows_bounds_batch", Title = "Set Window Bounds (Batch)", ReadOnly = false, Destructive = false, Idempotent = true, OpenWorld = false)]
-    [Description("Move and resize multiple windows in a single batch operation, as set_window_bounds does: x, y, width and height are " +
-                 "each window's visible frame. More efficient than multiple individual calls." + PlacementRules + BatchErrors +
+    [Description("Move and resize multiple windows in a single batch operation: each item's x, y, width and height, all four in " +
+                 "pixels, are its window's visible frame (no unit, relativeTo or monitor: use set_window_bounds for percent). More " +
+                 "efficient than multiple individual calls." + PlacementRules + BatchErrors +
                  " MoveFailed: Windows did not place the window, or it did not return to normal from minimized or maximized.")]
     public async Task<BatchWindowResult> SetWindowsBoundsBatch(
         [Description("Array of window placements, each with x, y, width, height (the visible frame), the window as handle or window " +
                      "(a selector, as the single-window tools take it), and optional bringToFront (raises the window without activating it)")]
         WindowBoundsPlacement[] placements,
-        [Description("Delay between operations in milliseconds (0-5000, default: 50)")]
+        [Description("Delay between operations in milliseconds (clamped to 0-5000, default: 50)")]
         int delayBetweenMs = 50,
         CancellationToken cancellationToken = default)
     {
         RequireItems(placements, nameof(placements));
         InputGateToolFilter.ThrowIfPaused(_session);
 
-        // Each item's window, resolved before the gate (roadmap M2.4); an item that names no single window fails alone
+        // Each item's window, resolved before the gate (roadmap M2.4); an item that names no single window, or misses a
+        // coordinate or size (which would otherwise bind 0 and move its window to the origin), fails alone
         var items = ResolveItems(placements, nameof(placements), "x, y, width, height and a handle or window", p => p.Handle, p => p.Window);
-        var invalid = items.Select((t, i) => t.Refusal ?? ItemSizeRefusal(t.Handle.ToInt64(), placements[i].Width, placements[i].Height))
-            .ToList();
+        var invalid = items.Select((t, i) => t.Refusal ?? ItemBoundsRefusal(i, t.Handle.ToInt64(), placements[i])).ToList();
 
         using (await EnterGateAsync(cancellationToken).ConfigureAwait(false))
         {
@@ -1090,8 +1126,9 @@ public class WindowManagerTools
             {
                 if (refusals[i] == null)
                 {
+                    // Every item that is not refused has all four (ItemBoundsRefusal)
                     var p = placements[i];
-                    servicePlacements.Add((items[i].Handle, p.X, p.Y, p.Width, p.Height, p.BringToFront));
+                    servicePlacements.Add((items[i].Handle, p.X!.Value, p.Y!.Value, p.Width!.Value, p.Height!.Value, p.BringToFront));
                 }
             }
 
@@ -1111,7 +1148,7 @@ public class WindowManagerTools
                      "tools take it), optional monitor, and optional bringToFront (raises the window without activating it; a " +
                      "minimized or maximized window is restored first, without activating it)")]
         WindowSnapPlacement[] placements,
-        [Description("Delay between operations in milliseconds (0-5000, default: 50)")]
+        [Description("Delay between operations in milliseconds (clamped to 0-5000, default: 50)")]
         int delayBetweenMs = 50,
         CancellationToken cancellationToken = default)
     {
@@ -1164,13 +1201,13 @@ public class WindowManagerTools
 
     [McpServerTool(Name = "set_windows_state_batch", Title = "Set Window States (Batch)", ReadOnly = false, Destructive = false, Idempotent = false, OpenWorld = false)]
     [Description("Set the state (minimize, maximize, restore) of multiple windows in a single batch operation. Each item's success is true only " +
-                 "when its window was seen in that state afterwards, and state reports the state it is in." + BatchErrors +
+                 "when its window was seen in that state afterwards, and state reports the state it is in." + StateBatchErrors +
                  " InvalidState: the item's state is missing or unknown (error lists the states). StateChangeFailed: the window did not reach the state.")]
     public async Task<BatchWindowResult> SetWindowsStateBatch(
         [Description("Array of state changes, each with state ('minimize', 'maximize' or 'restore'; 'minimized', 'maximized' and 'normal' " +
                      "are accepted too) and the window as handle or window (a selector, as the single-window tools take it)")]
         WindowStateChange[] changes,
-        [Description("Delay between operations in milliseconds (0-5000, default: 30)")]
+        [Description("Delay between operations in milliseconds (clamped to 0-5000, default: 30)")]
         int delayBetweenMs = 30,
         CancellationToken cancellationToken = default)
     {
@@ -1215,12 +1252,21 @@ public class WindowManagerTools
     private static string ForceQuestion(nint handle, WindowInfo? window, string protection)
     {
         var line = window is { } w
-            ? $"{UserConfirmation.Quote(string.IsNullOrEmpty(w.Title) ? w.ClassName : w.Title)} ({w.ProcessName}, PID {w.ProcessId}){(w.IsAgentHost ? ", the agent's own window" : string.Empty)}"
+            ? $"{UserConfirmation.Quote(string.IsNullOrEmpty(w.Title) ? w.ClassName : w.Title)} ({w.ProcessName}, PID {w.ProcessId}){HostLabel(w)}"
             : $"window {handle} (no longer exists)";
         return "The AI agent asks to close a protected window with force: the desktop shell (closing it can open the Shut Down " +
                "dialog) or the window of the terminal, editor or chat app the agent runs in (closing it can end the agent's " +
                $"session and lose unsaved work).\n{line}\n{protection}\nAllow it?";
     }
+
+    /// <summary>
+    /// How a question to the user marks a window of the agent's host: as the agent's own window, or, while the server cannot read
+    /// its ancestor processes and the window counts as the host's only for that (HostGuard), as possibly the agent's own.
+    /// </summary>
+    private static string HostLabel(WindowInfo window) =>
+        !window.IsAgentHost ? string.Empty
+        : window.IsAgentHostOnlyWhileAncestorsUnknown ? ", possibly the agent's own window"
+        : ", the agent's own window";
 
     /// <summary>Why the close guard protects a window: its ProtectedWindow error without the advice to the agent.</summary>
     private static string ProtectionReason(string? error)
@@ -1268,7 +1314,7 @@ public class WindowManagerTools
             .Select((t, i) => (Target: t, Number: i + 1, Protected: force && protectedWindows.Contains(t.Handle)))
             .Where(t => t.Number <= MaxListedInCloseQuestion || t.Protected)
             .Select(t => t.Target.Window is { } w
-                ? $"{t.Number}. {UserConfirmation.Quote(string.IsNullOrEmpty(w.Title) ? w.ClassName : w.Title)} ({w.ProcessName}, PID {w.ProcessId}){(w.IsAgentHost ? ", the agent's own window" : string.Empty)}{(t.Protected ? ", protected" : string.Empty)}"
+                ? $"{t.Number}. {UserConfirmation.Quote(string.IsNullOrEmpty(w.Title) ? w.ClassName : w.Title)} ({w.ProcessName}, PID {w.ProcessId}){HostLabel(w)}{(t.Protected ? ", protected" : string.Empty)}"
                 : $"{t.Number}. window {t.Target.Handle} (no longer exists)")
             .ToList();
         var more = targets.Count > lines.Count ? $"\n... and {targets.Count - lines.Count} more{(force ? " (none of them protected)" : string.Empty)}" : string.Empty;
@@ -1463,6 +1509,27 @@ public class WindowManagerTools
         width >= 1 && height >= 1
             ? null
             : new WindowResultItem(handle, false, Error: SizeMessage(width, height), ErrorCode: ToolErrorReporting.InvalidArgumentsErrorCode);
+
+    /// <summary>
+    /// InvalidArguments for a set_windows_bounds_batch item without x, y, width or height (missing or null: bound, it would
+    /// be 0, and the window would go to the origin), or with a size below 1; null when it has all four. Nothing is sent for it.
+    /// </summary>
+    private static WindowResultItem? ItemBoundsRefusal(int index, long handle, WindowBoundsPlacement placement)
+    {
+        var missing = new[] { ("x", placement.X), ("y", placement.Y), ("width", placement.Width), ("height", placement.Height) }
+            .Where(field => field.Item2 is null)
+            .Select(field => field.Item1)
+            .ToList();
+        if (missing.Count > 0)
+        {
+            return new WindowResultItem(handle, false,
+                Error: $"Item {index} of placements has no {string.Join(" or ", missing)}: each item needs x, y, width and height, in " +
+                       "pixels. Nothing was done for it.",
+                ErrorCode: ToolErrorReporting.InvalidArgumentsErrorCode);
+        }
+
+        return ItemSizeRefusal(handle, placement.Width!.Value, placement.Height!.Value);
+    }
 
     /// <summary>
     /// InvalidArguments for set_window_bounds' optional pairs (roadmap M6.1): x goes with y and width with height, at least one

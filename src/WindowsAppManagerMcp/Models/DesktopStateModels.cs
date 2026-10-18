@@ -130,7 +130,7 @@ public sealed record DesktopFocus(
     bool? IsPassword = null);
 
 /// <summary>The input state get_desktop_state reports: the pause and the keys Windows reports, read only.</summary>
-/// <param name="Paused">True while the user has paused the server's input with the pause hotkey: input tools return PausedByUser.</param>
+/// <param name="Paused">True while the server's input is paused (PausedBy says how): input tools return PausedByUser.</param>
 /// <param name="PausedBy">How it was paused, while paused.</param>
 /// <param name="ModifiersDown">The modifier keys Windows reports down (the user's, or stuck); left out when none is.</param>
 /// <param name="CapsLock">True when Caps Lock is on; null when Windows did not say.</param>

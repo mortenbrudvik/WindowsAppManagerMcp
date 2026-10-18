@@ -23,8 +23,8 @@ public class MonitorInfoTools
     [McpServerTool(Name = "get_monitors", Title = "List Monitors", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
     [Description("Get information about all connected displays/monitors including bounds, work area (excluding taskbar), scale factor " +
                  "and dpi, id (stays with the monitor on its port), friendlyName, isInternal (a built-in panel) and relation (left, " +
-                 "right, above or below the primary); a monitor parameter takes its index, id or name. virtualScreen: the bounds of " +
-                 "all monitors together, which take_screenshot captures with monitor 'all'.")]
+                 "right, above or below the primary); a monitor parameter takes its index, id or name (\\\\.\\DISPLAYn, not " +
+                 "friendlyName). virtualScreen: the bounds of all monitors together, which take_screenshot captures with monitor 'all'.")]
     public MonitorsResult GetMonitors() => ReadMonitors(_monitorService, _screen);
 
     /// <summary>
@@ -34,19 +34,20 @@ public class MonitorInfoTools
     {
         var monitors = monitorService.GetAllMonitors();
         var primary = monitors.FirstOrDefault(m => m.IsPrimary);
-        var primaryIndex = primary?.Index ?? 0;
         var (x, y, width, height) = screen.GetVirtualScreenBounds();
 
+        // No primary index is made up: without monitors (the enumeration failed) or a primary among them, it is null
         return new MonitorsResult(
             Monitors: monitors.Select(m => ToDto(m, primary)).ToList(),
-            PrimaryIndex: primaryIndex,
+            PrimaryIndex: primary?.Index,
             VirtualScreen: new VirtualScreenBounds(x, y, width, height)
         );
     }
 
     /// <summary>
     /// A monitor as get_monitors and the wam://monitors resource return it, with its identity and DPI
-    /// (roadmap M6.7) and, given the <paramref name="primary"/>, where it is from it.
+    /// (roadmap M6.7) and, given the <paramref name="primary"/>, where it is from it. A DPI Windows could not report is left
+    /// out, with the scale factor derived from it, rather than reported as 100%.
     /// </summary>
     internal static MonitorInfoDto ToDto(MonitorInfo monitor, MonitorInfo? primary = null) => new(
         Index: monitor.Index,
@@ -54,26 +55,28 @@ public class MonitorInfoTools
         IsPrimary: monitor.IsPrimary,
         Bounds: new BoundsDto(monitor.Bounds.X, monitor.Bounds.Y, monitor.Bounds.Width, monitor.Bounds.Height),
         WorkArea: new BoundsDto(monitor.WorkArea.X, monitor.WorkArea.Y, monitor.WorkArea.Width, monitor.WorkArea.Height),
-        ScaleFactor: monitor.ScaleFactor
+        ScaleFactor: monitor.DpiUnknown ? null : monitor.ScaleFactor
     )
     {
         Id = monitor.Id,
         FriendlyName = monitor.FriendlyName,
-        Dpi = monitor.Dpi,
+        Dpi = monitor.DpiUnknown ? null : monitor.Dpi,
         IsInternal = monitor.IsInternal == true ? true : null,
         Relation = primary is null ? null : MonitorSelection.RelationToPrimary(monitor, primary)
     };
 }
 
+/// <param name="PrimaryIndex">The primary monitor's index; null when no monitor is the primary (or none was found).</param>
 public record MonitorsResult(
     IReadOnlyList<MonitorInfoDto> Monitors,
-    int PrimaryIndex,
+    int? PrimaryIndex,
     VirtualScreenBounds VirtualScreen
 );
 
 /// <summary>
 /// A monitor in get_monitors (roadmap M6.7 added the fields after ScaleFactor): Id and FriendlyName are left out when the
 /// display configuration could not be read for it, IsInternal unless it is a built-in panel, and Relation for the primary.
+/// ScaleFactor and Dpi are left out when Windows could not report the monitor's DPI.
 /// </summary>
 public record MonitorInfoDto(
     int Index,
@@ -81,7 +84,7 @@ public record MonitorInfoDto(
     bool IsPrimary,
     BoundsDto Bounds,
     BoundsDto WorkArea,
-    double ScaleFactor
+    double? ScaleFactor
 )
 {
     /// <summary>The monitor's id ("m-" and 8 hex digits): the same while the monitor stays on its port.</summary>
@@ -90,8 +93,8 @@ public record MonitorInfoDto(
     /// <summary>The monitor's EDID name, such as "DELL U2720Q".</summary>
     public string? FriendlyName { get; init; }
 
-    /// <summary>The effective DPI: 96 at 100%.</summary>
-    public int Dpi { get; init; }
+    /// <summary>The effective DPI: 96 at 100%. Null when Windows could not report it.</summary>
+    public int? Dpi { get; init; }
 
     /// <summary>True for a built-in panel (a laptop's screen); left out otherwise.</summary>
     public bool? IsInternal { get; init; }

@@ -28,8 +28,8 @@ public class InputSimulationToolsSpaceTests
                 Sent(x, y, target, new ClickResult(true, x, y, button.ToString())));
         _input.Setup(s => s.MoveMouse(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<InputTarget>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .Returns((int x, int y, InputTarget target, bool _, CancellationToken _) => Sent(x, y, target, new MouseMoveResult(true, x, y)));
-        _input.Setup(s => s.Scroll(It.IsAny<int?>(), It.IsAny<int?>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<InputTarget>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
-            .Returns((int? x, int? y, int dy, int dx, InputTarget target, bool _, CancellationToken _) =>
+        _input.Setup(s => s.Scroll(It.IsAny<int?>(), It.IsAny<int?>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<IReadOnlyList<MouseModifier>>(), It.IsAny<InputTarget>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Returns((int? x, int? y, int dy, int dx, IReadOnlyList<MouseModifier> _, InputTarget target, bool _, CancellationToken _) =>
                 Sent(x ?? 0, y ?? 0, target, new ScrollResult(true, x ?? 0, y ?? 0, dy, dx)));
 
         // Image (50, 25) of a capture of window 0x5150 is screen (208, 281); window points are offset by (100, 200)
@@ -229,6 +229,24 @@ public class InputSimulationToolsSpaceTests
         _sentPoint.Should().Be((208, 281));
         _sentTarget!.Value.WindowHandle.Should().Be(Captured);
         result.Requested.Should().Be(new RequestedPoint(50, 25, "image", CaptureId));
+    }
+
+    [Fact]
+    public void Scroll_PassesItsModifiers_ToTheGuardedInput()
+    {
+        // Issue #8: Ctrl+wheel and Shift+wheel, at a point and at a window's client centre
+        var tools = CreateSut();
+
+        tools.Scroll(x: 300, y: 400, deltaY: -2, modifiers: [MouseModifier.Ctrl]);
+        tools.Scroll(windowHandle: Captured, deltaY: 1, modifiers: [MouseModifier.Shift]);
+        tools.Scroll(windowHandle: Captured, deltaY: 1);
+
+        _input.Verify(s => s.Scroll(300, 400, -2, 0, It.Is<IReadOnlyList<MouseModifier>>(m => m.SequenceEqual(new[] { MouseModifier.Ctrl })),
+            It.IsAny<InputTarget>(), false, It.IsAny<CancellationToken>()), Times.Once);
+        _input.Verify(s => s.Scroll(null, null, 1, 0, It.Is<IReadOnlyList<MouseModifier>>(m => m.SequenceEqual(new[] { MouseModifier.Shift })),
+            It.IsAny<InputTarget>(), false, It.IsAny<CancellationToken>()), Times.Once);
+        _input.Verify(s => s.Scroll(null, null, 1, 0, It.Is<IReadOnlyList<MouseModifier>>(m => m.Count == 0),
+            It.IsAny<InputTarget>(), false, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]

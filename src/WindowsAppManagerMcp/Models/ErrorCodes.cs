@@ -74,8 +74,9 @@ public enum WindowErrorCode
     TargetDeniedByPolicy = 25,
 
     /// <summary>
-    /// The user paused the server's input with the pause hotkey (roadmap M1.10), so the window was not
-    /// activated: activating takes the keyboard focus from the user and can send input. Nothing was done.
+    /// Input is paused (roadmap M1.10): the user pressed the pause hotkey, or the server paused itself because it could not
+    /// read the pause it shares with the other servers on the desktop (pausedBy shared_pause_unreadable). So the window was
+    /// not activated: activating takes the keyboard focus from the user and can send input. Nothing was done.
     /// </summary>
     PausedByUser = 26,
 
@@ -271,10 +272,20 @@ public enum LaunchErrorCode
 
     /// <summary>
     /// runAsAdmin on a computer where Windows elevates without asking (User Account Control is off, or administrators are
-    /// not asked for consent), and the user could not be asked to confirm through the client (roadmap M6.5). Nothing was
-    /// started.
+    /// not asked for consent), and the user could not be asked to confirm through the client (roadmap M6.5): the client
+    /// cannot ask, or the item is launch_applications_batch's, which never asks. Also when the user approved one program and
+    /// the request now starts another. Nothing was started.
     /// </summary>
-    ElevationNotConfirmed = 20
+    ElevationNotConfirmed = 20,
+
+    /// <summary>
+    /// An argument is a switch with which Chromium, an Electron or a CEF app runs a command line of the caller's choosing,
+    /// loads code or opens itself to remote control (--*-cmd-prefix, --gpu-launcher, --remote-debugging-port,
+    /// --load-extension, VS Code's --extensionDevelopmentPath, --inspect, ...), or a --user-data-dir inside a browser's
+    /// real 'User Data' profile (review F2, Services.ChromiumSwitchGuard). Any program's arguments are checked, since a
+    /// launcher hands them on, quoted or not; arguments nested too deep to read are refused too. Nothing was started.
+    /// </summary>
+    UnsafeChromiumSwitch = 21
 }
 
 /// <summary>
@@ -346,7 +357,9 @@ public enum ProcessErrorCode
     /// <summary>
     /// forceKill: the process list could not be read, or did not list the process (it may just have exited), so
     /// the child processes the forced kill would also end could not be checked against the target policy and the
-    /// host guard. Nothing was terminated.
+    /// host guard. Nothing was terminated. Also in both kill_process modes, and for close_debug_browser's host check,
+    /// when the process list could not be read to check that the process is no ancestor of this server (the agent's
+    /// host; review F3): nothing was done.
     /// </summary>
     ProcessTreeUnreadable = 15,
 
@@ -403,13 +416,16 @@ public enum LayoutErrorCode
 
     /// <summary>
     /// A placement has no criterion apply_layout's matchBy can use (title_only without titleContains, process_only
-    /// without a process name, or neither), so it was skipped instead of matching every window (roadmap M2.8).
+    /// without a process name, or neither; a process name of only '.exe' or a title of only invisible characters counts as
+    /// none), so it was skipped instead of matching every window (roadmap M2.8).
     /// </summary>
     NoMatchCriterion = 11,
 
     /// <summary>
-    /// A placement save_layout was given is not valid (roadmap M6.8): no matcher, snap with position, a fraction out of range,
-    /// an unknown snap position, state or monitor, and the like. Nothing was saved.
+    /// A placement save_layout was given is not valid (roadmap M6.8): no matcher, a matcher that is blank once normalized,
+    /// snap with position, a fraction out of range, an unknown snap position, state or monitor, and the like. Nothing was
+    /// saved. apply_layout reports it for a placement whose rectangle is less than one pixel wide or high on its monitor,
+    /// which is not arranged.
     /// </summary>
     InvalidPlacement = 12,
 
@@ -417,7 +433,14 @@ public enum LayoutErrorCode
     /// An agent wrote the layout, and the user has not confirmed that it may start programs (roadmap M6.8, owner decision D15):
     /// they declined, or the client cannot ask them. Nothing was launched for the placement.
     /// </summary>
-    LaunchNotConfirmed = 13
+    LaunchNotConfirmed = 13,
+
+    /// <summary>
+    /// A file in the layouts folder is not a valid preset (review finding F1): it is not JSON, lacks a name or placements, or
+    /// has a placement whose position is no rectangle. list_layouts lists it with this code; it cannot be applied until it is
+    /// fixed or deleted.
+    /// </summary>
+    InvalidPresetFile = 14
 }
 
 /// <summary>
@@ -431,7 +454,7 @@ public enum ScreenshotErrorCode
     /// <summary>The format is not auto, png, jpeg or jpg.</summary>
     InvalidFormat = 1,
 
-    /// <summary>maxDimension or maxWidth is out of range, or would scale the image to zero pixels.</summary>
+    /// <summary>maxDimension or maxWidth is out of range, zoom or gridSpacing is, or zoom would make the image larger than a capture may be.</summary>
     InvalidImageSize = 2,
 
     /// <summary>The output mode is unknown, or outputPath was given without a file output.</summary>
@@ -584,8 +607,9 @@ public enum BrowserErrorCode
     NotResponding = 15,
 
     /// <summary>
-    /// The UI Automation read of the browser window did not finish within timeoutMs, or earlier reads of the browser are
-    /// still stuck; the browser may be busy or hung.
+    /// The UI Automation read of the browser window did not finish within timeoutMs (the browser may be busy or hung), the
+    /// time ran out before UI Automation was asked (the browser was not asked), or earlier reads of the browser are still
+    /// stuck.
     /// </summary>
     OperationTimedOut = 16,
 
@@ -641,10 +665,18 @@ public enum BrowserErrorCode
     /// <summary>No CDP tab could be matched to the window.</summary>
     CdpTargetNotFound = 32,
 
-    /// <summary>More than one CDP tab matches the window, so the right one cannot be chosen.</summary>
+    /// <summary>
+    /// More than one CDP tab has a title the window shows, and which one it shows cannot be told (Services.CdpShownTab): none
+    /// or several of them are shown, their visibility could not be read, more than 8 have that title (their visibility is not
+    /// read), the window is minimized, or they are in several browser windows or in one that is not known. The tool never
+    /// guesses.
+    /// </summary>
     CdpTargetAmbiguous = 33,
 
-    /// <summary>The CDP port is owned by a different process than the window.</summary>
+    /// <summary>
+    /// The CDP port's listener is not the window's browser: another process, none, or it could not be read. It is read again
+    /// once a tab list has come and once a connection is open, before its first command, so nothing was sent.
+    /// </summary>
     CdpPortOwnerMismatch = 34,
 
     /// <summary>The page has a JavaScript dialog (alert/confirm/prompt/beforeunload) open.</summary>

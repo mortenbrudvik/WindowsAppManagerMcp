@@ -184,10 +184,10 @@ public class ScreenshotService : IScreenshotService
     }
 
     public ScreenCapture<ScreenshotResult> CaptureMonitor(int monitorIndex, CaptureOptions options) =>
-        Run("monitor", options, request => Complete(Acquire(new CaptureTarget.Monitor(monitorIndex)), request));
+        Run("monitor", options, request => Complete(Acquire(new CaptureTarget.Monitor(monitorIndex), request), request));
 
     public ScreenCapture<ScreenshotResult> CaptureRegion(int x, int y, int width, int height, CaptureOptions options) =>
-        Run("region", options, request => Complete(Acquire(new CaptureTarget.Region(x, y, width, height)), request));
+        Run("region", options, request => Complete(Acquire(new CaptureTarget.Region(x, y, width, height), request), request));
 
     public ScreenCapture<ScreenshotResult> CaptureWindow(nint windowHandle, bool includeFrame, CaptureOptions options) =>
         Run("window", options, request => Complete(Acquire(new CaptureTarget.Window(windowHandle, includeFrame, options.CaptureMethod)), request));
@@ -246,7 +246,15 @@ public class ScreenshotService : IScreenshotService
         List<string> Warnings,
         bool WindowCapture,
         CapturedWindow? Window,
-        CapturedScreen? Screen = null);
+        CapturedScreen? Screen = null)
+    {
+        /// <summary>
+        /// True when <see cref="ScaleFactor"/> was not read from the monitor: Windows could not report its DPI
+        /// (<see cref="MonitorInfo.DpiUnknown"/>), or a window is on no monitor. The scale stays for the server's own arithmetic
+        /// (the raw pixels' OCR), but the capture metadata leaves it out, as get_monitors does, rather than report 100% as fact.
+        /// </summary>
+        public bool ScaleUnknown { get; init; }
+    }
 
     /// <summary>
     /// Resolves <paramref name="target"/> and reads its pixels, with every refusal and warning of the capture tools: an
@@ -254,15 +262,18 @@ public class ScreenshotService : IScreenshotService
     /// (<see cref="CheckWindow"/>), the screen copy of a window that does not answer, the crop to the visible frame and the
     /// DPI warning. A screen capture also reads the screen layout right after its pixels (<see cref="ReadScreen"/>), so
     /// that its registration keeps the layout the pixels were read in, however long after them it is registered. The
-    /// target policy is not checked here (see <see cref="CapturePixels"/>), and no image is made.
+    /// target policy is not checked here (see <see cref="CapturePixels"/>), and no image is made. With <paramref name="request"/>,
+    /// a monitor or region whose image would be over the budget (<see cref="CaptureRequest.ThrowIfOutputTooLarge"/>: a zoom)
+    /// is refused before its pixels are read; a window's size is known only with its pixels, so its image is checked when
+    /// it is made.
     /// </summary>
     /// <exception cref="CaptureException">The target was refused.</exception>
-    private Acquired Acquire(CaptureTarget target)
+    private Acquired Acquire(CaptureTarget target, CaptureRequest? request = null)
     {
         var acquired = target switch
         {
-            CaptureTarget.Monitor monitor => AcquireMonitor(monitor.Index),
-            CaptureTarget.Region region => AcquireRegion(region.X, region.Y, region.Width, region.Height),
+            CaptureTarget.Monitor monitor => AcquireMonitor(monitor.Index, request),
+            CaptureTarget.Region region => AcquireRegion(region.X, region.Y, region.Width, region.Height, request),
             CaptureTarget.Window window => AcquireWindow(window.Handle, window.IncludeFrame, window.Method),
             _ => throw new ArgumentException($"Unknown capture target {target.GetType().Name}", nameof(target))
         };
@@ -278,12 +289,12 @@ public class ScreenshotService : IScreenshotService
         _ => "window"
     };
 
-    private Acquired AcquireMonitor(int monitorIndex)
+    private Acquired AcquireMonitor(int monitorIndex, CaptureRequest? request)
     {
         var monitors = _monitorService.GetAllMonitors();
         if (monitorIndex == VirtualScreenIndex)
         {
-            return AcquireVirtualScreen(monitors);
+            return AcquireVirtualScreen(monitors, request);
         }
 
         if (monitorIndex < 0 || monitorIndex >= monitors.Count)
@@ -295,8 +306,12 @@ public class ScreenshotService : IScreenshotService
 
         var monitor = monitors[monitorIndex];
         var bounds = monitor.Bounds;
+        request?.ThrowIfOutputTooLarge(bounds.Width, bounds.Height);
         var capture = _captureWrapper.CaptureScreenRegion(bounds.X, bounds.Y, bounds.Width, bounds.Height);
-        return new Acquired(capture, monitorIndex, monitor.ScaleFactor, [], WindowCapture: false, Window: null);
+        return new Acquired(capture, monitorIndex, monitor.ScaleFactor, [], WindowCapture: false, Window: null)
+        {
+            ScaleUnknown = monitor.DpiUnknown
+        };
     }
 
     /// <summary>
@@ -304,7 +319,7 @@ public class ScreenshotService : IScreenshotService
     /// refused before anything is allocated (CaptureFailed). It has no monitor index or scale factor, and warns when
     /// monitors of different sizes leave parts of the bounding rectangle on no screen (black in the image).
     /// </summary>
-    private Acquired AcquireVirtualScreen(IReadOnlyList<MonitorInfo> monitors)
+    private Acquired AcquireVirtualScreen(IReadOnlyList<MonitorInfo> monitors, CaptureRequest? request)
     {
         var screen = _captureWrapper.GetVirtualScreenBounds();
         if ((long)screen.Width * screen.Height > ScreenCaptureWrapper.MaxCapturePixels ||
@@ -316,6 +331,7 @@ public class ScreenshotService : IScreenshotService
                 "pixels on an edge). Nothing was captured. Capture one monitor at a time with take_screenshot, or parts with capture_region.");
         }
 
+        request?.ThrowIfOutputTooLarge(screen.Width, screen.Height);
         var warnings = new List<string>();
         var region = new Rectangle(screen.X, screen.Y, screen.Width, screen.Height);
         var capture = _captureWrapper.CaptureScreenRegion(screen.X, screen.Y, screen.Width, screen.Height);
@@ -328,7 +344,7 @@ public class ScreenshotService : IScreenshotService
         return new Acquired(capture, MonitorIndex: null, ScaleFactor: null, warnings, WindowCapture: false, Window: null);
     }
 
-    private Acquired AcquireRegion(int x, int y, int width, int height)
+    private Acquired AcquireRegion(int x, int y, int width, int height, CaptureRequest? request)
     {
         if (width <= 0 || height <= 0)
         {
@@ -363,6 +379,8 @@ public class ScreenshotService : IScreenshotService
                 "pixels on an edge. Capture it in parts, or one monitor at a time with take_screenshot.");
         }
 
+        // The part on the screen, as it will be captured: the size zoom enlarges
+        request?.ThrowIfOutputTooLarge(region.Width, region.Height);
         var warnings = new List<string>();
         if (region != requested)
         {
@@ -382,13 +400,17 @@ public class ScreenshotService : IScreenshotService
 
         // The monitor that contains the region's center, or none (MONITOR_DEFAULTTONULL, not the nearest one)
         var monitor = MonitorContaining(monitors, region.X + region.Width / 2, region.Y + region.Height / 2);
-        return new Acquired(capture, monitor?.Index, monitor?.ScaleFactor, warnings, WindowCapture: false, Window: null);
+        return new Acquired(capture, monitor?.Index, monitor?.ScaleFactor, warnings, WindowCapture: false, Window: null)
+        {
+            ScaleUnknown = monitor?.DpiUnknown == true
+        };
     }
 
     /// <summary>
     /// A window: refused as <see cref="CheckWindow"/> says before any pixel is read, then read as it was before its pixels
     /// (<see cref="ReadCapturedWindow"/>, with the client area the capture shows), its pixels (<see cref="CaptureWindowPixels"/>)
-    /// and the DPI warning of its monitor. A window without a monitor reports scale 1.
+    /// and the DPI warning of its monitor. A window without a monitor, or on one whose DPI is unknown, has scale 1 for the
+    /// arithmetic and none in the metadata (<see cref="Acquired.ScaleUnknown"/>).
     /// </summary>
     private Acquired AcquireWindow(nint windowHandle, bool includeFrame, WindowCaptureMethod method)
     {
@@ -399,7 +421,10 @@ public class ScreenshotService : IScreenshotService
         var monitor = _monitorService.GetMonitorForWindow(windowHandle);
         AddDpiWarning(windowHandle, monitor, warnings);
         return new Acquired(capture, monitor?.Index, monitor?.ScaleFactor ?? 1.0, warnings, WindowCapture: true,
-            WithClientArea(window, capture));
+            WithClientArea(window, capture))
+        {
+            ScaleUnknown = monitor is not { DpiUnknown: false }
+        };
     }
 
     public ScreenCapture<ScreenshotResult> CaptureWindowArea(nint windowHandle, bool includeFrame, BoundsDto area, CaptureOptions options)
@@ -523,7 +548,7 @@ public class ScreenshotService : IScreenshotService
                 ElementCount: finalAnnotations.Count,
                 CaptureElapsedMs: Math.Round(captureMs, 2),
                 AnnotationElapsedMs: Math.Round(annotationMs, 2),
-                MonitorScaleFactor: monitor?.ScaleFactor,
+                MonitorScaleFactor: monitor is { DpiUnknown: false } ? monitor.ScaleFactor : null,
                 FilePath: rendered.FilePath,
                 OriginalWidth: rendered.IsScaled ? capture.Width : null,
                 OriginalHeight: rendered.IsScaled ? capture.Height : null,
@@ -773,13 +798,15 @@ public class ScreenshotService : IScreenshotService
 
     /// <summary>
     /// The window through Windows.Graphics.Capture (roadmap M7.1), or null with <paramref name="why"/> when there is no
-    /// such capture here or it failed.
+    /// such capture here, it cannot be asked right now (an earlier call is stuck, or the support check did not answer: try
+    /// again later), or it failed.
     /// </summary>
     private CaptureResult? GraphicsCapture(nint windowHandle, bool includeFrame, out string why)
     {
-        if (_graphicsCapture is not { IsSupported: true } graphics)
+        var availability = _graphicsCapture?.Availability ?? GraphicsCaptureAvailability.Unsupported;
+        if (_graphicsCapture is not { } graphics || availability != GraphicsCaptureAvailability.Available)
         {
-            why = "Windows.Graphics.Capture is not available on this computer (it needs Windows 10 1903 or later and Direct3D 11).";
+            why = GraphicsCaptureAvailabilityText.Why(availability);
             return null;
         }
 
@@ -849,13 +876,14 @@ public class ScreenshotService : IScreenshotService
     /// </summary>
     private void AddDpiWarning(nint windowHandle, MonitorInfo? monitor, List<string> warnings)
     {
-        if (monitor == null)
+        // A monitor whose DPI Windows could not report has no DPI to compare with: its 96 only stands in for the arithmetic
+        if (monitor is not { DpiUnknown: false })
         {
             return;
         }
 
         var windowDpi = (int)_windows.GetDpiForWindow(windowHandle);
-        var monitorDpi = (int)Math.Round(monitor.ScaleFactor * 96);
+        var monitorDpi = monitor.Dpi;
         if (windowDpi == 0 || Math.Abs(windowDpi - monitorDpi) <= 1)
         {
             return;
@@ -1006,7 +1034,7 @@ public class ScreenshotService : IScreenshotService
             CapturedRegion: CapturedRegionOf(capture),
             ImageToScreen: TransformOf(capture, rendered),
             MonitorIndex: monitorIndex,
-            ScaleFactor: scaleFactor,
+            ScaleFactor: acquired.ScaleUnknown ? null : scaleFactor,
             FilePath: rendered.FilePath,
             OriginalWidth: rendered.IsScaled ? capture.Width : null,
             OriginalHeight: rendered.IsScaled ? capture.Height : null,
@@ -1124,11 +1152,13 @@ public class ScreenshotService : IScreenshotService
     /// Turns raw pixels into the output image: scaling to the size limit, optional overlays drawn on the scaled image (so
     /// they keep their size in pixels of the returned image), encoding, and the file write when the output includes a
     /// file. A failure to build, scale or encode the image is <see cref="ScreenshotErrorCode.EncodeFailed"/>; the file
-    /// write reports its own codes.
+    /// write reports its own codes. An image over the budget (a zoom, <see cref="CaptureRequest.ThrowIfOutputTooLarge"/>) is
+    /// refused before its bitmap is allocated, whatever captured the pixels.
     /// </summary>
     private static RenderedImage Render(CaptureResult capture, CaptureRequest request, Action<Bitmap>? annotate,
         Action<Bitmap>? beforeScaling = null)
     {
+        request.ThrowIfOutputTooLarge(capture.Width, capture.Height);
         var (width, height) = request.OutputSize(capture.Width, capture.Height);
         var isScaled = width != capture.Width || height != capture.Height;
         var encoding = request.EncodingFor(width, height);

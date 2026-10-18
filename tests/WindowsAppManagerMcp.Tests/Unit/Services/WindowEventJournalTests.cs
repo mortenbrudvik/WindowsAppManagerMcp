@@ -173,6 +173,28 @@ public class WindowEventJournalTests : IDisposable
     }
 
     [Fact]
+    public void ATitleChange_OfAWindowThatCountsAsTheHostOnlyWhileTheAncestorsAreUnknown_IsRecorded()
+    {
+        // Arrange - the server cannot read its ancestors, so Notepad, which started before it, counts as the host's for the
+        // refusals; the terminal is the host the guard knows
+        _host.Setup(h => h.IsHostWindow(Notepad)).Returns(true);
+        _host.Setup(h => h.IsHostWindowOnlyWhileAncestorsUnknown(Notepad)).Returns(true);
+        var since = Start();
+        RaiseAndWait(since, 2, (Foreground, Terminal), (Show, Notepad));
+
+        // Act
+        _titles[Terminal] = "✳ working";
+        _source.Raise(NameChange, Terminal);
+        _titles[Notepad] = "notes.txt - Notepad";
+        RaiseAndWait(since, 3, (NameChange, Notepad));
+
+        // Assert - leaving out the title changes of every older window would hide what the journal is read for
+        var events = _sut.Read(since, 50).Events;
+        events.Should().HaveCount(3);
+        events[^1].Should().BeEquivalentTo(new { Type = WindowEventType.TitleChanged, Handle = (long)Notepad, Title = "notes.txt - Notepad" });
+    }
+
+    [Fact]
     public void MinimizedAndRestored_AreRecorded()
     {
         var since = Start();

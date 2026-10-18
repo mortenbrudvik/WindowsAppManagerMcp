@@ -66,7 +66,15 @@ public enum ClosePromptKind
 public sealed record ClosePrompt(nint Handle, string Title, string ClassName, string? Text, IReadOnlyList<string> Buttons, ClosePromptKind Kind);
 
 /// <summary>What a close request led to for one window.</summary>
-public sealed record CloseObservation(nint Handle, CloseStatus Status, ClosePrompt? Prompt = null);
+public sealed record CloseObservation(nint Handle, CloseStatus Status, ClosePrompt? Prompt = null)
+{
+    /// <summary>
+    /// What the verifier could not find out, as a sentence for the agent: the window's prompt could not be inspected through
+    /// UI Automation (it failed, timed out, or the app does not answer), so StillOpen does not prove there is no prompt; or
+    /// a Win32 prompt's text and buttons could not be read. Null when everything was read.
+    /// </summary>
+    public string? Warning { get; init; }
+}
 
 /// <summary>A window owned by another window (get_owned_windows).</summary>
 /// <param name="Window">The owned window.</param>

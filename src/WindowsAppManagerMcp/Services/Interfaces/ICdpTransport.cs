@@ -30,10 +30,16 @@ public interface ICdpTransport
     /// <summary>
     /// Opens a DevTools WebSocket connection: a tab's webSocketDebuggerUrl, or the browser's from /json/version. The URL
     /// must be ws:// on 127.0.0.1 and on <paramref name="expectedPort"/>
-    /// (<see cref="Services.CdpEndpointValidator"/>), or nothing is connected.
+    /// (<see cref="Services.CdpEndpointValidator"/>), or nothing is connected. Once the connection is open, and before it
+    /// is handed out (so before its first command), the port's listener is read again: a browser that exited after its
+    /// process was checked leaves its port to any program on this computer, which would get the commands. When the listener
+    /// is not <paramref name="expectedOwner"/>, or cannot be read (fails closed), the connection is closed with nothing sent
+    /// and the result is CdpPortOwnerMismatch (review F4).
     /// </summary>
     /// <param name="webSocketUrl">The DevTools WebSocket URL.</param>
     /// <param name="expectedPort">The DevTools port the URL was listed by; a URL on another port is refused.</param>
+    /// <param name="expectedOwner">The browser's process, checked to listen on the port before the URL was read; the
+    /// connection is used only while it still listens there.</param>
     /// <param name="label">Names the connection in messages, for example "tab 8C1F...".</param>
     /// <param name="timeout">Maximum time for the connect.</param>
     /// <param name="cancellationToken">Cancels the connect.</param>
@@ -41,6 +47,7 @@ public interface ICdpTransport
     Task<CdpResult<ICdpConnection>> ConnectAsync(
         Uri webSocketUrl,
         int expectedPort,
+        int expectedOwner,
         string label,
         TimeSpan timeout,
         CancellationToken cancellationToken);

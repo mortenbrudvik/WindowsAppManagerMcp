@@ -42,8 +42,22 @@ public class NativeWindowWrapper : INativeWindowWrapper
             return string.Empty;
 
         var titleBuffer = new char[titleLength + 1];
-        NativeMethods.User32.GetWindowTextW(hWnd, titleBuffer, titleBuffer.Length);
-        return new string(titleBuffer, 0, titleLength);
+        var copied = NativeMethods.User32.GetWindowTextW(hWnd, titleBuffer, titleBuffer.Length);
+        return TextFromBuffer(titleBuffer, copied);
+    }
+
+    /// <summary>
+    /// The text GetWindowTextW copied into <paramref name="buffer"/>: its first <paramref name="copied"/> characters (the
+    /// count it returned, clamped to the buffer), up to the first NUL. Not GetWindowTextLengthW's length: Windows documents
+    /// that it can be larger than the text (a window that mixes ANSI and Unicode), and the title can shrink between the two
+    /// calls, so a title cut at that length would end in NULs that no titleEquals matches.
+    /// </summary>
+    public static string TextFromBuffer(char[] buffer, int copied)
+    {
+        ArgumentNullException.ThrowIfNull(buffer);
+        var length = Math.Clamp(copied, 0, buffer.Length);
+        var nul = Array.IndexOf(buffer, '\0', 0, length);
+        return new string(buffer, 0, nul >= 0 ? nul : length);
     }
 
     public uint GetWindowThreadProcessId(nint hWnd)

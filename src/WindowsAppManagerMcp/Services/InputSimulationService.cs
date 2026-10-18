@@ -247,8 +247,24 @@ public partial class InputSimulationService : IInputSimulationService
         }
     }
 
+    /// <summary>scroll without modifier keys.</summary>
     public ScrollResult Scroll(int? x, int? y, int deltaY, int deltaX, InputTarget target = default, bool releaseHeldModifiers = false,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default) =>
+        Scroll(x, y, deltaY, deltaX, [], target, releaseHeldModifiers, cancellationToken);
+
+    public ScrollResult Scroll(int? x, int? y, int deltaY, int deltaX, IReadOnlyList<MouseModifier> modifiers, InputTarget target = default,
+        bool releaseHeldModifiers = false, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(modifiers);
+        var held = modifiers.Distinct().ToList();
+        return ScrollAtPointOrCentre(x, y, deltaY, deltaX, held, target, releaseHeldModifiers, cancellationToken) with
+        {
+            Modifiers = ModifierNames(held)
+        };
+    }
+
+    private ScrollResult ScrollAtPointOrCentre(int? x, int? y, int deltaY, int deltaX, IReadOnlyList<MouseModifier> modifiers,
+        InputTarget target, bool releaseHeldModifiers, CancellationToken cancellationToken)
     {
         if (x.HasValue != y.HasValue || (!x.HasValue && !target.HasWindow))
         {
@@ -290,17 +306,20 @@ public partial class InputSimulationService : IInputSimulationService
                 InputErrorCode.CoordinatesOutOfBounds);
         }
 
-        return ScrollAt(pointX, pointY, deltaY, deltaX, target, releaseHeldModifiers, cancellationToken);
+        return ScrollAt(pointX, pointY, deltaY, deltaX, modifiers, target, releaseHeldModifiers, cancellationToken);
     }
 
     /// <summary>
     /// scroll at a checked point, as a click: the guard checks the window at the point before the pointer moves and
     /// again right before the wheel, together with where Windows sends the wheel. The wheel notches go in one SendInput
     /// call with a move to the checked point (<see cref="InputBatchBuilder"/>), so no other input can come between them; a
-    /// pointer that is not at the point afterwards is CursorClamped.
+    /// pointer that is not at the point afterwards is CursorClamped. <paramref name="modifiers"/> go down before the move and
+    /// up after the notches in the same batch (issue #8: Ctrl+wheel zooms, Shift+wheel scrolls sideways), as mouse_click's go
+    /// around its clicks, so none stays down whatever happens to the call; a key the user holds is refused (ModifiersHeld) as
+    /// for every call, before and right before the batch.
     /// </summary>
-    private ScrollResult ScrollAt(int x, int y, int deltaY, int deltaX, InputTarget target, bool releaseHeldModifiers,
-        CancellationToken cancellationToken)
+    private ScrollResult ScrollAt(int x, int y, int deltaY, int deltaX, IReadOnlyList<MouseModifier> modifiers, InputTarget target,
+        bool releaseHeldModifiers, CancellationToken cancellationToken)
     {
         const string NothingScrolled = "Nothing was scrolled.";
 
@@ -406,7 +425,10 @@ public partial class InputSimulationService : IInputSimulationService
                     return held.Apply(Finish(new ScrollResult(false, x, y, deltaY, deltaX, elsewhereNow, InputErrorCode.WheelFollowsFocus), approved));
                 }
 
-                var sent = Send(NewBatch().MoveTo(x, y).Wheel(deltaY, deltaX).Build(), approved);
+                // The modifiers take the scan codes of the target's layout, as mouse_click's do; a plain scroll reads no layout
+                var batch = NewBatch(modifiers.Count > 0 ? LayoutFor(target) : null)
+                    .ModifiersDown(modifiers).MoveTo(x, y).Wheel(deltaY, deltaX).ModifiersUp(modifiers).Build();
+                var sent = Send(batch, approved);
                 if (sent.PausedByUser)
                 {
                     return held.Apply(Finish(new ScrollResult(false, x, y, deltaY, deltaX, PausedMessage(NothingScrolled), InputErrorCode.PausedByUser), approved));
@@ -414,10 +436,8 @@ public partial class InputSimulationService : IInputSimulationService
 
                 if (!sent.Complete)
                 {
-                    return held.Apply(Finish(new ScrollResult(false, x, y, deltaY, deltaX,
-                        $"SendInput inserted {sent.Inserted} of {sent.Requested} events (the move to the point, then one per notch), so " +
-                        $"{Math.Max(0, sent.Inserted - 1)} of {Math.Abs(deltaY) + Math.Abs(deltaX)} notches were scrolled. Check the window " +
-                        "before scrolling again.", InputErrorCode.SendInputFailed), approved));
+                    return held.Apply(Finish(new ScrollResult(false, x, y, deltaY, deltaX, ScrollBatchCutShort(sent, deltaY, deltaX, modifiers.Count),
+                        InputErrorCode.SendInputFailed), approved));
                 }
 
                 if (PointerAwayAfterBatch(x, y) is { } at)
@@ -438,6 +458,21 @@ public partial class InputSimulationService : IInputSimulationService
                 _session.ReleaseHeldInput("the end of the input call");
             }
         }
+    }
+
+    /// <summary>
+    /// The SendInputFailed message of a scroll batch SendInput inserted only part of: how many of its notches went in. The
+    /// session has already released the modifier keys that went down.
+    /// </summary>
+    private static string ScrollBatchCutShort(InputSendOutcome sent, int deltaY, int deltaX, int modifiers)
+    {
+        var notches = Math.Abs(deltaY) + Math.Abs(deltaX);
+        var scrolled = Math.Clamp(sent.Inserted - modifiers - 1, 0, notches);
+        var events = modifiers == 0
+            ? "the move to the point, then one per notch"
+            : "the modifier keys, the move to the point, one per notch, then the release of the modifier keys, which was sent at once";
+        return $"SendInput inserted {sent.Inserted} of {sent.Requested} events ({events}), so {scrolled} of {notches} notches were " +
+               "scrolled. Check the window before scrolling again.";
     }
 
     /// <summary>
@@ -503,13 +538,17 @@ public partial class InputSimulationService : IInputSimulationService
         var typingMethod = ToolEnum<TextInputMethod>.Name(viaLayout ? TextInputMethod.Keys : TextInputMethod.Unicode);
         var pasteMethod = ToolEnum<TextInputMethod>.Name(TextInputMethod.Paste);
 
+        // Ctrl+V can be the user's pause hotkey, which the agent must never press: method paste is refused, auto types
+        var pasteIsPauseChord = _session.FindPauseChord(PasteKeys(KeyboardLayout.Invariant));
+
         // auto pastes long text where a paste puts in what typing would: not with delayMs, and not when line breaks or tabs
         // are to press keys
         var pastes = method == TextInputMethod.Paste ||
                      (method == TextInputMethod.Auto && _pasteClipboard != null && length > AutoPasteThreshold && delayBetweenKeysMs == 0 &&
-                      (controlChars is null or TextControlChars.Unicode || typed.AsSpan().IndexOfAny('\n', '\t') < 0));
+                      (controlChars is null or TextControlChars.Unicode || typed.AsSpan().IndexOfAny('\n', '\t') < 0) &&
+                      pasteIsPauseChord == null);
         var planned = pastes ? pasteMethod : typingMethod;
-        if (pastes && PasteRefusalBeforeInput(method == TextInputMethod.Paste, length, delayBetweenKeysMs) is { } pasteRefused)
+        if (pastes && PasteRefusalBeforeInput(method == TextInputMethod.Paste, length, delayBetweenKeysMs, pasteIsPauseChord) is { } pasteRefused)
         {
             return new TypeTextResult(false, length, 0, pasteRefused.Error, pasteRefused.Code) { Method = pasteMethod };
         }
@@ -518,7 +557,7 @@ public partial class InputSimulationService : IInputSimulationService
         List<InputEvent[]>? characters = null;
         if (!pastes)
         {
-            var prepared = PrepareTyping(typed, length, controlChars, viaLayout, target);
+            var prepared = PrepareTyping(typed, length, controlChars, viaLayout, target, pasteIsPauseChord);
             if (prepared.Characters == null)
             {
                 return new TypeTextResult(false, length, 0, prepared.Error, prepared.Code) { Method = typingMethod };
@@ -591,7 +630,7 @@ public partial class InputSimulationService : IInputSimulationService
                     approved = attempt.Approved;
                     notPasted = attempt.NotPasted;
                     back = attempt.Back;
-                    var prepared = PrepareTyping(typed, length, controlChars, viaLayout, target);
+                    var prepared = PrepareTyping(typed, length, controlChars, viaLayout, target, pasteIsPauseChord);
                     if (prepared.Characters == null)
                     {
                         var typingRefused = prepared.Code == InputErrorCode.TextTooLong
@@ -641,8 +680,8 @@ public partial class InputSimulationService : IInputSimulationService
         // Takeover detection (roadmap M7.4) watches the typing itself: from the first batch on
         call.WatchForTakeover(_takeover);
         var result = await TypeCharactersWatchedAsync(characters, delayBetweenKeysMs, approved, call).ConfigureAwait(false);
-        return call.TakeoverWarns
-            ? result with { Warning = TakeoverMessages.Combine(result.Warning, TakeoverMessages.Warning("the text was typed")) }
+        return call.TakeoverWarning("the text was typed") is { } takeover
+            ? result with { Warning = TakeoverMessages.Combine(result.Warning, takeover) }
             : result;
     }
 
@@ -726,17 +765,23 @@ public partial class InputSimulationService : IInputSimulationService
 
     /// <summary>
     /// The events that type <paramref name="typed"/>, one array per character; or why it must not be typed: more than
-    /// <see cref="MaxTypedLength"/> characters (TextTooLong), a line break or tab without controlChars (InvalidArguments), or
-    /// a copy followed by a paste among its control characters (PasteNotAllowed). Nothing is sent.
+    /// <see cref="MaxTypedLength"/> characters (TextTooLong), a line break or tab without controlChars (InvalidArguments),
+    /// keys that press the user's pause hotkey (PauseChordNotAllowed), or a copy followed by a paste among its control
+    /// characters (PasteNotAllowed). Nothing is sent. <paramref name="pasteIsPauseChord"/> is the user's pause hotkey when
+    /// it is Ctrl+V: no method pastes then, so the advice for text that is too long is to type it in parts.
     /// </summary>
     private (List<InputEvent[]>? Characters, InputErrorCode Code, string? Error) PrepareTyping(string typed, int length,
-        TextControlChars? controlChars, bool viaLayout, InputTarget target)
+        TextControlChars? controlChars, bool viaLayout, InputTarget target, string? pasteIsPauseChord)
     {
         if (length > MaxTypedLength)
         {
             return (null, InputErrorCode.TextTooLong,
                 $"The text has {Count(length)} characters, more than the {Count(MaxTypedLength)} type_text types, so that a runaway call " +
-                "cannot type for minutes. Nothing was typed. Paste it with method 'paste' (or 'auto'), or type it in parts.");
+                "cannot type for minutes. Nothing was typed. " +
+                (pasteIsPauseChord == null
+                    ? "Paste it with method 'paste' (or 'auto'), or type it in parts."
+                    : $"Type it in parts: it cannot be pasted, because a paste presses Ctrl+V and {pasteIsPauseChord} is the " +
+                      "user's pause hotkey."));
         }
 
         if (controlChars == null && typed.AsSpan().IndexOfAny('\n', '\t') >= 0)
@@ -748,10 +793,21 @@ public partial class InputSimulationService : IInputSimulationService
         var layout = mode == TextControlChars.Unicode && !viaLayout ? KeyboardLayout.Invariant : LayoutFor(target);
         var characters = CharacterInputs(typed, mode, layout, viaLayout);
 
+        var events = characters.SelectMany(c => c).ToList();
+
+        // The agent must never pause or resume itself, as send_keys and press_keys refuse: the hotkey reads the keys, not the
+        // character, so a character method keys types with AltGr (the left Ctrl and the right Alt) presses a Ctrl+Alt chord
+        if (_session.FindPauseChord(events) is { } pauseChord)
+        {
+            return (null, InputErrorCode.PauseChordNotAllowed,
+                $"Typing the text presses {pauseChord}, the user's pause hotkey, which pauses and resumes this server's input (a " +
+                "character typed with AltGr is Ctrl+Alt with its key to the hotkey). Only the user may press it. Nothing was " +
+                "typed. Type the text with method 'unicode', which presses no keys for its characters.");
+        }
+
         // The text goes out in several batches, each checked on its own: a copy (ETX, CAN) in one and the paste (SYN) in a
         // later one would paste what the copy took unchecked, so the order is checked on the whole text first
-        if (_pasteGuard != null && ClipboardPasteGuard.CopyThenPasteRefusal(characters.SelectMany(c => c).ToList(), receivingClass: null,
-                "Nothing was typed.") is { } copyThenPaste)
+        if (_pasteGuard != null && ClipboardPasteGuard.CopyThenPasteRefusal(events, receivingClass: null, "Nothing was typed.") is { } copyThenPaste)
         {
             return (null, InputErrorCode.PasteNotAllowed, copyThenPaste);
         }
@@ -779,9 +835,10 @@ public partial class InputSimulationService : IInputSimulationService
         }
 
         KeySpec spec;
+        var layout = LayoutFor(target);
         try
         {
-            spec = KeySpecParser.Parse(keys, LayoutFor(target));
+            spec = KeySpecParser.Parse(keys, layout);
         }
         catch (KeySyntaxException ex)
         {
@@ -810,21 +867,60 @@ public partial class InputSimulationService : IInputSimulationService
                 ErrorCode: InputErrorCode.InvalidKeySpecification);
         }
 
-        return await SendStepsAsync(keys, spec, target, releaseHeldModifiers, Math.Clamp(delayMs, 0, MaxSendKeysDelayMs), holdMs: 0,
-            cancellationToken).ConfigureAwait(false);
+        // Bounded as type_text is (roadmap M4.4), before anything is checked or sent: characters type themselves, so a
+        // runaway call could otherwise type for minutes, and with delayMs hold the input gate as long
+        var presses = SendKeysParser.KeyPresses(inputs).Count;
+        if (presses > MaxSendKeysPresses)
+        {
+            // type_text refuses to paste when Ctrl+V is the user's pause hotkey, so the advice must not send the agent there
+            var pasteIsPauseChord = _session.FindPauseChord(PasteKeys(KeyboardLayout.Invariant));
+            return new SendKeysResult(false, keys,
+                $"The keys press {Count(presses)} keys, more than the {Count(MaxSendKeysPresses)} send_keys sends in one call, so that a " +
+                "runaway call cannot type for minutes. Nothing was sent. " +
+                (pasteIsPauseChord == null
+                    ? "Send them in parts, or put long text in with type_text (method 'paste')."
+                    : $"Send them in parts: long text cannot be pasted with type_text, because a paste presses Ctrl+V and " +
+                      $"{pasteIsPauseChord} is the user's pause hotkey."), InputErrorCode.TextTooLong);
+        }
+
+        // Every event counts too: a modifier going down and up without a key between (crossed: {SHIFT down}{CTRL down}
+        // {SHIFT up}{CTRL up}) is no key press
+        if (inputs.Count > MaxSendKeysEvents)
+        {
+            return new SendKeysResult(false, keys,
+                $"The keys make {Count(inputs.Count)} key events (each key's down and up, the modifiers' included), more than the " +
+                $"{Count(MaxSendKeysEvents)} send_keys sends in one call, so that a runaway call cannot type for minutes. Nothing " +
+                "was sent. Send them in parts.", InputErrorCode.TextTooLong);
+        }
+
+        delayMs = Math.Clamp(delayMs, 0, MaxSendKeysDelayMs);
+        var waits = SendKeysWaitMs(spec.Steps.Count, delayMs);
+        if (waits > MaxSendKeysDurationMs)
+        {
+            return new SendKeysResult(false, keys,
+                $"With delayMs {delayMs} between its {Count(spec.Steps.Count)} keys the call would wait {Count(waits)} ms in all; one " +
+                $"call waits at most {Count(MaxSendKeysDurationMs)} ms, because every other input and window call waits for it. " +
+                "Nothing was sent. Lower delayMs, or send the keys in several calls.", InputErrorCode.InvalidArguments);
+        }
+
+        return await SendStepsAsync(keys, spec, target, releaseHeldModifiers, delayMs, holdMs: 0, SendKeysBatchSize,
+            ReportKeys(spec, layout, pressKeys: false), cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
     /// Sends the steps of send_keys or press_keys (roadmap M4.1, M4.3), after the pause chord, the held input and the guard
     /// (destructive chords, keys after a focus change) have checked all of them. Without <paramref name="delayMs"/> and
-    /// <paramref name="holdMs"/> every step goes in one SendInput call, so no other input can come between them; otherwise
-    /// each step is a batch of its own, checked again right before it, with <paramref name="delayMs"/> before every step but
-    /// the first. With <paramref name="holdMs"/> a step's leading key-downs go first, and its key-ups follow that much later
-    /// without a check of their own (they only release what went down; the session releases them anyway if the call stops
-    /// meanwhile).
+    /// <paramref name="holdMs"/> the steps go in batches of whole steps of at most <paramref name="batchSize"/> key-downs
+    /// (a step with more goes alone), so no other input can come between the keys of a batch; otherwise each step is a batch
+    /// of its own, with <paramref name="delayMs"/> before every step but the first. Every batch is checked again right before
+    /// it (the window, the modifiers, the paste rule, then the user's pause), as type_text's are; the paste rule and the
+    /// clipboard origin read a batch after the first with the modifiers an earlier batch holds down. With
+    /// <paramref name="holdMs"/> a step's leading key-downs go first, and its key-ups follow that much later without a check
+    /// of their own (they only release what went down; the session releases them anyway if the call stops meanwhile). A
+    /// call that goes through carries <paramref name="report"/>: how the keys went out on the layout, and its warnings.
     /// </summary>
     private async Task<SendKeysResult> SendStepsAsync(string keys, KeySpec spec, InputTarget target, bool releaseHeldModifiers,
-        int delayMs, int holdMs, CancellationToken cancellationToken)
+        int delayMs, int holdMs, int batchSize, KeyReport report, CancellationToken cancellationToken)
     {
         var inputs = spec.Events;
 
@@ -836,10 +932,12 @@ public partial class InputSimulationService : IInputSimulationService
                 "may press it. Nothing was sent.", InputErrorCode.PauseChordNotAllowed);
         }
 
-        var batches = KeyBatches(spec, delayMs, holdMs);
-        var oneBatch = delayMs == 0 && holdMs == 0;
+        var batches = KeyBatches(spec, delayMs, holdMs, batchSize);
         var total = spec.Steps.Count;
         var keysSent = 0;
+
+        // The events of the batches sent whole, so that a short SendInput count is told in steps of the whole call
+        var eventsSent = 0;
 
         using var call = new InputCall(_session, cancellationToken);
         if (call.IsPaused)
@@ -884,13 +982,18 @@ public partial class InputSimulationService : IInputSimulationService
 
                 for (var b = 0; b < batches.Count; b++)
                 {
-                    var (batch, wait, release, endsStep) = batches[b];
+                    var (batch, wait, release, steps) = batches[b];
                     if (wait > 0)
                     {
                         await Task.Delay(wait, call.Token).ConfigureAwait(false);
                     }
 
                     call.Token.ThrowIfCancellationRequested();
+
+                    // From the second batch on, the keys of the batch are pressed with the modifiers an earlier batch holds
+                    // down ({CTRL down}): the chord checks read them in front of the batch, or a Ctrl+V or Ctrl+C split
+                    // across batches would go unseen
+                    var pressedAs = b == 0 ? batch : WithServerHeldModifiers(batch);
 
                     // A release batch only lets go of what the step before it pressed
                     if (!release)
@@ -920,8 +1023,10 @@ public partial class InputSimulationService : IInputSimulationService
                         }
 
                         // Right before the keys: a paste must not put the user's clipboard where the agent can read it. The first
-                        // check reads the whole call, so a copy in one batch and its paste in a later one are refused together
-                        if (PasteRefusal(b == 0 ? inputs : batch, approved) is { } pasteRefused)
+                        // check reads the whole call, so a copy in one batch and its paste in a later one are refused together;
+                        // a later one reads its batch with the modifiers held for it, so a paste whose Ctrl went down earlier
+                        // is checked against the clipboard as it is now
+                        if (PasteRefusal(b == 0 ? inputs : pressedAs, approved) is { } pasteRefused)
                         {
                             return held.Apply(Finish(new SendKeysResult(false, keys,
                                 b == 0 ? pasteRefused : $"{KeysSentSoFar(keysSent, total, approved)} {pasteRefused}", InputErrorCode.PasteNotAllowed)
@@ -931,7 +1036,7 @@ public partial class InputSimulationService : IInputSimulationService
                         }
                     }
 
-                    var sent = Send(batch, approved);
+                    var sent = Send(batch, pressedAs, approved);
                     if (sent.PausedByUser)
                     {
                         return held.Apply(Finish(new SendKeysResult(false, keys, PausedMessage(KeysSentSoFar(keysSent, total, approved)),
@@ -940,24 +1045,18 @@ public partial class InputSimulationService : IInputSimulationService
 
                     if (!sent.Complete)
                     {
-                        if (oneBatch)
-                        {
-                            keysSent = StepsWithin(spec, sent.Inserted);
-                        }
-
+                        keysSent = StepsWithin(spec, eventsSent + sent.Inserted);
                         return held.Apply(Finish(new SendKeysResult(false, keys,
                             $"SendInput inserted only {sent.Inserted} of {sent.Requested} events, so {keysSent} of {total} keys were sent " +
                             "completely; the keys it had pressed were released again. Check the window before sending the rest.",
                             InputErrorCode.SendInputFailed) { KeysSent = keysSent }, approved));
                     }
 
-                    if (endsStep)
-                    {
-                        keysSent = oneBatch ? total : keysSent + 1;
-                    }
+                    eventsSent += batch.Count;
+                    keysSent += steps;
                 }
 
-                return held.Apply(Finish(new SendKeysResult(Success: true, Keys: keys) { KeysSent = keysSent }, approved));
+                return held.Apply(Finish(report.ApplyTo(new SendKeysResult(Success: true, Keys: keys) { KeysSent = keysSent }), approved));
             }
             catch (OperationCanceledException) when (call.IsPaused)
             {
@@ -973,6 +1072,45 @@ public partial class InputSimulationService : IInputSimulationService
 
     /// <summary>send_keys waits at most this long between keys (delayMs).</summary>
     public const int MaxSendKeysDelayMs = 500;
+
+    /// <summary>
+    /// send_keys presses at most this many keys in one call (TextTooLong), as type_text types at most
+    /// <see cref="MaxTypedLength"/> characters, so that a runaway call cannot type for minutes: every character, named key,
+    /// press of <c>{KEY n}</c> and modifier pressed on its own (<c>{ALT}</c>) counts, the modifiers held for a key do not
+    /// (<see cref="SendKeysParser.KeyPresses"/>); their events count in <see cref="MaxSendKeysEvents"/>.
+    /// </summary>
+    public const int MaxSendKeysPresses = MaxTypedLength;
+
+    /// <summary>
+    /// send_keys sends at most this many events in one call (TextTooLong), each key-down and key-up counting, the modifiers'
+    /// included: <see cref="MaxSendKeysPresses"/> counts no modifier that goes down and up without a key between (crossed:
+    /// <c>{SHIFT down}{CTRL down}{SHIFT up}{CTRL up}</c>), so a call of such events alone would be unbounded. 12 is the most
+    /// events one key press takes (Ctrl, Alt, Shift and Win held for an AltGr character, which adds the right Alt: five
+    /// modifier downs and ups around the key's own), so no call within <see cref="MaxSendKeysPresses"/> is refused by its
+    /// presses' events alone.
+    /// </summary>
+    public const int MaxSendKeysEvents = 12 * MaxSendKeysPresses;
+
+    /// <summary>
+    /// How long send_keys waits between <paramref name="keys"/> keys with <paramref name="delayMs"/>: (keys - 1) x delayMs,
+    /// in long, so that very many keys cannot wrap past int's range below <see cref="MaxSendKeysDurationMs"/> and hold the
+    /// input gate for days.
+    /// </summary>
+    public static long SendKeysWaitMs(int keys, int delayMs) => (long)Math.Max(0, keys - 1) * delayMs;
+
+    /// <summary>
+    /// send_keys without delayMs sends its keys in batches of whole keys of at most this many key-downs, every key going down
+    /// counting, a modifier's included (a key with more, such as a long group, goes whole and alone), checked again before
+    /// each as type_text's batches of <see cref="TypeTextBatchSize"/> characters are, so a focus change or the user's pause
+    /// stops a long call within a batch: once inserted, a batch cannot be stopped.
+    /// </summary>
+    public const int SendKeysBatchSize = TypeTextBatchSize;
+
+    /// <summary>
+    /// The longest send_keys may wait between its keys in all: (keys - 1) x delayMs. The input gate is held throughout, so
+    /// every other input and window call waits for it, as for press_keys (<see cref="MaxPressKeysDurationMs"/>).
+    /// </summary>
+    public const int MaxSendKeysDurationMs = MaxPressKeysDurationMs;
 
     /// <summary>press_keys holds a chord's keys down at most this long (holdMs).</summary>
     public const int MaxPressKeysHoldMs = 5000;
@@ -998,9 +1136,10 @@ public partial class InputSimulationService : IInputSimulationService
         ArgumentOutOfRangeException.ThrowIfGreaterThan(delayBetweenMs, MaxPressKeysDelayMs);
 
         KeySpec spec;
+        var layout = LayoutFor(target);
         try
         {
-            spec = PressKeysParser.Parse(keys, repeat, LayoutFor(target));
+            spec = PressKeysParser.Parse(keys, repeat, layout);
         }
         catch (KeySyntaxException ex)
         {
@@ -1010,7 +1149,9 @@ public partial class InputSimulationService : IInputSimulationService
         {
             return new SendKeysResult(false, keys.Text,
                 $"{ex.Message}. Key names: ctrl, shift, alt, win, enter, tab, esc, space, backspace, delete, up, down, left, right, " +
-                "home, end, pgup, pgdn, f1-f24, plus, comma, star, or a single character. Nothing was sent.", InputErrorCode.UnknownKey);
+                "home, end, pgup, pgdn, f1-f24, plus, comma, star, a punctuation key by its virtual key (oem_plus, oem_minus, oem_comma, " +
+                "oem_period, oem_1 to oem_8, oem_102; which key each is depends on the layout), or a single character. Nothing was sent.",
+                InputErrorCode.UnknownKey);
         }
 
         var duration = (long)spec.Steps.Count * (holdMs + delayBetweenMs);
@@ -1021,22 +1162,50 @@ public partial class InputSimulationService : IInputSimulationService
                 $"most {MaxPressKeysDurationMs} ms, because every other input call waits for it.", nameof(holdMs));
         }
 
-        return await SendStepsAsync(keys.Text, spec, target, releaseHeldModifiers, delayBetweenMs, holdMs, cancellationToken)
-            .ConfigureAwait(false);
+        // At most MaxPresses presses: without waits they all go in one batch
+        return await SendStepsAsync(keys.Text, spec, target, releaseHeldModifiers, delayBetweenMs, holdMs, batchSize: int.MaxValue,
+            ReportKeys(spec, layout, pressKeys: true), cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
-    /// The SendInput batches of <paramref name="spec"/>: all its steps in one without waits; otherwise each step, after
-    /// <paramref name="delayMs"/> (not before the first), split with <paramref name="holdMs"/> into its leading key-downs and,
-    /// that much later, the rest (a release batch, which <see cref="SendStepsAsync"/> does not check again).
+    /// The SendInput batches of <paramref name="spec"/>: without waits, its steps in order, as many whole steps in a batch as
+    /// hold at most <paramref name="batchSize"/> key-downs (every key going down, a modifier's included; a step with more is a
+    /// batch of its own); otherwise each step, after <paramref name="delayMs"/> (not before the first), split with
+    /// <paramref name="holdMs"/> into its leading key-downs and, that much later, the rest (a release batch, which
+    /// <see cref="SendStepsAsync"/> does not check again). Each batch says how many steps it completes.
     /// </summary>
-    private static List<(IReadOnlyList<InputEvent> Events, int Wait, bool Release, bool EndsStep)> KeyBatches(KeySpec spec, int delayMs,
-        int holdMs)
+    private static List<(IReadOnlyList<InputEvent> Events, int Wait, bool Release, int Steps)> KeyBatches(KeySpec spec, int delayMs,
+        int holdMs, int batchSize)
     {
-        var batches = new List<(IReadOnlyList<InputEvent> Events, int Wait, bool Release, bool EndsStep)>();
+        var batches = new List<(IReadOnlyList<InputEvent> Events, int Wait, bool Release, int Steps)>();
         if (delayMs == 0 && holdMs == 0)
         {
-            batches.Add((spec.Events, 0, false, true));
+            var events = new List<InputEvent>();
+            var steps = 0;
+            var downs = 0;
+            foreach (var step in spec.Steps)
+            {
+                // Every key going down, a modifier's included: a modifier down without a key press ({SHIFT down}, or a tap
+                // split across two steps) still counts, so no run of them goes out in one unchecked batch
+                var stepDowns = step.Count(e => e.Kind != InputEventKind.Mouse && (e.Flags & NativeEnums.KEYEVENTF_KEYUP) == 0);
+                if (steps > 0 && downs + stepDowns > batchSize)
+                {
+                    batches.Add((events, 0, false, steps));
+                    events = new List<InputEvent>();
+                    steps = 0;
+                    downs = 0;
+                }
+
+                events.AddRange(step);
+                steps++;
+                downs += stepDowns;
+            }
+
+            if (steps > 0)
+            {
+                batches.Add((events, 0, false, steps));
+            }
+
             return batches;
         }
 
@@ -1047,12 +1216,12 @@ public partial class InputSimulationService : IInputSimulationService
             var downs = holdMs == 0 ? step.Count : step.TakeWhile(e => (e.Flags & NativeEnums.KEYEVENTF_KEYUP) == 0).Count();
             if (downs == step.Count || downs == 0)
             {
-                batches.Add((step, wait, false, true));
+                batches.Add((step, wait, false, 1));
                 continue;
             }
 
-            batches.Add((step.Take(downs).ToList(), wait, false, false));
-            batches.Add((step.Skip(downs).ToList(), holdMs, true, true));
+            batches.Add((step.Take(downs).ToList(), wait, false, 0));
+            batches.Add((step.Skip(downs).ToList(), holdMs, true, 1));
         }
 
         return batches;
@@ -1317,6 +1486,21 @@ public partial class InputSimulationService : IInputSimulationService
         _pasteGuard?.Check(batch, approved.Receiving);
 
     /// <summary>
+    /// <paramref name="batch"/> with a key-down in front of it for every modifier the server holds down now: what the
+    /// batch's keys are pressed with when an earlier batch of the call left a modifier down (<c>{CTRL down}</c>). The chord
+    /// checks read a batch alone, so without these a Ctrl+V or Ctrl+C split across batches would be no chord: the paste
+    /// rule would not check the clipboard again before the V (and paste what the user copied in between), and the clipboard
+    /// origin would take the agent's copy for the user's. Read only, never sent.
+    /// </summary>
+    private IReadOnlyList<InputEvent> WithServerHeldModifiers(IReadOnlyList<InputEvent> batch)
+    {
+        var held = _session.ServerHeld.Where(h => h.IsModifier).ToList();
+        return held.Count == 0
+            ? batch
+            : [.. held.Select(h => InputEvent.Key(h.Code, h.Flags | NativeEnums.KEYEVENTF_KEYDOWN, h.Scan)), .. batch];
+    }
+
+    /// <summary>
     /// Sends a batch through the session. A batch that can copy (copy keys, a left-button press) is reported to the
     /// clipboard origin with the process of the window it goes to, so get_clipboard can tell the copy that application
     /// makes from one the user makes.
@@ -1329,9 +1513,14 @@ public partial class InputSimulationService : IInputSimulationService
     /// </summary>
     private InputSendOutcome Send(MouseBatch batch, InputGuardResult approved) => Send(batch.Events, batch.AsUnswapped, approved);
 
-    private InputSendOutcome Send(IReadOnlyList<InputEvent> batch, IReadOnlyList<InputEvent> asUnswapped, InputGuardResult approved)
+    /// <summary>
+    /// Sends <paramref name="batch"/>; the clipboard origin is told about it as <paramref name="pressedAs"/> presses it: the
+    /// mouse buttons as the user knows them, or the keys with the modifiers an earlier batch of the call holds down
+    /// (<see cref="WithServerHeldModifiers"/>), so a Ctrl+C whose Ctrl went down in an earlier batch counts as the agent's copy.
+    /// </summary>
+    private InputSendOutcome Send(IReadOnlyList<InputEvent> batch, IReadOnlyList<InputEvent> pressedAs, InputGuardResult approved)
     {
-        var copy = _clipboardOrigin?.BeforeInput(asUnswapped, approved.ReceivingWindow?.ProcessId ?? 0, approved.Receiving, approved.Anchor);
+        var copy = _clipboardOrigin?.BeforeInput(pressedAs, approved.ReceivingWindow?.ProcessId ?? 0, approved.Receiving, approved.Anchor);
         var sent = _session.Send(batch);
         if (copy != null && sent.Inserted > 0)
         {
@@ -1483,10 +1672,13 @@ public partial class InputSimulationService : IInputSimulationService
         $"Windows did not move the mouse pointer to the point (SetCursorPos failed). {done} The input desktop may not be " +
         "reachable (a UAC prompt, the lock screen or a disconnected session). Try again; if it keeps failing, ask the user.";
 
-    private string PausedMessage(string done) =>
-        $"{done} Input is paused: the user pressed the pause hotkey{(_session.PauseChord is { } chord ? $" ({chord})" : string.Empty)}. " +
-        "Stop and ask the user how to continue. Do not try to resume input yourself: only the user can, with the hotkey or by " +
-        "confirming resume_input.";
+    private string PausedMessage(string done)
+    {
+        var pausedBy = _session.PauseState?.PausedBy;
+        return $"{done} Input is paused: {InputControlSources.PauseCause(pausedBy, _session.PauseChord)}. Stop and ask the user " +
+               "how to continue. Do not try to resume input yourself: " +
+               $"{InputControlSources.WhoResumes(pausedBy, _session.IsSharedPauseUnreadable)}.";
+    }
 
     private string BusyMessage(string action) =>
         $"Another input or window call held the input gate for {_gateTimeout.TotalSeconds:0.#} s, so nothing was {action}. Try again " +
@@ -1691,8 +1883,13 @@ public partial class InputSimulationService : IInputSimulationService
         /// <summary>True when takeover detection stopped the call (mode stop), and the user did not pause input.</summary>
         public bool Interrupted => _takeover.Interrupted && !IsPaused;
 
-        /// <summary>True when the user used the keyboard or mouse during the watched part with mode warn.</summary>
-        public bool TakeoverWarns => _takeover.Warns;
+        /// <summary>
+        /// The warning the result carries about takeover detection (roadmap M7.4), or null: with mode warn, that the user used
+        /// the keyboard or mouse during the watched part; with warn or stop, that detection did not work for some of it, so the
+        /// user's input was not watched then (<see cref="TakeoverMessages.For"/>, from the watch itself).
+        /// <paramref name="what"/> names the operation, such as "the text was typed".
+        /// </summary>
+        public string? TakeoverWarning(string what) => TakeoverMessages.For(_takeover, what);
 
         /// <summary>
         /// Watches for the user's input from now on (roadmap M7.4): with mode stop, <see cref="Token"/> is cancelled too when

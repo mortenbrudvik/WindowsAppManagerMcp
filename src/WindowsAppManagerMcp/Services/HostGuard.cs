@@ -9,34 +9,94 @@ namespace WindowsAppManagerMcp.Services;
 /// it. Created at server start by <see cref="HostGuardStartup"/>, so the foreground window it records
 /// is the one the user started the agent from, not whatever is in front at the first tool call.
 /// </summary>
+/// <remarks>
+/// When the ancestor processes cannot be read at start (<see cref="HostSnapshot.AncestorsUnknown"/>, review F3), the host
+/// is known only by its console and the window in front then, so the terminal or editor that started the server is not
+/// recognized by its process. The guard then reads the ancestors again when a check needs them, at most once per
+/// <see cref="AncestorRetryInterval"/> (find_windows checks every window it lists), and records them once a read works,
+/// which also ends get_server_info's warning. Until then <see cref="IsHostWindow"/> fails closed where a cheap check per
+/// window cannot clear it: a window of a process that may be an ancestor, one not shown to have started after the server,
+/// counts as the host's (the desktop shell's excepted, as always), so what the host's windows are refused is refused for it
+/// too: input (TargetIsAgentHost), run_steps' run window and the reads of the window in front, closing it without force and
+/// placing a launch's window (ProtectedWindow). The reads that leave the host out leave these out too: the popup lists
+/// (get_active_popups, get_desktop_state's popups, the windowAndPopups scope) their popups, and a desktop search their
+/// windows unless named; the window lists mark them isAgentHost, and AmbiguousWindow's hint then says a marked candidate may
+/// be another app's. Window changes by handle are not refused for the host (owner decision D14), so not for these either. A
+/// process that started later, such as an app the agent launched, stays usable; a UWP app's frame
+/// belongs to ApplicationFrameHost, which normally started before the server, so it counts. Each such refusal says that the
+/// window counts only because the ancestors are unknown (<see cref="IsHostWindowOnlyWhileAncestorsUnknown"/>,
+/// <see cref="AncestorsUnknownNote"/>), rather than call it the agent's terminal. A transient failure at start costs
+/// at most one interval; a list that stays unreadable keeps the older windows refused. <see cref="IsHostProcess"/> does not
+/// fail closed that way: its callers (kill_process, close_debug_browser) read the ancestors themselves and refuse with
+/// ProcessTreeUnreadable when they cannot, which names the reason. The live check kill_process uses,
+/// IsAncestorOfCurrentProcess, reads the same process list as the re-read, so it would tell a window check nothing more.
+/// </remarks>
 public sealed class HostGuard : IHostGuard
 {
+    /// <summary>
+    /// How often, at most, the ancestors are read again while they are unknown: often enough that a transient failure at start
+    /// heals within a second, and seldom enough that a list that stays unreadable costs one failed read a second, however many
+    /// windows are checked.
+    /// </summary>
+    public static readonly TimeSpan AncestorRetryInterval = TimeSpan.FromSeconds(1);
+
+    /// <summary>
+    /// The sentence a host refusal adds for a window that counts as the host's only while the ancestors are unknown
+    /// (<see cref="IsHostWindowOnlyWhileAncestorsUnknown"/>), so the agent is not told that an app is its terminal when it only
+    /// may be. It can reach the user too, in close_window's question about force, so it gives the agent no instruction.
+    /// </summary>
+    public const string AncestorsUnknownNote =
+        " It counts as the host's only because the server cannot read its ancestor processes: until it can, every window of a " +
+        "program that started before the server does, so it may be another app's (get_server_info warns about it).";
+
+    /// <summary>
+    /// <see cref="AncestorsUnknownNote"/> for a window read while its being the host's rests only on the ancestors being
+    /// unknown (<see cref="WindowInfo.IsAgentHostOnlyWhileAncestorsUnknown"/>); empty for any other window.
+    /// </summary>
+    public static string AncestorsUnknownNoteFor(WindowInfo window) =>
+        window is { IsAgentHost: true, IsAgentHostOnlyWhileAncestorsUnknown: true } ? AncestorsUnknownNote : string.Empty;
+
+    /// <summary>
+    /// <see cref="AncestorsUnknownNote"/> when one of <paramref name="windows"/> counts as the host's only while the ancestors are
+    /// unknown (<see cref="IHostGuard.IsHostWindowOnlyWhileAncestorsUnknown"/>); empty otherwise, also without a guard.
+    /// </summary>
+    public static string AncestorsUnknownNoteFor(IHostGuard? guard, params nint[] windows) =>
+        guard != null && windows.Any(guard.IsHostWindowOnlyWhileAncestorsUnknown) ? AncestorsUnknownNote : string.Empty;
+
     private readonly INativeWindowWrapper _windows;
     private readonly INativeProcessWrapper _processes;
     private readonly ILogger<HostGuard>? _logger;
+    private readonly TimeProvider _time;
+    private readonly object _ancestorRead = new();
 
     /// <summary>
-    /// The processes, besides the server, all of whose windows are host windows: the ancestors, the
-    /// console host and the console server. <see cref="IsHostProcess"/> also counts the startup foreground
-    /// window's process.
+    /// What is recorded, replaced as a whole when the ancestors are read after all, so that a check reads one consistent
+    /// record: the snapshot, and the processes besides the server all of whose windows are host windows (the ancestors, the
+    /// console host and the console server). <see cref="IsHostProcess"/> also counts the startup foreground window's process.
     /// </summary>
-    private readonly IReadOnlyList<HostProcess> _hostProcesses;
+    private volatile HostRecord _record;
 
     /// <summary>The windows recorded by identity: the console host window and the startup foreground window.</summary>
     private readonly IReadOnlyList<HostWindow> _hostWindows;
 
-    public HostGuard(INativeWindowWrapper windows, INativeProcessWrapper processes, ILogger<HostGuard>? logger = null)
+    /// <summary>When the ancestors were last read (<see cref="TimeProvider.GetTimestamp"/>), while they are unknown.</summary>
+    private long _lastAncestorRead;
+
+    /// <summary>The server's own start time, read once when a window is checked while the ancestors are unknown.</summary>
+    private Lazy<DateTime?>? _serverStart;
+
+    public HostGuard(INativeWindowWrapper windows, INativeProcessWrapper processes, ILogger<HostGuard>? logger = null,
+        TimeProvider? time = null)
     {
         _windows = windows ?? throw new ArgumentNullException(nameof(windows));
         _processes = processes ?? throw new ArgumentNullException(nameof(processes));
         _logger = logger;
+        _time = time ?? TimeProvider.System;
 
-        Host = Record();
-        _hostProcesses = Host.Ancestors
-            .Concat(Host.ConsoleHostWindow is { } consoleHost ? [consoleHost.Process] : [])
-            .Concat(Host.ConsoleServerProcesses)
-            .ToList();
-        _hostWindows = new[] { Host.ConsoleHostWindow, Host.StartupForegroundWindow }
+        var host = Record();
+        _lastAncestorRead = _time.GetTimestamp();
+        _record = new HostRecord(host, HostProcessesOf(host));
+        _hostWindows = new[] { host.ConsoleHostWindow, host.StartupForegroundWindow }
             .OfType<HostWindow>()
             .ToList();
 
@@ -45,20 +105,25 @@ public sealed class HostGuard : IHostGuard
         _logger?.LogInformation(
             "Agent host recorded: ancestors {Ancestors}, console host window {ConsoleHost} (process {ConsoleHostProcess}), " +
             "console servers {ConsoleServers}, startup foreground window {Foreground} (process {ForegroundProcess}), shell process {ShellProcess}",
-            string.Join(", ", Host.Ancestors.Select(a => a.ProcessId)),
-            Host.ConsoleHostWindow?.Handle,
-            Host.ConsoleHostWindow?.Process.ProcessId,
-            string.Join(", ", Host.ConsoleServerProcesses.Select(p => p.ProcessId)),
-            Host.StartupForegroundWindow?.Handle,
-            Host.StartupForegroundWindow?.Process.ProcessId,
-            Host.ShellProcessId);
+            string.Join(", ", host.Ancestors.Select(a => a.ProcessId)),
+            host.ConsoleHostWindow?.Handle,
+            host.ConsoleHostWindow?.Process.ProcessId,
+            string.Join(", ", host.ConsoleServerProcesses.Select(p => p.ProcessId)),
+            host.StartupForegroundWindow?.Handle,
+            host.StartupForegroundWindow?.Process.ProcessId,
+            host.ShellProcessId);
     }
 
-    public HostSnapshot Host { get; }
+    /// <summary>
+    /// What is recorded. While the ancestors are unknown, reading it tries to read them again (at most once per
+    /// <see cref="AncestorRetryInterval"/>), so get_server_info warns only while they still cannot be read.
+    /// </summary>
+    public HostSnapshot Host => Current().Host;
 
     public bool IsHostProcess(int processId)
     {
-        if (IsSessionProcess(processId))
+        var record = Current();
+        if (IsSessionProcess(record, processId))
         {
             return true;
         }
@@ -66,7 +131,7 @@ public sealed class HostGuard : IHostGuard
         // Ending the process that owned the startup foreground window closes that window, which is
         // where a delegated terminal shows the agent
         return processId > 0 &&
-               Host.StartupForegroundWindow is { } foreground &&
+               record.Host.StartupForegroundWindow is { } foreground &&
                foreground.Process.ProcessId == processId &&
                IsStillRunningAs(foreground.Process);
     }
@@ -75,27 +140,48 @@ public sealed class HostGuard : IHostGuard
     /// The server, a recorded ancestor or the console host's process: every window of these reaches
     /// the agent's session.
     /// </summary>
-    private bool IsSessionProcess(int processId)
+    private bool IsSessionProcess(HostRecord record, int processId)
     {
         if (processId <= 0)
         {
             return false;
         }
 
-        if (processId == Host.ServerProcessId)
+        if (processId == record.Host.ServerProcessId)
         {
             return true;
         }
 
-        return _hostProcesses.Any(host => host.ProcessId == processId && IsStillRunningAs(host));
+        return record.HostProcesses.Any(host => host.ProcessId == processId && IsStillRunningAs(host));
     }
 
-    public bool IsHostWindow(nint hWnd)
+    public bool IsHostWindow(nint hWnd) => Match(hWnd) != HostWindowMatch.None;
+
+    // Known ancestors: no window is the host's only for want of them, and the owner chain need not be read again
+    public bool IsHostWindowOnlyWhileAncestorsUnknown(nint hWnd) =>
+        Current().Host.AncestorsUnknown && Match(hWnd) == HostWindowMatch.MayBeAncestor;
+
+    /// <summary>Why a window is the host's, as <see cref="Match"/> tells it.</summary>
+    private enum HostWindowMatch
+    {
+        /// <summary>It is not.</summary>
+        None,
+
+        /// <summary>A recorded window, or a window of the server, a known ancestor or the console host.</summary>
+        Known,
+
+        /// <summary>Only because the ancestors are unknown: its process is not shown to have started after the server.</summary>
+        MayBeAncestor
+    }
+
+    private HostWindowMatch Match(nint hWnd)
     {
         if (hWnd == nint.Zero)
         {
-            return false;
+            return HostWindowMatch.None;
         }
+
+        var record = Current();
 
         // The window, its top-level window and every window that owns it (GW_OWNER as well as
         // GA_ROOTOWNER, so WPF and WinForms dialogs of a host window count too)
@@ -104,17 +190,98 @@ public sealed class HostGuard : IHostGuard
         // Recorded windows by identity, including popups and dialogs they own
         if (candidates.Any(IsRecordedHostWindow))
         {
-            return true;
+            return HostWindowMatch.Known;
         }
 
         // Windows of the server, its ancestors and the console host, except the desktop shell's. The
-        // startup foreground window's process is left out here: only its recorded window counts.
-        return candidates.Any(candidate =>
+        // startup foreground window's process is left out here: only its recorded window counts
+        var processIds = candidates
+            .Select(candidate => (int)_windows.GetWindowThreadProcessId(candidate))
+            .Where(processId => processId != 0 && processId != record.Host.ShellProcessId)
+            .ToList();
+        if (processIds.Any(processId => IsSessionProcess(record, processId)))
         {
-            var processId = (int)_windows.GetWindowThreadProcessId(candidate);
-            return processId != 0 && processId != Host.ShellProcessId && IsSessionProcess(processId);
-        });
+            return HostWindowMatch.Known;
+        }
+
+        // While the ancestors are unknown, a process that may be one counts too (fail closed, see the remarks)
+        return record.Host.AncestorsUnknown && processIds.Any(MayBeAncestor) ? HostWindowMatch.MayBeAncestor : HostWindowMatch.None;
     }
+
+    /// <summary>
+    /// While the ancestors are unknown: false only for a process shown to have started after the server, which no ancestor
+    /// can have (each parent starts before its child, and a reused ancestor PID belongs to a later process). A start time that
+    /// cannot be read, the server's or the process's, leaves it a possible ancestor.
+    /// </summary>
+    private bool MayBeAncestor(int processId)
+    {
+        var server = LazyInitializer.EnsureInitialized(ref _serverStart,
+            () => new Lazy<DateTime?>(() => Read("server start time", () => _processes.GetProcessStartTime(Environment.ProcessId), null)));
+        return server.Value is not { } serverStart ||
+               Read("process start time", () => _processes.GetProcessStartTime(processId), null) is not { } started ||
+               started <= serverStart;
+    }
+
+    /// <summary>
+    /// The record, after reading the ancestors again when they are unknown and <see cref="AncestorRetryInterval"/> has passed
+    /// since the last read. A read that works replaces the record (and is logged); one that fails leaves it unknown.
+    /// </summary>
+    private HostRecord Current()
+    {
+        var record = _record;
+        if (!record.Host.AncestorsUnknown)
+        {
+            return record;
+        }
+
+        lock (_ancestorRead)
+        {
+            record = _record;
+            if (!record.Host.AncestorsUnknown || _time.GetElapsedTime(_lastAncestorRead) < AncestorRetryInterval)
+            {
+                return record;
+            }
+
+            _lastAncestorRead = _time.GetTimestamp();
+            if (ReadAncestorsAgain() is not { } ancestors)
+            {
+                return record;
+            }
+
+            var host = record.Host with { Ancestors = ancestors, AncestorsUnknown = false };
+            _record = new HostRecord(host, HostProcessesOf(host));
+            _logger?.LogInformation(
+                "Agent host guard read the ancestor processes after all: {Ancestors}. The terminal or editor that started the " +
+                "server is now recognized by its process", string.Join(", ", ancestors.Select(a => a.ProcessId)));
+            return _record;
+        }
+    }
+
+    /// <summary>
+    /// The ancestors, or null when the process list still cannot be read. The failure was warned about at start, so another
+    /// is only a debug line.
+    /// </summary>
+    private IReadOnlyList<HostProcess>? ReadAncestorsAgain()
+    {
+        try
+        {
+            return _processes.GetAncestorProcesses()?.Select(a => new HostProcess(a.ProcessId, a.StartTime)).ToList();
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogDebug(ex, "Agent host guard still could not read the ancestor processes");
+            return null;
+        }
+    }
+
+    private static IReadOnlyList<HostProcess> HostProcessesOf(HostSnapshot host) =>
+        host.Ancestors
+            .Concat(host.ConsoleHostWindow is { } consoleHost ? [consoleHost.Process] : [])
+            .Concat(host.ConsoleServerProcesses)
+            .ToList();
+
+    /// <summary>A snapshot and the processes whose windows are all host windows, as one value.</summary>
+    private sealed record HostRecord(HostSnapshot Host, IReadOnlyList<HostProcess> HostProcesses);
 
     private bool IsRecordedHostWindow(nint hWnd) =>
         _hostWindows.Any(host =>
@@ -138,10 +305,27 @@ public sealed class HostGuard : IHostGuard
 
     private HostSnapshot Record()
     {
+        // Null when they could not be read (review F3): the wrapper answers null when its process list cannot be read, and
+        // Read gives null (and logs) when it throws. Either way they are recorded as unknown, not as "no ancestors"
+        var unreadable = false;
         var ancestors = Read(
             "ancestor processes",
-            () => _processes.GetAncestorProcesses().Select(a => new HostProcess(a.ProcessId, a.StartTime)).ToList(),
-            []);
+            () =>
+            {
+                var read = _processes.GetAncestorProcesses();
+                unreadable = read == null;
+                return read?.Select(a => new HostProcess(a.ProcessId, a.StartTime)).ToList();
+            },
+            null);
+        if (unreadable)
+        {
+            _logger?.LogWarning(
+                "Agent host guard could not read the ancestor processes (the process list could not be read), so the terminal or " +
+                "editor that started the server is not known by its process. It reads them again when a check needs them, at " +
+                "most once a second; until it can, every window of a process that started before the server, except the desktop " +
+                "shell's, counts as the host's. kill_process and close_debug_browser read the ancestors themselves and refuse " +
+                "when they cannot.");
+        }
 
         var shellWindow = Read("shell window", _windows.GetShellWindow, nint.Zero);
         var shellProcessId = shellWindow == nint.Zero
@@ -164,13 +348,14 @@ public sealed class HostGuard : IHostGuard
 
         return new HostSnapshot(
             ServerProcessId: Environment.ProcessId,
-            Ancestors: ancestors,
+            Ancestors: ancestors ?? [],
             ConsoleWindow: consoleWindow,
             ConsoleHostWindow: consoleHostWindow,
             StartupForegroundWindow: startupForeground,
             ShellProcessId: shellProcessId == 0 ? null : shellProcessId)
         {
-            ConsoleServerProcesses = consoleServers
+            ConsoleServerProcesses = consoleServers,
+            AncestorsUnknown = ancestors == null
         };
     }
 

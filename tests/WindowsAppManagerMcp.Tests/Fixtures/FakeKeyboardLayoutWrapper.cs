@@ -1,10 +1,12 @@
 namespace WindowsAppManagerMcp.Tests.Fixtures;
 
 /// <summary>
-/// A fake of the keyboard layout queries (roadmap M4.1) that models four layouts the way Windows reports them: US
+/// A fake of the keyboard layout queries (roadmap M4.1) that models seven layouts the way Windows reports them: US
 /// English, Norwegian (AltGr for @ { [ ] } $ €, dead keys for ¨ ^ ~ ` ´), German (QWERTZ, AltGr for @ on the Q key,
-/// { [ ] } \ ~ | €, dead keys for ^ ´ `) and French AZERTY (digits with Shift, the digit row flipped by Caps Lock, A and
-/// Q, Z and W swapped). Each key has its scan code, its virtual key and what it types
+/// { [ ] } \ ~ | €, dead keys for ^ ´ `), French AZERTY (digits with Shift, the digit row flipped by Caps Lock, A and
+/// Q, Z and W swapped) and, in part, Brazilian ABNT2 (/ and ? on VK_ABNT_C1, a key with no OEM name, left of the right
+/// Shift), Russian (Cyrillic letters on the letter keys, no Latin ones: й on Q, ц on W, д on L) and Greek (; on the Q key,
+/// ς on W). Each key has its scan code, its virtual key and what it types
 /// unshifted, with Shift and with AltGr; VkKeyScan, ScanCode and KeyText answer from that table, so the server's mapping is
 /// tested against the layout's own answers rather than against a copy of its logic.
 /// </summary>
@@ -14,6 +16,9 @@ public sealed class FakeKeyboardLayoutWrapper : INativeKeyboardLayoutWrapper
     public static readonly nint Norwegian = 0x04140414;
     public static readonly nint French = 0x040C040C;
     public static readonly nint German = 0x04070407;
+    public static readonly nint Brazilian = 0x04160416;
+    public static readonly nint Russian = 0x04190419;
+    public static readonly nint Greek = 0x04080408;
 
     /// <summary>A layout handle the fake does not know: no key types anything on it.</summary>
     public static readonly nint Empty = 0x7777;
@@ -28,7 +33,10 @@ public sealed class FakeKeyboardLayoutWrapper : INativeKeyboardLayoutWrapper
         [Us] = UsKeys(),
         [Norwegian] = NorwegianKeys(),
         [German] = GermanKeys(),
-        [French] = FrenchKeys()
+        [French] = FrenchKeys(),
+        [Brazilian] = BrazilianKeys(),
+        [Russian] = RussianKeys(),
+        [Greek] = GreekKeys()
     };
 
     /// <summary>The scan codes (0xE0 prefix included) of the keys that type nothing, the same on every layout.</summary>
@@ -52,6 +60,30 @@ public sealed class FakeKeyboardLayoutWrapper : INativeKeyboardLayoutWrapper
 
     /// <summary>The windows <see cref="GetKeyboardLayout"/> was asked about, in order (0 is the foreground window).</summary>
     public IReadOnlyList<nint> LayoutQueries => _layoutQueries.ToList();
+
+    /// <summary>
+    /// An accent typed on a dead key that waits for its letter, which Windows keeps in the keyboard layout itself, shared by
+    /// every thread (issue #8: Alt+Shift+\ on a Norwegian keyboard leaves a grave accent waiting in the target). While it is
+    /// set, <see cref="KeyText"/> answers as ToUnicodeEx does then: the composed character when the accent and the key's
+    /// character combine ('`' and 'e' make 'è', and the space bar types the accent itself), otherwise the accent followed by
+    /// the key's character ("`+"), and the same for a second dead key.
+    /// </summary>
+    public char? PendingDeadKey { get; set; }
+
+    /// <summary>
+    /// What <see cref="ReadSystemHotkeys"/> returns: Windows' input-method hotkeys and language-switch toggles; null as a
+    /// read that failed. None by default.
+    /// </summary>
+    public SystemKeyboardHotkeys? SystemHotkeys { get; set; } = SystemKeyboardHotkeys.None;
+
+    /// <summary>How often <see cref="ReadSystemHotkeys"/> was called.</summary>
+    public int SystemHotkeyReads { get; private set; }
+
+    /// <summary>The dead-key compositions the fake knows: (accent, character) to the composed character.</summary>
+    private static readonly Dictionary<(char, char), char> Compositions = new()
+    {
+        [('`', 'e')] = 'è', [('`', 'a')] = 'à', [('´', 'e')] = 'é', [('¨', 'a')] = 'ä', [('^', 'e')] = 'ê', [('~', 'n')] = 'ñ'
+    };
 
     public nint GetKeyboardLayout(nint window)
     {
@@ -95,7 +127,25 @@ public sealed class FakeKeyboardLayoutWrapper : INativeKeyboardLayoutWrapper
         }
 
         var typed = key.Typed(shiftState);
+        if (PendingDeadKey is { } accent)
+        {
+            var character = typed == Dead ? key.DeadChar(shiftState) : typed;
+            return character switch
+            {
+                null => null,
+                ' ' => accent.ToString(),
+                { } c when Compositions.TryGetValue((accent, c), out var composed) => composed.ToString(),
+                { } c => $"{accent}{c}"
+            };
+        }
+
         return typed is null or Dead ? null : typed.Value.ToString();
+    }
+
+    public SystemKeyboardHotkeys? ReadSystemHotkeys()
+    {
+        SystemHotkeyReads++;
+        return SystemHotkeys;
     }
 
     private static Key[] KeysOf(nint layout) => Layouts.TryGetValue(layout, out var keys) ? keys : [];
@@ -170,6 +220,50 @@ public sealed class FakeKeyboardLayoutWrapper : INativeKeyboardLayoutWrapper
         new(0x56, 0xE2, '<', '>', '|'), new(0x33, 0xBC, ',', ';'), new(0x34, 0xBE, '.', ':'), new(0x35, 0xBD, '-', '_'),
         new(0x39, 0x20, ' ', ' ')
     ];
+
+    /// <summary>
+    /// The Brazilian ABNT2 keys a test needs: the letters, Ç, the digit row (a dead ¨ on Shift+6) and the punctuation keys of
+    /// the bottom row, with / and ? on VK_ABNT_C1 (0xC1, scan 73).
+    /// </summary>
+    private static Key[] BrazilianKeys() =>
+    [
+        .. Letters("abcdefghijklmnopqrstuvwxyz", UsScan),
+        new(0x27, 0xBA, 'ç', 'Ç', CapsLock: true),
+        .. "1234567890".Select((d, i) => new Key((uint)(0x02 + i), d, d, i == 5 ? Dead : "!@#$%¨&*()"[i], DeadChars: i == 5 ? " ¨ " : null)),
+        new(0x0C, 0xBD, '-', '_'), new(0x0D, 0xBB, '=', '+'), new(0x33, 0xBC, ',', '<'), new(0x34, 0xBE, '.', '>'),
+        new(0x35, 0xBF, ';', ':'), new(0x73, 0xC1, '/', '?'), new(0x39, 0x20, ' ', ' ')
+    ];
+
+    /// <summary>
+    /// The Russian (ЙЦУКЕН) keys a test needs: Cyrillic letters on the letter keys and on the US punctuation keys around
+    /// them (х ъ ж э б ю ё), the period on the US '/' key, and the digit row; no key types a Latin letter.
+    /// </summary>
+    private static Key[] RussianKeys()
+    {
+        const string latin = "qwertyuiopasdfghjklzxcvbnm", cyrillic = "йцукенгшщзфывапролдячсмить";
+        return
+        [
+            .. latin.Select((c, i) => new Key(UsScan(c), char.ToUpperInvariant(c), cyrillic[i], char.ToUpperInvariant(cyrillic[i]), CapsLock: true)),
+            new(0x1A, 0xDB, 'х', 'Х', CapsLock: true), new(0x1B, 0xDD, 'ъ', 'Ъ', CapsLock: true), new(0x27, 0xBA, 'ж', 'Ж', CapsLock: true),
+            new(0x28, 0xDE, 'э', 'Э', CapsLock: true), new(0x33, 0xBC, 'б', 'Б', CapsLock: true), new(0x34, 0xBE, 'ю', 'Ю', CapsLock: true),
+            new(0x29, 0xC0, 'ё', 'Ё', CapsLock: true), new(0x35, 0xBF, '.', ','),
+            .. "1234567890".Select((d, i) => new Key((uint)(0x02 + i), d, d, "!\"№;%:?*()"[i])),
+            new(0x39, 0x20, ' ', ' ')
+        ];
+    }
+
+    /// <summary>The Greek keys a test needs: ; and : on the Q key, ς on W, the other Greek letters on the letter keys, and the digit row.</summary>
+    private static Key[] GreekKeys()
+    {
+        const string latin = "ertyuiopasdfghjklzxcvbnm", greek = "ερτυθιοπασδφγηξκλζχψωβνμ";
+        return
+        [
+            new(0x10, 'Q', ';', ':'), new(0x11, 'W', 'ς', null),
+            .. latin.Select((c, i) => new Key(UsScan(c), char.ToUpperInvariant(c), greek[i], char.ToUpperInvariant(greek[i]), CapsLock: true)),
+            .. "1234567890".Select((d, i) => new Key((uint)(0x02 + i), d, d, "!@#$%^&*()"[i])),
+            new(0x33, 0xBC, ',', '<'), new(0x34, 0xBE, '.', '>'), new(0x39, 0x20, ' ', ' ')
+        ];
+    }
 
     /// <summary>The scan codes of the AZERTY letters: A and Q, Z and W swapped, M where US has ';'.</summary>
     private static uint FrenchScan(char c) => c switch

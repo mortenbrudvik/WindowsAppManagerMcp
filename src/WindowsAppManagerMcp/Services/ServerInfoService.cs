@@ -67,16 +67,17 @@ public sealed class ServerInfoService(
             connection,
             process,
             desktop,
+            // As get_monitors reports them: the DPI Windows reported, and neither it nor the scale when it could not report one
             monitors.GetAllMonitors()
                 .Select(m => new ServerMonitorInfo(
                     m.Index,
                     m.DeviceName,
                     m.IsPrimary,
                     new BoundsDto(m.Bounds.X, m.Bounds.Y, m.Bounds.Width, m.Bounds.Height),
-                    (int)Math.Round(m.ScaleFactor * 96),
-                    m.ScaleFactor))
+                    m.DpiUnknown ? null : m.Dpi,
+                    m.DpiUnknown ? null : m.ScaleFactor))
                 .ToList(),
-            ReadHost(settings.Host),
+            ReadHost(settings.Host, warnings),
             input,
             new SafetySettingsInfo(
                 settings.Policy.DeniedProcesses,
@@ -170,7 +171,11 @@ public sealed class ServerInfoService(
         var shared = session.SharesDesktopPause;
         if (state.Paused)
         {
-            warnings.Add("Input is paused by the user: input tools and every tool that changes windows or starts or stops processes " +
+            // The server's own pause, when the shared one could not be read, is not the user's: the agent must not say it is
+            var pausedBy = state.PausedBy == InputControlSources.SharedPauseUnreadable
+                ? $"because {InputControlSources.PauseCause(state.PausedBy, null)}"
+                : "by the user";
+            warnings.Add($"Input is paused {pausedBy}: input tools and every tool that changes windows or starts or stops processes " +
                          "return PausedByUser. Stop and ask the user; never try to resume input yourself.");
         }
 
@@ -188,8 +193,21 @@ public sealed class ServerInfoService(
         return new InputControlInfo(state.Paused, state.PausedBy, state.PausedAt, status, shared);
     }
 
-    private AgentHostInfo ReadHost(HostSnapshot host)
+    private AgentHostInfo ReadHost(HostSnapshot host, List<string> warnings)
     {
+        if (host.AncestorsUnknown)
+        {
+            // Review F3: the list below then has no ancestors because they are unknown, not because there are none. The host
+            // guard reads them again (reading the host above did), so this warns only while they still cannot be read
+            warnings.Add("The server cannot read its ancestor processes (the process list cannot be read), so it does not know the " +
+                         "terminal or editor that started it by its process. Until it can (it tries again at most once a second), " +
+                         "every window of a program that started before the server, except the desktop shell's, counts as the " +
+                         "agent's host: input to it and run_steps on it are refused (TargetIsAgentHost), and so are closing it " +
+                         "without force and placing it after a launch (ProtectedWindow); kill_process and close_debug_browser " +
+                         "refuse (ProcessTreeUnreadable). The window lists mark such windows isAgentHost, and the popup lists " +
+                         "leave out their popups and a desktop search their windows, as for the host. Tell the user.");
+        }
+
         var hostWindows = new List<AgentHostWindow>();
         AddWindow(host.ConsoleHostWindow, "console");
         AddWindow(host.StartupForegroundWindow, "startupForeground");

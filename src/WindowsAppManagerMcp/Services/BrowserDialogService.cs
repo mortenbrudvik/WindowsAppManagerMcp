@@ -198,6 +198,18 @@ public sealed class BrowserDialogService : IBrowserDialogService
             return await _worker.RunAsync(UiaTargets.TargetProcessId(_windows, window), token => Read(window, token), deadline.Token,
                 TimeSpan.Zero).ConfigureAwait(false);
         }
+        catch (TimeoutException) when (cancellationToken.IsCancellationRequested)
+        {
+            // The request was cancelled, not timed out: let the SDK report it
+            throw new OperationCanceledException(cancellationToken);
+        }
+        catch (UiaDeadlinePassedException)
+        {
+            // The worker started no read, so the browser was asked nothing and is not said to be busy
+            return (null, BrowserDialogResult.Failed(nameof(UIElementErrorCode.OperationTimedOut),
+                "The time to read the browser window ran out before UI Automation was asked, so the browser was not asked. " +
+                "Nothing was read or pressed. Try again.", window));
+        }
         catch (Exception ex) when (ex is TimeoutException or UiaReadRefusedException ||
                                    (ex is OperationCanceledException && !cancellationToken.IsCancellationRequested))
         {
@@ -372,20 +384,36 @@ public sealed class BrowserDialogService : IBrowserDialogService
     }
 
     /// <summary>
-    /// Whether two readings of a dialog's message are the same message: equal once runs of white space are one space, or one
-    /// the start of the other (an action reports the start of a long message, cut with "...").
+    /// Whether <paramref name="shown"/>, a reading of the dialog a window shows, is the message <paramref name="seen"/>, the
+    /// reading the agent was given: equal once runs of white space are one space, or, when <paramref name="seen"/> is a long
+    /// message cut to its start (<see cref="IsCut"/>), a message that starts with that start. Any other prefix is not the
+    /// same message: a short dialog read in a window ("Delete") must not let a longer one shown there later ("Delete all
+    /// repositories?") be accepted unread, and a page's own text may end with "..." too.
     /// </summary>
-    public static bool SameText(string first, string second)
+    public static bool SameText(string seen, string shown)
     {
-        var a = Squeeze(first);
-        var b = Squeeze(second);
-        if (a.Length == 0 || b.Length == 0)
-            return a.Length == b.Length;
+        var a = Squeeze(seen);
+        var b = Squeeze(shown);
+        if (a == b)
+            return true;
 
-        var shortA = a.EndsWith("...", StringComparison.Ordinal) ? a[..^3] : a;
-        var shortB = b.EndsWith("...", StringComparison.Ordinal) ? b[..^3] : b;
-        return a == b || b.StartsWith(shortA, StringComparison.Ordinal) || a.StartsWith(shortB, StringComparison.Ordinal);
+        if (!IsCut(seen))
+            return false;
+
+        var start = Squeeze(seen[..^CutMarker.Length]);
+        return start.Length > 0 && b.StartsWith(start, StringComparison.Ordinal);
     }
+
+    /// <summary>What a reading cut to its start ends with.</summary>
+    private const string CutMarker = "...";
+
+    /// <summary>
+    /// Whether <paramref name="text"/> is a dialog message cut to its start: as long as the readings are cut at
+    /// (<see cref="CdpDialogText.MaxDialogMessageLength"/>, where <see cref="Cut"/> and the actions' reports put the
+    /// <see cref="CutMarker"/>) and ending with it. A shorter text that ends with "..." is a whole message.
+    /// </summary>
+    private static bool IsCut(string text) =>
+        text.Length == CdpDialogText.MaxDialogMessageLength && text.EndsWith(CutMarker, StringComparison.Ordinal);
 
     private static string Squeeze(string text) => string.Join(' ', text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
 
@@ -395,7 +423,7 @@ public sealed class BrowserDialogService : IBrowserDialogService
         return root != nint.Zero ? root : window;
     }
 
-    private static string Cut(string text, int max) => text.Length > max ? text[..(max - 3)] + "..." : text;
+    private static string Cut(string text, int max) => text.Length > max ? text[..(max - CutMarker.Length)] + CutMarker : text;
 
     /// <summary>The dialog as read: its type, message, prompt value, and the refs of its field and buttons (accept first).</summary>
     private sealed record ShownDialog(

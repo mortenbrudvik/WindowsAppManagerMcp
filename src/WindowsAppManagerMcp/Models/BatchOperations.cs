@@ -4,13 +4,22 @@ using System.Text.Json.Serialization;
 namespace WindowsAppManagerMcp.Models;
 
 // Input models for batch operations. Each item names its window by handle or by a window selector (roadmap M2.4), not both.
+// An unknown member of an item is refused (InvalidArguments) rather than ignored, as WindowSelector's and LaunchPlacement's
+// are: a misspelled field would otherwise act without it (a launch without its arguments, a placement in pixels that meant
+// percent).
 
-/// <summary>A set_windows_bounds_batch item: the visible frame to place the window at.</summary>
+/// <summary>
+/// A set_windows_bounds_batch item: the visible frame to place the window at, in pixels (it takes no unit, relativeTo or
+/// monitor, which set_window_bounds does). The four numbers are nullable so that an item without one fails alone
+/// (InvalidArguments) instead of binding 0 and moving its window to the origin; the input schema lists them as required
+/// integers, without null (<see cref="ToolRequiredAttribute"/>), since a null fails the item too.
+/// </summary>
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 public record WindowBoundsPlacement(
-    int X,
-    int Y,
-    int Width,
-    int Height,
+    [property: ToolRequired] int? X,
+    [property: ToolRequired] int? Y,
+    [property: ToolRequired] int? Width,
+    [property: ToolRequired] int? Height,
     long? Handle = null,
     bool BringToFront = true,
     WindowSelector? Window = null
@@ -35,6 +44,7 @@ public record WindowSnapPlacement(
 /// A set_windows_state_batch item. State is checked per item (an unknown one fails that item with InvalidState); the
 /// input schema lists the states.
 /// </summary>
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 public record WindowStateChange(
     [ToolValues(typeof(WindowStateRequest))] string State,
     long? Handle = null,
@@ -42,8 +52,10 @@ public record WindowStateChange(
 );
 
 /// <summary>A launch_applications_batch item: what launch_application takes for one application.</summary>
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 public record ApplicationLaunchRequest(
     string Executable,
+    [property: Description("Checked as launch_application's arguments are (for example UnsafeChromiumSwitch)")]
     string[]? Arguments = null,
     string? WorkingDirectory = null,
     LaunchWindowHint? ExpectWindow = null,
@@ -54,11 +66,13 @@ public record ApplicationLaunchRequest(
     [property: Description("Start a Chromium, Electron or CEF .exe with --force-renderer-accessibility, as launch_application's " +
                            "forceAccessibility (default false)")]
     bool ForceAccessibility = false,
-    [property: Description("Start the .exe as administrator, as launch_application's runAsAdmin (default false)")]
+    [property: Description("Start the .exe as administrator, as launch_application's runAsAdmin (default false), but only where " +
+                           "Windows asks the user (UAC): a batch never asks the user itself (ElevationNotConfirmed)")]
     bool RunAsAdmin = false
 );
 
 /// <summary>A close_windows_batch item: the window to close.</summary>
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 public record WindowCloseRequest(long? Handle = null, WindowSelector? Window = null);
 
 // Output models for batch operations
@@ -121,4 +135,8 @@ public record LaunchResultItem(
     string? Elevation = null
 );
 
+/// <summary>
+/// A rectangle in pixels, as the results write it. It is no argument: a launch placement's bounds are
+/// <see cref="PlacementBounds"/>, whose members are checked for being there instead of binding 0 when they are missing.
+/// </summary>
 public record BoundsDto(int X, int Y, int Width, int Height);

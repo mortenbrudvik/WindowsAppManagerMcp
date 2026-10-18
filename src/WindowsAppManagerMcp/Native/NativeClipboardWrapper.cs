@@ -28,17 +28,29 @@ public sealed class NativeClipboardWrapper : INativeClipboardWrapper
 
     private static readonly TimeSpan OpenRetryDelay = TimeSpan.FromMilliseconds(30);
 
-    private const string ExcludeFromMonitorFormat = "ExcludeClipboardContentFromMonitorProcessing";
-    private const string HistoryFormat = "CanIncludeInClipboardHistory";
-    private const string CloudFormat = "CanUploadToCloudClipboard";
-    private const string ViewerIgnoreFormat = "Clipboard Viewer Ignore";
+    // The registered format names below are what password managers and Windows put on the clipboard, letter for letter: a
+    // name that differs registers another format, which no copy carries, and switches the protection off without any error.
+    // NativeClipboardWrapperTests pins them.
+
+    /// <summary>The privacy marker password managers put on a copy that clipboard monitors must not process.</summary>
+    public const string ExcludeFromMonitorFormat = "ExcludeClipboardContentFromMonitorProcessing";
+
+    /// <summary>The DWORD a copy carries to say whether it may go into clipboard history (Win+V): 0 keeps it out.</summary>
+    public const string HistoryFormat = "CanIncludeInClipboardHistory";
+
+    /// <summary>The DWORD a copy carries to say whether it may be synced to the cloud clipboard: 0 keeps it local.</summary>
+    public const string CloudFormat = "CanUploadToCloudClipboard";
+
+    /// <summary>The older marker that tells clipboard viewers to ignore a copy.</summary>
+    public const string ViewerIgnoreFormat = "Clipboard Viewer Ignore";
+
     private const string HtmlFormat = "HTML Format";
 
     /// <summary>
     /// Windows Information Protection's label on copied content: empty on a copy no enterprise identity protects, which
     /// Windows 11 adds to every copy (found by roadmap M4.4's check on a real desktop, a copy from Notepad).
     /// </summary>
-    private const string EnterpriseDataProtectionFormat = "EnterpriseDataProtectionId";
+    public const string EnterpriseDataProtectionFormat = "EnterpriseDataProtectionId";
 
     /// <summary>The largest protection label read to see whether it is empty; a longer one names an identity.</summary>
     private const int MaxEmptyLabelBytes = 1024;
@@ -47,7 +59,7 @@ public sealed class NativeClipboardWrapper : INativeClipboardWrapper
     /// The registered formats that say nothing about the content: the privacy markers, and the formats OLE adds for its
     /// data object (OleSetClipboard), whose real formats are listed on their own.
     /// </summary>
-    private static readonly string[] BookkeepingFormats =
+    public static readonly IReadOnlyList<string> BookkeepingFormats =
     [
         ExcludeFromMonitorFormat, HistoryFormat, CloudFormat, ViewerIgnoreFormat, "DataObject", "Ole Private Data",
         "OleClipboardPersistOnFlush"
@@ -206,40 +218,92 @@ public sealed class NativeClipboardWrapper : INativeClipboardWrapper
         }
     }
 
-    /// <summary>
-    /// The privacy markers on the open clipboard. Fails closed: a marker whose format name cannot be registered, or a
-    /// CanIncludeInClipboardHistory whose value cannot be read, counts as set.
-    /// </summary>
-    private static ClipboardPrivacyMarkers ReadMarkers()
+    /// <summary>What the clipboard says about a registered format name, for <see cref="PrivacyMarkers"/>.</summary>
+    public enum FormatPresence
     {
+        /// <summary>The format is not on the clipboard.</summary>
+        Absent,
+
+        /// <summary>The format is on the clipboard.</summary>
+        Present,
+
+        /// <summary>The name could not be registered (RegisterClipboardFormat failed), so whether it is there is not known.</summary>
+        Unregistered
+    }
+
+    /// <summary>The privacy markers on the open clipboard (see <see cref="PrivacyMarkers"/>).</summary>
+    private static ClipboardPrivacyMarkers ReadMarkers() => PrivacyMarkers(
+        name => NativeMethods.Clipboard.RegisterClipboardFormatW(name) is var format and not 0
+            ? NativeMethods.Clipboard.IsClipboardFormatAvailable(format) ? FormatPresence.Present : FormatPresence.Absent
+            : FormatPresence.Unregistered,
+        name => ReadDword(NativeMethods.Clipboard.RegisterClipboardFormatW(name)));
+
+    /// <summary>
+    /// The privacy markers, decided from what the clipboard says about each marker's format name (<paramref name="presence"/>)
+    /// and the DWORD CanIncludeInClipboardHistory holds (<paramref name="readDword"/>: null when it cannot be read; asked
+    /// only when the format is there). Pure, so that the names and the rule are tested without the user's clipboard. Fails
+    /// closed: a marker whose name cannot be registered counts as set, and so does a CanIncludeInClipboardHistory whose
+    /// value cannot be read. CanUploadToCloudClipboard is not a marker: a copy kept off the cloud may still be read.
+    /// </summary>
+    public static ClipboardPrivacyMarkers PrivacyMarkers(Func<string, FormatPresence> presence, Func<string, uint?> readDword)
+    {
+        ArgumentNullException.ThrowIfNull(presence);
+        ArgumentNullException.ThrowIfNull(readDword);
         var markers = ClipboardPrivacyMarkers.None;
-        if (IsAvailableOrUnknown(ExcludeFromMonitorFormat, out _))
+        if (presence(ExcludeFromMonitorFormat) != FormatPresence.Absent)
         {
             markers |= ClipboardPrivacyMarkers.ExcludeFromMonitorProcessing;
         }
 
-        if (IsAvailableOrUnknown(ViewerIgnoreFormat, out _))
+        if (presence(ViewerIgnoreFormat) != FormatPresence.Absent)
         {
             markers |= ClipboardPrivacyMarkers.ClipboardViewerIgnore;
         }
 
-        if (IsAvailableOrUnknown(HistoryFormat, out var history) && (history == 0 || ReadDword(history) is not { } value || value == 0))
+        switch (presence(HistoryFormat))
         {
-            markers |= ClipboardPrivacyMarkers.NotForClipboardHistory;
+            case FormatPresence.Unregistered:
+            case FormatPresence.Present when readDword(HistoryFormat) is not { } value || value == 0:
+                markers |= ClipboardPrivacyMarkers.NotForClipboardHistory;
+                break;
         }
 
         return markers;
     }
 
     /// <summary>
-    /// True when the open clipboard holds a format besides plain text (see <see cref="ClipboardSnapshot.HasOtherFormats"/>).
-    /// Fails closed: a bookkeeping format whose name cannot be registered is not recognised, so it counts.
+    /// True when the open clipboard holds a format besides plain text (see <see cref="HasOtherFormats(IEnumerable{uint}, Func{string, uint}, Func{uint, bool})"/>).
     /// </summary>
-    private static bool HasOtherFormats()
+    private static bool HasOtherFormats() => HasOtherFormats(
+        EnumerateFormats(),
+        name => NativeMethods.Clipboard.RegisterClipboardFormatW(name),
+        format => IsEmptyData(format));
+
+    /// <summary>The formats on the open clipboard, read one at a time (EnumClipboardFormats), so a caller can stop early.</summary>
+    private static IEnumerable<uint> EnumerateFormats()
     {
-        var bookkeeping = BookkeepingFormats.Select(NativeMethods.Clipboard.RegisterClipboardFormatW).Where(f => f != 0).ToHashSet();
-        var protectionLabel = NativeMethods.Clipboard.RegisterClipboardFormatW(EnterpriseDataProtectionFormat);
         for (var format = NativeMethods.Clipboard.EnumClipboardFormats(0); format != 0; format = NativeMethods.Clipboard.EnumClipboardFormats(format))
+        {
+            yield return format;
+        }
+    }
+
+    /// <summary>
+    /// True when <paramref name="formats"/> (the clipboard's, in order) hold one besides plain text (see
+    /// <see cref="ClipboardSnapshot.HasOtherFormats"/>): the text formats Windows makes from text, the
+    /// <see cref="BookkeepingFormats"/> (by the IDs <paramref name="register"/> gives their names) and an empty
+    /// EnterpriseDataProtectionId (<paramref name="isEmptyData"/>, asked only for it) do not count. Pure, so that the names
+    /// and the rule are tested without the user's clipboard. Fails closed: a bookkeeping name that cannot be registered (0)
+    /// is not recognised, so its format counts.
+    /// </summary>
+    public static bool HasOtherFormats(IEnumerable<uint> formats, Func<string, uint> register, Func<uint, bool> isEmptyData)
+    {
+        ArgumentNullException.ThrowIfNull(formats);
+        ArgumentNullException.ThrowIfNull(register);
+        ArgumentNullException.ThrowIfNull(isEmptyData);
+        var bookkeeping = BookkeepingFormats.Select(register).Where(f => f != 0).ToHashSet();
+        var protectionLabel = register(EnterpriseDataProtectionFormat);
+        foreach (var format in formats)
         {
             if (format is NativeMethods.Clipboard.CF_UNICODETEXT or NativeMethods.Clipboard.CF_TEXT or
                     NativeMethods.Clipboard.CF_OEMTEXT or NativeMethods.Clipboard.CF_LOCALE || bookkeeping.Contains(format))
@@ -249,7 +313,7 @@ public sealed class NativeClipboardWrapper : INativeClipboardWrapper
 
             // Windows 11 puts an empty protection label on every copy (Notepad's too): only a label that names an
             // enterprise identity protects the content, and that one counts, so a paste never strips it
-            if (protectionLabel != 0 && format == protectionLabel && IsEmptyData(format))
+            if (protectionLabel != 0 && format == protectionLabel && isEmptyData(format))
             {
                 continue;
             }
@@ -307,14 +371,14 @@ public sealed class NativeClipboardWrapper : INativeClipboardWrapper
         }
     }
 
-    private static bool IsAvailableOrUnknown(string name, out uint format)
-    {
-        format = NativeMethods.Clipboard.RegisterClipboardFormatW(name);
-        return format == 0 || NativeMethods.Clipboard.IsClipboardFormatAvailable(format);
-    }
-
+    /// <summary>The DWORD in the open clipboard's <paramref name="format"/>; null when there is none or it cannot be read.</summary>
     private static uint? ReadDword(uint format)
     {
+        if (format == 0)
+        {
+            return null;
+        }
+
         var handle = NativeMethods.Clipboard.GetClipboardData(format);
         if (handle == nint.Zero || NativeMethods.Clipboard.GlobalSize(handle) < sizeof(uint))
         {

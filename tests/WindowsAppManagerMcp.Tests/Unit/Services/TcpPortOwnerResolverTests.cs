@@ -140,4 +140,81 @@ public class TcpPortOwnerResolverTests
     {
         new TcpPortOwnerResolver().GetListeningProcessId(port).Should().BeNull();
     }
+
+    #region Which tables decide (the listener tables come from the seam)
+
+    private static readonly byte[] Ipv6Any = new byte[16];
+
+    /// <summary>A resolver over the given tables; null: that table cannot be read.</summary>
+    private static TcpPortOwnerResolver Over(byte[]? ipv4, byte[]? ipv6) =>
+        new(family => family switch
+        {
+            AddressFamily.InterNetwork => ipv4,
+            AddressFamily.InterNetworkV6 => ipv6,
+            _ => throw new ArgumentOutOfRangeException(nameof(family))
+        });
+
+    [Fact]
+    public void TryGetListeningProcessId_AnUnreadableIpv4Table_IsUnknown_EvenWithADualModeListenerInTheIpv6Table()
+    {
+        // A 127.0.0.1 listener that could not be seen would take the connection, not the [::] one
+        var sut = Over(ipv4: null, ipv6: Ipv6Table((Ipv6Any, 9222, 1234)));
+
+        sut.TryGetListeningProcessId(9222, out var owner).Should().BeFalse();
+        owner.Should().BeNull();
+        sut.GetListeningProcessId(9222).Should().BeNull();
+    }
+
+    [Fact]
+    public void TryGetListeningProcessId_NoTableReadable_IsUnknown()
+    {
+        Over(ipv4: null, ipv6: null).TryGetListeningProcessId(9222, out var owner).Should().BeFalse();
+        owner.Should().BeNull();
+    }
+
+    [Fact]
+    public void TryGetListeningProcessId_AnIpv4Listener_IsKnown_WithoutTheIpv6Table()
+    {
+        // The more specific IPv4 binding takes a connection to 127.0.0.1 whatever listens on [::]
+        var sut = Over(ipv4: Ipv4Table((Loopback, 9222, 1234, Listen)), ipv6: null);
+
+        sut.TryGetListeningProcessId(9222, out var owner).Should().BeTrue();
+        owner.Should().Be(1234);
+    }
+
+    [Fact]
+    public void TryGetListeningProcessId_NoIpv4Listener_AndAnUnreadableIpv6Table_IsUnknown()
+    {
+        Over(ipv4: Ipv4Table(), ipv6: null).TryGetListeningProcessId(9222, out var owner).Should().BeFalse();
+        owner.Should().BeNull();
+    }
+
+    [Fact]
+    public void TryGetListeningProcessId_NoIpv4Listener_AndADualModeListener_IsTheDualModeListener()
+    {
+        var sut = Over(ipv4: Ipv4Table(), ipv6: Ipv6Table((Ipv6Any, 9222, 4321)));
+
+        sut.TryGetListeningProcessId(9222, out var owner).Should().BeTrue();
+        owner.Should().Be(4321);
+    }
+
+    [Fact]
+    public void TryGetListeningProcessId_BothTablesWithoutTheListener_IsKnownToBeNothing()
+    {
+        var sut = Over(ipv4: Ipv4Table((Loopback, 9333, 1, Listen)), ipv6: Ipv6Table());
+
+        sut.TryGetListeningProcessId(9222, out var owner).Should().BeTrue();
+        owner.Should().BeNull();
+    }
+
+    [Fact]
+    public void TryGetListeningProcessId_ATableQueryThatThrows_IsUnknown()
+    {
+        var sut = new TcpPortOwnerResolver(_ => throw new InvalidOperationException("The table changed."));
+
+        sut.TryGetListeningProcessId(9222, out var owner).Should().BeFalse();
+        owner.Should().BeNull();
+    }
+
+    #endregion
 }

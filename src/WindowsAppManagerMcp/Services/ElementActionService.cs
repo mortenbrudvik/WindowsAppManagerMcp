@@ -22,7 +22,9 @@ namespace WindowsAppManagerMcp.Services;
 /// <para>Target checks: the ref's window is checked first (<see cref="IInputTargetGuard.CheckTarget"/>); an element of
 /// another process (a child or owned window of another program) has its own window checked too
 /// (<see cref="IInputTargetGuard.CheckElementWindow"/>), before its state is read, so a refusal carries no name or value of
-/// it; and a pause the user started while the element was read stops the call before it acts.</para>
+/// it; a pause the user started while the element was read stops the call before it acts; and the window's checks run again
+/// right before a pattern or focus call (<see cref="Recheck"/>), so a modal dialog that opened during the read stops it
+/// (BlockedByModal). The mouse and keyboard paths are checked by the input guard before every batch.</para>
 /// </remarks>
 public sealed partial class ElementActionService : IElementActionService
 {
@@ -129,42 +131,54 @@ public sealed partial class ElementActionService : IElementActionService
     public static string? ArgumentError(ElementActionRequest request)
     {
         ArgumentNullException.ThrowIfNull(request);
-        var action = ToolEnum<ElementActionKind>.Name(request.Action);
-        switch (request.Action)
+        return ArgumentError(request.Action, request.Value, request.Mode, request.Direction, request.Fallback, request.ScrollPercent);
+    }
+
+    /// <summary>
+    /// <see cref="ArgumentError(ElementActionRequest)"/> for the arguments of a request whose element is not named yet: the tool
+    /// checks them before it resolves its criteria to the element's ref.
+    /// </summary>
+    public static string? ArgumentError(
+        ElementActionKind kind, string? value = null, ElementValueMode mode = ElementValueMode.Value,
+        ElementScrollDirection? direction = null, ElementActionFallback fallback = ElementActionFallback.None,
+        double? scrollPercent = null)
+    {
+        var action = ToolEnum<ElementActionKind>.Name(kind);
+        switch (kind)
         {
-            case ElementActionKind.SetValue when request.Value == null:
+            case ElementActionKind.SetValue when value == null:
                 return "set_value needs value: the text to put in the element (\"\" empties it).";
-            case ElementActionKind.AppendText when string.IsNullOrEmpty(request.Value):
+            case ElementActionKind.AppendText when string.IsNullOrEmpty(value):
                 return "append_text needs value: the text to add at the end.";
-            case ElementActionKind.SetRangeValue when !TryParseNumber(request.Value, out _):
-                return $"set_range_value needs value: a number such as \"42\" or \"0.5\" (got {Describe(request.Value)}).";
-            case ElementActionKind.Toggle when request.Value != null && ParseToggleState(request.Value) == null:
-                return $"toggle's value is the state to reach: on, off or indeterminate (got {Describe(request.Value)}); leave it out to toggle once.";
-            case ElementActionKind.Scroll when request.Direction == null:
+            case ElementActionKind.SetRangeValue when !TryParseNumber(value, out _):
+                return $"set_range_value needs value: a number such as \"42\" or \"0.5\" (got {Describe(value)}).";
+            case ElementActionKind.Toggle when value != null && ParseToggleState(value) == null:
+                return $"toggle's value is the state to reach: on, off or indeterminate (got {Describe(value)}); leave it out to toggle once.";
+            case ElementActionKind.Scroll when direction == null:
                 return "scroll needs direction: up, down, left or right (amount: page or line).";
-            case ElementActionKind.MenuPath when MenuPaths.Parse(request.Value, out var pathError) == null:
+            case ElementActionKind.MenuPath when MenuPaths.Parse(value, out var pathError) == null:
                 return pathError;
         }
 
-        if (request.Value != null && request.Action is not (ElementActionKind.SetValue or ElementActionKind.AppendText
+        if (value != null && kind is not (ElementActionKind.SetValue or ElementActionKind.AppendText
                 or ElementActionKind.SetRangeValue or ElementActionKind.Toggle or ElementActionKind.MenuPath))
         {
             return $"value is for set_value, append_text, set_range_value, toggle and menu_path, not {action}.";
         }
 
-        if (request.Mode != ElementValueMode.Value && request.Action is not (ElementActionKind.SetValue or ElementActionKind.AppendText))
+        if (mode != ElementValueMode.Value && kind is not (ElementActionKind.SetValue or ElementActionKind.AppendText))
         {
             return $"mode is for set_value and append_text, not {action}.";
         }
 
-        if (request.Direction != null && request.Action != ElementActionKind.Scroll)
+        if (direction != null && kind != ElementActionKind.Scroll)
         {
             return $"direction is for scroll, not {action}.";
         }
 
-        if (request.ScrollPercent is { } percent)
+        if (scrollPercent is { } percent)
         {
-            if (request.Action != ElementActionKind.Scroll)
+            if (kind != ElementActionKind.Scroll)
             {
                 return $"scrollPercent is for scroll, not {action}.";
             }
@@ -175,7 +189,7 @@ public sealed partial class ElementActionService : IElementActionService
             }
         }
 
-        if (request.Fallback == ElementActionFallback.Mouse && request.Action is not (ElementActionKind.Invoke or ElementActionKind.Click
+        if (fallback == ElementActionFallback.Mouse && kind is not (ElementActionKind.Invoke or ElementActionKind.Click
                 or ElementActionKind.Select))
         {
             return $"fallback mouse is for invoke, click and select (a click does what they do), not {action}. " +
@@ -342,6 +356,11 @@ public sealed partial class ElementActionService : IElementActionService
 
             case PlanKind.Pattern:
             {
+                if (Recheck(call, target) is { } changed)
+                {
+                    return changed;
+                }
+
                 var outcome = await _runner.RunAsync(targetProcess, plan.Act!, Timeout(request), cancellationToken).ConfigureAwait(false);
                 gate.Dispose();
                 if (Unfinished(call, outcome, windowsBefore, plan.Method) is { } unfinished)
@@ -357,6 +376,11 @@ public sealed partial class ElementActionService : IElementActionService
                 if (Activate(call) is { } notInFront)
                 {
                     return notInFront;
+                }
+
+                if (Recheck(call, target) is { } changed)
+                {
+                    return changed;
                 }
 
                 var outcome = await _runner.RunAsync(targetProcess, () => _tree.SetFocus(element.Node), Timeout(request), cancellationToken)
@@ -397,6 +421,18 @@ public sealed partial class ElementActionService : IElementActionService
 
         return await AfterAsync(call, element, plan.Method, windowsBefore, targetProcess, receiving: null, cancellationToken)
             .ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// The window's target checks run again right before a pattern or focus call (<see cref="IInputTargetGuard.CheckTarget"/>,
+    /// Win32 reads only): the read before it can take up to the timeout, and a modal dialog that opened meanwhile disables
+    /// the window (BlockedByModal) while a pattern call would still reach its element behind the dialog's back. The refusal,
+    /// with nothing done, or null when the window still passes.
+    /// </summary>
+    private ElementActionResult? Recheck(ActionCall call, InputTarget target)
+    {
+        var rechecked = _guard.CheckTarget(target);
+        return rechecked.Allowed ? null : call.Fail(rechecked.ErrorCode.ToString(), rechecked.Error!);
     }
 
     /// <summary>
@@ -691,8 +727,11 @@ public sealed partial class ElementActionService : IElementActionService
         catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
         {
             watch.ErrorCode = nameof(UIElementErrorCode.OperationTimedOut);
-            watch.Message = $"UI Automation did not say in time where keyboard focus is ({ex.Message}), so the keys could reach " +
-                            "another control of the window.";
+            watch.Message = ex is UiaDeadlinePassedException
+                ? "The time to check where keyboard focus is ran out before UI Automation was asked (the application was not " +
+                  "asked), so the keys could reach another control of the window."
+                : $"UI Automation did not say in time where keyboard focus is ({ex.Message}), so the keys could reach " +
+                  "another control of the window.";
             return new SelectorRefusal(nameof(InputErrorCode.TargetLostFocus), watch.Message);
         }
 
@@ -832,6 +871,13 @@ public sealed partial class ElementActionService : IElementActionService
         catch (TimeoutException) when (cancellationToken.IsCancellationRequested)
         {
             throw new OperationCanceledException(cancellationToken);
+        }
+        catch (UiaDeadlinePassedException)
+        {
+            // The worker started no read: the application was not asked, so nothing says it does not answer
+            return ReadOutcome<T>.Failed(call.Fail(nameof(UIElementErrorCode.OperationTimedOut),
+                "The call's time ran out before UI Automation was asked to read the element, so the application was not asked. " +
+                "Nothing more was done; read the element again, with a larger timeoutMs, before you retry."));
         }
         catch (TimeoutException ex)
         {

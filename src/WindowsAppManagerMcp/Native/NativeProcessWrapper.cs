@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
 using WindowsAppManagerMcp.Models;
 using WindowsAppManagerMcp.Services.Interfaces;
 
@@ -13,62 +14,115 @@ namespace WindowsAppManagerMcp.Native;
 /// </summary>
 public class NativeProcessWrapper : INativeProcessWrapper
 {
+    /// <summary>SYNCHRONIZE: the right to wait for the process, which the pin asks for with the query right.</summary>
+    private const uint Synchronize = 0x00100000;
+
     private readonly Func<IReadOnlyDictionary<int, (int ParentProcessId, string ImageName)>?> _snapshot;
+    private readonly Func<int, IDisposable?> _openPin;
 
     /// <param name="snapshot">
     /// Reads the process list that the ancestor and descendant walks of this instance use: every running process
     /// with its parent's ID and image name, or null when the list cannot be read. By default a Toolhelp32 snapshot
     /// (read with <see cref="ReadProcessList"/>); tests pass their own.
     /// </param>
-    public NativeProcessWrapper(Func<IReadOnlyDictionary<int, (int ParentProcessId, string ImageName)>?>? snapshot = null)
+    /// <param name="openPin">
+    /// Opens the handle that <see cref="OpenProcess"/> holds to pin a process's PID (see there), or returns null when none
+    /// can be opened. By default a <see cref="SafeProcessHandle"/> with query and wait access; tests pass their own.
+    /// </param>
+    public NativeProcessWrapper(
+        Func<IReadOnlyDictionary<int, (int ParentProcessId, string ImageName)>?>? snapshot = null,
+        Func<int, IDisposable?>? openPin = null)
     {
         _snapshot = snapshot ?? SnapshotProcesses;
+        _openPin = openPin ?? OpenPin;
     }
 
     public IProcessHandle? StartProcess(ProcessStartInfo startInfo)
     {
+        // A started Process holds the handle CreateProcess or ShellExecuteEx returned until it is disposed, so its PID is
+        // pinned like an opened one's
         var process = Process.Start(startInfo);
-        return process == null ? null : new ProcessHandle(process);
-    }
-
-    public IProcessHandle? OpenProcess(int processId)
-    {
-        try
-        {
-            return new ProcessHandle(Process.GetProcessById(processId));
-        }
-        catch (ArgumentException)
-        {
-            // No process with this ID is running
-            return null;
-        }
-    }
-
-    public bool IsAncestorOfCurrentProcess(int processId)
-    {
-        var parentByProcessId = ReadParentProcessIds();
-        return parentByProcessId != null &&
-               FindAncestors(Environment.ProcessId, parentByProcessId, TryGetStartTime).Contains(processId);
+        return process == null ? null : new ProcessHandle(process, pin: null);
     }
 
     /// <summary>
-    /// Returns the current process's ancestors, nearest first (parent, grandparent, ...).
-    /// Returns an empty list if the process snapshot cannot be taken.
+    /// Opens a running process by ID, holding a handle to it (PROCESS_QUERY_LIMITED_INFORMATION and SYNCHRONIZE) until the
+    /// returned object is disposed. Review F4: Windows does not give a PID to another process while a handle to the process
+    /// object is open, even after it exited, so every later read, wait, close request or kill through the returned object
+    /// (which reopen the process by its ID) reaches this process, never one that got its PID after it exited. The handle is
+    /// opened before the process is read, so the process read is the one pinned. When no handle can be opened (a protected
+    /// process may refuse even that access), the process is opened without one, as before, and its PID is not pinned: the
+    /// callers' checks of the start time are then what tells a reused PID.
     /// </summary>
-    public static IReadOnlyList<int> GetAncestorProcessIds()
+    public IProcessHandle? OpenProcess(int processId)
+    {
+        var pin = processId > 0 ? _openPin(processId) : null;
+        try
+        {
+            return new ProcessHandle(Process.GetProcessById(processId), pin);
+        }
+        catch (ArgumentException)
+        {
+            // No process with this ID is running (it may have exited, its object kept only by the pin)
+            pin?.Dispose();
+            return null;
+        }
+        catch
+        {
+            pin?.Dispose();
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// A handle to the process with query and wait access, or with either alone, or null when none can be opened. Any
+    /// handle keeps the process object, and with it its PID, until it is closed.
+    /// </summary>
+    private static SafeProcessHandle? OpenPin(int processId)
+    {
+        foreach (var access in new[] { NativeEnums.PROCESS_QUERY_LIMITED_INFORMATION | Synchronize, NativeEnums.PROCESS_QUERY_LIMITED_INFORMATION, Synchronize })
+        {
+            var handle = NativeMethods.Kernel32.OpenProcess(access, false, (uint)processId);
+            if (handle != nint.Zero)
+            {
+                return new SafeProcessHandle(handle, ownsHandle: true);
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Whether the process is an ancestor of this server; null when the process list cannot be read (review F3): the
+    /// answer is then unknown, not no, and a caller that protects the agent's host must refuse.
+    /// </summary>
+    public bool? IsAncestorOfCurrentProcess(int processId)
+    {
+        var parentByProcessId = ReadParentProcessIds();
+        return parentByProcessId == null
+            ? null
+            : FindAncestors(Environment.ProcessId, parentByProcessId, TryGetStartTime).Contains(processId);
+    }
+
+    /// <summary>
+    /// Returns the current process's ancestors, nearest first (parent, grandparent, ...), or null when the process
+    /// snapshot cannot be taken: the ancestors are then unknown, not absent.
+    /// </summary>
+    public static IReadOnlyList<int>? GetAncestorProcessIds()
     {
         var parentByProcessId = SnapshotParentProcessIds();
         return parentByProcessId == null
-            ? []
+            ? null
             : FindAncestors(Environment.ProcessId, parentByProcessId, TryGetStartTime);
     }
 
-    public IReadOnlyList<(int ProcessId, DateTime? StartTime)> GetAncestorProcesses()
+    public IReadOnlyList<(int ProcessId, DateTime? StartTime)>? GetAncestorProcesses()
     {
+        // Unknown, not "no ancestors" (review F3): the host guard records that and warns
         var parentByProcessId = ReadParentProcessIds();
         if (parentByProcessId == null)
         {
-            return [];
+            return null;
         }
 
         // Read each start time once: the walk reads them to detect reused PIDs, the result reports them.
@@ -512,7 +566,11 @@ public class NativeProcessWrapper : INativeProcessWrapper
         }
     }
 
-    private sealed class ProcessHandle(Process process) : IProcessHandle
+    /// <summary>
+    /// A process opened or started by this wrapper, with the handle that pins its PID (<see cref="OpenProcess"/>; null for
+    /// a started process, whose <see cref="Process"/> holds its own, or when none could be opened).
+    /// </summary>
+    private sealed class ProcessHandle(Process process, IDisposable? pin) : IProcessHandle
     {
         public int Id => process.Id;
 
@@ -562,7 +620,12 @@ public class NativeProcessWrapper : INativeProcessWrapper
 
         public void Kill(bool entireProcessTree) => process.Kill(entireProcessTree);
 
-        public void Dispose() => process.Dispose();
+        public void Dispose()
+        {
+            // The pin last, so the PID stays this process's while the Process object lets go of it
+            process.Dispose();
+            pin?.Dispose();
+        }
     }
 }
 

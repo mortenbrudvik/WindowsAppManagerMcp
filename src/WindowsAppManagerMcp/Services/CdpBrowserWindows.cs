@@ -14,12 +14,21 @@ internal static class CdpBrowserWindows
     /// <summary>
     /// The browser window of each tab; a tab the browser says is in no browser window (an error reply: not a tab of the tab
     /// strip) is left out. Null when the browser's connection cannot be used or any reply did not come (timed out,
-    /// connection closed): a partial binding could narrow the tabs to the wrong ones.
+    /// connection closed): a partial binding could narrow the tabs to the wrong ones. The connection is used only while
+    /// <paramref name="owner"/> still listens on the port once it is open (<see cref="ICdpTransport.ConnectAsync"/>).
     /// </summary>
+    /// <param name="cdp">Reads /json/version.</param>
+    /// <param name="transport">Opens the browser's connection.</param>
+    /// <param name="port">The browser's DevTools port.</param>
+    /// <param name="owner">The browser's process, checked to listen on the port when its tabs were listed.</param>
+    /// <param name="targets">The tabs.</param>
+    /// <param name="timeout">How long the whole lookup may take.</param>
+    /// <param name="cancellationToken">Cancels the lookup.</param>
     public static async Task<IReadOnlyDictionary<string, CdpBrowserWindow>?> QueryAsync(
         ICdpService cdp,
         ICdpTransport transport,
         int port,
+        int owner,
         IReadOnlyList<CdpTarget> targets,
         TimeSpan timeout,
         CancellationToken cancellationToken)
@@ -34,7 +43,7 @@ internal static class CdpBrowserWindows
             return null;
 
         var connected = await transport
-            .ConnectAsync(version.Value!.WebSocketDebuggerUrl, port, "the browser", left, cancellationToken)
+            .ConnectAsync(version.Value!.WebSocketDebuggerUrl, port, owner, "the browser", left, cancellationToken)
             .ConfigureAwait(false);
         if (!connected.Success)
             return null;

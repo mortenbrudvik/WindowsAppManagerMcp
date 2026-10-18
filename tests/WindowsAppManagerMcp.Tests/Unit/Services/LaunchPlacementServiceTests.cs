@@ -139,6 +139,14 @@ public class LaunchPlacementServiceTests
         return plan!;
     }
 
+    /// <summary>The device name of the monitor a layout's plan names (<see cref="LayoutMonitor"/>).</summary>
+    private const string LayoutMonitorKey = @"\\.\DISPLAY1";
+
+    /// <summary>A layout's plan always names its monitor (LaunchPlacementPlan.ForLayout): this is it, with this work area.</summary>
+    private void LayoutMonitor(MonitorRect workArea) =>
+        _monitors.Setup(m => m.ResolveMonitor(It.Is<MonitorSelector>(s => s.Name == LayoutMonitorKey)))
+            .Returns(MonitorResolution.Found(0, new MonitorInfo(0, LayoutMonitorKey, true, workArea, workArea, 1.0)));
+
     private async Task<LaunchPlacementOutcome> PlaceOneAsync(nint handle, LaunchPlacement placement) =>
         (await CreateSut().PlaceAsync([(handle, Plan(placement))])).Single();
 
@@ -259,7 +267,7 @@ public class LaunchPlacementServiceTests
     {
         At(100, () => _desktop[Code] = _desktop[Code] with { State = WindowState.Maximized });
 
-        var outcome = await PlaceOneAsync(Code, new LaunchPlacement(Bounds: new BoundsDto(10, 20, 800, 600)));
+        var outcome = await PlaceOneAsync(Code, new LaunchPlacement(Bounds: new PlacementBounds(10, 20, 800, 600)));
 
         outcome.Reapplied.Should().BeTrue();
         outcome.Window!.State.Should().Be(WindowState.Normal);
@@ -356,7 +364,7 @@ public class LaunchPlacementServiceTests
         _windows.Setup(w => w.SetWindowFrame(It.IsAny<nint>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>()))
             .Throws(new WindowNotRespondingException(Code, "The window did not answer within 5 s."));
 
-        var outcome = await PlaceOneAsync(Code, new LaunchPlacement(Bounds: new BoundsDto(0, 0, 100, 100)));
+        var outcome = await PlaceOneAsync(Code, new LaunchPlacement(Bounds: new PlacementBounds(0, 0, 100, 100)));
 
         outcome.ErrorCode.Should().Be(WindowErrorCode.NotResponding);
         outcome.Error.Should().Contain("did not answer");
@@ -370,7 +378,7 @@ public class LaunchPlacementServiceTests
 
         var outcomes = await CreateSut().PlaceAsync([
             (Code, Plan(new LaunchPlacement(Snap: "left_half"))),
-            (Terminal, Plan(new LaunchPlacement(Bounds: new BoundsDto(10, 20, 800, 600), Focus: true)))
+            (Terminal, Plan(new LaunchPlacement(Bounds: new PlacementBounds(10, 20, 800, 600), Focus: true)))
         ]);
 
         outcomes[0].ErrorCode.Should().Be(WindowErrorCode.MoveFailed);
@@ -401,7 +409,21 @@ public class LaunchPlacementServiceTests
 
         outcome.ErrorCode.Should().Be(WindowErrorCode.ProtectedWindow);
         outcome.FailedStep.Should().Be(LaunchPlacementStep.Check);
-        outcome.Error.Should().Contain("agent's own host").And.Contain("snap_window");
+        outcome.Error.Should().Contain("agent's own host").And.Contain("snap_window").And.NotContain("ancestor processes");
+        _calls.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task AWindowThatCountsAsTheHostOnlyWhileTheAncestorsAreUnknown_IsNeitherMovedNorFocused_AndTheErrorSaysWhy()
+    {
+        // The server cannot read its ancestors, and the launch's window belongs to a program that started before it (say, a
+        // single-instance app that was already running)
+        _desktop[Terminal] = _desktop[Terminal] with { IsAgentHost = true, IsAgentHostOnlyWhileAncestorsUnknown = true };
+
+        var outcome = await PlaceOneAsync(Terminal, new LaunchPlacement(Snap: "right_half", Focus: true));
+
+        outcome.ErrorCode.Should().Be(WindowErrorCode.ProtectedWindow);
+        outcome.Error.Should().Contain(HostGuard.AncestorsUnknownNote).And.Contain("snap_window");
         _calls.Should().BeEmpty();
     }
 
@@ -444,6 +466,41 @@ public class LaunchPlacementServiceTests
         outcome.FailedStep.Should().Be(LaunchPlacementStep.Settle);
         outcome.Reapplied.Should().BeFalse();
         _calls.Should().Equal("snap LeftHalf ", "delay");
+    }
+
+    [Theory]
+    [InlineData(InputControlSources.Hotkey, "the user pressed the pause hotkey", "could not read the pause it shares")]
+    [InlineData(InputControlSources.SharedPauseUnreadable, "could not read the pause it shares", "pressed the pause hotkey")]
+    public async Task WhileInputIsPaused_TheErrorSaysWhy(string pausedBy, string says, string doesNotSay)
+    {
+        // The server pauses itself when it cannot read the shared pause: the agent must not tell the user they paused it
+        _session.SetupGet(s => s.IsPaused).Returns(true);
+        _session.SetupGet(s => s.PauseState).Returns(new InputPauseState(true, pausedBy));
+
+        var outcome = await PlaceOneAsync(Code, new LaunchPlacement(Snap: "left_half"));
+
+        outcome.ErrorCode.Should().Be(WindowErrorCode.PausedByUser);
+        outcome.Error.Should().Contain("Input is paused").And.Contain(says).And.NotContain(doesNotSay)
+            .And.NotContain("because the user paused input").And.Contain("never resume input yourself");
+    }
+
+    [Theory]
+    [InlineData(InputControlSources.Hotkey, "the user pressed the pause hotkey", "could not read the pause it shares")]
+    [InlineData(InputControlSources.SharedPauseUnreadable, "could not read the pause it shares", "pressed the pause hotkey")]
+    public async Task APauseDuringTheWatch_TheErrorSaysWhy(string pausedBy, string says, string doesNotSay)
+    {
+        At(100, () =>
+        {
+            Place(Code, SavedBounds);
+            _session.SetupGet(s => s.IsPaused).Returns(true);
+            _session.SetupGet(s => s.PauseState).Returns(new InputPauseState(true, pausedBy));
+        });
+
+        var outcome = await PlaceOneAsync(Code, new LaunchPlacement(Snap: "left_half"));
+
+        outcome.FailedStep.Should().Be(LaunchPlacementStep.Settle);
+        outcome.Error.Should().Contain("moved it again").And.Contain("Input is paused").And.Contain(says).And.NotContain(doesNotSay)
+            .And.NotContain("because the user paused input");
     }
 
     [Fact]
@@ -520,8 +577,11 @@ public class LaunchPlacementServiceTests
     [Fact]
     public async Task OuterBounds_PlaceTheWindowRect_AsLayoutsDo()
     {
-        // apply_layout's presets hold the window rect with its invisible borders (roadmap M3.F27)
-        var plan = new LaunchPlacementPlan(null, null, new WindowRect(0, 0, 974, 1047), null, false) { Frame = BoundsFrame.Outer };
+        // apply_layout's presets hold the window rect with its invisible borders (roadmap M3.F27); its monitor's work area is
+        // the rectangle, so the fractions place it there unchanged
+        LayoutMonitor(new MonitorRect(0, 0, 974, 1047));
+        var plan = LaunchPlacementPlan.ForLayout(LayoutMonitorKey, 0, bounds: new WindowRect(0, 0, 974, 1047),
+            relativeBounds: new RelativePosition(0, 0, 1, 1));
 
         var outcome = (await CreateSut().PlaceAsync([(Code, plan)])).Single();
 
@@ -535,7 +595,7 @@ public class LaunchPlacementServiceTests
     [Fact]
     public void APlan_PlacesTheVisibleFrame_UnlessItSaysOtherwise()
     {
-        Plan(new LaunchPlacement(Bounds: new BoundsDto(10, 20, 800, 600))).Frame.Should().Be(BoundsFrame.Visible);
+        Plan(new LaunchPlacement(Bounds: new PlacementBounds(10, 20, 800, 600))).Frame.Should().Be(BoundsFrame.Visible);
     }
 
     [Fact]
@@ -573,7 +633,7 @@ public class LaunchPlacementServiceTests
         var plans = new List<(nint, LaunchPlacementPlan)>
         {
             (Code, Plan(new LaunchPlacement(Snap: "left_half"))),
-            (Terminal, Plan(new LaunchPlacement(Bounds: new BoundsDto(960, 0, 960, 1040), Focus: true)))
+            (Terminal, Plan(new LaunchPlacement(Bounds: new PlacementBounds(960, 0, 960, 1040), Focus: true)))
         };
 
         var outcomes = await CreateSut().PlaceAsync(plans);
@@ -592,7 +652,7 @@ public class LaunchPlacementServiceTests
         var plans = new List<(nint, LaunchPlacementPlan)>
         {
             (Code, Plan(new LaunchPlacement(Snap: "left_half"))),
-            (Terminal, Plan(new LaunchPlacement(Bounds: new BoundsDto(960, 0, 960, 1040))))
+            (Terminal, Plan(new LaunchPlacement(Bounds: new PlacementBounds(960, 0, 960, 1040))))
         };
 
         var outcomes = await CreateSut().PlaceAsync(plans);
@@ -612,7 +672,7 @@ public class LaunchPlacementServiceTests
         var plans = new List<(nint, LaunchPlacementPlan)>
         {
             (Code, Plan(new LaunchPlacement(Snap: "left_half"))),
-            (Code, Plan(new LaunchPlacement(Bounds: new BoundsDto(10, 20, 800, 600))))
+            (Code, Plan(new LaunchPlacement(Bounds: new PlacementBounds(10, 20, 800, 600))))
         };
 
         var outcomes = await CreateSut().PlaceAsync(plans);
@@ -695,10 +755,9 @@ public class LaunchPlacementServiceTests
     public async Task ALayoutsMaximizedPlan_PlacesTheRestoreRectangle_ThenMaximizes()
     {
         // Review M6.8 #5: apply_layout's launched maximized window restores to its saved rectangle
-        var plan = new LaunchPlacementPlan(null, null, new WindowRect(192, 104, 960, 520), LaunchWindowState.Maximized, false)
-        {
-            Frame = BoundsFrame.Outer
-        };
+        LayoutMonitor(new MonitorRect(0, 0, 1920, 1040));
+        var plan = LaunchPlacementPlan.ForLayout(LayoutMonitorKey, 0, bounds: new WindowRect(192, 104, 960, 520),
+            relativeBounds: new RelativePosition(0.1, 0.1, 0.5, 0.5), state: LaunchWindowState.Maximized);
 
         var outcome = (await CreateSut().PlaceAsync([(Code, plan)])).Single();
 
@@ -715,10 +774,8 @@ public class LaunchPlacementServiceTests
             Id = "m-0a1b2c3d"
         };
         _monitors.Setup(m => m.ResolveMonitor(It.Is<MonitorSelector>(s => s.Name == "m-0a1b2c3d"))).Returns(MonitorResolution.Found(2, now));
-        var plan = new LaunchPlacementPlan(null, null, new WindowRect(0, 0, 960, 1040), null, false)
-        {
-            Frame = BoundsFrame.Outer, MonitorKey = "m-0a1b2c3d", RelativeBounds = new RelativePosition(0.5, 0, 0.5, 1)
-        };
+        var plan = LaunchPlacementPlan.ForLayout("m-0a1b2c3d", 1, bounds: new WindowRect(0, 0, 960, 1040),
+            relativeBounds: new RelativePosition(0.5, 0, 0.5, 1));
 
         var outcome = (await CreateSut().PlaceAsync([(Code, plan)])).Single();
 

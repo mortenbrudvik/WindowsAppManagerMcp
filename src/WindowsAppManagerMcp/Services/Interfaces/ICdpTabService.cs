@@ -11,7 +11,10 @@ namespace WindowsAppManagerMcp.Services.Interfaces;
 /// <remarks>
 /// The calls that change the browser (activate, open, navigate) take the input gate through <see cref="CdpGate"/> just
 /// around the command that changes it, and release it before they wait for the page, so a slow page never holds up the
-/// input and window tools.
+/// input and window tools. Every tab list is used, and every connection gets a command, only while the browser's process
+/// still listens on the port (review F4): a tab's connection and the browser's connection for a tab are tied to the browser
+/// that listed the tab (<see cref="CdpTarget.OwnerProcessId"/>), and fail with CdpPortOwnerMismatch, nothing sent, when the
+/// port changed hands or its listener cannot be read.
 /// </remarks>
 public interface ICdpTabService
 {
@@ -19,7 +22,10 @@ public interface ICdpTabService
     /// Lists the page targets (tabs) of the browser on <paramref name="port"/>, which must belong to process
     /// <paramref name="processId"/> (CdpPortOwnerMismatch otherwise, also when its owner cannot be read). With
     /// <paramref name="window"/>, binds it to its browser window as the reads do (<see cref="Services.CdpWindowBinder"/>):
-    /// the listing says which tabs are in it and, when its title picks exactly one of them, which one it shows.
+    /// the listing says which tabs are in it and which one it shows, picked as the reads pick it
+    /// (<see cref="ICdpService.FindTargetForWindowAsync"/>: its title, and of several tabs with it the one that is shown).
+    /// Over <see cref="Services.CdpService.MaxBoundTabs"/> tabs, the tabs are listed without their windows (not bound), and
+    /// only the windows of the tabs with the window's title are looked up, to tell which of them it shows.
     /// </summary>
     Task<CdpResult<CdpTabListing>> ListTabsAsync(
         int port, int processId, CdpWindow? window, TimeSpan timeout, CancellationToken cancellationToken = default);
@@ -34,7 +40,9 @@ public interface ICdpTabService
     /// <summary>
     /// Opens a new tab on about:blank in the browser on <paramref name="port"/> (Target.createTarget over the browser's
     /// DevTools connection), which must belong to process <paramref name="processId"/>. The browser puts it in its most
-    /// recently active window and shows it there. Returns the new tab as /json/list lists it.
+    /// recently active window and shows it there. Returns the new tab as /json/list lists it; a failure once the browser has
+    /// opened it (the tab list does not show it, cannot be read, or comes after the port changed hands) carries its id
+    /// (<see cref="CdpResult{T}.OpenedTargetId"/>), since the tab stays open on about:blank.
     /// </summary>
     Task<CdpResult<CdpTarget>> OpenTabAsync(
         int port, int processId, CdpGate gate, TimeSpan timeout, CancellationToken cancellationToken = default);
@@ -77,7 +85,8 @@ public sealed record CdpTab(CdpTarget Target, int? WindowId, bool InWindow);
 /// </summary>
 /// <param name="Tabs">Every page tab, those in the window first.</param>
 /// <param name="WindowBound">Whether the window was matched to its browser window; false without a window.</param>
-/// <param name="Shown">The tab the window shows, when its title picks exactly one; else null.</param>
+/// <param name="Shown">The tab the window shows, picked as the reads pick it (its title, and of several tabs with it the one
+/// that is shown); else null.</param>
 /// <param name="ShownError">Why no tab could be told as the shown one (CdpTargetNotFound, CdpTargetAmbiguous).</param>
 public sealed record CdpTabListing(IReadOnlyList<CdpTab> Tabs, bool WindowBound, CdpTarget? Shown, string? ShownError);
 

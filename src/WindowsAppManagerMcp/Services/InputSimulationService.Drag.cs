@@ -38,8 +38,8 @@ public partial class InputSimulationService
 
         using var call = new InputCall(_session, cancellationToken);
         var result = await DragInCallAsync().ConfigureAwait(false);
-        return call.TakeoverWarns
-            ? result with { Warning = TakeoverMessages.Combine(result.Warning, TakeoverMessages.Warning("the drag ran")) }
+        return call.TakeoverWarning("the drag ran") is { } takeover
+            ? result with { Warning = TakeoverMessages.Combine(result.Warning, takeover) }
             : result;
 
         async Task<DragResult> DragInCallAsync()

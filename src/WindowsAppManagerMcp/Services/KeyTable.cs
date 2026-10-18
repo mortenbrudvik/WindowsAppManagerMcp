@@ -112,7 +112,9 @@ public static class KeyTable
         Add(NativeEnums.VK_DECIMAL, "DECIMAL");
         Add(NativeEnums.VK_DIVIDE, "DIVIDE");
 
-        // The punctuation keys by position: what they type depends on the layout (VK_OEM_1 is ';' on a US keyboard)
+        // The punctuation keys by virtual key: which physical key each is, and what it types, depends on the layout (VK_OEM_1
+        // is ';' on a US keyboard and 'ü' on a German one; VK_OEM_PLUS is the = key on a US keyboard, the + key right of 0 on a
+        // Norwegian one)
         Add(0xBA, "OEM1");
         Add(0xBB, "OEMPLUS");
         Add(0xBC, "OEMCOMMA");
@@ -126,6 +128,12 @@ public static class KeyTable
         Add(0xDE, "OEM7");
         Add(0xDF, "OEM8");
         Add(0xE2, "OEM102");
+
+        // The two extra keys of a Brazilian ABNT2 keyboard: / ? left of the right Shift, and the numeric keypad's '.' (Windows
+        // gives them no OEM name). Named so that press_keys can report and take a character pressed on them ('ctrl+?' is
+        // ctrl+shift+abnt_c1 there)
+        Add(0xC1, "ABNTC1");
+        Add(0xC2, "ABNTC2");
 
         // Browser, volume, media and launch keys (VK_SLEEP is left out on purpose)
         Add(0xA6, "BROWSERBACK");

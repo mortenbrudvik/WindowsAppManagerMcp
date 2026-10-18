@@ -116,7 +116,8 @@ public sealed class HeldInputTracker
     /// <summary>
     /// The events that release <paramref name="held"/>: the masking key (<see cref="MaskKey"/> down and up)
     /// first when Alt or Windows is among them, then the key-ups of ordinary keys and characters, then the
-    /// modifier key-ups (last pressed first), then the mouse button-ups.
+    /// modifier key-ups (last pressed first), then the mouse button-ups. A key goes up with the extended flag and the
+    /// scan code it went down with (<see cref="HeldInput.Scan"/>).
     /// </summary>
     public static List<InputEvent> ReleaseEvents(IReadOnlyCollection<HeldInput> held)
     {
@@ -147,9 +148,28 @@ public sealed class HeldInputTracker
         return events;
     }
 
-    private static InputEvent KeyUp(HeldInput input) => input.Kind == InputEventKind.Unicode
-        ? InputEvent.Unicode((char)input.Code, NativeEnums.KEYEVENTF_KEYUP)
-        : InputEvent.Key(input.Code, input.Flags | NativeEnums.KEYEVENTF_KEYUP);
+    /// <summary>
+    /// The key-up of <paramref name="input"/>: a key goes up with the extended flag and the scan code it went down with. A
+    /// modifier held without a scan code (counted held without the key-down that pressed it, <see cref="HeldInput.Key"/>)
+    /// goes up with the scan code and the extended flag that key has on every keyboard (<see cref="KeyNames.ModifierScanCode"/>),
+    /// so that every path that releases a modifier reaches the remote desktop and virtual machine clients and games that
+    /// track keys by scan code, and leave a key-up without one down.
+    /// </summary>
+    private static InputEvent KeyUp(HeldInput input)
+    {
+        if (input.Kind == InputEventKind.Unicode)
+        {
+            return InputEvent.Unicode((char)input.Code, NativeEnums.KEYEVENTF_KEYUP);
+        }
+
+        if (input.IsModifier && input.Scan == 0)
+        {
+            var extended = KeyNames.IsExtended(input.Code) ? NativeEnums.KEYEVENTF_EXTENDEDKEY : 0;
+            return InputEvent.Key(input.Code, input.Flags | extended | NativeEnums.KEYEVENTF_KEYUP, KeyNames.ModifierScanCode(input.Code));
+        }
+
+        return InputEvent.Key(input.Code, input.Flags | NativeEnums.KEYEVENTF_KEYUP, input.Scan);
+    }
 
     /// <summary>What one event presses or releases. A mouse event can carry several button flags.</summary>
     private static IEnumerable<(HeldInput Input, bool Down)> Transitions(InputEvent e)
@@ -157,9 +177,13 @@ public sealed class HeldInputTracker
         switch (e.Kind)
         {
             case InputEventKind.VirtualKey:
-            case InputEventKind.Unicode:
-                yield return (new HeldInput(e.Kind, e.Code, e.Kind == InputEventKind.VirtualKey ? e.Flags & NativeEnums.KEYEVENTF_EXTENDEDKEY : 0),
+                // The extended flag and the scan code, so the key goes up as it went down
+                yield return (new HeldInput(e.Kind, e.Code, e.Flags & NativeEnums.KEYEVENTF_EXTENDEDKEY, e.Scan),
                     (e.Flags & NativeEnums.KEYEVENTF_KEYUP) == 0);
+                break;
+
+            case InputEventKind.Unicode:
+                yield return (new HeldInput(e.Kind, e.Code), (e.Flags & NativeEnums.KEYEVENTF_KEYUP) == 0);
                 break;
 
             case InputEventKind.Mouse:

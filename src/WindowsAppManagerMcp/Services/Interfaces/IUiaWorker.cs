@@ -26,6 +26,8 @@ public interface IUiaWorker
     /// <returns>What <paramref name="read"/> returned.</returns>
     /// <exception cref="TimeoutException">The read did not return by the deadline (its thread is
     /// abandoned and finishes on its own).</exception>
+    /// <exception cref="UiaDeadlinePassedException">The deadline had passed before the call (<paramref name="cancellationToken"/>
+    /// already cancelled, with no <paramref name="grace"/>), so the read was not started and is not counted as stuck.</exception>
     /// <exception cref="UiaReadRefusedException">The read was not started, because earlier reads of the
     /// same target, or too many reads overall, are still stuck: the target application is probably
     /// not responding.</exception>
@@ -41,6 +43,24 @@ public sealed class UiaReadRefusedException : TimeoutException
 {
     public UiaReadRefusedException(string message)
         : base(message)
+    {
+    }
+}
+
+/// <summary>
+/// <see cref="IUiaWorker"/> did not start a read because its deadline had passed before the read was asked for: the
+/// caller's time ran out between two reads, so the application was asked nothing. A <see cref="TimeoutException"/>, as a
+/// missed deadline, so every caller that handles one handles this too; a caller that describes the timeout tells it apart,
+/// so its message never says the application did not answer, or may be hung, when it was never asked.
+/// </summary>
+public sealed class UiaDeadlinePassedException : TimeoutException
+{
+    /// <summary>The worker's sentence for it, which a caller may put in its own message.</summary>
+    public const string DefaultMessage =
+        "The time for this UI Automation read had run out before it started, so the application was not asked. Nothing was read.";
+
+    public UiaDeadlinePassedException()
+        : base(DefaultMessage)
     {
     }
 }

@@ -26,10 +26,12 @@ public partial class InputSimulationService
     private sealed record PasteAttempt(TypeTextResult? Result, string? NotPasted, InputGuardResult Approved, ClipboardReturn? Back = null);
 
     /// <summary>
-    /// Why the text must not be pasted, before anything is checked: with delayMs (method paste only; auto types then)
-    /// or longer than <see cref="MaxPasteLength"/>. Null when it may be.
+    /// Why the text must not be pasted, before anything is checked: with delayMs, or when Ctrl+V is the user's pause hotkey
+    /// (<paramref name="pauseChord"/>), which the agent must never press (method paste only; auto types then), or longer than
+    /// <see cref="MaxPasteLength"/>. Null when it may be.
     /// </summary>
-    private (InputErrorCode Code, string Error)? PasteRefusalBeforeInput(bool explicitPaste, int length, int delayBetweenKeysMs)
+    private (InputErrorCode Code, string Error)? PasteRefusalBeforeInput(bool explicitPaste, int length, int delayBetweenKeysMs,
+        string? pauseChord)
     {
         if (explicitPaste && _pasteClipboard == null)
         {
@@ -41,6 +43,17 @@ public partial class InputSimulationService
             return (InputErrorCode.InvalidArguments,
                 "delayMs paces keystrokes, and a paste sends none but Ctrl+V. Leave delayMs out to paste, or type the text with " +
                 "method 'unicode'. Nothing was typed.");
+        }
+
+        // Typing is the only way left, so text longer than typing takes goes in parts: 'unicode' alone would be TextTooLong
+        if (explicitPaste && pauseChord != null)
+        {
+            return (InputErrorCode.PauseChordNotAllowed,
+                $"A paste presses Ctrl+V, and {pauseChord} is the user's pause hotkey, which pauses and resumes this server's " +
+                "input. Only the user may press it. Nothing was typed, and the clipboard was not touched. " +
+                (length > MaxTypedLength
+                    ? $"Type the text with method 'unicode', in parts of at most {Count(MaxTypedLength)} characters."
+                    : "Type the text with method 'unicode'."));
         }
 
         return length > MaxPasteLength
@@ -172,7 +185,7 @@ public partial class InputSimulationService
     }
 
     /// <summary>A count as the messages write it, the same in every culture: 5,000.</summary>
-    private static string Count(int count) => count.ToString("N0", CultureInfo.InvariantCulture);
+    private static string Count(long count) => count.ToString("N0", CultureInfo.InvariantCulture);
 
     /// <summary>Ctrl+V with the scan codes of <paramref name="layout"/>: Ctrl down, V down and up, Ctrl up.</summary>
     private static List<InputEvent> PasteKeys(KeyboardLayout layout) =>

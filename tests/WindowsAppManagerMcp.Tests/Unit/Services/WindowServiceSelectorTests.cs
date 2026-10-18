@@ -145,9 +145,50 @@ public class WindowServiceSelectorTests
 
         // Assert
         resolution.ErrorCode.Should().Be("AmbiguousWindow");
-        resolution.Error.Should().Contain("isAgentHost");
+        resolution.Error.Should().Contain("isAgentHost marks your own terminal or editor.")
+            .And.NotContain("ancestor processes", "the host is known, so the mark means the agent's own window");
         candidates.Single(c => c.Handle == host.ToInt64()).IsAgentHost.Should().BeTrue();
         candidates.Single(c => c.Handle == other.ToInt64()).IsAgentHost.Should().BeNull("only the host is marked; the field is omitted otherwise");
+    }
+
+    [Fact]
+    public void Resolve_Ambiguous_WithACandidateThatCountsAsTheHostOnlyWhileTheAncestorsAreUnknown_SaysTheMarkMayBeAnotherApps()
+    {
+        // Arrange - review A4: while the server cannot read its ancestors, every older program's window counts as the host's,
+        // so the hint must not tell the agent that each marked candidate is its own terminal or editor
+        var older = _desktop.Add("notes.txt - Notepad", processName: "notepad");
+        var later = _desktop.Add("todo.txt - Notepad", processName: "notepad");
+        _desktop.HostGuard.Setup(g => g.IsHostWindow(older)).Returns(true);
+        _desktop.HostGuard.Setup(g => g.IsHostWindowOnlyWhileAncestorsUnknown(older)).Returns(true);
+
+        // Act
+        var resolution = CreateSut().ResolveWindow(new WindowSelector { ProcessName = "notepad" });
+        var candidates = resolution.Candidates.Select(WindowCandidateDto.From).ToList();
+
+        // Assert
+        resolution.ErrorCode.Should().Be("AmbiguousWindow");
+        resolution.Error.Should().NotContain("isAgentHost marks your own terminal or editor.")
+            .And.Contain("cannot read its ancestor processes").And.Contain("started before the server")
+            .And.Contain("may be another app's").And.Contain("get_server_info");
+        candidates.Single(c => c.Handle == older.ToInt64()).IsAgentHost.Should().BeTrue("the output is unchanged; only the hint says what the mark may mean");
+        candidates.Single(c => c.Handle == later.ToInt64()).IsAgentHost.Should().BeNull();
+    }
+
+    [Fact]
+    public void Resolve_Ambiguous_WithSuchAWindowOnlyBeyondTheCandidates_KeepsTheUsualHint()
+    {
+        // Arrange - the hint describes the candidates the agent sees: a sixth match is not one of them
+        var shown = Enumerable.Range(0, 5).Select(i => _desktop.Add($"Tab {i} - Google Chrome", processName: "chrome")).ToList();
+        var beyond = _desktop.Add("Tab 5 - Google Chrome", processName: "chrome");
+        _desktop.HostGuard.Setup(g => g.IsHostWindow(beyond)).Returns(true);
+        _desktop.HostGuard.Setup(g => g.IsHostWindowOnlyWhileAncestorsUnknown(beyond)).Returns(true);
+
+        // Act
+        var resolution = CreateSut().ResolveWindow(new WindowSelector { ProcessName = "chrome" });
+
+        // Assert
+        resolution.Candidates.Select(w => w.Handle).Should().Equal(shown);
+        resolution.Error.Should().Contain("isAgentHost marks your own terminal or editor.").And.NotContain("ancestor processes");
     }
 
     [Fact]

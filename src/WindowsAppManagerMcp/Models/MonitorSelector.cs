@@ -52,7 +52,7 @@ public static class MonitorSelectorDescriptions
     /// <summary>The description of every `monitor` parameter.</summary>
     public const string Monitor =
         "A monitor: index, 'primary', 'left', 'right', 'current' (the foreground window's, maybe your own terminal's), or an id " +
-        "or name from get_monitors.";
+        "or device name from get_monitors.";
 
     /// <summary>The description of a `monitor` parameter that also takes every monitor in one image.</summary>
     public const string MonitorOrAll = Monitor + " 'all' (or -1): every monitor in one image.";
@@ -62,7 +62,7 @@ public static class MonitorSelectorDescriptions
 public sealed class MonitorSelectorConverter : JsonConverter<MonitorSelector>
 {
     private const string Expected =
-        "monitor takes an index (0-based) or a name: 'primary', 'left', 'right', 'current', or an id or name from get_monitors.";
+        "monitor takes an index (0-based) or a name: 'primary', 'left', 'right', 'current', or an id or device name from get_monitors.";
 
     public override MonitorSelector Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
     {
@@ -99,13 +99,14 @@ public sealed class MonitorSelectorConverter : JsonConverter<MonitorSelector>
 /// <summary>
 /// What a <see cref="MonitorSelector"/> named: the index (passed on as given for an index, which each tool checks against the
 /// monitors itself; <see cref="Services.MonitorSelection.AllMonitors"/> for 'all') and the monitor (null for 'all' and for an
-/// index that is no monitor), or why it names none (MonitorNotFound, AmbiguousMonitor).
+/// index that is no monitor), or why it names none (MonitorNotFound, AmbiguousMonitor). A failed resolution has no index
+/// (null), so it can never be read as -1, every monitor.
 /// </summary>
-public sealed record MonitorResolution(int Index, MonitorInfo? Monitor, string? ErrorCode = null, string? Error = null)
+public sealed record MonitorResolution(int? Index, MonitorInfo? Monitor, string? ErrorCode = null, string? Error = null)
 {
     public bool Succeeded => ErrorCode == null;
 
     public static MonitorResolution Found(int index, MonitorInfo? monitor) => new(index, monitor);
 
-    public static MonitorResolution Failed(string errorCode, string error) => new(-1, null, errorCode, error);
+    public static MonitorResolution Failed(string errorCode, string error) => new(null, null, errorCode, error);
 }

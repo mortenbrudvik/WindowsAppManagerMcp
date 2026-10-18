@@ -50,8 +50,8 @@ public class InputSimulationTools
         "The captureId of a take_screenshot, capture_region, capture_window or capture_with_elements result: x and y are then " +
         "pixels of that image as returned, converted through its imageToScreen. A window capture's window is the input's target " +
         "(another windowHandle is refused). Nothing is sent when the captured window moved or resized by more than 2 pixels, " +
-        "closed or was minimized since, or the monitors changed (StaleCapture), or when the id is unknown or older than 10 " +
-        "minutes (CaptureNotFound): capture again. Default: none";
+        "closed or was minimized since, or the monitors changed (StaleCapture), or when the id is unknown, older than 10 " +
+        "minutes or not among the last 32 captures (CaptureNotFound): capture again. Default: none";
 
     private const string ClickTargetNote =
         " Pass windowHandle with the window you mean. Without it the click goes to whatever window is at that point (check it with get_foreground_window and get_element_at_point first), " +
@@ -74,12 +74,19 @@ public class InputSimulationTools
         SessionNote;
 
     private const string SessionNote =
-        " While the user has paused input with the pause hotkey, nothing is sent (PausedByUser): stop and ask the user, and never try to resume." +
+        " While input is paused, nothing is sent (PausedByUser): stop and ask the user, and never try to resume." +
         " Refused while a modifier key is held down (ModifiersHeld) unless releaseHeldModifiers is true, and after waiting 30 s for another call (InputBusy).";
+
+    /// <summary>What takeover detection (roadmap M7.4) does to the operations it watches: type_text and drag (run_steps says it itself).</summary>
+    private const string TakeoverNote =
+        " Takeover detection, when on, stops it on the user's own input (stop: UserInterrupted) or warns (warn); a warning also " +
+        "says when detection did not work.";
 
     private const string NothingSent = "Nothing was sent.";
 
     private const string ModifiersDescription = "Modifier keys held down around the mouse events. Default: none";
+
+    private const string ScrollModifiersDescription = "Modifier keys held down around the wheel: ctrl zooms, shift scrolls sideways. Default: none";
 
     private readonly IInputSimulationService _inputService;
     private readonly IWindowService? _windowService;
@@ -108,8 +115,7 @@ public class InputSimulationTools
                  "(Back/Forward). The modifier key-downs, the move, the clicks and the key-ups go in one batch, so nothing stays held. " +
                  "A right or middle click in a terminal (console, Windows Terminal, PuTTY, and anywhere in VS Code) pastes, so there it " +
                  "follows send_keys' paste rule (PasteNotAllowed)." + ClickTargetNote +
-                 " With windowHandle the point must be on that window or a popup or dialog of it (TargetOccluded), and the window not " +
-                 "disabled by a modal dialog (BlockedByModal).")]
+                 " windowHandle adds TargetOccluded and BlockedByModal (see windowHandle).")]
     [ToolResultPayload(typeof(ClickResult))]
     public async Task<CallToolResult> MouseClick(
         [Description(XDescription)]
@@ -166,8 +172,8 @@ public class InputSimulationTools
                  "it, and to as well unless toWindowHandle names the drop's window; both are checked as a click's point before the " +
                  "press (TargetOccluded, BlockedByModal, TargetIsAgentHost, MouseInUse), and to again right before the drop. A drag " +
                  "stopped after the press (to refused then, the pointer kept off it, a cancelled request) goes back to from and " +
-                 "releases there; the user's pause releases where the pointer is. pressed says whether anything was sent; nothing " +
-                 "stays held after the call." + GuardNote)]
+                 "releases there; a pause releases where the pointer is. pressed says whether anything was sent; nothing " +
+                 "stays held after the call." + TakeoverNote + GuardNote)]
     [ToolResultPayload(typeof(DragResult))]
     public async Task<CallToolResult> Drag(
         [Description("Where the button goes down: x as mouse_click's (screen pixels, or as space says)")]
@@ -245,7 +251,7 @@ public class InputSimulationTools
 
     [McpServerTool(Name = "mouse_move", Title = "Move Mouse Pointer", ReadOnly = false, Destructive = false, Idempotent = true, OpenWorld = false)]
     [Description("Move the mouse cursor to the specified screen coordinates, or to a point of a capture's image with its captureId, without clicking. Useful for hovering over elements to trigger tooltips or hover states." +
-                 " Pass windowHandle with the window you mean; the same checks as for click apply (TargetOccluded, BlockedByModal, TargetIsAgentHost, MouseInUse); a pointer that does not get to the point is CursorClamped." + GuardNote)]
+                 " Pass windowHandle with the window you mean; the same checks as for mouse_click apply (TargetOccluded, BlockedByModal, TargetIsAgentHost, MouseInUse); a pointer that does not get to the point is CursorClamped." + GuardNote)]
     public MouseMoveResult MouseMove(
         [Description(XDescription)]
         int x,
@@ -284,7 +290,7 @@ public class InputSimulationTools
                  "call focus_window first; even then the wheel reaches the control with the keyboard focus, not the one at the " +
                  "point, so click into the content first. The wheel over a combo box, slider or number box changes its value, so point at the " +
                  "content, not at such a control. To see whether the content moved, read it again (get_ui_elements, a capture)." +
-                 " The same checks as for click apply (TargetOccluded, BlockedByModal, TargetIsAgentHost, CursorNotAtPoint, MouseInUse, CursorClamped)." +
+                 " The same checks as for mouse_click apply (TargetOccluded, BlockedByModal, TargetIsAgentHost, CursorNotAtPoint, MouseInUse, CursorClamped)." +
                  GuardNote)]
     public ScrollResult Scroll(
         [Description(MouseWindowHandleDescription)]
@@ -299,6 +305,8 @@ public class InputSimulationTools
         int deltaY = 0,
         [Description("Horizontal wheel notches: positive scrolls right, negative scrolls left, at most 100 either way. Default: 0")]
         int deltaX = 0,
+        [Description(ScrollModifiersDescription)]
+        MouseModifier[]? modifiers = null,
         [Description(AllowHostTargetDescription)]
         bool allowHostTarget = false,
         [Description(ReleaseHeldModifiersDescription)]
@@ -331,8 +339,8 @@ public class InputSimulationTools
                 return new ScrollResult(false, pointX, pointY, deltaY, deltaX, failure.Error, failure.ErrorCode) { Requested = point.Requested };
             }
 
-            return Echo(_inputService.Scroll(point.X, point.Y, deltaY, deltaX, point.Target, releaseHeldModifiers, cancellationToken),
-                point.Requested);
+            return Echo(_inputService.Scroll(point.X, point.Y, deltaY, deltaX, modifiers ?? [], point.Target, releaseHeldModifiers,
+                cancellationToken), point.Requested);
         }
 
         if ((space != null && space != CoordinateSpace.Screen) || captureId != null)
@@ -351,20 +359,20 @@ public class InputSimulationTools
                 "x and y. {\"foreground\": true} alone names no window here. Nothing was scrolled.");
         }
 
-        return _inputService.Scroll(null, null, deltaY, deltaX, target, releaseHeldModifiers, cancellationToken);
+        return _inputService.Scroll(null, null, deltaY, deltaX, modifiers ?? [], target, releaseHeldModifiers, cancellationToken);
     }
 
     [McpServerTool(Name = "type_text", Title = "Type Text", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = false)]
     [Description("Type text by simulating Unicode keyboard input (any language), or paste it (method)." + KeyboardTargetNote +
                  " The foreground window is checked again every 64 characters: if another window comes to the front, typing stops with " +
                  "TargetLostFocus and charactersTyped says how much was typed. Refused while a menu is open (TargetInMenuMode)." +
-                 " Cancelling the request, or the user's pause, stops typing between batches. Typing takes at most 5000 characters, " +
-                 "a paste 1,000,000 (TextTooLong). The result has the text's length, never the text.")]
+                 " Cancelling the request, or a pause, stops typing between batches. Typing takes at most 5000 characters, " +
+                 "a paste 1,000,000 (TextTooLong). The result has the text's length, never the text." + TakeoverNote)]
     [ToolResultPayload(typeof(TypeTextResult))]
     public async Task<CallToolResult> TypeText(
         [Description("The text to type")]
         string text,
-        [Description("Delay between keystrokes in milliseconds (0-100, default 0). Use for visible typing effect.")]
+        [Description("Delay between keystrokes in milliseconds (clamped to 0-100, default 0). Use for visible typing effect.")]
         int delayMs = 0,
         [Description("What line breaks and tabs do when typed; required when typed text has any. 'unicode': typed as characters, no " +
                      "Enter or Tab key (editors insert them). 'keys': Enter and Tab (can send a chat message or submit a " +
@@ -400,10 +408,11 @@ public class InputSimulationTools
     }
 
     [McpServerTool(Name = "send_keys", Title = "Send Keys", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = false)]
-    [Description("Send keys and key combinations (syntax under keys). Examples: '^c' (Ctrl+C), '{TAB}', '+{HOME}' (Shift+Home), '{DOWN 3}{ENTER}'." + KeyboardTargetNote +
+    [Description("Send keys and key combinations (syntax under keys). Examples: '^c' (Ctrl+C), '{TAB}', '{DOWN 3}{ENTER}'." + KeyboardTargetNote +
+                 " At most 5000 keys (TextTooLong); the window is checked again every 64 key-downs." +
                  " Chords that close, quit or lock (closing a window or tab, quitting an app, Task Manager) are refused without windowHandle (DestructiveChordNeedsTarget)." +
                  " A chord that hands the keyboard to another window (Alt+Tab, Alt+Esc, Ctrl+Esc, the Windows key, Alt+Space, or a closing chord) must be the last key: keys after it are refused (KeysAfterFocusChange), so send them in a new call." +
-                 " Never send keys that close, quit, submit or delete to a window you have not targeted. To close a window, use close_window with its handle instead of a key combination." +
+                 " Never send keys that close, quit, submit or delete to a window you have not targeted. To close a window, use close_window, not keys." +
                  " The user's pause hotkey chord is refused (PauseChordNotAllowed)." +
                  " A paste (^v, +{INSERT}) is sent only when the clipboard holds what set_clipboard put there, your own copy, or content the user let get_clipboard read; otherwise, and for content marked private, it is refused (PasteNotAllowed)." +
                  " Keys that copy and then paste (^c^v) are refused too (PasteNotAllowed): send the copy and the paste in separate calls.")]
@@ -425,8 +434,8 @@ public class InputSimulationTools
         bool releaseHeldModifiers = false,
         [Description(ActionObservation.ObserveDescription)]
         ObserveMode observe = ObserveMode.None,
-        [Description("Milliseconds between keys, each press of {NAME n} counting (0-500, default 0: one batch). For apps " +
-                     "that drop fast keys.")]
+        [Description("Milliseconds between keys, each press of {NAME n} counting (clamped to 0-500, default 0; more than 10000 ms in all is InvalidArguments). " +
+                     "For apps that drop fast keys.")]
         int delayMs = 0,
         CancellationToken cancellationToken = default)
     {
@@ -452,7 +461,9 @@ public class InputSimulationTools
         [Description("A chord of names joined by '+' (modifiers ctrl, shift, alt, win, then one key), or chords separated by " +
                      "spaces, each optionally '*n' (n presses, 1-100); or an array: one chord (['ctrl','shift','t']) or a sequence " +
                      "(['ctrl+a','delete']). Keys: enter, tab, esc, space, backspace, delete, up, down, left, right, home, end, " +
-                     "pgup, pgdn, f1-f24 and send_keys' other names, or one character (a letter or digit is its key, so 'ctrl+1' " +
+                     "pgup, pgdn, f1-f24, oem_plus, oem_minus, oem_comma, oem_period, oem_1-oem_8, oem_102, abnt_c1, abnt_c2 (VK_OEM " +
+                     "and ABNT keys, placed by the layout) and send_keys' " +
+                     "other names, or one character (a letter or digit is its key, so 'ctrl+1' " +
                      "works on any layout); write + , * as plus, comma, star.")]
         KeyList keys,
         [Description("How often to press the whole sequence, 1-100 (at most 200 presses in all). Default: 1")]

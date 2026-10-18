@@ -1,3 +1,5 @@
+using WindowsAppManagerMcp.Models;
+
 namespace WindowsAppManagerMcp.Services;
 
 /// <summary>
@@ -12,16 +14,24 @@ namespace WindowsAppManagerMcp.Services;
 /// or PATH: a chrome.exe planted there would be started with an open debug port. An App Paths value counts only when it
 /// is a full path to the browser's own file name, so a registration of another program is not started.
 /// </summary>
+/// <remarks>
+/// The browsers are the members of <see cref="DebugBrowser"/>, the one list the tool's schema, the launch and
+/// close_debug_browser derive from: each has its install here, so a member without one fails the tests, not a launch.
+/// </remarks>
 public sealed class DebugBrowserLocator
 {
     private sealed record BrowserInstall(string ExecutableName, string InstallFolder);
 
-    private static readonly Dictionary<string, BrowserInstall> Installs = new(StringComparer.OrdinalIgnoreCase)
+    private static readonly Dictionary<DebugBrowser, BrowserInstall> Installs = new()
     {
-        ["chrome"] = new("chrome.exe", @"Google\Chrome\Application"),
-        ["edge"] = new("msedge.exe", @"Microsoft\Edge\Application"),
-        ["brave"] = new("brave.exe", @"BraveSoftware\Brave-Browser\Application"),
+        [DebugBrowser.Chrome] = new("chrome.exe", @"Google\Chrome\Application"),
+        [DebugBrowser.Edge] = new("msedge.exe", @"Microsoft\Edge\Application"),
+        [DebugBrowser.Brave] = new("brave.exe", @"BraveSoftware\Brave-Browser\Application"),
     };
+
+    /// <summary>The .exe file names of the browsers (chrome.exe, msedge.exe, brave.exe), compared ignoring case.</summary>
+    public static IReadOnlySet<string> ExecutableNames { get; } =
+        Installs.Values.Select(i => i.ExecutableName).ToHashSet(StringComparer.OrdinalIgnoreCase);
 
     private readonly Func<string, bool> _fileExists;
     private readonly Func<string, IReadOnlyList<string>> _appPaths;
@@ -46,15 +56,15 @@ public sealed class DebugBrowserLocator
         _folderPath = folderPath;
     }
 
-    /// <summary>The file name of a supported browser's .exe (chrome.exe, msedge.exe, brave.exe), or null.</summary>
-    public static string? ExecutableName(string browser) =>
+    /// <summary>The file name of a browser's .exe (chrome.exe, msedge.exe, brave.exe), or null for a value outside the enum.</summary>
+    public static string? ExecutableName(DebugBrowser browser) =>
         Installs.TryGetValue(browser, out var install) ? install.ExecutableName : null;
 
     /// <summary>
     /// The browser's .exe and the places tried, in order: App Paths values and install paths, or "App Paths\name" when
     /// nothing is registered.
     /// </summary>
-    public DebugBrowserLocation Locate(string browser, string? executablePath = null)
+    public DebugBrowserLocation Locate(DebugBrowser browser, string? executablePath = null)
     {
         if (!string.IsNullOrWhiteSpace(executablePath))
         {

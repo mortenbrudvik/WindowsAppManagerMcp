@@ -7,7 +7,7 @@ namespace WindowsAppManagerMcp.Models;
 /// <param name="Desktop">Whether input can reach the desktop now, and the foreground lock timeout.</param>
 /// <param name="Monitors">The monitors with their DPI, in get_monitors order.</param>
 /// <param name="Host">The agent's host as recorded at server start: windows and processes input never reaches.</param>
-/// <param name="Input">The user's pause and the pause hotkey.</param>
+/// <param name="Input">The pause and the pause hotkey.</param>
 /// <param name="Safety">The target policy and the destructive chords in force.</param>
 /// <param name="Paths">Where the server keeps its files.</param>
 /// <param name="Toolsets">The toolsets, exclusions and read-only mode in force.</param>
@@ -87,13 +87,15 @@ public sealed record ServerProcessInfo(int ProcessId, int? SessionId, IntegrityL
 public sealed record DesktopStateInfo(bool InputDesktopAvailable, bool SessionLocked, int? ForegroundLockTimeoutMs);
 
 /// <summary>A monitor.</summary>
-/// <param name="Index">Its index, as get_monitors and monitorIndex parameters use it.</param>
+/// <param name="Index">Its index, as get_monitors and the monitor parameters use it.</param>
 /// <param name="Name">The device name.</param>
 /// <param name="IsPrimary">True for the primary monitor, whose top-left corner is (0, 0).</param>
 /// <param name="Bounds">Its bounds in physical virtual-screen pixels.</param>
-/// <param name="Dpi">Its effective DPI (96 at 100%).</param>
-/// <param name="ScaleFactor">Dpi / 96, for information only: never multiply coordinates by it.</param>
-public sealed record ServerMonitorInfo(int Index, string Name, bool IsPrimary, BoundsDto Bounds, int Dpi, double ScaleFactor);
+/// <param name="Dpi">Its effective DPI (96 at 100%); left out when Windows could not report it, as get_monitors leaves it out.</param>
+/// <param name="ScaleFactor">
+/// Dpi / 96, for information only: never multiply coordinates by it. Left out with <paramref name="Dpi"/>.
+/// </param>
+public sealed record ServerMonitorInfo(int Index, string Name, bool IsPrimary, BoundsDto Bounds, int? Dpi, double? ScaleFactor);
 
 /// <summary>The agent's host as the server recorded it at start (the input guard's TargetIsAgentHost).</summary>
 /// <param name="Windows">The host windows: the window showing the server's console, and the window in front at start.</param>
@@ -114,7 +116,7 @@ public sealed record AgentHostWindow(long Handle, string Role, int ProcessId, st
 public sealed record AgentHostProcess(int ProcessId, string Role, string? ProcessName);
 
 /// <summary>The user's control over the server's input (get_control_status has the details).</summary>
-/// <param name="Paused">True while the user has paused input: input tools and window changes return PausedByUser.</param>
+/// <param name="Paused">True while input is paused (PausedBy says how): input tools and window changes return PausedByUser.</param>
 /// <param name="PausedBy">How it was paused; null while running.</param>
 /// <param name="PausedAt">When it was paused; null while running.</param>
 /// <param name="Hotkey">The pause hotkey: chord, state, source and error.</param>

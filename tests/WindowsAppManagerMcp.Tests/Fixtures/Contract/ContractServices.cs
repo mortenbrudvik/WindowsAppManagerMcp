@@ -510,6 +510,7 @@ public sealed class ContractServices : IDisposable
         var preset = TypicalDesktop.Layouts[0];
         Layouts.Setup(l => l.GetStorageError()).Returns((string?)null);
         Layouts.Setup(l => l.GetAllPresets()).Returns(TypicalDesktop.Layouts);
+        Layouts.Setup(l => l.GetInvalidFiles()).Returns([]);
         Layouts.Setup(l => l.GetPreset(It.IsAny<string>())).Returns(preset);
         Layouts.Setup(l => l.CaptureCurrentLayoutAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string[]?>(), It.IsAny<string[]?>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new LayoutSaveResult(true, preset));
@@ -618,8 +619,8 @@ public sealed class ContractServices : IDisposable
             {
                 KeysSent = repeat, ReceivingWindow = receiving, ForegroundAfter = receiving
             });
-        Input.Setup(i => i.Scroll(It.IsAny<int?>(), It.IsAny<int?>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<InputTarget>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
-            .Returns((int? x, int? y, int deltaY, int deltaX, InputTarget _, bool _, CancellationToken _) => new ScrollResult(true, x ?? 1280, y ?? 760, deltaY, deltaX)
+        Input.Setup(i => i.Scroll(It.IsAny<int?>(), It.IsAny<int?>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<IReadOnlyList<MouseModifier>>(), It.IsAny<InputTarget>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Returns((int? x, int? y, int deltaY, int deltaX, IReadOnlyList<MouseModifier> _, InputTarget _, bool _, CancellationToken _) => new ScrollResult(true, x ?? 1280, y ?? 760, deltaY, deltaX)
             {
                 ReceivingWindow = receiving, ForegroundAfter = receiving, ActualX = x ?? 1280, ActualY = y ?? 760
             });
@@ -849,8 +850,8 @@ public sealed class ContractServices : IDisposable
                 It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((KeyList keys, int _, int _, int _, InputTarget _, bool _, CancellationToken _) =>
                 new SendKeysResult(false, keys.Text, host, InputErrorCode.TargetIsAgentHost));
-        Input.Setup(i => i.Scroll(It.IsAny<int?>(), It.IsAny<int?>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<InputTarget>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
-            .Returns((int? x, int? y, int deltaY, int deltaX, InputTarget _, bool _, CancellationToken _) =>
+        Input.Setup(i => i.Scroll(It.IsAny<int?>(), It.IsAny<int?>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<IReadOnlyList<MouseModifier>>(), It.IsAny<InputTarget>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Returns((int? x, int? y, int deltaY, int deltaX, IReadOnlyList<MouseModifier> _, InputTarget _, bool _, CancellationToken _) =>
                 new ScrollResult(false, x ?? 0, y ?? 0, deltaY, deltaX, host, InputErrorCode.TargetIsAgentHost));
 
         // The user copied something, and the test client cannot ask the user

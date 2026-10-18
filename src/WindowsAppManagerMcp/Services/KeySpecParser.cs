@@ -5,7 +5,9 @@ namespace WindowsAppManagerMcp.Services;
 
 /// <summary>
 /// The input events of a send_keys string, in steps: each top-level key, chord or group is one step, and so is each
-/// repetition of <c>{KEY n}</c>. send_keys' delayMs waits between steps; without it every step goes in one batch.
+/// repetition of <c>{KEY n}</c>. send_keys' delayMs waits between steps, each a batch of its own; without it the steps go
+/// in batches of whole steps (<see cref="InputSimulationService.SendKeysBatchSize"/> key-downs at most, unless one step has
+/// more), so a step is never split.
 /// </summary>
 public sealed class KeySpec
 {
@@ -20,6 +22,51 @@ public sealed class KeySpec
 
     /// <summary>Every event of every step, in order.</summary>
     public IReadOnlyList<InputEvent> Events { get; }
+
+    /// <summary>
+    /// press_keys (issue #10): each chord whose character went out on a key of another name than the chord's, each once, in
+    /// order (<see cref="ResolvedChord"/>); null when there is none.
+    /// </summary>
+    public IReadOnlyList<ResolvedChord>? ResolvedChords { get; init; }
+
+    /// <summary>
+    /// press_keys (issue #9): the chords whose character went out as Unicode, with no key, each once, in order; null when none
+    /// did. send_keys reads its characters from the events instead.
+    /// </summary>
+    public IReadOnlyList<CharacterWithoutKey>? SentAsCharacters { get; init; }
+}
+
+/// <summary>
+/// A press_keys chord whose character went out on a key of another name (issue #10), so the agent can tell what the target
+/// got: <paramref name="Asked"/> as written; <paramref name="Pressed"/>, the keys that went down in press_keys' names
+/// ('ctrl+shift+0' for 'ctrl+=' where '=' is Shift+0, 'ctrl+ralt+2' for 'ctrl+@' where '@' is AltGr+2, 'ctrl+6' for 'ctrl+-'
+/// on French AZERTY); and <paramref name="Chord"/>, the chord as Windows reads it (AltGr as Ctrl+Alt), which the SystemHotkey
+/// warning matches to name the chord asked whatever its spelling.
+/// </summary>
+public sealed record ResolvedChord(string Asked, string Pressed, KeyChord Chord);
+
+/// <summary>
+/// A chord (press_keys) or a character (send_keys) that went out as its character alone (KEYEVENTF_UNICODE), with no key and
+/// no scan code (issue #9): <paramref name="Keys"/> as the call wrote it, the <paramref name="Character"/> sent, and
+/// <paramref name="Why"/>, which the SentAsCharacter warning gives for each.
+/// </summary>
+public sealed record CharacterWithoutKey(string Keys, string Character, NoKeyReason Why);
+
+/// <summary>Why a character went out with no key (<see cref="KeyboardLayout.WhyNoKey"/>).</summary>
+public enum NoKeyReason
+{
+    /// <summary>No key of the window's layout types it, or only a dead key does.</summary>
+    NotOnLayout,
+
+    /// <summary>
+    /// Its key would have typed it with an accent waiting on the layout (<see cref="KeyboardLayout.DeadKeyPending"/>), the
+    /// accent in front or combined with it: text, and a press_keys chord without Ctrl, Alt or Win, stay exact then. Also given
+    /// for a dead key's own character while an accent waits, which cannot be told apart then.
+    /// </summary>
+    AccentWaiting,
+
+    /// <summary>The window's layout could not be read (<see cref="KeyboardLayout.ReadFailed"/>).</summary>
+    LayoutUnread
 }
 
 /// <summary>
@@ -362,10 +409,12 @@ public static class KeySpecParser
                 return;
             }
 
-            // Caps Lock matters only to text: a shortcut is the same key whatever Caps Lock says
+            // Caps Lock matters only to text: a shortcut is the same key whatever Caps Lock says, and its character names the
+            // key even while an accent waits on the layout (issue #8)
             var plain = modifiers.Count == 0 && !_held.Any(KeyTable.IsModifier);
-            var stroke = layout.Map(c, capsLock: plain && _capsLock);
-            if (stroke == null && char.IsAsciiLetterOrDigit(c) && HoldsShortcutModifier(modifiers))
+            var shortcut = HoldsShortcutModifier(modifiers);
+            var stroke = layout.Map(c, capsLock: plain && _capsLock, asKey: shortcut);
+            if (stroke == null && char.IsAsciiLetterOrDigit(c) && shortcut)
             {
                 // A shortcut on a layout without Latin letters (Cyrillic, Greek): the key Windows calls A-Z or 0-9
                 stroke = new KeyStroke(char.ToUpperInvariant(c), char.IsAsciiLetterUpper(c) ? KeyModifiers.Shift : KeyModifiers.None);
@@ -391,15 +440,26 @@ public static class KeySpecParser
         private void PressKey(KeyStroke stroke, List<ushort> modifiers)
         {
             var pressed = PressModifiers(modifiers);
+            var altGr = new List<ushort>();
             if (stroke.IsAltGr)
             {
-                // The left Ctrl and the right Alt, as a keyboard sends AltGr: the chord checks read that pair as a character,
-                // not as Ctrl+Alt. The right Alt goes down under an explicit % too, so %@ stays Alt with an AltGr character
-                PressIfNotDown(NativeEnums.VK_LCONTROL, KeyModifiers.Control, pressed);
+                // The left Ctrl and the right Alt, as a keyboard sends AltGr, tagged (InputEvent.AltGr) so that the chord checks
+                // read the pair as a character, not as Ctrl+Alt; the same keys spelled out ({LCTRL down}) are not tagged. The right
+                // Alt goes down under an explicit % too, so %@ stays Alt with an AltGr character
+                if (!_held.Concat(pressed).Any(down => SendKeysParser.ModifierOf(down) == KeyModifiers.Control))
+                {
+                    altGr.Add(NativeEnums.VK_LCONTROL);
+                }
+
                 if (!_held.Concat(pressed).Contains(NativeEnums.VK_RMENU))
                 {
-                    Down(NativeEnums.VK_RMENU);
-                    pressed.Add(NativeEnums.VK_RMENU);
+                    altGr.Add(NativeEnums.VK_RMENU);
+                }
+
+                foreach (var key in altGr)
+                {
+                    Down(key, altGr: true);
+                    pressed.Add(key);
                 }
             }
 
@@ -410,7 +470,7 @@ public static class KeySpecParser
 
             Down(stroke.VirtualKey);
             Up(stroke.VirtualKey);
-            ReleaseModifiers(pressed);
+            ReleaseModifiers(pressed, altGr);
         }
 
         private void PressUnicode(char[] characters, List<ushort> modifiers)
@@ -448,29 +508,30 @@ public static class KeySpecParser
             pressed.Add(key);
         }
 
-        private void ReleaseModifiers(List<ushort> pressed)
+        /// <summary>Releases <paramref name="pressed"/>, last first; the keys in <paramref name="altGr"/> go up tagged as AltGr.</summary>
+        private void ReleaseModifiers(List<ushort> pressed, List<ushort>? altGr = null)
         {
             for (var k = pressed.Count - 1; k >= 0; k--)
             {
-                Up(pressed[k]);
+                Up(pressed[k], altGr?.Contains(pressed[k]) == true);
             }
         }
 
-        private void Down(ushort virtualKey)
+        private void Down(ushort virtualKey, bool altGr = false)
         {
-            _current.Add(KeyEvent(virtualKey, NativeEnums.KEYEVENTF_KEYDOWN));
+            _current.Add(KeyEvent(virtualKey, NativeEnums.KEYEVENTF_KEYDOWN, altGr));
             if (virtualKey == NativeEnums.VK_CAPITAL)
             {
                 _capsLock = !_capsLock;
             }
         }
 
-        private void Up(ushort virtualKey) => _current.Add(KeyEvent(virtualKey, NativeEnums.KEYEVENTF_KEYUP));
+        private void Up(ushort virtualKey, bool altGr = false) => _current.Add(KeyEvent(virtualKey, NativeEnums.KEYEVENTF_KEYUP, altGr));
 
-        private InputEvent KeyEvent(ushort virtualKey, uint flags)
+        private InputEvent KeyEvent(ushort virtualKey, uint flags, bool altGr)
         {
             var (scan, extended) = layout.ScanOf(virtualKey);
-            return InputEvent.Key(virtualKey, flags | (extended ? NativeEnums.KEYEVENTF_EXTENDEDKEY : 0), scan);
+            return InputEvent.Key(virtualKey, flags | (extended ? NativeEnums.KEYEVENTF_EXTENDEDKEY : 0), scan) with { AltGr = altGr };
         }
 
         private static ushort ModifierKey(char c) => c switch

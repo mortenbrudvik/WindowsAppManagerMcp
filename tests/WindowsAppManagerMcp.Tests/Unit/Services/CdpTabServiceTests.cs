@@ -17,13 +17,13 @@ public class CdpTabServiceTests
     private static readonly TimeSpan LongTimeout = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan HangBound = TimeSpan.FromSeconds(10);
 
-    private static readonly CdpTarget Tab = new("T1", "page", "Docs", "https://example.com/", "ws://127.0.0.1:9222/devtools/page/T1", Port);
+    private static readonly CdpTarget Tab = new("T1", "page", "Docs", "https://example.com/", "ws://127.0.0.1:9222/devtools/page/T1", Port, BrowserPid);
 
     private static CdpTabService CreateSut(
         FakeCdpHttpHandler http, ICdpWebSocketFactory sockets, int? portOwner = BrowserPid, bool listenerTableReadable = true)
     {
-        var transport = new CdpTransport(http, sockets);
         var owners = new FakePortOwnerResolver(portOwner, listenerTableReadable);
+        var transport = new CdpTransport(http, sockets, owners);
         return new CdpTabService(new CdpService(transport, owners), transport, owners);
     }
 
@@ -84,9 +84,87 @@ public class CdpTabServiceTests
         var result = await sut.ListTabsAsync(Port, BrowserPid, At("Same - Google Chrome", 0, 0, 800, 600), LongTimeout);
 
         result.Success.Should().BeTrue(result.Error);
-        result.Value!.Shown.Should().BeNull("CDP has no active-tab flag, and the title does not tell");
+        result.Value!.Shown.Should().BeNull("CDP has no active-tab flag, the title does not tell, and which is shown cannot be read");
         result.Value.ShownError.Should().StartWith(nameof(BrowserErrorCode.CdpTargetAmbiguous));
         result.Value.WindowBound.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task ListTabsAsync_ABackgroundTabTitledAsTheWholeWindow_IsNotTheShownTab()
+    {
+        // As the reads pick the tab: a page that sets its title to the window's whole caption does not become the shown tab
+        var browser = new FakeCdpBrowser()
+            .Window(1, 0, 0, 800, 600)
+            .Tab("REAL", "Inbox", 1)
+            .Tab("SPOOF", "Inbox - Google Chrome", 1)
+            .Visibility("REAL", "visible")
+            .Visibility("SPOOF", "hidden");
+        var sut = CreateSut(browser);
+
+        var result = await sut.ListTabsAsync(Port, BrowserPid, At("Inbox - Google Chrome", 0, 0, 800, 600), LongTimeout);
+
+        result.Success.Should().BeTrue(result.Error);
+        result.Value!.Shown!.Id.Should().Be("REAL");
+        result.Value.ShownError.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task ListTabsAsync_TwoTabsOfTheWindowWithItsTitle_TellTheOneThatIsShown()
+    {
+        var browser = new FakeCdpBrowser()
+            .Window(1, 0, 0, 800, 600)
+            .Tab("A", "Same", 1)
+            .Tab("B", "Same", 1)
+            .Visibility("A", "hidden")
+            .Visibility("B", "visible");
+        var sut = CreateSut(browser);
+
+        var result = await sut.ListTabsAsync(Port, BrowserPid, At("Same - Google Chrome", 0, 0, 800, 600), LongTimeout);
+
+        result.Value!.Shown!.Id.Should().Be("B");
+    }
+
+    [Fact]
+    public async Task ListTabsAsync_WhenWhichWindowEachTabIsInCannotBeRead_ATabShownElsewhere_IsNotTheShownTab()
+    {
+        // As the reads: the window is covered (its tab hidden) and another window shows a tab with its title
+        var browser = new FakeCdpBrowser { NotABrowsersVersion = true }
+            .Window(1, 0, 0, 800, 600)
+            .Window(2, 900, 0, 800, 600)
+            .Tab("REAL", "Same", 1)
+            .Tab("OTHER", "Same", 2)
+            .Visibility("REAL", "hidden")
+            .Visibility("OTHER", "visible");
+        var sut = CreateSut(browser);
+
+        var result = await sut.ListTabsAsync(Port, BrowserPid, At("Same - Google Chrome", 0, 0, 800, 600), LongTimeout);
+
+        result.Success.Should().BeTrue(result.Error);
+        result.Value!.WindowBound.Should().BeFalse();
+        result.Value.Shown.Should().BeNull();
+        result.Value.ShownError.Should().StartWith(nameof(BrowserErrorCode.CdpTargetAmbiguous))
+            .And.Contain("which browser window each of them is in could not be read");
+    }
+
+    [Fact]
+    public async Task ListTabsAsync_OverTheBoundTabLimit_ListsTheTabsWithoutWindows_ButStillTellsTheShownTab()
+    {
+        // CdpService.MaxBoundTabs (200) tabs and two more: too many to look up every one's browser window, so the list has
+        // none; the windows of the two tabs with the window's title are still read, to tell which of them it shows
+        var browser = new FakeCdpBrowser().Window(1, 0, 0, 800, 600);
+        for (var i = 0; i < 200; i++)
+            browser.Tab($"F{i}", $"Filler {i}", 1);
+        browser.Tab("A", "Same", 1).Tab("B", "Same", 1).Visibility("A", "hidden").Visibility("B", "visible");
+        var sut = CreateSut(browser);
+
+        var result = await sut.ListTabsAsync(Port, BrowserPid, At("Same - Google Chrome", 0, 0, 800, 600), LongTimeout);
+
+        result.Success.Should().BeTrue(result.Error);
+        result.Value!.Shown!.Id.Should().Be("B");
+        result.Value.ShownError.Should().BeNull();
+        result.Value.WindowBound.Should().BeFalse();
+        result.Value.Tabs.Should().OnlyContain(t => t.WindowId == null && !t.InWindow);
+        browser.WindowQueries.Should().Be(2);
     }
 
     [Fact]
@@ -159,7 +237,7 @@ public class CdpTabServiceTests
         var browser = TwoWindows();
         var gate = new RecordingGate();
         var sut = CreateSut(browser);
-        var tab = new CdpTarget("B", "page", "Docs", "https://example.com/B", "ws://127.0.0.1:9222/devtools/page/B", Port);
+        var tab = new CdpTarget("B", "page", "Docs", "https://example.com/B", "ws://127.0.0.1:9222/devtools/page/B", Port, BrowserPid);
 
         var result = await sut.ActivateAsync(tab, gate.EnterAsync, LongTimeout);
 
@@ -174,7 +252,7 @@ public class CdpTabServiceTests
     public async Task ActivateAsync_ATabThatClosed_IsCdpTargetNotFound()
     {
         var sut = CreateSut(TwoWindows());
-        var gone = new CdpTarget("GONE", "page", "", "", "ws://127.0.0.1:9222/devtools/page/GONE", Port);
+        var gone = new CdpTarget("GONE", "page", "", "", "ws://127.0.0.1:9222/devtools/page/GONE", Port, BrowserPid);
 
         var result = await sut.ActivateAsync(gone, new RecordingGate().EnterAsync, LongTimeout);
 
@@ -188,7 +266,7 @@ public class CdpTabServiceTests
         var browser = TwoWindows();
         var sut = CreateSut(browser);
 
-        var act = () => sut.ActivateAsync(new CdpTarget("A", "page", "Inbox", "", null, Port),
+        var act = () => sut.ActivateAsync(new CdpTarget("A", "page", "Inbox", "", null, Port, BrowserPid),
             _ => throw new ToolErrorException(nameof(WindowErrorCode.PausedByUser), "paused"), LongTimeout);
 
         (await act.Should().ThrowAsync<ToolErrorException>()).Which.ErrorCode.Should().Be(nameof(WindowErrorCode.PausedByUser));
@@ -224,7 +302,36 @@ public class CdpTabServiceTests
         var result = await sut.OpenTabAsync(Port, BrowserPid, new RecordingGate().EnterAsync, TimeSpan.FromMilliseconds(600));
 
         result.ErrorCode.Should().Be(BrowserErrorCode.CdpTargetNotFound);
+        result.OpenedTargetId.Should().Be("NEW1", "the tab was opened, and the result names it");
         stopwatch.Elapsed.Should().BeLessThan(HangBound);
+    }
+
+    [Fact]
+    public async Task OpenTabAsync_ATabListThatFailsOnceTheTabIsOpen_SaysTheTabWasOpened()
+    {
+        // Arrange - the browser opens the tab, then its tab list cannot be read (it stopped answering)
+        var browser = TwoWindows();
+        var owners = new FakePortOwnerResolver(BrowserPid);
+        var transport = new CdpTransport(browser.Http, browser.Sockets, owners);
+        var real = new CdpService(transport, owners);
+        var cdp = new Mock<ICdpService>();
+        cdp.Setup(c => c.GetBrowserVersionAsync(Port, It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .Returns((int port, TimeSpan timeout, CancellationToken token) => real.GetBrowserVersionAsync(port, timeout, token));
+        cdp.Setup(c => c.GetOwnedPageTargetsAsync(Port, BrowserPid, It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(CdpResult<IReadOnlyList<CdpTarget>>.Fail(BrowserErrorCode.CdpUnavailable, "Nothing answered on port 9222."));
+        var sut = new CdpTabService(cdp.Object, transport, owners);
+
+        // Act - a budget the steps before the list (version, connection, Target.createTarget) do not use up under load; the
+        // list is asked for again until it is nearly spent
+        var result = await sut.OpenTabAsync(Port, BrowserPid, new RecordingGate().EnterAsync, TimeSpan.FromSeconds(3));
+
+        // Assert - the list's own error, after what happened to the tab, and what to do with the tab instead of opening another
+        browser.Created.Should().ContainSingle();
+        result.ErrorCode.Should().Be(BrowserErrorCode.CdpUnavailable);
+        result.Error.Should().StartWith("The browser opened tab NEW1 on about:blank, but it was not navigated: ")
+            .And.Contain("Nothing answered on port 9222.")
+            .And.EndWith("The tab stays open, so do not open another one: once list_tabs lists it, navigate it with targetId NEW1.");
+        result.OpenedTargetId.Should().Be("NEW1");
     }
 
     [Fact]
@@ -416,7 +523,10 @@ public class CdpTabServiceTests
 
         result.Success.Should().BeTrue(result.Error);
         result.Value!.LoadState.Should().Be("notWaited");
-        stopwatch.Elapsed.Should().BeLessThan(CdpTabService.GateHold + TimeSpan.FromSeconds(2));
+        // The call returns once GateHold (a second) has passed; waiting for the answer that never comes would take the whole
+        // LongTimeout. HangBound sits far from both, so a loaded test run does not fail this and a wait for the answer does
+        stopwatch.Elapsed.Should().BeLessThan(HangBound);
+        HangBound.Should().BeLessThan(LongTimeout);
         tab.NavigatedTo.Should().Equal("https://example.com/slow");
     }
 
@@ -435,7 +545,9 @@ public class CdpTabServiceTests
         result.Value!.TimedOut.Should().BeTrue();
         result.Value.LoadState.Should().Be("loading");
         result.Value.Url.Should().BeNull("the tab still shows the old page, which is not the one asked for");
-        stopwatch.Elapsed.Should().BeLessThan(TimeSpan.FromSeconds(4));
+        // The call ends at its 1.5 s limit; the reply never comes, so a call that ignored the limit would not end at all.
+        // HangBound catches that without failing a loaded test run that is slow to fire the limit's timer
+        stopwatch.Elapsed.Should().BeLessThan(HangBound);
     }
 
     [Fact]

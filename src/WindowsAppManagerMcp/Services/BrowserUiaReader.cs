@@ -237,7 +237,9 @@ public sealed class BrowserUiaReader
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            return new BrowserUiaContent(true, null, page.Url);
+            // Told from a page without text: the caller says the read failed, and why
+            return new BrowserUiaContent(true, null, page.Url,
+                ReadFailure: string.IsNullOrWhiteSpace(ex.Message) ? ex.GetType().Name : ex.Message);
         }
     }
 
@@ -819,8 +821,11 @@ public sealed record BrowserUiaUrl(
 /// <param name="NextOffset">Where the next page starts, when more text follows.</param>
 /// <param name="TextSkipped">True when the Text pattern page was cut (<see cref="UiaTextPage.Cut"/>): the rest of the
 /// provider's character it ends in is skipped. Null otherwise.</param>
+/// <param name="ReadFailure">Why the page's text could not be read (the provider's error), when it could not; null when it
+/// was read, so a null <paramref name="Text"/> then means the page has no text.</param>
 public sealed record BrowserUiaContent(
-    bool Found, string? Text, string? Url, int Offset = 0, int? TotalLength = null, int? NextOffset = null, bool? TextSkipped = null);
+    bool Found, string? Text, string? Url, int Offset = 0, int? TotalLength = null, int? NextOffset = null, bool? TextSkipped = null,
+    string? ReadFailure = null);
 
 /// <summary>
 /// Where a browser window shows a tab's page (<see cref="BrowserUiaReader.FindPageBounds"/>): the Document's bounds when it

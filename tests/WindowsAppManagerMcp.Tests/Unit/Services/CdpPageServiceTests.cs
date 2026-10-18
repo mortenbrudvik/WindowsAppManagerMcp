@@ -12,13 +12,17 @@ public class CdpPageServiceTests
 {
     private const int Port = 9222;
 
+    /// <summary>The browser's process: it lists the tab, and listens on its port when each connection opens.</summary>
+    private const int BrowserPid = 4242;
+
     private static readonly TimeSpan LongTimeout = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan HangBound = TimeSpan.FromSeconds(10);
 
-    private static readonly CdpTarget Tab = new("T1", "page", "Form", "https://example.com/form", "ws://127.0.0.1:9222/devtools/page/T1", Port);
+    private static readonly CdpTarget Tab = new("T1", "page", "Form", "https://example.com/form", "ws://127.0.0.1:9222/devtools/page/T1", Port,
+        BrowserPid);
 
     private static CdpPageService CreateSut(FakePage page) =>
-        new(new CdpTransport(FakeCdpHttpHandler.Targets(), new FakeCdpWebSocketFactory(page.Socket)));
+        new(new CdpTransport(FakeCdpHttpHandler.Targets(), new FakeCdpWebSocketFactory(page.Socket), new FakePortOwnerResolver(BrowserPid)));
 
     private static BrowserElementLocator BySelector(string selector, int? index = null) => new(selector, null, null, null, index);
 
@@ -137,15 +141,21 @@ public class CdpPageServiceTests
         var gate = new RecordingGate();
         var page = new FakePage { ScriptHangs = true, GateHeld = () => gate.Held };
         var stopwatch = Stopwatch.StartNew();
+        var scriptLimit = TimeSpan.FromSeconds(5);
 
-        var evaluate = CreateSut(page).EvaluateAsync(Tab, "new Promise(() => {})", true, gate.EnterAsync, TimeSpan.FromSeconds(2));
-        await Task.Delay(CdpTabService.GateHold + TimeSpan.FromMilliseconds(300));
-        var heldWhileWaiting = gate.Held;
+        // Act - wait until the gate was taken and let go again, at most well before the script's own limit: the gate is let
+        // go after GateHold (a second), while a call that held it for the script's work would hold it until the limit. The
+        // margins are seconds on both sides, so a loaded test run neither fails a correct call nor passes a wrong one
+        var evaluate = CreateSut(page).EvaluateAsync(Tab, "new Promise(() => {})", true, gate.EnterAsync, scriptLimit);
+        var letGoWhileWaiting = await Task.Run(() =>
+            SpinWait.SpinUntil(() => gate.Entered > 0 && !gate.Held, scriptLimit - TimeSpan.FromMilliseconds(1500)));
+        var stillWaitingForTheScript = !evaluate.IsCompleted;
         var result = await evaluate;
 
         result.ErrorCode.Should().Be(nameof(BrowserErrorCode.CdpTimeout));
         result.Error.Should().Contain("promise").And.Contain("browser_handle_dialog").And.NotContain("respond_to_dialog");
-        heldWhileWaiting.Should().BeFalse("the gate is let go after at most a second, not held for a script's work");
+        letGoWhileWaiting.Should().BeTrue("the gate is let go after at most a second, not held for a script's work");
+        stillWaitingForTheScript.Should().BeTrue("the gate was let go while the call still waited for the script");
         stopwatch.Elapsed.Should().BeLessThan(HangBound);
     }
 
@@ -291,6 +301,57 @@ public class CdpPageServiceTests
             "browser_element_rect only reads");
         Param(page.Command("Runtime.evaluate", c => Param(c, "expression")!.Contains("querySelectorAll")), "expression")
             .Should().Contain(JsonSerializer.Serialize("#save"));
+    }
+
+    [Fact]
+    public async Task LocateAsync_ReadsThePagesVisibilityAndViewport_InAnIsolatedWorld_WhereThePageCannotLie()
+    {
+        // A background page that redefines document.visibilityState and its viewport in its main world would pass
+        // browser_element_rect's gate and move the rect; the isolated world reads the real ones
+        var page = new FakePage { Visibility = "hidden", MainWorldView = ("visible", 640, 360, 3) };
+
+        var result = await CreateSut(page).LocateAsync(Tab, BySelector("#save"), LongTimeout);
+
+        result.Success.Should().BeTrue(result.Error);
+        result.Value!.Visibility.Should().Be("hidden");
+        (result.Value.ViewportWidth, result.Value.ViewportHeight, result.Value.DevicePixelRatio).Should().Be((1280, 720, 1.5));
+        page.Command("Page.createIsolatedWorld").GetProperty("params").GetProperty("frameId").GetString().Should().Be(FakePage.MainFrameId);
+        page.Command("Runtime.evaluate", c => Param(c, "expression")!.Contains("visibilityState"))
+            .GetProperty("params").GetProperty("contextId").GetInt32().Should().Be(FakePage.IsolatedContextId);
+    }
+
+    [Fact]
+    public async Task LocateAsync_AnIsolatedWorldThePageRefuses_IsAFailure_NotAMainWorldRead()
+    {
+        // Fails closed: without the isolated world the page's own word is not taken instead
+        var sut = new CdpPageService(new CdpTransport(FakeCdpHttpHandler.Targets(), new FakeCdpWebSocketFactory(new FakeCdpWebSocket((socket, command) =>
+        {
+            switch (command.GetProperty("method").GetString())
+            {
+                case "Page.getFrameTree":
+                    socket.Enqueue(JsonSerializer.Serialize(new
+                    {
+                        id = command.GetProperty("id").GetInt32(),
+                        result = new { frameTree = new { frame = new { id = FakePage.MainFrameId, loaderId = "L1", url = Tab.Url } } }
+                    }));
+                    break;
+                case "Page.createIsolatedWorld":
+                    socket.ReplyError(command, -32000, "Could not create isolated world");
+                    break;
+                case "Runtime.evaluate":
+                    socket.ReplyWithValue(command, new { visibility = "visible", vw = 1280, vh = 720, dpr = 1.5, scale = 1, url = Tab.Url, title = Tab.Title });
+                    break;
+                default:
+                    socket.ReplyEmpty(command);
+                    break;
+            }
+        })), new FakePortOwnerResolver(BrowserPid)));
+
+        var result = await sut.LocateAsync(Tab, BySelector("#save"), LongTimeout);
+
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(nameof(BrowserErrorCode.CdpProtocolError));
+        result.Error.Should().Contain("Page.createIsolatedWorld");
     }
 
     [Fact]
@@ -492,6 +553,43 @@ public class CdpPageServiceTests
         page.Commands("Input.dispatchMouseEvent").Select(c => c.GetProperty("params").GetProperty("type").GetString())
             .Should().Equal("mouseMoved");
         gate.Held.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task ClickAsync_APauseTheServerSetItself_SaysSo_NotThatTheUserPressedTheHotkey()
+    {
+        // Arrange - the server paused itself: it could not read the pause it shares with the other servers (review F4)
+        var page = new FakePage();
+        var gate = new RecordingGate
+        {
+            Paused = () => page.Commands("Input.dispatchMouseEvent").Any(),
+            PausedBy = InputControlSources.SharedPauseUnreadable
+        };
+
+        // Act
+        var result = await CreateSut(page).ClickAsync(Tab, BySelector("#save"), MouseButton.Primary, 1, gate.EnterAsync, LongTimeout);
+
+        // Assert - the same PausedByUser and the same advice, but never that the user pressed the hotkey
+        result.ErrorCode.Should().Be(nameof(WindowErrorCode.PausedByUser));
+        result.Error.Should().Contain("could not read the pause it shares").And.Contain("paused itself").And.Contain("0 of 1 click")
+            .And.Contain("Stop and ask the user").And.NotContain("pressed the pause hotkey");
+    }
+
+    [Fact]
+    public async Task TypeAsync_APauseTheUserMade_SaysTheyPressedTheHotkey_WithItsChord()
+    {
+        var page = new FakePage();
+        var gate = new RecordingGate
+        {
+            Paused = () => page.Commands("DOM.focus").Any(),
+            PausedBy = InputControlSources.Hotkey,
+            PauseChord = "Ctrl+Alt+Shift+Pause"
+        };
+
+        var result = await CreateSut(page).TypeAsync(Tab, new BrowserTypeOptions("query", "#q", false, false), gate.EnterAsync, LongTimeout);
+
+        result.ErrorCode.Should().Be(nameof(WindowErrorCode.PausedByUser));
+        result.Error.Should().Contain("the user pressed the pause hotkey (Ctrl+Alt+Shift+Pause)").And.Contain("nothing was typed");
     }
 
     [Fact]
@@ -807,6 +905,12 @@ public class CdpPageServiceTests
         /// <summary>Whether the user has paused input, asked each time the hold is.</summary>
         public Func<bool>? Paused { get; init; }
 
+        /// <summary>How input was paused (InputPauseState.PausedBy), as the hold reports it.</summary>
+        public string? PausedBy { get; init; }
+
+        /// <summary>The pause hotkey's chord, as the hold reports it.</summary>
+        public string? PauseChord { get; init; }
+
         public Task<IDisposable> EnterAsync(CancellationToken cancellationToken)
         {
             Entered++;
@@ -817,6 +921,10 @@ public class CdpPageServiceTests
         private sealed class Release(RecordingGate gate) : ICdpGateHold
         {
             public bool IsPaused => gate.Paused?.Invoke() == true;
+
+            public string? PausedBy => gate.PausedBy;
+
+            public string? PauseChord => gate.PauseChord;
 
             public void Dispose() => gate.Held = false;
         }
@@ -833,6 +941,12 @@ public class CdpPageServiceTests
         public static readonly object OpenDialog = new();
 
         public const string DocumentObject = "DOC";
+
+        /// <summary>The page's main frame id (Page.getFrameTree).</summary>
+        public const string MainFrameId = "MAINFRAME";
+
+        /// <summary>The execution context id Page.createIsolatedWorld answers with for the main frame.</summary>
+        public const int IsolatedContextId = 41;
 
         public static readonly byte[] Png = [0x89, 0x50, 0x4E, 0x47, 1, 2, 3];
 
@@ -866,6 +980,13 @@ public class CdpPageServiceTests
         public Queue<int> FieldLengths { get; init; } = new([0, 1]);
 
         public string Visibility { get; init; } = "visible";
+
+        /// <summary>
+        /// What a page that redefines document.visibilityState, innerWidth, innerHeight and devicePixelRatio
+        /// (Object.defineProperty) reports in its main world; null reports the real ones (<see cref="Visibility"/>, 1280 x 720
+        /// at 1.5) there too. The isolated world always reads the real ones.
+        /// </summary>
+        public (string Visibility, double Width, double Height, double Dpr)? MainWorldView { get; init; }
 
         public Func<JsonElement, object?>? Evaluate { get; init; }
 
@@ -1069,6 +1190,18 @@ public class CdpPageServiceTests
                         Reply(socket, command, new { data = Convert.ToBase64String(Png) });
                         break;
 
+                    case "Page.getFrameTree":
+                        Reply(socket, command, new { frameTree = new { frame = new { id = MainFrameId, loaderId = "L1", url = PageUrl } } });
+                        break;
+
+                    case "Page.createIsolatedWorld" when p.TryGetProperty("frameId", out var frame) && frame.GetString() == MainFrameId:
+                        Reply(socket, command, new { executionContextId = IsolatedContextId });
+                        break;
+
+                    case "Page.createIsolatedWorld":
+                        socket.ReplyError(command, -32602, "No frame for given id found");
+                        break;
+
                     default:
                         socket.ReplyEmpty(command);
                         break;
@@ -1094,7 +1227,9 @@ public class CdpPageServiceTests
             }
             else if (expression.Contains("visibilityState", StringComparison.Ordinal))
             {
-                socket.ReplyWithValue(command, new { visibility = Visibility, vw = 1280, vh = 720, dpr = 1.5, scale = 1, url = PageUrl, title = Tab.Title });
+                var isolated = p.TryGetProperty("contextId", out var context) && context.GetInt32() == IsolatedContextId;
+                var (visibility, vw, vh, dpr) = isolated || MainWorldView is not { } spoofed ? (Visibility, 1280.0, 720.0, 1.5) : spoofed;
+                socket.ReplyWithValue(command, new { visibility, vw, vh, dpr, scale = 1, url = PageUrl, title = Tab.Title });
             }
             else if (expression == "1")
             {

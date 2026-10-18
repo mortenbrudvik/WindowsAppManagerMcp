@@ -1733,6 +1733,7 @@ public class ProcessServiceTests
     [InlineData("winlogon")]
     [InlineData("dwm")]
     [InlineData("explorer")]
+    [InlineData("ApplicationFrameHost")]
     public void KillProcess_ProtectedProcessNames_AreInProtectedList(string processName)
     {
         // Act

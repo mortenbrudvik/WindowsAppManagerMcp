@@ -252,6 +252,43 @@ public class BrowserTabServiceTests
     }
 
     [Fact]
+    public async Task ListTabs_OverTheBoundTabLimit_SaysTheTabsWereTooManyToPlace_NotThatTheWindowCouldNotBeMatched()
+    {
+        // CdpService.MaxBoundTabs (200): over it no tab's browser window is looked up for the list, so none was matched
+        var tabs = Enumerable.Range(0, 201).Select(i => new CdpTab(Shown with { Id = $"T{i}" }, null, false)).ToList();
+        _tabs.Setup(t => t.ListTabsAsync(Port, (int)BrowserPid, It.IsAny<CdpWindow?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(CdpResult<CdpTabListing>.Ok(new CdpTabListing(tabs, false, tabs[7].Target, null)));
+
+        var result = await CreateSut().ListTabsAsync(ByWindow());
+
+        result.ShownTargetId.Should().Be("T7");
+        result.WindowBound.Should().BeFalse();
+        result.Note.Should().Contain("more than 200 tabs").And.NotContain("could not be matched").And.NotContain("No tab could be told");
+    }
+
+    [Theory]
+    [InlineData(201)] // over CdpService.MaxBoundTabs: only the windows of the tabs with the window's title were looked up
+    [InlineData(3)] // not bound: the window could not be matched to its browser window
+    public async Task ListTabs_WhenTheWindowIsNotBound_AndNoTabIsTold_TheNoteSaysWhy(int tabCount)
+    {
+        // Why no tab could be told can be one the agent can act on (here: bring the window to the front), so the note
+        // carries it, as it does for a bound window
+        const string why = "CdpTargetAmbiguous: 2 tabs have the title 'Same', so the tab shown by the window cannot be " +
+                           "identified: none of them is shown. Bring it to the front (focus_window) and try again.";
+        var tabs = Enumerable.Range(0, tabCount).Select(i => new CdpTab(Shown with { Id = $"T{i}" }, null, false)).ToList();
+        _tabs.Setup(t => t.ListTabsAsync(Port, (int)BrowserPid, It.IsAny<CdpWindow?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(CdpResult<CdpTabListing>.Ok(new CdpTabListing(tabs, false, null, why)));
+
+        var result = await CreateSut().ListTabsAsync(ByWindow());
+
+        result.Success.Should().BeTrue(result.Error);
+        result.ShownTargetId.Should().BeNull();
+        result.WindowBound.Should().BeFalse();
+        result.Note.Should().Contain($"No tab could be told as the one it shows ({why}).")
+            .And.Contain(tabCount > 200 ? "more than 200 tabs" : "could not be matched");
+    }
+
+    [Fact]
     public async Task ListTabs_PassesTheWindowsTitleAndBounds_ToTheBinding()
     {
         CdpWindow? passed = null;
@@ -391,6 +428,42 @@ public class BrowserTabServiceTests
     }
 
     [Fact]
+    public async Task Navigate_NewTab_ThatOpenedButCouldNotBeListed_ReportsTheTabItOpened()
+    {
+        // Arrange - the port changed hands once the tab was opened: it is left on about:blank, and is not navigated
+        _tabs.Setup(t => t.OpenTabAsync(Port, (int)BrowserPid, It.IsAny<CdpGate>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(CdpResult<CdpTarget>.Fail(BrowserErrorCode.CdpPortOwnerMismatch,
+                "The browser opened tab NEW1 on about:blank, but it was not navigated: CDP port 9222 changed hands.") with
+            {
+                OpenedTargetId = "NEW1"
+            });
+
+        // Act
+        var result = await CreateSut().NavigateAsync(ByWindow(), new BrowserNavigateOptions("https://example.com/", true, BrowserWaitUntil.Load, 15_000));
+
+        // Assert - as when a pause stops the navigation: the fields name the tab, not only the message
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(nameof(BrowserErrorCode.CdpPortOwnerMismatch));
+        result.TargetId.Should().Be("NEW1");
+        result.NewTab.Should().BeTrue();
+        result.Error.Should().Contain("NEW1");
+        _tabs.Verify(t => t.NavigateAsync(It.IsAny<CdpTarget>(), It.IsAny<string>(), It.IsAny<BrowserWaitUntil>(), It.IsAny<CdpGate>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>(), It.IsAny<BrowserDialogAnswer?>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task Navigate_NewTab_ThatCouldNotBeOpened_NamesNoTab()
+    {
+        _tabs.Setup(t => t.OpenTabAsync(Port, (int)BrowserPid, It.IsAny<CdpGate>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(CdpResult<CdpTarget>.Fail(BrowserErrorCode.CdpPortOwnerMismatch, "CDP port 9222 belongs to process 999."));
+
+        var result = await CreateSut().NavigateAsync(ByWindow(), new BrowserNavigateOptions("https://example.com/", true, BrowserWaitUntil.Load, 15_000));
+
+        result.ErrorCode.Should().Be(nameof(BrowserErrorCode.CdpPortOwnerMismatch));
+        result.TargetId.Should().BeNull();
+        result.NewTab.Should().BeNull();
+    }
+
+    [Fact]
     public async Task Navigate_NewTab_WhenTheGateRefusesTheNavigation_ReportsTheTabItOpened()
     {
         // The tab is opened inside the gate, which is let go; the user pauses before Page.navigate takes it again
@@ -424,6 +497,39 @@ public class BrowserTabServiceTests
     }
 
     [Fact]
+    public async Task Navigate_NewTab_WhenThePauseTheServerSetItselfRefusesTheNavigation_SaysSo()
+    {
+        // Arrange - as above, but the server paused itself: it could not read the pause it shares (review F4)
+        var opened = Other with { Id = "NEW1" };
+        _tabs.Setup(t => t.OpenTabAsync(Port, (int)BrowserPid, It.IsAny<CdpGate>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .Returns(async (int _, int _, CdpGate gate, TimeSpan _, CancellationToken token) =>
+            {
+                using (await gate(token))
+                {
+                }
+
+                _session.Pause(InputControlSources.SharedPauseUnreadable);
+                return CdpResult<CdpTarget>.Ok(opened);
+            });
+        _tabs.Setup(t => t.NavigateAsync(opened, It.IsAny<string>(), It.IsAny<BrowserWaitUntil>(), It.IsAny<CdpGate>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>(), It.IsAny<BrowserDialogAnswer?>()))
+            .Returns(async (CdpTarget _, string _, BrowserWaitUntil _, CdpGate gate, TimeSpan _, CancellationToken token, BrowserDialogAnswer? _) =>
+            {
+                using (await gate(token))
+                {
+                    return CdpResult<CdpNavigation>.Ok(new CdpNavigation(null, null, null, "load", false));
+                }
+            });
+
+        // Act
+        var result = await CreateSut().NavigateAsync(ByWindow(), new BrowserNavigateOptions("https://example.com/", true, BrowserWaitUntil.Load, 15_000));
+
+        // Assert
+        result.ErrorCode.Should().Be(nameof(WindowErrorCode.PausedByUser));
+        result.Error.Should().Contain("NEW1").And.Contain("could not read the pause it shares").And.Contain("Stop and ask the user")
+            .And.NotContain("not navigated: the user paused input");
+    }
+
+    [Fact]
     public async Task Navigate_ADownload_IsNavigationFailed_SayingTheTabKeptItsPage()
     {
         _tabs.Setup(t => t.NavigateAsync(It.IsAny<CdpTarget>(), It.IsAny<string>(), It.IsAny<BrowserWaitUntil>(), It.IsAny<CdpGate>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>(), It.IsAny<BrowserDialogAnswer?>()))
@@ -451,6 +557,46 @@ public class BrowserTabServiceTests
         result.ErrorCode.Should().Be(ToolErrorReporting.InvalidArgumentsErrorCode);
         result.Error.Should().Contain("DevTools").And.Contain("Nothing was done");
         _tabs.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task Navigate_ToALoopbackPort_WhoseListenerCannotBeRead_IsRefused()
+    {
+        // Fails closed: the port could be a browser's DevTools endpoint
+        _owners = new FakePortOwnerResolver(owner: null, tableReadable: false);
+
+        var result = await CreateSut().NavigateAsync(ByWindow(), new BrowserNavigateOptions("http://127.0.0.1:8080/a", false, BrowserWaitUntil.Load, 15_000));
+
+        result.ErrorCode.Should().Be(ToolErrorReporting.InvalidArgumentsErrorCode);
+        result.Error.Should().Contain("port 8080").And.Contain("could not be read").And.EndWith("Nothing was done.");
+        _tabs.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task Navigate_ToALoopbackPort_WhoseListenersNameCannotBeRead_IsRefused()
+    {
+        // Fails closed: a process whose name is unknown could be a browser
+        _owners = new FakePortOwnerResolver(owner: 777);
+        _windows.Setup(w => w.GetProcessName(777u)).Returns((string?)null);
+
+        var result = await CreateSut().NavigateAsync(ByWindow(), new BrowserNavigateOptions("http://localhost:8080/a", false, BrowserWaitUntil.Load, 15_000));
+
+        result.ErrorCode.Should().Be(ToolErrorReporting.InvalidArgumentsErrorCode);
+        result.Error.Should().Contain("process 777, whose name could not be read").And.Contain("DevTools").And.EndWith("Nothing was done.");
+        _tabs.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task Navigate_ToALoopbackPortNothingListensOn_IsOpened()
+    {
+        // Nothing to tell apart: the navigation fails as the browser reports it
+        _owners = new FakePortOwnerResolver(owner: null);
+        _tabs.Setup(t => t.NavigateAsync(Shown, "http://127.0.0.1:8080/a", BrowserWaitUntil.Load, It.IsAny<CdpGate>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>(), It.IsAny<BrowserDialogAnswer?>()))
+            .ReturnsAsync(CdpResult<CdpNavigation>.Ok(new CdpNavigation("http://127.0.0.1:8080/a", "A", null, "load", false)));
+
+        var result = await CreateSut().NavigateAsync(ByWindow(), new BrowserNavigateOptions("http://127.0.0.1:8080/a", false, BrowserWaitUntil.Load, 15_000));
+
+        result.Success.Should().BeTrue(result.Error);
     }
 
     [Fact]

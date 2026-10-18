@@ -673,7 +673,7 @@ public class BrowserReadingToolsTests
         await sut.LaunchBrowserWithDebug();
 
         // Assert - port 0 by default: the browser picks a free port (roadmap M5.1)
-        requests.Should().Equal(new DebugBrowserLaunchRequest("chrome", Url: null, Port: 0, UserDataDir: null, ExecutablePath: null));
+        requests.Should().Equal(new DebugBrowserLaunchRequest(DebugBrowser.Chrome, Url: null, Port: 0, UserDataDir: null, ExecutablePath: null));
     }
 
     [Fact]
@@ -689,14 +689,14 @@ public class BrowserReadingToolsTests
 
         // Assert
         requests.Should().Equal(new DebugBrowserLaunchRequest(
-            "edge", "https://example.com", 9224, @"C:\CustomProfile", @"C:\Edge Beta\Application\msedge.exe"));
+            DebugBrowser.Edge, "https://example.com", 9224, @"C:\CustomProfile", @"C:\Edge Beta\Application\msedge.exe"));
     }
 
     [Theory]
-    [InlineData(DebugBrowser.Chrome, "chrome")]
-    [InlineData(DebugBrowser.Edge, "edge")]
-    [InlineData(DebugBrowser.Brave, "brave")]
-    public async Task LaunchBrowserWithDebug_PassesTheBrowsersNameToTheService(DebugBrowser requested, string browser)
+    [InlineData(DebugBrowser.Chrome)]
+    [InlineData(DebugBrowser.Edge)]
+    [InlineData(DebugBrowser.Brave)]
+    public async Task LaunchBrowserWithDebug_PassesTheBrowserToTheService(DebugBrowser requested)
     {
         // Arrange
         var requests = LaunchReturns(Launched);
@@ -705,9 +705,71 @@ public class BrowserReadingToolsTests
         // Act
         var result = await sut.LaunchBrowserWithDebug(requested);
 
-        // Assert
+        // Assert - the enum itself, so a browser the tool takes is one the launch knows (no name to mistype)
         result.Success.Should().BeTrue();
-        requests.Should().ContainSingle().Which.Browser.Should().Be(browser);
+        requests.Should().ContainSingle().Which.Browser.Should().Be(requested);
+    }
+
+    [Fact]
+    public async Task LaunchBrowserWithDebug_PassesTheUrlWithoutTheWhiteSpaceAroundIt()
+    {
+        // Arrange
+        var requests = LaunchReturns(Launched);
+
+        // Act
+        await CreateSut().LaunchBrowserWithDebug(url: "  https://example.com/a  ");
+
+        // Assert - the url that was checked is the one the browser gets
+        requests.Should().ContainSingle().Which.Url.Should().Be("https://example.com/a");
+    }
+
+    [Theory]
+    [InlineData("http://127.0.0.1:9333/", "chrome", true)]
+    [InlineData("http://localhost:9333/anything", "msedge", true)]
+    [InlineData("http://127.0.0.1:9333/", null, true)]
+    [InlineData("http://127.0.0.1:9333/", "dotnet", false)]
+    [InlineData("https://example.com:9333/", "chrome", false)]
+    public async Task LaunchBrowserWithDebug_ALoopbackUrlWhereABrowserListens_IsRefused_AsBrowserNavigateRefusesIt(
+        string url, string? listener, bool refused)
+    {
+        // Arrange - another browser's DevTools port: its pages list and show its tabs, past the target policy
+        var requests = LaunchReturns(Launched);
+        _mockProcessService.Setup(p => p.GetProcessName(4242)).Returns(listener);
+        var sut = new BrowserReadingTools(_mockBrowserReadingService.Object, _mockProcessService.Object,
+            portOwners: new FakePortOwnerResolver(owner: 4242), browserDetection: new BrowserDetectionService());
+
+        // Act
+        var act = () => sut.LaunchBrowserWithDebug(url: url);
+
+        // Assert
+        if (refused)
+        {
+            (await act.Should().ThrowAsync<ToolErrorException>())
+                .Which.Should().Match<ToolErrorException>(e => e.ErrorCode == ToolErrorReporting.InvalidArgumentsErrorCode &&
+                                                              e.Message.Contains("DevTools") && e.Message.EndsWith("Nothing was launched."));
+            requests.Should().BeEmpty();
+        }
+        else
+        {
+            await act.Should().NotThrowAsync();
+            requests.Should().ContainSingle();
+        }
+    }
+
+    [Fact]
+    public async Task LaunchBrowserWithDebug_ALoopbackUrl_WhoseListenerCannotBeRead_IsRefused()
+    {
+        // Arrange - fails closed, as browser_navigate does
+        var requests = LaunchReturns(Launched);
+        var sut = new BrowserReadingTools(_mockBrowserReadingService.Object, _mockProcessService.Object,
+            portOwners: new FakePortOwnerResolver(owner: null, tableReadable: false), browserDetection: new BrowserDetectionService());
+
+        // Act
+        var act = () => sut.LaunchBrowserWithDebug(url: "http://127.0.0.1:8080/");
+
+        // Assert
+        (await act.Should().ThrowAsync<ToolErrorException>()).Which.Message.Should().Contain("could not be read").And.EndWith("Nothing was launched.");
+        requests.Should().BeEmpty();
     }
 
     [Fact]
@@ -827,6 +889,96 @@ public class BrowserReadingToolsTests
     }
 
     [Theory]
+    [InlineData(@"C:\Users\me\AppData\Local\Google\Chrome\USERDA~1\Default", "inside a 'User Data' folder")]
+    [InlineData(@"C:\Users\me\AppData\Local\Google\Chrome\User Data::$INDEX_ALLOCATION\Default", "inside a 'User Data' folder")]
+    [InlineData(@"C:\Users\me\AppData\Local\Google\Chrome\User Data:stream", "inside a 'User Data' folder")]
+    [InlineData(@"C:\Users\me\AppData\Local\Google\Chrome\User Data. .\Default", "inside a 'User Data' folder")]
+    public async Task LaunchBrowserWithDebug_RefusesAUserDataDirTheLaunchToolsRefuse_AndLaunchesNothing(string userDataDir, string message)
+    {
+        // Arrange - the launch tools' --user-data-dir check (ChromiumSwitchGuard), one implementation: an alternate data
+        // stream and trailing dots and spaces are left out as Windows reads a name. Short names on a network or device path
+        // are tested with a recording guard below: this tool's own guard makes paths full with Path.GetFullPath, which, if
+        // the refusal ever came too late, would expand them over SMB
+        var sut = CreateSut();
+
+        // Act
+        var act = () => sut.LaunchBrowserWithDebug(userDataDir: userDataDir);
+
+        // Assert
+        var refused = (await act.Should().ThrowAsync<ToolErrorException>()).Which;
+        refused.ErrorCode.Should().Be(ToolErrorReporting.InvalidArgumentsErrorCode);
+        refused.Message.Should().Contain(message).And.Contain("Nothing was launched");
+        _mockProcessService.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public void DebugProfileRefusal_ExpandsAShortNameOnADrive_AsTheLaunchToolsDo()
+    {
+        // Arrange - a hashed 8.3 name of the real profile's folder, which no pattern of the name catches
+        const string userData = @"C:\Users\me\AppData\Local\Google\Chrome\User Data";
+        var guard = new ChromiumSwitchGuard(path => path == @"C:\Users\me\AppData\Local\Google\Chrome\US1A2B~1" ? userData : null);
+
+        // Act & Assert
+        BrowserReadingTools.DebugProfileRefusal(@"C:\Users\me\AppData\Local\Google\Chrome\US1A2B~1\Default", guard)
+            .Should().Contain("inside a 'User Data' folder").And.Contain("Nothing was launched");
+        BrowserReadingTools.DebugProfileRefusal(@"C:\Temp\PROFIL~1", guard).Should().BeNull();
+        BrowserReadingTools.DebugProfileRefusal(@"\\server\share\profiles\debug", guard).Should().BeNull("a network path without a short name is read by its text");
+    }
+
+    [Theory]
+    [InlineData(@"\\localhost\C$\Users\me\AppData\Local\Google\Chrome\US1A2B~1")]
+    [InlineData(@"\\10.255.255.1\s\PROFIL~1")]
+    [InlineData(@"\\?\UNC\10.255.255.1\s\c~1")]
+    public void DebugProfileRefusal_RefusesAShortNameOnANetworkPath_BeforeAnyPathIsMadeFull(string userDataDir)
+    {
+        // Arrange - Path.GetFullPath expands 8.3 short names from the file system, which on a UNC path connects to that
+        // computer (\\localhost\C$ reaches the real profile); the guard's recorder makes paths full by their text only, so a
+        // test that fails touches no network either
+        var made = new List<string>();
+        var guard = new ChromiumSwitchGuard(_ => null, (path, basePath) =>
+        {
+            made.Add(path);
+            return basePath == null ? path : Path.Join(basePath, path);
+        });
+
+        // Act
+        var refusal = BrowserReadingTools.DebugProfileRefusal(userDataDir, guard);
+
+        // Assert
+        refusal.Should().Contain("short name").And.Contain("Nothing was launched");
+        made.Should().BeEmpty();
+    }
+
+    [Theory]
+    [InlineData(@"\\10.255.255.1\s\USERDA~1\Default", "inside a 'User Data' folder")]
+    [InlineData(@"\\10.255.255.1\s\User Data\x~1", "inside a 'User Data' folder")]
+    [InlineData(@"\\.\C:\..\UNC\10.255.255.1\s\x~1", "short name")]
+    public void DebugProfileRefusal_RefusesANetworkPathWithAShortName_WithoutMakingItFull(string userDataDir, string message)
+    {
+        // Arrange - a 'User Data' folder on a network path, and a device path whose ".." leaves its drive for a server
+        // (Windows makes \\.\C:\..\UNC\server full as \\.\UNC\server): Path.GetFullPath would expand the '~' over SMB. The
+        // recorder makes a path with a '~' full by its text only
+        var withShortName = new List<string>();
+        var guard = new ChromiumSwitchGuard(_ => null, (path, basePath) =>
+        {
+            if (path.Contains('~') || (basePath?.Contains('~') ?? false))
+            {
+                withShortName.Add(path);
+                return basePath == null ? path : Path.Join(basePath, path);
+            }
+
+            return basePath == null ? Path.GetFullPath(path) : Path.GetFullPath(path, basePath);
+        });
+
+        // Act
+        var refusal = BrowserReadingTools.DebugProfileRefusal(userDataDir, guard);
+
+        // Assert
+        refusal.Should().Contain(message).And.Contain("Nothing was launched");
+        withShortName.Should().BeEmpty();
+    }
+
+    [Theory]
     [InlineData("  C:/Temp/debug-profile  ", @"C:\Temp\debug-profile")]
     [InlineData(@"C:\Temp\a\..\debug-profile", @"C:\Temp\debug-profile")]
     [InlineData("   ", null)]
@@ -856,24 +1008,24 @@ public class BrowserReadingToolsTests
     }
 
     [Theory]
-    [InlineData("chrome", @"C:\Program Files\Google\Chrome Beta\Application\chrome.exe")]
-    [InlineData("edge", @"D:\Portable\Edge\MSEDGE.EXE")]
-    [InlineData("brave", @"\\server\share\Brave\brave.exe")]
-    [InlineData("chrome", null)]
-    [InlineData("chrome", "  ")]
-    public void DebugExecutableRefusal_TakesAFullPathToTheBrowsersOwnExe(string browser, string? executablePath)
+    [InlineData(DebugBrowser.Chrome, @"C:\Program Files\Google\Chrome Beta\Application\chrome.exe")]
+    [InlineData(DebugBrowser.Edge, @"D:\Portable\Edge\MSEDGE.EXE")]
+    [InlineData(DebugBrowser.Brave, @"\\server\share\Brave\brave.exe")]
+    [InlineData(DebugBrowser.Chrome, null)]
+    [InlineData(DebugBrowser.Chrome, "  ")]
+    public void DebugExecutableRefusal_TakesAFullPathToTheBrowsersOwnExe(DebugBrowser browser, string? executablePath)
     {
         BrowserReadingTools.DebugExecutableRefusal(browser, executablePath).Should().BeNull();
     }
 
     [Theory]
-    [InlineData("chrome", "chrome.exe", "is not a full path")]
-    [InlineData("chrome", @"Google\Chrome\Application\chrome.exe", "is not a full path")]
-    [InlineData("chrome", @"C:chrome.exe", "is not a full path")]
-    [InlineData("edge", @"C:\Program Files\Google\Chrome\Application\chrome.exe", "must name msedge.exe for browser 'edge'")]
-    [InlineData("chrome", @"C:\Windows\System32\cmd.exe", "must name chrome.exe")]
-    [InlineData("brave", @"C:\Tools\brave.exe.lnk", "must name brave.exe")]
-    public void DebugExecutableRefusal_RefusesARelativePathAndAnotherProgram(string browser, string executablePath, string message)
+    [InlineData(DebugBrowser.Chrome, "chrome.exe", "is not a full path")]
+    [InlineData(DebugBrowser.Chrome, @"Google\Chrome\Application\chrome.exe", "is not a full path")]
+    [InlineData(DebugBrowser.Chrome, @"C:chrome.exe", "is not a full path")]
+    [InlineData(DebugBrowser.Edge, @"C:\Program Files\Google\Chrome\Application\chrome.exe", "must name msedge.exe for browser 'edge'")]
+    [InlineData(DebugBrowser.Chrome, @"C:\Windows\System32\cmd.exe", "must name chrome.exe")]
+    [InlineData(DebugBrowser.Brave, @"C:\Tools\brave.exe.lnk", "must name brave.exe")]
+    public void DebugExecutableRefusal_RefusesARelativePathAndAnotherProgram(DebugBrowser browser, string executablePath, string message)
     {
         BrowserReadingTools.DebugExecutableRefusal(browser, executablePath).Should().Contain(message).And.Contain("Nothing was launched");
     }

@@ -212,6 +212,81 @@ public class ElementActionRealizeToolTests
         _requests[^1].ScrollPercent.Should().Be(0);
     }
 
+    [Theory]
+    [InlineData(ElementSearchTruncation.Timeout)]
+    [InlineData(ElementSearchTruncation.PartsSkipped)]
+    public async Task Realize_WithMaxScrolls_PutsTheListBack_WhenAPagesSearchDoesNotFinish(ElementSearchTruncation reason)
+    {
+        // Arrange - the list was 40% down before the search; the second page's search stopped (the deadline passed during it,
+        // or a part of the list could not be searched) before it found anything
+        _foundOnPage = 100;
+        _startPercent = 40;
+        var pageSearches = 0;
+        _firstSearch = query => query.WithinRef == _itemList && ++pageSearches == 2
+            ? new FindElementsResult(true, Handle, "Chat", 0, true, [], 1, TruncationReason: reason)
+            : null;
+
+        // Act
+        var result = await CreateSut().ElementAction(ElementActionKind.Realize, handle: Handle, name: "Old message", maxScrolls: 10,
+            allowHostTarget: true).Payload<ElementActionResult>();
+
+        // Assert - the page search's own code, and the list put back with one more element_action scroll
+        result.ErrorCode.Should().Be("OperationTimedOut");
+        result.Error.Should().Contain("after scrolling").And.Contain("2 pages").And.Contain("put back where it was (40% down)");
+        _requests.Should().HaveCount(3);
+        (_requests[^1].Action, _requests[^1].Ref, _requests[^1].ScrollPercent, _requests[^1].AllowHostTarget)
+            .Should().Be((ElementActionKind.Scroll, "w1e2", 40.0, true));
+    }
+
+    [Fact]
+    public async Task Realize_WithMaxScrolls_PutsTheListBack_WhenAPagesOnlyMatchesAreOfAnAppThePolicyRefuses()
+    {
+        // Arrange - on the second page the criteria match only an element of an app the target policy refuses
+        _foundOnPage = 100;
+        _startPercent = 40;
+        var pageSearches = 0;
+        const string leftOut = "1 element of window 33280 belongs to process 777 ('KeePass'), ...";
+        _firstSearch = query => query.WithinRef == _itemList && ++pageSearches == 2
+            ? new FindElementsResult(true, Handle, "Chat", 0, true, [], 1, TruncationReason: ElementSearchTruncation.PartsSkipped,
+                Warning: leftOut)
+            {
+                PolicyLeftOut = new PolicyLeftOutMatches(1, leftOut, OtherwiseComplete: true)
+            }
+            : null;
+
+        // Act
+        var result = await CreateSut().ElementAction(ElementActionKind.Realize, handle: Handle, name: "Old message", maxScrolls: 10)
+            .Payload<ElementActionResult>();
+
+        // Assert
+        result.ErrorCode.Should().Be("TargetDeniedByPolicy");
+        result.Error.Should().Contain("KeePass").And.Contain("put back where it was (40% down)");
+        _requests[^1].ScrollPercent.Should().Be(40);
+    }
+
+    [Fact]
+    public async Task Realize_WithMaxScrolls_LeavesTheListWhereTwoItemsMatch_SoTheirRefsStayOnScreen()
+    {
+        // Arrange - the second page shows two matching items
+        _foundOnPage = 100;
+        _startPercent = 40;
+        var pageSearches = 0;
+        _firstSearch = query => query.WithinRef == _itemList && ++pageSearches == 2
+            ? Found(2,
+                new FoundElement("w1e9", "Old message", "ListItem", null, null, null, null, true, false, []),
+                new FoundElement("w1e10", "Old message", "ListItem", null, null, null, null, true, false, []))
+            : null;
+
+        // Act
+        var result = await CreateSut().ElementAction(ElementActionKind.Realize, handle: Handle, name: "Old message", maxScrolls: 10)
+            .Payload<ElementActionResult>();
+
+        // Assert
+        result.ErrorCode.Should().Be("AmbiguousElement");
+        result.Error.Should().Contain("w1e9").And.Contain("w1e10");
+        _requests.Should().HaveCount(2).And.OnlyContain(r => r.ScrollPercent == null);
+    }
+
     [Fact]
     public async Task Realize_WithMaxScrolls_SaysWhy_WhenTheListCannotBePutBack()
     {

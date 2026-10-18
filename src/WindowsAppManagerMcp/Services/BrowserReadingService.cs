@@ -463,7 +463,8 @@ public class BrowserReadingService : IBrowserReadingService
 
             var uiaContent = shown.Text;
 
-            // Past the end of the text an empty page is the answer; at its start the page has no text to read
+            // Past the end of the text an empty page is the answer; at its start the page has no text to read. A read that
+            // failed says so, and why: it is not an empty page
             if (uiaContent == null || (uiaContent.Length == 0 && shown.Offset == 0))
             {
                 return new BrowserContentResult(
@@ -473,7 +474,13 @@ public class BrowserReadingService : IBrowserReadingService
                     BrowserType: browserType,
                     PageTitle: pageTitle,
                     ContentLength: null,
-                    Error: "Could not extract content from browser",
+                    Error: shown.ReadFailure is { } failure
+                        ? $"Reading the page's text through UI Automation failed ({failure}). Nothing was read. Try again (the page " +
+                          "may have changed while it was read); if it keeps failing, read it through CDP (a browser started with " +
+                          "launch_browser_with_debug, or cdpPort), or look at it with capture_window."
+                        : "The page was found, but it has no text that UI Automation can read: it may still be loading, or show " +
+                          "its content as images or a canvas. Read it again once it has loaded, read it through CDP (a browser " +
+                          "started with launch_browser_with_debug, or cdpPort), or look at it with capture_window.",
                     ErrorCode: BrowserErrorCode.ContentExtractionFailed,
                     Source: BrowserReadSource.Uia,
                     CdpError: cdpError,
@@ -664,6 +671,15 @@ public class BrowserReadingService : IBrowserReadingService
         {
             // Earlier reads of the same browser are still stuck; nothing was waited for
             return UiaRead.Failed(ex.Message, BrowserErrorCode.OperationTimedOut, warmup.Value);
+        }
+        catch (UiaDeadlinePassedException)
+        {
+            // The worker started no read, so the browser was asked nothing and is not said to be hung
+            return UiaRead.Failed(
+                $"The time for reading the browser window through UI Automation ({timeout.TotalMilliseconds:0} ms) ran out before " +
+                "UI Automation was asked, so the browser was not asked. Nothing was read. Try again, with a larger timeoutMs.",
+                BrowserErrorCode.OperationTimedOut,
+                warmup.Value);
         }
         catch (Exception ex) when (ex is TimeoutException || (ex is OperationCanceledException && !cancellationToken.IsCancellationRequested))
         {

@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using ModelContextProtocol;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
@@ -17,12 +18,16 @@ namespace WindowsAppManagerMcp.Infrastructure;
 /// <remarks>
 /// The filter does nothing when no <see cref="IAuditLog"/> is registered (tests that register their own services), and
 /// it never changes a call's result or fails it: the audit log swallows its own failures, and the filter swallows any
-/// failure of a log that does not. The line is normally written before the result goes back (one small append); the call
-/// waits for it at most <see cref="Services.AuditLog.MaxCallDelay"/>, so a slow or unreachable audit folder never holds
-/// up a call for longer.
+/// failure of a log that does not, logging a warning with the exception (category <see cref="LoggerCategory"/>), so that
+/// a call that went unaudited leaves a trace. The line is normally written before the result goes back (one small append);
+/// the call waits for it at most <see cref="Services.AuditLog.MaxCallDelay"/>, so a slow or unreachable audit folder never
+/// holds up a call for longer.
 /// </remarks>
 public static class AuditLogToolFilter
 {
+    /// <summary>The log category of the filter's warnings: this class's full name.</summary>
+    public static string LoggerCategory { get; } = typeof(AuditLogToolFilter).FullName!;
+
     /// <summary>
     /// The audited tools: every tool that injects input (keys, clicks, pointer moves, scrolling, key releases) or acts on a UI
     /// element through a UI Automation pattern (element_action, with its value's length only; respond_to_dialog with its
@@ -84,7 +89,7 @@ public static class AuditLogToolFilter
         async (request, cancellationToken) =>
         {
             var tool = request.Params?.Name;
-            var audit = tool != null && AuditedTools.Contains(tool) ? AuditLogOf(request.Services) : null;
+            var audit = tool != null && AuditedTools.Contains(tool) ? AuditLogOf(request.Services, tool!) : null;
             var call = audit == null ? null : Begin(audit, tool!, request);
             if (call == null)
             {
@@ -102,35 +107,41 @@ public static class AuditLogToolFilter
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
-                await EndAsync(audit!, call, null, AuditOutcome.Cancelled).ConfigureAwait(false);
+                await EndAsync(audit!, call, null, AuditOutcome.Cancelled, request.Services).ConfigureAwait(false);
                 throw;
             }
             catch (McpProtocolException)
             {
-                await EndAsync(audit!, call, null, AuditOutcome.ProtocolError).ConfigureAwait(false);
+                await EndAsync(audit!, call, null, AuditOutcome.ProtocolError, request.Services).ConfigureAwait(false);
                 throw;
             }
             catch (Exception)
             {
                 // The error filter inside turns every other exception into an error result; recorded all the same
-                await EndAsync(audit!, call, null, AuditOutcome.Error).ConfigureAwait(false);
+                await EndAsync(audit!, call, null, AuditOutcome.Error, request.Services).ConfigureAwait(false);
                 throw;
             }
 
-            await EndAsync(audit!, call, result, result.IsError == true ? AuditOutcome.Error : AuditOutcome.Ok).ConfigureAwait(false);
+            await EndAsync(audit!, call, result, result.IsError == true ? AuditOutcome.Error : AuditOutcome.Ok, request.Services)
+                .ConfigureAwait(false);
             return result;
         };
 
-    /// <summary>Starts the record, with the tool's declared input schema; null (the call goes unaudited) if the log fails.</summary>
+    /// <summary>
+    /// Starts the record, with the tool's declared input schema; null (the call goes unaudited, with a warning in the
+    /// server's log) if the log fails.
+    /// </summary>
     private static AuditCall? Begin(IAuditLog audit, string tool, RequestContext<CallToolRequestParams> request)
     {
         try
         {
             return audit.Begin(tool, request.Params?.Arguments, request.JsonRpcRequest?.Id.ToString(), InputSchemaOf(request, tool));
         }
-        catch (Exception)
+        catch (Exception e)
         {
-            // An audit log that breaks its own contract never breaks the call
+            // An audit log that breaks its own contract never breaks the call, but the call going unaudited is logged
+            Warn(request.Services, logger => logger.LogWarning(e,
+                "The audit log failed to start the record of a '{Tool}' call; the call runs unaudited", tool));
             return null;
         }
     }
@@ -139,15 +150,37 @@ public static class AuditLogToolFilter
     /// Finishes the record. The log bounds its own wait; this also bounds a log that breaks its contract, so that a call
     /// waits for its line at most <see cref="Services.AuditLog.MaxCallDelay"/>, without a thread.
     /// </summary>
-    private static async Task EndAsync(IAuditLog audit, AuditCall call, CallToolResult? result, string outcome)
+    private static async Task EndAsync(IAuditLog audit, AuditCall call, CallToolResult? result, string outcome, IServiceProvider? services)
     {
         try
         {
             await audit.EndAsync(call, result, outcome).WaitAsync(Services.AuditLog.MaxCallDelay).ConfigureAwait(false);
         }
+        catch (Exception e)
+        {
+            // As in Begin: the result goes back as it is, and the line that may be missing is logged
+            Warn(services, logger => logger.LogWarning(e,
+                "The audit log failed to write the line of a '{Tool}' call, or did not finish it in time; the call's result goes " +
+                "back as it is", call.Tool));
+        }
+    }
+
+    /// <summary>
+    /// Writes a warning through a logger of <see cref="LoggerCategory"/>, from the call's services. Never throws: a logger
+    /// that fails is ignored, as a failing audit log is.
+    /// </summary>
+    private static void Warn(IServiceProvider? services, Action<ILogger> warn)
+    {
+        try
+        {
+            if (services?.GetService<ILoggerFactory>()?.CreateLogger(LoggerCategory) is { } logger)
+            {
+                warn(logger);
+            }
+        }
         catch (Exception)
         {
-            // As in Begin: the result goes back as it is
+            // Nowhere left to report it
         }
     }
 
@@ -157,15 +190,16 @@ public static class AuditLogToolFilter
             ? served.ProtocolTool.InputSchema
             : null;
 
-    private static IAuditLog? AuditLogOf(IServiceProvider? services)
+    private static IAuditLog? AuditLogOf(IServiceProvider? services, string tool)
     {
         try
         {
             return services?.GetService<IAuditLog>();
         }
-        catch (Exception)
+        catch (Exception e)
         {
-            // A log that cannot even be created never breaks the call
+            // A log that cannot even be created never breaks the call, but the call going unaudited is logged
+            Warn(services, logger => logger.LogWarning(e, "The audit log could not be created; the '{Tool}' call runs unaudited", tool));
             return null;
         }
     }

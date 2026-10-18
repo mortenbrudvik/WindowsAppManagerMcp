@@ -15,13 +15,33 @@ namespace WindowsAppManagerMcp.Services.Interfaces;
 public interface ICdpService
 {
     /// <summary>
-    /// Lists the page targets (tabs) of the browser listening on the debug port.
+    /// Lists the page targets (tabs) of whatever listens on the debug port. Nothing ties the list to a browser, so its tabs
+    /// carry no <see cref="CdpTarget.OwnerProcessId"/>, and no connection is opened to them: a tab to work on comes from
+    /// <see cref="GetOwnedPageTargetsAsync"/>, <see cref="FindTargetForWindowAsync"/> or <see cref="FindTargetByIdAsync"/>.
     /// </summary>
     /// <param name="port">The CDP debug port.</param>
     /// <param name="timeout">Maximum time to wait for the browser.</param>
     /// <param name="cancellationToken">Cancels the request.</param>
     Task<CdpResult<IReadOnlyList<CdpTarget>>> GetPageTargetsAsync(
         int port,
+        TimeSpan timeout,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Lists the page targets (tabs) of the browser whose process is <paramref name="ownerProcessId"/>: its listener on the
+    /// port is read before the request and again once the list has come (review F4), so a list another program answered
+    /// after the browser left its port is not used. CdpPortOwnerMismatch when the listener is another process at either
+    /// read, or cannot be read (fails closed); CdpUnavailable when nothing listens before the request. Each tab carries
+    /// <paramref name="ownerProcessId"/> as its <see cref="CdpTarget.OwnerProcessId"/>, which every connection to it is
+    /// checked against once open (<see cref="ICdpTransport.ConnectAsync"/>).
+    /// </summary>
+    /// <param name="port">The CDP debug port.</param>
+    /// <param name="ownerProcessId">The browser's process, which must listen on the port.</param>
+    /// <param name="timeout">Maximum time to wait for the browser.</param>
+    /// <param name="cancellationToken">Cancels the request.</param>
+    Task<CdpResult<IReadOnlyList<CdpTarget>>> GetOwnedPageTargetsAsync(
+        int port,
+        int ownerProcessId,
         TimeSpan timeout,
         CancellationToken cancellationToken = default);
 
@@ -47,9 +67,15 @@ public interface ICdpService
     /// window (Browser.getWindowForTarget over the browser's DevTools connection, <see cref="Services.CdpWindowBinder"/>),
     /// and the tab is the one there whose exact title the window shows; CDP reports no active tab, so the title picks it.
     /// When no browser window matches, the binding cannot be read (also when a reply did not come), or the bound window has
-    /// no tab with the title, the title is matched among all tabs. The binding takes at most a third of what is left of
-    /// <paramref name="timeout"/> (at most 2 s). Nothing listening on the port is CdpUnavailable. Fails with
-    /// CdpTargetNotFound or CdpTargetAmbiguous when no single tab matches.
+    /// no tab with the title, the title is matched among all tabs. A page sets its own title, so when several tabs have a
+    /// title the window shows, the one taken is the one whose document.visibilityState, read in an isolated world the
+    /// page's scripts cannot reach, is "visible" (<see cref="Services.CdpShownTab"/>); never the longest title. The binding
+    /// and that read each take at most a third of what is left of <paramref name="timeout"/> (at most 2 s). Nothing
+    /// listening on the port is CdpUnavailable. Fails with CdpTargetNotFound when no tab matches, and CdpTargetAmbiguous
+    /// when several do and exactly one shown tab cannot be told (none or several shown, a read that failed, a minimized
+    /// window, candidates in several browser windows, or a binding that could not be read, which is then asked for also
+    /// without <see cref="CdpWindow.Geometry"/>). Over <see cref="Services.CdpService.MaxBoundTabs"/> tabs, only the
+    /// browser windows of the tabs with the title are asked for, when several have it.
     /// </summary>
     /// <param name="port">The CDP debug port.</param>
     /// <param name="window">The window: its process, its title and, when known, where it is.</param>
@@ -86,8 +112,9 @@ public interface ICdpService
     /// Fails with CdpTimeout when the page does not answer (for example while a JavaScript dialog
     /// is open), with CdpDialogOpen when the browser reports an open dialog, with CdpTargetClosed when the tab's
     /// connection ends during the read, with CdpResponseTooLarge when the answer is over the size limit, with
-    /// CdpEvaluationFailed when the page throws (a selector that is not valid CSS), and with ContentExtractionFailed when
-    /// no element matches the selector.
+    /// CdpEvaluationFailed when the page throws (a selector that is not valid CSS), with ContentExtractionFailed when
+    /// no element matches the selector, and with CdpPortOwnerMismatch, nothing sent, when the browser that listed the tab
+    /// (<see cref="CdpTarget.OwnerProcessId"/>, none: fails closed) no longer listens on its port once the connection is open.
     /// </summary>
     /// <param name="target">The tab to read.</param>
     /// <param name="request">What to read: text or HTML, the slice, and the selector.</param>
@@ -133,13 +160,18 @@ public record CdpPageRequest(bool TextOnly, int Offset, int MaxLength, string? S
 /// </summary>
 /// <param name="Port">The debug port that listed the tab. Its WebSocket URL must be on the same port (roadmap M5.2); it is
 /// required, so the check can never compare the URL with itself.</param>
+/// <param name="OwnerProcessId">The browser's process, read as the port's listener before the tab list was requested and
+/// again once it came (<see cref="ICdpService.GetOwnedPageTargetsAsync"/>); a connection to the tab is used only while it
+/// still listens there (review F4). Null when no read tied the list to a browser: then no connection is opened to the tab
+/// (fails closed).</param>
 public record CdpTarget(
     string Id,
     string Type,
     string Title,
     string Url,
     string? WebSocketDebuggerUrl,
-    int Port
+    int Port,
+    int? OwnerProcessId = null
 );
 
 /// <summary>

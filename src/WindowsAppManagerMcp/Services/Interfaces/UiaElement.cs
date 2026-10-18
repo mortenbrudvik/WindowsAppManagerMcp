@@ -24,6 +24,11 @@ namespace WindowsAppManagerMcp.Services.Interfaces;
 /// <param name="Virtualized">An item its list has not realized, read by <see cref="IUiaTree.ReadVirtualizedItem"/>: its provider
 /// left out some properties (its bounds, IsOffscreen, IsEnabled, ...), which hold their defaults here (no bounds, offscreen,
 /// enabled). False for every element a walk, a search or <see cref="IUiaTree.ReadElement"/> read.</param>
+/// <param name="ProcessId">The process that provides the element (UI Automation's ProcessId), read in the same call, so that
+/// the target policy can check an element of another process than its window's (an embedded WebView2, a child window of
+/// another app: <see cref="Services.ForeignElements"/>) with no further call. Both engines read it with every element they
+/// return, 0 when UI Automation did not say (which the policy refuses while it denies anything); null only for an element
+/// built without that read.</param>
 public sealed record UiaElement(
     IUiaNode Node,
     UiaNodeProperties Properties,
@@ -33,7 +38,8 @@ public sealed record UiaElement(
     IReadOnlyList<int>? RuntimeId,
     int? ControlTypeId,
     nint NativeWindowHandle = 0,
-    bool Virtualized = false)
+    bool Virtualized = false,
+    int? ProcessId = null)
 {
     /// <summary>
     /// Keyboard-focusable, or supports an action pattern (<see cref="UiaPatterns.Actions"/>): what interactableOnly

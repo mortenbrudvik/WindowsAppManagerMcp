@@ -22,7 +22,9 @@ namespace WindowsAppManagerMcp.Services.Interfaces;
 /// </para>
 /// <para>
 /// The tab is the caller's to choose and check (the window's own debug port, the target policy, not one of the browser's
-/// own pages): this service only talks to the tab it is given.
+/// own pages): this service only talks to the tab it is given, and only while the browser that listed it still listens on
+/// its port once the tab's connection is open (<see cref="CdpTarget.OwnerProcessId"/>, review F4): otherwise, also when the
+/// listener cannot be read, CdpPortOwnerMismatch with nothing sent, no script and no text among it.
 /// </para>
 /// </remarks>
 public interface ICdpPageService
@@ -112,6 +114,15 @@ public interface ICdpGateHold : IDisposable
 {
     /// <summary>True once the user has paused input.</summary>
     bool IsPaused { get; }
+
+    /// <summary>
+    /// How input was paused (<see cref="InputPauseState.PausedBy"/>), so the PausedByUser message names the cause
+    /// (<see cref="InputControlSources.PauseCause"/>): the server may have paused itself; null when it is not known.
+    /// </summary>
+    string? PausedBy => null;
+
+    /// <summary>The pause hotkey's chord, for the same message; null when it is not known.</summary>
+    string? PauseChord => null;
 }
 
 /// <summary>

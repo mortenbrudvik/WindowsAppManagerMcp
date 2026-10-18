@@ -76,8 +76,8 @@ public readonly record struct InputTarget(nint? WindowHandle, bool AllowHostTarg
 /// Result of a mouse click operation.
 /// </summary>
 /// <param name="ClickType">
-/// click, right_click and double_click: "left", "right" or "double"; mouse_click (roadmap M4.3): the button, "primary",
-/// "secondary", "middle", "x1" or "x2".
+/// element_action's mouse path (IInputSimulationService's Click, RightClick and DoubleClick): "left", "right" or "double";
+/// mouse_click (roadmap M4.3): the button, "primary", "secondary", "middle", "x1" or "x2".
 /// </param>
 public record ClickResult(
     bool Success,
@@ -88,7 +88,7 @@ public record ClickResult(
     InputErrorCode ErrorCode = InputErrorCode.None
 )
 {
-    /// <summary>mouse_click: how many clicks the batch holds (1 to 3). Null for click, right_click and double_click.</summary>
+    /// <summary>mouse_click: how many clicks the batch holds (1 to 3). Null for element_action's mouse path.</summary>
     public int? ClickCount { get; init; }
 
     /// <summary>mouse_click: the modifier keys held around the clicks ("ctrl", "shift", "alt", "win"); null without any.</summary>
@@ -244,6 +244,29 @@ public record SendKeysResult(
     /// </summary>
     public int? KeysSent { get; init; }
 
+    /// <summary>
+    /// press_keys, on success (issue #10): each chord whose character went out on a key of another name, with the keys that
+    /// went down on the window's keyboard layout, in names press_keys takes: a Shift or AltGr the chord does not name
+    /// ({"ctrl+=": "ctrl+shift+0"} where '=' is Shift+0; AltGr as the keys it is, {"ctrl+@": "ctrl+ralt+2"}), or a letter or
+    /// digit key ({"ctrl+-": "ctrl+6"} on French AZERTY). Null when every chord was pressed as written, so a typical result
+    /// stays small.
+    /// </summary>
+    public IReadOnlyDictionary<string, string>? ResolvedChords { get; init; }
+
+    /// <summary>
+    /// On success (issue #9): what went out as its character alone, with no key and no scan code (KEYEVENTF_UNICODE): press_keys'
+    /// chords, send_keys' characters, at most 20 (the SentAsCharacter warning counts them all). A text field gets the character,
+    /// but an application that matches the physical key does not see a key press; the warning says why. Null when everything
+    /// went as keys.
+    /// </summary>
+    public IReadOnlyList<string>? SentAsCharacters { get; init; }
+
+    /// <summary>
+    /// On success: what to know about keys that went through, each starting with its code (<see cref="KeyWarnings"/>):
+    /// SentAsCharacter, KeyboardLayoutUnknown, SystemHotkey. Null when there is nothing to say.
+    /// </summary>
+    public IReadOnlyList<string>? Warnings { get; init; }
+
     /// <inheritdoc cref="TypeTextResult.ReceivingWindow"/>
     public WindowSummary? ReceivingWindow { get; init; }
 
@@ -334,6 +357,15 @@ public readonly record struct InputEvent(InputEventKind Kind, ushort Code, uint 
     /// </summary>
     public ushort Scan { get; init; }
 
+    /// <summary>
+    /// VirtualKey events: true for a key-down or key-up of the left Ctrl or the right Alt that a key parser
+    /// (<see cref="Services.KeySpecParser"/>, <see cref="Services.PressKeysParser"/>) sent as AltGr, to type a character
+    /// the layout types with AltGr ('@' on a German keyboard). The chord checks read that pair as a character, not as
+    /// Ctrl+Alt (<see cref="Services.SendKeysParser.Chords"/>); the same keys pressed as keys (<c>{LCTRL down}{RALT down}</c>,
+    /// <c>lctrl+ralt</c>) are not tagged and count as Ctrl and Alt, as Windows reads them. Not passed to SendInput.
+    /// </summary>
+    public bool AltGr { get; init; }
+
     public static InputEvent Unicode(char character, uint flags) => new(InputEventKind.Unicode, character, flags);
 }
 
@@ -377,7 +409,7 @@ public enum InputErrorCode
     /// </summary>
     TargetLostFocus = 24,
 
-    /// <summary>send_keys: the keys contain a chord that closes, quits or locks, and no windowHandle was given.</summary>
+    /// <summary>send_keys, press_keys: the keys contain a chord that closes, quits or locks, and no windowHandle was given.</summary>
     DestructiveChordNeedsTarget = 25,
 
     /// <summary>
@@ -412,7 +444,7 @@ public enum InputErrorCode
     CursorNotAtPoint = 32,
 
     /// <summary>
-    /// send_keys: keys follow a chord that hands the keyboard to another window (Alt+Tab, Alt+Esc, Ctrl+Esc,
+    /// send_keys, press_keys: keys follow a chord that hands the keyboard to another window (Alt+Tab, Alt+Esc, Ctrl+Esc,
     /// the Windows key, Alt+Space or a closing chord), so they would reach a window the guard never checked.
     /// </summary>
     KeysAfterFocusChange = 33,
@@ -420,9 +452,14 @@ public enum InputErrorCode
     // Input session codes (roadmap M1.10). Nothing (more) was sent.
 
     /// <summary>
-    /// The user paused the server's input with the pause hotkey. Nothing (more) was sent: a call that was
-    /// running stopped (CharactersTyped says how much it typed). Only the user resumes input: the hotkey
-    /// again, or resume_input confirmed by the user.
+    /// Input is paused: the user pressed the pause hotkey, or the server paused itself because it could not read the pause
+    /// it shares with the other servers on the desktop (shared_pause_unreadable; the error says which). Nothing (more) was
+    /// sent: a call that was running stopped (CharactersTyped says how much it typed). Only the user resumes input: the
+    /// hotkey again, or resume_input confirmed by the user. After the server paused itself, the first press of the hotkey
+    /// keeps the pause, as the user's own, and only a second one resumes; the presses of another server's chord reach this
+    /// server only once it can read the shared pause again. While it cannot read the shared pause, whoever paused, only the
+    /// hotkey of the server that registered the chord reaches it. In both cases the error names resume_input, and
+    /// get_control_status says what the hotkey does.
     /// </summary>
     PausedByUser = 34,
 
@@ -436,16 +473,25 @@ public enum InputErrorCode
     /// <summary>Another call held the input gate for longer than the wait limit, so nothing was sent.</summary>
     InputBusy = 36,
 
-    /// <summary>send_keys: the keys contain the user's pause hotkey chord, which only the user may press.</summary>
+    /// <summary>
+    /// send_keys, press_keys, type_text: the keys contain the user's pause hotkey chord, which only the user may press
+    /// (type_text: a character method keys types with AltGr on the chord's key, or a paste's Ctrl+V).
+    /// </summary>
     PauseChordNotAllowed = 37,
 
     /// <summary>
-    /// resume_input: the MCP client cannot ask the user (it does not support elicitation), so only the user
-    /// can resume input, with the pause hotkey. Input stays paused.
+    /// resume_input: the MCP client cannot ask the user (it does not support elicitation), or the question could not be
+    /// shown, so only the user can resume input: with the pause hotkey, or, after the server paused itself or while it
+    /// cannot read the shared pause, as the error says (a second press, a confirmed resume_input or a restart). Input stays
+    /// paused.
     /// </summary>
     ResumeNeedsUser = 38,
 
-    /// <summary>resume_input: the user declined or dismissed the question, or did not answer in time. Input stays paused.</summary>
+    /// <summary>
+    /// resume_input: the user declined or dismissed the question, or did not answer in time; or input was paused again
+    /// meanwhile (the answer was for the earlier pause); or another question is open (another resume_input is waiting for its
+    /// answer). Input stays paused.
+    /// </summary>
     ResumeDeclined = 39,
 
     /// <summary>
@@ -486,7 +532,9 @@ public enum InputErrorCode
 
     /// <summary>
     /// The window selector could not be checked again once the call held the input gate because of the selector itself
-    /// (a titleRegex that took longer than 100 ms on the window's title), as the window tools report it. Nothing was sent.
+    /// (a titleRegex that took longer than 100 ms on the window's title), as the window tools report it; or type_text's
+    /// arguments cannot be used together; or send_keys' delayMs waits would add up to more than
+    /// <see cref="Services.InputSimulationService.MaxSendKeysDurationMs"/>. Nothing was sent.
     /// </summary>
     InvalidArguments = 45,
 
@@ -522,7 +570,9 @@ public enum InputErrorCode
     /// <summary>
     /// type_text: the text is longer than its method takes: more than <see cref="Services.InputSimulationService.MaxTypedLength"/>
     /// characters to type (unicode, keys, or auto when it types), or more than
-    /// <see cref="Services.InputSimulationService.MaxPasteLength"/> to paste. Nothing was typed.
+    /// <see cref="Services.InputSimulationService.MaxPasteLength"/> to paste. Nothing was typed. send_keys: the keys press more
+    /// than <see cref="Services.InputSimulationService.MaxSendKeysPresses"/> keys, or make more than
+    /// <see cref="Services.InputSimulationService.MaxSendKeysEvents"/> input events. Nothing was sent.
     /// </summary>
     TextTooLong = 49,
 

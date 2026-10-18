@@ -135,7 +135,17 @@ public sealed class BrowserTabService : IBrowserTabService
             ? await _tabs.OpenTabAsync(browser.Port, browser.ProcessId, EnterGateAsync, timeout, cancellationToken).ConfigureAwait(false)
             : await FindTabAsync(browser, target.TargetId, cancellationToken).ConfigureAwait(false);
         if (!tab.Success)
-            return BrowserNavigateResult.Failed(tab.ErrorCode.ToString(), tab.Error!, browser.Port, target.TargetId);
+        {
+            // A new tab the browser opened before the failure is left on about:blank: the fields name it, as below when the
+            // pause or a busy gate stops its navigation
+            return tab.OpenedTargetId is { } opened
+                ? BrowserNavigateResult.Failed(tab.ErrorCode.ToString(), tab.Error!, browser.Port, opened) with
+                {
+                    NewTab = true,
+                    ElapsedMs = stopwatch.ElapsedMilliseconds
+                }
+                : BrowserNavigateResult.Failed(tab.ErrorCode.ToString(), tab.Error!, browser.Port, target.TargetId);
+        }
 
         var targetId = tab.Value!.Id;
         var newTab = options.NewTab ? true : (bool?)null;
@@ -151,7 +161,7 @@ public sealed class BrowserTabService : IBrowserTabService
             // The gate was let go once the tab was opened, and the pause or a busy gate came before Page.navigate took it
             // again: the tab is there, so the result names it instead of the gate's "nothing was done"
             var why = refused.ErrorCode == nameof(WindowErrorCode.PausedByUser)
-                ? "the user paused input"
+                ? $"input is paused ({InputControlSources.PauseCause(_session?.PauseState?.PausedBy, null)})"
                 : "another input or window call held the input gate";
             return BrowserNavigateResult.Failed(refused.ErrorCode,
                 $"A new tab {targetId} was opened on about:blank, but it was not navigated: {why}. " +
@@ -237,38 +247,12 @@ public sealed class BrowserTabService : IBrowserTabService
     }
 
     /// <summary>
-    /// Why <paramref name="url"/> is not opened as a loopback address a browser listens on, or null: a browser listens on
-    /// this computer only for DevTools, whose /json pages list, show and close tabs when opened (a check of the URL's
-    /// path alone is <see cref="BrowserNavigationUrls.Refusal"/>'s). Fails closed when the port's owner cannot be read; a
-    /// port nothing listens on is opened, and fails as the browser reports it. A page that redirects to such an address
-    /// is not stopped by this check.
+    /// Why <paramref name="url"/> is not opened as a loopback address a browser listens on, or null
+    /// (<see cref="BrowserNavigationUrls.BrowserPortRefusal"/>, which launch_browser_with_debug's url shares).
     /// </summary>
-    private string? DevToolsPortRefusal(string url)
-    {
-        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri) || uri.Scheme is not ("http" or "https") ||
-            !BrowserNavigationUrls.IsLoopback(uri))
-        {
-            return null;
-        }
-
-        if (!_portOwners.TryGetListeningProcessId(uri.Port, out var owner))
-        {
-            return $"url is on this computer, and which program listens on port {uri.Port} could not be read, so it cannot be " +
-                   "told from a browser's DevTools endpoint. Nothing was done.";
-        }
-
-        if (owner is not int processId)
-            return null;
-
-        var processName = _windows.GetProcessName((uint)processId);
-        if (processName != null && !_detection.IsBrowser(processName))
-            return null;
-
-        var listener = processName == null ? $"process {processId}, whose name could not be read," : $"the browser '{processName}'";
-        return $"url is port {uri.Port} on this computer, where {listener} listens. A browser listens on this computer only for " +
-               "DevTools, whose /json pages list, show and close tabs when opened, past the target policy and the tab tools' " +
-               "checks. Use list_tabs and activate_tab instead. Nothing was done.";
-    }
+    private string? DevToolsPortRefusal(string url) =>
+        BrowserNavigationUrls.BrowserPortRefusal(
+            url, _portOwners, processId => _windows.GetProcessName((uint)processId), _detection.IsBrowser, BrowserNavigationUrls.NothingDone);
 
     /// <summary>The tab with <paramref name="targetId"/>, or the one the window shows.</summary>
     private Task<CdpResult<CdpTarget>> FindTabAsync(ResolvedBrowser browser, string? targetId, CancellationToken cancellationToken) =>
@@ -282,11 +266,26 @@ public sealed class BrowserTabService : IBrowserTabService
     private static string? NoteFor(CdpTabListing listing) =>
         (listing.WindowBound, listing.ShownError) switch
         {
+            // Over CdpService.MaxBoundTabs no tab's browser window is looked up for the list (CdpTabService.ListTabsAsync)
+            (false, _) when listing.Tabs.Count > CdpService.MaxBoundTabs =>
+                $"The browser has more than {CdpService.MaxBoundTabs} tabs, too many to look up the browser window of each, so " +
+                "the tabs are listed without windowId and the window's tabs are not marked (inWindow)." + NotShownNote(listing),
             (false, _) => "The window could not be matched to its browser window, so its tabs are not marked (inWindow); every tab of " +
-                          "the browser is listed." + (listing.Shown == null ? " No tab could be told as the one it shows." : string.Empty),
+                          "the browser is listed." + NotShownNote(listing),
             (true, { } why) => $"No tab could be told as the one the window shows ({why}).",
             _ => null
         };
+
+    /// <summary>
+    /// For a window that is not bound, the sentence that no tab could be told as the one it shows, with why when known (it
+    /// may be one the agent can act on, such as focus_window for a covered window), or empty when one was told.
+    /// </summary>
+    private static string NotShownNote(CdpTabListing listing) =>
+        listing.Shown != null
+            ? string.Empty
+            : listing.ShownError is { } why
+                ? $" No tab could be told as the one it shows ({why})."
+                : " No tab could be told as the one it shows.";
 
     internal static string WaitUntilName(BrowserWaitUntil waitUntil) => waitUntil switch
     {

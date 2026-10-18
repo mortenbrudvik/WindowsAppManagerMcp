@@ -68,6 +68,13 @@ public sealed record LaunchRequest(
     /// Without it, the handle is released when it comes. No tool parameter sets it.
     /// </summary>
     public Action<Task<Services.Interfaces.IProcessHandle?>>? OnStartAbandoned { get; init; }
+
+    /// <summary>
+    /// launch_browser_with_debug's own start (review F2): the plan lets its --remote-debugging-port through, which the server
+    /// builds itself next to a profile the tool checked (review MCP-S-1); every other refused switch is still refused
+    /// (Services.ChromiumSwitchGuard). No tool parameter sets it.
+    /// </summary>
+    public bool DebugBrowserLaunch { get; init; }
 }
 
 /// <summary>
@@ -79,6 +86,11 @@ public sealed record LaunchRequest(
 /// </summary>
 /// <param name="ProcessName">Part of the name of the process that owns the window, case-insensitive (for example 'CalculatorApp' or 'SystemSettings').</param>
 /// <param name="TitleContains">Part of the window title, case-insensitive.</param>
+/// <remarks>
+/// An unknown member (a titleEquals or className it does not take) is refused (InvalidArguments) rather than ignored, which
+/// would leave a hint that matches more windows than the one meant.
+/// </remarks>
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 public sealed record LaunchWindowHint(
     [property: Description("Part of the name of the process that will own the window, case-insensitive (e.g. 'CalculatorApp', 'SystemSettings', 'WINWORD')")]
     string? ProcessName = null,

@@ -596,6 +596,28 @@ public sealed class UserConfirmationContractTests : IDisposable
         _services.Windows.Verify(w => w.CloseWindow(It.IsAny<nint>(), true), Times.Never);
     }
 
+    [Theory]
+    [InlineData(false, ", the agent's own window")]
+    [InlineData(true, ", possibly the agent's own window")]
+    public async Task CloseWindow_ForceOnAHostWindow_TellsTheUserWhetherItIsTheAgentsOwn_OrOnlyMayBe(bool onlyWhileUnknown, string label)
+    {
+        // Arrange - Notepad counts as the agent's host: as the host the guard knows, or only because the server cannot read its
+        // ancestor processes (Notepad started before it)
+        NotepadIsProtected();
+        _services.Windows.Setup(w => w.GetWindowInfo((nint)TypicalDesktop.NotepadHandle)).Returns(TypicalDesktop.Notepad with
+        {
+            IsAgentHost = true, IsAgentHostOnlyWhileAncestorsUnknown = onlyWhileUnknown
+        });
+        await using var server = await StartAsync(null, _ => Answer("decline"));
+
+        // Act
+        await server.CallToolAsync("close_window", ForceClose(TypicalDesktop.NotepadHandle));
+
+        // Assert - the user is not told as fact that another app is the agent's own window
+        _questions.Should().ContainSingle().Which.Should().Contain($"(notepad, PID 10244){label}\n");
+        _services.Windows.Verify(w => w.CloseWindow(It.IsAny<nint>(), true), Times.Never);
+    }
+
     [Fact]
     public async Task CloseWindow_ForceOnAProtectedWindow_ClosesItAfterTheUsersYes()
     {

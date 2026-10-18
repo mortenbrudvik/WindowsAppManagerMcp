@@ -13,8 +13,9 @@ namespace WindowsAppManagerMcp.Native;
 /// Windows.System and Windows.UI.Composition, which the single-file exe would carry for nothing. The vtable slots are those of
 /// the Windows SDK headers (windows.graphics.capture.h, d3d11.h); a wrong one fails the capture, which falls back.</para>
 /// <para>Each capture runs on a thread of its own, in the multithreaded apartment WinRT needs, and the caller waits at most
-/// <see cref="Deadline"/>: the compositor answers, not the window, but a stuck graphics driver would otherwise hang the tool.
-/// A capture that misses it is abandoned, and while it is still blocked <see cref="IsSupported"/> is false. The Direct3D
+/// <see cref="DefaultDeadline"/>: the compositor answers, not the window, but a stuck graphics driver would otherwise hang the
+/// tool. A capture or support check that misses it is abandoned, and while it is still blocked <see cref="Availability"/> is
+/// Busy (try again later), never Unsupported, which only the check's answer says. The Direct3D
 /// device is made once and kept; captures take turns on it (its immediate context is not thread-safe), and a device the
 /// driver lost is made again.</para>
 /// <para>On Windows 11 the yellow border Windows draws around a captured window is turned off where Windows allows it
@@ -22,8 +23,8 @@ namespace WindowsAppManagerMcp.Native;
 /// </remarks>
 public sealed unsafe class NativeGraphicsCaptureWrapper : IGraphicsCaptureWrapper, IDisposable
 {
-    /// <summary>How long a caller waits for one capture, the first frame included.</summary>
-    public static readonly TimeSpan Deadline = TimeSpan.FromSeconds(3);
+    /// <summary>How long a caller waits for one capture, the first frame included, or for the support check.</summary>
+    public static readonly TimeSpan DefaultDeadline = TimeSpan.FromSeconds(3);
 
     /// <summary>How long a capture waits for the compositor's first frame.</summary>
     private static readonly TimeSpan FrameWait = TimeSpan.FromSeconds(1.5);
@@ -53,26 +54,45 @@ public sealed unsafe class NativeGraphicsCaptureWrapper : IGraphicsCaptureWrappe
 
     private readonly object _deviceLock = new();
     private readonly object _supportLock = new();
+    private readonly TimeSpan _deadline;
+    private readonly Func<bool> _querySupported;
     private nint _device, _context, _graphicsDevice;
     private int _abandoned;
     private bool? _supported;
     private volatile bool _disposed;
 
+    /// <param name="deadline">How long a caller waits for a capture or the support check; default <see cref="DefaultDeadline"/>.</param>
+    /// <param name="querySupported">
+    /// The support check (GraphicsCaptureSession.IsSupported); default the WinRT call. Tests pass one that answers, fails or
+    /// blocks, so the availability states are checked without anything native.
+    /// </param>
+    public NativeGraphicsCaptureWrapper(TimeSpan? deadline = null, Func<bool>? querySupported = null)
+    {
+        _deadline = deadline ?? DefaultDeadline;
+        _querySupported = querySupported ?? QuerySupported;
+    }
+
     /// <inheritdoc />
-    public bool IsSupported
+    public GraphicsCaptureAvailability Availability
     {
         get
         {
+            // A call that missed its deadline is still blocked: nothing new starts, and this Windows may well support it
             if (Volatile.Read(ref _abandoned) > 0)
             {
-                return false;
+                return GraphicsCaptureAvailability.Busy;
             }
 
             lock (_supportLock)
             {
-                // Only an answer is kept: a probe that missed its deadline (a busy machine) asks again next time
-                _supported ??= OnMtaThread<bool?>(() => QuerySupported(), fallback: null);
-                return _supported == true;
+                // Only an answer is kept: a check that missed its deadline or failed (a busy machine) asks again next time
+                _supported ??= OnMtaThread<bool?>(() => _querySupported(), fallback: null);
+                return _supported switch
+                {
+                    true => GraphicsCaptureAvailability.Available,
+                    false => GraphicsCaptureAvailability.Unsupported,
+                    null => GraphicsCaptureAvailability.Unknown
+                };
             }
         }
     }
@@ -80,9 +100,9 @@ public sealed unsafe class NativeGraphicsCaptureWrapper : IGraphicsCaptureWrappe
     /// <inheritdoc />
     public CaptureResult CaptureWindow(nint windowHandle, bool includeFrame)
     {
-        if (!IsSupported)
+        if (Availability is not GraphicsCaptureAvailability.Available and var availability)
         {
-            throw new GraphicsCaptureException("Windows.Graphics.Capture is not available on this computer.");
+            throw new GraphicsCaptureException(GraphicsCaptureAvailabilityText.Why(availability));
         }
 
         // The visible frame and the client area are read here, before the frame: the window's place on the screen
@@ -108,7 +128,7 @@ public sealed unsafe class NativeGraphicsCaptureWrapper : IGraphicsCaptureWrappe
         {
             // A capture stuck in the driver holds the device: wait for it no longer than the caller does, so a waiting
             // worker never runs a capture after its caller gave up
-            if (!Monitor.TryEnter(_deviceLock, Deadline))
+            if (!Monitor.TryEnter(_deviceLock, _deadline))
             {
                 failure = new GraphicsCaptureException("Another Windows.Graphics.Capture capture is still running.");
                 return true;
@@ -133,7 +153,7 @@ public sealed unsafe class NativeGraphicsCaptureWrapper : IGraphicsCaptureWrappe
         if (!completed)
         {
             throw new GraphicsCaptureException(
-                $"Windows.Graphics.Capture did not deliver a frame within {Deadline.TotalSeconds:0} seconds (the graphics driver may be busy).");
+                $"Windows.Graphics.Capture did not deliver a frame within {_deadline.TotalSeconds:0} seconds (the graphics driver may be busy).");
         }
 
         if (failure != null || captured is not { } pixels)
@@ -381,7 +401,7 @@ public sealed unsafe class NativeGraphicsCaptureWrapper : IGraphicsCaptureWrappe
 
     // ---- Helpers ----
 
-    /// <summary>Runs <paramref name="work"/> on a new MTA thread and waits at most <see cref="Deadline"/>; <paramref name="fallback"/> when it does not finish.</summary>
+    /// <summary>Runs <paramref name="work"/> on a new MTA thread and waits at most the deadline; <paramref name="fallback"/> when it does not finish.</summary>
     private T OnMtaThread<T>(Func<T> work, T fallback)
     {
         if (Volatile.Read(ref _abandoned) > 0)
@@ -429,7 +449,7 @@ public sealed unsafe class NativeGraphicsCaptureWrapper : IGraphicsCaptureWrappe
         }
 
         // The event is not disposed: an abandoned worker still sets it when it returns
-        if (!finished.Wait(Deadline) && Interlocked.CompareExchange(ref state, Abandoned, Running) == Running)
+        if (!finished.Wait(_deadline) && Interlocked.CompareExchange(ref state, Abandoned, Running) == Running)
         {
             Interlocked.Increment(ref _abandoned);
             return fallback;

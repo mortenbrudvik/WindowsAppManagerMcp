@@ -31,7 +31,7 @@ public class MirroredWindowCaptureTests
 
         // Act
         var capture = server.Screenshots.CaptureWindow(
-            window.Handle, includeFrame: false, new CaptureOptions { Format = "png", MaxDimension = 0, Output = "metadata" });
+            window.Handle, includeFrame: false, new CaptureOptions { Format = CaptureFormat.Png, MaxDimension = 0, Output = WindowsAppManagerMcp.Services.CaptureOutputMode.Metadata });
 
         // Assert - a borderless popup's client area is its window rectangle
         capture.Metadata.Success.Should().BeTrue(capture.Metadata.Error);

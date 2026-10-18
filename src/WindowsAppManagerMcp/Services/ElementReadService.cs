@@ -11,17 +11,22 @@ namespace WindowsAppManagerMcp.Services;
 /// (TargetDeniedByPolicy, <see cref="UiaTargets.ReadVerdict"/>; read_element_text's criteria are checked by the search, which
 /// refuses the window the same way), then in one read on the worker thread the hung-window check (NotResponding), the
 /// warm-up of a window with web content within a third of the timeout (roadmap M3.3), the ref resolved
-/// (<see cref="IElementRegistry.Resolve"/>: ElementStale, AmbiguousElement), then the read.</para>
+/// (<see cref="IElementRegistry.Resolve"/>: ElementStale, AmbiguousElement), the element's own process checked when it is not
+/// the window's (an embedded WebView2, a child window of another app: TargetDeniedByPolicy, <see cref="ForeignElements"/>),
+/// then the read. read_element_text's criteria search and its read share the timeout, but the read gets at least
+/// <see cref="MinReadAfterSearch"/> after the search, however long that took.</para>
 /// <para><b>Text.</b> The password flag is read first; a password field, or one whose flag cannot be read, is never read.
 /// Then the sources in this order: the Text pattern's document, paged by
 /// the provider (<see cref="IUiaTextPattern.GetTextPage"/>, so a page costs its own length and not the document's), the
 /// Value pattern's value (read in full, then cut), and the name. A page holds at most maxLength characters and
 /// <see cref="MaxTextBytes"/> bytes of JSON: a document page that does not fit is read again over fewer characters, so its
 /// nextOffset skips nothing. An empty document falls through to the value and a failing
-/// pattern to the next source, but an element with either pattern is never read by its name: an empty edit box is empty, not
-/// its label. The Text pattern comes before the Value pattern (the
-/// design had them the other way round) because a browser document's value is its URL, and because only the Text pattern
-/// can page a long document without reading all of it for every page; where an edit has both, they hold the same text.
+/// pattern to the next source, but an element whose Text or Value pattern answers is never read by its name: an empty edit
+/// box is empty, not its label. When a pattern fails, the text of the next source comes with a warning that names the
+/// pattern and the error: the name, once every pattern failed, may be the element's label. The Text pattern comes before the
+/// Value pattern (the design had them the other way round) because a browser document's value is its URL, and because only
+/// the Text pattern can page a long document without reading all of it for every page; where an edit has both, they hold the
+/// same text.
 /// An element with the Text pattern also gives its selection with every page (roadmap M3.F15), cut to
 /// <see cref="MaxSelectedTextLength"/> characters. Its text attributes (font, weight, color, ...) are not read: they vary along
 /// a page (a range's attribute is "mixed" as soon as two runs differ), so reporting them would take a walk of the page's
@@ -44,8 +49,12 @@ namespace WindowsAppManagerMcp.Services;
 /// row for one read through its rows, and from the value of a Header that starts a row of the walk (a WinForms row header
 /// has none, only a made-up "Row n" name, so it gives none). A cell's text is its value when it has the
 /// Value pattern (never a password field's: null), else its name, else the names of its children; a cell that disappears is
-/// null. The read stops at the timeout (whole rows only), at <see cref="MaxTableTextBytes"/> bytes of JSON, and between
-/// cells when the token is cancelled; the rows read until the worker abandons a stuck call, or until the table itself
+/// null. A cell whose Value pattern fails gives its name too, and the page's warning says how many did and why: such a name
+/// is often a description of the cell ("Amount Row 1, Not sorted."). A cell of another process than the window's that the
+/// target policy refuses (<see cref="ForeignElements"/>; checked by the process read with it, with no further call) is null,
+/// and the warning says so; each cell counts once in the warnings. The read stops at the timeout (whole rows only), at
+/// <see cref="MaxTableTextBytes"/> bytes of JSON, and between cells when the token is cancelled; the rows read until the
+/// worker abandons a stuck call, or until the table itself
 /// disappears, are still returned. A page that timed out before its first row has no nextStartRow (roadmap M3.F15).</para>
 /// </remarks>
 public sealed partial class ElementReadService : IElementReadService
@@ -65,6 +74,14 @@ public sealed partial class ElementReadService : IElementReadService
     /// sentence or a paragraph the user picked out; a longer one is cut (selectionTruncated), and its text is in the pages.
     /// </summary>
     public const int MaxSelectedTextLength = 1_000;
+
+    /// <summary>
+    /// The least time the read of the element that read_element_text's criteria found gets after the search. The search and
+    /// the read share the call's timeout, but a search that used most of it still leaves the read this much (never more than
+    /// the timeout itself), so that a slow search does not fail a read that takes milliseconds: a call by criteria takes at
+    /// most its timeout plus this.
+    /// </summary>
+    public static readonly TimeSpan MinReadAfterSearch = TimeSpan.FromSeconds(1);
 
     /// <summary>The most rows one read_table call returns.</summary>
     public const int MaxRowsLimit = 200;
@@ -166,16 +183,20 @@ public sealed partial class ElementReadService : IElementReadService
         var offset = Math.Max(0, request.Offset);
         var maxLength = Math.Clamp(request.MaxLength, 1, MaxTextLength);
 
-        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        deadline.CancelAfter(request.Timeout);
-
         var elementRef = request.Ref;
+        var readTimeout = request.Timeout;
         AccessibilityWarmupInfo? searchWarmup = null;
         if (elementRef == null)
         {
             var query = request.Query ?? throw new ArgumentException("Give a ref or a query.", nameof(request));
-            var found = await _search.FindAsync(query with { Detail = ElementDetail.Minimal, Timeout = request.Timeout }, deadline.Token)
-                .ConfigureAwait(false);
+            FindElementsResult found;
+            using (var searchDeadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
+            {
+                searchDeadline.CancelAfter(request.Timeout);
+                found = await _search.FindAsync(query with { Detail = ElementDetail.Minimal, Timeout = request.Timeout }, searchDeadline.Token)
+                    .ConfigureAwait(false);
+            }
+
             cancellationToken.ThrowIfCancellationRequested();
             searchWarmup = found.AccessibilityWarmup;
             if (Unique(found, query, out var error, out var code) is not { } match)
@@ -187,7 +208,11 @@ public sealed partial class ElementReadService : IElementReadService
             }
 
             elementRef = match;
+            readTimeout = ReadTimeoutAfterSearch(request.Timeout, stopwatch.Elapsed);
         }
+
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        deadline.CancelAfter(readTimeout);
 
         var lookup = _registry.Lookup(elementRef);
         if (!lookup.Success)
@@ -206,13 +231,19 @@ public sealed partial class ElementReadService : IElementReadService
         {
             return await _worker.RunAsync(
                 UiaTargets.TargetProcessId(_windows, handle),
-                token => ReadText(lookup.Ref, handle, offset, maxLength, AccessibilityWarmup.BudgetFor(request.Timeout), warmup, stopwatch, token),
+                token => ReadText(lookup.Ref, handle, offset, maxLength, AccessibilityWarmup.BudgetFor(readTimeout), warmup, stopwatch, token),
                 deadline.Token,
                 TimeSpan.Zero).ConfigureAwait(false);
         }
         catch (TimeoutException) when (cancellationToken.IsCancellationRequested)
         {
             throw new OperationCanceledException(cancellationToken);
+        }
+        catch (UiaDeadlinePassedException ex)
+        {
+            // Not started: the application was not asked, so it is not said to have not answered
+            return TextFailure((long)handle, lookup.Ref, $"{ex.Message} Try again with a larger timeoutMs.",
+                UIElementErrorCode.OperationTimedOut, stopwatch, warmup.Value);
         }
         catch (TimeoutException ex)
         {
@@ -222,10 +253,23 @@ public sealed partial class ElementReadService : IElementReadService
     }
 
     /// <summary>
+    /// The time the read after read_element_text's search gets: what is left of <paramref name="timeout"/> after
+    /// <paramref name="elapsed"/>, but at least <see cref="MinReadAfterSearch"/> (or the whole timeout, when that is shorter).
+    /// </summary>
+    public static TimeSpan ReadTimeoutAfterSearch(TimeSpan timeout, TimeSpan elapsed)
+    {
+        var left = timeout - elapsed;
+        var least = timeout < MinReadAfterSearch ? timeout : MinReadAfterSearch;
+        return left > least ? left : least;
+    }
+
+    /// <summary>
     /// The ref of the one element the criteria found, or null with why not, with element_action's codes: several
-    /// (AmbiguousElement, also from a search that did not finish: more search cannot make them one), a search that did not
-    /// cover the whole window, so another match (or the only one) may be in the rest (OperationTimedOut), or none
-    /// (ElementNotFound).
+    /// (AmbiguousElement, also from a search that did not finish: more search cannot make them one), matches left out because
+    /// the target policy refuses their process (<see cref="FindElementsResult.PolicyLeftOut"/>, a search that covered the rest:
+    /// TargetDeniedByPolicy when they are the only ones, else AmbiguousElement, since one of them may be the one meant), a
+    /// search that did not cover the whole window, so another match (or the only one) may be in the rest (OperationTimedOut,
+    /// with the policy's warning when it left matches out too), or none (ElementNotFound).
     /// </summary>
     private static string? Unique(FindElementsResult found, ElementQuery query, out string? error, out UIElementErrorCode code)
     {
@@ -248,6 +292,24 @@ public sealed partial class ElementReadService : IElementReadService
             return null;
         }
 
+        // Matches of an app the target policy refuses, shown inside the window, were left out unread
+        if (found.PolicyLeftOut is { OtherwiseComplete: true } leftOut)
+        {
+            if (found.MatchCount == 0)
+            {
+                error = $"The criteria match only {(leftOut.Count == 1 ? "an element" : $"{leftOut.Count} elements")} of an app " +
+                        $"the server's target policy refuses, so nothing was read. {leftOut.Warning}";
+                code = UIElementErrorCode.TargetDeniedByPolicy;
+                return null;
+            }
+
+            error = $"{found.MatchCount + leftOut.Count} elements match the criteria, {leftOut.Count} of them of an app the " +
+                    "server's target policy refuses, so none was read: a read never picks one for you. Pass the ref of the one " +
+                    $"you mean (candidates lists the others), or narrow the criteria. {leftOut.Warning}";
+            code = UIElementErrorCode.AmbiguousElement;
+            return null;
+        }
+
         if (unfinished)
         {
             var covered = found.Scope is ElementSearchScope.WindowAndPopups or ElementSearchScope.Desktop
@@ -257,7 +319,8 @@ public sealed partial class ElementReadService : IElementReadService
                     (found.MatchCount == 0
                         ? "the element may be in the part it did not search: it found none so far."
                         : "the one element it found may not be the only match.") +
-                    " Nothing was read. Pass the element's ref, narrow the criteria, or give more time.";
+                    " Nothing was read. Pass the element's ref, narrow the criteria, or give more time." +
+                    (found.PolicyLeftOut is { } partlyLeftOut ? $" {partlyLeftOut.Warning}" : string.Empty);
             code = UIElementErrorCode.OperationTimedOut;
             return null;
         }
@@ -290,7 +353,7 @@ public sealed partial class ElementReadService : IElementReadService
 
         try
         {
-            if (Prepare(elementRef, handle, warmupBudget, warmup, token, out var error, out var code) is not { } resolved)
+            if (Prepare(elementRef, handle, warmupBudget, warmup, token, out var identity, out var error, out var code) is not { } resolved)
             {
                 return Failure(error!, code);
             }
@@ -298,17 +361,22 @@ public sealed partial class ElementReadService : IElementReadService
             var node = resolved.Node;
             var controlType = resolved.Element.Properties.ControlType;
 
+            // The patterns that failed, so that a text read from a later source says so
+            var failures = new List<string>();
+
             // A ref moved to a re-created element is read, and the result says so
             ElementTextResult Read(ElementTextResult result) =>
                 resolved.Moved ? result with { RefMoved = true, Warning = ElementRefs.MovedWarning(resolved.Ref) } : result;
             ElementTextResult Page(string text, ElementTextSource source, int start, int? total, int? next) =>
-                WithSelection(node, resolved.Element.Patterns, Read(new(true, resolved.Ref, (long)handle, controlType, text, source,
-                    start, total, next != null, next, Elapsed(stopwatch), AccessibilityWarmup: warmup.Value)));
+                WithWarning(WithSelection(node, resolved.Element.Patterns, Read(new(true, resolved.Ref, (long)handle, controlType, text,
+                    source, start, total, next != null, next, Elapsed(stopwatch), AccessibilityWarmup: warmup.Value))),
+                    FallbackWarning(failures, source));
 
             bool isPassword;
             try
             {
-                isPassword = _tree.ReadIdentity(node).IsPassword;
+                // Prepare read it already when it checked the element's process
+                isPassword = (identity ?? _tree.ReadIdentity(node)).IsPassword;
             }
             catch (UiaElementUnavailableException) when (resolved.Element.Virtualized)
             {
@@ -338,11 +406,13 @@ public sealed partial class ElementReadService : IElementReadService
                     null, false, null, Elapsed(stopwatch), IsPassword: true, AccessibilityWarmup: warmup.Value));
             }
 
-            // An empty document falls through to the value, and a pattern that fails to the next source; but an element with
-            // a Text or Value pattern never falls through to its name: an empty edit box reads as empty, not as its label
+            // An empty document falls through to the value, and a pattern that fails to the next source. An element whose Text
+            // or Value pattern answers is never read by its name: an empty edit box reads as empty, not as its label. Only when
+            // every such pattern it has fails is its name returned, and a warning names each pattern that failed, since the
+            // name may be its label rather than its text
             var patterns = resolved.Element.Patterns;
             var hasValue = (patterns & UiaPatterns.Value) != 0;
-            var page = (patterns & UiaPatterns.Text) != 0 ? TryTextPage(node, offset, maxLength) : null;
+            var page = (patterns & UiaPatterns.Text) != 0 ? TryTextPage(node, offset, maxLength, failures) : null;
             if (page != null && (!hasValue || page is not { Start: 0, Length: 0, HasMore: false }))
             {
                 page = FitTextPage(node, page, offset, maxLength);
@@ -353,7 +423,7 @@ public sealed partial class ElementReadService : IElementReadService
                 };
             }
 
-            if (hasValue && TryValue(node) is { } value)
+            if (hasValue && TryValue(node, failures) is { } value)
             {
                 return Slice(value, ElementTextSource.Value);
             }
@@ -422,8 +492,11 @@ public sealed partial class ElementReadService : IElementReadService
         return result with { SelectedText = selected[..end], SelectionTruncated = end < selected.Length ? true : null };
     }
 
-    /// <summary>A page of the Text pattern's document; null when the element has no such pattern or it fails.</summary>
-    private UiaTextPage? TryTextPage(IUiaNode node, int offset, int maxLength)
+    /// <summary>
+    /// A page of the Text pattern's document; null when the element has no such pattern or it fails, and then, when
+    /// <paramref name="failures"/> is given, what failed is added to it.
+    /// </summary>
+    private UiaTextPage? TryTextPage(IUiaNode node, int offset, int maxLength, List<string>? failures = null)
     {
         try
         {
@@ -432,6 +505,7 @@ public sealed partial class ElementReadService : IElementReadService
         catch (Exception ex) when (ex is not TimeoutException and not UiaElementUnavailableException)
         {
             // A provider whose Text pattern fails: the value or the name may still have the text
+            failures?.Add(PatternFailure("Text", ex));
             return null;
         }
     }
@@ -444,7 +518,11 @@ public sealed partial class ElementReadService : IElementReadService
     private static int FittingLength(ReadOnlySpan<char> text, int maxChars, int maxBytes) =>
         TextPages.FittingLength(text, maxChars, maxBytes);
 
-    private string? TryValue(IUiaNode node)
+    /// <summary>
+    /// The element's value; null when it has none or the Value pattern fails, and then, when <paramref name="failures"/> is
+    /// given, what failed is added to it.
+    /// </summary>
+    private string? TryValue(IUiaNode node, List<string>? failures = null)
     {
         try
         {
@@ -452,9 +530,40 @@ public sealed partial class ElementReadService : IElementReadService
         }
         catch (Exception ex) when (ex is not TimeoutException and not UiaElementUnavailableException)
         {
+            failures?.Add(PatternFailure("Value", ex));
             return null;
         }
     }
+
+    /// <summary>"the Value pattern failed (COMException: ...)", for a warning.</summary>
+    private static string PatternFailure(string pattern, Exception ex) =>
+        $"the {pattern} pattern failed ({ex.GetType().Name}: {ex.Message})";
+
+    /// <summary>
+    /// The warning of a text read from a later source than a pattern that failed (<paramref name="failures"/>), or null: a
+    /// text from the Value pattern after the Text pattern failed (a browser document's value is its URL), or the name after
+    /// every pattern the element has failed, which may be its label rather than its text.
+    /// </summary>
+    private static string? FallbackWarning(List<string> failures, ElementTextSource source)
+    {
+        if (failures.Count == 0 || source == ElementTextSource.Text)
+        {
+            return null;
+        }
+
+        var what = string.Join(" and ", failures);
+        return source == ElementTextSource.Name
+            ? $"The element has {(failures.Count == 1 ? "a pattern" : "patterns")} that should hold its text, but {what}, so its " +
+              "name is returned in its place: that may be its label or a description rather than its text. Read it again; if " +
+              "it keeps failing, its application does not serve the text this way (try get_browser_content for a web page, or " +
+              "read_screen_text)."
+            : $"{char.ToUpperInvariant(what[0])}{what[1..]}, so the text comes from the {source} pattern, which can differ from " +
+              "the document's text (a browser document's value is its URL). Read it again to get the document's text.";
+    }
+
+    /// <summary>The result with <paramref name="warning"/> after any warning it has; unchanged for none.</summary>
+    private static ElementTextResult WithWarning(ElementTextResult result, string? warning) =>
+        warning == null ? result : result with { Warning = result.Warning == null ? warning : $"{result.Warning} {warning}" };
 
     private static ElementTextResult TextFailure(
         long handle, string? elementRef, string error, UIElementErrorCode code, Stopwatch stopwatch, AccessibilityWarmupInfo? warmup) =>
@@ -464,13 +573,18 @@ public sealed partial class ElementReadService : IElementReadService
     #endregion
 
     /// <summary>
-    /// The hung-window check, the warm-up and the ref's resolution, on the worker thread: the live element, or null with the
-    /// error and its code.
+    /// The hung-window check, the warm-up, the ref's resolution and the target policy's check of the element's own process, on
+    /// the worker thread: the live element, or null with the error and its code. The window passed the policy before; an
+    /// element of another process inside it (an embedded WebView2, a child window of another app) is checked by its own
+    /// process (<see cref="ForeignElements"/>: TargetDeniedByPolicy), as the resolution read it and as its identity names it:
+    /// <paramref name="identity"/> is that read, for the password check after it, or null when it was not read (no policy that
+    /// denies anything, or an item its list has not realized, which fails it).
     /// </summary>
     private ResolvedElement? Prepare(
-        string elementRef, nint handle, TimeSpan warmupBudget, WarmupSlot warmup, CancellationToken token, out string? error,
-        out UIElementErrorCode code)
+        string elementRef, nint handle, TimeSpan warmupBudget, WarmupSlot warmup, CancellationToken token,
+        out UiaNodeIdentity? identity, out string? error, out UIElementErrorCode code)
     {
+        identity = null;
         error = null;
         code = UIElementErrorCode.None;
         if (UiaTargets.NotRespondingReason(_windows, handle, "its element was not read") is { } notResponding)
@@ -495,6 +609,40 @@ public sealed partial class ElementReadService : IElementReadService
         {
             error = resolution.Error;
             code = resolution.ErrorCode;
+            return null;
+        }
+
+        var foreign = UiaTargets.ForeignElementsOf(_windows, _policy, handle);
+        if (!foreign.Active)
+        {
+            return resolved;
+        }
+
+        int processId;
+        try
+        {
+            identity = _tree.ReadIdentity(resolved.Node);
+            processId = identity.ProcessId;
+        }
+        catch (UiaElementUnavailableException) when (resolved.Element.Virtualized)
+        {
+            // An item its list has not realized fails the identity read as a whole; its process is read on its own
+            processId = _tree.ReadVirtualizedItem(resolved.Node).ProcessId;
+        }
+        catch (Exception ex) when (ex is not (TimeoutException or OperationCanceledException or UiaElementUnavailableException))
+        {
+            // Fails closed: without its process the element cannot be checked against the policy
+            error = $"The element's process could not be read ({ex.Message}), so the server's target policy cannot be checked " +
+                    "for it. Nothing was read. Read it again; if it keeps failing, find it again with find_ui_elements.";
+            code = UIElementErrorCode.ElementAccessFailed;
+            return null;
+        }
+
+        if (foreign.Refusal(resolved.Element, processId) is { } refused)
+        {
+            identity = null;
+            error = refused;
+            code = UIElementErrorCode.TargetDeniedByPolicy;
             return null;
         }
 

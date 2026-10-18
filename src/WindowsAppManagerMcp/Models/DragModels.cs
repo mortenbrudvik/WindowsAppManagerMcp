@@ -76,8 +76,8 @@ public record DragResult(
 
     /// <summary>
     /// True once the button went down. False: nothing was sent. True without success: the drag was stopped after the press,
-    /// and the error says where the button was released (back at the from point, or, after the user's pause, where the
-    /// pointer was).
+    /// and the error says where the button was released (back at the from point, or, after a pause, where the pointer
+    /// was).
     /// </summary>
     public bool Pressed { get; init; }
 
@@ -115,8 +115,9 @@ public record DragResult(
     public DesktopState? Observed { get; init; }
 
     /// <summary>
-    /// With WAM_TAKEOVER_DETECTION=warn: the user used the keyboard or mouse while the drag ran (roadmap M7.4), so it may
-    /// have gone elsewhere. Null otherwise.
+    /// Takeover detection (roadmap M7.4, TakeoverMessages.For): with WAM_TAKEOVER_DETECTION=warn, the user used the keyboard
+    /// or mouse while the drag ran, so it may have gone elsewhere; with warn or stop, detection did not work for all or part
+    /// of the drag, so the user's input was not watched then. Null otherwise.
     /// </summary>
     public string? Warning { get; init; }
 }

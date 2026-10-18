@@ -30,6 +30,9 @@ public sealed class InputSession : IInputSession, IDisposable
     /// <summary>While the shared pause is on, how often the watcher looks whether another server resumed.</summary>
     public static readonly TimeSpan SharedResumePoll = TimeSpan.FromMilliseconds(250);
 
+    /// <summary>While the shared pause cannot be read, how often the watcher tries again.</summary>
+    public static readonly TimeSpan SharedPauseRetry = TimeSpan.FromSeconds(1);
+
     private static readonly TimeSpan WatcherStopTimeout = TimeSpan.FromSeconds(2);
 
     private readonly INativeInputWrapper _input;
@@ -41,6 +44,9 @@ public sealed class InputSession : IInputSession, IDisposable
     private readonly CancellationTokenSource _watcherStop = new();
     private IDesktopPauseFlag? _flag;
     private bool _flagSeen;
+
+    // True from a read of the flag that failed until the next one that works (see SyncLocked)
+    private bool _flagUnreadable;
     private bool _shared;
     private Thread? _watcher;
     private long _pauses;
@@ -117,6 +123,19 @@ public sealed class InputSession : IInputSession, IDisposable
     }
 
     /// <inheritdoc />
+    public bool IsSharedPauseUnreadable
+    {
+        get
+        {
+            lock (_lock)
+            {
+                SyncLocked();
+                return _flagUnreadable;
+            }
+        }
+    }
+
+    /// <inheritdoc />
     public IReadOnlyList<HeldInput> ServerHeld
     {
         get
@@ -182,6 +201,17 @@ public sealed class InputSession : IInputSession, IDisposable
             SyncLocked();
             if (!_state.Paused)
             {
+                WriteFlagLocked(paused: true);
+                ApplyPauseLocked(InputControlSources.Hotkey);
+                return;
+            }
+
+            if (_state.PausedBy == InputControlSources.SharedPauseUnreadable)
+            {
+                // The server paused itself and nobody told the user, so this press asks for a pause: resuming would make the
+                // user's stop control a go. The pause stays and is the user's own from now on, so their next press resumes
+                _logger?.LogWarning("The pause hotkey was pressed while this server had paused itself (the shared pause could not be read); " +
+                                    "input stays paused, now by the user");
                 WriteFlagLocked(paused: true);
                 ApplyPauseLocked(InputControlSources.Hotkey);
                 return;
@@ -305,7 +335,7 @@ public sealed class InputSession : IInputSession, IDisposable
     public IReadOnlyList<HeldInput> ReadModifiersDown() =>
         KeyNames.SidedModifiers
             .Where(_input.IsKeyDown)
-            .Select(key => HeldInput.Key(key, KeyNames.IsExtended(key)))
+            .Select(HeldInput.Modifier)
             .ToList();
 
     /// <inheritdoc />
@@ -360,6 +390,20 @@ public sealed class InputSession : IInputSession, IDisposable
     /// Takes over a change of the flag made by another server: a pause pauses this server too, a resume resumes
     /// it. Only changes count, so a flag that could not be written does not undo this server's own change.
     /// </summary>
+    /// <remarks>
+    /// A flag that cannot be read fails closed: a pause the user made in another server may be in it, so the first failed
+    /// read pauses this server (<see cref="InputControlSources.SharedPauseUnreadable"/>) and is logged. Later failed reads
+    /// change nothing, so the user can still resume here (a confirmed resume_input; in this server, if it registered the
+    /// chord, a hotkey press first makes the pause the user's own, see <see cref="TogglePauseByHotkey"/>, and the next one
+    /// resumes) while it cannot be read, and a read that works again does not resume by itself: what happened meanwhile is
+    /// not known, so only the user resumes. Another server's presses reach this one only through the flag, so while it cannot
+    /// be read they neither pause nor resume this server (<see cref="IsSharedPauseUnreadable"/>). Once it can be read, a set
+    /// flag makes the server's own pause the user's (pausedBy hotkey, a new pause, as a press here makes it): the user paused
+    /// in another server while this one could not read the flag, or another server's first press since did, so the press
+    /// that resumes the other servers resumes this one too. The named
+    /// event throws ObjectDisposedException only after <see cref="Dispose"/>, where pausing is right too: a closed session
+    /// sends nothing.
+    /// </remarks>
     private void SyncLocked()
     {
         if (_flag == null)
@@ -372,8 +416,23 @@ public sealed class InputSession : IInputSession, IDisposable
         {
             paused = _flag.IsSet;
         }
-        catch (Exception ex) when (ex is ObjectDisposedException or IOException or UnauthorizedAccessException)
+        catch (Exception ex) when (IsFlagFailure(ex))
         {
+            ReadFailedLocked(ex);
+            return;
+        }
+
+        _flagUnreadable = false;
+        if (paused && _state is { Paused: true, PausedBy: InputControlSources.SharedPauseUnreadable })
+        {
+            // The pause in force is the user's: they paused with the hotkey, in whichever server registered it, while this
+            // server could not read the flag or since. The pause stays and is the user's own from now on, as after a press
+            // here (TogglePauseByHotkey), so the press that resumes the other servers resumes this one too, and a resume_input
+            // answer about the server's own pause does not resume it
+            _logger?.LogWarning("The shared pause is set while this server had paused itself (it could not read the shared pause); " +
+                                "input stays paused, now by the user");
+            _flagSeen = true;
+            ApplyPauseLocked(InputControlSources.Hotkey);
             return;
         }
 
@@ -388,11 +447,36 @@ public sealed class InputSession : IInputSession, IDisposable
             // Only the pause hotkey pauses, in whichever server registered it
             ApplyPauseLocked(InputControlSources.Hotkey);
         }
-        else if (!paused && _state.Paused)
+        else if (!paused && _state.Paused && _state.PausedBy != InputControlSources.SharedPauseUnreadable)
         {
+            // Never the server's own pause, which only the user resumes. A reset still reaches here during it when the server
+            // took the flag as set (a resume of its own could not reset it) before it could no longer read it
             ApplyResumeLocked(InputControlSources.OtherServer);
         }
     }
+
+    /// <summary>
+    /// A read of the flag failed (<see cref="SyncLocked"/>, or the watcher's wait): the first failure pauses this server, as
+    /// <see cref="InputControlSources.SharedPauseUnreadable"/>, and is logged; later ones change nothing until a read works.
+    /// </summary>
+    private void ReadFailedLocked(Exception ex)
+    {
+        if (_flagUnreadable)
+        {
+            return;
+        }
+
+        _flagUnreadable = true;
+        _logger?.LogError(ex, "The shared pause could not be read, so this server cannot tell whether the user paused input in " +
+                              "another server; input is paused until the user resumes it");
+        if (!_state.Paused)
+        {
+            ApplyPauseLocked(InputControlSources.SharedPauseUnreadable);
+        }
+    }
+
+    /// <summary>The ways reading or writing the named event fails (ObjectDisposedException only after <see cref="Dispose"/>).</summary>
+    private static bool IsFlagFailure(Exception ex) => ex is ObjectDisposedException or IOException or UnauthorizedAccessException;
 
     private void WriteFlagLocked(bool paused)
     {
@@ -414,7 +498,7 @@ public sealed class InputSession : IInputSession, IDisposable
 
             _flagSeen = paused;
         }
-        catch (Exception ex) when (ex is ObjectDisposedException or IOException or UnauthorizedAccessException)
+        catch (Exception ex) when (IsFlagFailure(ex))
         {
             _logger?.LogError(ex, "The shared pause could not be {Change}; only this server is {State}",
                 paused ? "set" : "reset", paused ? "paused" : "resumed");
@@ -430,7 +514,8 @@ public sealed class InputSession : IInputSession, IDisposable
         // Running calls stop at their next check. CancelAsync runs their callbacks on the thread pool, not on this
         // thread (the hotkey's or the watcher's); no batch can start meanwhile, because Send checks the state first.
         _ = _pauseSource.CancelAsync();
-        _logger?.LogWarning("Input paused by the user ({Source}); input tools return PausedByUser until the user resumes", source);
+        _logger?.LogWarning("Input paused by {Who} ({Source}); input tools return PausedByUser until the user resumes",
+            source == InputControlSources.SharedPauseUnreadable ? "this server" : "the user", source);
 
         if (!_held.IsEmpty)
         {
@@ -449,8 +534,10 @@ public sealed class InputSession : IInputSession, IDisposable
     }
 
     /// <summary>
-    /// The watcher thread: waits until the shared pause is set, takes it over (which cancels running calls),
-    /// then looks every <see cref="SharedResumePoll"/> whether it was reset.
+    /// The watcher thread: reads the shared pause under the lock (<see cref="SyncLocked"/>, which takes over a pause and
+    /// cancels running calls), then waits until it is set, or, while it is set, looks every <see cref="SharedResumePoll"/>
+    /// whether it was reset. A read that fails pauses this server, as every failed read does, and the watcher tries again
+    /// every <see cref="SharedPauseRetry"/> until a read works, so it keeps watching once the flag can be read again.
     /// </summary>
     private void Watch(IDesktopPauseFlag flag, CancellationToken stop)
     {
@@ -459,21 +546,35 @@ public sealed class InputSession : IInputSession, IDisposable
             var handles = new[] { flag.WaitHandle, stop.WaitHandle };
             while (!stop.IsCancellationRequested)
             {
-                if (!flag.IsSet)
-                {
-                    if (WaitHandle.WaitAny(handles) == 1)
-                    {
-                        return;
-                    }
-                }
-                else if (stop.WaitHandle.WaitOne(SharedResumePoll))
-                {
-                    return;
-                }
-
+                bool unreadable, set;
                 lock (_lock)
                 {
                     SyncLocked();
+                    unreadable = _flagUnreadable;
+                    set = _flagSeen;
+                }
+
+                bool stopped;
+                try
+                {
+                    stopped = unreadable ? stop.WaitHandle.WaitOne(SharedPauseRetry)
+                        : set ? stop.WaitHandle.WaitOne(SharedResumePoll)
+                        : WaitHandle.WaitAny(handles) == 1;
+                }
+                catch (Exception ex) when (IsFlagFailure(ex))
+                {
+                    // The wait on the flag failed as a read can: fail closed, then try again
+                    lock (_lock)
+                    {
+                        ReadFailedLocked(ex);
+                    }
+
+                    stopped = stop.WaitHandle.WaitOne(SharedPauseRetry);
+                }
+
+                if (stopped)
+                {
+                    return;
                 }
             }
         }

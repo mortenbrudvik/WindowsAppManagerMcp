@@ -8,7 +8,10 @@ namespace WindowsAppManagerMcp.Services.Interfaces;
 /// </summary>
 public interface IInputSafetyInfo
 {
-    /// <summary>Reads the current settings. Cheap; nothing is probed.</summary>
+    /// <summary>
+    /// Reads the current settings. Cheap; nothing is probed, except that the host guard reads the server's ancestors again
+    /// while they are unknown (at most once a second, see HostGuard).
+    /// </summary>
     InputSafetySnapshot Read();
 }
 

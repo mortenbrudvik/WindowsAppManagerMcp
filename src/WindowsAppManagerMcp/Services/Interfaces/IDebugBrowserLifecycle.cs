@@ -22,8 +22,9 @@ public interface IDebugBrowserLifecycle
     /// <summary>
     /// Ends the browser a successful <see cref="LaunchAsync"/> started when the launch_browser_with_debug call is cancelled
     /// after it (during the placement): the cancelled call sends no result, so nobody learns its PID or its unauthenticated
-    /// port. Only a browser this launch started (never one it reused) whose PID still has the start time read at its start;
-    /// its temporary profile is then deleted. Best effort; never throws.
+    /// port. Only a browser this launch started (never one it reused) whose PID still has the start time read at its start,
+    /// and only what close_debug_browser would end: the browser process and what is left of its own child processes, never
+    /// a program it opened. Its temporary profile is then deleted. Best effort; never throws.
     /// </summary>
     Task AbandonAsync(DebugBrowserLaunchResult launch);
 

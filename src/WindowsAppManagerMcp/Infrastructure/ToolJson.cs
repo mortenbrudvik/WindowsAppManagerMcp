@@ -76,8 +76,14 @@ public static class ToolJson
         _ => 3
     };
 
-    /// <summary>The SDK's schema options, with the values of the <see cref="ToolEnumAttribute"/> enums added.</summary>
-    public static AIJsonSchemaCreateOptions SchemaOptions { get; } = new() { TransformSchemaNode = ListToolEnumValues };
+    /// <summary>
+    /// The SDK's schema options, with the values of the <see cref="ToolEnumAttribute"/> enums added, and without null for a
+    /// <see cref="ToolRequiredAttribute"/> member.
+    /// </summary>
+    public static AIJsonSchemaCreateOptions SchemaOptions { get; } = new()
+    {
+        TransformSchemaNode = (context, schema) => WithoutNullWhereRequired(context, ListToolEnumValues(context, schema))
+    };
 
     /// <summary>
     /// Registers every [McpServerTool] method of <typeparamref name="T"/>, as WithTools&lt;T&gt;() does (public and
@@ -290,6 +296,32 @@ public static class ToolJson
         }
 
         node["enum"] = values;
+        return node;
+    }
+
+    /// <summary>
+    /// A <see cref="ToolRequiredAttribute"/> member: nullable in the type only so that a missing one is refused, and refused as
+    /// null too, so its schema offers no null: "null" leaves its type list (a list of one becomes that type) and its enum.
+    /// Any other node is returned as it is.
+    /// </summary>
+    private static JsonNode WithoutNullWhereRequired(AIJsonSchemaCreateContext context, JsonNode schema)
+    {
+        if (context.GetCustomAttribute<ToolRequiredAttribute>() == null || schema is not JsonObject node)
+        {
+            return schema;
+        }
+
+        if (node["type"] is JsonArray types)
+        {
+            var kept = types.Where(t => t?.GetValue<string>() != "null").Select(t => t!.GetValue<string>()).ToList();
+            node["type"] = kept.Count == 1 ? kept[0] : new JsonArray([.. kept.Select(t => (JsonNode?)JsonValue.Create(t))]);
+        }
+
+        if (node["enum"] is JsonArray values)
+        {
+            node["enum"] = new JsonArray([.. values.Where(v => v is not null).Select(v => v!.DeepClone())]);
+        }
+
         return node;
     }
 

@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using Microsoft.Extensions.Logging;
 using ModelContextProtocol.Server;
 using WindowsAppManagerMcp.Infrastructure;
 using WindowsAppManagerMcp.Models;
@@ -19,6 +20,9 @@ public partial class BrowserReadingTools
     private readonly IInputSession? _session;
     private readonly TimeSpan _answerTimeout;
     private readonly TimeSpan? _gateWaitTimeout;
+    private readonly ITcpPortOwnerResolver? _portOwners;
+    private readonly IBrowserDetectionService? _browserDetection;
+    private readonly ILogger<BrowserReadingTools>? _logger;
 
     /// <param name="browserReadingService">The browser reads.</param>
     /// <param name="processService">Starts the debug browser when there is no <paramref name="debugBrowsers"/>.</param>
@@ -27,10 +31,16 @@ public partial class BrowserReadingTools
     /// <param name="debugBrowsers">The debug browsers' lifecycle (roadmap M5.4): launches with profiles and reuse, and
     /// close_debug_browser. The server always passes it; without it the launch goes straight to <paramref name="processService"/>.</param>
     /// <param name="placementService">Places the debug browser's window (placement, roadmap M5.4); the server always passes it.</param>
-    /// <param name="monitorService">Checks a placement's monitorIndex before anything is launched.</param>
+    /// <param name="monitorService">Resolves a placement's monitor (index or name) before anything is launched.</param>
     /// <param name="session">The input session, whose pause close_debug_browser respects (it takes the input gate itself).</param>
     /// <param name="answerTimeout">How long close_debug_browser waits for the user's answer; default <see cref="UserConfirmation.DefaultAnswerTimeout"/>.</param>
     /// <param name="gateWaitTimeout">How long close_debug_browser waits for the input gate; default <see cref="InputGateToolFilter.GateWaitTimeout"/>.</param>
+    /// <param name="portOwners">With <paramref name="browserDetection"/>, refuses a launch url on a loopback port where a
+    /// browser listens, as browser_navigate does (<see cref="BrowserNavigationUrls.BrowserPortRefusal"/>); the server
+    /// always passes both.</param>
+    /// <param name="browserDetection">Tells a browser from another program listening on that port.</param>
+    /// <param name="logger">Logs a placement that threw, with its stack trace, which the result carries only the message of
+    /// (as launch_application's); the server always passes it.</param>
     public BrowserReadingTools(
         IBrowserReadingService browserReadingService,
         IProcessService processService,
@@ -40,7 +50,10 @@ public partial class BrowserReadingTools
         IMonitorService? monitorService = null,
         IInputSession? session = null,
         TimeSpan? answerTimeout = null,
-        TimeSpan? gateWaitTimeout = null)
+        TimeSpan? gateWaitTimeout = null,
+        ITcpPortOwnerResolver? portOwners = null,
+        IBrowserDetectionService? browserDetection = null,
+        ILogger<BrowserReadingTools>? logger = null)
     {
         _browserReadingService = browserReadingService;
         _processService = processService;
@@ -51,10 +64,13 @@ public partial class BrowserReadingTools
         _session = session;
         _answerTimeout = answerTimeout ?? UserConfirmation.DefaultAnswerTimeout;
         _gateWaitTimeout = gateWaitTimeout;
+        _portOwners = portOwners;
+        _browserDetection = browserDetection;
+        _logger = logger;
     }
 
     private const string BrowserWindowDescription =
-        "Alternative to handle: the browser window as a window selector with find_windows' filters, resolved to exactly one " +
+        "Alternative to handle: the browser window as a window selector (its fields filter as find_windows' do), resolved to exactly one " +
         "window, e.g. {\"processName\": \"msedge\", \"titleContains\": \"Inbox\"}.";
 
     private const string CdpBehaviorDescription =
@@ -64,10 +80,6 @@ public partial class BrowserReadingTools
 
     private const string RequireCdpDescription =
         "If true, return the CDP error (for example CdpTimeout, CdpDialogOpen, CdpTargetNotFound) instead of falling back to UI Automation. Needs a debug port; implied by targetId. Default: false.";
-
-    // The browser in front (get_browser_url with a bare foreground selector) takes no targetId, so this does not mention one
-    private const string ActiveRequireCdpDescription =
-        "If true, return the CDP error (for example CdpTimeout, CdpDialogOpen, CdpTargetNotFound) instead of falling back to UI Automation. Needs a debug port. Default: false.";
 
     private const string CdpPortDescription =
         "DevTools port of the window's browser (launch_browser_with_debug returns it); found from its command line when omitted.";
@@ -79,7 +91,7 @@ public partial class BrowserReadingTools
         "CDP tab id from an earlier result's targetId or a CdpTargetAmbiguous error; reads that tab instead of the one the window shows. Must be a tab of the window's browser, never falls back to UI Automation.";
 
     private const string TimeoutDescription =
-        "Time limit in ms for the CDP requests, and again for the UI Automation read (default: 10000, range: 1000-30000). A page with an open JavaScript dialog (alert/confirm/prompt/beforeunload) never answers CDP, so the call returns CdpTimeout or CdpDialogOpen instead of hanging.";
+        "Time limit in ms for the CDP requests, and again for the UI Automation read (default: 10000, clamped to 1000-30000). A page with an open JavaScript dialog (alert/confirm/prompt/beforeunload) never answers CDP, so the call returns CdpTimeout or CdpDialogOpen instead of hanging.";
 
     [McpServerTool(Name = "get_browser_url", Title = "Get Browser URL", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
     [Description("Get the current URL from a browser window. Uses Windows UI Automation to read the address of the shown tab's page, else the address bar (urlSource says which), or CDP (Chrome DevTools Protocol) for a debug browser." + CdpBehaviorDescription + " Supports Chrome, Edge, Firefox, Brave, Opera, Vivaldi, and other Chromium/Firefox-based browsers." +
@@ -106,9 +118,8 @@ public partial class BrowserReadingTools
         var cdp = new CdpOptions(cdpPort, requireCdp, timeoutMs, targetId, useCdp);
         if (handle == null && WindowTargeting.IsBareForeground(window))
         {
-            // Roadmap M6.1: the selector that only says "the window in front" reads the active browser (get_active_browser_url's
-            // read before 3.0.0 removed it), with its
-            // NoBrowserInForeground when that window is not a browser (or there is none)
+            // Roadmap M6.1: a selector that says only "the window in front" reads the browser in front, as get_active_browser_url
+            // did before 3.0.0 removed it: NoBrowserInForeground when that window is not a browser (or there is none)
             return ToDto(await _browserReadingService.GetActiveBrowserUrlAsync(cdp, cancellationToken));
         }
 
@@ -126,7 +137,7 @@ public partial class BrowserReadingTools
         long? handle = null,
         [Description(BrowserWindowDescription)]
         WindowSelector? window = null,
-        [Description("Most characters to return (default 20000, max 50000; below 1 is InvalidArguments). A page holds at most 60,000 bytes of JSON.")]
+        [Description("Most characters to return (default 20000; more than 50000 is cut to 50000, below 1 is InvalidArguments). A page holds at most 60,000 bytes of JSON.")]
         int maxLength = BrowserContentOptions.DefaultMaxLength,
         [Description("true (default): the text. false: the HTML, which needs CDP.")]
         bool textOnly = true,
@@ -180,11 +191,11 @@ public partial class BrowserReadingTools
                  " The debug port has no authentication: any program on this computer can control that browser until it exits. Launch it only when CDP is needed, and close it with close_debug_browser when done." +
                  " It returns once the DevTools endpoint answers (cdpReady, cdpEndpoint, browserVersion); if it does not within 10 seconds, DebugLaunchFailed, and the browser keeps running (processId)." +
                  " DebugLaunchFailed when a browser already runs with that profile (nothing is launched), unless reuseIfRunning returns it (launchStatus alreadyRunning)." +
-                 " InvalidArguments: a url that starts with '-' or '/' (the browser would read it as a command-line switch), a userDataDir that is not a full path or is inside a browser's own 'User Data' folder (the user's real profile), or an executablePath that is not the browser's own .exe.")]
+                 " InvalidArguments: a url browser_navigate refuses (it takes http(s) and about:blank), a userDataDir that is not a full path or is inside a browser's own 'User Data' folder (the user's real profile), or an executablePath that is not the browser's own .exe.")]
     public async Task<DebugBrowserLaunchResultDto> LaunchBrowserWithDebug(
         [Description("Browser to launch: chrome (default), edge or brave. Any other value fails with UnsupportedBrowser.")]
         DebugBrowser browser = DebugBrowser.Chrome,
-        [Description("URL to open (optional). It must not start with '-' or '/', which the browser reads as a command-line switch.")]
+        [Description("URL to open (optional): an http(s) address with its scheme, or about:blank.")]
         string? url = null,
         [Description("CDP debug port: 0 (default) lets the browser pick a free port, or 1024-65535. The result's cdpPort is the port it listens on.")]
         int port = DebugBrowserLaunchRequest.EphemeralPort,
@@ -213,6 +224,15 @@ public partial class BrowserReadingTools
             throw new ToolErrorException(ToolErrorReporting.InvalidArgumentsErrorCode, badUrl);
         }
 
+        // The browser gets the url that was checked
+        url = string.IsNullOrWhiteSpace(url) ? null : url.Trim();
+        if (url != null && _portOwners != null && _browserDetection != null &&
+            BrowserNavigationUrls.BrowserPortRefusal(url, _portOwners, _processService.GetProcessName, _browserDetection.IsBrowser,
+                NothingLaunched) is { } browserPort)
+        {
+            throw new ToolErrorException(ToolErrorReporting.InvalidArgumentsErrorCode, browserPort);
+        }
+
         if (DebugProfileRefusal(userDataDir) is { } badProfile)
         {
             throw new ToolErrorException(ToolErrorReporting.InvalidArgumentsErrorCode, badProfile);
@@ -221,14 +241,13 @@ public partial class BrowserReadingTools
         // One full path for the browser, the port file and the result: the path the check above looked at
         userDataDir = string.IsNullOrWhiteSpace(userDataDir) ? null : Path.GetFullPath(userDataDir.Trim());
 
-        var browserName = ToolEnum<DebugBrowser>.Name(browser);
-        if (DebugExecutableRefusal(browserName, executablePath) is { } badExecutable)
+        if (DebugExecutableRefusal(browser, executablePath) is { } badExecutable)
         {
             throw new ToolErrorException(ToolErrorReporting.InvalidArgumentsErrorCode, badExecutable);
         }
 
         var plan = CheckDebugLaunch(profile, userDataDir, reuseIfRunning, placement);
-        var request = new DebugBrowserLaunchRequest(browserName, url, port, userDataDir, executablePath)
+        var request = new DebugBrowserLaunchRequest(browser, url, port, userDataDir, executablePath)
         {
             ProfileName = profile,
             ReuseIfRunning = reuseIfRunning
@@ -243,7 +262,8 @@ public partial class BrowserReadingTools
             if (plan != null)
             {
                 placed = (await LaunchPlacing.PlaceAsync(_placementService,
-                    [new LaunchToPlace(result.Success, result.WindowHandle, result.LaunchStatus, plan)], cancellationToken).ConfigureAwait(false))[0];
+                    [new LaunchToPlace(result.Success, result.WindowHandle, result.LaunchStatus, plan)], cancellationToken, _logger)
+                    .ConfigureAwait(false))[0];
             }
         }
         catch (OperationCanceledException) when (_debugBrowsers != null && result.Success && result.LaunchStatus != LaunchStatus.AlreadyRunning)
@@ -262,7 +282,7 @@ public partial class BrowserReadingTools
     /// path whose file name is the browser's own .exe (chrome.exe for chrome, also for Beta, Dev and Canary), so the tool
     /// starts the browser it names, with the debug switches, and not another program.
     /// </summary>
-    public static string? DebugExecutableRefusal(string browser, string? executablePath)
+    public static string? DebugExecutableRefusal(DebugBrowser browser, string? executablePath)
     {
         if (string.IsNullOrWhiteSpace(executablePath))
         {
@@ -270,6 +290,12 @@ public partial class BrowserReadingTools
         }
 
         var expected = DebugBrowserLocator.ExecutableName(browser);
+        if (expected == null)
+        {
+            // A value outside the enum: the launch refuses it as UnsupportedBrowser
+            return null;
+        }
+
         var path = executablePath.Trim();
         if (path.Any(char.IsControl) || !Path.IsPathFullyQualified(path))
         {
@@ -279,7 +305,7 @@ public partial class BrowserReadingTools
         var fileName = Path.GetFileName(path);
         return string.Equals(fileName, expected, StringComparison.OrdinalIgnoreCase)
             ? null
-            : $"executablePath must name {expected} for browser '{browser}', but it names '{fileName}'. Nothing was launched.";
+            : $"executablePath must name {expected} for browser '{ToolEnum<DebugBrowser>.Name(browser)}', but it names '{fileName}'. Nothing was launched.";
     }
 
     /// <summary>
@@ -324,11 +350,17 @@ public partial class BrowserReadingTools
         }
     }
 
+    private const string NothingLaunched = "Nothing was launched.";
+
     /// <summary>
-    /// Why launch_browser_with_debug refuses <paramref name="url"/>, or null. The url is a separate argument on the
-    /// browser's command line, and Chromium reads an argument that starts with '-' or (on Windows) '/', after trimming
-    /// white space, as a switch: an agent's url such as '--remote-allow-origins=*' or a switch that runs a command would
-    /// be a switch of the agent's choosing.
+    /// Why launch_browser_with_debug refuses <paramref name="url"/>, or null (no url, or one it opens). The url is a
+    /// separate argument on the browser's command line, and Chromium reads an argument that starts with '-' or (on
+    /// Windows) '/', after trimming white space, as a switch: an agent's url such as '--remote-allow-origins=*' or a
+    /// switch that runs a command would be a switch of the agent's choosing. What is left is held to browser_navigate's
+    /// URLs (<see cref="BrowserNavigationUrls.Refusal(string?, string, string)"/>): Chromium opens a file: or data: URL,
+    /// its own pages and a path from its command line (an address without a scheme is looked up as a file relative to its
+    /// working folder first), and get_browser_content would then read the disk, a read this server does not otherwise give.
+    /// The white space around the url is not part of it.
     /// </summary>
     public static string? DebugUrlRefusal(string? url)
     {
@@ -344,8 +376,11 @@ public partial class BrowserReadingTools
                    "would read as a command-line switch. Nothing was launched. Pass a URL such as https://example.com/.";
         }
 
-        return null;
+        return BrowserNavigationUrls.Refusal(trimmed, "launch_browser_with_debug", NothingLaunched);
     }
+
+    /// <summary>The launch tools' --user-data-dir check, which launch_browser_with_debug's userDataDir shares.</summary>
+    private static readonly ChromiumSwitchGuard ProfileFolderGuard = new();
 
     /// <summary>
     /// Why launch_browser_with_debug refuses <paramref name="userDataDir"/>, or null: a path inside a folder named
@@ -354,8 +389,20 @@ public partial class BrowserReadingTools
     /// A profile the user keeps elsewhere cannot be told apart. A relative path is refused too: the server would resolve it
     /// against its own current directory, the browser against its install folder.
     /// </summary>
-    public static string? DebugProfileRefusal(string? userDataDir)
+    public static string? DebugProfileRefusal(string? userDataDir) => DebugProfileRefusal(userDataDir, ProfileFolderGuard);
+
+    /// <summary>
+    /// <see cref="DebugProfileRefusal(string?)"/> with the launch tools' own check of a profile folder
+    /// (<see cref="ChromiumSwitchGuard.CheckProfileFolder"/>), one implementation for both: a folder inside 'User Data' as
+    /// written, with an alternate data stream or trailing dots and spaces left out as Windows reads a name, or with its 8.3
+    /// short names expanded (on a drive letter); a short name on a UNC or device path is refused without any file-system
+    /// call, since expanding it would connect to another computer.
+    /// </summary>
+    /// <param name="userDataDir">The userDataDir the agent passed.</param>
+    /// <param name="switchGuard">Checks the folder; tests pass one whose 8.3 short names are a fake's.</param>
+    public static string? DebugProfileRefusal(string? userDataDir, ChromiumSwitchGuard switchGuard)
     {
+        ArgumentNullException.ThrowIfNull(switchGuard);
         if (string.IsNullOrWhiteSpace(userDataDir))
         {
             return null;
@@ -368,25 +415,27 @@ public partial class BrowserReadingTools
                    "Leave it out to use a new temporary profile.";
         }
 
-        string fullPath;
+        // First: Path.GetFullPath expands 8.3 short names from the file system, which on a network path would connect to
+        // the computer it names, and the check refuses such a name without that
+        switch (switchGuard.CheckProfileFolder(path))
+        {
+            case ProfileFolderProblem.UnexpandedShortName:
+                return "userDataDir names a folder by an 8.3 short name ('~') on a network or device path, which the server does " +
+                       "not expand (that would connect to another computer), so it cannot tell whether the folder is a browser's " +
+                       "real 'User Data' profile. Nothing was launched. Pass the folder's long name, or a separate folder on a local drive.";
+            case ProfileFolderProblem.InsideUserData:
+                return "userDataDir is inside a 'User Data' folder, where Chrome, Edge and Brave keep the user's real profiles. The " +
+                       "unauthenticated debug port would expose that profile's signed-in sessions to any program on this computer. " +
+                       "Nothing was launched. Leave userDataDir out to use a new temporary profile, or pass a separate folder.";
+        }
+
         try
         {
-            fullPath = Path.GetFullPath(path);
+            _ = Path.GetFullPath(path);
         }
         catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
         {
             return $"userDataDir is not a valid path ({ex.Message}). Nothing was launched. Leave it out to use a new temporary profile.";
-        }
-
-        var segments = fullPath.Split([Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar], StringSplitOptions.RemoveEmptyEntries)
-            .Select(segment => segment.TrimEnd('.', ' '));
-        if (segments.Any(segment => string.Equals(segment, "User Data", StringComparison.OrdinalIgnoreCase) ||
-                                    (segment.StartsWith("USERDA~", StringComparison.OrdinalIgnoreCase) && segment.Length > 7 &&
-                                     segment[7..].All(char.IsAsciiDigit))))
-        {
-            return "userDataDir is inside a 'User Data' folder, where Chrome, Edge and Brave keep the user's real profiles. The " +
-                   "unauthenticated debug port would expose that profile's signed-in sessions to any program on this computer. " +
-                   "Nothing was launched. Leave userDataDir out to use a new temporary profile, or pass a separate folder.";
         }
 
         return null;

@@ -38,7 +38,7 @@ public class BrowserReadingServiceTests
     /// Chromium's address bar class with <paramref name="url"/> (none when null), and a Document "Example" with
     /// <paramref name="content"/> as its text and <paramref name="url"/> as its value (none when the content is null).
     /// </summary>
-    private void ShowPage(nint handle, string? url, string? content = null, string? title = "Example - Google Chrome")
+    private void ShowPage(nint handle, string? url, string? content = null, string? title = "Example - Google Chrome", Exception? textFailure = null)
     {
         var window = new FakeUiaNode("Window", title);
         if (url != null)
@@ -50,7 +50,7 @@ public class BrowserReadingServiceTests
 
         if (content != null)
         {
-            var document = new FakeUiaNode("Document", "Example").WithPattern<IUiaTextPattern>(new FakeTextPattern(content));
+            var document = new FakeUiaNode("Document", "Example").WithPattern<IUiaTextPattern>(new FakeTextPattern(content) { Failure = textFailure });
             window.With(url != null ? document.WithPattern<IUiaValuePattern>(new FakeValuePattern(url)) : document);
         }
 
@@ -442,10 +442,31 @@ public class BrowserReadingServiceTests
         // Act
         var result = await sut.GetBrowserContentAsync(handle);
 
-        // Assert
+        // Assert - an empty page, told from a read that failed
         result.Success.Should().BeFalse();
         result.ErrorCode.Should().Be(BrowserErrorCode.ContentExtractionFailed);
         result.Url.Should().Be("https://example.com");
+        result.Error.Should().Contain("has no text").And.NotContain("failed");
+    }
+
+    [Fact]
+    public async Task GetBrowserContent_AUiAutomationReadThatFails_IsContentExtractionFailed_WithItsCause()
+    {
+        // Arrange - the Document's Text pattern throws, as a provider does whose element went away
+        var handle = new nint(12345);
+        SetupValidBrowserWindow(handle, "chrome", "chrome");
+        ShowPage(handle, "https://example.com", content: "Some text", textFailure: new InvalidOperationException("The element is not available."));
+        var sut = CreateSut();
+
+        // Act
+        var result = await sut.GetBrowserContentAsync(handle);
+
+        // Assert - the cause and what to do, not the message of an empty page
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(BrowserErrorCode.ContentExtractionFailed);
+        result.Url.Should().Be("https://example.com");
+        result.Error.Should().Contain("failed").And.Contain("The element is not available.").And.Contain("CDP")
+            .And.NotContain("has no text");
     }
 
     [Fact]
@@ -950,14 +971,15 @@ public class BrowserReadingServiceTests
     [Fact]
     public async Task GetActiveBrowserUrl_Ambiguous_DoesNotTellTheCallerToPassTargetIdToItself()
     {
-        // get_active_browser_url takes no targetId (an undeclared argument is refused), so the hint names the tools that do
+        // The browser in front (get_browser_url with window {"foreground": true}; get_active_browser_url, which took no
+        // targetId, before 3.0.0): the hint names the tools that take targetId
         var handle = new nint(12345);
         _mockNativeWrapper.Setup(n => n.GetForegroundWindow()).Returns(handle);
         SetupValidBrowserWindow(handle, "chrome", "chrome");
         var cdp = new CdpService(
             new CdpTransport(
                 FakeCdpHttpHandler.Targets(("A", "Test Page", "https://example.com/a"), ("B", "Test Page", "https://example.com/b")),
-                FakeCdpWebSocketFactory.NeverConnects()),
+                FakeCdpWebSocketFactory.NeverConnects(), new FakePortOwnerResolver(1000)),
             new FakePortOwnerResolver(1000));
         var sut = new BrowserReadingService(
             _mockNativeWrapper.Object, _mockBrowserDetection.Object, cdp, _tree, _worker, _warmup.Object, _policy);
@@ -2070,6 +2092,24 @@ public class BrowserReadingServiceTests
         var result = await sut.GetBrowserUrlAsync(handle);
 
         result.ErrorCode.Should().Be(BrowserErrorCode.OperationTimedOut);
+    }
+
+    [Fact]
+    public async Task GetBrowserContent_WhoseReadsTimeRanOutBeforeItStarted_SaysTheBrowserWasNotAsked_NotThatItMayBeHung()
+    {
+        // Arrange - the worker started no read: its deadline had passed before it was asked for
+        var handle = new nint(12345);
+        SetupValidBrowserWindow(handle, "chrome", "chrome");
+        var sut = CreateSut(new FailingUiaWorker(new UiaDeadlinePassedException()));
+
+        // Act
+        var result = await sut.GetBrowserContentAsync(handle, new BrowserContentOptions(), new CdpOptions(TimeoutMs: 3000));
+
+        // Assert
+        result.ErrorCode.Should().Be(BrowserErrorCode.OperationTimedOut);
+        result.Error.Should().Contain("3000 ms").And.Contain("the browser was not asked").And.Contain("Nothing was read")
+            .And.Contain("larger timeoutMs").And.NotContain("hung").And.NotContain("did not finish");
+        result.Source.Should().Be("uia");
     }
 
     [Fact]

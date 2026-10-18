@@ -1,3 +1,4 @@
+using System.Text.Json;
 using WindowsAppManagerMcp.Infrastructure;
 
 namespace WindowsAppManagerMcp.Tests.Unit.Services;
@@ -137,6 +138,32 @@ public sealed class ServerInfoServiceTests : IDisposable
     }
 
     [Fact]
+    public void Read_AMonitorWhoseDpiWindowsCouldNotReport_HasNoDpiOrScale_AsInGetMonitors()
+    {
+        // Arrange - the native wrapper's scale of 1 for the arithmetic, which was never read, and a DPI Windows reported as is
+        _monitors.Setup(m => m.GetAllMonitors()).Returns(
+        [
+            new MonitorInfo(0, @"\\.\DISPLAY1", true, new MonitorRect(0, 0, 2560, 1440), new MonitorRect(0, 0, 2560, 1392), 1.0)
+            {
+                Dpi = 96, DpiUnknown = true
+            },
+            new MonitorInfo(1, @"\\.\DISPLAY2", false, new MonitorRect(-1920, 0, 1920, 1080), new MonitorRect(-1920, 0, 1920, 1040), 1.5)
+            {
+                Dpi = 144
+            }
+        ]);
+
+        // Act
+        var monitors = CreateSut().Read(Connection, 48).Monitors;
+
+        // Assert
+        monitors.Should().Equal(
+            new ServerMonitorInfo(0, @"\\.\DISPLAY1", true, new BoundsDto(0, 0, 2560, 1440), Dpi: null, ScaleFactor: null),
+            new ServerMonitorInfo(1, @"\\.\DISPLAY2", false, new BoundsDto(-1920, 0, 1920, 1080), 144, 1.5));
+        JsonSerializer.Serialize(monitors[0], ToolJson.SerializerOptions).Should().NotContain("dpi").And.NotContain("scaleFactor");
+    }
+
+    [Fact]
     public void Read_ReportsTheHostTheServerRecorded()
     {
         var info = CreateSut().Read(Connection, 48);
@@ -149,6 +176,26 @@ public sealed class ServerInfoServiceTests : IDisposable
             new AgentHostProcess(3100, "ancestor", "node"),
             new AgentHostProcess(2900, "ancestor", "pwsh"),
             new AgentHostProcess(3300, "consoleServer", "OpenConsole"));
+    }
+
+    [Fact]
+    public void Read_AHostWhoseAncestorsCouldNotBeRead_IsAWarning()
+    {
+        // Arrange - review F3: the host guard could not read the server's ancestors at start
+        var host = new HostSnapshot(4242, [], 0x1001, new HostWindow(0x2002, new HostProcess(2800, null)), null, 1500)
+        {
+            AncestorsUnknown = true
+        };
+        _safety.Setup(s => s.Read()).Returns(new InputSafetySnapshot(host, TargetPolicySettings.Default, ["%{F4}", "^w"], "default"));
+
+        // Act
+        var info = CreateSut().Read(Connection, 48);
+
+        // Assert
+        info.Warnings.Should().ContainSingle().Which.Should().Contain("ancestor processes").And.Contain("started before the server").And.Contain("Tell the user")
+            // Review A4: the effects that are no refusal, so an agent that sees many windows marked or left out knows why
+            .And.Contain("isAgentHost").And.Contain("popups").And.Contain("desktop search");
+        info.Host.Processes.Should().Equal(new AgentHostProcess(4242, "server", "WindowsAppManagerMcp"));
     }
 
     [Fact]
@@ -311,6 +358,20 @@ public sealed class ServerInfoServiceTests : IDisposable
         _system.Setup(s => s.GetDpiAwareness()).Returns(DpiAwareness.PerMonitor);
 
         CreateSut().Read(Connection, 48).Warnings.Should().BeNull();
+    }
+
+    [Fact]
+    public void Read_APauseTheServerSetItself_IsWarnedAsTheServers_NotTheUsers()
+    {
+        // Arrange - the server could not read the pause it shares with the other servers, so it paused itself (review F4)
+        _session.Pause(InputControlSources.SharedPauseUnreadable);
+
+        // Act
+        var warnings = CreateSut().Read(Connection, 48).Warnings;
+
+        // Assert - the same PausedByUser and the same advice, but the user did not pause, so it does not say they did
+        warnings.Should().ContainSingle(w => w.Contains("PausedByUser")).Which.Should()
+            .Contain("could not read the pause it shares").And.Contain("Stop and ask the user").And.NotContain("by the user");
     }
 
     [Fact]

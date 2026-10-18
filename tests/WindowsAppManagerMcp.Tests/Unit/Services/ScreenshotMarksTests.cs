@@ -12,7 +12,7 @@ namespace WindowsAppManagerMcp.Tests.Unit.Services;
 /// </summary>
 public class ScreenshotMarksTests
 {
-    private static readonly CaptureOptions Png = new() { Format = "png" };
+    private static readonly CaptureOptions Png = new() { Format = CaptureFormat.Png };
     private static readonly nint Window = 0x1234;
 
     private readonly Mock<IScreenCaptureWrapper> _capture = new();

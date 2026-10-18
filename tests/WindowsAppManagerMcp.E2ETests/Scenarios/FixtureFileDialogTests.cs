@@ -26,6 +26,7 @@ public class FixtureFileDialogTests
     private void Log(FileDialogResult result) =>
         _output.WriteLine($"file_dialog: success={result.Success} dialog={result.DialogHandle} completed={result.Completed} " +
                           $"path='{result.FinalPath}' promptHandled={result.PromptHandled} prompt='{result.Prompt?.Title}' " +
+                          $"promptText='{string.Join(" | ", result.Prompt?.Text ?? [])}' " +
                           $"warnings={string.Join(" | ", result.Warnings ?? [])} error={result.ErrorCode}: {result.Error}");
 
     /// <summary>Opens the Save As dialog through its button (element_action invoke) and returns it once it is shown.</summary>

@@ -26,12 +26,14 @@ public interface ITakeoverMonitor
 /// <summary>
 /// One operation's watch for the user's input (<see cref="ITakeoverMonitor.Watch"/>): <see cref="UserActed"/> once the user
 /// pressed a key or button, turned the wheel or moved the mouse since it started, and with mode stop <see cref="Token"/> is
-/// cancelled then, so the operation stops between two batches or in a wait.
+/// cancelled then, so the operation stops between two batches or in a wait. <see cref="Unwatched"/> once detection did not
+/// work for some of that time.
 /// </summary>
 public sealed class TakeoverWatch : IDisposable
 {
     private readonly CancellationTokenSource? _stop;
     private readonly Action<TakeoverWatch>? _ended;
+    private string? _unwatched;
     private int _acted;
     private int _disposed;
 
@@ -61,6 +63,30 @@ public sealed class TakeoverWatch : IDisposable
 
     /// <summary>True when the user acted and the mode is warn: the result must carry the warning.</summary>
     public bool Warns => UserActed && Mode == TakeoverMode.Warn;
+
+    /// <summary>
+    /// True once the monitor said detection did not work for some of this watch (<see cref="MarkUnwatched"/>): its hooks
+    /// were not installed, a hook failed, or the detection thread stopped or could not be started, so the user's input may
+    /// have gone unseen and the result must say so. Set on the watch itself, not read from the monitor's status, so an
+    /// operation is never blamed for a failure that came before it, and one that came during it is never missed.
+    /// </summary>
+    public bool Unwatched => Volatile.Read(ref _unwatched) != null;
+
+    /// <summary>Why <see cref="Unwatched"/>: the first reason the monitor gave; null while the watch works.</summary>
+    public string? UnwatchedBecause => Volatile.Read(ref _unwatched);
+
+    /// <summary>
+    /// Records that detection did not work for some of this watch, and why (<paramref name="why"/>); the first reason is
+    /// kept. Mode off ignores it: nothing was to be watched.
+    /// </summary>
+    public void MarkUnwatched(string why)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(why);
+        if (Mode != TakeoverMode.Off)
+        {
+            Interlocked.CompareExchange(ref _unwatched, why, null);
+        }
+    }
 
     /// <summary>Records that the user acted; with mode stop cancels <see cref="Token"/>. Mode off ignores it.</summary>
     public void Signal()

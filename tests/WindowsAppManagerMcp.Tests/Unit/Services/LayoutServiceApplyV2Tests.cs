@@ -403,7 +403,7 @@ public class LayoutServiceApplyV2Tests : IDisposable
             It.Is<LaunchRequest>(r => r.Executable == @"shell:AppsFolder\Microsoft.WindowsCalculator_8wekyb3d8bbwe!App" &&
                                       r.Arguments == null && r.ExpectWindow!.ProcessName == "CalculatorApp"),
             true, It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Once);
-        _placed.Single().Plan.Should().Be(new LaunchPlacementPlan(SnapPosition.LeftHalf, 1, null, null, false) { MonitorKey = "m-22222222" });
+        _placed.Single().Plan.Should().Be(LaunchPlacementPlan.ForLayout("m-22222222", 1, snap: SnapPosition.LeftHalf));
     }
 
     [Fact]

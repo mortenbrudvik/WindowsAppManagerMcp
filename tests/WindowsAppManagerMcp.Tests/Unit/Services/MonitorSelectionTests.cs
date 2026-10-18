@@ -222,7 +222,7 @@ public class MonitorSelectionTests
 
         // Assert
         resolution.ErrorCode.Should().Be(nameof(WindowErrorCode.MonitorNotFound));
-        resolution.Error.Should().Contain("'primary'").And.Contain("'current'").And.Contain("get_monitors");
+        resolution.Error.Should().Contain("'primary'").And.Contain("'current'").And.Contain("an id or device name from get_monitors");
     }
 
     [Fact]
@@ -314,7 +314,7 @@ public class MonitorSelectionTests
         // Assert - the index and the monitor come from the same snapshot, the one the next call lists
         resolution.Index.Should().Be(0);
         resolution.Monitor.Should().Be(docked);
-        sut.GetAllMonitors()[resolution.Index].Should().Be(resolution.Monitor);
+        sut.GetAllMonitors()[resolution.Index!.Value].Should().Be(resolution.Monitor);
     }
 
     [Fact]

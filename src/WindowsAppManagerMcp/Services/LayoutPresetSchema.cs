@@ -51,6 +51,13 @@ public static partial class LayoutPresetSchema
     public const double EdgeSlack = 0.01;
 
     /// <summary>
+    /// How many work areas a position read from a file may reach, each way (<see cref="LoadedError"/>): far more than any
+    /// window a person put beside or below its monitor, and little enough that the rectangle on any monitor is well inside
+    /// the int range apply_layout casts it to.
+    /// </summary>
+    public const double MaxLoadedFraction = 100;
+
+    /// <summary>
     /// Whether an agent wrote the preset (review M6.8 #2): any authoredBy at all, in any case or spelling, so a preset is trusted
     /// only when it has none. save_layout writes "agent".
     /// </summary>
@@ -107,6 +114,61 @@ public static partial class LayoutPresetSchema
 
     /// <summary>Whether a server newer than this one wrote the preset: its fields this server does not know are ignored.</summary>
     public static bool IsNewer(LayoutPreset preset) => preset.Version > CurrentVersion;
+
+    /// <summary>
+    /// Why a preset read from a file cannot be applied (review finding F2), whoever wrote it: a placement's position or
+    /// normalPosition that is no rectangle a window can have. Each value must be a finite number and the width and height
+    /// above 0, as <see cref="RangeError"/> requires of what an agent writes; unlike there, a rectangle may lie off its work
+    /// area (a window a person put beside its monitor, a snapped window's borders), up to <see cref="MaxLoadedFraction"/>
+    /// work areas away, as apply_layout has always placed it. The preset's shape (a name, placements with a matcher and a
+    /// position) is checked first. Null when every placement passes.
+    /// </summary>
+    public static string? LoadedError(LayoutPreset preset)
+    {
+        ArgumentNullException.ThrowIfNull(preset);
+        for (var i = 0; i < preset.Placements.Count; i++)
+        {
+            var placement = preset.Placements[i];
+            if (LoadedPositionError(placement.Position) is { } positionError)
+                return $"placements[{i}].position: {positionError}";
+
+            if (placement.NormalPosition is { } normal && LoadedPositionError(normal) is { } normalError)
+                return $"placements[{i}].normalPosition: {normalError}";
+        }
+
+        return null;
+    }
+
+    /// <summary>Why fractions read from a file are no rectangle (<see cref="LoadedError"/>); null when they are one.</summary>
+    private static string? LoadedPositionError(RelativePosition position)
+    {
+        if (NumbersAndSizeError(position) is { } error)
+            return error;
+
+        return Math.Abs(position.X) > MaxLoadedFraction || Math.Abs(position.Y) > MaxLoadedFraction ||
+               position.Width > MaxLoadedFraction || position.Height > MaxLoadedFraction
+            ? string.Create(CultureInfo.InvariantCulture,
+                $"x {position.X}, y {position.Y}, width {position.Width}, height {position.Height} reach more than {MaxLoadedFraction} work areas away, which no window does.")
+            : null;
+    }
+
+    /// <summary>
+    /// The rules every rectangle of a layout follows, read or written: each value a finite number, and the width and height
+    /// above 0 (a size of 0 or less is no window). Null when they hold.
+    /// </summary>
+    private static string? NumbersAndSizeError(RelativePosition position)
+    {
+        if (!(double.IsFinite(position.X) && double.IsFinite(position.Y) && double.IsFinite(position.Width) && double.IsFinite(position.Height)))
+        {
+            return string.Create(CultureInfo.InvariantCulture,
+                $"x {position.X}, y {position.Y}, width {position.Width}, height {position.Height} must all be finite numbers.");
+        }
+
+        return position.Width > 0 && position.Height > 0
+            ? null
+            : string.Create(CultureInfo.InvariantCulture,
+                $"width {position.Width} and height {position.Height} must be above 0: a window needs a size.");
+    }
 
     /// <summary>
     /// The preset as it is written: version <see cref="CurrentVersion"/>, and each placement's version 1 launchCommand filled
@@ -248,6 +310,10 @@ public static partial class LayoutPresetSchema
         var titleContains = Trimmed(spec.TitleContains);
         if (processName == null && titleContains == null)
             return Fail($"{at} needs processName or titleContains, so apply_layout knows its window.", out error);
+
+        // Text that normalizes to nothing would match every window, as the window selectors refuse it (review finding F4)
+        if (BlankMatcherError(processName, titleContains) is { } blank)
+            return Fail($"{at}.{blank}", out error);
 
         SnapPosition? snap = null;
         if (spec.Snap != null)
@@ -438,7 +504,7 @@ public static partial class LayoutPresetSchema
         if (Is(name, MonitorSelection.Current) || Is(name, MonitorSelection.All))
         {
             return Fail($"{at}.monitor '{name}' cannot be saved: it names no one monitor when the layout is applied. Use 'primary', " +
-                        "'left', 'right', or an id or name from get_monitors.", out error);
+                        "'left', 'right', or an id or device name from get_monitors.", out error);
         }
 
         var keyword = Is(name, MonitorSelection.Primary) || Is(name, MonitorSelection.Left) || Is(name, MonitorSelection.Right);
@@ -447,7 +513,7 @@ public static partial class LayoutPresetSchema
                          name.StartsWith("DISPLAY", StringComparison.OrdinalIgnoreCase);
         if (!keyword && !id && !deviceName)
         {
-            return Fail($"{at}.monitor '{name}' names no monitor: give an index, 'primary', 'left', 'right', or an id or name from " +
+            return Fail($"{at}.monitor '{name}' names no monitor: give an index, 'primary', 'left', 'right', or an id or device name from " +
                         "get_monitors.", out error);
         }
 
@@ -463,12 +529,45 @@ public static partial class LayoutPresetSchema
     }
 
     /// <summary>
+    /// The criterion of a placement's matcher, read from a file, that is given but blank once normalized (review finding F4),
+    /// with why, as <see cref="TryBuildPlacement"/> refuses it in what an agent writes: apply_layout does not apply such a
+    /// placement. Text of only whitespace counts as left out, as save_layout takes it. Null when neither criterion is blank.
+    /// </summary>
+    public static string? BlankCriterion(WindowMatcher matcher)
+    {
+        ArgumentNullException.ThrowIfNull(matcher);
+        return BlankMatcherError(Trimmed(matcher.ProcessName), Trimmed(matcher.TitleContains));
+    }
+
+    /// <summary>
+    /// The field of a matcher that is given but blank once normalized, as apply_layout and the window selectors compare it, with
+    /// why: a processName that is nothing but '.exe', or a titleContains of only invisible format characters (a zero-width
+    /// space, bidirectional marks). Either normalizes to "", which matches every window. Null when neither is blank.
+    /// </summary>
+    private static string? BlankMatcherError(string? processName, string? titleContains)
+    {
+        if (processName != null && WindowMatching.WithoutExe(processName).Length == 0)
+        {
+            return $"processName '{processName}' is blank once '.exe' is taken off, so it would match every window. Give the " +
+                   "process's name, or leave it out.";
+        }
+
+        return titleContains != null && WindowTitles.Normalize(titleContains).Length == 0
+            ? "titleContains holds only invisible characters, so it would match every window. Give text the title shows, or leave it out."
+            : null;
+    }
+
+    /// <summary>
     /// Why fractions of a work area are out of range: x and y from 0 to 1, width and height above 0 up to 1, and the rectangle
     /// inside the work area (x + width and y + height up to 1, with <see cref="EdgeSlack"/> for the invisible borders).
     /// </summary>
     private static string? RangeError(RelativePosition position)
     {
         static bool In(double value, bool aboveZero) => !double.IsNaN(value) && value <= 1 && (aboveZero ? value > 0 : value >= 0);
+
+        // The rules every layout rectangle follows, then the stricter range of what an agent writes
+        if (NumbersAndSizeError(position) is { } shared)
+            return shared;
 
         if (!(In(position.X, false) && In(position.Y, false) && In(position.Width, true) && In(position.Height, true)))
         {

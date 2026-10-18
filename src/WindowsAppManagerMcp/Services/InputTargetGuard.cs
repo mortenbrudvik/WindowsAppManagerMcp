@@ -655,9 +655,11 @@ public sealed class InputTargetGuard : IInputTargetGuard
                 :"Pass windowHandle with the window you mean; the server brings it to the front for keys and checks that the point is on it for clicks. " +
                   "To act on the host window itself, pass its handle as windowHandle with allowHostTarget=true, and only if the user explicitly asked for it." +
                   (target.AllowHostTarget ? " allowHostTarget has no effect without windowHandle." : string.Empty);
+            // A window that counts as the host's only because the ancestors are unknown (HostGuard): the error says so
+            var unknown = HostGuard.AncestorsUnknownNoteFor(_hostGuard, hWnd);
             return InputGuardResult.Refuse(InputErrorCode.TargetIsAgentHost,
                 $"The input would reach {Name(window.Summary)}, the agent's own host: the terminal, editor or chat app this server " +
-                $"was started from, or a window it owns. Nothing was {action}. {hint}",
+                $"was started from, or a window it owns.{unknown} Nothing was {action}. {hint}",
                 target, window.Summary);
         }
 

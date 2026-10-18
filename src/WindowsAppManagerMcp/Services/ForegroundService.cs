@@ -473,10 +473,15 @@ public sealed class ForegroundService : IForegroundService
         _ => "The window is cloaked: it is on another virtual desktop or its app has hidden it, so it was not activated."
     };
 
-    private static Activation Paused(nint root, nint foreground) =>
+    /// <summary>
+    /// PausedByUser, naming how input was paused (<see cref="InputControlSources.PauseCause"/>): the server pauses itself
+    /// when it cannot read the pause it shares with the other servers, which the user did not do.
+    /// </summary>
+    private Activation Paused(nint root, nint foreground) =>
         Activation.Failed(root, foreground, WindowErrorCode.PausedByUser,
-            "Input is paused: the user pressed the pause hotkey, so the window was not activated, or activation stopped part-way " +
-            "(activating takes the keyboard focus from the user). Stop and ask the user how to continue; only the user can resume.");
+            $"Input is paused: {InputControlSources.PauseCause(_session?.PauseState?.PausedBy, _session?.PauseChord)}. So the window " +
+            "was not activated, or activation stopped part-way (activating takes the keyboard focus from the user). Stop and ask the " +
+            "user how to continue; only the user can resume.");
 
     /// <summary>Why the attach step must be skipped, or null when it may run.</summary>
     private string? AttachSkipReason(nint foreground, out uint foregroundThread)

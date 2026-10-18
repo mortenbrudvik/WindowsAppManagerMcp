@@ -10,6 +10,12 @@ public class InputSimulationServiceSessionTests
 {
     private const uint KeyDown = 0x0000, KeyUp = 0x0002;
     private const ushort VkControl = 0x11, VkLControl = 0xA2, VkRShift = 0xA1, VkLShift = 0xA0, VkLMenu = 0xA4, VkLWin = 0x5B;
+
+    /// <summary>
+    /// Ctrl's scan code: the keys here go down without one (no keyboard layout), and a release gives a modifier the one it
+    /// has on every keyboard (KeyNames.ModifierScanCode).
+    /// </summary>
+    private const ushort CtrlScan = 0x1D;
     private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(10);
 
     private readonly FakeInputWrapper _input = new();
@@ -319,10 +325,10 @@ public class InputSimulationServiceSessionTests
         // Act
         var result = await Call(CreateSut(session: session), path, releaseHeldModifiers: true);
 
-        // Assert - the first batch releases it, then the input is sent
+        // Assert - the first batch releases it (with the left Ctrl's scan code), then the input is sent
         result.Success.Should().BeTrue(result.Error);
         result.Released.Should().Equal("LeftCtrl");
-        _input.Batches[0].Should().Equal(InputEvent.Key(VkLControl, KeyUp));
+        _input.Batches[0].Should().Equal(InputEvent.Key(VkLControl, KeyUp, 0x1D));
         _input.Batches.Should().HaveCountGreaterThan(path == "mouse_move" ? 0 : 1);
         _input.IsKeyDown(VkLControl).Should().BeFalse();
     }
@@ -575,7 +581,7 @@ public class InputSimulationServiceSessionTests
 
         // Assert - Ctrl is sent up again at once
         result.ErrorCode.Should().Be(InputErrorCode.SendInputFailed);
-        _input.Batches[^1].Should().Equal(InputEvent.Key(VkControl, KeyUp));
+        _input.Batches[^1].Should().Equal(InputEvent.Key(VkControl, KeyUp, CtrlScan));
         VerifyNothingIsDown();
     }
 
@@ -632,7 +638,7 @@ public class InputSimulationServiceSessionTests
         // Assert - no hold spans two calls: the next call releases Ctrl before it types
         heldBetweenCalls.Should().Equal("Ctrl");
         next.Success.Should().BeTrue();
-        _input.Batches[3].Should().Equal(InputEvent.Key(VkControl, KeyUp));
+        _input.Batches[3].Should().Equal(InputEvent.Key(VkControl, KeyUp, CtrlScan));
         VerifyNothingIsDown();
     }
 
@@ -645,7 +651,7 @@ public class InputSimulationServiceSessionTests
         await CreateSut().SendKeysAsync("^c");
 
         _input.Batches.Should().HaveCount(3);
-        _input.Batches[2].Should().Equal(InputEvent.Key(VkControl, KeyUp));
+        _input.Batches[2].Should().Equal(InputEvent.Key(VkControl, KeyUp, CtrlScan));
         VerifyNothingIsDown();
     }
 

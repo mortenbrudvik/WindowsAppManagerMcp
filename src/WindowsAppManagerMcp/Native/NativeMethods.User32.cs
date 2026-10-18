@@ -64,16 +64,6 @@ internal static partial class NativeMethods
             int cy,
             uint uFlags);
 
-        [LibraryImport("user32.dll", SetLastError = true)]
-        [return: MarshalAs(UnmanagedType.Bool)]
-        public static partial bool MoveWindow(
-            nint hWnd,
-            int X,
-            int Y,
-            int nWidth,
-            int nHeight,
-            [MarshalAs(UnmanagedType.Bool)] bool bRepaint);
-
         [LibraryImport("user32.dll")]
         [return: MarshalAs(UnmanagedType.Bool)]
         public static partial bool ShowWindow(nint hWnd, int nCmdShow);
@@ -93,9 +83,6 @@ internal static partial class NativeMethods
         public static partial nint GetWindow(nint hWnd, uint uCmd);
 
         [LibraryImport("user32.dll")]
-        public static partial nint GetParent(nint hWnd);
-
-        [LibraryImport("user32.dll")]
         public static partial nint GetAncestor(nint hWnd, uint gaFlags);
 
         [LibraryImport("user32.dll", SetLastError = true)]
@@ -112,9 +99,6 @@ internal static partial class NativeMethods
         // NativeWindowWrapper.RespondsWithin sends only WM_NULL, which every window ignores, with SMTO_ABORTIFHUNG
         [LibraryImport("user32.dll", SetLastError = true)]
         public static partial nint SendMessageTimeoutW(nint hWnd, uint Msg, nint wParam, nint lParam, uint fuFlags, uint uTimeout, out nint lpdwResult);
-
-        [LibraryImport("user32.dll", SetLastError = true)]
-        public static partial int SetWindowLongW(nint hWnd, int nIndex, int dwNewLong);
 
         [LibraryImport("user32.dll", SetLastError = true)]
         [return: MarshalAs(UnmanagedType.Bool)]
@@ -143,17 +127,7 @@ internal static partial class NativeMethods
         public static partial nint MonitorFromPoint(POINT pt, uint dwFlags);
 
         [LibraryImport("user32.dll")]
-        public static partial nint MonitorFromRect(ref RECT lprc, uint dwFlags);
-
-        [LibraryImport("user32.dll")]
         public static partial uint GetDpiForWindow(nint hwnd);
-
-        [LibraryImport("user32.dll")]
-        [return: MarshalAs(UnmanagedType.Bool)]
-        public static partial bool AllowSetForegroundWindow(uint dwProcessId);
-
-        [LibraryImport("user32.dll")]
-        public static partial uint GetWindowThreadProcessId(nint hWnd, nint lpdwProcessId);
 
         [LibraryImport("user32.dll", SetLastError = true)]
         [return: MarshalAs(UnmanagedType.Bool)]

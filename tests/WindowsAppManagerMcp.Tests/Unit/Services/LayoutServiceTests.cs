@@ -19,7 +19,7 @@ public class LayoutServiceTests : IDisposable
             $"LayoutServiceTests_{Guid.NewGuid()}");
 
         _mockWindowService = TestDataFactory.CreateMockWindowService();
-        _mockMonitorService = TestDataFactory.CreateMockMonitorService();
+        _mockMonitorService = TestDataFactory.CreateMockMonitorService().WithWindowMonitors();
         _mockProcessService = TestDataFactory.CreateMockProcessService();
         _mockForegroundService = TestDataFactory.CreateMockForegroundService();
     }

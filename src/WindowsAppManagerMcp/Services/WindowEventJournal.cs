@@ -294,6 +294,15 @@ public sealed class WindowEventJournal : IWindowEventJournal, IDisposable
         }
     }
 
+    /// <summary>
+    /// Whether the window is the agent's host as the guard knows it, whose title changes are noise. A window that counts as the
+    /// host's only because the server cannot read its ancestors (IHostGuard.IsHostWindowOnlyWhileAncestorsUnknown) is every
+    /// window of a program that started before the server: leaving out all their title changes would hide what the journal is
+    /// read for, and this is no refusal, so they are kept.
+    /// </summary>
+    private bool IsKnownHostWindow(nint window) =>
+        _hostGuard != null && _hostGuard.IsHostWindow(window) && !_hostGuard.IsHostWindowOnlyWhileAncestorsUnknown(window);
+
     /// <summary>On the worker: turns a raw event into an entry, when it is about a top-level window worth recording.</summary>
     private void Record(RawEvent raw, Recording recording)
     {
@@ -323,9 +332,8 @@ public sealed class WindowEventJournal : IWindowEventJournal, IDisposable
                 return;
 
             case EventObjectNameChange:
-                // A title change of a window the journal has seen shown, when the title really changed
-                if (!known.TryGetValue(window, out var before) || !_windows.IsWindowVisible(window) ||
-                    _hostGuard?.IsHostWindow(window) == true)
+                // A title change of a window the journal has seen shown, when the title really changed, unless it is the host's
+                if (!known.TryGetValue(window, out var before) || !_windows.IsWindowVisible(window) || IsKnownHostWindow(window))
                 {
                     return;
                 }

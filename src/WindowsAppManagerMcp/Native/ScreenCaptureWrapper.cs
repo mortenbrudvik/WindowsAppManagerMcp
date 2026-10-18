@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using WindowsAppManagerMcp.Services;
 using WindowsAppManagerMcp.Services.Interfaces;
 
 namespace WindowsAppManagerMcp.Native;
@@ -17,18 +18,19 @@ public class ScreenCaptureWrapper : IScreenCaptureWrapper
 
     /// <summary>
     /// The pixel budget of one capture: 64 megapixels (for example 8192 x 8192), 256 MB of pixels. A larger capture
-    /// is refused before any memory is allocated, so a capture can never take gigabytes of the user's memory.
+    /// is refused before any memory is allocated, and so is an image larger than that (a zoom, refused by
+    /// <see cref="Services.CaptureRequest.ThrowIfOutputTooLarge"/>), so a capture can never take gigabytes of the user's memory.
     /// </summary>
     public const long MaxCapturePixels = 64L * 1024 * 1024;
 
     /// <summary>The pixels were copied from the screen: what is on screen there, covering windows included.</summary>
-    internal const string ScreenBitBltMethod = "ScreenBitBlt";
+    internal const string ScreenBitBltMethod = CaptureMethods.ScreenBitBlt;
 
     /// <summary>The window drew itself (PrintWindow): covering windows do not show.</summary>
-    internal const string PrintWindowMethod = "PrintWindow";
+    internal const string PrintWindowMethod = CaptureMethods.PrintWindow;
 
     /// <summary>The window refused PrintWindow, so its device context was copied: covering windows can show.</summary>
-    internal const string BitBltFallbackMethod = "BitBltFallback";
+    internal const string BitBltFallbackMethod = CaptureMethods.BitBltFallback;
 
     /// <summary>The Capture members' reader: one copy of the lent pixels.</summary>
     private static readonly PixelReader<CaptureResult> Copy = static pixels => pixels.ToCaptureResult();

@@ -83,8 +83,26 @@ public class CdpTargetMatcherTests
     }
 
     [Fact]
-    public void Match_PrefersMostSpecificTitle_WhenShorterTitleIsAlsoAPrefix()
+    public void FindCandidates_ReturnsEveryTabWhoseTitleTheWindowShows_LongestFirst()
     {
+        var targets = new[]
+        {
+            Page("A", "GitHub", "https://github.com/"),
+            Page("C", "Google", "https://www.google.com/"),
+            Page("B", "GitHub - Pull requests", "https://github.com/pulls")
+        };
+
+        var result = CdpTargetMatcher.FindCandidates("GitHub - Pull requests - Google Chrome", targets);
+
+        result.Success.Should().BeTrue(result.Error);
+        result.Value!.Select(t => t.Id).Should().Equal("B", "A");
+    }
+
+    [Fact]
+    public void Match_DoesNotTakeTheLongestTitle_WhenAShorterOneAlsoMatches()
+    {
+        // The legitimate 'GitHub - Pull requests' and a page that titles itself after the window look alike to the title:
+        // which one is shown is CdpShownTab's to read, so the title alone never picks one
         var targets = new[]
         {
             Page("A", "GitHub", "https://github.com/"),
@@ -93,8 +111,50 @@ public class CdpTargetMatcherTests
 
         var result = CdpTargetMatcher.Match("GitHub - Pull requests - Google Chrome", targets);
 
-        result.Success.Should().BeTrue();
-        result.Value!.Id.Should().Be("B");
+        result.ErrorCode.Should().Be(BrowserErrorCode.CdpTargetAmbiguous);
+        result.Error.Should().Contain("targetId A (https://github.com/)").And.Contain("targetId B (https://github.com/pulls)");
+    }
+
+    [Theory]
+    [InlineData("Inbox - Google Chrome", "Inbox - Google Chrome")]
+    [InlineData("Inbox - Personal - Microsoft​ Edge", "Inbox - Personal")]
+    public void Match_ABackgroundTabTitledAfterTheWindow_IsNeverTakenForTheShownOne(string window, string spoofTitle)
+    {
+        var targets = new[]
+        {
+            Page("REAL", "Inbox", "https://mail.example/"),
+            Page("SPOOF", spoofTitle, "https://evil.example/")
+        };
+
+        var candidates = CdpTargetMatcher.FindCandidates(window, targets);
+        var result = CdpTargetMatcher.Match(window, targets);
+
+        candidates.Value!.Select(t => t.Id).Should().BeEquivalentTo("REAL", "SPOOF");
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(BrowserErrorCode.CdpTargetAmbiguous);
+    }
+
+    [Fact]
+    public void Ambiguous_SaysWhy_AndListsAtMostFiveTabs()
+    {
+        var targets = Enumerable.Range(1, 7).Select(i => Page($"T{i}", "Inbox", $"https://mail.example/{i}")).ToList();
+
+        var result = CdpTargetMatcher.Ambiguous("Inbox - Google Chrome", targets, "none of them is shown.");
+
+        result.ErrorCode.Should().Be(BrowserErrorCode.CdpTargetAmbiguous);
+        result.Error.Should().Contain("7 tabs have the title 'Inbox'").And.Contain("none of them is shown.")
+            .And.Contain("targetId T5").And.NotContain("targetId T6").And.Contain("and 2 more");
+    }
+
+    [Fact]
+    public void Ambiguous_CutsALongTitle_ThatThePageSet()
+    {
+        var title = new string('x', 5000);
+        var targets = new[] { Page("A", title, "https://a.example/"), Page("B", title, "https://b.example/") };
+
+        var result = CdpTargetMatcher.Ambiguous(title + " - Google Chrome", targets, "none of them is shown.");
+
+        result.Error!.Length.Should().BeLessThan(1000);
     }
 
     [Fact]

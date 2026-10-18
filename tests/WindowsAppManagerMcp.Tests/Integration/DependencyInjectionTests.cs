@@ -16,6 +16,12 @@ namespace WindowsAppManagerMcp.Tests.Integration;
 /// Only the layout storage differs: a temp folder instead of %LOCALAPPDATA%. Resolving services
 /// only constructs them; no test here sends input, starts processes or changes windows.
 /// </summary>
+/// <remarks>
+/// In the <see cref="RealUiAutomationCollection"/>: the container hands out the production UI Automation adapters (IUiaTree,
+/// IUIAutomationWrapper, and every read service built over them), which start the real client on their first read. These tests
+/// only construct them, but a class that holds them runs where a first call cannot race another class's first call.
+/// </remarks>
+[Collection(RealUiAutomationCollection.Name)]
 public class DependencyInjectionTests : IDisposable
 {
     private readonly ServiceProvider _serviceProvider;
@@ -36,6 +42,8 @@ public class DependencyInjectionTests : IDisposable
     private ServiceCollection BuildServerServices()
     {
         var services = new ServiceCollection();
+        // The host (Host.CreateApplicationBuilder in Program.cs) registers logging, so the tools' optional loggers resolve
+        services.AddLogging();
         services.AddWindowsAppManagerServices(
             () => LayoutStorageOptions.ForPath(_testLayoutPath),
             () => AuditLogOptions.ForFolder(Path.Combine(_testLayoutPath, "audit")));
@@ -167,7 +175,22 @@ public class DependencyInjectionTests : IDisposable
         Field(_serviceProvider.GetRequiredService<InputControlTools>(), "_takeover").Should().BeSameAs(monitor);
         var runner = Field(_serviceProvider.GetRequiredService<StepSequenceTools>(), "_runner")!;
         Field(runner, "_takeover").Should().BeSameAs(monitor);
-        monitor.Mode.Should().Be(TakeoverMode.Off, "the tests run without WAM_TAKEOVER_DETECTION, and off is the default");
+        // The mode the user set (WAM_TAKEOVER_DETECTION), whatever it is on the machine that runs the tests; off when unset
+        // is TakeoverOptions' own rule (UserTakeoverMonitorTests.Options_ReadTheMode_FromTheEnvironment)
+        monitor.Mode.Should().Be(TakeoverOptions.FromEnvironment().Mode, "the monitor uses the mode the server reads from its environment");
+        _serviceProvider.GetRequiredService<TakeoverOptions>().Mode.Should().Be(monitor.Mode);
+    }
+
+    [Fact]
+    public void RunSteps_GetsTheKeyboardLayoutQueries()
+    {
+        // A step's keys are read on the layout of the window they go to (BACKLOG.md RF.F11): built without the queries, the
+        // runner would read them on the invariant layout only, where ctrl+ц is no Ctrl+W
+        static object? Field(object service, string name) =>
+            service.GetType().GetField(name, BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(service);
+
+        var runner = Field(_serviceProvider.GetRequiredService<StepSequenceTools>(), "_runner")!;
+        Field(runner, "_keyboardLayout").Should().BeSameAs(_serviceProvider.GetRequiredService<INativeKeyboardLayoutWrapper>());
     }
 
     [Fact]
@@ -443,65 +466,41 @@ public class DependencyInjectionTests : IDisposable
 
     #region Additional: Tools Resolve with Correct Service Dependencies
 
-    [Fact]
-    public void WindowFinderTools_Resolves_WithDependencies()
+    public static TheoryData<Type> ToolClasses()
     {
-        // Act
-        var tools = _serviceProvider.GetRequiredService<WindowFinderTools>();
+        var data = new TheoryData<Type>();
+        foreach (var type in typeof(ServiceRegistration).Assembly.GetTypes()
+                     .Where(t => t.GetCustomAttribute<McpServerToolTypeAttribute>() != null)
+                     .OrderBy(t => t.Name, StringComparer.Ordinal))
+        {
+            data.Add(type);
+        }
 
-        // Assert
-        tools.Should().NotBeNull();
+        return data;
     }
 
-    [Fact]
-    public void WindowManagerTools_Resolves_WithDependencies()
+    [Theory]
+    [MemberData(nameof(ToolClasses))]
+    public void EveryToolClass_AsTheSdkCreatesItForACall_GetsEveryServiceItsConstructorTakes(Type toolType)
     {
-        // Act
-        var tools = _serviceProvider.GetRequiredService<WindowManagerTools>();
+        // The SDK creates a tool class for every call from the request's services (ToolJson.CreateTarget, through
+        // ActivatorUtilities), and leaves an optional parameter at its default when the container has no such service. So a
+        // tool that takes an optional service the server never registers (its input session, and with it the pause; its
+        // target policy; its audit) would silently run without it. Every service parameter of the widest constructor must
+        // therefore resolve from the server's container; only values such as timeouts are left to their defaults
+        var widest = toolType.GetConstructors().OrderByDescending(c => c.GetParameters().Length).First();
+        var missing = widest.GetParameters()
+            .Where(p => IsService(p.ParameterType) && _serviceProvider.GetService(p.ParameterType) == null)
+            .Select(p => $"{p.ParameterType.Name} {p.Name}")
+            .ToList();
 
-        // Assert
-        tools.Should().NotBeNull();
+        missing.Should().BeEmpty("{0} is created for every call with the server's services", toolType.Name);
+        ActivatorUtilities.CreateInstance(_serviceProvider, toolType).Should().BeOfType(toolType);
     }
 
-    [Fact]
-    public void MonitorInfoTools_Resolves_WithDependencies()
-    {
-        // Act
-        var tools = _serviceProvider.GetRequiredService<MonitorInfoTools>();
-
-        // Assert
-        tools.Should().NotBeNull();
-    }
-
-    [Fact]
-    public void AppLauncherTools_Resolves_WithDependencies()
-    {
-        // Act
-        var tools = _serviceProvider.GetRequiredService<AppLauncherTools>();
-
-        // Assert
-        tools.Should().NotBeNull();
-    }
-
-    [Fact]
-    public void LayoutPresetTools_Resolves_WithDependencies()
-    {
-        // Act
-        var tools = _serviceProvider.GetRequiredService<LayoutPresetTools>();
-
-        // Assert
-        tools.Should().NotBeNull();
-    }
-
-    [Fact]
-    public void BrowserReadingTools_Resolves_WithDependencies()
-    {
-        // Act
-        var tools = _serviceProvider.GetRequiredService<BrowserReadingTools>();
-
-        // Assert
-        tools.Should().NotBeNull();
-    }
+    /// <summary>A parameter the container is expected to fill: an interface or a class, not a value, a string or a delegate.</summary>
+    private static bool IsService(Type type) =>
+        !type.IsValueType && type != typeof(string) && !typeof(Delegate).IsAssignableFrom(type);
 
     #endregion
 
@@ -619,7 +618,7 @@ public class DependencyInjectionTests : IDisposable
         }
 
         public Task<CdpResult<ICdpConnection>> ConnectAsync(
-            Uri webSocketUrl, int expectedPort, string label, TimeSpan timeout, CancellationToken cancellationToken) =>
+            Uri webSocketUrl, int expectedPort, int expectedOwner, string label, TimeSpan timeout, CancellationToken cancellationToken) =>
             throw new InvalidOperationException("No connection is expected.");
     }
 

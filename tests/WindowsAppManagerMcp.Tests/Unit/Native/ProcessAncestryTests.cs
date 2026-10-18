@@ -1,3 +1,5 @@
+using System.Diagnostics;
+
 namespace WindowsAppManagerMcp.Tests.Unit.Native;
 
 /// <summary>
@@ -33,6 +35,69 @@ public class ProcessAncestryTests
 
         // Assert - a cancellation, not "did not exit within the timeout"
         await act.Should().ThrowAsync<OperationCanceledException>();
+    }
+
+    [Fact]
+    public void OpenProcess_HoldsAHandleToTheProcess_UntilItIsDisposed()
+    {
+        // Arrange - review F4: Process.GetProcessById holds no handle, so an "open" process did not keep its PID from being
+        // given to another process. The pin is a fake here; this test process is only opened, never closed or killed
+        var pins = new List<(int ProcessId, FakePin Pin)>();
+        var wrapper = new NativeProcessWrapper(openPin: pid =>
+        {
+            var pin = new FakePin();
+            pins.Add((pid, pin));
+            return pin;
+        });
+
+        // Act
+        var self = wrapper.OpenProcess(Environment.ProcessId)!;
+
+        // Assert
+        self.Id.Should().Be(Environment.ProcessId);
+        pins.Should().ContainSingle().Which.ProcessId.Should().Be(Environment.ProcessId);
+        pins[0].Pin.Disposed.Should().Be(0, "the handle is held while the process is open");
+        self.Dispose();
+        pins[0].Pin.Disposed.Should().Be(1);
+    }
+
+    [Fact]
+    public void OpenProcess_OfAProcessThatIsNotRunning_IsNull_AndReleasesItsHandle()
+    {
+        var pin = new FakePin();
+        var wrapper = new NativeProcessWrapper(openPin: _ => pin);
+
+        wrapper.OpenProcess(int.MaxValue - 1).Should().BeNull();
+        pin.Disposed.Should().Be(1);
+    }
+
+    [Fact]
+    public void OpenProcess_WhenNoHandleCanBeOpened_StillOpensTheProcess()
+    {
+        // The fallback: without a handle the PID is not pinned, and the callers' start-time checks are what is left
+        var wrapper = new NativeProcessWrapper(openPin: _ => null);
+
+        using var self = wrapper.OpenProcess(Environment.ProcessId);
+
+        self.Should().NotBeNull();
+        self!.ProcessName.Should().Be(Process.GetCurrentProcess().ProcessName);
+    }
+
+    [Fact]
+    public void OpenProcess_TheRealHandle_OpensThisProcess()
+    {
+        // Reads only: a query handle to this test process
+        using var self = new NativeProcessWrapper().OpenProcess(Environment.ProcessId);
+
+        self.Should().NotBeNull();
+        self!.HasExited.Should().BeFalse();
+    }
+
+    private sealed class FakePin : IDisposable
+    {
+        public int Disposed { get; private set; }
+
+        public void Dispose() => Disposed++;
     }
 
     [Fact]
@@ -110,13 +175,41 @@ public class ProcessAncestryTests
     public void GetAncestorProcessIds_RealSnapshot_ReturnsParentsButNotSelf()
     {
         // Act - reads the process list only
-        var ancestors = NativeProcessWrapper.GetAncestorProcessIds();
+        var ancestors = NativeProcessWrapper.GetAncestorProcessIds()!;
 
         // Assert - the test host always has a running parent (dotnet test / vstest)
         ancestors.Should().NotBeEmpty();
         ancestors.Should().NotContain(Environment.ProcessId);
         new NativeProcessWrapper().IsAncestorOfCurrentProcess(Environment.ProcessId).Should().BeFalse();
         new NativeProcessWrapper().IsAncestorOfCurrentProcess(ancestors[0]).Should().BeTrue();
+    }
+
+    [Fact]
+    public void TheServersAncestors_AreUnknown_NotAbsent_WhenTheProcessListCannotBeRead()
+    {
+        // Arrange - review F3: an empty list read as "no ancestors", so the host checks protected nothing and said nothing
+        var wrapper = new NativeProcessWrapper(snapshot: () => null);
+
+        // Act & Assert
+        wrapper.GetAncestorProcesses().Should().BeNull();
+        ((bool?)wrapper.IsAncestorOfCurrentProcess(4)).Should().BeNull();
+    }
+
+    [Fact]
+    public void TheServersAncestors_AreRead_FromTheSnapshot()
+    {
+        // Arrange - the server under a parent that cannot be the real one (its start time is unknown, so it is trusted)
+        const int parent = int.MaxValue - 7;
+        var wrapper = new NativeProcessWrapper(snapshot: () => new Dictionary<int, (int, string)>
+        {
+            [Environment.ProcessId] = (parent, "testhost.exe"),
+            [parent] = (0, "terminal.exe")
+        });
+
+        // Act & Assert
+        wrapper.GetAncestorProcesses().Should().ContainSingle().Which.ProcessId.Should().Be(parent);
+        ((bool?)wrapper.IsAncestorOfCurrentProcess(parent)).Should().BeTrue();
+        ((bool?)wrapper.IsAncestorOfCurrentProcess(parent - 1)).Should().BeFalse();
     }
 
     [Fact]

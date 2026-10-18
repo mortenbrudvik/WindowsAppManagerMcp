@@ -56,16 +56,22 @@ public sealed partial class ElementSearchService
     /// <param name="window">The named window, whose root is <paramref name="root"/> unless <paramref name="rootIsWithin"/>.</param>
     /// <param name="rootIsWithin">The root is withinRef's element: it is the list itself when it is one.</param>
     /// <param name="total">What the tree search found: its kept matches are not reported again.</param>
+    /// <param name="foreign">The target policy's check of the window's elements of other processes: a list of a process it
+    /// refuses (an app shown inside the window) is neither asked for its items nor listed, and the lookup says so (a part
+    /// skipped); an item it refuses by what was read with it (as <see cref="CheckedWithTheSearch"/> says for
+    /// <paramref name="detail"/>) does not take an allowed item's place among maxResults (<see cref="VirtualizedLookup.Refused"/>).</param>
     private VirtualizedLookup SearchVirtualized(
-        ElementCriteria criteria, nint window, IUiaNode root, bool rootIsWithin, SearchTotal total, int maxResults, CancellationToken token)
+        ElementCriteria criteria, nint window, IUiaNode root, bool rootIsWithin, SearchTotal total, int maxResults,
+        ForeignElements foreign, ElementDetail detail, CancellationToken token)
     {
         if (total.Stop != ElementSearchStop.None)
         {
             return VirtualizedLookup.Skipped("The tree search did not finish, so the lists were not searched for items that are not realized.");
         }
 
+        // The matches the tree search left out for their process take no place among maxResults
         var room = maxResults - total.Matches.Count;
-        if (room <= 0 || total.MatchCount > total.Matches.Count)
+        if (room <= 0 || total.MatchCount - total.Refused > total.Matches.Count)
         {
             return VirtualizedLookup.Skipped("maxResults matches were found in the tree already, so the lists were not searched.");
         }
@@ -81,6 +87,16 @@ public sealed partial class ElementSearchService
             return VirtualizedLookup.Skipped(
                 $"The lists could not be looked for: {ex.Message}",
                 ex is TimeoutException or OperationCanceledException ? ElementSearchTruncation.Timeout : ElementSearchTruncation.PartsSkipped);
+        }
+
+        if (containers.Count(foreign.Refuses) is > 0 and var refused)
+        {
+            containers = containers.Where(c => !foreign.Refuses(c)).ToList();
+            var note = (refused == 1
+                           ? "1 list of another process that the server's target policy refuses was"
+                           : $"{refused} lists of other processes that the server's target policy refuses were") +
+                       " not searched (an app shown inside the window): ask the user to do steps in that app.";
+            containersSkipped = containersSkipped == null ? note : $"{containersSkipped} {note}";
         }
 
         if (containers.Count == 0)
@@ -115,6 +131,7 @@ public sealed partial class ElementSearchService
         var untypedKept = 0;
         var known = total.Matches.Select(m => m.Element.RuntimeId).OfType<IReadOnlyList<int>>().ToList();
         var items = new List<VirtualizedItem>();
+        var refusedItems = new List<UiaElement>();
         var more = false;
         var matched = false;
 
@@ -246,6 +263,13 @@ public sealed partial class ElementSearchService
                             known.Add(id);
                         }
 
+                        if (CheckedWithTheSearch(element, detail) && foreign.Refuses(element))
+                        {
+                            // Left out, and counted as such once the result is made (WithVirtualized), without its place
+                            refusedItems.Add(element);
+                            continue;
+                        }
+
                         if (items.Count >= room)
                         {
                             more = true;
@@ -295,7 +319,10 @@ public sealed partial class ElementSearchService
                       "them: they are returned with the control type they have now. element_action realize makes the item real.");
         }
 
-        return new VirtualizedLookup(items, more, containers, notes.Count == 0 ? null : string.Join(" ", notes), stop);
+        return new VirtualizedLookup(items, more, containers, notes.Count == 0 ? null : string.Join(" ", notes), stop)
+        {
+            Refused = refusedItems
+        };
     }
 
     /// <summary>
@@ -380,16 +407,31 @@ public sealed partial class ElementSearchService
         return (ordered.Take(MaxVirtualizedContainers).ToList(), skipped);
     }
 
-    /// <summary>The result with what searchVirtualized found: its items after the tree's matches, and the lists with refs.</summary>
+    /// <summary>
+    /// The result with what searchVirtualized found: its items after the tree's matches, and the lists with refs. An item of
+    /// another process than the window's that the target policy refuses is left out, as a tree match is
+    /// (<see cref="LeftOutForProcess"/>).
+    /// </summary>
     private FindElementsResult WithVirtualized(
         FindElementsResult result, VirtualizedLookup lookup, ElementQuery query, ElementCriteria criteria, long generation,
-        CancellationToken token)
+        ForeignMatches foreign, CancellationToken token)
     {
         var window = query.WindowHandle;
         var mayRead = true;
+        foreach (var refused in lookup.Refused)
+        {
+            // Counted for the warning, as a tree match left out is (once, also when a tree search left it out); not in matchCount
+            foreign.LeavesOut(window, refused);
+        }
+
         var items = new List<FoundElement>(lookup.Items.Count);
         foreach (var (item, locator) in lookup.Items)
         {
+            if (LeftOutForProcess(foreign, window, item, query.Detail, ref mayRead, out var identity, token))
+            {
+                continue;
+            }
+
             string? itemRef = null;
             try
             {
@@ -412,7 +454,7 @@ public sealed partial class ElementSearchService
             {
                 try
                 {
-                    found = Read(found, item, query.Detail);
+                    found = Read(found, item, query.Detail, identity);
                 }
                 catch (TimeoutException)
                 {
@@ -481,6 +523,12 @@ public sealed partial class ElementSearchService
     private sealed record VirtualizedLookup(
         IReadOnlyList<VirtualizedItem> Items, bool More, IReadOnlyList<UiaElement> Containers, string? Note, ElementSearchTruncation? Stop = null)
     {
+        /// <summary>
+        /// The matching items the target policy refuses by what was read with them: not in <see cref="Items"/> (they took no
+        /// place there), and counted as left out when the result is made.
+        /// </summary>
+        public IReadOnlyList<UiaElement> Refused { get; init; } = [];
+
         public static VirtualizedLookup Skipped(string note, ElementSearchTruncation? stop = null) => new([], false, [], note, stop);
     }
 

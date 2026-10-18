@@ -167,6 +167,42 @@ public class BrowserDialogServiceTests
         _requests.Should().BeEmpty();
     }
 
+    [Fact]
+    public async Task ARequestCancelledBeforeTheRead_IsCancelled_NotATimeout()
+    {
+        // Arrange - the real worker, which starts no read for a token already cancelled and says its time ran out
+        Show(new FakeChromiumDialog("confirm"));
+        using var cancelled = new CancellationTokenSource();
+        cancelled.Cancel();
+        var sut = new BrowserDialogService(_tree, new UiaWorker(), _registry, _actions.Object, _windows.Object, _policy);
+
+        // Act
+        var act = () => sut.HandleAsync(Browser, accept: false, promptText: null, cancelled.Token);
+
+        // Assert
+        await act.Should().ThrowAsync<OperationCanceledException>();
+        _requests.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task AReadWhoseTimeRanOutBeforeItStarted_SaysTheBrowserWasNotAsked_NotThatItIsBusy()
+    {
+        // Arrange - the real worker, given the read after its deadline: it starts no thread
+        Show(new FakeChromiumDialog("confirm"));
+        var worker = new ExpiringUiaWorker { Expired = true };
+        var sut = new BrowserDialogService(_tree, worker, _registry, _actions.Object, _windows.Object, _policy);
+
+        // Act
+        var result = await sut.HandleAsync(Browser, accept: false, promptText: null);
+
+        // Assert
+        result.ErrorCode.Should().Be(nameof(UIElementErrorCode.OperationTimedOut));
+        result.Error.Should().Contain("before UI Automation was asked").And.Contain("the browser was not asked")
+            .And.Contain("Nothing was read or pressed").And.Contain("Try again").And.NotContain("busy");
+        worker.ExpiredCalls.Should().Be(1);
+        _requests.Should().BeEmpty();
+    }
+
     #endregion
 
     #region Answering
@@ -247,12 +283,45 @@ public class BrowserDialogServiceTests
         // browser_click reported the dialog it opened, cut to its start
         var dialog = Show(new FakeChromiumDialog("confirm", message: "Delete the draft?   It cannot be restored."));
         var sut = CreateSut();
-        sut.NoteShown(Browser, "Delete the draft? It cannot...");
+        sut.NoteShown(Browser, "Delete the draft? It cannot be restored.");
 
         var result = await sut.HandleAsync(Browser, accept: true, promptText: null);
 
         result.Accepted.Should().BeTrue(result.Error);
         Target(0).Should().BeSameAs(dialog.Ok);
+    }
+
+    [Fact]
+    public async Task Accept_OfALongDialogAnActionReportedCut_NeedsNoFurtherRead()
+    {
+        // browser_click reported the start of a long message, cut with "..." as every reading of it is
+        var message = "Delete the draft? " + string.Concat(Enumerable.Repeat("It cannot be restored. ", 12));
+        var dialog = Show(new FakeChromiumDialog("confirm", message: message));
+        var sut = CreateSut();
+        sut.NoteShown(Browser, message[..(CdpDialogText.MaxDialogMessageLength - 3)] + "...");
+
+        var result = await sut.HandleAsync(Browser, accept: true, promptText: null);
+
+        result.Accepted.Should().BeTrue(result.Error);
+        Target(0).Should().BeSameAs(dialog.Ok);
+    }
+
+    [Theory]
+    [InlineData("Delete")]
+    [InlineData("Delete...")]
+    [InlineData("...")]
+    public async Task Accept_OfALongerDialog_ThatStartsWithTheTextOfAShortOneThatWasRead_IsRefused(string read)
+    {
+        // A short dialog read in this window is not the start of another, longer one that shows there now
+        Show(new FakeChromiumDialog("confirm", message: "Delete all repositories?"));
+        var sut = CreateSut();
+        sut.NoteShown(Browser, read);
+
+        var result = await sut.HandleAsync(Browser, accept: true, promptText: null);
+
+        result.ErrorCode.Should().Be(nameof(BrowserErrorCode.DialogNotRead));
+        result.DialogMessage.Should().Be("Delete all repositories?");
+        _requests.Should().BeEmpty();
     }
 
     [Fact]
@@ -360,12 +429,32 @@ public class BrowserDialogServiceTests
     [Theory]
     [InlineData("Delete it?", "Delete it?", true)]
     [InlineData("Delete   it?\n", "Delete it?", true)]
-    [InlineData("Delete the draft? It cannot...", "Delete the draft? It cannot be restored.", true)]
     [InlineData("Delete it?", "Save it?", false)]
     [InlineData("", "Delete it?", false)]
+    [InlineData("", "", true)]
+    [InlineData("Delete", "Delete all repositories?", false)]
+    [InlineData("Delete...", "Delete all repositories?", false)]
+    [InlineData("...", "Delete all repositories?", false)]
+    [InlineData("Delete the draft? It cannot...", "Delete the draft? It cannot be restored.", false)]
     public void SameText_TellsWhetherTwoReadingsAreTheSameMessage(string first, string second, bool same)
     {
+        // Equal once runs of white space are one space: a short message is never the start of a longer one, even when it
+        // ends with "..." (a page writes its own text, dots and all)
         BrowserDialogService.SameText(first, second).Should().Be(same);
         BrowserDialogService.SameText(second, first).Should().Be(same);
+    }
+
+    [Fact]
+    public void SameText_AReadingCutToItsStart_IsTheStartOfTheWholeMessage_OnlyThatWay()
+    {
+        // Arrange - a message as long as the readings are cut at: its first characters and "..."
+        var whole = "Delete the draft? " + string.Concat(Enumerable.Repeat("It   cannot be restored. ", 12));
+        var cut = whole[..(CdpDialogText.MaxDialogMessageLength - 3)] + "...";
+
+        // Assert - a stored cut reading matches the whole message and its own cut, never a message it does not start
+        BrowserDialogService.SameText(cut, whole).Should().BeTrue();
+        BrowserDialogService.SameText(cut, cut).Should().BeTrue();
+        BrowserDialogService.SameText(cut, "Delete the draft? It cannot be restored.").Should().BeFalse();
+        BrowserDialogService.SameText(whole, cut).Should().BeFalse("only the reading that was noted may be the cut one");
     }
 }

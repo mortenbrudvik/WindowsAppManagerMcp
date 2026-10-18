@@ -2,8 +2,9 @@ namespace WindowsAppManagerMcp.Services.Interfaces;
 
 /// <summary>
 /// The keyboard layout queries send_keys maps characters with (roadmap M4.1): which key, with which shift state, types a
-/// character on the layout of the window the keys go to, and the key's scan code. Every member only reads. Tests replace it
-/// with a fake that models a few layouts.
+/// character on the layout of the window the keys go to, and the key's scan code; and Windows' own keyboard hotkeys, which
+/// take a chord before any application sees it (issue #10). Every member only reads. Tests replace it with a fake that
+/// models a few layouts.
 /// </summary>
 public interface INativeKeyboardLayoutWrapper
 {
@@ -31,4 +32,11 @@ public interface INativeKeyboardLayoutWrapper
     /// waits for the next key) or types nothing.
     /// </summary>
     string? KeyText(ushort virtualKey, uint scanCode, byte shiftState, bool capsLock, nint layout);
+
+    /// <summary>
+    /// The user's input-method hotkeys (HKCU\Control Panel\Input Method\Hot Keys) and language-switch toggles (HKCU\Keyboard
+    /// Layout\Toggle), read from the registry now; null when they cannot be read. press_keys and send_keys read them once per
+    /// call that holds a modifier, to warn about a chord Windows takes (SystemHotkey); a failed read gives no warning.
+    /// </summary>
+    SystemKeyboardHotkeys? ReadSystemHotkeys();
 }

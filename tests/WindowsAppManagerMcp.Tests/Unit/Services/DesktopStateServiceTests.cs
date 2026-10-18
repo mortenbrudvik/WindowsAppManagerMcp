@@ -228,9 +228,66 @@ public class DesktopStateServiceTests
             new { Section = "target", ErrorCode = nameof(InputErrorCode.TargetIsAgentHost) },
             new { Section = "focus", ErrorCode = nameof(InputErrorCode.TargetIsAgentHost) }
         ], o => o.WithStrictOrdering());
-        state.Errors![0].Error.Should().Contain("window");
+        state.Errors![0].Error.Should().Contain("window").And.NotContain("ancestor processes");
         _elements.VerifyNoOtherCalls();
         _inspection.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task AnAppInFrontThatCountsAsTheHostOnlyWhileTheAncestorsAreUnknown_IsNotRead_AndTheErrorSaysWhy()
+    {
+        // Arrange - the server cannot read its ancestors, and the terminal in front started before it
+        _windows.Setup(w => w.GetForegroundWindow()).Returns(Window(Terminal, "pwsh", "WindowsTerminal") with
+        {
+            IsAgentHost = true, IsAgentHostOnlyWhileAncestorsUnknown = true
+        });
+
+        // Act
+        var (state, _) = await CreateSut().GetStateAsync(Request(), CancellationToken.None);
+
+        // Assert - refused as the host is, without calling it the agent's terminal as fact
+        state.Elements.Should().BeNull();
+        state.Errors.Should().Contain(e => e.Section == "target" && e.ErrorCode == nameof(InputErrorCode.TargetIsAgentHost))
+            .Which.Error.Should().Contain(HostGuard.AncestorsUnknownNote);
+        _elements.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task TheFocus_InAnAppInFrontThatCountsAsTheHostOnlyWhileTheAncestorsAreUnknown_IsNotRead_AndTheErrorSaysWhy()
+    {
+        // Arrange - Notepad is named, while the focus is in a window in front that counts as the host's only for now
+        _windows.Setup(w => w.GetForegroundWindow()).Returns(Window(Terminal, "pwsh", "WindowsTerminal") with
+        {
+            IsAgentHost = true, IsAgentHostOnlyWhileAncestorsUnknown = true
+        });
+        FocusIn(Terminal);
+
+        // Act
+        var (state, _) = await CreateSut().GetStateAsync(Request(window: Notepad), CancellationToken.None);
+
+        // Assert
+        state.Errors.Should().ContainSingle().Which.Should().BeEquivalentTo(
+            new { Section = "focus", ErrorCode = nameof(InputErrorCode.TargetIsAgentHost) });
+        state.Errors![0].Error.Should().Contain(HostGuard.AncestorsUnknownNote);
+    }
+
+    [Fact]
+    public async Task TheFocus_InAnotherWindowThatCountsAsTheHostOnlyWhileTheAncestorsAreUnknown_IsLeftOut_AndTheErrorSaysWhy()
+    {
+        // Arrange - Notepad is in front, but the focus read finds the element in a window that counts as the host's for now
+        _windows.Setup(w => w.GetWindowInfo(Terminal)).Returns(Window(Terminal, "pwsh", "WindowsTerminal") with
+        {
+            IsAgentHost = true, IsAgentHostOnlyWhileAncestorsUnknown = true
+        });
+        FocusIn(Terminal);
+
+        // Act
+        var (state, _) = await CreateSut().GetStateAsync(Request(), CancellationToken.None);
+
+        // Assert
+        state.Focus.Should().BeNull();
+        state.Errors.Should().Contain(e => e.Section == "focus" && e.ErrorCode == nameof(InputErrorCode.TargetIsAgentHost))
+            .Which.Error.Should().Contain(HostGuard.AncestorsUnknownNote);
     }
 
     [Fact]
@@ -910,7 +967,7 @@ public class DesktopStateServiceTests
         image!.MimeType.Should().Be("image/jpeg");
         state.Screenshot!.CaptureId.Should().Be("c1-ab12");
         options!.MaxDimension.Should().Be(1280);
-        options.Output.Should().Be("image", "nothing is written to a file");
+        options.Output.Should().Be(CaptureOutputMode.Image, "nothing is written to a file");
     }
 
     [Fact]
@@ -1026,7 +1083,7 @@ public class DesktopStateServiceTests
         _marked.WalkedWindow.Should().Be(WalkedNotepad);
         _marked.Overlays.Should().Be(new ElementOverlayOptions { MarkMovedWindow = false });
         _marked.Options.MaxDimension.Should().Be(1280);
-        _marked.Options.Output.Should().Be("image");
+        _marked.Options.Output.Should().Be(CaptureOutputMode.Image);
         image!.MimeType.Should().Be("image/png");
         state.Screenshot!.CaptureId.Should().Be("c2-ab12");
         state.Screenshot.Width.Should().Be(1280);

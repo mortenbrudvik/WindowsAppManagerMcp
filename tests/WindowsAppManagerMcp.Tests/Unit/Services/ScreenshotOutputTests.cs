@@ -41,7 +41,7 @@ public sealed class ScreenshotOutputTests : IDisposable
         var sut = CreateSut();
 
         // Act
-        var capture = sut.CaptureRegion(0, 0, 200, 100, new CaptureOptions { Output = "image" });
+        var capture = sut.CaptureRegion(0, 0, 200, 100, new CaptureOptions { Output = CaptureOutputMode.Image });
 
         // Assert
         capture.Image.Should().NotBeNull();
@@ -56,7 +56,7 @@ public sealed class ScreenshotOutputTests : IDisposable
         var sut = CreateSut();
 
         // Act
-        var capture = sut.CaptureRegion(0, 0, 200, 100, new CaptureOptions { Output = "metadata" });
+        var capture = sut.CaptureRegion(0, 0, 200, 100, new CaptureOptions { Output = CaptureOutputMode.Metadata });
 
         // Assert
         capture.Metadata.Success.Should().BeTrue();
@@ -73,7 +73,7 @@ public sealed class ScreenshotOutputTests : IDisposable
         var sut = CreateSut();
 
         // Act
-        var capture = sut.CaptureRegion(0, 0, 200, 100, new CaptureOptions { Output = "file" });
+        var capture = sut.CaptureRegion(0, 0, 200, 100, new CaptureOptions { Output = CaptureOutputMode.File });
         TrackDefaultFile(capture.Metadata.FilePath);
 
         // Assert
@@ -91,7 +91,7 @@ public sealed class ScreenshotOutputTests : IDisposable
         var sut = CreateSut();
 
         // Act
-        var capture = sut.CaptureMonitor(0, new CaptureOptions { Output = "file" });
+        var capture = sut.CaptureMonitor(0, new CaptureOptions { Output = CaptureOutputMode.File });
         TrackDefaultFile(capture.Metadata.FilePath);
 
         // Assert
@@ -107,7 +107,7 @@ public sealed class ScreenshotOutputTests : IDisposable
         var sut = CreateSut();
 
         // Act
-        var capture = sut.CaptureRegion(0, 0, 200, 100, new CaptureOptions { Output = "both", OutputPath = path });
+        var capture = sut.CaptureRegion(0, 0, 200, 100, new CaptureOptions { Output = CaptureOutputMode.Both, OutputPath = path });
 
         // Assert
         capture.Image.Should().NotBeNull();
@@ -140,7 +140,7 @@ public sealed class ScreenshotOutputTests : IDisposable
 
         // Act
         var capture = sut.CaptureRegion(0, 0, 200, 100,
-            new CaptureOptions { SaveToFile = true, Output = "both", OutputPath = path });
+            new CaptureOptions { SaveToFile = true, Output = CaptureOutputMode.Both, OutputPath = path });
 
         // Assert
         capture.Image.Should().NotBeNull();
@@ -148,17 +148,17 @@ public sealed class ScreenshotOutputTests : IDisposable
     }
 
     [Fact]
-    public void Output_Unknown_ReturnsInvalidOutputMode()
+    public void Output_NoToolCanBind_ReturnsInvalidOutputMode()
     {
-        // Arrange
+        // Arrange - the tools refuse an unknown name when they bind it
         var sut = CreateSut();
 
         // Act
-        var metadata = sut.CaptureRegion(0, 0, 200, 100, new CaptureOptions { Output = "base64" }).Metadata;
+        var metadata = sut.CaptureRegion(0, 0, 200, 100, new CaptureOptions { Output = (CaptureOutputMode)42 }).Metadata;
 
         // Assert
         metadata.ErrorCode.Should().Be("InvalidOutputMode");
-        metadata.Error.Should().Contain("base64");
+        metadata.Error.Should().Contain("42");
     }
 
     [Fact]
@@ -192,7 +192,7 @@ public sealed class ScreenshotOutputTests : IDisposable
         var sut = CreateSut();
 
         // Act
-        var metadata = sut.CaptureRegion(0, 0, 200, 100, new CaptureOptions { Output = "file", OutputPath = path }).Metadata;
+        var metadata = sut.CaptureRegion(0, 0, 200, 100, new CaptureOptions { Output = CaptureOutputMode.File, OutputPath = path }).Metadata;
 
         // Assert
         metadata.ErrorCode.Should().Be("InvalidOutputPath");
@@ -211,7 +211,7 @@ public sealed class ScreenshotOutputTests : IDisposable
         var sut = CreateSut();
 
         // Act
-        var metadata = sut.CaptureRegion(0, 0, 200, 100, new CaptureOptions { Output = "file", OutputPath = path }).Metadata;
+        var metadata = sut.CaptureRegion(0, 0, 200, 100, new CaptureOptions { Output = CaptureOutputMode.File, OutputPath = path }).Metadata;
 
         // Assert
         metadata.ErrorCode.Should().Be("InvalidOutputPath");
@@ -227,7 +227,7 @@ public sealed class ScreenshotOutputTests : IDisposable
 
         // Act
         var metadata = sut.CaptureRegion(0, 0, 200, 100,
-            new CaptureOptions { Format = "jpeg", Output = "file", OutputPath = path }).Metadata;
+            new CaptureOptions { Format = CaptureFormat.Jpeg, Output = CaptureOutputMode.File, OutputPath = path }).Metadata;
 
         // Assert
         metadata.ErrorCode.Should().Be("InvalidOutputPath");
@@ -246,7 +246,7 @@ public sealed class ScreenshotOutputTests : IDisposable
         var sut = CreateSut();
 
         // Act
-        var metadata = sut.CaptureMonitor(0, new CaptureOptions { Output = "file", OutputPath = path }).Metadata;
+        var metadata = sut.CaptureMonitor(0, new CaptureOptions { Output = CaptureOutputMode.File, OutputPath = path }).Metadata;
 
         // Assert
         metadata.Success.Should().BeTrue();
@@ -263,7 +263,7 @@ public sealed class ScreenshotOutputTests : IDisposable
         var sut = CreateSut();
 
         // Act
-        var metadata = sut.CaptureRegion(0, 0, 200, 100, new CaptureOptions { Output = "file", OutputPath = path }).Metadata;
+        var metadata = sut.CaptureRegion(0, 0, 200, 100, new CaptureOptions { Output = CaptureOutputMode.File, OutputPath = path }).Metadata;
 
         // Assert
         metadata.ErrorCode.Should().Be("InvalidOutputPath");
@@ -280,7 +280,7 @@ public sealed class ScreenshotOutputTests : IDisposable
         var sut = CreateSut();
 
         // Act
-        var metadata = sut.CaptureRegion(0, 0, 200, 100, new CaptureOptions { Output = "file", OutputPath = path }).Metadata;
+        var metadata = sut.CaptureRegion(0, 0, 200, 100, new CaptureOptions { Output = CaptureOutputMode.File, OutputPath = path }).Metadata;
 
         // Assert
         metadata.Success.Should().BeFalse();
@@ -300,7 +300,7 @@ public sealed class ScreenshotOutputTests : IDisposable
 
         // Act
         var metadata = sut.CaptureRegion(0, 0, 200, 100,
-            new CaptureOptions { Output = "file", OutputPath = path, Overwrite = true }).Metadata;
+            new CaptureOptions { Output = CaptureOutputMode.File, OutputPath = path, Overwrite = true }).Metadata;
 
         // Assert
         metadata.Success.Should().BeTrue();
@@ -317,7 +317,7 @@ public sealed class ScreenshotOutputTests : IDisposable
 
         // Act
         var metadata = sut.CaptureRegion(0, 0, 200, 100,
-            new CaptureOptions { Output = "file", OutputPath = folder, Overwrite = true }).Metadata;
+            new CaptureOptions { Output = CaptureOutputMode.File, OutputPath = folder, Overwrite = true }).Metadata;
 
         // Assert
         metadata.ErrorCode.Should().Be("InvalidOutputPath");
@@ -332,7 +332,7 @@ public sealed class ScreenshotOutputTests : IDisposable
         var sut = CreateSut();
 
         // Act
-        var metadata = sut.CaptureRegion(0, 0, 200, 100, new CaptureOptions { Output = "file", OutputPath = path }).Metadata;
+        var metadata = sut.CaptureRegion(0, 0, 200, 100, new CaptureOptions { Output = CaptureOutputMode.File, OutputPath = path }).Metadata;
 
         // Assert
         metadata.FilePath.Should().Be(Path.Combine(_folder, "shot.png"));
@@ -349,7 +349,7 @@ public sealed class ScreenshotOutputTests : IDisposable
 
         // Act
         var metadata = sut.CaptureRegion(0, 0, 200, 100,
-            new CaptureOptions { Output = "file", OutputPath = host + ":hidden.png" }).Metadata;
+            new CaptureOptions { Output = CaptureOutputMode.File, OutputPath = host + ":hidden.png" }).Metadata;
 
         // Assert
         metadata.ErrorCode.Should().Be("InvalidOutputPath");

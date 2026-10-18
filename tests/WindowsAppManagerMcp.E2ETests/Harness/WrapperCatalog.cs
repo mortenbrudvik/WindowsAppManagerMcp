@@ -231,7 +231,7 @@ public static class WrapperCatalog
             // Direct3D device of the server's own; it changes no window and sends no input
             [typeof(IGraphicsCaptureWrapper)] = new Dictionary<string, WrapperMember>
             {
-                ["get_" + nameof(IGraphicsCaptureWrapper.IsSupported)] = WrapperMember.Read,
+                ["get_" + nameof(IGraphicsCaptureWrapper.Availability)] = WrapperMember.Read,
                 [nameof(IGraphicsCaptureWrapper.CaptureWindow)] = WrapperMember.Read
             },
             // Windows OCR (roadmap M6.3): recognizes text in pixels the server already holds, through the WinRT projection of
@@ -259,7 +259,9 @@ public static class WrapperCatalog
                 [nameof(INativeKeyboardLayoutWrapper.GetKeyboardLayout)] = WrapperMember.Read,
                 [nameof(INativeKeyboardLayoutWrapper.VkKeyScan)] = WrapperMember.Read,
                 [nameof(INativeKeyboardLayoutWrapper.ScanCode)] = WrapperMember.Read,
-                [nameof(INativeKeyboardLayoutWrapper.KeyText)] = WrapperMember.Read
+                [nameof(INativeKeyboardLayoutWrapper.KeyText)] = WrapperMember.Read,
+                // The input-method hotkeys and language toggles, from the user's registry, opened for reading (issue #10)
+                [nameof(INativeKeyboardLayoutWrapper.ReadSystemHotkeys)] = WrapperMember.Read
             },
             // The folders File Explorer's windows show (roadmap M7.5): read through the shell's window list, which it never changes
             [typeof(INativeShellWindowsWrapper)] = new Dictionary<string, WrapperMember>

@@ -26,11 +26,15 @@ public class StepSequenceTools
     /// <param name="elements">The windows of the element refs a step names.</param>
     /// <param name="keyGuard">The server's destructive chords, which a step's keys may not contain; null for the defaults.</param>
     /// <param name="takeover">Takeover detection (roadmap M7.4), which watches the run; the server always registers it.</param>
+    /// <param name="keyboardLayout">
+    /// The keyboard layout queries, to read a step's keys on the layout of the window they go to, as its tool maps them; the
+    /// server always registers them.
+    /// </param>
     public StepSequenceTools(IInputSession session, IWindowService windows, IElementRegistry elements, InputGuardOptions? keyGuard = null,
-        ITakeoverMonitor? takeover = null)
+        ITakeoverMonitor? takeover = null, INativeKeyboardLayoutWrapper? keyboardLayout = null)
     {
         _windows = windows;
-        _runner = new StepRunner(session, windows, elements, keyGuard, takeover: takeover);
+        _runner = new StepRunner(session, windows, elements, keyGuard, takeover: takeover, keyboardLayout: keyboardLayout);
     }
 
     [McpServerTool(Name = "run_steps", Title = "Run Steps", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = false)]
@@ -42,8 +46,10 @@ public class StepSequenceTools
                  "wait_for_window only read, anywhere). The run holds the input gate (no other call's input lands " +
                  "between steps) for at most maxDurationMs, and stops at the first failed step unless it is optional; " +
                  "the rest are skipped, and nothing is undone. It also stops on a pause (PausedByUser), when " +
-                 "maxDurationMs runs out (OperationTimedOut), and when another window takes the front after window or " +
-                 "its dialog had it (TargetNotForeground: it never takes it back). Check a state with wait_for_window " +
+                 "maxDurationMs runs out (OperationTimedOut), when another window takes the front after window or " +
+                 "its dialog had it (TargetNotForeground: it never takes it back), and on the user's own input when " +
+                 "takeover detection is set to stop (UserInterrupted; warn only warns, and a warning says when detection did " +
+                 "not work). Check a state with wait_for_window " +
                  "(condition foreground) or wait_for_element, timeoutMs 0. Refused in a step: paste (type_text types, " +
                  "unicode or keys), file output, window_close, scope desktop, allowHostTarget, and keys that close, " +
                  "quit or lock (ctrl+w, ctrl+q); other keys act in window as in a direct call (ctrl+s saves). A whole " +
@@ -53,7 +59,7 @@ public class StepSequenceTools
                  "most 2 images. Each step is audited as its own call.")]
     [ToolResultPayload(typeof(RunStepsResult))]
     public async Task<CallToolResult> RunSteps(
-        [Description("The run's window: a selector with find_windows' filters, or {\"handle\": n}, resolved to exactly one window before the run; not {\"foreground\": true} alone")]
+        [Description("The run's window: a window selector, or {\"handle\": n}, resolved to exactly one window before the run; not {\"foreground\": true} alone")]
         WindowSelector window,
         [Description("The steps, 1-50, run in order")]
         RunStep[] steps,
@@ -90,8 +96,8 @@ public class StepSequenceTools
         if (target.IsAgentHost)
         {
             throw new ToolErrorException(nameof(InputErrorCode.TargetIsAgentHost),
-                $"The run's window {handle} ({target.ProcessName}) is your own terminal or chat window, or a window it owns. " +
-                "Nothing was done: name the window you mean to act on.");
+                $"The run's window {handle} ({target.ProcessName}) is your own terminal or chat window, or a window it owns." +
+                $"{HostGuard.AncestorsUnknownNoteFor(target)} Nothing was done: name the window you mean to act on.");
         }
 
         var run = await _runner.RunAsync(handle, checkedSteps, dispatcher, TimeSpan.FromMilliseconds(maxDurationMs),

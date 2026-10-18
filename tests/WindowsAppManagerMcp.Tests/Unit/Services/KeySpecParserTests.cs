@@ -11,9 +11,12 @@ public class KeySpecParserTests
 
     private static readonly InputEvent ShiftDown = Down(VkShift, 0x2A), ShiftUp = Up(VkShift, 0x2A);
     private static readonly InputEvent CtrlDown = Down(VkControl, 0x1D), CtrlUp = Up(VkControl, 0x1D);
-    private static readonly InputEvent LCtrlDown = Down(VkLControl, 0x1D), LCtrlUp = Up(VkLControl, 0x1D);
+    // The AltGr pair the parser sends for a character: the left Ctrl and the right Alt, tagged as AltGr
+    private static readonly InputEvent LCtrlDown = Down(VkLControl, 0x1D) with { AltGr = true },
+        LCtrlUp = Up(VkLControl, 0x1D) with { AltGr = true };
     private static readonly InputEvent AltDown = Down(VkMenu, 0x38), AltUp = Up(VkMenu, 0x38);
-    private static readonly InputEvent AltGrDown = Down(VkRMenu, 0x38, extended: true), AltGrUp = Up(VkRMenu, 0x38, extended: true);
+    private static readonly InputEvent AltGrDown = Down(VkRMenu, 0x38, extended: true) with { AltGr = true },
+        AltGrUp = Up(VkRMenu, 0x38, extended: true) with { AltGr = true };
     private static readonly InputEvent WinDown = Down(VkLWin, 0x5B, extended: true), WinUp = Up(VkLWin, 0x5B, extended: true);
 
     private static KeyboardLayout Layout(nint layout, bool capsLock = false) =>
@@ -132,6 +135,21 @@ public class KeySpecParserTests
         // Norwegian ~ ^ ` ´ and ¨ are dead keys: sent as keys they would turn the next 'a' into ã, â, à, á or ä
         Norwegian("{~}{^}`´¨a").Should().Equal(Seq(Unicode('~'), Unicode('^'), Unicode('`'), Unicode('´'), Unicode('¨'), Tap('A', 0x1E)));
         Norwegian("^{^}").Should().Equal(Seq(One(CtrlDown), Unicode('^'), One(CtrlUp)));
+    }
+
+    [Fact]
+    public void WhileAnAccentWaitsOnTheLayout_AShortcutsCharacter_IsStillItsKey_ButTextStaysExact()
+    {
+        // Issue #8: an accent left waiting (a dead key) makes the '+' key type "`+". In a chord the character names the key,
+        // so ^{+} is still Ctrl and that key; as text it stays Unicode, since the key would type the accent too
+        var layout = KeyboardLayout.Of(new FakeKeyboardLayoutWrapper { Layout = FakeKeyboardLayoutWrapper.Norwegian, PendingDeadKey = '`' }, 0,
+            capsLock: false);
+
+        KeySpecParser.Parse("^{+}", layout).Events.Should().Equal(Seq(One(CtrlDown), Tap(0xBB, 0x0C), One(CtrlUp)));
+        KeySpecParser.Parse("{+}", layout).Events.Should().Equal(Unicode('+'));
+        layout.DeadKeyPending.Should().BeTrue();
+        Layout(FakeKeyboardLayoutWrapper.Norwegian).DeadKeyPending.Should().BeFalse();
+        KeyboardLayout.Invariant.DeadKeyPending.Should().BeFalse();
     }
 
     [Fact]

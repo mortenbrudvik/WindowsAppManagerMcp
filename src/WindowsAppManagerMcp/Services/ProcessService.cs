@@ -32,6 +32,7 @@ public class ProcessService : IProcessService
     private readonly IProcessSecurityProbe? _securityProbe;
     private readonly INativeAppsWrapper? _appsWrapper;
     private readonly IInstalledAppsService? _installedApps;
+    private readonly ChromiumSwitchGuard _switchGuard;
 
     /// <param name="targetPolicy">
     /// The server's target policy, which kill_process enforces (roadmap M1.12), and which keeps list_processes from
@@ -65,6 +66,8 @@ public class ProcessService : IProcessService
     /// <param name="installedApps">The installed apps (roadmap M6.5): a bare name that is no program on disk is looked up by
     /// its exact display name, and an app's program is read before arguments are passed to it. The server always passes it;
     /// without it no name is looked up and no argument is passed to an app whose program the server cannot tell.</param>
+    /// <param name="switchGuard">Refuses the Chromium and Electron switches that run a command, load code or open a program to
+    /// remote control (review F2); default one that expands 8.3 short names from the real file system.</param>
     public ProcessService(
         IWindowService windowService,
         IInputValidationService validationService,
@@ -81,7 +84,8 @@ public class ProcessService : IProcessService
         DebugBrowserProfiles? debugBrowserProfiles = null,
         IProcessSecurityProbe? securityProbe = null,
         INativeAppsWrapper? appsWrapper = null,
-        IInstalledAppsService? installedApps = null)
+        IInstalledAppsService? installedApps = null,
+        ChromiumSwitchGuard? switchGuard = null)
     {
         _windowService = windowService;
         _validationService = validationService;
@@ -99,6 +103,7 @@ public class ProcessService : IProcessService
         _securityProbe = securityProbe;
         _appsWrapper = appsWrapper;
         _installedApps = installedApps;
+        _switchGuard = switchGuard ?? new ChromiumSwitchGuard();
     }
 
     /// <summary>
@@ -280,7 +285,8 @@ public class ProcessService : IProcessService
                 ToolErrorReporting.InvalidArgumentsErrorCode);
         }
 
-        var plan = PlanLaunch(request.Executable, request.Arguments, request.WorkingDirectory, request.ForceAccessibility, request.RunAsAdmin);
+        var plan = PlanLaunch(request.Executable, request.Arguments, request.WorkingDirectory, request.ForceAccessibility, request.RunAsAdmin,
+            request.DebugBrowserLaunch);
         if (!plan.IsValid || !request.RunAsAdmin)
         {
             return plan;
@@ -733,8 +739,10 @@ public class ProcessService : IProcessService
                 return null;
             }
 
-            // Review M6.5 #4: an app that exited at once may have left its PID to another process before it was opened. The
-            // handle, now held, pins the PID: the process behind it must be of the app's package
+            // Review M6.5 #4: an app that exited at once may have left its PID to another process before it was opened, so the
+            // process behind it must be of the app's package. Review F4: the opened process holds a handle to it, which pins
+            // the PID from here to the end of the window wait (when no handle could be opened, the package is still checked,
+            // but the PID is not pinned for the wait)
             if (process != null &&
                 !string.Equals(_appsWrapper.GetPackageFamilyName(processId), app.PackageFamilyName, StringComparison.OrdinalIgnoreCase))
             {
@@ -1045,11 +1053,16 @@ public class ProcessService : IProcessService
     /// AmbiguousApp.</item>
     /// <item><paramref name="runAsAdmin"/> (roadmap M6.5) starts a program's .exe with the runas verb; any other target is
     /// refused. Whether the user must approve the elevation is decided by the launch, not here (PreviewElevation).</item>
+    /// <item>Review F2: no target gets a switch with which Chromium, an Electron or a CEF app runs a command line, loads code
+    /// or opens itself to remote control, nor a --user-data-dir in a browser's real profile (<see cref="ChromiumSwitchGuard"/>,
+    /// UnsafeChromiumSwitch): every program's arguments are checked, since a launcher hands them on to the browser.
+    /// <paramref name="debugBrowserLaunch"/> is launch_browser_with_debug's own start, whose --remote-debugging-port
+    /// passes.</item>
     /// </list>
     /// </remarks>
     public LaunchPlan PlanLaunch(
         string executable, string[]? arguments = null, string? workingDirectory = null, bool forceAccessibility = false,
-        bool runAsAdmin = false)
+        bool runAsAdmin = false, bool debugBrowserLaunch = false)
     {
         // Validate executable path
         var executableValidation = _validationService.ValidateExecutable(executable);
@@ -1140,6 +1153,12 @@ public class ProcessService : IProcessService
             {
                 return LaunchPlan.Rejected(appRefusal.Message, appRefusal.ErrorCode, warning);
             }
+        }
+
+        // Review F2: whatever the target, since a launcher or an app's entry hands its arguments on to the browser
+        if (_switchGuard.Check(executable, arguments, requestedWorkingDirectory ?? DefaultWorkingDirectory(target), debugBrowserLaunch) is { } switchRefusal)
+        {
+            return LaunchPlan.Rejected(switchRefusal.Message, switchRefusal.ErrorCode, warning);
         }
 
         var isNativeExecutable = target.Kind == LaunchTargetKind.NativeExecutable;
@@ -1234,6 +1253,13 @@ public class ProcessService : IProcessService
             return LaunchPlan.Rejected(refusal.Message, refusal.ErrorCode, warning);
         }
 
+        // Review F2: a Store app built on Electron or CEF reads the switches from its activation's arguments too
+        var target = new ResolvedLaunchTarget(app.AppsFolderTarget, LaunchTargetKind.PackagedApp) { App = app };
+        if (_switchGuard.Check(executable, arguments, workingDirectory ?? DefaultWorkingDirectory(target)) is { } switchRefusal)
+        {
+            return LaunchPlan.Rejected(switchRefusal.Message, switchRefusal.ErrorCode, warning);
+        }
+
         bool? forceAccessibilityApplied = null;
         if (forceAccessibility)
         {
@@ -1241,7 +1267,6 @@ public class ProcessService : IProcessService
             warning = CombineWarnings(warning, ForceAccessibilityNotApplied(executable, "it is a packaged app, not a program's .exe"));
         }
 
-        var target = new ResolvedLaunchTarget(app.AppsFolderTarget, LaunchTargetKind.PackagedApp) { App = app };
         var startInfo = new ProcessStartInfo
         {
             FileName = app.AppsFolderTarget,
@@ -1537,7 +1562,10 @@ public class ProcessService : IProcessService
         "System", "smss", "csrss", "wininit", "services", "lsass", "lsm",
         "svchost", "winlogon", "dwm", "explorer", "Registry", "Memory Compression",
         // User-session shell infrastructure: killing these breaks keyboard input, the Start menu or search
-        "sihost", "ctfmon", "StartMenuExperienceHost", "ShellExperienceHost", "SearchHost", "TextInputHost", "fontdrvhost"
+        "sihost", "ctfmon", "StartMenuExperienceHost", "ShellExperienceHost", "SearchHost", "TextInputHost", "fontdrvhost",
+        // Review F1: the frame host of every Store app, whose windows are the frames of apps the target policy denies too
+        // (Windows Security, the sign-in window); the policy, which decides by the process name, cannot see them here
+        UwpFrames.FrameHostProcessName
     };
 
     public const int DefaultGracefulTimeoutMs = 5000;
@@ -1822,7 +1850,8 @@ public class ProcessService : IProcessService
                 return KillTargetCheck.Refused(NoClosableWindow(processId, processName));
             }
 
-            // Read while the process is open, so the PID cannot have been reused yet
+            // Read while the process is open: it holds a handle that pins the PID (review F4; when none could be opened, the
+            // start time is what the kill compares to tell a reused PID)
             return new KillTargetCheck(null, processName, tree ?? [], _processWrapper.GetProcessStartTime(processId));
         }
     }
@@ -1830,7 +1859,8 @@ public class ProcessService : IProcessService
     /// <summary>
     /// Why the open process is not the one the user confirmed, or null: it started at another time than the confirmed one
     /// (the PID was reused while the question was open), or, with <paramref name="forceKill"/>, its tree has a process the
-    /// user was not shown. The process is open, so its PID cannot be reused while this reads its start time.
+    /// user was not shown. The process is open and holds a handle that pins its PID (review F4), so the start time read here
+    /// is the process that is then closed or ended; when no handle could be opened, this check is what is left.
     /// </summary>
     private KillResult? ConfirmedTargetRefusal(
         int processId, string processName, bool forceKill, KillTargetCheck confirmed, IReadOnlyList<(int ProcessId, string ImageName)>? tree)
@@ -1946,7 +1976,7 @@ public class ProcessService : IProcessService
                 Success: false,
                 ProcessId: processId,
                 ProcessName: processName,
-                ErrorMessage: $"Cannot terminate protected system process '{processName}'.",
+                ErrorMessage: ProtectedProcessMessage(processId, processName),
                 ErrorCode: nameof(ProcessErrorCode.ProtectedProcess));
         }
 
@@ -1976,7 +2006,8 @@ public class ProcessService : IProcessService
         }
 
         // Closing or killing the agent's host (the terminal or editor hosting the agent) ends its own session
-        if (IsHostProcess(processId))
+        var isHost = IsHostProcess(processId);
+        if (isHost == true)
         {
             return new KillResult(
                 Success: false,
@@ -1985,6 +2016,20 @@ public class ProcessService : IProcessService
                 ErrorMessage: $"'{processName}' (PID {processId}) belongs to the agent's host: {HostProcessKinds}. " +
                               "Closing it would end or disrupt the agent's own session, so it is refused. Nothing was done.",
                 ErrorCode: nameof(ProcessErrorCode.CannotTerminateHost));
+        }
+
+        // Review F3: fails closed. A graceful close has no other check behind it (only Kill(entireProcessTree) refuses to end
+        // an ancestor of the caller on its own)
+        if (isHost == null)
+        {
+            return new KillResult(
+                Success: false,
+                ProcessId: processId,
+                ProcessName: processName,
+                ErrorMessage: $"The process list could not be read, so the server cannot tell whether '{processName}' (PID {processId}) " +
+                              "is an ancestor of this server, such as the terminal or editor hosting the agent: closing it could end " +
+                              "the agent's own session (the agent's host). Nothing was done. Try again.",
+                ErrorCode: nameof(ProcessErrorCode.ProcessTreeUnreadable));
         }
 
         // forceKill ends the whole process tree, so every process in it must pass the policy and the
@@ -2007,6 +2052,18 @@ public class ProcessService : IProcessService
             }
 
             tree = descendants;
+            if (ProtectedDescendant(descendants) is { } protectedChild)
+            {
+                return new KillResult(
+                    Success: false,
+                    ProcessId: processId,
+                    ProcessName: processName,
+                    ErrorMessage: $"forceKill also ends the child processes of '{processName}' (PID {processId}), and its child process " +
+                                  $"'{protectedChild.ImageName}' (PID {protectedChild.ProcessId}) is a protected system process. " +
+                                  "Nothing was terminated. Close it without forceKill (only its main window is asked to close), or ask the user.",
+                    ErrorCode: nameof(ProcessErrorCode.ProtectedProcess));
+            }
+
             if (DeniedDescendant(descendants) is { } denied)
             {
                 return new KillResult(
@@ -2030,6 +2087,23 @@ public class ProcessService : IProcessService
                                   "Ending it would end or disrupt the agent's own session, so nothing was terminated. Close it without " +
                                   "forceKill (only its main window is asked to close), or ask the user.",
                     ErrorCode: nameof(ProcessErrorCode.CannotTerminateHost));
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// The first process of a process tree that is a protected system process (by its image name without .exe), or null: a
+    /// forced kill would end it with the tree.
+    /// </summary>
+    private static (int ProcessId, string ImageName)? ProtectedDescendant(IReadOnlyList<(int ProcessId, string ImageName)> tree)
+    {
+        foreach (var child in tree)
+        {
+            if (ProtectedProcesses.Contains(TargetPolicySettings.NormalizeProcessName(child.ImageName)))
+            {
+                return child;
             }
         }
 
@@ -2219,9 +2293,12 @@ public class ProcessService : IProcessService
     /// True for a process of the agent's host: what the host guard recorded at server start (this server,
     /// its ancestors, the console host's process and the startup foreground window's process), or an
     /// ancestor found by a live walk of the process tree. The live walk keeps the check working when the
-    /// host guard could not read the ancestors at start (it then logs a warning and protects less).
+    /// host guard could not read the ancestors at start (it then logs a warning, and get_server_info warns).
+    /// Null when the process is not a recorded host process and the walk cannot read the process list
+    /// (review F3): the caller refuses then, since a graceful close has no other check behind it (only
+    /// Kill(entireProcessTree: true) refuses an ancestor of the caller on its own).
     /// </summary>
-    private bool IsHostProcess(int processId)
+    private bool? IsHostProcess(int processId)
     {
         if (_hostGuard?.IsHostProcess(processId) == true)
         {
@@ -2234,10 +2311,24 @@ public class ProcessService : IProcessService
         }
         catch (Exception)
         {
-            // If the process tree cannot be read, fall back to the runtime's own check in Kill(entireProcessTree: true)
-            return false;
+            // The process tree could not be read: unknown, not "no ancestor"
+            return null;
         }
     }
+
+    /// <summary>
+    /// Why a protected process is refused. ApplicationFrameHost (review F1) gets its own reason and what to do instead: its
+    /// windows are the frames of every Store app, those the target policy denies among them, so the agent is pointed at
+    /// the app's own process and window.
+    /// </summary>
+    private static string ProtectedProcessMessage(int processId, string processName) =>
+        UwpFrames.IsFrameHostProcess(processName)
+            ? $"'{processName}' (PID {processId}) holds the window frames of every Store (UWP) app, including apps the server's " +
+              "target policy refuses, such as Windows Security and the sign-in window: a close request could close any of them, " +
+              "and terminating it would end the windows of them all. Nothing was done. Close the app by its own process instead " +
+              "(find_windows reports a Store app's window with the app's own processId, and hostProcessName 'ApplicationFrameHost'), " +
+              "or close its window with close_window."
+            : $"Cannot terminate protected system process '{processName}'.";
 
     private static bool ProcessNameMatches(string actualName, string expectedName)
     {
@@ -2299,11 +2390,6 @@ public class ProcessService : IProcessService
         ErrorMessage: "Process not found. It may have already exited.",
         ErrorCode: nameof(ProcessErrorCode.ProcessNotFound));
 
-    private static readonly HashSet<string> SupportedBrowsers = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "chrome", "edge", "brave"
-    };
-
     /// <summary>
     /// How long a debug browser started with port 0 may take, after its window wait, to write the DevToolsActivePort file
     /// that names its port (roadmap M5.1); tests shorten it.
@@ -2331,16 +2417,20 @@ public class ProcessService : IProcessService
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(request);
-        var browser = request.Browser;
-        if (!SupportedBrowsers.Contains(browser))
+
+        // The DebugBrowser enum is the list (DebugBrowserLocator has each member's install): only a value outside it is refused
+        if (DebugBrowserLocator.ExecutableName(request.Browser) == null)
         {
-            return DebugLaunchFailure($"Unsupported browser '{browser}'. Supported browsers: chrome, edge, brave.", BrowserErrorCode.UnsupportedBrowser);
+            return DebugLaunchFailure(
+                $"Unsupported browser '{request.Browser}'. Supported browsers: {ToolEnumInfo.Get(typeof(DebugBrowser)).AllowedValues}. Nothing was launched.",
+                BrowserErrorCode.UnsupportedBrowser);
         }
 
-        var location = _debugBrowserLocator.Locate(browser, request.ExecutablePath);
+        var browser = ToolEnum<DebugBrowser>.Name(request.Browser);
+        var location = _debugBrowserLocator.Locate(request.Browser, request.ExecutablePath);
         if (location.Path == null)
         {
-            return DebugLaunchFailure(BrowserNotFoundMessage(browser, request.ExecutablePath, location.Tried), BrowserErrorCode.BrowserNotFound);
+            return DebugLaunchFailure(BrowserNotFoundMessage(request.Browser, request.ExecutablePath, location.Tried), BrowserErrorCode.BrowserNotFound);
         }
 
         var port = request.Port;
@@ -2413,6 +2503,7 @@ public class ProcessService : IProcessService
                 new LaunchRequest(location.Path, arguments.ToArray())
                 {
                     OnlyStartedProcess = true,
+                    DebugBrowserLaunch = true,
                     OnStarted = pid =>
                     {
                         // Read at once, so that a failure or a cancellation below can tell the browser from a process
@@ -2530,10 +2621,14 @@ public class ProcessService : IProcessService
     private static readonly TimeSpan AbandonTimeout = TimeSpan.FromSeconds(5);
 
     /// <summary>
-    /// A launch_browser_with_debug call cancelled after the start (roadmap M5.4): the browser it started is ended with its
-    /// process tree, since no result names its PID or port and its debug port has no authentication, and its temporary
-    /// profile is deleted. Only that browser: the PID must still have the start time read when it started (or, when that
-    /// could not be read, the browser's own command line must name the launch's profile). Best effort; never throws.
+    /// A launch_browser_with_debug call cancelled after the start (roadmap M5.4): the browser it started is ended, since no
+    /// result names its PID or port and its debug port has no authentication, and its temporary profile is deleted. Only
+    /// that browser: the PID must still have the start time read when it started (or, when that could not be read, the
+    /// browser's own command line must name the launch's profile), checked while the opened process holds a handle that pins
+    /// its PID until it is ended (review F4). And only what it provably started, as close_debug_browser ends it
+    /// (<see cref="DebugBrowserProcesses"/>): the browser process alone, then what is left of its own child processes, never
+    /// its process tree, which holds what the browser opened (a download's program, the user's own browser that a link
+    /// started). Best effort; never throws.
     /// </summary>
     private async Task AbandonCancelledLaunchAsync(int? processId, DateTime? startTime, string userDataDir, bool temporaryProfile)
     {
@@ -2544,8 +2639,8 @@ public class ProcessService : IProcessService
                 using var process = _processWrapper.OpenProcess(pid);
                 if (process != null && !HasExitedSafe(process) && IsStartedDebugBrowser(pid, startTime, userDataDir))
                 {
-                    process.Kill(entireProcessTree: true);
-                    await process.WaitForExitAsync((int)AbandonTimeout.TotalMilliseconds, CancellationToken.None).ConfigureAwait(false);
+                    await new DebugBrowserProcesses(_processWrapper, _hostGuard)
+                        .EndStartedBrowserAsync(process, pid, userDataDir, AbandonTimeout).ConfigureAwait(false);
                 }
             }
             catch (Exception ex) when (ex is InvalidOperationException or Win32Exception or NotSupportedException or AggregateException)
@@ -2562,8 +2657,10 @@ public class ProcessService : IProcessService
 
     /// <summary>
     /// A launch_browser_with_debug call cancelled while its start still ran (roadmap M5.4): once the start returns, the
-    /// browser it brought is ended with its process tree (the handle is the started process's own, so it cannot be another
-    /// process that got the PID), and only then is the temporary profile deleted. Best effort; never throws.
+    /// browser it brought is ended (the handle is the started process's own, so it cannot be another process that got the
+    /// PID), as close_debug_browser ends it (<see cref="DebugBrowserProcesses"/>): the browser process alone, then what is
+    /// left of its own child processes, never a program it opened. Only then is the temporary profile deleted. Best effort;
+    /// never throws.
     /// </summary>
     private async Task EndAbandonedStartAsync(Task<IProcessHandle?> start, string userDataDir, bool temporaryProfile)
     {
@@ -2585,8 +2682,8 @@ public class ProcessService : IProcessService
                 {
                     if (!HasExitedSafe(process))
                     {
-                        process.Kill(entireProcessTree: true);
-                        await process.WaitForExitAsync((int)AbandonTimeout.TotalMilliseconds, CancellationToken.None).ConfigureAwait(false);
+                        await new DebugBrowserProcesses(_processWrapper, _hostGuard)
+                            .EndStartedBrowserAsync(process, process.Id, userDataDir, AbandonTimeout).ConfigureAwait(false);
                     }
                 }
             }
@@ -2636,9 +2733,9 @@ public class ProcessService : IProcessService
     private static DebugBrowserLaunchResult DebugLaunchFailure(string error, string errorCode) =>
         new(Success: false, ProcessId: null, WindowHandle: null, CdpPort: null, UserDataDir: null, Error: error, ErrorCode: errorCode);
 
-    private static string BrowserNotFoundMessage(string browser, string? executablePath, IReadOnlyList<string> tried) =>
+    private static string BrowserNotFoundMessage(DebugBrowser browser, string? executablePath, IReadOnlyList<string> tried) =>
         string.IsNullOrWhiteSpace(executablePath)
-            ? $"Browser '{browser}' was not found. Tried: {string.Join("; ", tried)}. Nothing was launched. If it is installed " +
+            ? $"Browser '{ToolEnum<DebugBrowser>.Name(browser)}' was not found. Tried: {string.Join("; ", tried)}. Nothing was launched. If it is installed " +
               $"elsewhere (another channel or a portable copy), pass the full path of its {DebugBrowserLocator.ExecutableName(browser)} as executablePath."
             : $"executablePath '{executablePath.Trim()}' does not exist. Nothing was launched.";
 

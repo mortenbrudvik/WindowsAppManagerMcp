@@ -940,7 +940,7 @@ public class ElementSearchServiceTests
         // Arrange
         BuildEditor();
         var warmup = new Mock<IAccessibilityWarmup>();
-        warmup.Setup(w => w.WarmUp(Handle, It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+        warmup.Setup(w => w.WarmUpForSearch(Handle, It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
             .Callback(() => _tree.Finds.Should().BeEmpty("the warm-up comes before the search"))
             .Returns(Warmed);
         var sut = new ElementSearchService(_tree, _worker, _registry, _windows.Object, warmup.Object);
@@ -952,7 +952,7 @@ public class ElementSearchServiceTests
         result.Success.Should().BeTrue();
         result.Elements!.Single().Ref.Should().NotBeNull();
         result.AccessibilityWarmup.Should().Be(Warmed);
-        warmup.Verify(w => w.WarmUp(Handle, AccessibilityWarmup.BudgetFor(TimeSpan.FromSeconds(5)), _worker.LastToken), Times.Once);
+        warmup.Verify(w => w.WarmUpForSearch(Handle, AccessibilityWarmup.BudgetFor(TimeSpan.FromSeconds(5)), _worker.LastToken), Times.Once);
     }
 
     [Fact]
@@ -962,7 +962,7 @@ public class ElementSearchServiceTests
         BuildEditor();
         var notReady = Warmed with { Status = AccessibilityWarmupStatus.NotReady, DocumentChildCount = 0, Warning = "Read again." };
         var warmup = new Mock<IAccessibilityWarmup>();
-        warmup.Setup(w => w.WarmUp(Handle, It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>())).Returns(notReady);
+        warmup.Setup(w => w.WarmUpForSearch(Handle, It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>())).Returns(notReady);
         var sut = new ElementSearchService(_tree, _worker, _registry, _windows.Object, warmup.Object);
 
         // Act

@@ -256,12 +256,9 @@ public class ScreenshotScalingTests
     }
 
     [Theory]
-    [InlineData("png", "png")]
-    [InlineData("PNG", "png")]
-    [InlineData("jpeg", "jpeg")]
-    [InlineData("jpg", "jpeg")]
-    [InlineData(" Jpg ", "jpeg")]
-    public void CaptureMonitor_WithExplicitFormat_UsesIt(string format, string expected)
+    [InlineData(CaptureFormat.Png, "png")]
+    [InlineData(CaptureFormat.Jpeg, "jpeg")]
+    public void CaptureMonitor_WithExplicitFormat_UsesIt(CaptureFormat format, string expected)
     {
         // Arrange
         var sut = CreateSut();
@@ -274,22 +271,19 @@ public class ScreenshotScalingTests
         capture.Metadata.MimeType.Should().Be($"image/{expected}");
     }
 
-    [Theory]
-    [InlineData("webp")]
-    [InlineData("gif")]
-    [InlineData("bmp")]
-    public void CaptureMonitor_WithUnknownFormat_ReturnsInvalidFormatWithoutCapturing(string format)
+    [Fact]
+    public void CaptureMonitor_WithAFormatNoToolCanBind_ReturnsInvalidFormatWithoutCapturing()
     {
-        // Arrange - the old code silently fell back to PNG
+        // Arrange - the old code silently fell back to PNG; the tools refuse an unknown name when they bind it
         var sut = CreateSut();
 
         // Act
-        var capture = sut.CaptureMonitor(0, new CaptureOptions { Format = format });
+        var capture = sut.CaptureMonitor(0, new CaptureOptions { Format = (CaptureFormat)42 });
 
         // Assert
         capture.Metadata.Success.Should().BeFalse();
         capture.Metadata.ErrorCode.Should().Be("InvalidFormat");
-        capture.Metadata.Error.Should().Contain(format);
+        capture.Metadata.Error.Should().Contain("42");
         VerifyNothingCaptured();
     }
 
@@ -302,7 +296,7 @@ public class ScreenshotScalingTests
         var sut = CreateSut();
 
         // Act
-        var capture = sut.CaptureMonitor(0, new CaptureOptions { Format = "jpeg", Quality = quality });
+        var capture = sut.CaptureMonitor(0, new CaptureOptions { Format = CaptureFormat.Jpeg, Quality = quality });
 
         // Assert
         capture.Metadata.Success.Should().BeTrue();
@@ -321,8 +315,8 @@ public class ScreenshotScalingTests
         var sut = CreateSut();
 
         // Act
-        var low = sut.CaptureMonitor(0, new CaptureOptions { Format = "jpeg", Quality = 10 }).Metadata.ByteSize;
-        var high = sut.CaptureMonitor(0, new CaptureOptions { Format = "jpeg", Quality = 95 }).Metadata.ByteSize;
+        var low = sut.CaptureMonitor(0, new CaptureOptions { Format = CaptureFormat.Jpeg, Quality = 10 }).Metadata.ByteSize;
+        var high = sut.CaptureMonitor(0, new CaptureOptions { Format = CaptureFormat.Jpeg, Quality = 95 }).Metadata.ByteSize;
 
         // Assert
         low.Should().BeLessThan(high!.Value);
@@ -342,7 +336,7 @@ public class ScreenshotScalingTests
         var sut = CreateSut();
 
         // Act
-        var capture = sut.CaptureRegion(0, 0, 64, 32, new CaptureOptions { Format = "png" });
+        var capture = sut.CaptureRegion(0, 0, 64, 32, new CaptureOptions { Format = CaptureFormat.Png });
 
         // Assert
         using var bitmap = ToBitmap(capture.Image!);
@@ -362,7 +356,7 @@ public class ScreenshotScalingTests
         var sut = CreateSut();
 
         // Act
-        var capture = sut.CaptureRegion(0, 0, 1200, 40, new CaptureOptions { Format = "png", MaxDimension = 300 });
+        var capture = sut.CaptureRegion(0, 0, 1200, 40, new CaptureOptions { Format = CaptureFormat.Png, MaxDimension = 300 });
 
         // Assert
         capture.Metadata.Width.Should().Be(300);

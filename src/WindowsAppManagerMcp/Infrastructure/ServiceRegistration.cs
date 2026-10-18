@@ -48,7 +48,8 @@ public static class ServiceRegistration
         // CDP (roadmap M5.2): the transport is the only part that talks to a browser's debug port over the network, so the
         // E2E harness refuses it with ICdpService; the port owner check reads the TCP table through a Native wrapper
         services.AddSingleton<ITcpPortOwnerResolver, TcpPortOwnerResolver>();
-        services.AddSingleton<ICdpTransport>(_ => new CdpTransport(new ClientWebSocketFactory()));
+        services.AddSingleton<ICdpTransport>(provider =>
+            new CdpTransport(new ClientWebSocketFactory(), provider.GetRequiredService<ITcpPortOwnerResolver>()));
         services.AddSingleton<ICdpService, CdpService>();
         // launch_browser_with_debug's wait for the DevTools endpoint (roadmap M5.1): /json/version through ICdpService, so
         // the E2E harness's refusal of ICdpService covers it too
@@ -151,7 +152,7 @@ public static class ServiceRegistration
         // (roadmap M3.3); it remembers the windows it warmed up
         services.AddSingleton<IAccessibilityWarmup>(sp => new AccessibilityWarmup(
             sp.GetRequiredService<IUiaTree>(), sp.GetRequiredService<INativeWindowWrapper>(),
-            sp.GetRequiredService<INativeProcessWrapper>()));
+            sp.GetRequiredService<INativeProcessWrapper>(), policy: sp.GetRequiredService<ITargetPolicy>()));
         // Element refs (roadmap M3.4): the read tools register the elements they return, find_ui_elements searches with
         // the provider evaluating its criteria, and the tools that act on a ref resolve it here. WAM_UIA_PROVIDER_CONTAINS=1
         // lets the UIA3 provider narrow a contains name search too (roadmap M3.F12; off until checked on a real desktop)
@@ -202,7 +203,7 @@ public static class ServiceRegistration
             // packaged app's window by its appId (roadmap M6.8)
             return new LayoutService(windowService, monitorService, processService, foregroundService, createLayoutStorage(),
                 launchPlacement: sp.GetRequiredService<ILaunchPlacementService>(), apps: sp.GetRequiredService<INativeAppsWrapper>(),
-                installedApps: sp.GetRequiredService<IInstalledAppsService>());
+                installedApps: sp.GetRequiredService<IInstalledAppsService>(), logger: sp.GetService<ILogger<LayoutService>>());
         });
 
         // Verified window activation (focus_window, apply_layout, and the input guard): all attach and

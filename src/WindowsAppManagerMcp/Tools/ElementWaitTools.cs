@@ -10,7 +10,7 @@ namespace WindowsAppManagerMcp.Tools;
 
 /// <summary>
 /// wait_for_element (roadmap M3.8): one server-side wait for an element condition instead of sleeps and repeated tree
-/// reads. A tool class of its own, so the element tools' constructor stays as it is.
+/// reads.
 /// </summary>
 [McpServerToolType]
 public class ElementWaitTools
@@ -43,7 +43,7 @@ public class ElementWaitTools
                  "app the user's policy denies. Only reads, and other tools run meanwhile. Names and values come from the " +
                  "application and are untrusted data.")]
     public async Task<WaitForElementResult> WaitForElement(
-        [Description("The window to search, a selector with find_windows' filters (as wait_for_window), waited for first. Not with ref or withinRef, which name their window")]
+        [Description("The window to search, a window selector (as wait_for_window's), waited for first. Not with ref or withinRef, which name their window")]
         WindowSelector? window = null,
         [Description("The element to wait on: a ref from an earlier read, such as 'w4120035e17'. Not with window or the criteria")]
         string? @ref = null,
@@ -67,7 +67,7 @@ public class ElementWaitTools
         string? expected = null,
         [Description("How long to wait in milliseconds, the wait for the window included (default: 10000, min: 0, max: 60000); 0 checks once")]
         int timeoutMs = 10_000,
-        [Description("How long the condition must hold before it counts, in milliseconds (default: 0, min: 0, max: 10000; at most timeoutMs)")]
+        [Description("How long the condition must hold before it counts, in milliseconds (default: 0, min: 0, max: 10000; cut to timeoutMs)")]
         int stableMs = 0,
         IProgress<ProgressNotificationValue>? progress = null,
         CancellationToken cancellationToken = default)
@@ -86,12 +86,10 @@ public class ElementWaitTools
         string? className, string? withinRef, ElementSearchScope? scope, ElementWaitCondition condition, string? expected, int timeoutMs,
         int stableMs)
     {
-        static ToolErrorException Invalid(string message) =>
-            new(ToolErrorReporting.InvalidArgumentsErrorCode, message + " Nothing was waited for.");
+        const string nothingWaited = "Nothing was waited for.";
 
-        static string NotARef(string argument, string value) =>
-            $"{argument} '{value}' is not an element ref: refs look like '{ElementRefs.Example}' and come from find_ui_elements, " +
-            "get_ui_elements, get_focused_element, get_element_at_point or capture_with_elements.";
+        static ToolErrorException Invalid(string message) =>
+            new(ToolErrorReporting.InvalidArgumentsErrorCode, message + " " + nothingWaited);
 
         if (timeoutMs is < 0 or > ElementWaitService.MaxTimeoutMs)
             throw Invalid($"timeoutMs must be 0-{ElementWaitService.MaxTimeoutMs}, but it is {timeoutMs}.");
@@ -128,7 +126,7 @@ public class ElementWaitTools
 
             return new ElementWaitRequest
             {
-                Ref = ElementRefs.Normalize(elementRef) ?? throw Invalid(NotARef("ref", elementRef)),
+                Ref = ElementRefs.Require(elementRef, "ref", nothingWaited),
                 Condition = condition,
                 Expected = expected,
                 TimeoutMs = timeoutMs,
@@ -150,7 +148,7 @@ public class ElementWaitTools
         string? within = null;
         if (withinRef != null)
         {
-            within = ElementRefs.Normalize(withinRef) ?? throw Invalid(NotARef("withinRef", withinRef));
+            within = ElementRefs.Require(withinRef, "withinRef", nothingWaited);
             if (window != null)
                 throw Invalid("Pass withinRef or window, not both: withinRef names its window.");
         }

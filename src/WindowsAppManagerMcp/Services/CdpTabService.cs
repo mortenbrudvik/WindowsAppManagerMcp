@@ -12,7 +12,8 @@ namespace WindowsAppManagerMcp.Services;
 /// <remarks>
 /// <para>
 /// Tabs are listed from /json/list and placed in their browser windows with Browser.getWindowForTarget (the M5.3
-/// binding). CDP reports no active tab, so the tab a window shows is the one of its tabs whose title the window shows.
+/// binding). CDP reports no active tab, so the tab a window shows is the one of its tabs whose title the window shows, and
+/// of several, the one that is shown (<see cref="CdpShownTab"/>, as the reads pick it).
 /// Activating and opening a tab go over the browser's own DevTools connection (Target.activateTarget,
 /// Target.createTarget), not the /json/activate and /json/new pages.
 /// </para>
@@ -93,8 +94,10 @@ public sealed class CdpTabService : ICdpTabService
         if (CheckOwner(port, processId) is { } refused)
             return refused.FailAs<CdpTabListing>();
 
+        // The list is used only while the browser still listens on the port once it has come (review F4): another program
+        // that took the port would answer with tabs of its own, whose WebSocket URLs the tab tools would then connect to
         var stopwatch = Stopwatch.StartNew();
-        var listed = await _cdp.GetPageTargetsAsync(port, timeout, cancellationToken).ConfigureAwait(false);
+        var listed = await _cdp.GetOwnedPageTargetsAsync(port, processId, timeout, cancellationToken).ConfigureAwait(false);
         if (!listed.Success)
             return listed.FailAs<CdpTabListing>();
 
@@ -103,9 +106,8 @@ public sealed class CdpTabService : ICdpTabService
         if (all.Count is > 0 and <= CdpService.MaxBoundTabs)
         {
             // Best effort: without it the tabs are listed without their windows
-            var left = timeout - stopwatch.Elapsed;
             windows = await CdpBrowserWindows.QueryAsync(
-                _cdp, _transport, port, all, left < MaxWindowLookupTime ? left / 2 : MaxWindowLookupTime, cancellationToken)
+                _cdp, _transport, port, processId, all, WindowLookupTime(timeout - stopwatch.Elapsed), cancellationToken)
                 .ConfigureAwait(false);
         }
 
@@ -122,10 +124,20 @@ public sealed class CdpTabService : ICdpTabService
             : new HashSet<int>();
         var inWindow = all.Where(t => WindowOf(t) is int id && bound.Contains(id)).ToList();
 
-        // As the reads pick the tab (CdpService.FindTargetForWindowAsync): the title among the window's tabs, else among all
-        var shown = inWindow.Count > 0 ? CdpTargetMatcher.Match(window.Title, inWindow) : null;
-        if (shown is not { Success: true } && shown?.ErrorCode != BrowserErrorCode.CdpTargetAmbiguous)
-            shown = CdpTargetMatcher.Match(window.Title, all);
+        // Over MaxBoundTabs tabs the list has no windows, but those of the tabs with the window's title are still looked up,
+        // as the reads look them up, to tell which of them it shows; the list stays without windows
+        var placed = windows;
+        if (all.Count > CdpService.MaxBoundTabs && CdpShownTab.CandidatesToPlace(window, all) is { Count: > 0 } candidates)
+        {
+            placed = await CdpBrowserWindows.QueryAsync(
+                _cdp, _transport, port, processId, candidates, WindowLookupTime(timeout - stopwatch.Elapsed), cancellationToken)
+                .ConfigureAwait(false);
+        }
+
+        // As the reads pick the tab (CdpService.FindTargetForWindowAsync, the same CdpShownTab): the title among the
+        // window's tabs, else among all, and of several, the one shown
+        var shown = await CdpShownTab.PickAsync(
+            _transport, window, all, placed, CdpService.BindingBudget(timeout - stopwatch.Elapsed), cancellationToken).ConfigureAwait(false);
 
         var tabs = inWindow.Select(t => new CdpTab(t, WindowOf(t), true))
             .Concat(all.Except(inWindow).Select(t => new CdpTab(t, WindowOf(t), false)))
@@ -139,8 +151,13 @@ public sealed class CdpTabService : ICdpTabService
         CdpTarget target, CdpGate gate, TimeSpan timeout, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(target);
+
+        // The browser's connection, used only while the browser that listed the tab still listens on its port
+        if (target.OwnerProcessId is not int owner)
+            return CdpTargetConnection.Unowned<CdpTarget>(target);
+
         var stopwatch = Stopwatch.StartNew();
-        var connected = await ConnectToBrowserAsync(target.Port, timeout, cancellationToken).ConfigureAwait(false);
+        var connected = await ConnectToBrowserAsync(target.Port, owner, timeout, cancellationToken).ConfigureAwait(false);
         if (!connected.Success)
             return connected.FailAs<CdpTarget>();
 
@@ -163,9 +180,11 @@ public sealed class CdpTabService : ICdpTabService
         if (CheckOwner(port, processId) is { } refused)
             return refused.FailAs<CdpTarget>();
 
+        // Target.createTarget goes out only once the browser's connection is open and the browser still listens on the port
+        // (the transport reads it again then): a program that took the port meanwhile gets nothing
         var stopwatch = Stopwatch.StartNew();
         string targetId;
-        var connected = await ConnectToBrowserAsync(port, timeout, cancellationToken).ConfigureAwait(false);
+        var connected = await ConnectToBrowserAsync(port, processId, timeout, cancellationToken).ConfigureAwait(false);
         if (!connected.Success)
             return connected.FailAs<CdpTarget>();
 
@@ -189,23 +208,31 @@ public sealed class CdpTabService : ICdpTabService
             }
         }
 
-        // The new tab is listed once the browser has set it up, usually at once
+        // The new tab is listed once the browser has set it up, usually at once; the list only while the browser still
+        // listens on the port, since its WebSocket URL is what browser_navigate connects to next. Every failure from here on
+        // carries the tab's id: the tab is open, on about:blank. A list's own advice ("Try again") is followed by what to do
+        // with that tab, since browser_navigate with newTab again would open a second one
         while (true)
         {
             var remaining = timeout - stopwatch.Elapsed;
-            var listed = await _cdp.GetPageTargetsAsync(port, remaining > TimeSpan.Zero ? remaining : TimeSpan.Zero, cancellationToken)
-                .ConfigureAwait(false);
+            var listed = await _cdp.GetOwnedPageTargetsAsync(port, processId, remaining > TimeSpan.Zero ? remaining : TimeSpan.Zero,
+                cancellationToken).ConfigureAwait(false);
             if (listed.Success && listed.Value!.FirstOrDefault(t => t.Id == targetId) is { } opened)
                 return CdpResult<CdpTarget>.Ok(opened);
 
-            if (timeout - stopwatch.Elapsed <= NewTabListingDelay)
+            // A port that changed hands is not listed again (another program may have it now), nor any port once the time is up
+            if (listed.ErrorCode == BrowserErrorCode.CdpPortOwnerMismatch || timeout - stopwatch.Elapsed <= NewTabListingDelay)
             {
-                return listed.Success
+                var failed = listed.Success
                     ? CdpResult<CdpTarget>.Fail(
                         BrowserErrorCode.CdpTargetNotFound,
                         $"The browser opened tab {targetId}, but did not list it within {FormatMs(timeout)}; it may have been " +
                         "closed at once. Call list_tabs to see the browser's tabs.")
-                    : listed.FailAs<CdpTarget>();
+                    : CdpResult<CdpTarget>.Fail(
+                        listed.ErrorCode,
+                        $"The browser opened tab {targetId} on about:blank, but it was not navigated: {listed.Error} The tab " +
+                        $"stays open, so do not open another one: once list_tabs lists it, navigate it with targetId {targetId}.");
+                return failed with { OpenedTargetId = targetId };
             }
 
             await Task.Delay(NewTabListingDelay, cancellationToken).ConfigureAwait(false);
@@ -477,15 +504,15 @@ public sealed class CdpTabService : ICdpTabService
             var check = await CheckAsync(connection, expression, condition, Bounded(budget > TimeSpan.Zero ? budget : TimeSpan.FromMilliseconds(1)),
                 cancellationToken).ConfigureAwait(false);
             if (!check.Success && IsFinal(check.ErrorCode))
-                return check;
+                return check.FailAs<CdpWaitOutcome>();
 
             // A check the page did not answer in time is skipped; one it answered, even between two documents, is not
             answered |= check.Success;
-            if (check is { Success: true, Value: { } seen })
+            if (check is { Success: true, Value.Outcome: { } seen })
             {
                 last = seen;
                 if (seen.Satisfied)
-                    return check;
+                    return CdpResult<CdpWaitOutcome>.Ok(seen);
             }
 
             first = false;
@@ -511,11 +538,11 @@ public sealed class CdpTabService : ICdpTabService
     }
 
     /// <summary>
-    /// One check of a wait: the condition's result, or null when the page answered but could not be checked this time (it
-    /// was between two documents); CdpTimeout when it did not answer in time (busy, or blocked); a failure that ends the
-    /// wait (a dialog, a closed tab, a selector that is not valid CSS).
+    /// One check of a wait: the condition's result, or a check without an outcome when the page answered but could not be
+    /// checked this time (it was between two documents); CdpTimeout when it did not answer in time (busy, or blocked); a
+    /// failure that ends the wait (a dialog, a closed tab, a selector that is not valid CSS).
     /// </summary>
-    private static async Task<CdpResult<CdpWaitOutcome>> CheckAsync(
+    private static async Task<CdpResult<WaitCheck>> CheckAsync(
         ICdpConnection connection, string expression, BrowserWaitCondition condition, TimeSpan timeout, CancellationToken cancellationToken)
     {
         var evaluated = await connection.SendAsync("Runtime.evaluate", new
@@ -526,16 +553,16 @@ public sealed class CdpTabService : ICdpTabService
         }, timeout, cancellationToken).ConfigureAwait(false);
 
         if (!evaluated.Success)
-            return evaluated.FailAs<CdpWaitOutcome>();
+            return evaluated.FailAs<WaitCheck>();
 
         // An error reply or an exception: the page is between two documents (its context was destroyed); check again
         if (evaluated.Value!.Error != null || ValueOf(evaluated.Value.Result) is not { } value)
-            return CdpResult<CdpWaitOutcome>.Ok(null!);
+            return CdpResult<WaitCheck>.Ok(WaitCheck.NotChecked);
 
         var badSelector = CdpReplies.GetString(value, "badSelector");
         if (badSelector.Length > 0)
         {
-            return CdpResult<CdpWaitOutcome>.Fail(
+            return CdpResult<WaitCheck>.Fail(
                 BrowserErrorCode.CdpEvaluationFailed,
                 $"The selector '{condition.Selector}' is not valid CSS ({badSelector}). Nothing was waited for.");
         }
@@ -552,8 +579,14 @@ public sealed class CdpTabService : ICdpTabService
         if (condition.Selector != null && !IsTrue(value, "selector"))
             missing.Add($"no element matches '{condition.Selector}'");
 
-        return CdpResult<CdpWaitOutcome>.Ok(new CdpWaitOutcome(missing.Count == 0, url, title,
-            missing.Count == 0 ? null : string.Join("; ", missing)));
+        return CdpResult<WaitCheck>.Ok(new WaitCheck(new CdpWaitOutcome(missing.Count == 0, url, title,
+            missing.Count == 0 ? null : string.Join("; ", missing))));
+    }
+
+    /// <summary>What one check of a wait saw: the outcome, or none when the page could not be checked this time.</summary>
+    private sealed record WaitCheck(CdpWaitOutcome? Outcome)
+    {
+        public static WaitCheck NotChecked { get; } = new((CdpWaitOutcome?)null);
     }
 
     /// <summary>
@@ -641,6 +674,10 @@ public sealed class CdpTabService : ICdpTabService
     private static TimeSpan PreNavigationLookup(TimeSpan remaining) =>
         Bounded(remaining / 4 < MaxPreNavigationLookup ? remaining / 4 : MaxPreNavigationLookup);
 
+    /// <summary>How long list_tabs' browser-window lookup may take: MaxWindowLookupTime, or half of what is left when less is left.</summary>
+    private static TimeSpan WindowLookupTime(TimeSpan remaining) =>
+        remaining < MaxWindowLookupTime ? remaining / 2 : MaxWindowLookupTime;
+
     /// <summary>The part of a navigation's time kept to ask the tab why Page.navigate got no answer: at most half a second or a quarter.</summary>
     private static TimeSpan UnansweredProbeTime(TimeSpan remaining) =>
         remaining / 4 < MaxUnansweredProbeTime ? remaining / 4 : MaxUnansweredProbeTime;
@@ -664,8 +701,11 @@ public sealed class CdpTabService : ICdpTabService
         ICdpConnection connection, CdpGate gate, string method, object parameters, TimeSpan timeout, CancellationToken cancellationToken) =>
         CdpGatedSend.StartAsync(connection, gate, method, parameters, timeout, cancellationToken);
 
-    /// <summary>The browser-level DevTools connection (/json/version's webSocketDebuggerUrl).</summary>
-    private async Task<CdpResult<ICdpConnection>> ConnectToBrowserAsync(int port, TimeSpan timeout, CancellationToken cancellationToken)
+    /// <summary>
+    /// The browser-level DevTools connection (/json/version's webSocketDebuggerUrl), used only while
+    /// <paramref name="owner"/> still listens on the port once it is open (<see cref="ICdpTransport.ConnectAsync"/>).
+    /// </summary>
+    private async Task<CdpResult<ICdpConnection>> ConnectToBrowserAsync(int port, int owner, TimeSpan timeout, CancellationToken cancellationToken)
     {
         var stopwatch = Stopwatch.StartNew();
         var version = await _cdp.GetBrowserVersionAsync(port, timeout, cancellationToken).ConfigureAwait(false);
@@ -673,19 +713,15 @@ public sealed class CdpTabService : ICdpTabService
             return version.FailAs<ICdpConnection>();
 
         return await _transport.ConnectAsync(
-            version.Value!.WebSocketDebuggerUrl, port, "the browser", Remaining(timeout, stopwatch), cancellationToken).ConfigureAwait(false);
+            version.Value!.WebSocketDebuggerUrl, port, owner, "the browser", Remaining(timeout, stopwatch), cancellationToken).ConfigureAwait(false);
     }
 
-    /// <summary>The tab's own DevTools connection, at the WebSocket URL its port listed.</summary>
-    private async Task<CdpResult<ICdpConnection>> ConnectToTabAsync(CdpTarget target, TimeSpan timeout, CancellationToken cancellationToken)
-    {
-        var label = $"tab {target.Id}";
-        var webSocketUrl = CdpEndpointValidator.ValidateWebSocketUrl(target.WebSocketDebuggerUrl, target.Port, label);
-        if (!webSocketUrl.Success)
-            return webSocketUrl.FailAs<ICdpConnection>();
-
-        return await _transport.ConnectAsync(webSocketUrl.Value!, target.Port, label, timeout, cancellationToken).ConfigureAwait(false);
-    }
+    /// <summary>
+    /// The tab's own DevTools connection, at the WebSocket URL its port listed, on the browser that listed it
+    /// (<see cref="CdpTargetConnection"/>).
+    /// </summary>
+    private Task<CdpResult<ICdpConnection>> ConnectToTabAsync(CdpTarget target, TimeSpan timeout, CancellationToken cancellationToken) =>
+        CdpTargetConnection.OpenAsync(_transport, target, timeout, cancellationToken);
 
     private static TimeSpan Remaining(TimeSpan timeout, Stopwatch stopwatch)
     {

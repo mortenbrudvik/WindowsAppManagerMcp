@@ -198,8 +198,41 @@ public class InputTargetGuardTests
         result.Allowed.Should().BeFalse();
         result.ErrorCode.Should().Be(InputErrorCode.TargetIsAgentHost);
         result.ReceivingWindow.Should().Be(new WindowSummary(Terminal, "pwsh", "WindowsTerminal", TerminalPid));
-        result.Error.Should().Contain("agent's own host").And.Contain("windowHandle").And.Contain("allowHostTarget=true");
+        result.Error.Should().Contain("agent's own host").And.Contain("windowHandle").And.Contain("allowHostTarget=true")
+            .And.NotContain("ancestor processes");
         VerifyNoActivation();
+    }
+
+    [Fact]
+    public void Keyboard_NoTarget_AWindowCountedAsTheHostOnlyWhileTheAncestorsAreUnknown_SaysWhy()
+    {
+        // Arrange - the host guard cannot read the server's ancestors: it counts the window as the host's because it may be
+        _inFront = Terminal;
+        _hostGuard.Setup(g => g.Host).Returns(new HostSnapshot(ServerPid, [], nint.Zero, null, null, null) { AncestorsUnknown = true });
+        _hostGuard.Setup(g => g.IsHostWindowOnlyWhileAncestorsUnknown(Terminal)).Returns(true);
+
+        // Act
+        var result = CreateSut().CheckKeyboard(InputTarget.None, KeyboardInputKind.Text, null);
+
+        // Assert
+        result.ErrorCode.Should().Be(InputErrorCode.TargetIsAgentHost);
+        result.Error.Should().Contain(HostGuard.AncestorsUnknownNote);
+        VerifyNoActivation();
+    }
+
+    [Fact]
+    public void Keyboard_NoTarget_AWindowTheGuardKnowsAsTheHost_WhileTheAncestorsAreUnknown_IsNotSaidToBeOnlyMaybe()
+    {
+        // Arrange - the ancestors are unknown, but the window is the host's anyway (say, the window that shows the console)
+        _inFront = Terminal;
+        _hostGuard.Setup(g => g.Host).Returns(new HostSnapshot(ServerPid, [], nint.Zero, null, null, null) { AncestorsUnknown = true });
+
+        // Act
+        var result = CreateSut().CheckKeyboard(InputTarget.None, KeyboardInputKind.Text, null);
+
+        // Assert
+        result.ErrorCode.Should().Be(InputErrorCode.TargetIsAgentHost);
+        result.Error.Should().NotContain("ancestor processes");
     }
 
     [Fact]
@@ -1528,6 +1561,105 @@ public class InputTargetGuardTests
         At(Terminal);
 
         sut.RecheckMouse(500, 300, approved).ErrorCode.Should().Be(InputErrorCode.TargetIsAgentHost);
+    }
+
+    #endregion
+
+    #region A drag's drop point, checked again right before the release (M4.3, review F6)
+
+    [Fact]
+    public void RecheckDrop_TheSameWindowAtTheDropPoint_KeepsTheApproval()
+    {
+        At(Notepad);
+        var sut = CreateSut();
+        var drop = sut.CheckMouse(500, 300, To(Notepad));
+
+        sut.RecheckDrop(500, 300, drop).Should().BeSameAs(drop);
+    }
+
+    [Theory]
+    [InlineData(0x100L, InputErrorCode.TargetIsAgentHost)]     // the agent's terminal
+    [InlineData(0x300L, InputErrorCode.TargetDeniedByPolicy)]  // KeePass, on the default deny list
+    [InlineData(0x400L, InputErrorCode.TargetElevated)]        // Task Manager, elevated
+    public void RecheckDrop_WithoutTarget_AWindowThatTakesNoInput_CameUnderTheDropPointMidDrag_IsRefused(long window, InputErrorCode code)
+    {
+        // Arrange - the drop point was on Notepad when the drag started; then the window came over it
+        At(Notepad);
+        var sut = CreateSut();
+        var drop = sut.CheckMouse(500, 300, InputTarget.None);
+        At((nint)window);
+
+        // Act
+        var rechecked = sut.RecheckDrop(500, 300, drop);
+
+        // Assert - the release would drop what is dragged (a file, text) into it
+        rechecked.Allowed.Should().BeFalse();
+        rechecked.ErrorCode.Should().Be(code);
+        rechecked.ReceivingWindow!.Handle.Should().Be(window);
+    }
+
+    [Theory]
+    [InlineData(0x100L)] // the agent's terminal
+    [InlineData(0x300L)] // a denied app
+    [InlineData(0x700L)] // any other application's window
+    public void RecheckDrop_WithATarget_AnotherWindowUnderTheDropPoint_IsTargetOccluded(long window)
+    {
+        At(Notepad);
+        var sut = CreateSut();
+        var drop = sut.CheckMouse(500, 300, To(Notepad));
+        At((nint)window);
+
+        sut.RecheckDrop(500, 300, drop).ErrorCode.Should().Be(InputErrorCode.TargetOccluded);
+    }
+
+    [Fact]
+    public void RecheckDrop_AWindowTheTargetOwns_UnderTheDropPoint_IsAllowed()
+    {
+        At(Notepad);
+        var sut = CreateSut();
+        var drop = sut.CheckMouse(500, 300, To(Notepad));
+        At(NotepadDialog);
+
+        var rechecked = sut.RecheckDrop(500, 300, drop);
+
+        rechecked.Allowed.Should().BeTrue(rechecked.Error);
+        rechecked.Receiving.Should().Be(NotepadDialog);
+    }
+
+    [Fact]
+    public void RecheckDrop_RunsThePointRecheck_EvenWithTheSameWindowAtTheDropPoint()
+    {
+        // A converted drop point whose window moved since its capture would drop somewhere else in it
+        At(Notepad);
+        var rechecks = 0;
+        var target = To(Notepad) with
+        {
+            PointRecheck = () => ++rechecks == 1 ? null : new SelectorRefusal("StaleCapture", "Window 512 moved 40 px since capture c3-abcdef.")
+        };
+        var sut = CreateSut();
+        var drop = sut.CheckMouse(500, 300, target);
+
+        sut.RecheckDrop(500, 300, drop).ErrorCode.Should().Be(InputErrorCode.StaleCapture);
+    }
+
+    [Fact]
+    public void RecheckDrop_TheCaptureTheDragsSourceHolds_IsNotRefused_WhereRecheckMouseRefusesIt()
+    {
+        // Arrange - the drop on Notepad was approved before the press; the press made the drag's source, Calculator in
+        // front, capture the mouse, as every drag does. The drop point is now on a dialog Notepad owns
+        At(Notepad);
+        var sut = CreateSut();
+        var drop = sut.CheckMouse(500, 300, To(Notepad));
+        _inFront = Calculator;
+        Captured(Calculator);
+        At(NotepadDialog);
+
+        // Act
+        var rechecked = sut.RecheckDrop(500, 300, drop);
+
+        // Assert
+        rechecked.Allowed.Should().BeTrue(rechecked.Error);
+        sut.RecheckMouse(500, 300, drop).ErrorCode.Should().Be(InputErrorCode.MouseInUse, "a click there would go to the captor");
     }
 
     #endregion

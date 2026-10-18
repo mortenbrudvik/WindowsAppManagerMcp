@@ -334,6 +334,12 @@ public sealed class ElementRegistry : IElementRegistry
         {
             throw new OperationCanceledException(cancellationToken);
         }
+        catch (UiaDeadlinePassedException ex)
+        {
+            // Not started: the application was not asked
+            return ElementResolution.Failed(UIElementErrorCode.OperationTimedOut,
+                $"Element ref '{lookup.Ref}' was not resolved: {ex.Message} Try again.");
+        }
         catch (TimeoutException ex)
         {
             return ElementResolution.Failed(UIElementErrorCode.OperationTimedOut,

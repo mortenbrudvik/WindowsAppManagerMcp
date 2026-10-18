@@ -631,7 +631,87 @@ public class AuditRecordTests
         AuditRecord.WindowHandles(Arguments(new { windows = Enumerable.Range(1, 500).Select(h => new { handle = h }) }))
             .Should().HaveCount(AuditRecord.MaxWindowsRead);
         AuditRecord.ProcessIds(Arguments(new { processId = 7 })).Should().Equal(7);
-        AuditRecord.ProcessIds(Arguments(new { processId = "7" })).Should().BeEmpty();
+        AuditRecord.ProcessIds(Arguments(new { processId = "seven" })).Should().BeEmpty();
+        AuditRecord.ProcessIds(Arguments(new { processId = 7.5 })).Should().BeEmpty();
+        AuditRecord.ProcessIds(Arguments(new { processId = 3_000_000_000 })).Should().BeEmpty("no process ID is that large");
+    }
+
+    [Fact]
+    public void AHandleOrProcessIdGivenAsAString_IsReadAsTheNumberTheToolBinds()
+    {
+        // The tools bind a number from a JSON string (the SDK's AllowReadingFromString): close_window {"handle": "123"}
+        // closes window 123, so the line names it
+        AuditRecord.WindowHandles(Arguments(new { handle = "123" })).Should().Equal(123);
+        AuditRecord.WindowHandles(Arguments(new { windowHandle = "0124" })).Should().Equal(124);
+        AuditRecord.WindowHandles(Arguments(new { window = new { handle = "125" } })).Should().Equal(125);
+        AuditRecord.WindowHandles(Arguments(new { windows = new object[] { new { handle = "126" }, new { window = new { handle = "127" } } } }))
+            .Should().Equal(126, 127);
+        AuditRecord.ProcessIds(Arguments(new { processId = "7" })).Should().Equal(7);
+
+        // A string the tool would not bind as a number names nothing
+        AuditRecord.WindowHandles(Arguments(new { handle = "notepad", windowHandle = "12.5" })).Should().BeEmpty();
+    }
+
+    [Fact]
+    public void ASelectorsHandle_IsRead_InAnyLetterCase_AsTheSelectorBindsIt()
+    {
+        // A selector's members bind case-insensitively; the last of two that differ only in case is the one bound
+        AuditRecord.WindowHandles(Arguments(new { window = new { Handle = 10 } })).Should().Equal(10);
+        AuditRecord.WindowHandles(Arguments(new Dictionary<string, object> { ["window"] = new Dictionary<string, object> { ["HANDLE"] = "11" } }))
+            .Should().Equal(11);
+        AuditRecord.WindowHandles(Arguments(new { windows = new object[] { new { Handle = 12 }, new { Window = new { handle = 13 } } } }))
+            .Should().Equal(12, 13);
+        AuditRecord.WindowHandles(Arguments(new Dictionary<string, object>
+        {
+            ["window"] = new Dictionary<string, object> { ["handle"] = 14, ["Handle"] = 15 }
+        })).Should().Equal(15);
+    }
+
+    [Fact]
+    public void AnIntegerGivenAsAString_IsSummarizedAsTheNumber_WhereTheToolDeclaresAnInteger()
+    {
+        var schema = new
+        {
+            type = "object",
+            properties = new
+            {
+                handle = new { type = new[] { "integer", "null" } },
+                delayMs = new { type = "integer" },
+                text = new { type = "string" },
+                monitor = new { type = new[] { "integer", "string", "null" } }
+            }
+        };
+
+        var entry = Build(Call("close_window", new { handle = "123", delayMs = "12.5", text = "482913", monitor = "1" }, schema: schema), null);
+
+        entry.Args!["handle"]!.GetValue<long>().Should().Be(123);
+        entry.Args.ContainsKey("handleLength").Should().BeFalse();
+        entry.Args["delayMsLength"]!.GetValue<int>().Should().Be(4, "a string the tool would not bind as an integer stays a length");
+        entry.Args["textLength"]!.GetValue<int>().Should().Be(6, "a string parameter's digits are content");
+        entry.Args["monitorLength"]!.GetValue<int>().Should().Be(1, "a parameter that takes a string keeps its strings as lengths");
+        AuditRecord.ToJsonLine(entry).Should().NotContain("482913");
+    }
+
+    [Fact]
+    public void ALaunchPlacementsMembers_AreRead_InAnyLetterCase_AndItsBoundsAsTheNumbersTheyBind()
+    {
+        var call = Call("launch_application", new
+        {
+            executable = "notepad",
+            placement = new { Snap = "left_half", Bounds = (object?)null, Focus = true }
+        });
+        var byBounds = Call("launch_application", new
+        {
+            executable = "notepad",
+            placement = new { bounds = new { X = "10", y = 20, Width = 800, height = "600" } }
+        });
+
+        var snapped = Build(call, Result(new { success = true, processId = 42 })).Target!.Placement!;
+        var placed = Build(byBounds, Result(new { success = true, processId = 42 })).Target!.Placement!;
+
+        snapped.Snap.Should().Be("left_half");
+        snapped.Focus.Should().BeTrue();
+        placed.Bounds.Should().Be(new BoundsDto(10, 20, 800, 600));
     }
 
     [Fact]

@@ -12,11 +12,24 @@ namespace WindowsAppManagerMcp.Models;
 /// For a virtual key, KEYEVENTF_EXTENDEDKEY when the key was sent as an extended key; for an X button (MOUSEEVENTF_XDOWN),
 /// which one: XBUTTON1 or XBUTTON2, as in the event's mouseData; otherwise 0.
 /// </param>
-public readonly record struct HeldInput(InputEventKind Kind, ushort Code, uint Flags = 0)
+/// <param name="Scan">
+/// For a virtual key, the scan code it went down with (KEYBDINPUT.wScan, without the 0xE0 prefix, which
+/// <paramref name="Flags"/>' extended flag carries), sent again with its key-up: remote desktop and virtual machine clients
+/// and games track keys by scan code, and a key-up without it leaves the key down there. 0 when not known; otherwise 0.
+/// </param>
+public readonly record struct HeldInput(InputEventKind Kind, ushort Code, uint Flags = 0, ushort Scan = 0)
 {
     /// <summary>A virtual key.</summary>
     public static HeldInput Key(ushort virtualKey, bool extended = false) =>
         new(InputEventKind.VirtualKey, virtualKey, extended ? NativeEnums.KEYEVENTF_EXTENDEDKEY : 0);
+
+    /// <summary>
+    /// A modifier key Windows reports down, which the server did not press (the user's, or a stuck one): with its
+    /// extended flag and the scan code that key has on every keyboard (<see cref="KeyNames.ModifierScanCode"/>), so that
+    /// its release reaches the applications that track keys by scan code.
+    /// </summary>
+    public static HeldInput Modifier(ushort virtualKey) =>
+        Key(virtualKey, KeyNames.IsExtended(virtualKey)) with { Scan = KeyNames.ModifierScanCode(virtualKey) };
 
     /// <summary>A mouse button, by its MOUSEEVENTF_LEFTDOWN, RIGHTDOWN or MIDDLEDOWN flag.</summary>
     public static HeldInput Button(uint downFlag) => new(InputEventKind.Mouse, (ushort)downFlag);
@@ -77,6 +90,23 @@ public static class KeyNames
         NativeEnums.VK_SHIFT or NativeEnums.VK_CONTROL or NativeEnums.VK_MENU or
         NativeEnums.VK_LSHIFT or NativeEnums.VK_RSHIFT or NativeEnums.VK_LCONTROL or NativeEnums.VK_RCONTROL or
         NativeEnums.VK_LMENU or NativeEnums.VK_RMENU or NativeEnums.VK_LWIN or NativeEnums.VK_RWIN;
+
+    /// <summary>
+    /// The scan code (without the 0xE0 prefix) of a modifier key: Shift, Ctrl, Alt or Windows, generic (its left key) or
+    /// left/right; 0 for any other key. The modifiers sit at the same place on every PC keyboard, so their scan codes are
+    /// the same in every layout: left Shift 2A, right Shift 36, Ctrl 1D (the right one E0 1D), Alt 38 (the right one
+    /// E0 38), Windows E0 5B and E0 5C.
+    /// </summary>
+    public static ushort ModifierScanCode(ushort virtualKey) => virtualKey switch
+    {
+        NativeEnums.VK_SHIFT or NativeEnums.VK_LSHIFT => 0x2A,
+        NativeEnums.VK_RSHIFT => 0x36,
+        NativeEnums.VK_CONTROL or NativeEnums.VK_LCONTROL or NativeEnums.VK_RCONTROL => 0x1D,
+        NativeEnums.VK_MENU or NativeEnums.VK_LMENU or NativeEnums.VK_RMENU => 0x38,
+        NativeEnums.VK_LWIN => 0x5B,
+        NativeEnums.VK_RWIN => 0x5C,
+        _ => 0
+    };
 
     /// <summary>
     /// True for the keys Windows sends as extended keys: the right Ctrl and Alt, the Windows keys and the
@@ -189,7 +219,7 @@ public static class KeyNames
 }
 
 /// <summary>
-/// What <c>IInputSession.Send</c> did with one batch: refused it because the user paused input, or passed
+/// What <c>IInputSession.Send</c> did with one batch: refused it because input is paused, or passed
 /// it to SendInput, which inserted <see cref="Inserted"/> of <see cref="Requested"/> events.
 /// </summary>
 public readonly record struct InputSendOutcome(bool PausedByUser, int Inserted, int Requested)
@@ -201,7 +231,7 @@ public readonly record struct InputSendOutcome(bool PausedByUser, int Inserted, 
 /// <summary>What a release of held input did.</summary>
 /// <param name="Released">The keys and buttons whose up event was sent.</param>
 /// <param name="StillHeld">The keys and buttons that could not be released (SendInput inserted too few events, or failed).</param>
-/// <param name="PausedByUser">True when the release was refused because the user paused input (user-held keys only).</param>
+/// <param name="PausedByUser">True when the release was refused because input is paused (user-held keys only).</param>
 /// <param name="Error">Why SendInput failed, when it threw.</param>
 public sealed record InputReleaseOutcome(
     IReadOnlyList<string> Released,
@@ -212,7 +242,7 @@ public sealed record InputReleaseOutcome(
     /// <summary>Nothing was down, so nothing was sent.</summary>
     public static InputReleaseOutcome Nothing { get; } = new([], []);
 
-    /// <summary>Refused: the user paused input.</summary>
+    /// <summary>Refused: input is paused.</summary>
     public static InputReleaseOutcome Paused { get; } = new([], [], PausedByUser: true);
 
     /// <summary>True when nothing is left down.</summary>
@@ -232,9 +262,9 @@ public sealed record InputReleaseRecord(
     IReadOnlyList<string> StillHeld,
     string? Error = null);
 
-/// <summary>Whether the user paused the server's input, and since when.</summary>
+/// <summary>Whether the server's input is paused (by the user or by the server itself), and since when.</summary>
 /// <param name="Paused">True while input is paused.</param>
-/// <param name="PausedBy">How it was paused ("hotkey"); null while running.</param>
+/// <param name="PausedBy">How it was paused ("hotkey", or "shared_pause_unreadable" when the shared pause could not be read); null while running.</param>
 /// <param name="PausedAt">When this server paused; null while running.</param>
 /// <param name="ResumedBy">
 /// How it was last resumed ("hotkey", "resume_input" after the user confirmed, or "another_server"); null if never.
@@ -270,6 +300,39 @@ public static class InputControlSources
     /// user confirmed.
     /// </summary>
     public const string OtherServer = "another_server";
+
+    /// <summary>
+    /// The pause every server on the desktop shares could not be read, so this server cannot tell whether the user paused
+    /// input in another one: it pauses itself (fails closed) until the user resumes.
+    /// </summary>
+    public const string SharedPauseUnreadable = "shared_pause_unreadable";
+
+    /// <summary>
+    /// Why input is paused, as the PausedByUser messages tell the agent: the user pressed the pause hotkey
+    /// (<paramref name="chord"/>, when known), or, for <see cref="SharedPauseUnreadable"/>, the server paused itself. The
+    /// user did not make that pause, so the agent must not tell them they did; what it does is the same: stop and ask.
+    /// </summary>
+    /// <param name="pausedBy">How it was paused (<see cref="InputPauseState.PausedBy"/>).</param>
+    /// <param name="chord">The pause hotkey's chord; null when it is not known.</param>
+    public static string PauseCause(string? pausedBy, string? chord) => pausedBy == SharedPauseUnreadable
+        ? "this server could not read the pause it shares with the other Windows App Manager servers on this desktop, so it " +
+          "paused itself in case the user paused input in another one"
+        : $"the user pressed the pause hotkey{(chord is null ? string.Empty : $" ({chord})")}";
+
+    /// <summary>
+    /// Who resumes, as the PausedByUser messages tell the agent: only the user, with the hotkey or by confirming
+    /// resume_input. For <see cref="SharedPauseUnreadable"/> a press of the hotkey does not resume: the first press makes the
+    /// pause the user's own and only a second one resumes, and the presses of another server's chord reach this server only
+    /// once it can read the shared pause again. While the shared pause cannot be read, whoever paused, the hotkey reaches only
+    /// the server that registered the chord. Those messages do not know which server registered it, so in both cases they name
+    /// resume_input and leave the hotkey to get_control_status.
+    /// </summary>
+    /// <param name="pausedBy">How it was paused (<see cref="InputPauseState.PausedBy"/>).</param>
+    /// <param name="sharedPauseUnreadable">The shared pause cannot be read now (<c>IInputSession.IsSharedPauseUnreadable</c>).</param>
+    public static string WhoResumes(string? pausedBy, bool sharedPauseUnreadable) =>
+        pausedBy == SharedPauseUnreadable || sharedPauseUnreadable
+            ? "only the user can, by confirming resume_input (get_control_status says whether the pause hotkey can resume this pause)"
+            : "only the user can, with the hotkey or by confirming resume_input";
 }
 
 /// <summary>Whether the pause hotkey is registered.</summary>
@@ -312,8 +375,11 @@ public sealed record HeldInputStatus(
     InputReleaseRecord? LastRelease);
 
 /// <summary>Result of get_control_status.</summary>
-/// <param name="Paused">True while the user has paused the server's input: every input tool returns PausedByUser.</param>
-/// <param name="PausedBy">How it was paused ("hotkey"); null while running.</param>
+/// <param name="Paused">
+/// True while input is paused (by the user's hotkey, or by the server itself, as <paramref name="PausedBy"/> says): every
+/// input tool returns PausedByUser.
+/// </param>
+/// <param name="PausedBy">How it was paused ("hotkey", or "shared_pause_unreadable" when the shared pause could not be read); null while running.</param>
 /// <param name="PausedAt">When it was paused; null while running.</param>
 /// <param name="ResumedBy">How it was last resumed; null if never.</param>
 /// <param name="ResumedAt">When it was last resumed; null if never.</param>
@@ -322,7 +388,7 @@ public sealed record HeldInputStatus(
 /// True when the pause is shared by every Windows App Manager server on this desktop: the hotkey pauses and resumes
 /// all of them, and so does resume_input.
 /// </param>
-/// <param name="HeldInput">Keys and buttons that are down.</param>
+/// <param name="HeldInput">The keys and buttons the server could not release, and the modifier keys that are down.</param>
 /// <param name="Message">What this means for the agent.</param>
 /// <param name="Takeover">
 /// Takeover detection (roadmap M7.4): off, warn or stop, and whether its hooks work. Null when the server has none.

@@ -29,7 +29,7 @@ public class WorkspaceServiceTests : IDisposable
             Window(Edge, "Inbox - Mail - Microsoft Edge", "msedge"),
             Window(Notepad, "notes.txt - Notepad", "notepad")
         ]);
-        _shell.Setup(s => s.GetExplorerFolders()).Returns([new ExplorerFolder(Explorer, _folder)]);
+        _shell.Setup(s => s.GetExplorerFolders()).Returns(Listing(new ExplorerFolder(Explorer, _folder)));
         _browsers.Setup(b => b.IsBrowserWindow(Edge)).Returns(true);
         _browsers.Setup(b => b.GetBrowserUrlAsync(Edge, It.IsAny<CdpOptions?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new BrowserUrlResult(true, "https://mail.example.com/inbox?folder=1&access_token=abc", "edge", "Inbox", null, BrowserErrorCode.None));
@@ -75,6 +75,80 @@ public class WorkspaceServiceTests : IDisposable
         new(_layouts.Object, _windows.Object, _native.Object, _browsers.Object, _shell.Object, _processes.Object, _tabs.Object, _policy.Object);
 
     private void Saved(LayoutPreset preset) => _saved = preset;
+
+    /// <summary>File Explorer's windows as the shell lists them, every one of them read.</summary>
+    private static ExplorerFolderListing Listing(params ExplorerFolder[] folders) => new(folders, 0);
+
+    [Fact]
+    public async Task Restore_OfAWorkspaceWhoseFileIsInvalid_IsPresetNotFound_AndNamesTheFile()
+    {
+        // Arrange - the file is there, but it is no valid preset (review finding F1)
+        _layouts.Setup(l => l.GetPreset("evening")).Returns((LayoutPreset?)null);
+        _layouts.Setup(l => l.GetInvalidFiles()).Returns([new InvalidLayoutFile("evening.json", "It has no placements.", DateTime.UtcNow)]);
+
+        // Act
+        var result = await CreateSut().RestoreAsync("evening", dryRun: false);
+
+        // Assert
+        result.ErrorCode.Should().Be(nameof(LayoutErrorCode.PresetNotFound));
+        result.Error.Should().Contain("evening.json").And.Contain("It has no placements.");
+        _processes.VerifyNoOtherCalls();
+    }
+
+    // ---- File Explorer windows the shell could not read ----
+
+    [Fact]
+    public async Task Save_WhenAFileExplorerWindowCouldNotBeRead_SaysItsFolderWasNotKept()
+    {
+        // Arrange - the shell read one window and failed another
+        _shell.Setup(s => s.GetExplorerFolders()).Returns(new ExplorerFolderListing([new ExplorerFolder(Explorer, _folder)], 1));
+
+        // Act
+        var result = await CreateSut().SaveAsync("morning", null, null, null, includeMinimized: false);
+
+        // Assert
+        result.Success.Should().BeTrue();
+        result.Folders.Should().Be(1);
+        result.Warnings.Should().Contain(w => w.Contains("1 File Explorer window") && w.Contains("could not be read"));
+    }
+
+    [Fact]
+    public async Task Save_WhenEveryFileExplorerWindowWasRead_SaysNothingAboutIt()
+    {
+        var result = await CreateSut().SaveAsync("morning", null, null, null, includeMinimized: false);
+
+        result.Warnings.Should().NotContain(w => w.Contains("File Explorer"));
+    }
+
+    [Fact]
+    public async Task Restore_WhenAFileExplorerWindowCouldNotBeRead_OpensTheFolder_AndWarnsItMayBeOpenTwice()
+    {
+        // Arrange - the window that could not be read may be the one that shows the folder
+        _shell.Setup(s => s.GetExplorerFolders()).Returns(new ExplorerFolderListing([], 1));
+        Saved(Preset(Placement("explorer", "Reports", content: new WorkspaceContent(Folder: _folder))));
+
+        // Act
+        var result = await CreateSut().RestoreAsync("morning", dryRun: false);
+
+        // Assert
+        result.Opened!.Single().Status.Should().Be("opened");
+        result.Warnings.Should().ContainSingle().Which.Should().Contain("could not be read").And.Contain("second");
+    }
+
+    [Fact]
+    public async Task Restore_WhenEveryFolderIsAlreadyOpen_DoesNotWarnAboutWindowsItCouldNotRead()
+    {
+        // Arrange - nothing is opened, so nothing can be opened twice
+        _shell.Setup(s => s.GetExplorerFolders()).Returns(new ExplorerFolderListing([new ExplorerFolder(Explorer, _folder)], 1));
+        Saved(Preset(Placement("explorer", "Reports", content: new WorkspaceContent(Folder: _folder))));
+
+        // Act
+        var result = await CreateSut().RestoreAsync("morning", dryRun: false);
+
+        // Assert
+        result.Opened!.Single().Status.Should().Be("alreadyOpen");
+        result.Warnings.Should().BeNull();
+    }
 
     // ---- Save ----
 
@@ -194,7 +268,7 @@ public class WorkspaceServiceTests : IDisposable
     [Fact]
     public async Task Restore_AFolderThatNoWindowShows_IsOpenedInFileExplorer()
     {
-        _shell.Setup(s => s.GetExplorerFolders()).Returns([]);
+        _shell.Setup(s => s.GetExplorerFolders()).Returns(Listing());
         Saved(Preset(Placement("explorer", "Reports", content: new WorkspaceContent(Folder: _folder))));
 
         var result = await CreateSut().RestoreAsync("morning", dryRun: false);
@@ -208,7 +282,7 @@ public class WorkspaceServiceTests : IDisposable
     [Fact]
     public async Task Restore_ADryRun_OpensAndStartsNothing()
     {
-        _shell.Setup(s => s.GetExplorerFolders()).Returns([]);
+        _shell.Setup(s => s.GetExplorerFolders()).Returns(Listing());
         Saved(Preset(Placement("explorer", "Reports", content: new WorkspaceContent(Folder: _folder))));
 
         var result = await CreateSut().RestoreAsync("morning", dryRun: true);
@@ -245,7 +319,7 @@ public class WorkspaceServiceTests : IDisposable
     [Fact]
     public async Task Save_WhenFileExplorerDoesNotAnswer_KeepsNoFolder_AndSaysSo()
     {
-        _shell.Setup(s => s.GetExplorerFolders()).Returns((IReadOnlyList<ExplorerFolder>?)null);
+        _shell.Setup(s => s.GetExplorerFolders()).Returns((ExplorerFolderListing?)null);
 
         var result = await CreateSut().SaveAsync("morning", null, null, null, includeMinimized: false);
 
@@ -256,7 +330,7 @@ public class WorkspaceServiceTests : IDisposable
     [Fact]
     public async Task Restore_WhenFileExplorerDoesNotAnswer_OpensNoFolder_RatherThanASecondWindow()
     {
-        _shell.Setup(s => s.GetExplorerFolders()).Returns((IReadOnlyList<ExplorerFolder>?)null);
+        _shell.Setup(s => s.GetExplorerFolders()).Returns((ExplorerFolderListing?)null);
         Saved(Preset(Placement("explorer", "Reports", content: new WorkspaceContent(Folder: _folder))));
 
         var result = await CreateSut().RestoreAsync("morning", dryRun: false);
@@ -286,7 +360,7 @@ public class WorkspaceServiceTests : IDisposable
     [Fact]
     public async Task Restore_AFolderThatIsNotAFullPath_IsNotOpened()
     {
-        _shell.Setup(s => s.GetExplorerFolders()).Returns([]);
+        _shell.Setup(s => s.GetExplorerFolders()).Returns(Listing());
         Saved(Preset(Placement("explorer", "Here", content: new WorkspaceContent(Folder: "."))));
 
         var result = await CreateSut().RestoreAsync("morning", dryRun: false);

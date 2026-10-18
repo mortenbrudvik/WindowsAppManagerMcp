@@ -23,7 +23,9 @@ public class FixturePlacementTests
         var main = e2e.Fixture.MainWindowHandle;
         var workArea = e2e.Server.Monitors.GetPrimaryMonitor().WorkArea;
         var target = new BoundsDto(workArea.X + 40, workArea.Y + 40, 640, 480);
-        LaunchPlacementPlan.TryCreate(new LaunchPlacement(Bounds: target, Focus: true), out var plan, out _, out var error)
+        LaunchPlacementPlan.TryCreate(
+                new LaunchPlacement(Bounds: new PlacementBounds(target.X, target.Y, target.Width, target.Height), Focus: true),
+                out var plan, out _, out var error)
             .Should().BeTrue(error);
 
         // Act

@@ -1429,6 +1429,352 @@ public class AccessibilityWarmupTests
 
     #endregion
 
+    #region Pages of another process that the target policy refuses
+
+    /// <summary>The default deny list, and the WebView2 runtime on it too.</summary>
+    private static readonly TargetPolicy DeniesWebView2 =
+        new(new TargetPolicySettings([.. TargetPolicySettings.DefaultDeniedProcesses, "msedgewebview2"], null, "test"));
+
+    private AccessibilityWarmup CreateSut(ITargetPolicy policy) => new(_tree, _windows.Object, _processes.Object, _clock, (delay, token) =>
+    {
+        _waits.Add(delay);
+        _clock.Advance(delay);
+        _afterWait?.Invoke();
+    }, policy);
+
+    /// <summary>The windows UI Automation is asked for by their handle (FromHandle), in order.</summary>
+    private List<nint> WindowsAskedFor()
+    {
+        var asked = new List<nint>();
+        _tree.FromHandleFailure = handle =>
+        {
+            asked.Add(handle);
+            return null;
+        };
+        return asked;
+    }
+
+    [Fact]
+    public void AWebView2OfADeniedProcess_IsNeitherWarmedUpNorFound_AndAskedNothing()
+    {
+        // Arrange - the user denies the WebView2 runtime; the app that hosts it in a window started it. Asking for the
+        // render widget's element would already make that process turn on its page's accessibility tree
+        WpfWithWebView2();
+        HostsWebView2(BrowserProcess);
+        var asked = WindowsAskedFor();
+        var sut = CreateSut(DeniesWebView2);
+
+        // Act
+        var info = sut.WarmUp(Browser, Budget, CancellationToken.None);
+        var pages = sut.FindPages(Browser, CancellationToken.None);
+        var pagesWithoutAWarmUp = CreateSut(DeniesWebView2).FindPages(Browser, CancellationToken.None);
+
+        // Assert - nor is the window's own tree searched for the WebView2's views
+        info.Should().BeNull();
+        pages.Should().BeEmpty();
+        pagesWithoutAWarmUp.Should().BeEmpty();
+        asked.Should().BeEmpty();
+        _tree.Reads.Should().BeEmpty();
+        _tree.ChildListings.Should().BeEmpty();
+        _waits.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void AWebView2WhoseProcessCannotBeNamed_IsNeitherWarmedUpNorFound_WhileThePolicyDeniesAnything()
+    {
+        // Arrange - the default deny list, which does not name the WebView2 runtime, but its process name cannot be read
+        WpfWithWebView2();
+        _windows.Setup(w => w.GetProcessName(WebViewProcess)).Returns((string?)null);
+        var asked = WindowsAskedFor();
+        var sut = CreateSut(new TargetPolicy(TargetPolicySettings.Default));
+
+        // Act
+        var info = sut.WarmUp(Browser, Budget, CancellationToken.None);
+        var pages = sut.FindPages(Browser, CancellationToken.None);
+
+        // Assert
+        info.Should().BeNull();
+        pages.Should().BeEmpty();
+        asked.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void AWebView2OfAnAllowedProcess_IsWarmedUpAndFound_AsBefore()
+    {
+        // Arrange
+        var pane = WpfWithWebView2();
+        var sut = CreateSut(new TargetPolicy(TargetPolicySettings.Default));
+
+        // Act
+        var info = sut.WarmUp(Browser, Budget, CancellationToken.None);
+        var pages = sut.FindPages(Browser, CancellationToken.None);
+
+        // Assert
+        info!.Host.Should().Be(WebContentHost.WebView2);
+        info.Status.Should().Be(AccessibilityWarmupStatus.Ready);
+        pages.Should().Equal(new RenderWidgetPage(RenderWidget, WebViewHost, pane));
+    }
+
+    [Fact]
+    public void ABrowsersOwnPage_IsWarmedUp_WhateverThePolicyDeniesElsewhere()
+    {
+        // Arrange - Chrome's render widget is a window of its own process, which the read of the window was allowed
+        var document = ChromeWithPage(documentChildren: 2);
+        var sut = CreateSut(DeniesWebView2);
+
+        // Act
+        var info = sut.WarmUp(Browser, Budget, CancellationToken.None);
+        var pages = sut.FindPages(Browser, CancellationToken.None);
+
+        // Assert
+        info!.Status.Should().Be(AccessibilityWarmupStatus.Ready);
+        info.Host.Should().Be(WebContentHost.Chromium);
+        pages.Should().Equal(new RenderWidgetPage(RenderWidget, Browser, document));
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void AWebView2HostedAsAVisual_OfADeniedOrUnnamedProcess_IsNeitherWarmedUpNorFound_AndAskedNothing(bool denied)
+    {
+        // Arrange - the page is drawn into the app's own window: it is told by the msedgewebview2.exe the app started
+        AppWithVisualWebView(documentChildren: 3);
+        if (!denied)
+        {
+            _windows.Setup(w => w.GetProcessName(WebViewProcess)).Returns((string?)null);
+        }
+
+        var asked = WindowsAskedFor();
+        var sut = CreateSut(denied ? DeniesWebView2 : new TargetPolicy(TargetPolicySettings.Default));
+
+        // Act
+        var info = sut.WarmUp(App, Budget, CancellationToken.None);
+        var pages = sut.FindPages(App, CancellationToken.None);
+
+        // Assert
+        info.Should().BeNull();
+        pages.Should().BeEmpty();
+        asked.Should().BeEmpty();
+        _tree.ChildListings.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void AWebView2HostedAsAVisual_OfAnAllowedProcess_IsWarmedUp_AsBefore()
+    {
+        AppWithVisualWebView(documentChildren: 3);
+
+        var info = CreateSut(new TargetPolicy(TargetPolicySettings.Default)).WarmUp(App, Budget, CancellationToken.None);
+
+        info.Should().Be(new AccessibilityWarmupInfo(AccessibilityWarmupStatus.Ready, WebContentHost.WebView2, 0, 1, 3));
+    }
+
+    [Fact]
+    public void AWindowHoldingARenderWidgetOfADeniedProcess_IsNotSearchedForAPageHostedAsAVisual_ThoughItStartedAnAllowedWebView2()
+    {
+        // Arrange - a password manager's page shown as a child window of the app, which also started a WebView2 the policy
+        // allows: a search of the app's tree for a page hosted as a visual would go down into the password manager's element
+        const nint vault = 0x302;
+        const uint vaultProcess = 7000;
+        AppWithVisualWebView(documentChildren: 3);
+        _desktop[vault] = new FakeWindow(AccessibilityWarmup.RenderWidgetHostClass, vaultProcess, App);
+        _windows.Setup(w => w.GetProcessName(vaultProcess)).Returns("KeePass");
+        var asked = WindowsAskedFor();
+        var policy = new TargetPolicy(TargetPolicySettings.Default);
+        var sut = CreateSut(policy);
+
+        // Act
+        var info = sut.WarmUp(App, Budget, CancellationToken.None);
+        var pages = sut.FindPages(App, CancellationToken.None);
+        var pagesWithoutAWarmUp = CreateSut(policy).FindPages(App, CancellationToken.None);
+
+        // Assert
+        info.Should().BeNull();
+        pages.Should().BeEmpty();
+        pagesWithoutAWarmUp.Should().BeEmpty();
+        asked.Should().BeEmpty();
+        _tree.CachedFetches.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void AWindowRememberedWithAPageHostedAsAVisual_IsNotSearchedForItAgain_OnceItHoldsARenderWidgetOfADeniedProcess()
+    {
+        // Arrange - the page was warmed up while the policy allowed everything shown; then a password manager's page is
+        // shown as a child window of the app
+        const nint vault = 0x302;
+        const uint vaultProcess = 7000;
+        AppWithVisualWebView(documentChildren: 3);
+        _windows.Setup(w => w.GetProcessName(vaultProcess)).Returns("KeePass");
+        var sut = CreateSut(new TargetPolicy(TargetPolicySettings.Default));
+        sut.WarmUp(App, Budget, CancellationToken.None)!.Status.Should().Be(AccessibilityWarmupStatus.Ready);
+        _desktop[vault] = new FakeWindow(AccessibilityWarmup.RenderWidgetHostClass, vaultProcess, App);
+        var asked = WindowsAskedFor();
+        var fetched = _tree.CachedFetches.Count;
+
+        // Act
+        var info = sut.WarmUp(App, Budget, CancellationToken.None);
+        var pages = sut.FindPages(App, CancellationToken.None);
+
+        // Assert
+        info.Should().BeNull();
+        pages.Should().BeEmpty();
+        asked.Should().BeEmpty();
+        _tree.CachedFetches.Should().HaveCount(fetched);
+    }
+
+    [Fact]
+    public void ASearchsWarmUp_OfAWebView2OfADeniedProcess_WarmsItUp_ButGivesTheWalkNoPageOfIt()
+    {
+        // Arrange - a search's provider search evaluates its criteria on the page's elements anyway, and leaves its matches
+        // out after: a page left unbuilt would hide them, so criteria could take another match for the only one
+        WpfWithWebView2();
+        var asked = WindowsAskedFor();
+        var sut = CreateSut(DeniesWebView2);
+
+        // Act
+        var info = sut.WarmUpForSearch(Browser, Budget, CancellationToken.None);
+        var pages = sut.FindPages(Browser, CancellationToken.None);
+
+        // Assert - and its warm-up is not reported: nothing of the page is returned, its number of elements neither
+        info.Should().BeNull();
+        pages.Should().BeEmpty();
+        asked.Should().Equal(RenderWidget);
+        sut.RememberedCount.Should().Be(1);
+    }
+
+    [Fact]
+    public void ASearchsWarmUp_WaitsForAPageOfADeniedProcess_ThatIsNotBuiltYet_AndReportsNothingOfIt()
+    {
+        // Arrange - the WebView2 builds its page's tree only once asked, and in the background
+        WpfWithWebView2();
+        var pane = new FakeUiaNode("Pane", "Chrome Legacy Window") { FrameworkId = "Win32" };
+        _tree.WithWindow(RenderWidget, pane);
+        _afterWait = () =>
+        {
+            if (pane.Children.Count == 0)
+            {
+                pane.With(new FakeUiaNode("Text", "Heading") { FrameworkId = "Chrome" },
+                    new FakeUiaNode("Button", "Web button") { FrameworkId = "Chrome" });
+            }
+        };
+        var sut = CreateSut(DeniesWebView2);
+
+        // Act
+        var info = sut.WarmUpForSearch(Browser, Budget, CancellationToken.None);
+        var again = sut.WarmUpForSearch(Browser, Budget, CancellationToken.None);
+
+        // Assert - it waited until the page stopped changing, and the next search does not wait for it again
+        info.Should().BeNull();
+        _waits.Should().HaveCount(2);
+        again.Should().BeNull();
+        _waits.Should().HaveCount(2);
+    }
+
+    [Fact]
+    public void ASearchsWarmUp_OfAWindowWithAnAllowedPage_AndOneOfADeniedProcess_ReportsTheAllowedPageOnly()
+    {
+        // Arrange - Chrome's own page (2 elements) and a page of a WebView2 the policy denies (1 element)
+        const nint deniedHost = 0x104;
+        const nint deniedWidget = 0x103;
+        ChromeWithPage(documentChildren: 2);
+        _desktop[deniedHost] = new FakeWindow("Chrome_WidgetWin_1", WebViewProcess, Browser);
+        _desktop[deniedWidget] = new FakeWindow(AccessibilityWarmup.RenderWidgetHostClass, WebViewProcess, deniedHost);
+        _tree.WithWindow(deniedWidget, new FakeUiaNode("Pane", "Chrome Legacy Window").With(
+            new FakeUiaNode("Button", "Web button") { FrameworkId = "Chrome" }));
+        var asked = new List<nint>();
+        _tree.FromHandleFailure = handle =>
+        {
+            asked.Add(handle);
+            return null;
+        };
+        var sut = CreateSut(DeniesWebView2);
+
+        // Act
+        var info = sut.WarmUpForSearch(Browser, Budget, CancellationToken.None);
+
+        // Assert - both pages were warmed up, and the info counts the elements of the one a read may reach
+        asked.Should().Equal(RenderWidget, deniedWidget);
+        info.Should().Be(new AccessibilityWarmupInfo(AccessibilityWarmupStatus.Ready, WebContentHost.Chromium, 0, 1, 2));
+    }
+
+    [Fact]
+    public void ADeniedPageASearchWarmedUp_IsAskedForOnce_ThoughAWalksWarmUpOfANewTabHeldItBack()
+    {
+        // Arrange - the window's own page, a background tab, and a page of a WebView2 the policy denies
+        const nint deniedHost = 0x104;
+        const nint deniedWidget = 0x103;
+        _desktop[Browser] = new FakeWindow("Chrome_WidgetWin_1", BrowserProcess, 0);
+        _desktop[RenderWidget] = new FakeWindow(AccessibilityWarmup.RenderWidgetHostClass, BrowserProcess, Browser);
+        _desktop[HiddenTab] = new FakeWindow(AccessibilityWarmup.RenderWidgetHostClass, BrowserProcess, Browser, visible: false);
+        _desktop[deniedHost] = new FakeWindow("Chrome_WidgetWin_1", WebViewProcess, Browser);
+        _desktop[deniedWidget] = new FakeWindow(AccessibilityWarmup.RenderWidgetHostClass, WebViewProcess, deniedHost);
+        foreach (var widget in new[] { RenderWidget, HiddenTab })
+        {
+            var document = new FakeUiaNode("Document", "Page");
+            AddChildren(document, 2);
+            _tree.WithWindow(widget, document);
+        }
+
+        _tree.WithWindow(deniedWidget, new FakeUiaNode("Pane", "Chrome Legacy Window").With(
+            new FakeUiaNode("Button", "Web button") { FrameworkId = "Chrome" }));
+        var asked = WindowsAskedFor();
+        var sut = CreateSut(DeniesWebView2);
+        sut.WarmUpForSearch(Browser, Budget, CancellationToken.None).Should().NotBeNull();
+
+        // Act - the user switches tabs; a walk warms up the tab shown now, then a search reads the window again
+        _desktop[RenderWidget].Visible = false;
+        _desktop[HiddenTab].Visible = true;
+        var walk = sut.WarmUp(Browser, Budget, CancellationToken.None);
+        var nextSearch = sut.WarmUpForSearch(Browser, Budget, CancellationToken.None);
+
+        // Assert - the walk warmed up the new tab only, and the page the search warmed up stayed remembered
+        walk!.Status.Should().Be(AccessibilityWarmupStatus.Ready);
+        nextSearch.Should().BeNull();
+        asked.Should().Equal(RenderWidget, deniedWidget, HiddenTab);
+    }
+
+    [Fact]
+    public void AWebView2HostedAsAVisual_OfADeniedProcess_IsWarmedUpForASearch_ButNotLookedForByTheWalkAfterIt()
+    {
+        // Arrange - the search's warm-up remembers the window with its page
+        AppWithVisualWebView(documentChildren: 3);
+        var sut = CreateSut(DeniesWebView2);
+        var search = sut.WarmUpForSearch(App, Budget, CancellationToken.None);
+        var asked = WindowsAskedFor();
+        var fetched = _tree.CachedFetches.Count;
+
+        // Act
+        var walk = sut.WarmUp(App, Budget, CancellationToken.None);
+        var pages = sut.FindPages(App, CancellationToken.None);
+
+        // Assert - the search's warm-up looked for the page and is not reported; a window remembered with such a page is
+        // not searched for it again for the walk
+        search.Should().BeNull();
+        fetched.Should().BePositive();
+        sut.RememberedCount.Should().Be(1);
+        walk.Should().BeNull();
+        pages.Should().BeEmpty();
+        asked.Should().BeEmpty();
+        _tree.CachedFetches.Should().HaveCount(fetched);
+    }
+
+    [Fact]
+    public void ASearchsWarmUp_WithoutAPolicyThatDeniesAnything_IsTheWarmUp()
+    {
+        // Arrange
+        var pane = WpfWithWebView2();
+        var sut = CreateSut(new TargetPolicy(new TargetPolicySettings([], null, "test")));
+
+        // Act
+        var info = sut.WarmUpForSearch(Browser, Budget, CancellationToken.None);
+        var pages = sut.FindPages(Browser, CancellationToken.None);
+
+        // Assert - the walk's pages come from its own warm-up, which a search's does not stand in for
+        info!.Status.Should().Be(AccessibilityWarmupStatus.Ready);
+        pages.Should().Equal(new RenderWidgetPage(RenderWidget, WebViewHost, pane));
+    }
+
+    #endregion
+
     [Theory]
     [InlineData(10_000, 1_500)]
     [InlineData(3_000, 1_000)]

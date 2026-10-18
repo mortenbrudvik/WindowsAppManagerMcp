@@ -18,7 +18,7 @@ public partial class WindowFinderTools
 
     [McpServerTool(Name = "wait_for_window", Title = "Wait for Window", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
     [Description("Wait on the server until a window condition holds, instead of sleeping or calling find_windows again and again: " +
-                 "after a launch, a click that opens a dialog, a close or a save. window is a selector as in find_windows (an untitled " +
+                 "after a launch, a click that opens a dialog, a close or a save. window is a window selector (an untitled " +
                  "dialog needs className or includeUntitled). condition: exists (default: a matching window is open, minimized " +
                  "included), gone (none is open any more; by handle: it closed), foreground (a matching window is in front), " +
                  "visible (on screen: not minimized, hidden or cloaked), title_changed (the one window named has a title other " +
@@ -33,7 +33,7 @@ public partial class WindowFinderTools
                  "candidates, when title_changed or input_idle match several windows; WindowNotFound when title_changed names none. " +
                  "Only reads windows, and other tools run meanwhile.")]
     public async Task<WaitForWindowResult> WaitForWindow(
-        [Description("The window(s) to wait for: a window selector with find_windows' filters (processName is the whole name; className " +
+        [Description("The window(s) to wait for: a window selector (its fields filter as find_windows' do; processName is the whole name; className " +
                      "or includeUntitled for untitled dialogs; index picks one of the windows that count, front to back; handle plus " +
                      "filters waits for that window to match them, e.g. {\"handle\": 1706796, \"titleContains\": \"report.txt\"})")]
         WindowSelector window,
@@ -50,7 +50,7 @@ public partial class WindowFinderTools
         string? previousTitle = null,
         [Description("How long to wait in milliseconds (default: 10000, min: 0, max: 60000); 0 checks once")]
         int timeoutMs = 10_000,
-        [Description("How long the condition must hold before it counts, in milliseconds (default: 300, min: 0, max: 10000; at most timeoutMs)")]
+        [Description("How long the condition must hold before it counts, in milliseconds (default: 300, min: 0, max: 10000; cut to timeoutMs)")]
         int stableMs = 300,
         IProgress<ProgressNotificationValue>? progress = null,
         CancellationToken cancellationToken = default)

@@ -189,7 +189,8 @@ public sealed class DebugBrowserReadinessProbeTests : IDisposable
         // Arrange - the real CdpService over the in-memory HTTP fake: the endpoint answered, so it is not "not listening yet"
         var http = FakeCdpHttpHandler.Json(System.Text.Json.JsonSerializer.Serialize(
             new Dictionary<string, string> { ["Browser"] = "Chrome/141.0.7390.55", ["webSocketDebuggerUrl"] = listed }));
-        var cdp = new CdpService(new CdpTransport(http, FakeCdpWebSocketFactory.NeverConnects()), new FakePortOwnerResolver(BrowserPid));
+        var cdp = new CdpService(
+            new CdpTransport(http, FakeCdpWebSocketFactory.NeverConnects(), new FakePortOwnerResolver(BrowserPid)), new FakePortOwnerResolver(BrowserPid));
         var sut = new DebugBrowserReadinessProbe(cdp, new FakePortOwnerResolver(BrowserPid), _processes.Object)
         {
             PollInterval = TimeSpan.FromMilliseconds(10)
@@ -344,7 +345,8 @@ public sealed class DebugBrowserReadinessProbeTests : IDisposable
     {
         // Arrange - the real CdpService and transport over the in-memory HTTP fake
         var http = FakeCdpHttpHandler.Json($$"""{ "Browser": "Chrome/141.0.7390.55", "webSocketDebuggerUrl": "{{BrowserWs}}" }""");
-        var cdp = new CdpService(new CdpTransport(http, FakeCdpWebSocketFactory.NeverConnects()), new FakePortOwnerResolver(BrowserPid));
+        var cdp = new CdpService(
+            new CdpTransport(http, FakeCdpWebSocketFactory.NeverConnects(), new FakePortOwnerResolver(BrowserPid)), new FakePortOwnerResolver(BrowserPid));
         var sut = new DebugBrowserReadinessProbe(cdp, new FakePortOwnerResolver(BrowserPid), _processes.Object);
 
         // Act

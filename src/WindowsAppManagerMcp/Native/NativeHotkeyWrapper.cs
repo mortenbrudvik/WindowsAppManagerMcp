@@ -26,6 +26,25 @@ public sealed class NativeHotkeyWrapper : INativeHotkeyWrapper
     /// <summary>The prefix of the mark of the server that registered a chord.</summary>
     internal const string ChordHolderPrefix = @"Local\WindowsAppManagerMcp.PauseHotkeyHolder.";
 
+    private readonly string _desktopPauseName;
+
+    /// <summary>The server's wrapper: its shared pause is <see cref="DesktopPauseName"/>, the one every server on the desktop opens.</summary>
+    public NativeHotkeyWrapper()
+        : this(DesktopPauseName)
+    {
+    }
+
+    /// <summary>
+    /// A wrapper whose shared pause is the named event <paramref name="desktopPauseName"/>. Only tests pass a name: one of
+    /// their own, so that two wrappers on it stand for two servers on one desktop without touching the pause of the
+    /// servers running on the machine (the default name is theirs). Nothing is opened until <see cref="OpenDesktopPause"/>.
+    /// </summary>
+    public NativeHotkeyWrapper(string desktopPauseName)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(desktopPauseName);
+        _desktopPauseName = desktopPauseName;
+    }
+
     /// <inheritdoc />
     public uint GetCurrentThreadId() => NativeMethods.Kernel32.GetCurrentThreadId();
 
@@ -69,7 +88,7 @@ public sealed class NativeHotkeyWrapper : INativeHotkeyWrapper
 
     /// <inheritdoc />
     public IDesktopPauseFlag OpenDesktopPause() =>
-        new NamedPauseFlag(new EventWaitHandle(initialState: false, EventResetMode.ManualReset, DesktopPauseName));
+        new NamedPauseFlag(new EventWaitHandle(initialState: false, EventResetMode.ManualReset, _desktopPauseName));
 
     /// <inheritdoc />
     public IDisposable MarkChordHolder(string chordId) =>

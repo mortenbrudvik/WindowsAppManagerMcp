@@ -841,11 +841,12 @@ public class WrapperGuardTests
     public void InputEvent_CarriesOnlyADistance_WhichTheMoveRulesRead()
     {
         // The zero-distance and destination rules read Dx and Dy; MouseData only carries how far a wheel event turns,
-        // which does not change where it goes (the wheel rule checks that), and Scan only a key's scan code, which does not
-        // change which window a key goes to. An InputEvent that gains other data must revisit FixtureOnlyCallPolicy.
+        // which does not change where it goes (the wheel rule checks that), Scan only a key's scan code, which does not
+        // change which window a key goes to, and AltGr only tags the AltGr keys of a character for the server's chord checks
+        // (it never reaches SendInput). An InputEvent that gains other data must revisit FixtureOnlyCallPolicy.
         typeof(InputEvent).GetProperties().Select(p => p.Name).Should().BeEquivalentTo(
             nameof(InputEvent.Kind), nameof(InputEvent.Code), nameof(InputEvent.Flags), nameof(InputEvent.Dx), nameof(InputEvent.Dy),
-            nameof(InputEvent.MouseData), nameof(InputEvent.Scan));
+            nameof(InputEvent.MouseData), nameof(InputEvent.Scan), nameof(InputEvent.AltGr));
     }
 
     [Fact]

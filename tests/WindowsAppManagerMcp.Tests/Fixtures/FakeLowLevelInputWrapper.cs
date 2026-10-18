@@ -12,14 +12,35 @@ public sealed class FakeLowLevelInputWrapper : INativeLowLevelInputWrapper
     private readonly BlockingCollection<object> _queue = new();
     private readonly ConcurrentDictionary<nint, (bool Keyboard, LowLevelInputCallback Callback)> _hooks = new();
     private readonly ConcurrentQueue<(bool Keyboard, int Thread)> _installed = new();
+    private readonly ConcurrentQueue<int> _loopThreads = new();
+    private readonly ConcurrentQueue<Thread> _threads = new();
     private int _nextHook = 0x100;
     private int _stopsPosted;
+    private int _callbackExceptions;
 
     /// <summary>Whether SetKeyboardHook and SetMouseHook install (true) or fail (zero). Default: both install.</summary>
     public Func<bool, bool> OnInstall { get; set; } = _ => true;
 
-    /// <summary>The managed thread that ran the message loop.</summary>
+    /// <summary>The Win32 error a hook that <see cref="OnInstall"/> fails reports (ERROR_ACCESS_DENIED by default).</summary>
+    public int InstallError { get; set; } = 5;
+
+    /// <summary>The managed thread that ran the message loop last.</summary>
     public int? LoopThread { get; private set; }
+
+    /// <summary>Every managed thread that created a message queue (one per monitor thread started), in order.</summary>
+    public IReadOnlyList<int> LoopThreads => _loopThreads.ToArray();
+
+    /// <summary>
+    /// How many of the threads that created a message queue are still running: 0 once a monitor thread that stopped has
+    /// really ended (its last bookkeeping done), which <see cref="ActiveHooks"/> alone does not show.
+    /// </summary>
+    public int RunningLoopThreads => _threads.Count(t => t.IsAlive);
+
+    /// <summary>Makes <see cref="Unhook"/> throw, as removing a hook that failed in an unexpected way would.</summary>
+    public Exception? UnhookFails { get; set; }
+
+    /// <summary>Runs in <see cref="Unhook"/> before the hook is removed, on the thread that removes it.</summary>
+    public Action? OnUnhook { get; set; }
 
     /// <summary>True once the loop's thread created its message queue.</summary>
     public bool QueueCreated { get; private set; }
@@ -34,32 +55,56 @@ public sealed class FakeLowLevelInputWrapper : INativeLowLevelInputWrapper
     public int StopsPosted => Volatile.Read(ref _stopsPosted);
 
     /// <summary>
+    /// How many exceptions a hook's callback threw into the "wrapper": the real one swallows them, because an exception that
+    /// crossed back into Windows would end the process, so this one does too, and counts them.
+    /// </summary>
+    public int CallbackExceptions => Volatile.Read(ref _callbackExceptions);
+
+    /// <summary>
     /// An input event, as Windows hands it to the low-level hooks: a key event to the keyboard hooks, any other to the mouse
     /// hooks.
     /// </summary>
     public void Raise(LowLevelInputKind kind, bool injected = false) => _queue.Add(new LowLevelInput(kind, injected));
+
+    /// <summary>The loop's next wait fails (GetMessage returns -1).</summary>
+    public void FailLoop() => _queue.Add(WinEventLoopMessage.Failed);
+
+    /// <summary>The loop's next wait ends it as WM_QUIT does, without the monitor's stop message.</summary>
+    public void QuitLoop() => _queue.Add(WinEventLoopMessage.Stop);
+
+    /// <summary>The loop's next wait throws <paramref name="exception"/>.</summary>
+    public void ThrowInLoop(Exception exception) => _queue.Add(exception);
 
     public uint GetCurrentThreadId() => (uint)Environment.CurrentManagedThreadId;
 
     public void CreateMessageQueue()
     {
         LoopThread = Environment.CurrentManagedThreadId;
+        _loopThreads.Enqueue(Environment.CurrentManagedThreadId);
+        _threads.Enqueue(Thread.CurrentThread);
         QueueCreated = true;
     }
 
-    public nint SetKeyboardHook(LowLevelInputCallback callback) => Install(keyboard: true, callback);
+    public LowLevelHookResult SetKeyboardHook(LowLevelInputCallback callback) => Install(keyboard: true, callback);
 
-    public nint SetMouseHook(LowLevelInputCallback callback) => Install(keyboard: false, callback);
+    public LowLevelHookResult SetMouseHook(LowLevelInputCallback callback) => Install(keyboard: false, callback);
 
-    public bool Unhook(nint hook) => _hooks.TryRemove(hook, out _);
+    public bool Unhook(nint hook)
+    {
+        OnUnhook?.Invoke();
+        return UnhookFails is { } failure ? throw failure : _hooks.TryRemove(hook, out _);
+    }
 
     public WinEventLoopMessage WaitForMessage()
     {
         while (_queue.TryTake(out var item, TimeSpan.FromSeconds(30)))
         {
-            if (item is WinEventLoopMessage message)
+            switch (item)
             {
-                return message;
+                case WinEventLoopMessage message:
+                    return message;
+                case Exception exception:
+                    throw exception;
             }
 
             // An input event: the hooks of its device are called here, on the loop's thread, while it waits
@@ -67,7 +112,14 @@ public sealed class FakeLowLevelInputWrapper : INativeLowLevelInputWrapper
             var keyboard = input.Kind is LowLevelInputKind.KeyDown or LowLevelInputKind.KeyUp;
             foreach (var hook in _hooks.Values.Where(h => h.Keyboard == keyboard))
             {
-                hook.Callback(input);
+                try
+                {
+                    hook.Callback(input);
+                }
+                catch (Exception)
+                {
+                    Interlocked.Increment(ref _callbackExceptions);
+                }
             }
         }
 
@@ -88,16 +140,16 @@ public sealed class FakeLowLevelInputWrapper : INativeLowLevelInputWrapper
         return true;
     }
 
-    private nint Install(bool keyboard, LowLevelInputCallback callback)
+    private LowLevelHookResult Install(bool keyboard, LowLevelInputCallback callback)
     {
         if (!OnInstall(keyboard))
         {
-            return nint.Zero;
+            return LowLevelHookResult.Failure(InstallError);
         }
 
         var hook = new nint(Interlocked.Increment(ref _nextHook));
         _hooks[hook] = (keyboard, callback);
         _installed.Enqueue((keyboard, Environment.CurrentManagedThreadId));
-        return hook;
+        return LowLevelHookResult.Installed(hook);
     }
 }

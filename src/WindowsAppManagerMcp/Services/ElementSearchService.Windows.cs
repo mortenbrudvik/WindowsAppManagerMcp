@@ -148,7 +148,7 @@ public sealed partial class ElementSearchService
             {
                 if (await ReadAsync(call, group.Key, t =>
                     {
-                        described = Describe(call.Query, call.Criteria, matches, call.Generation, mayRead: true, Unique, t);
+                        described = Describe(call.Query, call.Criteria, matches, call.Generation, mayRead: true, Unique, call.Started.Foreign, t);
                         return null;
                     }, token).ConfigureAwait(false) is { } describeFailure)
                 {
@@ -158,7 +158,7 @@ public sealed partial class ElementSearchService
             catch (UiaReadRefusedException)
             {
                 // Described from what the search read, with no further call
-                described = Describe(call.Query, call.Criteria, matches, call.Generation, mayRead: false, Unique, default);
+                described = Describe(call.Query, call.Criteria, matches, call.Generation, mayRead: false, Unique, call.Started.Foreign, default);
             }
 
             elements.AddRange(described ?? []);
@@ -174,7 +174,7 @@ public sealed partial class ElementSearchService
             {
                 if (await ReadAsync(call, handle, t =>
                     {
-                        withItems = WithVirtualized(described, lookup, call.Query, call.Criteria, call.Generation, t);
+                        withItems = WithVirtualized(described, lookup, call.Query, call.Criteria, call.Generation, call.Started.Foreign, t);
                         return null;
                     }, token).ConfigureAwait(false) is { } itemsFailure)
                 {
@@ -184,7 +184,8 @@ public sealed partial class ElementSearchService
             catch (UiaReadRefusedException)
             {
                 // The items with their refs, described from what the lookup read
-                withItems = WithVirtualized(described, lookup, call.Query, call.Criteria, call.Generation, new CancellationToken(canceled: true));
+                withItems = WithVirtualized(described, lookup, call.Query, call.Criteria, call.Generation, call.Started.Foreign,
+                    new CancellationToken(canceled: true));
             }
 
             result = withItems ?? result;

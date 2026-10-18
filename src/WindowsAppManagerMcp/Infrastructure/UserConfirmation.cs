@@ -72,7 +72,7 @@ public static class UserConfirmation
             }
             catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
             {
-                return new ConfirmationAnswer(false, $"The user did not answer within {timeout.TotalMinutes:0.#} minutes.");
+                return new ConfirmationAnswer(false, NoAnswerReason(timeout));
             }
             catch (Exception ex) when (ex is InvalidOperationException or McpException)
             {
@@ -92,6 +92,19 @@ public static class UserConfirmation
         return new ConfirmationAnswer(false, answer.IsAccepted
             ? "The user did not confirm."
             : $"The user {(answer.Action == "decline" ? "declined" : "dismissed")} the question.");
+    }
+
+    /// <summary>
+    /// Why a question that got no answer within <paramref name="timeout"/> is no confirmation, with the wait in seconds below
+    /// a minute and in minutes from one, to one decimal, the same in every culture: in minutes alone, a wait under three
+    /// seconds read "within 0 minutes".
+    /// </summary>
+    public static string NoAnswerReason(TimeSpan timeout)
+    {
+        var (amount, unit) = timeout < TimeSpan.FromMinutes(1) ? (timeout.TotalSeconds, "second") : (timeout.TotalMinutes, "minute");
+        var rounded = Math.Round(amount, 1, MidpointRounding.AwayFromZero);
+        var number = rounded.ToString("0.#", CultureInfo.InvariantCulture);
+        return $"The user did not answer within {number} {unit}{(rounded == 1 ? string.Empty : "s")}.";
     }
 
     /// <summary>The longest text from another app, such as a window title, that a question shows (<see cref="Quote"/>).</summary>
