@@ -86,7 +86,7 @@ public static class MonitorSelection
         }
 
         return NotFound($"monitor '{name}' names no monitor. It takes an index (0 to {monitors.Count - 1}), 'primary', 'left', " +
-                        "'right', 'current' (the foreground window's monitor), or an id or name from get_monitors.");
+                        "'right', 'current' (the foreground window's monitor), or an id or device name from get_monitors.");
     }
 
     /// <summary>

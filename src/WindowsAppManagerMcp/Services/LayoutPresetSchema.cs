@@ -504,7 +504,7 @@ public static partial class LayoutPresetSchema
         if (Is(name, MonitorSelection.Current) || Is(name, MonitorSelection.All))
         {
             return Fail($"{at}.monitor '{name}' cannot be saved: it names no one monitor when the layout is applied. Use 'primary', " +
-                        "'left', 'right', or an id or name from get_monitors.", out error);
+                        "'left', 'right', or an id or device name from get_monitors.", out error);
         }
 
         var keyword = Is(name, MonitorSelection.Primary) || Is(name, MonitorSelection.Left) || Is(name, MonitorSelection.Right);
@@ -513,7 +513,7 @@ public static partial class LayoutPresetSchema
                          name.StartsWith("DISPLAY", StringComparison.OrdinalIgnoreCase);
         if (!keyword && !id && !deviceName)
         {
-            return Fail($"{at}.monitor '{name}' names no monitor: give an index, 'primary', 'left', 'right', or an id or name from " +
+            return Fail($"{at}.monitor '{name}' names no monitor: give an index, 'primary', 'left', 'right', or an id or device name from " +
                         "get_monitors.", out error);
         }
 

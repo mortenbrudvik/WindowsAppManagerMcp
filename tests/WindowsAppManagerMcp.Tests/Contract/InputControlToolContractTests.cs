@@ -241,6 +241,48 @@ public sealed class InputControlToolContractTests : IDisposable
         _session.IsPaused.Should().BeTrue();
     }
 
+    [Fact]
+    public async Task ResumeInput_ClientWithoutElicitation_WhenTheServerPausedItself_SaysWhy_NotThatTheUserPausedIt()
+    {
+        // The server pauses itself when it cannot read the shared pause: the agent must not tell the user they paused it
+        using var session = new InputSession(_input, PauseHotkeyOptions.Default, _clock);
+        session.ShareDesktopPause(new FakeDesktopPauseFlag { ReadFails = new IOException("the handle broke") });
+        await using var server = await StartAsync(session: session);
+
+        var result = Payload(await server.CallToolAsync("resume_input"));
+
+        result.GetProperty("errorCode").GetString().Should().Be(nameof(InputErrorCode.ResumeNeedsUser));
+        result.GetProperty("error").GetString().Should().Contain("Input is paused").And.Contain("could not read the pause it shares")
+            .And.NotContain("paused by the user").And.NotContain("pressed the pause hotkey").And.Contain("Ctrl+Alt+Shift+Pause");
+        session.IsPaused.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task ResumeInput_ClientWithoutElicitation_AfterTheHotkey_SaysTheUserPausedIt()
+    {
+        _session.Pause(InputControlSources.Hotkey);
+        await using var server = await StartAsync();
+
+        var result = Payload(await server.CallToolAsync("resume_input"));
+
+        result.GetProperty("error").GetString().Should().Contain("Input is paused: the user pressed the pause hotkey (Ctrl+Alt+Shift+Pause)");
+    }
+
+    [Fact]
+    public async Task ResumeInput_WhenTheServerPausedItself_TheQuestionSaysWhy_NotThatTheUserPausedIt()
+    {
+        // The user is asked: telling them "You paused it" would be false, and could make them resume a pause they never made
+        using var session = new InputSession(_input, PauseHotkeyOptions.Default, _clock);
+        session.ShareDesktopPause(new FakeDesktopPauseFlag { ReadFails = new IOException("the handle broke") });
+        await using var server = await StartAsync(answer: (_, _) => Answer("decline"), session: session);
+
+        await server.CallToolAsync("resume_input");
+
+        _question!.Message.Should().Contain("resume keyboard and mouse input").And.Contain("could not read the pause it shares")
+            .And.NotContain("You paused it");
+        session.IsPaused.Should().BeTrue();
+    }
+
     [Theory]
     [MemberData(nameof(Revisions))]
     public async Task ResumeInput_TheUserConfirms_Resumes(string? revision)
@@ -532,6 +574,7 @@ public sealed class InputControlToolContractTests : IDisposable
             new Dictionary<string, object?> { ["releaseHeldModifiers"] = true }));
 
         result.GetProperty("errorCode").GetString().Should().Be(nameof(InputErrorCode.PausedByUser));
+        result.GetProperty("error").GetString().Should().Contain("Input is paused: the user pressed the pause hotkey (Ctrl+Alt+Shift+Pause)");
         _input.IsKeyDown(VkLWin).Should().BeTrue();
         _input.IsKeyDown(0x41).Should().BeFalse();
     }

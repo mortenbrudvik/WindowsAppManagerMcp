@@ -256,9 +256,9 @@ public class NestedArgumentContractTests
 
     [Theory]
     [InlineData("launch_application", """{ "executable": "notepad", "placement": { "monitor": true } }""",
-        "monitor takes an index (0-based) or a name: 'primary', 'left', 'right', 'current', or an id or name from get_monitors. (at placement.monitor)")]
+        "monitor takes an index (0-based) or a name: 'primary', 'left', 'right', 'current', or an id or device name from get_monitors. (at placement.monitor)")]
     [InlineData("take_screenshot", """{ "monitor": true }""",
-        "monitor takes an index (0-based) or a name: 'primary', 'left', 'right', 'current', or an id or name from get_monitors.")]
+        "monitor takes an index (0-based) or a name: 'primary', 'left', 'right', 'current', or an id or device name from get_monitors.")]
     [InlineData("press_keys", """{ "keys": 5, "windowHandle": 1706796 }""",
         "keys takes a string, such as 'ctrl+shift+t', or an array of strings, such as ['ctrl','shift','t'].")]
     [InlineData("close_windows_batch", """{ "windows": [ { "window": { "processId": "notepad" } } ] }""",

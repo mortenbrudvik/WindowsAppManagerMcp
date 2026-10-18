@@ -92,6 +92,20 @@ public class SharedPauseUnreadableMessageTests : IDisposable
     }
 
     [Fact]
+    public void ReleaseAllInput_WithReleaseHeldModifiers_SaysTheServerPausedItself_NotTheUser()
+    {
+        // A stuck Windows key: not one of the pause hotkey's modifiers, so only the pause leaves it down
+        _input.Press(0x5B);
+
+        var result = new InputControlTools(_session, new Mock<IPauseHotkey>().Object).ReleaseAllInput(releaseHeldModifiers: true);
+
+        result.ErrorCode.Should().Be(InputErrorCode.PausedByUser);
+        result.Error.Should().Contain("Input is paused").And.Contain("could not read the pause it shares")
+            .And.NotContain("by the user").And.NotContain("pressed the pause hotkey").And.Contain("left alone");
+        _input.IsKeyDown(0x5B).Should().BeTrue();
+    }
+
+    [Fact]
     public void APauseTheUserMade_StillSaysTheyPressedTheHotkey()
     {
         InputControlSources.PauseCause(InputControlSources.Hotkey, "Ctrl+Alt+Shift+Pause")

@@ -170,6 +170,19 @@ public class LayoutPresetSchemaTests
         error.Should().StartWith("placements[3]").And.Contain(expected, why);
     }
 
+    [Theory]
+    [InlineData("current")]
+    [InlineData("middle")]
+    public void AMonitorThatCannotBeSaved_SaysAnIdOrDeviceNameFromGetMonitors(string monitor)
+    {
+        // get_monitors' friendlyName names no monitor: only its id and device name (\\.\DISPLAYn) do
+        var spec = new LayoutPlacementSpec("Code", Snap: "left_half", Monitor: MonitorSelector.Of(monitor));
+
+        LayoutPresetSchema.TryBuildPlacement(spec, 0, Monitors, out _, out var error).Should().BeFalse();
+
+        error.Should().Contain("an id or device name from get_monitors");
+    }
+
     [Fact]
     public void ASnap_IsKept_AndItsRectangleOnTheMonitorIsThePosition_ForOlderServers()
     {

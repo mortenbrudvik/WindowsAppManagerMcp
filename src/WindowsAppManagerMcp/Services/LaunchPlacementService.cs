@@ -223,8 +223,7 @@ public sealed class LaunchPlacementService : ILaunchPlacementService
                 {
                     failures[i] = WindowChangeResult.Failed(handle, PausedByUser,
                         "The window was placed, but the app moved it again on its own (it restored its saved position or size), and it " +
-                        "was not placed again because the user paused input (pause hotkey). Stop and ask the user; never resume " +
-                        "input yourself.");
+                        $"was not placed again. Input is paused: {PauseCause()}. Stop and ask the user; never resume input yourself.");
                     continue;
                 }
 
@@ -259,6 +258,12 @@ public sealed class LaunchPlacementService : ILaunchPlacementService
 
     private static TimeSpan Min(TimeSpan a, TimeSpan b) => a < b ? a : b;
 
+    /// <summary>
+    /// Why input is paused (<see cref="InputControlSources.PauseCause"/>): the server pauses itself when it cannot read the pause it
+    /// shares with the other servers, which the user did not do.
+    /// </summary>
+    private string PauseCause() => InputControlSources.PauseCause(_session?.PauseState?.PausedBy, _session?.PauseChord);
+
     /// <summary>Why a window is not placed at all, before anything is sent to it; null when it can be.</summary>
     private WindowChangeResult? Refusal(nint handle)
     {
@@ -271,8 +276,8 @@ public sealed class LaunchPlacementService : ILaunchPlacementService
         if (_session?.IsPaused == true)
         {
             return WindowChangeResult.Failed(handle, PausedByUser,
-                "The app was launched, but its window was not placed or focused because the user paused input (pause hotkey). Stop " +
-                "and ask the user; never resume input yourself.");
+                $"The app was launched, but its window was not placed or focused. Input is paused: {PauseCause()}. Stop and ask the " +
+                "user; never resume input yourself.");
         }
 
         if (window.IsAgentHost)

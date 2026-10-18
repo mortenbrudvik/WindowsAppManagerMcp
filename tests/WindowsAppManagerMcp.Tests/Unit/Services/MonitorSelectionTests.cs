@@ -222,7 +222,7 @@ public class MonitorSelectionTests
 
         // Assert
         resolution.ErrorCode.Should().Be(nameof(WindowErrorCode.MonitorNotFound));
-        resolution.Error.Should().Contain("'primary'").And.Contain("'current'").And.Contain("get_monitors");
+        resolution.Error.Should().Contain("'primary'").And.Contain("'current'").And.Contain("an id or device name from get_monitors");
     }
 
     [Fact]

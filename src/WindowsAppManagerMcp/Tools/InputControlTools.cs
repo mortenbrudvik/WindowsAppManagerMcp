@@ -134,18 +134,23 @@ public class InputControlTools
         if (server.ClientCapabilities?.Elicitation?.Form == null)
         {
             return new ResumeInputResult(false, WasPaused: true,
-                Error: $"Input was paused by the user, and this MCP client cannot ask the user to confirm a resume (it does not support " +
-                       $"elicitation). Only the user can resume, by pressing {hotkeyHint} again. Tell the user and wait.",
+                Error: $"Input is paused: {InputControlSources.PauseCause(state.PausedBy, chord)}. This MCP client cannot ask the user " +
+                       $"to confirm a resume (it does not support elicitation), so input was not resumed. Only the user can resume, " +
+                       $"with {hotkeyHint}. Tell the user and wait.",
                 ErrorCode: InputErrorCode.ResumeNeedsUser);
         }
 
         var everyServer = _session.SharesDesktopPause
             ? " The pause is shared: resuming lets every Windows App Manager server on this desktop send input again."
             : string.Empty;
+        // The server's own pause, when the shared one could not be read, is not the user's: the question must not say it is
+        var why = state.PausedBy == InputControlSources.SharedPauseUnreadable
+            ? $"Input is paused{Since(state.PausedAt)}: {InputControlSources.PauseCause(state.PausedBy, chord)}."
+            : $"You paused it{(chord == null ? string.Empty : $" with {chord}")}{Since(state.PausedAt)}.";
         var question = new ElicitRequestParams
         {
-            Message = $"The AI agent asks to resume keyboard and mouse input. You paused it{(chord == null ? string.Empty : $" with {chord}")}" +
-                      $"{Since(state.PausedAt)}.{everyServer} Resume only if you want the agent to send input to your desktop again.",
+            Message = $"The AI agent asks to resume keyboard and mouse input. {why}{everyServer} Resume only if you want the agent " +
+                      "to send input to your desktop again.",
             RequestedSchema = new ElicitRequestParams.RequestSchema
             {
                 Properties = new Dictionary<string, ElicitRequestParams.PrimitiveSchemaDefinition>
@@ -250,7 +255,8 @@ public class InputControlTools
             else if (modifiers.PausedByUser)
             {
                 errorCode = errorCode == InputErrorCode.None ? InputErrorCode.PausedByUser : errorCode;
-                error = Join(error, "Input is paused by the user, so modifier keys the server did not press were left alone.");
+                error = Join(error, $"Input is paused: {InputControlSources.PauseCause(_session.PauseState?.PausedBy, _session.PauseChord)}. " +
+                                    "Modifier keys the server did not press were left alone.");
             }
             else
             {
