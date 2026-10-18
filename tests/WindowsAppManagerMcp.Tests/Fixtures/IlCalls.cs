@@ -44,14 +44,43 @@ public static class IlCalls
     public static IReadOnlyList<MethodBase> CalledMethods(MethodBase method)
     {
         var called = new List<MethodBase>();
+        var typeArguments = method.DeclaringType is { IsGenericType: true } declaring ? declaring.GetGenericArguments() : null;
+        var methodArguments = method.IsGenericMethod ? method.GetGenericArguments() : null;
+        foreach (var (opCode, operand) in Instructions(method))
+        {
+            if (opCode.OperandType != OperandType.InlineMethod)
+            {
+                continue;
+            }
+
+            try
+            {
+                if (method.Module.ResolveMethod(operand, typeArguments, methodArguments) is { } callee)
+                {
+                    called.Add(callee);
+                }
+            }
+            catch (ArgumentException)
+            {
+                // A token that cannot be resolved in this generic context; not a call these tests track
+            }
+        }
+
+        return called;
+    }
+
+    /// <summary>True when <paramref name="method"/>'s body has an instruction with <paramref name="opCode"/> (calli, for example).</summary>
+    public static bool Uses(MethodBase method, OpCode opCode) => Instructions(method).Any(i => i.OpCode == opCode);
+
+    /// <summary>The instructions of a method body: each opcode with its 4-byte token operand, or 0 when it has none.</summary>
+    private static IEnumerable<(OpCode OpCode, int Operand)> Instructions(MethodBase method)
+    {
         var il = method.GetMethodBody()?.GetILAsByteArray();
         if (il == null)
         {
-            return called;
+            yield break;
         }
 
-        var typeArguments = method.DeclaringType is { IsGenericType: true } declaring ? declaring.GetGenericArguments() : null;
-        var methodArguments = method.IsGenericMethod ? method.GetGenericArguments() : null;
         var position = 0;
         while (position < il.Length)
         {
@@ -62,22 +91,7 @@ public static class IlCalls
             }
 
             var opCode = OpCodesByValue[value];
-            if (opCode.OperandType == OperandType.InlineMethod)
-            {
-                try
-                {
-                    if (method.Module.ResolveMethod(BitConverter.ToInt32(il, position), typeArguments, methodArguments) is { } callee)
-                    {
-                        called.Add(callee);
-                    }
-                }
-                catch (ArgumentException)
-                {
-                    // A token that cannot be resolved in this generic context; not a call these tests track
-                }
-            }
-
-            position += opCode.OperandType switch
+            var size = opCode.OperandType switch
             {
                 OperandType.InlineNone => 0,
                 OperandType.ShortInlineBrTarget or OperandType.ShortInlineI or OperandType.ShortInlineVar => 1,
@@ -86,9 +100,9 @@ public static class IlCalls
                 OperandType.InlineSwitch => 4 + 4 * BitConverter.ToInt32(il, position),
                 _ => 4
             };
+            yield return (opCode, size == 4 ? BitConverter.ToInt32(il, position) : 0);
+            position += size;
         }
-
-        return called;
     }
 
     /// <summary>Every method that the code of <paramref name="type"/> (its nested types included) calls.</summary>
