@@ -11,7 +11,8 @@ namespace WindowsAppManagerMcp.Tests.Contract;
 /// Contract: the user's target policy (docs/TOOLS.md, Target policy) holds for every tool that names a window or a process. Every
 /// served tool whose input schema takes a window (handle, windowHandle, toWindowHandle, aboveHandle, a window selector, a batch's
 /// windows, placements or changes, a launch's expectWindow or placement), an element's ref (ref, withinRef, listRef) or a
-/// processId is called with a window, element or process the policy denies, through the production pipeline and the real
+/// processId, and every tool the docs list under the policy whose target is the window in front or at a point
+/// (<see cref="TargetedByPointOrFront"/>), is called with a window, element or process the policy denies, through the production pipeline and the real
 /// services over faked native seams (<see cref="NativeFakedServer"/>): it must answer TargetDeniedByPolicy, and nothing may act
 /// (no window change, input, process start or stop, clipboard write, UI Automation action or CDP command), read the window
 /// through UI Automation (by its handle, or by an element of it: its properties, a search under it, its children) or capture
@@ -49,8 +50,10 @@ public sealed class DeniedTargetContractTests
     /// <param name="Before">A call made first that must succeed, such as saving the layout the call applies.</param>
     /// <param name="RefTo">The denied window's element whose ref the server's registry gives before the call, as a read would
     /// have given it to the agent.</param>
+    /// <param name="InFront">The denied window is the window in front (<see cref="DeniedDesktop.PutTheDeniedWindowInFront"/>):
+    /// the call names no window, and reaches the one in front.</param>
     public sealed record DeniedCall(string Arguments, RefusalAt At = RefusalAt.Result, (string Tool, string Arguments)? Before = null,
-        Func<DeniedDesktop, FakeUiaNode>? RefTo = null);
+        Func<DeniedDesktop, FakeUiaNode>? RefTo = null, bool InFront = false);
 
     /// <summary>The placeholder in <see cref="DeniedCall.Arguments"/> for the ref of <see cref="DeniedCall.RefTo"/>.</summary>
     private const string DeniedRef = "{deniedRef}";
@@ -94,6 +97,9 @@ public sealed class DeniedTargetContractTests
         ["read_element_text"] = new($$"""{ "window": { "handle": {{Denied}} }, "name": "Transfer money" }"""),
         // A table of the denied window by a ref the agent holds (it takes nothing else)
         ["read_table"] = new($$"""{ "ref": "{{DeniedRef}}" }""", RefTo: d => d.TableNode),
+        // Name no window (TargetedByPointOrFront): the focus in the denied window in front, and the element at a point over it
+        ["get_focused_element"] = new("""{ }""", InFront: true),
+        ["get_element_at_point"] = new("""{ "x": 500, "y": 500 }"""),
         ["wait_for_element"] = new($$"""{ "window": { "handle": {{Denied}} }, "name": "Transfer money", "timeoutMs": 200 }"""),
         // Succeeds with what it may read, and lists the window it left out in errors (documented)
         ["get_desktop_state"] = new($$"""{ "handle": {{Denied}} }""", RefusalAt.AnItem),
@@ -143,6 +149,10 @@ public sealed class DeniedTargetContractTests
                 new($$"""{ "withinRef": "{{DeniedRef}}", "name": "Salary 3,200.00" }""", RefTo: d => d.TableNode)),
             // No handle: the window captured is the ref's own, read from the registry
             ["capture_window: by a ref"] = ("capture_window", new($$"""{ "ref": "{{DeniedRef}}" }""", RefTo: d => d.ButtonNode)),
+            // No windowHandle: the input would reach the denied window, in front or at the point (Target policy: the window the
+            // input would reach)
+            ["type_text: to the window in front"] = ("type_text", new("""{ "text": "1000" }""", InFront: true)),
+            ["mouse_click: at a point over it"] = ("mouse_click", new("""{ "x": 500, "y": 500 }""")),
         };
 
     /// <summary>A launch tool's call that would reuse, place or focus the denied window.</summary>
@@ -204,6 +214,13 @@ public sealed class DeniedTargetContractTests
         "ref", "withinRef", "listRef", "expectWindow", "placement"
     };
 
+    /// <summary>
+    /// The tools on <see cref="Checked"/> whose target no schema property names: the window in front, or the window at a point.
+    /// The schema scan cannot find them, so the docs' list of the tools the policy applies to (<see cref="ToolsThePolicyAppliesTo"/>)
+    /// holds them on a list.
+    /// </summary>
+    private static readonly HashSet<string> TargetedByPointOrFront = new(StringComparer.Ordinal) { "get_focused_element", "get_element_at_point" };
+
     /// <summary>Every call to make: each tool of <see cref="Checked"/> by its name, and each of <see cref="Variants"/> by its key.</summary>
     public static TheoryData<string> CheckedTools()
     {
@@ -234,11 +251,31 @@ public sealed class DeniedTargetContractTests
             "a tool that takes a window or a process must refuse one the user's target policy denies: add it to Checked with a call " +
             "that names the denied window (a launch tool to Launches), or to Exempt with the reason it legitimately does not apply " +
             "the policy");
-        Checked.Keys.Concat(Exempt.Keys).Concat(launches).Concat(CheckedElsewhere.Keys).Except(targeting).Should().BeEmpty(
-            "an entry names a served tool that takes a window or a process");
+        Checked.Keys.Concat(Exempt.Keys).Concat(launches).Concat(CheckedElsewhere.Keys).Except(TargetedByPointOrFront).Except(targeting)
+            .Should().BeEmpty("an entry names a served tool that takes a window or a process");
+        TargetedByPointOrFront.Should().BeSubsetOf(Checked.Keys, "a tool that targets the window in front or at a point is checked")
+            .And.NotIntersectWith(targeting, "a tool whose schema names its target is found by the scan");
         Variants.Values.Select(v => v.Tool).Except(Checked.Keys).Should().BeEmpty("a variant calls a tool that is checked");
         targeting.Should().Contain("read_table", "the scan must see a tool that names its target only by a ref");
         targeting.Should().Contain(["launch_application", "launch_applications_batch"], "the scan must see a launch's expectWindow and placement");
+    }
+
+    [Fact]
+    public void EveryToolTheDocsPutUnderThePolicy_IsCheckedOrExempt()
+    {
+        // Arrange - the tools docs/TOOLS.md's Target policy section links in its list of what the policy applies to (it also
+        // names the window lists, which are exempt), whatever their schemas take
+        var documented = ToolsThePolicyAppliesTo();
+        var served = ServedSchemas().Select(t => t.Name).ToHashSet(StringComparer.Ordinal);
+
+        // Assert
+        documented.Should().Contain(["close_window", "read_table", "get_focused_element", "get_element_at_point", "find_windows"],
+            "the scan must see the tools the list links");
+        documented.Where(served.Contains)
+            .Except(Checked.Keys).Except(Exempt.Keys).Except(Launches.Values.Select(l => l.Tool)).Except(CheckedElsewhere.Keys)
+            .Should().BeEmpty(
+                "docs/TOOLS.md says the policy applies to these tools: add each to Checked with a call that names the denied window " +
+                "(one whose schema names no window to TargetedByPointOrFront too), or correct the docs");
     }
 
     [Theory]
@@ -248,6 +285,11 @@ public sealed class DeniedTargetContractTests
         // Arrange
         var (tool, call) = Checked.TryGetValue(name, out var named) ? (name, named) : Variants[name];
         using var desktop = new NativeFakedServer(DeniedDesktop.Policy);
+        if (call.InFront)
+        {
+            desktop.Desktop.PutTheDeniedWindowInFront();
+        }
+
         await using var server = await desktop.StartAsync();
 
         if (call.Before is var (before, beforeArguments))
@@ -367,6 +409,22 @@ public sealed class DeniedTargetContractTests
             "GetChildElements of Transactions", "Read:Salary 3,200.00", "Read:Transfer money"
         ]);
         desktop.Desktop.DeniedElementNames.Should().Contain(["Salary 3,200.00", "Save"], "the names are read from the denied windows' trees");
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("Balance: 3,200.00")]
+    public void TheReadCheck_RefusesADeniedElementItCouldNotMatch(string? name)
+    {
+        // Arrange - the fake tree logs a property read as "Kind:Name": an element with no name, or a colon in it, would go unseen
+        using var desktop = new NativeFakedServer(DeniedDesktop.Policy);
+        desktop.Desktop.WindowNode.With(new FakeUiaNode("Text", name) { ProcessId = DeniedPid });
+
+        // Act
+        var names = () => desktop.Desktop.DeniedElementNames;
+
+        // Assert
+        names.Should().Throw<InvalidOperationException>().WithMessage("*name*");
     }
 
     // ---- helpers ----
@@ -505,6 +563,23 @@ public sealed class DeniedTargetContractTests
         return provider.GetRequiredService<IOptions<McpServerOptions>>().Value.ToolCollection!
             .Select(t => (t.ProtocolTool.Name, t.ProtocolTool.InputSchema.Clone()))
             .ToList();
+    }
+
+    /// <summary>
+    /// The tools linked ([name](#name)) in the bullets that follow "The policy applies to:" in docs/TOOLS.md's Target policy
+    /// section; links to sections ([input tool](#input-guard)) are no tools and are left out by the caller.
+    /// </summary>
+    private static IReadOnlySet<string> ToolsThePolicyAppliesTo()
+    {
+        const string Intro = "The policy applies to:";
+        var lines = File.ReadAllLines(RepositoryFiles.PathOf("docs", "TOOLS.md"));
+        var start = Array.FindIndex(lines, line => line.Trim() == Intro);
+        start.Should().BeGreaterThan(0, "docs/TOOLS.md's Target policy section has a list that starts '{0}'", Intro);
+        return lines.Skip(start + 1)
+            .SkipWhile(string.IsNullOrWhiteSpace)
+            .TakeWhile(line => line.StartsWith("- ", StringComparison.Ordinal))
+            .SelectMany(line => System.Text.RegularExpressions.Regex.Matches(line, @"\[([a-z0-9_]+)\]\(#\1\)").Select(m => m.Groups[1].Value))
+            .ToHashSet(StringComparer.Ordinal);
     }
 
     /// <summary>The names of the window and process properties in a schema, at any depth (items of arrays, anyOf and the like).</summary>

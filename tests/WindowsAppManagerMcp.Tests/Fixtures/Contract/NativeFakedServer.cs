@@ -369,14 +369,30 @@ public sealed class DeniedDesktop
     public FakeUiaNode DialogNode { get; private set; } = null!;
 
     /// <summary>
-    /// The names of every UI Automation element of the denied windows (their names, or their control types when they have none),
-    /// which the fake tree logs its reads by: read from <see cref="WindowNode"/>'s and <see cref="DialogNode"/>'s subtrees, so an
-    /// element added to them is checked too.
+    /// The names of every UI Automation element of the denied windows, which the fake tree logs its reads by: read from
+    /// <see cref="WindowNode"/>'s and <see cref="DialogNode"/>'s subtrees, so an element added to them is checked too.
     /// </summary>
-    public IReadOnlySet<string> DeniedElementNames => new[] { WindowNode, DialogNode }
-        .SelectMany(Subtree)
-        .Select(node => node.Name ?? node.ControlType)
-        .ToHashSet(StringComparer.Ordinal);
+    /// <exception cref="InvalidOperationException">An element of the denied windows has no name, or a colon in it. The fake tree
+    /// logs a property read as "Kind:Name" (a nameless one as "Kind:"), so a read of it could not be told from a read of another
+    /// window's element: the check would miss it. Give every element of the denied windows a name without a colon.</exception>
+    public IReadOnlySet<string> DeniedElementNames
+    {
+        get
+        {
+            var nodes = new[] { WindowNode, DialogNode }.SelectMany(Subtree).ToList();
+            var unmatched = nodes.Where(node => string.IsNullOrEmpty(node.Name) || node.Name.Contains(':', StringComparison.Ordinal))
+                .Select(node => $"{node.ControlType} '{node.Name}'")
+                .ToList();
+            if (unmatched.Count > 0)
+            {
+                throw new InvalidOperationException(
+                    "Every element of the denied windows needs a name without a colon, which the fake tree logs its reads by " +
+                    $"('Kind:Name'); a read of these would go unseen: {string.Join(", ", unmatched)}.");
+            }
+
+            return nodes.Select(node => node.Name!).ToHashSet(StringComparer.Ordinal);
+        }
+    }
 
     private static IEnumerable<FakeUiaNode> Subtree(FakeUiaNode node) => node.Children.SelectMany(Subtree).Prepend(node);
 
@@ -488,6 +504,13 @@ public sealed class DeniedDesktop
         Tree.WithWindow((nint)DeniedWindow, WindowNode);
         Tree.WithWindow((nint)DeniedDialog, DialogNode);
     }
+
+    /// <summary>
+    /// Makes the denied window the window in front (GetForegroundWindow), for a call that names no window and reaches the one in
+    /// front: the focus, and input without a windowHandle.
+    /// </summary>
+    public void PutTheDeniedWindowInFront() =>
+        _server.Mock<INativeWindowWrapper>().Setup(w => w.GetForegroundWindow()).Returns((nint)DeniedWindow);
 
     /// <summary>
     /// The denied process's handle, as OpenProcess hands it out (and StartProcess, for a test that launches the denied app's
