@@ -213,6 +213,24 @@ public class NestedArgumentContractTests
     }
 
     [Fact]
+    public async Task LaunchBrowserWithDebug_PlacementBoundsWithoutASize_IsRefused_AndNothingIsLaunched()
+    {
+        // The debug browser's placement is launch_application's, checked the same way
+        var (result, services) = await CallAsync("launch_browser_with_debug", """
+            { "placement": { "bounds": { "x": 0, "y": 0 } } }
+            """);
+
+        using (services)
+        {
+            result.IsError.Should().BeTrue();
+            var payload = Payload(result);
+            payload.GetProperty("errorCode").GetString().Should().Be(ToolErrorReporting.InvalidArgumentsErrorCode, payload.GetRawText());
+            payload.GetProperty("error").GetString().Should().Contain("placement.bounds has no width or height").And.EndWith("Nothing was launched.");
+            services.Processes.Invocations.Should().NotContain(i => i.Method.Name.StartsWith("Launch", StringComparison.Ordinal));
+        }
+    }
+
+    [Fact]
     public async Task LaunchApplicationsBatch_AnItemWhosePlacementBoundsMissAMember_FailsAlone_AndTheOthersLaunch()
     {
         var (result, services) = await CallAsync("launch_applications_batch", """

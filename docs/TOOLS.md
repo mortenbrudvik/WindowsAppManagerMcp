@@ -138,7 +138,7 @@ object). save_layout's `placements` check their own members, so that get_layout'
 The place is written as in the arguments, with array indexes counted from 0 (`steps[1]` is the second step,
 `placements[0].x` the first placement's `x`). A value of the wrong type is reported the same way
 (`placements[0].x does not have the type the input schema gives it`, or `limit is not an integer` for an argument as a
-whole), and a required argument that is missing by its name (`The required argument 'executable' is missing`). Where the
+whole), and a missing required argument by its name (`The required argument 'executable' is missing`). Where the
 server cannot tell which argument it was, the error says "an argument" and gives the place within it.
 
 A number may also be sent as a JSON string of its digits (`"handle": "1706796"`), as the SDK binds numbers: the call acts
