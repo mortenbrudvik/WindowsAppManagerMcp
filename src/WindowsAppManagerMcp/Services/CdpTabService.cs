@@ -200,7 +200,8 @@ public sealed class CdpTabService : ICdpTabService
         }
 
         // The new tab is listed once the browser has set it up, usually at once; the list only while the browser still
-        // listens on the port, since its WebSocket URL is what browser_navigate connects to next
+        // listens on the port, since its WebSocket URL is what browser_navigate connects to next. Every failure from here on
+        // carries the tab's id: the tab is open, on about:blank
         while (true)
         {
             var remaining = timeout - stopwatch.Elapsed;
@@ -209,21 +210,18 @@ public sealed class CdpTabService : ICdpTabService
             if (listed.Success && listed.Value!.FirstOrDefault(t => t.Id == targetId) is { } opened)
                 return CdpResult<CdpTarget>.Ok(opened);
 
-            if (listed.ErrorCode == BrowserErrorCode.CdpPortOwnerMismatch)
+            // Another program may have the port now: the list is not tried again
+            if (listed.ErrorCode == BrowserErrorCode.CdpPortOwnerMismatch || timeout - stopwatch.Elapsed <= NewTabListingDelay)
             {
-                return CdpResult<CdpTarget>.Fail(
-                    BrowserErrorCode.CdpPortOwnerMismatch,
-                    $"The browser opened tab {targetId} on about:blank, but it was not navigated: {listed.Error}");
-            }
-
-            if (timeout - stopwatch.Elapsed <= NewTabListingDelay)
-            {
-                return listed.Success
+                var failed = listed.Success
                     ? CdpResult<CdpTarget>.Fail(
                         BrowserErrorCode.CdpTargetNotFound,
                         $"The browser opened tab {targetId}, but did not list it within {FormatMs(timeout)}; it may have been " +
                         "closed at once. Call list_tabs to see the browser's tabs.")
-                    : listed.FailAs<CdpTarget>();
+                    : CdpResult<CdpTarget>.Fail(
+                        listed.ErrorCode,
+                        $"The browser opened tab {targetId} on about:blank, but it was not navigated: {listed.Error}");
+                return failed with { OpenedTargetId = targetId };
             }
 
             await Task.Delay(NewTabListingDelay, cancellationToken).ConfigureAwait(false);

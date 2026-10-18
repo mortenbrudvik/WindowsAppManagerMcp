@@ -216,7 +216,8 @@ public sealed class CdpTransport : ICdpTransport, IDisposable
             return CdpResult<ICdpConnection>.Fail(
                 BrowserErrorCode.CdpPortOwnerMismatch,
                 $"Which process listens on CDP port {port} could not be read again once the connection to {label} was open, so " +
-                $"the connection cannot be tied to the browser (process {owner}). It was closed. Nothing was sent to it. Try again.");
+                $"the connection cannot be tied to the browser (process {owner}). The connection was closed. Nothing was sent " +
+                "on it. Try again.");
         }
 
         if (now == owner)
@@ -226,8 +227,8 @@ public sealed class CdpTransport : ICdpTransport, IDisposable
         return CdpResult<ICdpConnection>.Fail(
             BrowserErrorCode.CdpPortOwnerMismatch,
             $"CDP port {port} changed hands before the connection to {label} was open: {listener}, not the browser (process " +
-            $"{owner}), so the connection may be another program's. It was closed. Nothing was sent to it. The browser may have " +
-            "exited; check that it still runs.");
+            $"{owner}), so the connection may be another program's. The connection was closed. Nothing was sent on it. The " +
+            "browser may have exited; check that it still runs.");
     }
 
     /// <summary>

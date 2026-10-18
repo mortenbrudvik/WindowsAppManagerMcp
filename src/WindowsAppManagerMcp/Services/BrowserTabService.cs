@@ -135,7 +135,17 @@ public sealed class BrowserTabService : IBrowserTabService
             ? await _tabs.OpenTabAsync(browser.Port, browser.ProcessId, EnterGateAsync, timeout, cancellationToken).ConfigureAwait(false)
             : await FindTabAsync(browser, target.TargetId, cancellationToken).ConfigureAwait(false);
         if (!tab.Success)
-            return BrowserNavigateResult.Failed(tab.ErrorCode.ToString(), tab.Error!, browser.Port, target.TargetId);
+        {
+            // A new tab the browser opened before the failure is left on about:blank: the fields name it, as below when the
+            // pause or a busy gate stops its navigation
+            return tab.OpenedTargetId is { } opened
+                ? BrowserNavigateResult.Failed(tab.ErrorCode.ToString(), tab.Error!, browser.Port, opened) with
+                {
+                    NewTab = true,
+                    ElapsedMs = stopwatch.ElapsedMilliseconds
+                }
+                : BrowserNavigateResult.Failed(tab.ErrorCode.ToString(), tab.Error!, browser.Port, target.TargetId);
+        }
 
         var targetId = tab.Value!.Id;
         var newTab = options.NewTab ? true : (bool?)null;

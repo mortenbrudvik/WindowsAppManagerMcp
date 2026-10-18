@@ -391,6 +391,42 @@ public class BrowserTabServiceTests
     }
 
     [Fact]
+    public async Task Navigate_NewTab_ThatOpenedButCouldNotBeListed_ReportsTheTabItOpened()
+    {
+        // Arrange - the port changed hands once the tab was opened: it is left on about:blank, and is not navigated
+        _tabs.Setup(t => t.OpenTabAsync(Port, (int)BrowserPid, It.IsAny<CdpGate>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(CdpResult<CdpTarget>.Fail(BrowserErrorCode.CdpPortOwnerMismatch,
+                "The browser opened tab NEW1 on about:blank, but it was not navigated: CDP port 9222 changed hands.") with
+            {
+                OpenedTargetId = "NEW1"
+            });
+
+        // Act
+        var result = await CreateSut().NavigateAsync(ByWindow(), new BrowserNavigateOptions("https://example.com/", true, BrowserWaitUntil.Load, 15_000));
+
+        // Assert - as when a pause stops the navigation: the fields name the tab, not only the message
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(nameof(BrowserErrorCode.CdpPortOwnerMismatch));
+        result.TargetId.Should().Be("NEW1");
+        result.NewTab.Should().BeTrue();
+        result.Error.Should().Contain("NEW1");
+        _tabs.Verify(t => t.NavigateAsync(It.IsAny<CdpTarget>(), It.IsAny<string>(), It.IsAny<BrowserWaitUntil>(), It.IsAny<CdpGate>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>(), It.IsAny<BrowserDialogAnswer?>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task Navigate_NewTab_ThatCouldNotBeOpened_NamesNoTab()
+    {
+        _tabs.Setup(t => t.OpenTabAsync(Port, (int)BrowserPid, It.IsAny<CdpGate>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(CdpResult<CdpTarget>.Fail(BrowserErrorCode.CdpPortOwnerMismatch, "CDP port 9222 belongs to process 999."));
+
+        var result = await CreateSut().NavigateAsync(ByWindow(), new BrowserNavigateOptions("https://example.com/", true, BrowserWaitUntil.Load, 15_000));
+
+        result.ErrorCode.Should().Be(nameof(BrowserErrorCode.CdpPortOwnerMismatch));
+        result.TargetId.Should().BeNull();
+        result.NewTab.Should().BeNull();
+    }
+
+    [Fact]
     public async Task Navigate_NewTab_WhenTheGateRefusesTheNavigation_ReportsTheTabItOpened()
     {
         // The tab is opened inside the gate, which is let go; the user pauses before Page.navigate takes it again

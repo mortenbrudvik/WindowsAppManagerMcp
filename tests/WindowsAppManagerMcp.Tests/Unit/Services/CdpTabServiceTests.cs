@@ -281,7 +281,34 @@ public class CdpTabServiceTests
         var result = await sut.OpenTabAsync(Port, BrowserPid, new RecordingGate().EnterAsync, TimeSpan.FromMilliseconds(600));
 
         result.ErrorCode.Should().Be(BrowserErrorCode.CdpTargetNotFound);
+        result.OpenedTargetId.Should().Be("NEW1", "the tab was opened, and the result names it");
         stopwatch.Elapsed.Should().BeLessThan(HangBound);
+    }
+
+    [Fact]
+    public async Task OpenTabAsync_ATabListThatFailsOnceTheTabIsOpen_SaysTheTabWasOpened()
+    {
+        // Arrange - the browser opens the tab, then its tab list cannot be read (it stopped answering)
+        var browser = TwoWindows();
+        var owners = new FakePortOwnerResolver(BrowserPid);
+        var transport = new CdpTransport(browser.Http, browser.Sockets, owners);
+        var real = new CdpService(transport, owners);
+        var cdp = new Mock<ICdpService>();
+        cdp.Setup(c => c.GetBrowserVersionAsync(Port, It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .Returns((int port, TimeSpan timeout, CancellationToken token) => real.GetBrowserVersionAsync(port, timeout, token));
+        cdp.Setup(c => c.GetOwnedPageTargetsAsync(Port, BrowserPid, It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(CdpResult<IReadOnlyList<CdpTarget>>.Fail(BrowserErrorCode.CdpUnavailable, "Nothing answered on port 9222."));
+        var sut = new CdpTabService(cdp.Object, transport, owners);
+
+        // Act
+        var result = await sut.OpenTabAsync(Port, BrowserPid, new RecordingGate().EnterAsync, TimeSpan.FromMilliseconds(600));
+
+        // Assert - the list's own error, after what happened to the tab
+        browser.Created.Should().ContainSingle();
+        result.ErrorCode.Should().Be(BrowserErrorCode.CdpUnavailable);
+        result.Error.Should().StartWith("The browser opened tab NEW1 on about:blank, but it was not navigated: ")
+            .And.Contain("Nothing answered on port 9222.");
+        result.OpenedTargetId.Should().Be("NEW1");
     }
 
     [Fact]

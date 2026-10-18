@@ -38,7 +38,9 @@ public interface ICdpTabService
     /// <summary>
     /// Opens a new tab on about:blank in the browser on <paramref name="port"/> (Target.createTarget over the browser's
     /// DevTools connection), which must belong to process <paramref name="processId"/>. The browser puts it in its most
-    /// recently active window and shows it there. Returns the new tab as /json/list lists it.
+    /// recently active window and shows it there. Returns the new tab as /json/list lists it; a failure once the browser has
+    /// opened it (the tab list does not show it, cannot be read, or comes after the port changed hands) carries its id
+    /// (<see cref="CdpResult{T}.OpenedTargetId"/>), since the tab stays open on about:blank.
     /// </summary>
     Task<CdpResult<CdpTarget>> OpenTabAsync(
         int port, int processId, CdpGate gate, TimeSpan timeout, CancellationToken cancellationToken = default);

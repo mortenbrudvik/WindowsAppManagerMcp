@@ -141,7 +141,8 @@ public class CdpPortOwnerRecheckTests
 
         // Assert
         result.ErrorCode.Should().Be(BrowserErrorCode.CdpPortOwnerMismatch);
-        result.Error.Should().Contain("Nothing was sent");
+        result.Error.Should().Contain("The connection was closed. Nothing was sent on it.",
+            "close_debug_browser puts this after 'It was ended without Browser.close:', where 'It was closed' would read as the browser");
         browser.CloseCommands.Should().Be(0);
         browser.Socket.WasDisposed.Should().BeTrue("the connection is closed");
     }
@@ -177,7 +178,8 @@ public class CdpPortOwnerRecheckTests
         // Assert
         connected.Success.Should().BeFalse();
         connected.ErrorCode.Should().Be(BrowserErrorCode.CdpPortOwnerMismatch);
-        connected.Error.Should().Contain($"CDP port {Port}").And.Contain("tab T1").And.Contain("Nothing was sent");
+        connected.Error.Should().Contain($"CDP port {Port}").And.Contain("tab T1")
+            .And.Contain("The connection was closed. Nothing was sent on it.").And.NotContain("It was closed");
         socket.SentCommands.Should().BeEmpty();
         socket.WasDisposed.Should().BeTrue("the connection is closed");
         owners.Reads.Should().Be(1);
@@ -411,7 +413,8 @@ public class CdpPortOwnerRecheckTests
         // Assert - its listed WebSocket URL may be another program's, so the tab is not handed on to be navigated
         opened.ErrorCode.Should().Be(BrowserErrorCode.CdpPortOwnerMismatch);
         browser.Created.Should().ContainSingle();
-        opened.Error.Should().Contain("opened tab").And.Contain("about:blank").And.Contain("not navigated");
+        opened.Error.Should().Contain("opened tab NEW1").And.Contain("about:blank").And.Contain("not navigated");
+        opened.OpenedTargetId.Should().Be("NEW1", "browser_navigate names the tab it leaves on about:blank");
     }
 
     [Fact]
