@@ -28,7 +28,7 @@ The `snap_window` tool supports 14 positions:
 
 ## Save and Restore a Workspace
 
-1. Arrange the windows, then `save_layout` with a descriptive name
+1. Arrange the windows, then `save_layout` with a descriptive name (`MonitorNotFound`: no monitor could be read while the displays change; nothing was saved, so try again)
 2. Later, `apply_layout` (keep the default `matchBy`: a saved layout has no title text for `title_only`). Each placement gets its own window; `status` is `applied`, `partial` or `failed`, and `placements` says per placement what happened (`applied`, `notFound`, `notApplicable` or `failed`, with `window` and `errorCode`). `success: false` lists every problem in `errors`; a placement that could not be arranged or minimized, that its app kept moving back, or with `focus` that did not come to the front is an `ArrangeFailed` error, and `focus` lists each focus placement's activation with the fields of a `focus_window` result
 3. **Verify:** `get_foreground_window` before typing anything
 

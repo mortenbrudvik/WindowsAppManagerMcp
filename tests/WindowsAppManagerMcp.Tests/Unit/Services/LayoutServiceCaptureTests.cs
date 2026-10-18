@@ -174,6 +174,26 @@ public class LayoutServiceCaptureTests : IDisposable
     }
 
     [Fact]
+    public async Task WhenNoMonitorCanBeRead_NothingIsSaved_AndThePresetIsKept()
+    {
+        // Final review: three enumeration passes that each missed a monitor (a dock or undock under way) give no monitors
+        // (NativeMonitorWrapper.ReadMonitors), and every window then has monitor index 0. The capture threw
+        // IndexOutOfRangeException ("Index was outside the bounds of the array") on monitors[0]
+        OpenWindows(Window(0x101, "Code", 501, 0, 0, 960, 1040));
+        (await CreateSut().CaptureCurrentLayoutAsync("captured")).Success.Should().BeTrue();
+        var before = await File.ReadAllTextAsync(Path.Combine(_layoutsPath, "captured.json"));
+        OpenWindows(Window(0x102, "notepad", 502, 0, 0, 800, 600));
+        _monitors.Setup(m => m.GetAllMonitors()).Returns(Array.Empty<MonitorInfo>());
+
+        var result = await CreateSut().CaptureCurrentLayoutAsync("captured");
+
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(nameof(WindowErrorCode.MonitorNotFound));
+        result.ErrorMessage.Should().Contain("No monitor could be read").And.Contain("nothing was saved").And.Contain("Try again");
+        (await File.ReadAllTextAsync(Path.Combine(_layoutsPath, "captured.json"))).Should().Be(before, "the preset is kept as it was");
+    }
+
+    [Fact]
     public async Task ACapturedPreset_IsVersion2_AndNotAgentAuthored()
     {
         OpenWindows(Window(0x101, "Code", 501, 0, 0, 960, 1040));

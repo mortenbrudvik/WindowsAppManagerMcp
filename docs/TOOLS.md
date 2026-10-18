@@ -6575,7 +6575,7 @@ If the folder cannot be created or used (for example, `WAM_LAYOUTS_PATH` points 
 | `WindowNotFound` | apply_layout | No open window matched a placement (or every match was given to another placement) |
 | `NoMatchCriterion` | apply_layout | A placement has no criterion the `matchBy` used can match on, or one that is blank once normalized (a `processName` of only `.exe`), so it was skipped |
 | `InvalidMonitorIndex` | apply_layout | A placement's monitor does not exist (for example, after undocking) |
-| `MonitorNotFound` | apply_layout | A placement saved its monitor by identity, that monitor is not connected, and neither its name nor its monitor index fits one |
+| `MonitorNotFound` | apply_layout, save_layout | apply_layout: a placement saved its monitor by identity, that monitor is not connected, and neither its name nor its monitor index fits one. save_layout: no monitor could be read (the displays may be changing), so nothing was saved; try again |
 | `InvalidPlacement` | save_layout, apply_layout | save_layout: a placement of `placements` is not valid; nothing was saved. apply_layout: a placement's rectangle is less than one pixel on its monitor; it was not arranged |
 | `InvalidPresetFile` | list_layouts | A file in the layouts folder is not a valid preset; it is listed with `file` and `error`, and cannot be applied until it is fixed or deleted |
 | `LaunchNotConfirmed` | apply_layout | An AI agent wrote the layout and the user has not confirmed that it may start programs; nothing was started for that placement |
@@ -6713,7 +6713,7 @@ The first placement above was saved by [save_layout](#save_layout) (and given fo
 
 Save the current window arrangement as a preset, or the placements you write (`placements`, see [Agent-written layouts](#agent-written-layouts)). Saving under an existing name replaces that preset, and the response has `replaced: true`.
 
-If no visible window matches the filters, nothing is saved (an existing preset with that name is kept) and the call fails with `NoWindowsCaptured`.
+If no visible window matches the filters, nothing is saved (an existing preset with that name is kept) and the call fails with `NoWindowsCaptured`. When no monitor can be read (Windows failed to list every display three times in a row, as can happen while they are changing, see [get_monitors](#get_monitors)), there is no work area to record a window's position in: nothing is saved either, an existing preset is kept, and the call fails with `MonitorNotFound`. Try again in a moment.
 
 <!-- tools:begin params:save_layout -->
 **Parameters:**
@@ -7050,7 +7050,7 @@ Pages are http and https only (at most 50 per window). A user name and password 
 { "success": true, "name": "morning", "windows": 5, "folders": 1, "browserWindows": 1, "urls": 3, "partialBrowsers": 0 }
 ```
 
-In the preset file, each window with content has `content`: `{ "folder": "C:\\Users\\user\\Documents\\Reports" }` or `{ "urls": ["https://mail.example.com/inbox", "..."], "urlsPartial": true }`. A save that captures no window fails as save_layout does (`NoWindowsCaptured`).
+In the preset file, each window with content has `content`: `{ "folder": "C:\\Users\\user\\Documents\\Reports" }` or `{ "urls": ["https://mail.example.com/inbox", "..."], "urlsPartial": true }`. A save that captures no window, or can read no monitor, fails as save_layout does (`NoWindowsCaptured`, `MonitorNotFound`).
 
 ---
 
@@ -8520,11 +8520,12 @@ that ignores fields it does not know keeps working.
   (`WindowsGraphicsCapture`), which shows none. `captureMethod: "wgc"` while a capture is stuck, or Windows' support
   check timed out, says to try again instead of that the computer lacks Windows.Graphics.Capture.
 - **Monitors and DPI.** **Changed:** [get_monitors](#get_monitors) returns no monitors, after three tries, when Windows
-  fails to list them or to read one of them, never a shorter list whose indexes name other monitors. **Breaking:**
-  `primaryIndex` is left out when no monitor is the primary or none was found (it was 0). A monitor whose DPI Windows
-  cannot report has no `dpi` and `scaleFactor`, in get_server_info's `monitors` too (they were 96 and 1.0), and the
-  captures leave out `scaleFactor` (capture_with_elements: `monitorScaleFactor`) for it and for a window on no monitor,
-  with no `DpiScaledWindow` warning. A client must take these fields as optional.
+  fails to list them or to read one of them, never a shorter list whose indexes name other monitors; save_layout and
+  save_workspace then save nothing and fail with `MonitorNotFound` (they failed with `UnhandledException`).
+  **Breaking:** `primaryIndex` is left out when no monitor is the primary or none was found (it was 0). A monitor whose
+  DPI Windows cannot report has no `dpi` and `scaleFactor`, in get_server_info's `monitors` too (they were 96 and 1.0),
+  and the captures leave out `scaleFactor` (capture_with_elements: `monitorScaleFactor`) for it and for a window on no
+  monitor, with no `DpiScaledWindow` warning. A client must take these fields as optional.
 - **Window titles and cut text.** **Changed:** a window title ends where Windows stopped copying it, so titles no
   longer end in NUL characters, which broke `titleEquals` and showed as `\u0000`. Text cut to a limit (a dialog's text,
   a title, a menu item's name in an error) never ends inside a surrogate pair.
@@ -8746,7 +8747,7 @@ table, it gives more detail.
 | `LaunchFailed` | [apply_layout](#apply_layout) | A missing app could not be launched, its window did not appear, or the window it brought up was already given to another placement (a single-instance app) |
 | `LaunchNotConfirmed` | [apply_layout](#apply_layout) (per placement) | An AI agent wrote the layout (save_layout `placements`), and the user did not confirm that it may start programs: they declined, or the client cannot ask them. Nothing was started for the placement; the open windows were arranged. Ask the user |
 | `ModifiersHeld` | [Input Simulation](#input-simulation) tools, [element_action](#element_action) (mouse and keyboard paths), [release_all_input](#release_all_input) (`releaseHeldModifiers`) | Shift, Ctrl, Alt or Windows is down (`heldModifiers`), held by the user or stuck, or keys the server pressed earlier could not be released; nothing (more) was sent. Wait and retry; for a stuck key pass `releaseHeldModifiers: true` or call [release_all_input](#release_all_input) (element_action has no `releaseHeldModifiers`: call release_all_input). While any modifier of the [pause hotkey](#pause-hotkey) is down, no modifier is released for the agent: ask the user |
-| `MonitorNotFound` | Every tool that takes `monitor` (see [Monitor selectors](#monitor-selectors)): a tool error; per item in snap_windows_batch and launch_applications_batch; per placement in [apply_layout](#apply_layout), when the monitor it saved, its monitor's name and its index all fit none | `monitor` names no monitor: an id no monitor has now (it was moved to another port or dock, or unplugged), a word that is not a selector, `"current"` while no window is in the foreground, or `"left"` or `"right"` with one monitor. Nothing was done. Call [get_monitors](#get_monitors) and pass an index or id it lists |
+| `MonitorNotFound` | Every tool that takes `monitor` (see [Monitor selectors](#monitor-selectors)): a tool error; per item in snap_windows_batch and launch_applications_batch; per placement in [apply_layout](#apply_layout), when the monitor it saved, its monitor's name and its index all fit none; [save_layout](#save_layout) and [save_workspace](#save_workspace), when no monitor could be read | `monitor` names no monitor: an id no monitor has now (it was moved to another port or dock, or unplugged), a word that is not a selector, `"current"` while no window is in the foreground, or `"left"` or `"right"` with one monitor. Nothing was done. Call [get_monitors](#get_monitors) and pass an index or id it lists. From save_layout and save_workspace: Windows did not list the displays (they may be changing), so nothing was saved and an existing preset was kept; try again in a moment |
 | `MouseInUse` | [mouse_click](#mouse_click), [drag](#drag), mouse_move, [scroll](#scroll), [element_action](#element_action) (mouse paths) | A mouse button is held down (the user is dragging or selecting), or another window has captured the mouse, so the input would go to that window instead of the one at the point, or the capture could not be read; nothing (more) was sent |
 | `MoveFailed` | set_window_bounds (with `x` and `y`), snap_window, move_window_to_monitor (see [Window Control](#window-control)), their batches (per window) | Windows did not move the window (`error` gives the Win32 error); a minimized or maximized window did not return to normal, or is hidden, so it was not placed; or move_window_to_monitor did not get the window onto the monitor asked for (with `positioning: "maximize"` it is then not maximized) |
 | `NavigationFailed` | [browser_navigate](#browser_navigate) | The browser could not load the page: `errorText` is its reason (such as `net::ERR_NAME_NOT_RESOLVED`, `net::ERR_CONNECTION_REFUSED` or `net::ERR_ABORTED`), and the tab shows the browser's error page (`loadState: "failed"`); check the address and that the site can be reached from this computer. With `loadState: "download"` the address answered with a file, which the browser downloads, and the tab keeps its page; do not navigate there again to read it (roadmap M5.5) |

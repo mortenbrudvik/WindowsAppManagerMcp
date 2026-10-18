@@ -368,6 +368,17 @@ public class LayoutService : ILayoutService
 
         var windows = _windowService.GetAllWindows(includeMinimized);
         var monitors = _monitorService.GetAllMonitors();
+        if (monitors.Count == 0)
+        {
+            // Every pass of the monitor enumeration failed or missed a monitor (a dock or undock under way), so there is no work
+            // area to record a window's position in, and every window has monitor index 0 of no monitor
+            return new LayoutSaveResult(false, null,
+                ErrorMessage: "No monitor could be read (Windows did not list the displays, as happens while they are changing), so " +
+                              $"nothing was saved and any preset named '{name}' was kept. Try again in a moment; get_monitors lists " +
+                              "the monitors once they can be read.",
+                ErrorCode: nameof(WindowErrorCode.MonitorNotFound));
+        }
+
         var placements = new List<WindowPlacement>();
         var ordinals = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         var exePaths = new Dictionary<int, string?>();
