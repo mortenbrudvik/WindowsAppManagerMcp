@@ -391,7 +391,8 @@ public sealed class ElementSearch
         return _tree.FindAll(node, scope, _condition, cancellationToken);
     }
 
-    private static string RuntimeKey(IReadOnlyList<int> runtimeId) =>
+    /// <summary>A runtime id as one key: its parts joined with dots.</summary>
+    internal static string RuntimeKey(IReadOnlyList<int> runtimeId) =>
         string.Join('.', runtimeId.Select(i => i.ToString(CultureInfo.InvariantCulture)));
 
     /// <summary>

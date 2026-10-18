@@ -420,8 +420,8 @@ public sealed partial class ElementSearchService
         var mayRead = true;
         foreach (var refused in lookup.Refused)
         {
-            // Counted for the warning, as a tree match left out is; not in matchCount
-            foreign.Of(window).LeavesOut(refused);
+            // Counted for the warning, as a tree match left out is (once, also when a tree search left it out); not in matchCount
+            foreign.LeavesOut(window, refused);
         }
 
         var items = new List<FoundElement>(lookup.Items.Count);

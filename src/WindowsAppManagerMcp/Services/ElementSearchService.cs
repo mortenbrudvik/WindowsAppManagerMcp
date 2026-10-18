@@ -485,7 +485,7 @@ public sealed partial class ElementSearchService : IElementSearchService
 
         // A window's own tree: the windows it owns are searched as windows of their own (below withinRef there are none)
         var leaveOut = isNamed && call.Query.WithinRef != null ? null : OwnedWindows.Below(_windows, target);
-        var refuse = RefusedBySearch(started.Foreign.Of(target), call.Query.Detail);
+        var refuse = RefusedBySearch(started.Foreign, target, call.Query.Detail);
         ElementSearchOutcome outcome;
         try
         {
@@ -683,14 +683,14 @@ public sealed partial class ElementSearchService : IElementSearchService
     }
 
     /// <summary>
-    /// The search's test of each match of a window (<see cref="ElementSearch"/>'s refuse): a match that
-    /// <paramref name="check"/> leaves out for its process, told by what the search read with it, is counted there and not
-    /// kept, so it never takes the place among maxResults of an allowed match after it. Only a match whose check needs a
-    /// further read (<see cref="CheckedWithTheSearch"/>) is kept and checked when it is described. Null when the policy
-    /// refuses nothing.
+    /// The search's test of each match of <paramref name="window"/> (<see cref="ElementSearch"/>'s refuse): a match that
+    /// the window's check leaves out for its process, told by what the search read with it, is counted there (once per call:
+    /// <see cref="ForeignMatches.LeavesOut"/>) and not kept, so it never takes the place among maxResults of an allowed match
+    /// after it. Only a match whose check needs a further read (<see cref="CheckedWithTheSearch"/>) is kept and checked when
+    /// it is described. Null when the policy refuses nothing.
     /// </summary>
-    private static Func<UiaElement, bool>? RefusedBySearch(ForeignElements check, ElementDetail detail) =>
-        check.Active ? match => CheckedWithTheSearch(match, detail) && check.LeavesOut(match) : null;
+    private static Func<UiaElement, bool>? RefusedBySearch(ForeignMatches foreign, nint window, ElementDetail detail) =>
+        foreign.Of(window).Active ? match => CheckedWithTheSearch(match, detail) && foreign.LeavesOut(window, match) : null;
 
     /// <summary>
     /// Whether the target policy's check of <paramref name="match"/> needs nothing more than what the search read with it: its
@@ -1215,14 +1215,48 @@ public sealed partial class ElementSearchService : IElementSearchService
     /// The target policy's check of the matches whose process is not their window's (an element of an embedded WebView2, of an
     /// app or preview shown as a child window of another app; see <see cref="ForeignElements"/>), for one call: one check per
     /// window of the scope, so that each process is named once per window. A refused match is left out unread and counted
-    /// (see <see cref="LeftOutForProcess"/>, <see cref="Result(SearchCall, IReadOnlyList{FoundElement})"/>). Thread safe.
+    /// (see <see cref="LeftOutForProcess"/>, <see cref="Result(SearchCall, IReadOnlyList{FoundElement})"/>), once per call
+    /// (<see cref="LeavesOut"/>). Thread safe.
     /// </summary>
     private sealed class ForeignMatches(INativeWindowWrapper? windows, ITargetPolicy? policy)
     {
         private readonly System.Collections.Concurrent.ConcurrentDictionary<nint, ForeignElements> _checks = new();
 
+        // The runtime ids of the matches a window's search left out, with that window: the window that counted each
+        private readonly System.Collections.Concurrent.ConcurrentDictionary<string, nint> _leftOutBySearch = new(StringComparer.Ordinal);
+
         /// <summary>The check of the matches found in <paramref name="window"/>.</summary>
         public ForeignElements Of(nint window) => _checks.GetOrAdd(window, w => UiaTargets.ForeignElementsOf(windows, policy, w));
+
+        /// <summary>
+        /// Whether the search of <paramref name="window"/> leaves out <paramref name="match"/> for its process (its check's
+        /// <see cref="ForeignElements.LeavesOut(UiaElement, int?)"/>), counted once per call: a match an earlier window's
+        /// search left out already (the same runtime id: an owned window whose owner's tree could not be split is searched
+        /// with its owner too, see <see cref="SearchStarted"/>) is checked again but not counted again, as a match two
+        /// windows find is kept once.
+        /// </summary>
+        public bool LeavesOut(nint window, UiaElement match)
+        {
+            var check = Of(window);
+            if (match.RuntimeId is not { Count: > 0 } runtimeId)
+            {
+                return check.LeavesOut(match);
+            }
+
+            var key = ElementSearch.RuntimeKey(runtimeId);
+            if (_leftOutBySearch.TryGetValue(key, out var counted) && counted != window)
+            {
+                return check.Refuses(match);
+            }
+
+            if (!check.LeavesOut(match))
+            {
+                return false;
+            }
+
+            _leftOutBySearch.TryAdd(key, window);
+            return true;
+        }
 
         /// <summary>How many matches were left out so far.</summary>
         public int LeftOut => _checks.Values.Sum(check => check.LeftOutCount);

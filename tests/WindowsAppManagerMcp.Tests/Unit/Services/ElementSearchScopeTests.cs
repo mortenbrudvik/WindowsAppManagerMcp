@@ -51,8 +51,8 @@ public class ElementSearchScopeTests
     private void SetPopups(bool truncated, params PopupWindow[] popups) =>
         _popups.Setup(p => p.GetPopupList(Main)).Returns(new PopupList(popups, truncated));
 
-    private ElementSearchService CreateSut(IUiaWorker? worker = null) =>
-        new(_tree, worker ?? _worker, _registry, _windows.Object, popups: _popups.Object);
+    private ElementSearchService CreateSut(IUiaWorker? worker = null, ITargetPolicy? policy = null) =>
+        new(_tree, worker ?? _worker, _registry, _windows.Object, popups: _popups.Object, policy: policy);
 
     private Task<FindElementsResult> Find(
         string? name = null, string[]? controlTypes = null, ElementSearchScope? scope = null, int maxResults = 20,
@@ -777,6 +777,32 @@ public class ElementSearchScopeTests
         // Assert
         result.MatchCount.Should().Be(1);
         result.Elements!.Should().ContainSingle().Which.WindowHandle.Should().Be((long)Dialog);
+    }
+
+    [Fact]
+    public async Task Find_WhenAnOwnedWindowIsStillSearchedWithItsOwner_CountsAMatchThePolicyRefusesOnce()
+    {
+        // Arrange - the dialog shows a password manager's field (process 777, on the default deny list) next to its own OK
+        // button; the window's tree cannot be split, so its search meets both again
+        _popups.Setup(p => p.IsInForeground(Main)).Returns(true);
+        _windows.Setup(w => w.GetProcessName(300u)).Returns("notepad");
+        _windows.Setup(w => w.GetProcessName(777u)).Returns("KeePass");
+        OwnedDialog(Dialog, "Unlock",
+            new FakeUiaNode("Edit", "Master password") { ProcessId = 777 },
+            new FakeUiaNode("Edit", "Comment") { ProcessId = 300 });
+        ((FakeUiaNode)_tree.FromHandle(Main)!).CachedChildrenException = new InvalidOperationException("provider failed");
+
+        // Act
+        var result = await CreateSut(policy: new TargetPolicy(TargetPolicySettings.Default)).FindAsync(new ElementQuery(
+            Main, null, null, ControlTypes: ["Edit"], MaxResults: 20, Timeout: TimeSpan.FromSeconds(5)));
+
+        // Assert - the field is left out once, by the dialog that met it first; the allowed edit box is the dialog's once
+        result.Success.Should().BeTrue();
+        result.MatchCount.Should().Be(1);
+        result.Elements!.Should().ContainSingle().Which.Name.Should().Be("Comment");
+        result.PolicyLeftOut!.Count.Should().Be(1);
+        result.Warning.Should().Contain($"1 element of window {(long)Dialog} belongs to process 777 ('KeePass')")
+            .And.NotContain($"of window {(long)Main} belong");
     }
 
     #endregion
