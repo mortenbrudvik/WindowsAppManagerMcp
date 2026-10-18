@@ -24,9 +24,11 @@ public partial class SkillFilesTests
     /// DialogNotFound codes and scoped the InvalidArguments and TargetIsAgentHost lines; then 5,487 tokens (21,948 bytes)
     /// after the second review gave the last three codes of the reference files a line (CoordinatesOutOfBounds,
     /// InvalidControlType, ArrangeFailed): every error code of the reference files now has a line, or, for the browser and
-    /// the capture and OCR codes, a pointer to the file that lists them. When a change adds to the core on
-    /// purpose (a safety rule, a code that means stop), raise it in the same change by what the failure message measures;
-    /// detail for one kind of task goes into its reference file instead.
+    /// the capture and OCR codes, a pointer to the file that lists them; then 5,496 tokens (21,983 bytes) after the docs pass
+    /// of the 3.0.0 review fixes taught the core their refusals and warnings (the server's own pause, UserInterrupted,
+    /// UnsafeChromiumSwitch) and dropped repeats of the reference files to make room, 4 tokens below it. When a change adds
+    /// to the core on purpose (a safety rule, a code that means stop), raise it in the same change by what the failure
+    /// message measures; detail for one kind of task goes into its reference file instead.
     /// </summary>
     private const int CoreTokenBudget = 5_500;
 

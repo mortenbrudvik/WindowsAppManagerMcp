@@ -33,7 +33,8 @@ public class OcrTools
         "One target: a window (handle or window; read even when covered, except one that does not answer, which is copied " +
         "from the screen with what covers it (WindowNotResponding); minimized is WindowMinimized, nothing is restored), a screen region (x, y, width, height in physical virtual-screen pixels) or a monitor (monitor, 'all' " +
         "for all; MonitorNotFound when it names none); none reads the primary monitor. A window of an app the user's policy denies is refused " +
-        "(TargetDeniedByPolicy), and such windows are blacked out of a region or monitor before OCR (maskedWindows). ";
+        "(TargetDeniedByPolicy), and such windows are blacked out of a region, a monitor or a window copied from the screen " +
+        "before OCR (maskedWindows). ";
 
     internal const string OcrResultDescription =
         "Boxes are screen pixels; below 150% scale (up to 5 MP; not the virtual screen) the pixels are read at 2x (ocrScale). " +
