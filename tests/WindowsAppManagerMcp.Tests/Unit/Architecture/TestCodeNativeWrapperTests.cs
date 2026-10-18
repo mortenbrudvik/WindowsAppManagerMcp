@@ -1,5 +1,8 @@
 using System.Diagnostics;
 using System.Reflection;
+using System.Runtime.CompilerServices;
+using Microsoft.Extensions.DependencyInjection;
+using WindowsAppManagerMcp.Infrastructure;
 
 namespace WindowsAppManagerMcp.Tests.Unit.Architecture;
 
@@ -13,9 +16,15 @@ namespace WindowsAppManagerMcp.Tests.Unit.Architecture;
 /// <item>Test code constructs a real action wrapper (<see cref="ActionWrappers"/>) only where <see cref="SanctionedConstructions"/>
 /// says why that use only reads: the read-only window wrapper and the process-tree reads.</item>
 /// <item>Test code calls a real window or process wrapper only through the members on <see cref="ReadOnlyMembers"/>, and never
-/// closes or kills a process through a process handle.</item>
+/// closes or kills a process through a process handle. In a type that constructs a real window or process wrapper, calls through
+/// their interfaces (INativeWindowWrapper, INativeProcessWrapper) are held to the same members: the interface may hold the real
+/// one.</item>
 /// <item>Server code that a test hands a real wrapper to (a constructor called in the same method) calls only those read members
 /// on it.</item>
+/// <item>Test code builds the server's production container (ServiceRegistration.AddWindowsAppManagerServices), whose services
+/// hold the real input, clipboard, hook, window and process wrappers, only where <see cref="SanctionedProductionContainers"/>
+/// says why that use only reads; and there it calls the server's services and wrappers only through constructors, property
+/// getters, static members and the reads on <see cref="SanctionedProductionContainerCalls"/>.</item>
 /// </list>
 /// A Moq setup names a member in an expression tree (ldtoken), not as a call, so mocked members are never counted.
 /// </summary>
@@ -92,6 +101,63 @@ public class TestCodeNativeWrapperTests
         nameof(IProcessHandle.Kill), nameof(IProcessHandle.CloseMainWindow)
     };
 
+    /// <summary>The window and process wrappers' interfaces, each with the real wrapper whose <see cref="ReadOnlyMembers"/> it is held to.</summary>
+    private static readonly Dictionary<Type, Type> WrapperInterfaces = new()
+    {
+        [typeof(INativeProcessWrapper)] = typeof(NativeProcessWrapper),
+        [typeof(INativeWindowWrapper)] = typeof(NativeWindowWrapper)
+    };
+
+    /// <summary>
+    /// The test types (by full name) that build the server's production container, whose services hold the real native wrappers
+    /// (input, clipboard, hooks, the pause hotkey, windows, processes), and why that use only reads.
+    /// </summary>
+    private static readonly Dictionary<string, string> SanctionedProductionContainers = new(StringComparer.Ordinal)
+    {
+        ["WindowsAppManagerMcp.Tests.Integration.DependencyInjectionTests"] =
+            "resolves the services to check their types, lifetimes and what they hold; it acts through none of them, and calls only " +
+            "the reads on SanctionedProductionContainerCalls",
+        ["WindowsAppManagerMcp.Tests.Integration.InputGuardRegistrationTests"] =
+            "resolves the input guard, the policy and the safety info with the read-only window wrapper, and reads what they hold",
+        ["WindowsAppManagerMcp.Tests.Integration.InputSessionRegistrationTests"] =
+            "resolves the session and the pause hotkey with the read-only window wrapper and reads what they hold; the hosted " +
+            "service that would register the hotkey and share the pause is never started",
+        ["WindowsAppManagerMcp.Tests.Integration.ScrollClipboardRegistrationTests"] =
+            "resolves the input and clipboard services with the read-only window wrapper and reads what they hold; the clipboard " +
+            "wrapper starts its thread only when it is called",
+        ["WindowsAppManagerMcp.Tests.Integration.SecurityServiceRegistrationTests"] =
+            "resolves the host guard and the security probes with the read-only window wrapper; they only read the process tree " +
+            "and the console and foreground windows",
+        ["WindowsAppManagerMcp.Tests.Fixtures.ServerToolCatalog"] =
+            "reads the tool collection's names from the options; no service is resolved",
+        ["WindowsAppManagerMcp.Tests.Contract.DeniedTargetContractTests"] =
+            "reads the served tools' input schemas from the options (no service is resolved); its calls go to NativeFakedServer",
+        ["WindowsAppManagerMcp.Tests.Contract.SelfGatedToolsContractTests"] =
+            "reads the production registrations' implementation types; no container is built from them",
+        ["WindowsAppManagerMcp.Tests.Fixtures.NativeFakedServer"] =
+            "replaces every native seam with a fake before the container is built, and refuses to start when a service still " +
+            "holds a real wrapper",
+    };
+
+    /// <summary>
+    /// The calls a type of <see cref="SanctionedProductionContainers"/> makes on the server's services and wrappers beyond
+    /// constructors, property getters and static members, keyed by (the test type's full name, "Type.Member"), and why each only
+    /// reads.
+    /// </summary>
+    private static readonly Dictionary<(string TestType, string Member), string> SanctionedProductionContainerCalls = new()
+    {
+        [("WindowsAppManagerMcp.Tests.Integration.DependencyInjectionTests", "ILayoutService.GetAllPresets")] =
+            "lists the layout presets of the test's own temporary folder",
+        [("WindowsAppManagerMcp.Tests.Integration.DependencyInjectionTests", "ICdpService.GetPageTargetsAsync")] =
+            "asks a recording transport the test registers in place of the real one; nothing reaches the network",
+        [("WindowsAppManagerMcp.Tests.Integration.DependencyInjectionTests", "IDebugBrowserReadiness.WaitUntilReadyAsync")] =
+            "asks the recording transport, with the port owner faked; nothing reaches the network or the TCP table",
+        [("WindowsAppManagerMcp.Tests.Integration.DependencyInjectionTests", "ICdpTransport.GetJsonAsync")] =
+            "the recording transport's own member, and a disposed transport sent to a port the test listens on: nothing is sent",
+        [("WindowsAppManagerMcp.Tests.Integration.InputGuardRegistrationTests", "IInputSafetyInfo.Read")] =
+            "reads the host, the policy and the chords the guard was given",
+    };
+
     [Fact]
     public void TestCode_ConstructsARealActionWrapper_OnlyWhereThatUseOnlyReads()
     {
@@ -114,14 +180,24 @@ public class TestCodeNativeWrapperTests
     [Fact]
     public void TestCode_CallsARealWindowOrProcessWrapper_OnlyThroughItsReadMembers()
     {
-        // Act
-        var calls = Calls(TestCode()).Where(c => ReadOnlyMembers.ContainsKey(c.Callee.DeclaringType!)).ToList();
+        // Act - on the real wrappers, and through their interfaces in the types that construct a real one
+        var calls = CallsOnARealWindowOrProcessWrapper(TestCode()).ToList();
 
         // Assert
         calls.Should().Contain(c => c.Owner.Name == "ProcessAncestryTests" && c.Callee.Name == nameof(NativeProcessWrapper.GetDescendantsOf),
             "the scan must see the process tests' calls on the real process wrapper");
-        Calls(SampleCode()).Should().Contain(c => c.Callee.Name == nameof(NativeProcessWrapper.StartProcess) && !IsReadOnly(c.Callee),
+        calls.Should().Contain(c => c.Owner == typeof(ReadOnlyNativeWindowWrapper) && c.Callee.DeclaringType == typeof(INativeWindowWrapper),
+            "the scan must see the read-only window wrapper's calls through the interface on the real one");
+        var samples = CallsOnARealWindowOrProcessWrapper(SampleCode()).ToList();
+        samples.Should().Contain(c => c.Callee.DeclaringType == typeof(NativeProcessWrapper) &&
+                                      c.Callee.Name == nameof(NativeProcessWrapper.StartProcess) && !IsReadOnly(c.Callee),
             "the scan must see a sample's process start as an action");
+        samples.Should().Contain(c => c.Callee.DeclaringType == typeof(INativeProcessWrapper) &&
+                                      c.Callee.Name == nameof(INativeProcessWrapper.StartProcess) && !IsReadOnly(c.Callee),
+            "the scan must see a process start through the interface, in a type that constructs the real wrapper, as an action");
+        samples.Should().Contain(c => c.Callee.DeclaringType == typeof(INativeWindowWrapper) &&
+                                      c.Callee.Name == nameof(INativeWindowWrapper.SetWindowPos) && !IsReadOnly(c.Callee),
+            "the scan must see a window change through the interface, in a type that constructs the real wrapper, as an action");
         calls.Where(c => !IsReadOnly(c.Callee)).Select(c => c.Description).Should().BeEmpty(
             "test code may only read through a real window or process wrapper; a member that changes a window or starts a process " +
             "belongs to a desktop-gated test, or to ReadOnlyMembers after review");
@@ -163,6 +239,48 @@ public class TestCodeNativeWrapperTests
         actions.Should().BeEmpty("a server type a test hands a real wrapper to must only read through it");
     }
 
+    [Fact]
+    public void TestCode_BuildsTheProductionContainer_OnlyWhereThatUseOnlyReads()
+    {
+        // Act
+        var containers = TypesThatBuildTheProductionContainer(TestCode()).ToList();
+
+        // Assert
+        containers.Should().Contain([typeof(Integration.ScrollClipboardRegistrationTests), typeof(NativeFakedServer)],
+            "the scan must see the registration tests and the faked server build the production container");
+        TypesThatBuildTheProductionContainer(SampleCode()).Should().Contain(typeof(NativeWrapperScanSamples),
+            "the scan must see a sample build the production container");
+        containers.Select(t => t.FullName!).Where(name => !SanctionedProductionContainers.ContainsKey(name)).Should().BeEmpty(
+            "the production container's services hold the real input, clipboard, hook, window and process wrappers: replace them " +
+            "with fakes (NativeFakedServer), or add the type to SanctionedProductionContainers with why its use only reads");
+        SanctionedProductionContainers.Keys.Should().BeSubsetOf(containers.Select(t => t.FullName!), "an entry names a type that builds the container");
+    }
+
+    [Fact]
+    public void TestCode_ThatBuildsTheProductionContainer_CallsItsServicesOnlyThroughReads()
+    {
+        // Act - in each type that builds the container: the calls on the server's types that may act
+        var calls = Calls(TestCode())
+            .Where(c => SanctionedProductionContainers.ContainsKey(c.Owner.FullName!) && MayAct(c.Callee))
+            .ToList();
+
+        // Assert
+        calls.Should().Contain(c => c.Owner == typeof(Integration.InputGuardRegistrationTests) && c.Callee.Name == nameof(IInputSafetyInfo.Read),
+            "the scan must see a registration test's call on a resolved service");
+        Calls(SampleCode()).Where(c => MayAct(c.Callee)).Should()
+            .Contain(c => c.Callee.DeclaringType == typeof(INativeClipboardWrapper) && c.Callee.Name == nameof(INativeClipboardWrapper.WriteText),
+                "the scan must see a sample write the clipboard through a resolved wrapper")
+            .And.Contain(c => c.Callee.DeclaringType == typeof(IInputSimulationService),
+                "the scan must see a sample type through a resolved service");
+        calls.Where(c => !SanctionedProductionContainerCalls.ContainsKey((c.Owner.FullName!, Member(c.Callee))))
+            .Select(c => c.Description)
+            .Should().BeEmpty(
+                "a type that builds the production container holds the real native wrappers: it may construct services and read their " +
+                "properties, and call a member only after review onto SanctionedProductionContainerCalls with why it only reads");
+        SanctionedProductionContainerCalls.Keys.Should().BeSubsetOf(calls.Select(c => (c.Owner.FullName!, Member(c.Callee))),
+            "an entry names a call the type makes");
+    }
+
     // ---- the scan ----
 
     /// <summary>A call in test code: the outermost type that owns the calling code, the calling method, and the callee.</summary>
@@ -187,8 +305,48 @@ public class TestCodeNativeWrapperTests
     private static bool IsActionWrapperConstruction(MethodBase callee) =>
         callee is ConstructorInfo { IsStatic: false } && ActionWrappers.Contains(callee.DeclaringType);
 
+    /// <summary>
+    /// The calls on a real window or process wrapper, and, in a type that constructs one of them, every call through their
+    /// interfaces: an INativeProcessWrapper there may hold the real one.
+    /// </summary>
+    private static IEnumerable<Call> CallsOnARealWindowOrProcessWrapper(IEnumerable<MethodBase> methods)
+    {
+        var calls = Calls(methods).ToList();
+        var owners = calls.Where(c => c.Callee is ConstructorInfo { IsStatic: false } && ReadOnlyMembers.ContainsKey(c.Callee.DeclaringType!))
+            .Select(c => c.Owner)
+            .ToHashSet();
+        return calls.Where(c => ReadOnlyMembers.ContainsKey(c.Callee.DeclaringType!) ||
+                                (owners.Contains(c.Owner) && WrapperInterfaces.ContainsKey(c.Callee.DeclaringType!)));
+    }
+
+    /// <summary>The outermost types whose code calls ServiceRegistration.AddWindowsAppManagerServices.</summary>
+    private static IEnumerable<Type> TypesThatBuildTheProductionContainer(IEnumerable<MethodBase> methods) =>
+        Calls(methods)
+            .Where(c => c.Callee.DeclaringType == typeof(ServiceRegistration) && c.Callee.Name == nameof(ServiceRegistration.AddWindowsAppManagerServices))
+            .Select(c => c.Owner)
+            .Distinct();
+
+    /// <summary>
+    /// A call on a server type that may act: an instance member that is no constructor, no property getter and no part of a
+    /// record's copy (its clone and init-only setters), or a static member of a Native wrapper.
+    /// </summary>
+    private static bool MayAct(MethodBase callee) =>
+        callee.DeclaringType is { } type && type.Assembly == ServerAssembly &&
+        callee is not ConstructorInfo &&
+        (callee.IsStatic
+            ? type.Namespace == typeof(NativeWindowWrapper).Namespace
+            : !(callee.IsSpecialName && callee.Name.StartsWith("get_", StringComparison.Ordinal)) &&
+              callee.Name != "<Clone>$" && !IsInitOnlySetter(callee));
+
+    private static bool IsInitOnlySetter(MethodBase callee) =>
+        callee is MethodInfo { IsSpecialName: true } setter && setter.Name.StartsWith("set_", StringComparison.Ordinal) &&
+        setter.ReturnParameter.GetRequiredCustomModifiers().Contains(typeof(IsExternalInit));
+
+    private static string Member(MethodBase callee) => $"{callee.DeclaringType!.Name}.{callee.Name}";
+
     private static bool IsReadOnly(MethodBase callee) =>
-        ReadOnlyMembers.TryGetValue(callee.DeclaringType!, out var reads) && reads.Contains(callee.Name);
+        ReadOnlyMembers.TryGetValue(WrapperInterfaces.GetValueOrDefault(callee.DeclaringType!, callee.DeclaringType!), out var reads) &&
+        reads.Contains(callee.Name);
 
     private static bool IsProcessHandleAction(MethodBase callee) =>
         callee.DeclaringType is { } type && typeof(IProcessHandle).IsAssignableFrom(type) && ProcessHandleActions.Contains(callee.Name);
@@ -255,4 +413,24 @@ internal static class NativeWrapperScanSamples
     public static object? StartsAProcess() => new NativeProcessWrapper().StartProcess(new ProcessStartInfo("notepad.exe"));
 
     public static void KillsAProcess(IProcessHandle handle) => handle.Kill(entireProcessTree: true);
+
+    public static object? StartsAProcessThroughItsInterface()
+    {
+        INativeProcessWrapper processes = new NativeProcessWrapper();
+        return processes.StartProcess(new ProcessStartInfo("notepad.exe"));
+    }
+
+    public static bool MovesAWindowThroughItsInterface()
+    {
+        INativeWindowWrapper windows = new NativeWindowWrapper();
+        return windows.SetWindowPos(0x10010, 0, 0, 800, 600, 0).Succeeded;
+    }
+
+    public static async Task ActsThroughTheProductionContainer()
+    {
+        using var provider = new ServiceCollection().AddWindowsAppManagerServices().BuildServiceProvider();
+        provider.GetRequiredService<INativeClipboardWrapper>().WriteText("sample");
+        await provider.GetRequiredService<IInputSimulationService>().TypeTextAsync(
+            "sample", 0, new InputTarget(null), false, null, TextInputMethod.Unicode, CancellationToken.None);
+    }
 }
