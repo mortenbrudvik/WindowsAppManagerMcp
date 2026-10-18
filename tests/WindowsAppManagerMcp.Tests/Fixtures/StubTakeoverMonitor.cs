@@ -8,7 +8,13 @@ public sealed class StubTakeoverMonitor(TakeoverMode mode) : ITakeoverMonitor
 {
     public TakeoverMode Mode => mode;
 
-    public TakeoverStatus Status => new(mode, TakeoverState.Ready, TakeoverOptions.EnvironmentVariable);
+    /// <summary>The state <see cref="Status"/> reports: Ready unless the test says otherwise (Unavailable: detection does not work).</summary>
+    public TakeoverState State { get; set; } = TakeoverState.Ready;
+
+    /// <summary>The error <see cref="Status"/> reports with it.</summary>
+    public string? Error { get; set; }
+
+    public TakeoverStatus Status => new(mode, State, TakeoverOptions.EnvironmentVariable, Error);
 
     /// <summary>How many watches were started.</summary>
     public int Watches { get; private set; }

@@ -1,3 +1,5 @@
+using WindowsAppManagerMcp.Models;
+
 namespace WindowsAppManagerMcp.Services;
 
 /// <summary>What the results say when takeover detection (roadmap M7.4) saw the user's input during an operation.</summary>
@@ -13,6 +15,18 @@ public static class TakeoverMessages
     public static string Warning(string what) =>
         $"The user used the keyboard or mouse while {what} (takeover detection, WAM_TAKEOVER_DETECTION=warn): their input may be " +
         "mixed into it, or the focus or the pointer may have moved. Check the result before you go on.";
+
+    /// <summary>
+    /// The warning when detection is on but did not work during the operation (its status was Unavailable when the watch
+    /// started or when the operation ended): the user's input was not watched, so it neither stopped nor flagged the
+    /// operation. <paramref name="what"/> names the operation as for <see cref="Warning"/>; <paramref name="why"/> is the
+    /// status's error.
+    /// </summary>
+    public static string Unavailable(string what, TakeoverMode mode, string? why) =>
+        $"Takeover detection (WAM_TAKEOVER_DETECTION={mode.ToString().ToLowerInvariant()}) did not work while {what}, so the " +
+        "user's keyboard and mouse were not watched: had the user used them, the operation would not have " +
+        $"{(mode == TakeoverMode.Stop ? "stopped" : "said so")}. {why ?? "Its hooks were not installed."} get_control_status " +
+        "shows its state. Check the result before you go on.";
 
     /// <summary><paramref name="first"/> and <paramref name="second"/> as one warning; null when both are.</summary>
     public static string? Combine(string? first, string? second) =>

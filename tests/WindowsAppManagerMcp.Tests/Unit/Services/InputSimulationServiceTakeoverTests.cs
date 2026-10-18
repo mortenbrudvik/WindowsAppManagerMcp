@@ -152,6 +152,74 @@ public class InputSimulationServiceTakeoverTests
         VerifyNothingIsDown();
     }
 
+    // ---- Detection that does not work (review F1): the result says the user's input was not watched ----
+
+    private const string HooksFailed = "Windows did not install the low-level keyboard and mouse hooks (keyboard: Windows error 5; " +
+                                       "mouse: installed), so the user's input is not detected.";
+
+    private static StubTakeoverMonitor Unavailable(TakeoverMode mode) =>
+        new(mode) { State = TakeoverState.Unavailable, Error = HooksFailed };
+
+    [Theory]
+    [InlineData(TakeoverMode.Stop, "stop")]
+    [InlineData(TakeoverMode.Warn, "warn")]
+    public async Task TypeText_WhileDetectionIsUnavailable_TypesTheText_WithAWarningThatSaysSo(TakeoverMode mode, string name)
+    {
+        var result = await CreateSut(Unavailable(mode)).TypeTextAsync(new string('x', 200));
+
+        result.Success.Should().BeTrue("detection that does not work runs the operation as with off");
+        result.CharactersTyped.Should().Be(200);
+        result.Warning.Should().Contain($"WAM_TAKEOVER_DETECTION={name}").And.Contain("did not work while the text was typed")
+            .And.Contain("not watched").And.Contain(HooksFailed);
+    }
+
+    [Fact]
+    public async Task Drag_WhileDetectionIsUnavailable_Drops_WithAWarningThatSaysSo()
+    {
+        var request = new DragRequest(100, 100, 600, 100, MouseButton.Primary, [], 4, 0, 0);
+
+        var result = await CreateSut(Unavailable(TakeoverMode.Stop))
+            .DragAsync(request, InputTarget.None, InputTarget.None, false, CancellationToken.None);
+
+        result.Success.Should().BeTrue();
+        result.Warning.Should().Contain("WAM_TAKEOVER_DETECTION=stop").And.Contain("did not work while the drag ran").And.Contain(HooksFailed);
+        VerifyNothingIsDown();
+    }
+
+    [Fact]
+    public async Task TypeText_DetectionThatStopsWorkingDuringTheCall_IsWarnedAbout()
+    {
+        // Arrange - the monitor thread dies while the second batch goes in
+        var monitor = new StubTakeoverMonitor(TakeoverMode.Stop);
+        var sent = 0;
+        _input.BeforeSend = _ =>
+        {
+            if (++sent == 2)
+            {
+                monitor.State = TakeoverState.Unavailable;
+                monitor.Error = "The takeover detection thread stopped, so the user's input is no longer detected.";
+            }
+        };
+
+        // Act
+        var result = await CreateSut(monitor).TypeTextAsync(new string('x', 200));
+
+        // Assert
+        result.Success.Should().BeTrue();
+        result.Warning.Should().Contain("did not work").And.Contain("thread stopped");
+    }
+
+    [Fact]
+    public async Task TypeText_TheUsersInputWithModeWarn_WhileDetectionWorks_HasOnlyTheTakeoverWarning()
+    {
+        var monitor = new StubTakeoverMonitor(TakeoverMode.Warn);
+        UserActsAfter(1, monitor);
+
+        var result = await CreateSut(monitor).TypeTextAsync(new string('x', 200));
+
+        result.Warning.Should().Contain("WAM_TAKEOVER_DETECTION=warn").And.NotContain("did not work");
+    }
+
     [Fact]
     public async Task Drag_ModeWarn_TheUsersInput_LetsItDrop_WithAWarning()
     {

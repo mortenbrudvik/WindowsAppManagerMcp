@@ -641,8 +641,8 @@ public partial class InputSimulationService : IInputSimulationService
         // Takeover detection (roadmap M7.4) watches the typing itself: from the first batch on
         call.WatchForTakeover(_takeover);
         var result = await TypeCharactersWatchedAsync(characters, delayBetweenKeysMs, approved, call).ConfigureAwait(false);
-        return call.TakeoverWarns
-            ? result with { Warning = TakeoverMessages.Combine(result.Warning, TakeoverMessages.Warning("the text was typed")) }
+        return call.TakeoverWarning("the text was typed") is { } takeover
+            ? result with { Warning = TakeoverMessages.Combine(result.Warning, takeover) }
             : result;
     }
 
@@ -1670,6 +1670,10 @@ public partial class InputSimulationService : IInputSimulationService
         private CancellationTokenSource _linked;
         private CancellationTokenSource? _beforeWatch;
         private TakeoverWatch _takeover = TakeoverWatch.None;
+        private ITakeoverMonitor? _monitor;
+
+        // Detection's status when the watch started, while it did not work; null when it did
+        private TakeoverStatus? _unavailable;
 
         public InputCall(IInputSession session, CancellationToken requestToken)
         {
@@ -1691,8 +1695,19 @@ public partial class InputSimulationService : IInputSimulationService
         /// <summary>True when takeover detection stopped the call (mode stop), and the user did not pause input.</summary>
         public bool Interrupted => _takeover.Interrupted && !IsPaused;
 
-        /// <summary>True when the user used the keyboard or mouse during the watched part with mode warn.</summary>
-        public bool TakeoverWarns => _takeover.Warns;
+        /// <summary>
+        /// The warning the result carries about takeover detection (roadmap M7.4), or null: with mode warn, that the user used
+        /// the keyboard or mouse during the watched part; with warn or stop, that detection did not work during it (its status
+        /// was Unavailable when the watch started or is now), so the user's input was not watched. <paramref name="what"/>
+        /// names the operation, such as "the text was typed". Call it before the call is disposed.
+        /// </summary>
+        public string? TakeoverWarning(string what)
+        {
+            var unavailable = _unavailable ?? (_monitor?.Status is { State: TakeoverState.Unavailable } now ? now : null);
+            return TakeoverMessages.Combine(
+                _takeover.Warns ? TakeoverMessages.Warning(what) : null,
+                unavailable == null ? null : TakeoverMessages.Unavailable(what, _takeover.Mode, unavailable.Error));
+        }
 
         /// <summary>
         /// Watches for the user's input from now on (roadmap M7.4): with mode stop, <see cref="Token"/> is cancelled too when
@@ -1706,6 +1721,10 @@ public partial class InputSimulationService : IInputSimulationService
             }
 
             _takeover = monitor.Watch();
+            _monitor = monitor;
+
+            // Read after the watch: a monitor thread that stopped is started again by it, but its first moments go unwatched
+            _unavailable = monitor.Status is { State: TakeoverState.Unavailable } status ? status : null;
             _beforeWatch = _linked;
             _linked = CancellationTokenSource.CreateLinkedTokenSource(_requestToken, _pauseToken, _takeover.Token);
         }

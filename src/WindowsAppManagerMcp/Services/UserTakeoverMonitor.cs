@@ -18,9 +18,21 @@ namespace WindowsAppManagerMcp.Services;
 /// running, queues their signal to the thread pool: Windows waits for a low-level hook before the input reaches any window,
 /// so it must return at once. A watch whose hooks are not installed yet (the first moments after it starts) misses
 /// input.</para>
+/// <para>Whatever stops detection shows in <see cref="Status"/> as Unavailable, with why, so the operations' results can warn
+/// that the user's input was not watched: hooks Windows did not install (with its error), a callback that failed (it throws
+/// nothing back into Windows), and a thread that stopped on its own (an exception, or its message loop failed or ended).
+/// Such a thread is started again by the next watch, at most <see cref="MaxRestarts"/> times; then detection stays
+/// unavailable until the server restarts.</para>
 /// </remarks>
 public sealed class UserTakeoverMonitor : ITakeoverMonitor, IDisposable
 {
+    /// <summary>
+    /// How often a later watch starts the monitor thread again after it stopped on its own (an exception, or its message loop
+    /// failed or ended); after that, detection stays unavailable until the server restarts, so a thread that keeps dying is
+    /// not started for every operation.
+    /// </summary>
+    public const int MaxRestarts = 3;
+
     private static readonly TimeSpan StopTimeout = TimeSpan.FromSeconds(2);
 
     private readonly INativeLowLevelInputWrapper _native;
@@ -42,6 +54,12 @@ public sealed class UserTakeoverMonitor : ITakeoverMonitor, IDisposable
     private uint _threadId;
     private bool _disposed;
 
+    // How many monitor threads were started: the first one and the restarts
+    private int _starts;
+
+    // 1 once a failing hook callback was logged, until the hooks are installed again
+    private int _callbackFailureLogged;
+
     /// <param name="native">The native hook calls and the thread's message loop.</param>
     /// <param name="options">The mode the user set.</param>
     /// <param name="time">The clock of the mouse bursts.</param>
@@ -56,7 +74,7 @@ public sealed class UserTakeoverMonitor : ITakeoverMonitor, IDisposable
         _options = options ?? throw new ArgumentNullException(nameof(options));
         _logger = logger;
         _filter = new UserInputFilter(time);
-        _callback = OnInput;
+        _callback = OnHookInput;
     }
 
     /// <inheritdoc />
@@ -98,8 +116,10 @@ public sealed class UserTakeoverMonitor : ITakeoverMonitor, IDisposable
 
             _watches.Add(watch);
             _active = [.. _watches];
-            if (_thread == null)
+            // The first watch starts the thread; a later one starts it again when it stopped on its own, a few times at most
+            if (_thread == null && _starts <= MaxRestarts)
             {
+                _starts++;
                 _thread = new Thread(Run) { IsBackground = true, Name = "WAM takeover detection" };
                 _thread.SetApartmentState(ApartmentState.STA);
                 _thread.Start();
@@ -171,7 +191,28 @@ public sealed class UserTakeoverMonitor : ITakeoverMonitor, IDisposable
         }
     }
 
-    /// <summary>The hook callback, on the monitor thread: counts the user's input and signals the running watches.</summary>
+    /// <summary>
+    /// The hook callback, on the monitor thread, which Windows called: nothing may be thrown back. A failure means the input,
+    /// which may have been the user's, was not looked at, so the status says detection is unavailable until the hooks are
+    /// installed again (the next operation); it is logged once in that time, not on every event.
+    /// </summary>
+    private void OnHookInput(LowLevelInput input)
+    {
+        try
+        {
+            OnInput(input);
+        }
+        catch (Exception ex)
+        {
+            _hookError = "The takeover detection hook failed while it handled an input event, so the user's input may not be detected.";
+            if (Interlocked.Exchange(ref _callbackFailureLogged, 1) == 0)
+            {
+                _logger?.LogWarning(ex, "The takeover detection hook callback failed; takeovers may not be detected (logged once until the hooks are installed again)");
+            }
+        }
+    }
+
+    /// <summary>Counts the user's input and signals the running watches.</summary>
     private void OnInput(LowLevelInput input)
     {
         if (!_filter.Counts(input))
@@ -195,6 +236,8 @@ public sealed class UserTakeoverMonitor : ITakeoverMonitor, IDisposable
     /// <summary>The monitor thread: its queue, the hooks while an operation is watched, and the message loop until the stop message.</summary>
     private void Run()
     {
+        // True when the loop ended because the monitor is disposed; otherwise the thread stopped on its own
+        var disposed = false;
         try
         {
             var threadId = _native.GetCurrentThreadId();
@@ -204,6 +247,7 @@ public sealed class UserTakeoverMonitor : ITakeoverMonitor, IDisposable
                 _threadId = threadId;
                 if (_disposed)
                 {
+                    disposed = true;
                     return;
                 }
             }
@@ -217,6 +261,18 @@ public sealed class UserTakeoverMonitor : ITakeoverMonitor, IDisposable
                         Update();
                         break;
                     case WinEventLoopMessage.Stop:
+                        lock (_lock)
+                        {
+                            disposed = _disposed;
+                        }
+
+                        if (!disposed)
+                        {
+                            // WM_QUIT: only Dispose's stop message should end the loop
+                            _hookError = "The takeover detection thread's message loop ended before the server stopped, so the user's input is no longer detected.";
+                            _logger?.LogWarning("The takeover detection thread's message loop ended unexpectedly; takeovers are no longer detected");
+                        }
+
                         return;
                     case WinEventLoopMessage.Failed:
                         _hookError = "The takeover detection thread's message loop failed, so the user's input is no longer detected.";
@@ -232,7 +288,28 @@ public sealed class UserTakeoverMonitor : ITakeoverMonitor, IDisposable
         }
         finally
         {
+            // The hooks first: the thread that installed them must remove them, and a new thread may start once this one is gone
             Unhook();
+            Ended(disposed);
+        }
+    }
+
+    /// <summary>
+    /// On the monitor thread, as it ends: lets the next watch start a new one, unless the monitor is disposed or the thread
+    /// has already been started again <see cref="MaxRestarts"/> times; then the status says detection is off for good.
+    /// </summary>
+    private void Ended(bool disposed)
+    {
+        lock (_lock)
+        {
+            _thread = null;
+            _threadId = 0;
+            if (!disposed && !_disposed && _starts > MaxRestarts)
+            {
+                _hookError = $"{_hookError} It stopped {_starts} times, so it is not started again: takeovers are not detected " +
+                             "until the server is restarted.";
+                _logger?.LogWarning("The takeover detection thread stopped {Starts} times and is not started again", _starts);
+            }
         }
     }
 
@@ -260,24 +337,30 @@ public sealed class UserTakeoverMonitor : ITakeoverMonitor, IDisposable
         var mouse = _native.SetMouseHook(_callback);
         foreach (var hook in new[] { keyboard, mouse })
         {
-            if (hook != nint.Zero)
+            if (hook.Succeeded)
             {
-                _hooks.Add(hook);
+                _hooks.Add(hook.Handle);
             }
         }
 
-        if (keyboard == nint.Zero || mouse == nint.Zero)
+        if (!keyboard.Succeeded || !mouse.Succeeded)
         {
             // Half a detection would stop on keys and miss the mouse, or the other way round: none at all is clearer
             Unhook();
-            _hookError = "Windows did not install the low-level keyboard and mouse hooks, so the user's input is not detected.";
-            _logger?.LogWarning("The takeover detection hooks could not be installed; takeovers are not detected");
+            _hookError = $"Windows did not install the low-level keyboard and mouse hooks (keyboard: {Describe(keyboard)}; mouse: " +
+                         $"{Describe(mouse)}), so the user's input is not detected.";
+            _logger?.LogWarning("The takeover detection hooks could not be installed (keyboard: {Keyboard}; mouse: {Mouse}); takeovers are not detected",
+                Describe(keyboard), Describe(mouse));
             return;
         }
 
         _hookError = null;
+        Interlocked.Exchange(ref _callbackFailureLogged, 0);
         _hooked = true;
     }
+
+    /// <summary>"installed", or the Windows error of a hook that was not.</summary>
+    private static string Describe(LowLevelHookResult hook) => hook.Succeeded ? "installed" : $"Windows error {hook.Win32Error}";
 
     /// <summary>On the monitor thread: removes the hooks it installed.</summary>
     private void Unhook()
