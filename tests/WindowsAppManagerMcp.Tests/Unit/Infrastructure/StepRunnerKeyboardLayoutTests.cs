@@ -169,6 +169,43 @@ public class StepRunnerKeyboardLayoutTests
         _dispatcher.Calls.Should().ContainSingle();
     }
 
+    [Fact]
+    public async Task AStepToADialogNamedByAWindowSelectorsHandle_IsReadOnTheDialogsLayout()
+    {
+        // Arrange - a literal selector handle names the dialog before the run, as a literal windowHandle does
+        _layouts.WindowLayouts[(nint)Window] = FakeKeyboardLayoutWrapper.Us;
+        _layouts.WindowLayouts[(nint)Dialog] = FakeKeyboardLayoutWrapper.Russian;
+
+        // Act
+        var act = () => RunAsync(Step(StepTool.SendKeys, $$"""{ "keys": "^ц", "window": { "handle": {{Dialog}} } }"""));
+
+        // Assert
+        var error = (await act.Should().ThrowAsync<ToolErrorException>()).Which;
+        error.ErrorCode.Should().Be("InvalidArguments");
+        error.Message.Should().Contain("^w").And.Contain($"window {Dialog}").And.Contain("Nothing was done: the whole run was refused.");
+        _dispatcher.Calls.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task AStepToADialogNamedByAWindowSelector_IsReadOnTheDialogsLayout_BeforeItRuns()
+    {
+        // Arrange - the selector names the dialog only once it is resolved, before the step (it is then passed on as its
+        // handle), so only the check before step 2 reads the dialog's layout
+        _layouts.WindowLayouts[(nint)Window] = FakeKeyboardLayoutWrapper.Us;
+        _layouts.WindowLayouts[(nint)Dialog] = FakeKeyboardLayoutWrapper.Russian;
+        _windows.Setup(w => w.ResolveWindow(It.Is<WindowSelector>(s => s.TitleEquals == "Open")))
+            .Returns(WindowResolution.Found(Info((nint)Dialog)!));
+
+        // Act
+        var run = await RunAsync(Typing(), Step(StepTool.PressKeys, """{ "keys": "ctrl+ц", "window": { "titleEquals": "Open" } }"""));
+
+        // Assert
+        run.Result.StoppedBy.Should().Be(StepStopReason.StepFailed);
+        run.Result.ErrorCode.Should().Be("InvalidArguments");
+        run.Result.Error.Should().Contain("Step 2 (press_keys) was not run").And.Contain("^w").And.Contain($"window {Dialog}");
+        _dispatcher.Calls.Should().ContainSingle().Which.Tool.Should().Be("type_text");
+    }
+
     [Theory]
     [InlineData(StepTool.PressKeys, """{ "keys": "ctrl+ц" }""", "^ц")]
     [InlineData(StepTool.SendKeys, """{ "keys": "%ς" }""", "%ς")]
