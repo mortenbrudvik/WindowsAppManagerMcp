@@ -125,7 +125,7 @@ public class InputControlTools
     [Description("Resume the server's input after it was paused, but only if the user confirms: the server asks " +
                  "the user directly through the MCP client (elicitation), and input resumes only when they answer yes. Call it only when " +
                  "the user has asked you to continue, and only once at a time. ResumeNeedsUser: this client cannot ask the user, so only " +
-                 "the user can resume; the error says how. ResumeDeclined: the user said no or did not answer, paused again meanwhile, or " +
+                 "the user can resume; the error says how. ResumeDeclined: the user said no or did not answer, input was paused again meanwhile, or " +
                  "another resume_input is already waiting for the answer; input stays paused. Never try to resume any other way, and " +
                  "never send the pause hotkey's keys.")]
     public async Task<ResumeInputResult> ResumeInput(McpServer server, CancellationToken cancellationToken)
@@ -365,8 +365,10 @@ public class InputControlTools
     /// <summary>
     /// What a press of the pause hotkey does to <paramref name="state"/>. The server that registered the chord toggles its own
     /// pause (InputSession.TogglePauseByHotkey). Another server's presses reach this one only through the shared pause, so not
-    /// while it cannot be read (<see cref="IInputSession.IsSharedPauseUnreadable"/>), whoever paused; and without a server that
-    /// registered the chord, a pause the server made itself has no press that resumes it.
+    /// while it cannot be read (<see cref="IInputSession.IsSharedPauseUnreadable"/>), whoever paused; once it can, a press there
+    /// sets it, which makes the pause the server made itself the user's (InputSession.SyncLocked), so the next press resumes,
+    /// and a pause the user made there meanwhile is the user's already. Without a server that registered the chord, a pause
+    /// the server made itself has no press that resumes it.
     /// </summary>
     private HotkeyResume HotkeyResumes(InputPauseState state, PauseHotkeyStatus hotkey)
     {
@@ -389,7 +391,7 @@ public class InputControlTools
     /// <summary>What the presses of the hotkey do to the server's own pause.</summary>
     private static string SelfPauseHotkeyPresses() =>
         "the first press keeps the pause, as the user's own (and pauses every Windows App Manager server on this desktop), and a " +
-        $"second press more than {InputSession.HotkeyResumeDelay.TotalSeconds.ToString("0.#", CultureInfo.InvariantCulture)} seconds " +
+        $"second press {InputSession.HotkeyResumeDelay.TotalSeconds.ToString("0.#", CultureInfo.InvariantCulture)} seconds or more " +
         "later resumes";
 
     /// <summary>

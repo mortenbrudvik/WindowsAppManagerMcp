@@ -92,7 +92,7 @@ public class SharedPauseUnreadableMessageTests : IDisposable
             .And.Contain("Stop and ask the user");
 
         // The hotkey's first press only makes this pause the user's own (InputSession.TogglePauseByHotkey): "again" is wrong
-        status.Message.Should().Contain("the first press keeps the pause").And.Contain("a second press more than 2 seconds later resumes")
+        status.Message.Should().Contain("the first press keeps the pause").And.Contain("a second press 2 seconds or more later resumes")
             .And.NotContain("Ctrl+Alt+Shift+Pause again");
     }
 
@@ -131,7 +131,7 @@ public class SharedPauseUnreadableMessageTests : IDisposable
         var status = StatusWith(PauseHotkeyState.Registered);
 
         status.Message.Should().NotContain("Ctrl+Alt+Shift+Pause again").And.Contain("by confirming resume_input")
-            .And.Contain("first press keeps the pause").And.Contain("second press more than 2 seconds later resumes");
+            .And.Contain("first press keeps the pause").And.Contain("second press 2 seconds or more later resumes");
     }
 
     [Fact]

@@ -654,6 +654,157 @@ public class InputSessionTests
     }
 
     [Fact]
+    public void AUsersPauseInAnotherServer_WhileTheFlagCouldNotBeRead_MakesTheServersOwnPauseTheUsers_OnceItCanBeReadAgain()
+    {
+        // Arrange - the server paused itself, and meanwhile the user paused with the hotkey another server registered
+        var flag = new FakeDesktopPauseFlag { ReadFails = new IOException("the handle broke") };
+        using var sut = CreateSut();
+        sut.ShareDesktopPause(flag);
+        var ownPause = sut.PauseState.PauseNumber;
+        flag.SetByAnotherServer();
+
+        // Act - the flag can be read again
+        flag.ReadFails = null;
+        var state = sut.PauseState;
+
+        // Assert - the pause in force is the user's, so it is the user's here too: that server's next press resumes every
+        // server, this one too, and an answer about the server's own pause is not one about the user's
+        state.Paused.Should().BeTrue();
+        state.PausedBy.Should().Be(InputControlSources.Hotkey);
+        state.PauseNumber.Should().NotBe(ownPause);
+        sut.PauseState.PauseNumber.Should().Be(state.PauseNumber, "the pause is made the user's once, not at every read");
+        flag.ResetByAnotherServer();
+        sut.IsPaused.Should().BeFalse();
+        sut.PauseState.ResumedBy.Should().Be(InputControlSources.OtherServer);
+    }
+
+    [Fact]
+    public void AnotherServersFirstPress_AfterTheServerPausedItself_KeepsThePause_AsTheUsersOwn_AndItsSecondResumes()
+    {
+        // Arrange - the server paused itself, and the flag can be read again with no pause in it
+        var flag = new FakeDesktopPauseFlag { ReadFails = new IOException("the handle broke") };
+        using var sut = CreateSut();
+        sut.ShareDesktopPause(flag);
+        flag.ReadFails = null;
+        sut.PauseState.PausedBy.Should().Be(InputControlSources.SharedPauseUnreadable);
+
+        // Act - the first press in the server that registered the chord pauses every server
+        flag.SetByAnotherServer();
+
+        // Assert - the pause stays, as the user's own, so the second press resumes it as any pause the user made
+        sut.IsPaused.Should().BeTrue();
+        sut.PauseState.PausedBy.Should().Be(InputControlSources.Hotkey);
+        flag.ResetByAnotherServer();
+        sut.IsPaused.Should().BeFalse();
+    }
+
+    [Fact]
+    public void ASelfPause_IsNotResumedByARead_EvenWhenAnEarlierResumeCouldNotResetTheFlag()
+    {
+        // Arrange - the user paused in another server; this server's confirmed resume could not reset the flag (only this
+        // server resumed, and it still takes the flag as set), and then it could not read the flag, so it paused itself
+        var flag = new FakeDesktopPauseFlag();
+        using var sut = CreateSut();
+        sut.ShareDesktopPause(flag);
+        flag.SetByAnotherServer();
+        sut.IsPaused.Should().BeTrue();
+        flag.WriteFails = new UnauthorizedAccessException("denied");
+        sut.Resume(InputControlSources.ResumeInput).Should().BeTrue();
+        flag.WriteFails = null;
+        flag.ReadFails = new IOException("the handle broke");
+        sut.PauseState.PausedBy.Should().Be(InputControlSources.SharedPauseUnreadable);
+
+        // Act - the other server resumes the shared pause, and the flag can be read again
+        flag.ResetByAnotherServer();
+        flag.ReadFails = null;
+
+        // Assert - what happened while it could not be read is not known: only the user resumes the server's own pause
+        sut.IsPaused.Should().BeTrue();
+        sut.PauseState.PausedBy.Should().Be(InputControlSources.SharedPauseUnreadable);
+        sut.Send(CtrlC).PausedByUser.Should().BeTrue();
+    }
+
+    [Fact]
+    public void AReadThatFailsInTheWatcher_PausesAtOnce_AndStopsRunningCalls()
+    {
+        // Arrange - a call is running; the watcher's first read of the shared pause fails, the session's own reads work
+        var flag = new WatcherReadsFailFlag(failures: 1);
+        using var sut = CreateSut();
+        var running = sut.PauseToken;
+
+        // Act
+        sut.ShareDesktopPause(flag);
+
+        // Assert - fail closed from the watcher too, without waiting for the server's next call
+        SpinWait.SpinUntil(() => running.IsCancellationRequested, Timeout).Should().BeTrue();
+        sut.PauseState.PausedBy.Should().Be(InputControlSources.SharedPauseUnreadable);
+    }
+
+    [Fact]
+    public void AReadThatFailsInTheWatcher_DoesNotStopIt_AnotherServersLaterPauseStillStopsRunningCalls()
+    {
+        // Arrange - the watcher's first read fails (the server pauses itself), the user resumes, and a call runs
+        var flag = new WatcherReadsFailFlag(failures: 1);
+        using var sut = CreateSut();
+        var first = sut.PauseToken;
+        sut.ShareDesktopPause(flag);
+        SpinWait.SpinUntil(() => flag.WatcherReads >= 1, Timeout).Should().BeTrue();
+        sut.Resume(InputControlSources.ResumeInput);
+        sut.IsPaused.Should().BeFalse();
+        var running = sut.PauseToken;
+
+        // Act - another server's hotkey pauses every server
+        flag.Inner.SetByAnotherServer();
+
+        // Assert - the watcher still runs: the call stops at once, not at this server's next call
+        SpinWait.SpinUntil(() => running.IsCancellationRequested, Timeout).Should().BeTrue();
+        first.IsCancellationRequested.Should().BeTrue();
+        sut.PauseState.PausedBy.Should().Be(InputControlSources.Hotkey);
+    }
+
+    [Fact]
+    public void Dispose_StopsTheWatcher_WhileTheSharedPauseCannotBeRead()
+    {
+        // The watcher keeps trying while every read fails, and still ends when the session is disposed
+        var flag = new WatcherReadsFailFlag(failures: int.MaxValue);
+        var sut = CreateSut();
+        sut.ShareDesktopPause(flag);
+        var watcher = (Thread)typeof(InputSession)
+            .GetField("_watcher", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!
+            .GetValue(sut)!;
+        SpinWait.SpinUntil(() => flag.WatcherReads >= 2, Timeout).Should().BeTrue("the watcher tries again after a failed read");
+
+        sut.Dispose();
+
+        watcher.IsAlive.Should().BeFalse();
+    }
+
+    /// <summary>
+    /// A shared pause whose reads from any thread but the test's (the session's watcher) fail the first
+    /// <paramref name="failures"/> times, as a flag that cannot be read for a while would; the test's own reads work.
+    /// </summary>
+    private sealed class WatcherReadsFailFlag(int failures) : IDesktopPauseFlag
+    {
+        private readonly int _testThread = Environment.CurrentManagedThreadId;
+        private int _watcherReads;
+
+        public FakeDesktopPauseFlag Inner { get; } = new();
+
+        /// <summary>How many times the watcher read the flag, failed or not.</summary>
+        public int WatcherReads => Volatile.Read(ref _watcherReads);
+
+        public bool IsSet => Environment.CurrentManagedThreadId != _testThread && Interlocked.Increment(ref _watcherReads) <= failures
+            ? throw new IOException("the handle broke")
+            : Inner.IsSet;
+
+        public WaitHandle WaitHandle => Inner.WaitHandle;
+
+        public void Set() => Inner.Set();
+
+        public void Reset() => Inner.Reset();
+    }
+
+    [Fact]
     public void ShareDesktopPause_Twice_Throws()
     {
         using var sut = CreateSut();
