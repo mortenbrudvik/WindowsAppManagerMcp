@@ -1989,6 +1989,9 @@ Rules for new tests:
   fails an `OpenDesktopPause` on a wrapper it cannot trace, in the same method, to such a constructor on such a name,
   a `Set` or `Reset` of a pause it cannot trace to such an `OpenDesktopPause`, and a parameterless wrapper that does
   not go straight into `FieldInfo.GetValue`: a wrapper or pause kept in a field or handed back by a helper fails.
+  The trace reads the IL as one list, so it fails closed on a value merged from two paths: a name, wrapper or pause
+  that a `??` or a `?:` picks (`new NativeHotkeyWrapper(name ?? UniqueName())`) is not traced, since the instruction
+  that takes it is a branch target (`IlInstruction.IsBranchTarget`).
 - Never install a real low-level keyboard or mouse hook. Takeover detection (roadmap M7.4) installs them only through
   `INativeLowLevelInputWrapper` (`LowLevelInputHooks_AreOnlyInstalledByNativeLowLevelInputWrapper`). Tests use
   `FakeLowLevelInputWrapper`, whose message loop can fail (`FailLoop`), end as WM_QUIT does (`QuitLoop`) or throw

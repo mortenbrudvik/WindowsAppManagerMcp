@@ -28,8 +28,8 @@ namespace WindowsAppManagerMcp.Tests.Unit.Architecture;
 /// marks, so a method that constructs it calls nothing on a hotkey wrapper, and the wrapper goes straight into a reflection
 /// read of a field (never kept, returned or passed on); the constructor that takes a name opens the pause of any name, so test
 /// code passes it only a name visibly of its own (Local\WamTests., traced through the IL; a naming helper takes no parameter,
-/// loads no field and calls no test or server code). The shared pause is opened only on a wrapper built so in the same method,
-/// and set or reset only when it was opened so.</item>
+/// loads no field and calls no test or server code; a value merged from two paths, as by a ?? or a ?:, is not traced). The
+/// shared pause is opened only on a wrapper built so in the same method, and set or reset only when it was opened so.</item>
 /// <item>Server code that a test hands a real wrapper to (a constructor called in the same method) calls only those read members
 /// on it.</item>
 /// <item>Test code builds the server's production container (ServiceRegistration.AddWindowsAppManagerServices), whose services
@@ -44,9 +44,11 @@ namespace WindowsAppManagerMcp.Tests.Unit.Architecture;
 /// A Moq setup names a member in an expression tree (ldtoken), not as a call, so mocked members are never counted.
 /// </summary>
 /// <remarks>
-/// The scan follows a real wrapper only within the method that creates it. For the hotkey wrapper that fails closed: a wrapper
-/// or a shared pause kept in a field, passed in or handed back by a helper cannot be opened, set or reset, since the scan
-/// cannot see its name. A server constructor that creates a real wrapper
+/// The scan follows a real wrapper only within the method that creates it, and only along one path: it reads the IL as a list,
+/// so a value an instruction takes at a branch target (the end of a ?? or a ?:) is not traced. For the hotkey wrapper that fails
+/// closed: a wrapper or a shared pause kept in a field, passed in, handed back by a helper or merged from two paths cannot be
+/// opened, set or reset, and a name merged so is no name of the test's own, since the scan cannot see which it is. A server
+/// constructor that creates a real wrapper
 /// itself when a test leaves the parameter out (ProcessService's processWrapper) is outside what the IL shows; the tests that
 /// build a ProcessService pass a mock.
 /// </remarks>
@@ -356,7 +358,7 @@ public class TestCodeNativeWrapperTests
         // Arrange - a hotkey wrapper opens the pause of the name it holds, and the servers' (Local\WindowsAppManagerMcp.InputPaused)
         // pauses or resumes every server on the desktop: the pause is opened only on a wrapper built in the same method on a
         // name of the test's own, and set or reset only when it was opened so; a wrapper or pause from a field, an argument or
-        // a helper is not followed, so the check fails closed
+        // a helper, or merged from two paths (?? or ?:), is not followed, so the check fails closed
         static string Key(PauseUse use) => $"{use.Owner.Name}.{SourceMethodName(use.Caller) ?? use.Caller.Name}: {use.Member}";
 
         // Act
@@ -379,6 +381,12 @@ public class TestCodeNativeWrapperTests
                 $"{nameof(NativeWrapperScanSamples)}.{nameof(NativeWrapperScanSamples.ResetsThePauseOfAField)}: NativeHotkeyWrapper.OpenDesktopPause",
                 $"{nameof(NativeWrapperScanSamples)}.{nameof(NativeWrapperScanSamples.ResetsThePauseOfAField)}: IDesktopPauseFlag.Reset"
             ], "the scan must see a sample open the servers' pause, also on a wrapper a helper hands back or a field keeps, and set or reset it");
+        samples.Where(u => !u.OfItsOwn).Select(Key).Should().Contain(
+            [
+                $"{nameof(NativeWrapperScanSamples)}.{nameof(NativeWrapperScanSamples.NamesThePauseThroughACoalesce)}: NativeHotkeyWrapper.OpenDesktopPause",
+                $"{nameof(NativeWrapperScanSamples)}.{nameof(NativeWrapperScanSamples.OpensThePauseOfACoalescedWrapper)}: NativeHotkeyWrapper.OpenDesktopPause",
+                $"{nameof(NativeWrapperScanSamples)}.{nameof(NativeWrapperScanSamples.SetsACoalescedPause)}: IDesktopPauseFlag.Set"
+            ], "the scan must not take a name, a wrapper or a pause merged from two paths (?? or ?:) for the one pushed last before the merge");
         samples.Where(u => u.OfItsOwn).Select(Key).Should().Contain(
             [
                 $"{nameof(NativeWrapperScanSamples)}.{nameof(NativeWrapperScanSamples.OpensAPauseOfItsOwn)}: NativeHotkeyWrapper.OpenDesktopPause",
@@ -388,7 +396,8 @@ public class TestCodeNativeWrapperTests
             "the shared pause of the servers' name pauses or resumes every server on the desktop: open it only on " +
             "new NativeHotkeyWrapper(<a name of the test's own>) in the same method (a Local\\WamTests.<test> literal, a helper " +
             "that builds one such as UniqueName, or a local only those set), and set or reset only the pause it returns, directly " +
-            "or through a local; a wrapper or pause kept in a field, passed in or handed back by a helper is not traced");
+            "or through a local; a wrapper or pause kept in a field, passed in, handed back by a helper or merged by a ?? or a ?: " +
+            "is not traced");
     }
 
     [Fact]
@@ -415,6 +424,13 @@ public class TestCodeNativeWrapperTests
                 $"{nameof(NativeWrapperScanSamples)}.{nameof(NativeWrapperScanSamples.NamesThePauseThroughAField)}"
             ], "the scan must see a sample name a wrapper after the servers' pause: by its literal, its field and a helper, and " +
                "through a helper whose literal is of the test's own but whose name comes from a parameter or a field");
+        samples.Where(n => !n.OfItsOwn).Select(Key).Should().Contain(
+            [
+                $"{nameof(NativeWrapperScanSamples)}.{nameof(NativeWrapperScanSamples.NamesThePauseThroughACoalesce)}",
+                $"{nameof(NativeWrapperScanSamples)}.{nameof(NativeWrapperScanSamples.NamesThePauseThroughAChoice)}",
+                $"{nameof(NativeWrapperScanSamples)}.{nameof(NativeWrapperScanSamples.NamesThePauseThroughACoalescedLocal)}"
+            ], "the scan must not take a name merged from two paths (?? or ?:), directly or through a local, for the one pushed last " +
+               "before the merge");
         samples.Where(n => n.OfItsOwn).Select(Key).Should().Contain(
             [
                 $"{nameof(NativeWrapperScanSamples)}.{nameof(NativeWrapperScanSamples.MarksAChord)}",
@@ -426,7 +442,8 @@ public class TestCodeNativeWrapperTests
             .Should().BeEmpty(
                 "a hotkey wrapper opens the pause of the name it is built on, and the servers' (Local\\WindowsAppManagerMcp.InputPaused) " +
                 "would pause or resume every server on the desktop: pass a literal of Local\\WamTests.<test>, or a test helper " +
-                "that builds one (UniqueName), directly or through a local; or add the method to SanctionedHotkeyNames with why its name is its own");
+                "that builds one (UniqueName), directly or through a local, and not through a ?? or a ?:; or add the method to " +
+                "SanctionedHotkeyNames with why its name is its own");
         SanctionedHotkeyNames.Keys.Should().BeSubsetOf(untraced.Select(n => (n.Owner.FullName!, SourceMethodName(n.Caller) ?? n.Caller.Name)),
             "an entry names a method whose name the scan cannot trace");
     }
@@ -589,14 +606,19 @@ public class TestCodeNativeWrapperTests
     /// What pushed the name the instruction after <paramref name="at"/> takes, and whether it is visibly the test's own: a literal
     /// of <see cref="TestPausePrefix"/>; a call of a test method that returns one built from such a literal and names nothing of the
     /// servers' (<see cref="ServersHotkeyNames"/>), with nothing but its own IL (<see cref="BuildsANameOfItsOwn"/>); or a local whose
-    /// address is never taken and that only those set. Anything
-    /// else (a field, an argument, a string built in place) is not traced, so the check fails closed.
+    /// address is never taken and that only those set. Anything else (a field, an argument, a string built in place, or a value
+    /// merged from two paths, <see cref="Merges"/>) is not traced, so the check fails closed.
     /// </summary>
     private static (string Source, bool OfItsOwn) NameSource(IReadOnlyList<IlInstruction> code, int at)
     {
         if (at < 0)
         {
             return ("a value the scan cannot read", false);
+        }
+
+        if (Merges(code, at))
+        {
+            return (MergedValue, false);
         }
 
         var instruction = code[at];
@@ -618,6 +640,15 @@ public class TestCodeNativeWrapperTests
 
         return ($"the result of {instruction.OpCode.Name}", false);
     }
+
+    /// <summary>
+    /// True when the instruction after <paramref name="at"/> may take a value another path pushed: it is a branch target (the end
+    /// of a ?? or a ?:, for example: <c>name ?? UniqueName()</c> pushes UniqueName's result last before the merge, but the value
+    /// may be <c>name</c>), so what the instruction at <paramref name="at"/> pushes is not traced as the one it takes.
+    /// </summary>
+    private static bool Merges(IReadOnlyList<IlInstruction> code, int at) => at + 1 >= code.Count || code[at + 1].IsBranchTarget;
+
+    private const string MergedValue = "a value merged from more than one path (a ?? or a ?:), which the scan does not follow";
 
     private static readonly OpCode[] LoadLocal = [OpCodes.Ldloc_0, OpCodes.Ldloc_1, OpCodes.Ldloc_2, OpCodes.Ldloc_3];
 
@@ -701,13 +732,19 @@ public class TestCodeNativeWrapperTests
     /// <summary>
     /// The hotkey wrapper the instruction at <paramref name="at"/> pushes, and whether it visibly holds a name of the test's own:
     /// a NativeHotkeyWrapper(string) built right there on such a name (<see cref="NameSource"/>), or a local only those set. The
-    /// servers' parameterless wrapper, a field, an argument or a helper's result is not, so the check fails closed.
+    /// servers' parameterless wrapper, a field, an argument, a helper's result or a value merged from two paths
+    /// (<see cref="Merges"/>) is not, so the check fails closed.
     /// </summary>
     private static (string Source, bool OfItsOwn) WrapperSource(IReadOnlyList<IlInstruction> code, int at)
     {
         if (at < 0)
         {
             return ("a value the scan cannot read", false);
+        }
+
+        if (Merges(code, at))
+        {
+            return (MergedValue, false);
         }
 
         var instruction = code[at];
@@ -729,13 +766,19 @@ public class TestCodeNativeWrapperTests
 
     /// <summary>
     /// The shared pause the instruction at <paramref name="at"/> pushes, and whether it is visibly of a name of the test's own:
-    /// opened right there on such a wrapper (<see cref="WrapperSource"/>), or a local only those set.
+    /// opened right there on such a wrapper (<see cref="WrapperSource"/>), or a local only those set; not a value merged from two
+    /// paths (<see cref="Merges"/>).
     /// </summary>
     private static (string Source, bool OfItsOwn) PauseSource(IReadOnlyList<IlInstruction> code, int at)
     {
         if (at < 0)
         {
             return ("a value the scan cannot read", false);
+        }
+
+        if (Merges(code, at))
+        {
+            return (MergedValue, false);
         }
 
         var instruction = code[at];
@@ -752,8 +795,8 @@ public class TestCodeNativeWrapperTests
 
     /// <summary>
     /// True when <paramref name="local"/>'s address is never taken and each of its stores takes a value that
-    /// <paramref name="ofItsOwn"/> accepts (given the index of the instruction that pushed it); a local set from another local is
-    /// not followed.
+    /// <paramref name="ofItsOwn"/> accepts (given the index of the instruction that pushed it, so a store that is a branch target
+    /// fails it: <see cref="Merges"/>); a local set from another local is not followed.
     /// </summary>
     private static bool SetOnlyBy(IReadOnlyList<IlInstruction> code, int local, Func<int, bool> ofItsOwn)
     {
@@ -1033,4 +1076,25 @@ internal static class NativeWrapperScanSamples
     private static string? s_pauseName = null;
 
     private static string PauseNameOfAField() => s_pauseName ?? @"Local\WamTests.ScanSample";
+
+    // A name, a wrapper or a pause merged from two paths (?? or ?:) in the method itself: the instruction that takes it is a
+    // branch target, so the value the instruction before it pushes (a name of the test's own here) may not be the one it gets
+
+    public static IDesktopPauseFlag NamesThePauseThroughACoalesce(string? name) =>
+        new NativeHotkeyWrapper(name ?? PauseNameOfItsOwn()).OpenDesktopPause();
+
+    public static IDesktopPauseFlag NamesThePauseThroughAChoice(bool own) =>
+        new NativeHotkeyWrapper(own ? PauseNameOfItsOwn() : @"Local\WindowsAppManagerMcp.InputPaused").OpenDesktopPause();
+
+    public static IDesktopPauseFlag NamesThePauseThroughACoalescedLocal(string? given)
+    {
+        var name = given ?? PauseNameOfItsOwn();
+        return new NativeHotkeyWrapper(name).OpenDesktopPause();
+    }
+
+    public static IDesktopPauseFlag OpensThePauseOfACoalescedWrapper(NativeHotkeyWrapper? given) =>
+        (given ?? new NativeHotkeyWrapper(PauseNameOfItsOwn())).OpenDesktopPause();
+
+    public static void SetsACoalescedPause(IDesktopPauseFlag? given) =>
+        (given ?? new NativeHotkeyWrapper(PauseNameOfItsOwn()).OpenDesktopPause()).Set();
 }

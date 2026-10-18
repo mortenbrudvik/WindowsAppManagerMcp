@@ -46,7 +46,7 @@ public static class IlCalls
         var called = new List<MethodBase>();
         var typeArguments = method.DeclaringType is { IsGenericType: true } declaring ? declaring.GetGenericArguments() : null;
         var methodArguments = method.IsGenericMethod ? method.GetGenericArguments() : null;
-        foreach (var (opCode, operand) in Instructions(method))
+        foreach (var (_, opCode, operand, _) in Instructions(method))
         {
             if (opCode.OperandType != OperandType.InlineMethod)
             {
@@ -74,15 +74,25 @@ public static class IlCalls
 
     /// <summary>
     /// The instructions of <paramref name="method"/>'s body in order, with the method each one names (call, callvirt, newobj,
-    /// ldftn) and the string it loads (ldstr) resolved: for tests that follow where a value comes from, such as the name a
-    /// wrapper is built on.
+    /// ldftn) and the string it loads (ldstr) resolved, and whether control can reach each one other than from the instruction
+    /// before it: for tests that follow where a value comes from, such as the name a wrapper is built on. What an instruction
+    /// takes from the stack is what the instruction before it pushed only when it is no branch target: at a target, such as the
+    /// end of a ?? or a ?:, it may come from another path.
     /// </summary>
     public static IReadOnlyList<IlInstruction> InstructionsOf(MethodBase method)
     {
         var typeArguments = method.DeclaringType is { IsGenericType: true } declaring ? declaring.GetGenericArguments() : null;
         var methodArguments = method.IsGenericMethod ? method.GetGenericArguments() : null;
+        var raw = Instructions(method).ToList();
+
+        // Where control can jump to: a branch's, a leave's or a switch's target, and where an exception handler or filter starts
+        var clauses = method.GetMethodBody()?.ExceptionHandlingClauses ?? [];
+        var targets = raw.SelectMany(i => i.Targets)
+            .Concat(clauses.Select(c => c.HandlerOffset))
+            .Concat(clauses.Where(c => c.Flags == ExceptionHandlingClauseOptions.Filter).Select(c => c.FilterOffset))
+            .ToHashSet();
         var instructions = new List<IlInstruction>();
-        foreach (var (opCode, operand) in Instructions(method))
+        foreach (var (offset, opCode, operand, _) in raw)
         {
             MethodBase? callee = null;
             string? text = null;
@@ -96,17 +106,18 @@ public static class IlCalls
                 // A token that cannot be resolved in this generic context: the instruction is kept without it
             }
 
-            instructions.Add(new IlInstruction(opCode, operand, callee, text));
+            instructions.Add(new IlInstruction(opCode, operand, callee, text, offset, targets.Contains(offset)));
         }
 
         return instructions;
     }
 
     /// <summary>
-    /// The instructions of a method body: each opcode with its operand when it is a 4-byte token or a 1- or 2-byte local or
-    /// argument index or constant, or 0 when it has none (or one of 8 bytes, or a switch table).
+    /// The instructions of a method body: each one's offset; its opcode with its operand when it is a 4-byte token or a 1- or
+    /// 2-byte local or argument index or constant, or 0 when it has none (or one of 8 bytes, or a switch table); and the offsets
+    /// a branch, a leave or a switch jumps to.
     /// </summary>
-    private static IEnumerable<(OpCode OpCode, int Operand)> Instructions(MethodBase method)
+    private static IEnumerable<(int Offset, OpCode OpCode, int Operand, int[] Targets)> Instructions(MethodBase method)
     {
         var il = method.GetMethodBody()?.GetILAsByteArray();
         if (il == null)
@@ -117,6 +128,7 @@ public static class IlCalls
         var position = 0;
         while (position < il.Length)
         {
+            var offset = position;
             ushort value = il[position++];
             if (value == 0xFE)
             {
@@ -142,8 +154,18 @@ public static class IlCalls
                 OperandType.InlineVar => BitConverter.ToUInt16(il, position),
                 _ => 0
             };
-            yield return (opCode, operand);
-            position += size;
+            // A branch's offset counts from the next instruction, a switch's from the end of its table
+            var next = position + size;
+            int[] targets = opCode.OperandType switch
+            {
+                OperandType.ShortInlineBrTarget or OperandType.InlineBrTarget => [next + operand],
+                OperandType.InlineSwitch => Enumerable.Range(0, BitConverter.ToInt32(il, position))
+                    .Select(k => next + BitConverter.ToInt32(il, position + 4 + 4 * k))
+                    .ToArray(),
+                _ => []
+            };
+            yield return (offset, opCode, operand, targets);
+            position = next;
         }
     }
 
@@ -153,7 +175,12 @@ public static class IlCalls
 
 /// <summary>One IL instruction of <see cref="IlCalls.InstructionsOf"/>.</summary>
 /// <param name="OpCode">The instruction.</param>
-/// <param name="Operand">Its token, its local's or argument's index, or its constant; 0 when it has none.</param>
+/// <param name="Operand">Its token, its local's or argument's index, or its constant (a branch's relative offset); 0 when it has none.</param>
 /// <param name="Method">The method it names (call, callvirt, newobj, ldftn), or null.</param>
 /// <param name="Text">The string it loads (ldstr), or null.</param>
-public sealed record IlInstruction(OpCode OpCode, int Operand, MethodBase? Method, string? Text);
+/// <param name="Offset">Its offset in the method body's IL.</param>
+/// <param name="IsBranchTarget">
+/// True when control can reach it other than from the instruction before it: a branch, a leave or a switch jumps to it, or an
+/// exception handler or filter starts there. What it takes from the stack may then come from another path.
+/// </param>
+public sealed record IlInstruction(OpCode OpCode, int Operand, MethodBase? Method, string? Text, int Offset, bool IsBranchTarget);
