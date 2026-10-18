@@ -167,6 +167,42 @@ public class BrowserDialogServiceTests
         _requests.Should().BeEmpty();
     }
 
+    [Fact]
+    public async Task ARequestCancelledBeforeTheRead_IsCancelled_NotATimeout()
+    {
+        // Arrange - the real worker, which starts no read for a token already cancelled and says its time ran out
+        Show(new FakeChromiumDialog("confirm"));
+        using var cancelled = new CancellationTokenSource();
+        cancelled.Cancel();
+        var sut = new BrowserDialogService(_tree, new UiaWorker(), _registry, _actions.Object, _windows.Object, _policy);
+
+        // Act
+        var act = () => sut.HandleAsync(Browser, accept: false, promptText: null, cancelled.Token);
+
+        // Assert
+        await act.Should().ThrowAsync<OperationCanceledException>();
+        _requests.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task AReadWhoseTimeRanOutBeforeItStarted_SaysTheBrowserWasNotAsked_NotThatItIsBusy()
+    {
+        // Arrange - the real worker, given the read after its deadline: it starts no thread
+        Show(new FakeChromiumDialog("confirm"));
+        var worker = new ExpiringUiaWorker { Expired = true };
+        var sut = new BrowserDialogService(_tree, worker, _registry, _actions.Object, _windows.Object, _policy);
+
+        // Act
+        var result = await sut.HandleAsync(Browser, accept: false, promptText: null);
+
+        // Assert
+        result.ErrorCode.Should().Be(nameof(UIElementErrorCode.OperationTimedOut));
+        result.Error.Should().Contain("before UI Automation was asked").And.Contain("the browser was not asked")
+            .And.Contain("Nothing was read or pressed").And.Contain("Try again").And.NotContain("busy");
+        worker.ExpiredCalls.Should().Be(1);
+        _requests.Should().BeEmpty();
+    }
+
     #endregion
 
     #region Answering

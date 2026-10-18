@@ -235,6 +235,11 @@ public class ElementInspectionService : IElementInspectionService
             // Earlier reads of the same application are still stuck; nothing was waited for
             return failure(ex.Message, UIElementErrorCode.OperationTimedOut);
         }
+        catch (UiaDeadlinePassedException ex)
+        {
+            // Not started: nothing was waited for, and the application, which was not asked, is not said to be hung
+            return failure($"{ex.Message} Try again with a larger timeoutMs.", UIElementErrorCode.OperationTimedOut);
+        }
         catch (TimeoutException ex)
         {
             return failure(

@@ -239,6 +239,12 @@ public sealed partial class ElementReadService : IElementReadService
         {
             throw new OperationCanceledException(cancellationToken);
         }
+        catch (UiaDeadlinePassedException ex)
+        {
+            // Not started: the application was not asked, so it is not said to have not answered
+            return TextFailure((long)handle, lookup.Ref, $"{ex.Message} Try again with a larger timeoutMs.",
+                UIElementErrorCode.OperationTimedOut, stopwatch, warmup.Value);
+        }
         catch (TimeoutException ex)
         {
             return TextFailure((long)handle, lookup.Ref, $"UI Automation did not answer in time: {ex.Message}",

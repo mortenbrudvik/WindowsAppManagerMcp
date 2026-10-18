@@ -2094,6 +2094,24 @@ public class BrowserReadingServiceTests
     }
 
     [Fact]
+    public async Task GetBrowserContent_WhoseReadsTimeRanOutBeforeItStarted_SaysTheBrowserWasNotAsked_NotThatItMayBeHung()
+    {
+        // Arrange - the worker started no read: its deadline had passed before it was asked for
+        var handle = new nint(12345);
+        SetupValidBrowserWindow(handle, "chrome", "chrome");
+        var sut = CreateSut(new FailingUiaWorker(new UiaDeadlinePassedException()));
+
+        // Act
+        var result = await sut.GetBrowserContentAsync(handle, new BrowserContentOptions(), new CdpOptions(TimeoutMs: 3000));
+
+        // Assert
+        result.ErrorCode.Should().Be(BrowserErrorCode.OperationTimedOut);
+        result.Error.Should().Contain("3000 ms").And.Contain("the browser was not asked").And.Contain("Nothing was read")
+            .And.Contain("larger timeoutMs").And.NotContain("hung").And.NotContain("did not finish");
+        result.Source.Should().Be("uia");
+    }
+
+    [Fact]
     public async Task GetBrowserContent_ReturnsOperationTimedOut_WhenEarlierReadsOfTheBrowserAreStuck()
     {
         // Arrange

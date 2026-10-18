@@ -23,7 +23,10 @@ namespace WindowsAppManagerMcp.Services;
 /// a part skipped (truncationReason PartsSkipped, matchCount without it, a warning naming the process), at every detail level:
 /// its process comes with the search's read of it (<see cref="UiaElement.ProcessId"/>), so the check costs no further UI
 /// Automation call. The provider still evaluates the criteria on such an element: only that it matched, and whose it is,
-/// shows.</para>
+/// shows. So the warm-up warms up a web page of such a process too (<see cref="IAccessibilityWarmup.WarmUpForSearch"/>,
+/// unlike a walk's): Chromium builds a page's tree only once asked, and a search of a page left unbuilt would miss its
+/// matches, come out complete and let element_action or read_element_text take another match for the only one. The
+/// warm-up's info counts only the pages the policy allows, so it shows nothing of such a page either.</para>
 /// <para>Each match is registered with the search's identity criteria as its selector and whether they fit only it in the
 /// window (<see cref="ElementOrigin.Unique"/>), which decides whether a resolution may later move its ref to the element
 /// re-created. Proven only by a complete search of the whole window (not below withinRef): without visibleOnly or
@@ -369,8 +372,9 @@ public sealed partial class ElementSearchService : IElementSearchService
             }
 
             // A window with web content builds its page's tree only once asked: ask, and wait for it a moment, so the
-            // search does not miss the page's elements
-            started.Warmup = query.WarmUp ? _warmup?.WarmUp(handle, warmupBudget, token) : null;
+            // search does not miss the page's elements. Also a page the target policy refuses: the provider's search below
+            // evaluates the criteria on its elements anyway, and a page left unbuilt would hide the matches it leaves out
+            started.Warmup = query.WarmUp ? _warmup?.WarmUpForSearch(handle, warmupBudget, token) : null;
             started.Title = TryReadName(window);
         }
 

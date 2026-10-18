@@ -766,4 +766,109 @@ public class ForeignElementReadTests
     }
 
     #endregion
+
+    #region A page of a denied WebView2 that Chromium builds only once it is asked for
+
+    private static readonly nint WebViewHost = 0x7510;
+    private static readonly nint RenderWidget = 0x7511;
+
+    /// <summary>The default deny list with the WebView2 runtime on it: process 778 is refused.</summary>
+    private static readonly TargetPolicy DeniesWebView2 =
+        new(new TargetPolicySettings([.. TargetPolicySettings.DefaultDeniedProcesses, "msedgewebview2"], null, "test"));
+
+    /// <summary>
+    /// The window hosts a WebView2 (process 778) whose render widget's pane holds <paramref name="page"/>. Chromium builds a
+    /// page's tree only once a UI Automation client asks for the render widget's element, as the warm-up does: until then the
+    /// pane is empty, and a search of the window finds none of the page's elements.
+    /// </summary>
+    private void HostsAWebView2PageNotBuiltYet(params FakeUiaNode[] page)
+    {
+        _windows.Setup(w => w.EnumChildWindows(Handle, It.IsAny<Func<nint, bool>>()))
+            .Callback((nint _, Func<nint, bool> callback) =>
+            {
+                if (callback(WebViewHost))
+                {
+                    callback(RenderWidget);
+                }
+            });
+        _windows.Setup(w => w.GetClassName(WebViewHost)).Returns("Chrome_WidgetWin_1");
+        _windows.Setup(w => w.GetClassName(RenderWidget)).Returns(AccessibilityWarmup.RenderWidgetHostClass);
+        _windows.Setup(w => w.IsWindowVisible(RenderWidget)).Returns(true);
+        _windows.Setup(w => w.GetWindowThreadProcessId(RenderWidget)).Returns((uint)AllowedPid);
+        var pane = new FakeUiaNode("Pane", "Chrome Legacy Window") { ProcessId = AllowedPid, FrameworkId = "Win32", NativeWindowHandle = RenderWidget };
+        _window.With(new FakeUiaNode("Pane", "WebView2") { ProcessId = AllowedPid, NativeWindowHandle = WebViewHost }.With(pane));
+        _tree.WithWindow(RenderWidget, pane);
+        _tree.FromHandleFailure = handle =>
+        {
+            if (handle == RenderWidget && pane.Children.Count == 0)
+            {
+                pane.With(page);
+            }
+
+            return null;
+        };
+    }
+
+    /// <summary>The page's button, served by the WebView2's process.</summary>
+    private static FakeUiaNode PageButton(string name) =>
+        new("Button", name) { ProcessId = AllowedPid, FrameworkId = "Chrome", ActionPatterns = ["Invoke"] };
+
+    /// <summary>The search with the warm-up as the server wires it: one warm-up, given the target policy too.</summary>
+    private ElementSearchService SearchAsTheServerWires(ITargetPolicy policy) =>
+        new(_tree, _worker, _registry, _windows.Object,
+            new AccessibilityWarmup(_tree, _windows.Object, new Mock<INativeProcessWrapper>().Object, wait: (_, _) => { }, policy: policy),
+            policy: policy);
+
+    [Fact]
+    public async Task ElementAction_ByCriteria_MatchingAnAllowedElement_AndOneOfADeniedWebView2sPageNotBuiltYet_IsAmbiguous()
+    {
+        // Arrange - the search's own provider search reaches the page's elements anyway (and leaves its matches out): its
+        // warm-up asks for the page, so the match there is found and said, rather than missed on the first call
+        HostsAWebView2PageNotBuiltYet(PageButton("Send"));
+        _window.With(new FakeUiaNode("Button", "Send") { ProcessId = AppPid, ActionPatterns = ["Invoke"] });
+        var actions = new Mock<IElementActionService>();
+        actions.Setup(a => a.ActAsync(It.IsAny<ElementActionRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ElementActionResult(true, "invoke"));
+        var tools = new ElementActionTools(actions.Object, SearchAsTheServerWires(DeniesWebView2), _registry, new Mock<IWindowService>().Object);
+
+        // Act
+        var result = await tools.ElementAction(ElementActionKind.Invoke, handle: (long)Handle, name: "Send").Payload<ElementActionResult>();
+
+        // Assert
+        result.ErrorCode.Should().Be(nameof(UIElementErrorCode.AmbiguousElement));
+        result.Error.Should().StartWith("2 elements match the criteria, 1 of them of an app the server's target policy refuses")
+            .And.Contain("msedgewebview2");
+        actions.Verify(a => a.ActAsync(It.IsAny<ElementActionRequest>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task Wait_Gone_IsNotMet_WhileADeniedWebView2sPageNotBuiltYet_HoldsAMatch()
+    {
+        // Arrange
+        HostsAWebView2PageNotBuiltYet(PageButton("Send"));
+        var windowWait = new Mock<IWindowWaitService>();
+        windowWait.Setup(w => w.WaitForConditionAsync(It.IsAny<WindowConditionRequest>(), It.IsAny<IProgress<OperationProgress>?>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new WindowConditionResult
+            {
+                Satisfied = true, MatchCount = 1, ElapsedMs = 0, Window = TestDataFactory.CreateWindowInfo((int)Handle, "Inbox - Outlook", "outlook", AppPid)
+            });
+        var waits = new ElementWaitService(SearchAsTheServerWires(DeniesWebView2), _registry, windowWait.Object,
+            _tree, _worker, _windows.Object, delay: (_, _) => Task.CompletedTask, policy: DeniesWebView2);
+
+        // Act
+        var result = await waits.WaitAsync(new ElementWaitRequest
+        {
+            Window = new WindowSelector { Handle = (long)Handle },
+            Criteria = new ElementQuery(nint.Zero, Name: "Send", Scope: ElementSearchScope.Window),
+            Condition = ElementWaitCondition.Gone,
+            TimeoutMs = 0
+        });
+
+        // Assert - its first check saw the match it left out, so the element is not taken for gone
+        result.Satisfied.Should().BeFalse();
+        result.LastObservedState.Should().Contain("PartsSkipped");
+    }
+
+    #endregion
 }

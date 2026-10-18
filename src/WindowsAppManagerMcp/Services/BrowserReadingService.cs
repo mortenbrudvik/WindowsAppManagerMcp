@@ -672,6 +672,15 @@ public class BrowserReadingService : IBrowserReadingService
             // Earlier reads of the same browser are still stuck; nothing was waited for
             return UiaRead.Failed(ex.Message, BrowserErrorCode.OperationTimedOut, warmup.Value);
         }
+        catch (UiaDeadlinePassedException)
+        {
+            // The worker started no read, so the browser was asked nothing and is not said to be hung
+            return UiaRead.Failed(
+                $"The time for reading the browser window through UI Automation ({timeout.TotalMilliseconds:0} ms) ran out before " +
+                "UI Automation was asked, so the browser was not asked. Nothing was read. Try again, with a larger timeoutMs.",
+                BrowserErrorCode.OperationTimedOut,
+                warmup.Value);
+        }
         catch (Exception ex) when (ex is TimeoutException || (ex is OperationCanceledException && !cancellationToken.IsCancellationRequested))
         {
             // The worker gave up at the deadline, or the read stopped there

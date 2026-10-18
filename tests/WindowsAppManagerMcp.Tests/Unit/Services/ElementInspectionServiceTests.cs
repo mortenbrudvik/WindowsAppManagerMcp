@@ -324,6 +324,23 @@ public class ElementInspectionServiceTests
     }
 
     [Fact]
+    public async Task GetFocusedElement_WhenItsTimeRanOutBeforeTheReadWasAsked_SaysTheApplicationWasNotAsked()
+    {
+        // Arrange - the deadline passed before the read was asked for: the worker starts none, so nothing waited on the app
+        _tree.Focused = BuildForm();
+        var worker = new ExpiringUiaWorker { Expired = true };
+
+        // Act
+        var result = await CreateSut(worker).GetFocusedElementAsync(Timeout);
+
+        // Assert
+        worker.ExpiredCalls.Should().Be(1);
+        result.ErrorCode.Should().Be(UIElementErrorCode.OperationTimedOut);
+        result.Error.Should().Contain("was not asked").And.Contain("larger timeoutMs")
+            .And.NotContain("Waited").And.NotContain("hung").And.NotContain("did not answer");
+    }
+
+    [Fact]
     public async Task GetFocusedElement_WhenTheCallIsCancelled_ThrowsInsteadOfReportingATimeout()
     {
         // Arrange

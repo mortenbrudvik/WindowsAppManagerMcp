@@ -260,7 +260,7 @@ public class UiaWorkerTests
 
         // Assert - what a read that missed its deadline throws, but nothing says the application does not answer
         var thrown = (await act.Should().ThrowAsync<TimeoutException>()).Which;
-        thrown.Should().NotBeOfType<UiaReadRefusedException>();
+        thrown.Should().BeOfType<UiaDeadlinePassedException>("callers that describe the timeout tell it apart from one the application caused");
         thrown.Message.Should().NotContain("not responding").And.NotContain("did not answer");
         started.Should().BeFalse("no thread is started for a read that could not be waited for");
         sut.StuckCalls.Should().Be(0);

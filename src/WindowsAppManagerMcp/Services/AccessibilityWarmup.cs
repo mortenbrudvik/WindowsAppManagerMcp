@@ -32,6 +32,18 @@ namespace WindowsAppManagerMcp.Services;
 /// window is read as before. So a window without web content costs one process list, and a window of an app that hosts
 /// WebView2 without a page in it (a dialog of that app) a bounded search.</item>
 /// <item>Only the window being read is touched: nothing global is set, and no other application is asked anything.</item>
+/// <item>A page of another process than the window's that the user's target policy refuses (a WebView2's render widget, by
+/// its process; a page hosted as a visual, by the msedgewebview2.exe the window's process started), or whose process cannot
+/// be named while the policy denies anything, is neither warmed up nor given to the walk (<see cref="FindPages"/>), and a
+/// window that holds such a render widget is not searched for a page hosted as a visual either: that search would go down
+/// into the render widget's element. That is decided by Win32 reads before any UI Automation call, since asking for such a
+/// page's element would already make its process turn on the page's accessibility tree; the reads leave its elements out
+/// unread (<see cref="ForeignElements"/>). Only the warm-up before a search (<see cref="WarmUpForSearch"/>) warms it up
+/// still: the search's provider evaluates its criteria on the page's elements anyway, and leaves the matches out after,
+/// counted; a page left unbuilt would hide them, so a search would come out complete and one match be taken for the only
+/// one. What it returns describes only the pages the policy lets a read reach (null when it warmed up none of those), so
+/// nothing of such a page, not even its number of elements, is returned. A page a search warmed up stays remembered while
+/// a later warm-up holds it back, so it is asked for once.</item>
 /// <item>A window whose pages got web content is remembered with the render widgets it showed (at most
 /// <see cref="CacheCapacity"/> windows, a dead window or one whose handle now belongs to another process is forgotten), so
 /// later reads do not wait. A later read still lists the window's shown render widgets (Win32 only): one that was not
@@ -111,6 +123,7 @@ public sealed class AccessibilityWarmup : IAccessibilityWarmup
     private readonly IUiaTree _tree;
     private readonly INativeWindowWrapper _windows;
     private readonly INativeProcessWrapper _processes;
+    private readonly ITargetPolicy? _policy;
     private readonly TimeProvider _time;
     private readonly Action<TimeSpan, CancellationToken> _wait;
     private readonly object _gate = new();
@@ -127,18 +140,22 @@ public sealed class AccessibilityWarmup : IAccessibilityWarmup
     /// <param name="time">Measures the wait; default the system clock.</param>
     /// <param name="wait">Waits between two checks, returning early when the token is cancelled; default a wait on the
     /// token's handle. Tests pass one that moves a manual clock.</param>
+    /// <param name="policy">The user's target policy, which a page of another process than the window's must pass before
+    /// anything of it is asked for; null to check nothing.</param>
     public AccessibilityWarmup(
         IUiaTree tree,
         INativeWindowWrapper windows,
         INativeProcessWrapper processes,
         TimeProvider? time = null,
-        Action<TimeSpan, CancellationToken>? wait = null)
+        Action<TimeSpan, CancellationToken>? wait = null,
+        ITargetPolicy? policy = null)
     {
         _tree = tree;
         _windows = windows;
         _processes = processes;
         _time = time ?? TimeProvider.System;
         _wait = wait ?? ((delay, token) => token.WaitHandle.WaitOne(delay));
+        _policy = policy;
     }
 
     /// <summary>
@@ -161,11 +178,18 @@ public sealed class AccessibilityWarmup : IAccessibilityWarmup
     }
 
     /// <inheritdoc />
-    public AccessibilityWarmupInfo? WarmUp(nint window, TimeSpan budget, CancellationToken cancellationToken)
+    public AccessibilityWarmupInfo? WarmUp(nint window, TimeSpan budget, CancellationToken cancellationToken) =>
+        Guarded(window, budget, everyPage: false, cancellationToken);
+
+    /// <inheritdoc />
+    public AccessibilityWarmupInfo? WarmUpForSearch(nint window, TimeSpan budget, CancellationToken cancellationToken) =>
+        Guarded(window, budget, everyPage: true, cancellationToken);
+
+    private AccessibilityWarmupInfo? Guarded(nint window, TimeSpan budget, bool everyPage, CancellationToken cancellationToken)
     {
         try
         {
-            return WarmUpWindow(window, budget, cancellationToken);
+            return WarmUpWindow(window, budget, everyPage, cancellationToken);
         }
         catch (Exception)
         {
@@ -185,7 +209,18 @@ public sealed class AccessibilityWarmup : IAccessibilityWarmup
             }
 
             var found = TakeFound(window);
-            var widgets = found != null && StillShown(window, found.Widgets) ? found.Widgets : FindRenderWidgets(window);
+            List<nint> widgets;
+            bool heldBack;
+            if (found != null && StillShown(window, found.Widgets))
+            {
+                (widgets, heldBack) = (found.Widgets, found.HeldBack);
+            }
+            else
+            {
+                var shown = FindRenderWidgets(window);
+                (widgets, heldBack) = (shown.Allowed, shown.Refused.Count > 0);
+            }
+
             var pages = new List<RenderWidgetPage>();
             foreach (var widget in widgets)
             {
@@ -225,11 +260,13 @@ public sealed class AccessibilityWarmup : IAccessibilityWarmup
                 }
             }
 
-            // A page hosted as a visual: the one the warm-up just found, or for a window remembered with one, found again
-            if (widgets.Count == 0 && !cancellationToken.IsCancellationRequested &&
+            // A page hosted as a visual: the one the warm-up just found, or for a window remembered with one (by a search's
+            // warm-up too, which warms up a page the policy refuses), found again once the policy allows it. None in a
+            // window whose render widget the policy refuses: the search would go down into its element
+            if (widgets.Count == 0 && !heldBack && !cancellationToken.IsCancellationRequested &&
                 (found is { VisualSearched: true }
                     ? found.VisualPage
-                    : IsRememberedVisual(window) ? FindVisualPage(window, cancellationToken) : null) is { } visual)
+                    : IsRememberedVisual(window) && AllowsVisualPage(window) ? FindVisualPage(window, cancellationToken) : null) is { } visual)
             {
                 pages.Add(visual);
             }
@@ -293,7 +330,11 @@ public sealed class AccessibilityWarmup : IAccessibilityWarmup
         }
     }
 
-    private AccessibilityWarmupInfo? WarmUpWindow(nint window, TimeSpan budget, CancellationToken cancellationToken)
+    /// <summary>
+    /// The warm-up of <paramref name="window"/>'s pages: with <paramref name="everyPage"/> (a search's) also those the target
+    /// policy refuses, which are then not noted for the walk (<see cref="FindPages"/>), else only those it lets a read reach.
+    /// </summary>
+    private AccessibilityWarmupInfo? WarmUpWindow(nint window, TimeSpan budget, bool everyPage, CancellationToken cancellationToken)
     {
         lock (_gate)
         {
@@ -318,16 +359,23 @@ public sealed class AccessibilityWarmup : IAccessibilityWarmup
             }
         }
 
-        var widgets = FindRenderWidgets(window);
-        var found = new Found(window, widgets);
-        lock (_gate)
+        var shown = FindRenderWidgets(window);
+        var found = new Found(window, shown.Allowed, heldBack: shown.Refused.Count > 0);
+        if (!everyPage)
         {
-            _found = found;
+            // Only a warm-up that leaves out the pages the policy refuses notes its pages for the walk that follows
+            lock (_gate)
+            {
+                _found = found;
+            }
         }
 
+        List<nint> widgets = everyPage ? [.. shown.Allowed, .. shown.Refused] : shown.Allowed;
         if (widgets.Count == 0)
         {
-            return WarmUpVisual(window, processId, known, found, budget, cancellationToken);
+            // A window whose only render widgets the policy refuses is not searched for a page hosted as a visual either:
+            // that search would go down into their elements
+            return shown.Refused.Count > 0 ? null : WarmUpVisual(window, processId, known, found, everyPage, budget, cancellationToken);
         }
 
         // A page that was warmed up is remembered with its render widget. Chromium builds a hidden page's tree only once it
@@ -339,8 +387,15 @@ public sealed class AccessibilityWarmup : IAccessibilityWarmup
             return null;
         }
 
+        // A page held back here that a search warmed up stays remembered, so the next search does not ask for it again
+        List<nint> heldBack = everyPage ? [] : shown.Refused.Where(warmed.Contains).ToList();
         var host = IsWebView2(pending[0]) ? WebContentHost.WebView2 : WebContentHost.Chromium;
-        return WarmUpPages(window, processId, known, new Pages(widgets, pending, host, FindDocument, []), budget, cancellationToken);
+        var unreported = everyPage ? shown.Refused.ToHashSet() : [];
+        var info = WarmUpPages(window, processId, known, new Pages(widgets, pending, host, FindDocument, [], heldBack, unreported), budget,
+            cancellationToken);
+
+        // A search's warm-up of only pages the policy refuses says nothing of them: nothing of such a page is returned
+        return pending.All(unreported.Contains) ? null : info;
     }
 
     /// <summary>
@@ -348,12 +403,20 @@ public sealed class AccessibilityWarmup : IAccessibilityWarmup
     /// page has no window of its own, so it is remembered by the window. Null, with no UI Automation call, when the
     /// window's process started no msedgewebview2.exe; null, after a bounded search, when neither a Document of Chromium nor
     /// the root of Chromium's views is found below the window. Below such a root (roadmap M3.F43) the Document is looked for
-    /// at each check until it is there, and the page is noted in <paramref name="found"/> for the walk that follows.
+    /// at each check until it is there, and the page is noted in <paramref name="found"/> for the walk that follows. The
+    /// page's elements are the WebView2's: without <paramref name="everyPage"/> (a search's warm-up) none is asked for while
+    /// the policy refuses a WebView2 the app started, and a search's warm-up of such a page is not reported.
     /// </summary>
     private AccessibilityWarmupInfo? WarmUpVisual(
-        nint window, uint processId, Remembered? known, Found found, TimeSpan budget, CancellationToken cancellationToken)
+        nint window, uint processId, Remembered? known, Found found, bool everyPage, TimeSpan budget, CancellationToken cancellationToken)
     {
-        if (known?.Warmed.Contains(window) == true || !StartedWebView2(processId))
+        if (known?.Warmed.Contains(window) == true || WebView2ProcessesStartedBy(processId) is not { Count: > 0 } webViews)
+        {
+            return null;
+        }
+
+        var allowed = AllowsAll(window, webViews);
+        if (!everyPage && !allowed)
         {
             return null;
         }
@@ -374,19 +437,21 @@ public sealed class AccessibilityWarmup : IAccessibilityWarmup
         Func<nint, CancellationToken, IUiaNode?> findDocument = content.ViewsRoot is { } viewsRoot
             ? (_, token) => FindDocumentInViews(viewsRoot.Node, token)
             : FindVisualDocument;
-        var pages = new Pages([window], [window], WebContentHost.WebView2, findDocument, documents);
+        var pages = new Pages([window], [window], WebContentHost.WebView2, findDocument, documents, [],
+            allowed ? NoWidgets : new HashSet<nint> { window });
         var info = WarmUpPages(window, processId, known, pages, budget, cancellationToken);
         if (content.ViewsRoot?.RuntimeId is { Count: > 0 } viewsRootId && documents.TryGetValue(window, out var document))
         {
             found.VisualPage = new RenderWidgetPage(window, nint.Zero, document, viewsRootId);
         }
 
-        return info;
+        return allowed ? info : null;
     }
 
     /// <summary>
     /// Waits for <paramref name="pages"/>' documents (<see cref="Poll"/>) and remembers the outcome: a window whose pages got
-    /// web content with the pages shown now, one whose pages stayed empty with the number of warm-ups that waited for them.
+    /// web content with the pages shown now, one whose pages stayed empty with the number of warm-ups that waited for them;
+    /// either with the pages it held back that a search warmed up (<see cref="Pages.HeldBack"/>).
     /// </summary>
     private AccessibilityWarmupInfo WarmUpPages(
         nint window, uint processId, Remembered? known, Pages pages, TimeSpan budget, CancellationToken cancellationToken)
@@ -397,7 +462,7 @@ public sealed class AccessibilityWarmup : IAccessibilityWarmup
             ? TimeSpan.Zero
             : budget < TimeSpan.Zero ? TimeSpan.Zero : budget > MaxWait ? MaxWait : budget;
 
-        var info = Poll(pages, waitFor, cancellationToken);
+        var (status, info) = Poll(pages, waitFor, cancellationToken);
         if (info.Status == AccessibilityWarmupStatus.NotReady && attempts > MaxWaitingAttempts)
         {
             info = info with
@@ -407,27 +472,30 @@ public sealed class AccessibilityWarmup : IAccessibilityWarmup
         }
 
         // Only the widgets shown now are kept: a page shown again later is checked again, at the cost of one read when its
-        // tree is still there
-        var ready = info.Status != AccessibilityWarmupStatus.NotReady;
+        // tree is still there. Whether the pages got web content is told by every page waited for, the unreported too
+        var ready = status != AccessibilityWarmupStatus.NotReady;
         Remember(window, processId,
-            ready ? pages.Shown.ToHashSet() : pages.Shown.Where(warmed.Contains).ToHashSet(),
+            (ready ? pages.Shown : pages.Shown.Where(warmed.Contains)).Concat(pages.HeldBack).ToHashSet(),
             ready ? 0 : attempts);
         return info;
     }
 
     /// <summary>
     /// The visible render widgets of <paramref name="window"/>: the window itself when it is one (whatever its visibility,
-    /// since it was asked for), then those inside it, at most <see cref="MaxRenderWidgets"/>. Hidden ones are pages that
-    /// are not shown, such as background tabs.
+    /// since it was asked for, and its read passed the target policy), then those inside it, each by whether the policy lets
+    /// a read reach its page (<see cref="Allows"/>), at most <see cref="MaxRenderWidgets"/> of either. Hidden ones are pages
+    /// that are not shown, such as background tabs.
     /// </summary>
-    private List<nint> FindRenderWidgets(nint window)
+    private RenderWidgets FindRenderWidgets(nint window)
     {
-        var widgets = new List<nint>();
+        var allowed = new List<nint>();
+        var refused = new List<nint>();
         if (ClassOf(window) == RenderWidgetHostClass)
         {
-            widgets.Add(window);
+            allowed.Add(window);
         }
 
+        var foreign = UiaTargets.ForeignElementsOf(_windows, _policy, window);
         var seen = 0;
         _windows.EnumChildWindows(window, child =>
         {
@@ -436,15 +504,70 @@ public sealed class AccessibilityWarmup : IAccessibilityWarmup
                 return false;
             }
 
-            if (ClassOf(child) == RenderWidgetHostClass && _windows.IsWindowVisible(child) && !widgets.Contains(child))
+            if (ClassOf(child) == RenderWidgetHostClass && _windows.IsWindowVisible(child) && !allowed.Contains(child) &&
+                !refused.Contains(child))
             {
-                widgets.Add(child);
+                var widgets = !foreign.Active || Allows(foreign, ProcessOf(child)) ? allowed : refused;
+                if (widgets.Count < MaxRenderWidgets)
+                {
+                    widgets.Add(child);
+                }
             }
 
-            return widgets.Count < MaxRenderWidgets;
+            return allowed.Count < MaxRenderWidgets || (foreign.Active && refused.Count < MaxRenderWidgets);
         });
 
-        return widgets;
+        return new RenderWidgets(allowed, refused);
+    }
+
+    /// <summary>
+    /// Whether the policy lets a read of <paramref name="window"/> reach a page hosted as a visual that the
+    /// <paramref name="webViews"/> serve (the msedgewebview2.exe the window's process started): every one of them, as
+    /// <see cref="Allows"/> decides.
+    /// </summary>
+    private bool AllowsAll(nint window, IReadOnlyCollection<int> webViews)
+    {
+        var foreign = UiaTargets.ForeignElementsOf(_windows, _policy, window);
+        return webViews.All(webView => Allows(foreign, webView));
+    }
+
+    /// <summary>
+    /// Whether the policy lets the walk be given the page hosted as a visual of a window remembered with one, which a
+    /// search's warm-up remembers also when the policy refuses it: by the msedgewebview2.exe the window's process started
+    /// now (<see cref="AllowsAll"/>; refused while the policy denies anything when none is found, as nothing then says whose
+    /// the page is). Win32 reads only, and none without a policy that denies anything.
+    /// </summary>
+    private bool AllowsVisualPage(nint window)
+    {
+        if (!UiaTargets.ForeignElementsOf(_windows, _policy, window).Active)
+        {
+            return true;
+        }
+
+        return WebView2ProcessesStartedBy((uint)ProcessOf(window)) is { Count: > 0 } webViews && AllowsAll(window, webViews);
+    }
+
+    /// <summary>
+    /// Whether the target policy lets a read of the window <paramref name="foreign"/> checks reach a page of
+    /// <paramref name="processId"/>: always one of the window's own process (a browser's, an Electron app's), and one of
+    /// another process (a WebView2's, msedgewebview2.exe) only when the policy allows that process by its name, as a walk
+    /// checks its elements (<see cref="ForeignElements.Verdict"/>): failing closed for a process that is not known or cannot
+    /// be named while the policy denies anything. Win32 reads only, decided before any UI Automation call: asking for the
+    /// page of a refused process would already make it turn on that page's accessibility tree.
+    /// </summary>
+    private static bool Allows(ForeignElements foreign, int processId) => !foreign.Active || foreign.Verdict(processId).Allowed;
+
+    /// <summary>The process of a window, or 0 when it cannot be read (which <see cref="Allows"/> refuses while the policy denies anything).</summary>
+    private int ProcessOf(nint window)
+    {
+        try
+        {
+            return (int)_windows.GetWindowThreadProcessId(window);
+        }
+        catch (Exception)
+        {
+            return 0;
+        }
     }
 
     private string ClassOf(nint window)
@@ -474,27 +597,30 @@ public sealed class AccessibilityWarmup : IAccessibilityWarmup
     }
 
     /// <summary>
-    /// Whether the process started a WebView2 browser process (msedgewebview2.exe), read from one process list (Win32 only):
+    /// The WebView2 browser processes (msedgewebview2.exe) the process started, read from one process list (Win32 only):
     /// web content hosted as a visual in its windows comes from there (roadmap M3.F23). A parent ID can be a reused PID, so
-    /// this only tells which windows are worth a search; the Document of Chromium found below the window decides.
+    /// this only tells which windows are worth a search; the Document of Chromium found below the window decides. None when
+    /// the list cannot be read.
     /// </summary>
-    private bool StartedWebView2(uint processId)
+    private List<int> WebView2ProcessesStartedBy(uint processId)
     {
         if (processId == 0)
         {
-            return false;
+            return [];
         }
 
         try
         {
-            return _processes.GetProcessList() is { } processes &&
-                   processes.Values.Any(process => process.ParentProcessId == (int)processId &&
-                                                   string.Equals(Path.GetFileNameWithoutExtension(process.ImageName),
-                                                       WebView2ProcessName, StringComparison.OrdinalIgnoreCase));
+            return _processes.GetProcessList() is { } processes
+                ? processes.Where(process => process.Value.ParentProcessId == (int)processId &&
+                                             string.Equals(Path.GetFileNameWithoutExtension(process.Value.ImageName),
+                                                 WebView2ProcessName, StringComparison.OrdinalIgnoreCase))
+                    .Select(process => process.Key).ToList()
+                : [];
         }
         catch (Exception)
         {
-            return false;
+            return [];
         }
     }
 
@@ -502,19 +628,25 @@ public sealed class AccessibilityWarmup : IAccessibilityWarmup
     /// Checks the documents' children until they are there and stopped changing, or <paramref name="budget"/> or the
     /// cancellation ends the wait. A count above zero at the first check is taken at once: the tree was already built.
     /// </summary>
-    private AccessibilityWarmupInfo Poll(Pages pages, TimeSpan budget, CancellationToken cancellationToken)
+    /// <returns>How the wait for every page ended, which decides what is remembered; and what the caller reports, which
+    /// counts only the pages not <see cref="Pages.Unreported"/> (every page, unless a search's warm-up waited for one the
+    /// target policy refuses), so nothing of such a page, not even its number of elements, is returned.</returns>
+    private (AccessibilityWarmupStatus Status, AccessibilityWarmupInfo Info) Poll(
+        Pages pages, TimeSpan budget, CancellationToken cancellationToken)
     {
         var start = _time.GetTimestamp();
         var host = pages.Host;
         int? previous = null;
         int? count;
+        int? previousReported = null;
+        int? reported;
         var polls = 0;
         AccessibilityWarmupStatus status;
         for (var step = 0; ; step++)
         {
-            count = CountDocumentChildren(pages, cancellationToken, out var stuck);
+            (count, reported) = CountDocumentChildren(pages, cancellationToken, out var stuck);
             polls++;
-            if (count > 0 && (polls == 1 || count == previous))
+            if (Settled(count, previous, polls))
             {
                 status = AccessibilityWarmupStatus.Ready;
                 break;
@@ -536,11 +668,22 @@ public sealed class AccessibilityWarmup : IAccessibilityWarmup
             }
 
             previous = count;
+            previousReported = reported;
         }
 
+        // The status of the reported pages by the rule that ended the wait: with none unreported, the wait's own status
         var waitedMs = (int)Math.Round(_time.GetElapsedTime(start).TotalMilliseconds);
-        return new AccessibilityWarmupInfo(status, host, waitedMs, polls, count, Warning(status, host, waitedMs, count));
+        var shown = Settled(reported, previousReported, polls) ? AccessibilityWarmupStatus.Ready
+            : reported > 0 ? AccessibilityWarmupStatus.Partial
+            : AccessibilityWarmupStatus.NotReady;
+        return (status, new AccessibilityWarmupInfo(shown, host, waitedMs, polls, reported, Warning(shown, host, waitedMs, reported)));
     }
+
+    /// <summary>
+    /// Whether a count of the documents' children is final: above zero, and at the first check (the tree was already built)
+    /// or the same as at the check before.
+    /// </summary>
+    private static bool Settled(int? count, int? previous, int polls) => count > 0 && (polls == 1 || count == previous);
 
     private static string? Warning(AccessibilityWarmupStatus status, WebContentHost host, int waitedMs, int? count) => status switch
     {
@@ -558,15 +701,18 @@ public sealed class AccessibilityWarmup : IAccessibilityWarmup
     };
 
     /// <summary>
-    /// The children of the pages' documents, together, or null when no document was found. Each page's document is looked
-    /// for until it is found; one that disappears (the page navigated) is looked for again at the next check. A provider
-    /// that times out ends the wait (<paramref name="stuck"/>): every further call would wait as long.
+    /// The children of the pages' documents, together, or null when no document was found: of every page, and of the pages
+    /// that are reported (not <see cref="Pages.Unreported"/>). Each page's document is looked for until it is found; one
+    /// that disappears (the page navigated) is looked for again at the next check. A provider that times out ends the wait
+    /// (<paramref name="stuck"/>): every further call would wait as long.
     /// </summary>
-    private int? CountDocumentChildren(Pages pages, CancellationToken cancellationToken, out bool stuck)
+    private (int? All, int? Reported) CountDocumentChildren(Pages pages, CancellationToken cancellationToken, out bool stuck)
     {
         stuck = false;
         var found = false;
         var total = 0;
+        var foundReported = false;
+        var totalReported = 0;
         var documents = pages.Documents;
         foreach (var widget in pages.Pending)
         {
@@ -587,8 +733,14 @@ public sealed class AccessibilityWarmup : IAccessibilityWarmup
                     documents[widget] = document = located;
                 }
 
-                total += _tree.GetChildren(document, cancellationToken).Count;
+                var children = _tree.GetChildren(document, cancellationToken).Count;
+                total += children;
                 found = true;
+                if (!pages.Unreported.Contains(widget))
+                {
+                    totalReported += children;
+                    foundReported = true;
+                }
             }
             catch (TimeoutException)
             {
@@ -605,7 +757,7 @@ public sealed class AccessibilityWarmup : IAccessibilityWarmup
             }
         }
 
-        return found ? total : null;
+        return (found ? total : null, foundReported ? totalReported : null);
     }
 
     /// <summary>
@@ -760,23 +912,38 @@ public sealed class AccessibilityWarmup : IAccessibilityWarmup
     /// <param name="Host">What shows the web content.</param>
     /// <param name="FindDocument">Finds a page's Document, or null when there is none (yet).</param>
     /// <param name="Documents">The Documents found so far, by page.</param>
+    /// <param name="HeldBack">Shown pages the warm-up leaves out for the target policy that a search's warm-up warmed up
+    /// before: remembered still, so the next search does not ask for them again.</param>
+    /// <param name="Unreported">Pages a search's warm-up waits for although the target policy refuses them, which the info
+    /// it returns does not count (<see cref="Poll"/>).</param>
     private sealed record Pages(
         List<nint> Shown,
         List<nint> Pending,
         WebContentHost Host,
         Func<nint, CancellationToken, IUiaNode?> FindDocument,
-        Dictionary<nint, IUiaNode> Documents);
+        Dictionary<nint, IUiaNode> Documents,
+        List<nint> HeldBack,
+        IReadOnlySet<nint> Unreported);
 
     /// <summary>
-    /// What the latest warm-up found in a window, for the walk that follows it: its shown render widgets, and, for a window
-    /// without any, whether web content hosted as a visual was looked for and its page as the walk lists it (roadmap
-    /// M3.F43). Set before the walk takes it, on the same thread.
+    /// A window's shown render widgets (<see cref="FindRenderWidgets"/>): those whose page the target policy lets a read
+    /// reach, and those it refuses.
     /// </summary>
-    private sealed class Found(nint window, List<nint> widgets)
+    private sealed record RenderWidgets(List<nint> Allowed, List<nint> Refused);
+
+    /// <summary>
+    /// What the latest warm-up found in a window, for the walk that follows it: its shown render widgets that the target
+    /// policy lets a read reach, whether it refused one (<paramref name="heldBack"/>: then no page hosted as a visual is
+    /// looked for), and, for a window without any, whether web content hosted as a visual was looked for and its page as the
+    /// walk lists it (roadmap M3.F43). Set before the walk takes it, on the same thread.
+    /// </summary>
+    private sealed class Found(nint window, List<nint> widgets, bool heldBack)
     {
         public nint Window { get; } = window;
 
         public List<nint> Widgets { get; } = widgets;
+
+        public bool HeldBack { get; } = heldBack;
 
         public bool VisualSearched { get; set; }
 
