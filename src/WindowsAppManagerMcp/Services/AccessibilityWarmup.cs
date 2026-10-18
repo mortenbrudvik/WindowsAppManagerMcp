@@ -32,6 +32,11 @@ namespace WindowsAppManagerMcp.Services;
 /// window is read as before. So a window without web content costs one process list, and a window of an app that hosts
 /// WebView2 without a page in it (a dialog of that app) a bounded search.</item>
 /// <item>Only the window being read is touched: nothing global is set, and no other application is asked anything.</item>
+/// <item>A page of another process than the window's that the user's target policy refuses (a WebView2's render widget, by
+/// its process; a page hosted as a visual, by the msedgewebview2.exe the window's process started), or whose process cannot
+/// be named while the policy denies anything, is neither warmed up nor given to the walk (<see cref="FindPages"/>). That is
+/// decided by Win32 reads before any UI Automation call, since asking for such a page's element would already make its
+/// process turn on the page's accessibility tree; the reads leave its elements out unread (<see cref="ForeignElements"/>).</item>
 /// <item>A window whose pages got web content is remembered with the render widgets it showed (at most
 /// <see cref="CacheCapacity"/> windows, a dead window or one whose handle now belongs to another process is forgotten), so
 /// later reads do not wait. A later read still lists the window's shown render widgets (Win32 only): one that was not
@@ -111,6 +116,7 @@ public sealed class AccessibilityWarmup : IAccessibilityWarmup
     private readonly IUiaTree _tree;
     private readonly INativeWindowWrapper _windows;
     private readonly INativeProcessWrapper _processes;
+    private readonly ITargetPolicy? _policy;
     private readonly TimeProvider _time;
     private readonly Action<TimeSpan, CancellationToken> _wait;
     private readonly object _gate = new();
@@ -127,18 +133,22 @@ public sealed class AccessibilityWarmup : IAccessibilityWarmup
     /// <param name="time">Measures the wait; default the system clock.</param>
     /// <param name="wait">Waits between two checks, returning early when the token is cancelled; default a wait on the
     /// token's handle. Tests pass one that moves a manual clock.</param>
+    /// <param name="policy">The user's target policy, which a page of another process than the window's must pass before
+    /// anything of it is asked for; null to check nothing.</param>
     public AccessibilityWarmup(
         IUiaTree tree,
         INativeWindowWrapper windows,
         INativeProcessWrapper processes,
         TimeProvider? time = null,
-        Action<TimeSpan, CancellationToken>? wait = null)
+        Action<TimeSpan, CancellationToken>? wait = null,
+        ITargetPolicy? policy = null)
     {
         _tree = tree;
         _windows = windows;
         _processes = processes;
         _time = time ?? TimeProvider.System;
         _wait = wait ?? ((delay, token) => token.WaitHandle.WaitOne(delay));
+        _policy = policy;
     }
 
     /// <summary>
@@ -353,7 +363,14 @@ public sealed class AccessibilityWarmup : IAccessibilityWarmup
     private AccessibilityWarmupInfo? WarmUpVisual(
         nint window, uint processId, Remembered? known, Found found, TimeSpan budget, CancellationToken cancellationToken)
     {
-        if (known?.Warmed.Contains(window) == true || !StartedWebView2(processId))
+        if (known?.Warmed.Contains(window) == true || WebView2ProcessesStartedBy(processId) is not { Count: > 0 } webViews)
+        {
+            return null;
+        }
+
+        // The page's elements are the WebView2's: none is asked for while the policy refuses a WebView2 the app started
+        var foreign = UiaTargets.ForeignElementsOf(_windows, _policy, window);
+        if (!webViews.All(webView => Allows(foreign, webView)))
         {
             return null;
         }
@@ -417,8 +434,9 @@ public sealed class AccessibilityWarmup : IAccessibilityWarmup
 
     /// <summary>
     /// The visible render widgets of <paramref name="window"/>: the window itself when it is one (whatever its visibility,
-    /// since it was asked for), then those inside it, at most <see cref="MaxRenderWidgets"/>. Hidden ones are pages that
-    /// are not shown, such as background tabs.
+    /// since it was asked for, and its read passed the target policy), then those inside it that the policy lets a read
+    /// reach (<see cref="Allows"/>), at most <see cref="MaxRenderWidgets"/>. Hidden ones are pages that are not shown, such as
+    /// background tabs.
     /// </summary>
     private List<nint> FindRenderWidgets(nint window)
     {
@@ -428,6 +446,7 @@ public sealed class AccessibilityWarmup : IAccessibilityWarmup
             widgets.Add(window);
         }
 
+        var foreign = UiaTargets.ForeignElementsOf(_windows, _policy, window);
         var seen = 0;
         _windows.EnumChildWindows(window, child =>
         {
@@ -436,7 +455,8 @@ public sealed class AccessibilityWarmup : IAccessibilityWarmup
                 return false;
             }
 
-            if (ClassOf(child) == RenderWidgetHostClass && _windows.IsWindowVisible(child) && !widgets.Contains(child))
+            if (ClassOf(child) == RenderWidgetHostClass && _windows.IsWindowVisible(child) && !widgets.Contains(child) &&
+                Allows(foreign, ProcessOf(child)))
             {
                 widgets.Add(child);
             }
@@ -445,6 +465,29 @@ public sealed class AccessibilityWarmup : IAccessibilityWarmup
         });
 
         return widgets;
+    }
+
+    /// <summary>
+    /// Whether the target policy lets a read of the window <paramref name="foreign"/> checks reach a page of
+    /// <paramref name="processId"/>: always one of the window's own process (a browser's, an Electron app's), and one of
+    /// another process (a WebView2's, msedgewebview2.exe) only when the policy allows that process by its name, as a walk
+    /// checks its elements (<see cref="ForeignElements.Verdict"/>): failing closed for a process that is not known or cannot
+    /// be named while the policy denies anything. Win32 reads only, decided before any UI Automation call: asking for the
+    /// page of a refused process would already make it turn on that page's accessibility tree.
+    /// </summary>
+    private static bool Allows(ForeignElements foreign, int processId) => !foreign.Active || foreign.Verdict(processId).Allowed;
+
+    /// <summary>The process of a window, or 0 when it cannot be read (which <see cref="Allows"/> refuses while the policy denies anything).</summary>
+    private int ProcessOf(nint window)
+    {
+        try
+        {
+            return (int)_windows.GetWindowThreadProcessId(window);
+        }
+        catch (Exception)
+        {
+            return 0;
+        }
     }
 
     private string ClassOf(nint window)
@@ -474,27 +517,30 @@ public sealed class AccessibilityWarmup : IAccessibilityWarmup
     }
 
     /// <summary>
-    /// Whether the process started a WebView2 browser process (msedgewebview2.exe), read from one process list (Win32 only):
+    /// The WebView2 browser processes (msedgewebview2.exe) the process started, read from one process list (Win32 only):
     /// web content hosted as a visual in its windows comes from there (roadmap M3.F23). A parent ID can be a reused PID, so
-    /// this only tells which windows are worth a search; the Document of Chromium found below the window decides.
+    /// this only tells which windows are worth a search; the Document of Chromium found below the window decides. None when
+    /// the list cannot be read.
     /// </summary>
-    private bool StartedWebView2(uint processId)
+    private List<int> WebView2ProcessesStartedBy(uint processId)
     {
         if (processId == 0)
         {
-            return false;
+            return [];
         }
 
         try
         {
-            return _processes.GetProcessList() is { } processes &&
-                   processes.Values.Any(process => process.ParentProcessId == (int)processId &&
-                                                   string.Equals(Path.GetFileNameWithoutExtension(process.ImageName),
-                                                       WebView2ProcessName, StringComparison.OrdinalIgnoreCase));
+            return _processes.GetProcessList() is { } processes
+                ? processes.Where(process => process.Value.ParentProcessId == (int)processId &&
+                                             string.Equals(Path.GetFileNameWithoutExtension(process.Value.ImageName),
+                                                 WebView2ProcessName, StringComparison.OrdinalIgnoreCase))
+                    .Select(process => process.Key).ToList()
+                : [];
         }
         catch (Exception)
         {
-            return false;
+            return [];
         }
     }
 

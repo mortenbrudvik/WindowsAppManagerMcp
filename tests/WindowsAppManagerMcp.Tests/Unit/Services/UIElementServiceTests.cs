@@ -2204,13 +2204,42 @@ public class UIElementServiceTests
         new(new TargetPolicySettings([.. TargetPolicySettings.DefaultDeniedProcesses, "msedgewebview2"], null, "test"));
 
     /// <summary>The walk with the real warm-up and <paramref name="policy"/>, over <see cref="_win32"/>; the window's app is allowed.</summary>
-    private UIElementService PolicySut(ITargetPolicy policy, Action<Mock<INativeWindowWrapper>>? setup = null)
+    /// <param name="warmupChecksPolicy">Whether the warm-up is given the policy too, as the server wires it.</param>
+    private UIElementService PolicySut(ITargetPolicy policy, Action<Mock<INativeWindowWrapper>>? setup = null, bool warmupChecksPolicy = false)
     {
         var windows = Win32Windows();
         windows.Setup(w => w.GetProcessName(AppProcess)).Returns("WamFixture");
         setup?.Invoke(windows);
-        var warmup = new AccessibilityWarmup(_tree, windows.Object, new Mock<INativeProcessWrapper>().Object, wait: (_, _) => { });
+        var warmup = new AccessibilityWarmup(_tree, windows.Object, new Mock<INativeProcessWrapper>().Object, wait: (_, _) => { },
+            policy: warmupChecksPolicy ? policy : null);
         return new UIElementService(_tree, _worker, windows.Object, warmup, policy: policy);
+    }
+
+    [Fact]
+    public async Task GetUIElements_NeverAsksForTheRenderWidgetOfADeniedWebView2_WhenTheWarmUpChecksThePolicyToo()
+    {
+        // Arrange - as the server wires it: the warm-up checks the page's process before it asks UI Automation for the
+        // render widget's element, which would already make the WebView2 turn on its page's accessibility tree
+        WpfWithWebView2();
+        var asked = new List<nint>();
+        _tree.FromHandleFailure = handle =>
+        {
+            asked.Add(handle);
+            return null;
+        };
+
+        // Act
+        var result = await PolicySut(DeniesWebView2, warmupChecksPolicy: true).GetUIElementsAsync(Handle, maxDepth: 5);
+
+        // Assert - the WebView2's window is still left out and said; its page was never looked for, so it is not counted
+        result.Success.Should().BeTrue(result.Error);
+        asked.Should().NotContain(RenderWidget);
+        Shape(result.Elements).Should().Be("HwndHost,Native");
+        result.SkippedElementCount.Should().Be(1);
+        result.AccessibilityWarmup.Should().BeNull();
+        result.Warnings.Should().ContainSingle(w => w.StartsWith("TargetDeniedByPolicy: ") && w.Contains("msedgewebview2"));
+        var json = System.Text.Json.JsonSerializer.Serialize(result.Elements);
+        json.Should().NotContain("Web button").And.NotContain("Heading").And.NotContain("BrowserRootView");
     }
 
     [Fact]
