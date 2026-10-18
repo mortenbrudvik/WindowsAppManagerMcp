@@ -1923,8 +1923,8 @@ Rules for new tests:
   port, roadmap M5.1). Before it starts, record
   every top-level window and every msedge, chrome and brave process; if the launch hands off to a browser
   that was already running, stop and close nothing. Open only pages of a `127.0.0.1` listener the check
-  runs (no network): launch_browser_with_debug's `url`, like browser_navigate, refuses `data:` and `file:` URLs
-  (since the 3.0.0 review). A check that needs a `data:` page opens it from its own CDP script on that instance. Act
+  runs, or `data:` pages the check's own CDP script opens on that instance (no network): launch_browser_with_debug's
+  `url`, like browser_navigate, refuses `data:` and `file:` URLs (since the 3.0.0 review). Act
   only on that process's windows and targets, and close it by its process ID (close_debug_browser), never by window
   title. Then check that the developer's own browser
   processes are unchanged and delete the profile. The developer's browser windows, tabs and profile are
@@ -1968,7 +1968,9 @@ Rules for new tests:
   in-memory queue (`Press()` posts WM_HOTKEY) and whose shared pause and chord marks live in a
   `FakeNamedObjects` two fakes can share (two servers on one desktop), and never start the hosted
   service with the real wrapper. A session that is not shared keeps its pause to itself, so
-  `new InputSession(...)` touches nothing; `FakeDesktopPauseFlag` stands in for the shared pause.
+  `new InputSession(...)` touches nothing; `FakeDesktopPauseFlag` stands in for the shared pause (`ReadFails` and
+  `WriteFails` make its reads or writes throw, as a pause that cannot be read or written would; a read that fails
+  pauses the session, pausedBy `shared_pause_unreadable`).
   `HotkeyMethods_AreOnlyCalledByNativeHotkeyWrapper` pins the RegisterHotKey and GetMessage calls to
   that wrapper. `NamedWaitHandles_AreOnlyOpenedByNativeHotkeyWrapper` pins to it every constructor of a
   `WaitHandle` type (`EventWaitHandle`, `Mutex`, `Semaphore`) that takes a name, every `OpenExisting` and
@@ -1978,9 +1980,10 @@ Rules for new tests:
   pause and the chord marks themselves, so no other code can open the objects every server on the
   desktop shares. The E2E `WrapperCatalog` classifies the wrapper's members, and the shared pause's Set
   and Reset, as `GlobalHotkey`, which no tier allows. The one test of the real named event,
-  `NativeHotkeyWrapperSharedPauseTests`, builds each wrapper with `NativeHotkeyWrapper(string)` on a name of its own
-  (`Local\WamTests.SharedPause.<guid>`), never the servers' `Local\WindowsAppManagerMcp.InputPaused`, and registers no
-  hotkey; `TestCodeNativeWrapperTests` traces the name passed to that constructor through the IL and fails one it
+  `NativeHotkeyWrapperSharedPauseTests`, opens it only through wrappers built with `NativeHotkeyWrapper(string)` on a
+  name of its own (`Local\WamTests.SharedPause.<guid>`), never the servers' `Local\WindowsAppManagerMcp.InputPaused`,
+  builds the servers' parameterless wrapper only to read the name it would open, and registers no hotkey;
+  `TestCodeNativeWrapperTests` traces the name passed to that constructor through the IL and fails one it
   cannot trace to a `Local\WamTests.` literal of the test's own, unless `SanctionedHotkeyNames` gives a reason.
 - Never install a real low-level keyboard or mouse hook. Takeover detection (roadmap M7.4) installs them only through
   `INativeLowLevelInputWrapper` (`LowLevelInputHooks_AreOnlyInstalledByNativeLowLevelInputWrapper`). Tests use
@@ -2284,7 +2287,7 @@ being ignored.
 | `FixtureWindowEventTests` | Input | The window event journal (M7.2) over the real WinEvent hooks: after the first read starts it, minimizing and restoring the fixture's window are recorded in order with the window's title, class and process, and nothing of the server's own process is |
 | `ShellWindowsTests` | Input | File Explorer's folders for workspaces (M7.5): the test opens its own temp folder in File Explorer, the real shell window list (NativeShellWindowsWrapper) reports that window with that folder and the class CabinetWClass, and the test closes only that window, by the handle the list gave for its unique folder |
 | `FixtureZOrderTests` | Input | set_window_zorder (M6.7) with the fixture's topmost overlay (`--open-overlay`): `topmost` puts the main window above the overlay and get_server_info lists it in `pinnedWindows`, `notopmost` puts it back below and drops the pin, `above` the overlay makes it topmost directly above it, `bottom` sends it behind every listed window and `top` raises it above the normal ones; the foreground never moves, and every test unpins the window before the fixture closes |
-| `FixtureMouseTests` | Input | click, right_click, double_click and mouse_move land on the exact pixel aimed at (the corners and centres of the swatches), on the primary and on a monitor at another scale (skipped without one); click presses the user's primary button and right_click the secondary one, as the fixture's `mouseDown` events record them after Windows applied the user's swap; a double click is one press with `clickCount` 1 and one with 2 (M4.2) |
+| `FixtureMouseTests` | Input | The input service's Click, RightClick and DoubleClick (element_action's mouse path; the click, right_click and double_click tools before 3.0.0) and MoveMouse (mouse_move) land on the exact pixel aimed at (the corners and centres of the swatches), on the primary and on a monitor at another scale (skipped without one); Click presses the user's primary button and RightClick the secondary one, as the fixture's `mouseDown` events record them after Windows applied the user's swap; a double click is one press with `clickCount` 1 and one with 2 (M4.2) |
 | `FixtureMouseClickDragTests` | Input | mouse_click: a Ctrl+Shift click reaches the fixture with both modifiers down and neither stays down (a plain click after it sees none); the middle, X1 and X2 buttons arrive as themselves; a triple click is three presses with `clickCount` 1, 2 and 3 at the pixel. drag: a Ctrl+drag presses on one swatch and releases on another, with Ctrl down at both and no other press or release between them, and leaves nothing held; a drop point right of the fixture window is refused before anything is pressed (M4.3). The fixture logs presses and releases with their modifiers (`mouseDown`, `mouseUp`) |
 | `FixtureRunStepsTests` | Input | run_steps through the real MCP pipeline (`ServerHarness.StartMcpServerAsync`, M6.2): a form fill (focus, a click at a found element's clickPoint by `$steps` reference, ctrl+a, typing, a toggle, a wait that verifies the text) in one call, the fixture's events in step order, one audit line per audited step under `<run's id>#<step>`, no modifier left down; a failed step stops the run and the step after it does nothing; a direct element_action made during the run waits for the gate and lands after the run's last step; a pause between steps stops the run with `PausedByUser`; a wait longer than `maxDurationMs` stops it with `OperationTimedOut`; a second fixture, a process of its own, taking the foreground stops it with `TargetNotForeground` and keeps the foreground (the terminal is never touched) |
 | `FixtureOcrTests` | Both | read_screen_text and find_text_on_screen on the canvas window (M6.3): every line read inside its drawn rectangle at both scales, a find's click point on its word and back through the captureId, a regex; in the input tier a covered canvas still reads, a minimized one is `WindowMinimized`, a click through the captureId lands on the word and is `StaleCapture` once the canvas moved, and a canvas a policy denies is blacked out of a region read. Skipped without an OCR language |
@@ -2428,12 +2431,11 @@ Every run keeps these rules, for every debug instance it starts:
    `%TEMP%\WamM5Check-<guid>` folder, on an explicit free port or port 0. Its `processId` must be new and its command line must
    carry that `--user-data-dir`; if the process or the window was already there, the launch was handed to the user's
    browser: stop and close nothing.
-3. Open only pages of a 127.0.0.1 HttpListener the check runs. No network. Since the 3.0.0 review,
-   launch_browser_with_debug's `url` takes only what browser_navigate takes (http and https with their scheme, and
-   `about:blank`), so a `data:` or `file:` page is refused there. Launch with a listener page as `url`, or with no `url`,
-   and where a step below names a `data:` page, either serve that markup from the listener or open the `data:` URL from
-   the check's own script over the launch's `browserWsEndpoint` (`Target.createTarget`, as the M5.3 block opens its
-   second window).
+3. Open only pages of a 127.0.0.1 HttpListener the check runs, or `data:` pages the check's own script opens over the
+   launch's `browserWsEndpoint` (`Target.createTarget`, as the M5.3 block opens its second window). No network. Since
+   the 3.0.0 review, launch_browser_with_debug's `url` takes only what browser_navigate takes (http and https with their
+   scheme, and `about:blank`), so a `data:` or `file:` page is refused there: launch with a listener page as `url`, or
+   with no `url`.
 4. Act only on windows and targets of those processes. No window of the user's browser is passed to any call.
 5. Clean up by process ID only, never by window title: check that the browser and its helper processes have exited and
    that the user's browser process IDs are unchanged, then delete the profile folder. After roadmap M5.4, close_debug_browser with the
@@ -2441,7 +2443,7 @@ Every run keeps these rules, for every debug instance it starts:
 
 Roadmap M5.2 (after its merge, on a real Edge):
 
-- **Plain read.** get_browser_content with `cdpPort` on a `data:` page returns `source: "cdp"`. Ten reads in a row
+- **Plain read.** get_browser_content with `cdpPort` on a listener page returns `source: "cdp"`. Ten reads in a row
   leave no DevTools client attached (`edge://inspect` lists none).
 - **Dialog before the read.** A page that calls `alert('x')` on load returns `CdpDialogOpen` within `timeoutMs`, not
   `CdpTimeout`: Chromium reports an open dialog again after Page.enable on a new connection (M5.8's dialog tool relies on
@@ -2473,8 +2475,8 @@ only the check's own debug instances):
   and matches the profile file's second line. Record how much longer the launch took than before (expected well under
   a second).
 - **Explicit free port.** The same with `port` set to a free port from 1024-65535: `cdpPort` is that port.
-- **Read after ready.** get_browser_content with the returned `cdpPort` and `requireCdp: true` on the launch's own
-  `windowHandle`, on a `data:` page, returns `source: "cdp"` at once, without a retry.
+- **Read after ready.** On a launch with a listener page as `url`, get_browser_content with the returned `cdpPort` and
+  `requireCdp: true` on the launch's own `windowHandle` returns `source: "cdp"` at once, without a retry.
 - **Refused url** (3.0.0 review). launch_browser_with_debug with `url` `file:///C:/`, `data:text/html,x`, a path
   (`C:\Windows\win.ini`) or an address without its scheme (`example.com`) returns `InvalidArguments` ending in "Nothing
   was launched.", and no new `msedge` process or window appears (compare with rule 1's record).
@@ -2490,8 +2492,8 @@ never with keystrokes; windows are moved only with set_window_bounds (`x` and `y
 - **No cdpPort.** On instance A, launched with port 0, get_browser_url and get_browser_content on the launch's
   `windowHandle` without `cdpPort` return `source: "cdp"` and `cdpPort` equal to the launch's `cdpPort`;
   get_browser_content with `textOnly: false` returns the HTML. The same on an instance launched on an explicit free port.
-- **Window binding.** Two normal, non-overlapping windows of A, each showing
-  `data:text/html,<title>Same</title>`: get_browser_url on each window returns a different `targetId`, the one whose
+- **Window binding.** Two normal, non-overlapping windows of A, each showing a listener page titled `Same`:
+  get_browser_url on each window returns a different `targetId`, the one whose
   `Browser.getWindowForTarget` window is that window (check from the script). Repeat with the second window's tab in
   the background behind a tab titled `Other`: the first window still returns its own tab. With one window maximized,
   the maximized one returns its own tab; with both maximized, record the result (`CdpTargetAmbiguous` is expected).
@@ -2499,8 +2501,9 @@ never with keystrokes; windows are moved only with set_window_bounds (`x` and `y
   binds (a fallback to the title is expected).
 - **The tab the window shows** (3.0.0 review: of several tabs with the window's title, the one whose
   `document.visibilityState`, read in an isolated world, is `visible`). In one window of A, a shown tab titled `Inbox`
-  and, behind it, a tab whose page sets `document.title` to the window's caption up to the browser's name (Chrome:
-  `Inbox - Google Chrome`; Edge, whose caption carries the profile: `Inbox - <profile name>`): get_browser_url and
+  and, behind it, a tab whose page sets `document.title` to a longer title that the window's caption also starts with
+  (Chrome: the whole caption, `Inbox - Google Chrome`; Edge, whose caption carries the profile: `Inbox - <profile
+  name>`): get_browser_url and
   get_browser_content with `requireCdp: true` and no `targetId`, browser_type without `targetId` (server with
   `WAM_TOOLSETS=+browser-actions`) and list_tabs' `shownTargetId` all name the shown `Inbox` tab. A shown tab titled
   `GitHub - Pull requests` beside a background tab titled `GitHub` still reads the shown one. With the window
@@ -2627,10 +2630,16 @@ around `#q` whose submit goes to `/done`), `/dialogs` (buttons that open `alert(
   `hidden` (Chromium's occlusion tracking), else `anchor: "renderWidget"`; record which, and that the call never
   returned a rect another window's page holds. **Background tab:** open `/long` with browser_navigate `newTab: true`,
   then browser_element_rect with the `/form` tab's `targetId` and `text: "Save draft"`: `ContentAreaNotFound` naming the
-  tab the window shows, not a rect on `/long`. **A page that lies** (3.0.0 review): a listener page `/liar` that
-  redefines `document.visibilityState` as `visible` and `window.innerWidth` with `Object.defineProperty`, opened in a
-  tab behind another: browser_element_rect on it by `targetId` still returns `ContentAreaNotFound`, since the DOM
-  bridge reads the page's visibility and viewport in an isolated world, where the page's scripts change nothing.
+  tab the window shows, not a rect on `/long`. **A page that lies** (3.0.0 review): a listener page `/liar` (title
+  `Liar`, a button `Here`) that redefines `document.visibilityState` as `visible` and `window.innerWidth` as 10 with
+  `Object.defineProperty`, alone in a window of its own (`Target.createTarget` with `newWindow: true` from the check's
+  script, as in the M5.3 block; its handle from find_windows by the debug browser's `processId`). With that window
+  minimized (set_window_state), browser_element_rect by its handle, without `targetId`, with `text: "Here"` returns
+  `ContentAreaNotFound` saying "The tab's page is not shown (its visibilityState is 'hidden')": the DOM bridge reads the
+  page's visibility and viewport in an isolated world, where the page's scripts change nothing. A rect, or the message
+  "is not the tab the window shows", fails the step. Restored and in front (focus_window), the same call returns
+  success, and get_element_at_point at its `clickPoint` returns the button: the redefined innerWidth did not move
+  `screenRect`.
 - **Isolated world.** browser_element_rect, browser_click, browser_type, browser_evaluate and browser_screenshot each
   read the page in an isolated world first (Page.createIsolatedWorld): a `CdpProtocolError` naming Page.getFrameTree or
   Page.createIsolatedWorld from any of them, on Edge or Chrome, fails the check; record the browser's version with it.
@@ -2902,30 +2911,38 @@ Every debug browser follows the rules of [Desktop check: M5 browser bridge](#des
 only to windows the check opened, named by their handle: the check's debug browser, on a listener page with a text
 field (focused with mouse_click before the keys) that also writes the `key` and `code` of every keydown, or for item 4
 a window the check opens itself. Not
-Notepad: Windows 11's Notepad restores the user's own tabs. Issues #8, #9 and #10 can be closed once items 5 and 6
-pass, and #11 once item 7 does.
+Notepad: Windows 11's Notepad restores the user's own tabs. One exception, for the owner to approve at the time: item
+3's optional step types into a Remote Desktop or virtual machine window the owner already has open, into a text field
+the owner picks inside the session. Issues #8, #9 and #10 can be closed once items 5 and 6 pass, and #11 once item 7
+does.
 
 1. **The UI Automation engines read ProcessId.** The walk and search cache requests of both engines now ask for UI
    Automation's ProcessId, so that an element of another process (a WebView2 page, a child window of another app) is
    checked by its own process. Run the release gate with both engines
    ([Release gate: the UI Automation engines](#release-gate-the-ui-automation-engines)); a provider that fails its cached
-   reads with the extra property shows as a scenario that fails with one engine only. Record any such scenario.
+   reads with the extra property shows as a scenario that fails, with one engine or with both. Record every scenario
+   that fails now and passed in the last gate (BACKLOG.md M3.F1).
 2. **The browser bridge.** The steps the review added to the M5 blocks: **Refused url** (M5.1), **Same titles**
    (M5.2), **The tab the window shows** (M5.3), **Cancelled launch** (M5.4), and **A page that lies** and **Isolated
    world** (M5.8), on a real Edge and a real Chrome.
 3. **send_keys in batches.** send_keys of 300 small letters, without `delayMs`, into the page's text field (the debug
    browser by its handle) types all of them (`keysSent` 300; the call goes in batches of up to 64 key-downs, each
-   checked again). During a send_keys of 5,000 small letters, press the pause hotkey: the call returns `PausedByUser`
-   within a batch with `keysSent` short of 5,000, and no key stays down (get_control_status). The user resumes; the agent
-   never does. Optional, where the owner has a Remote Desktop or virtual machine window open: the same pause during a
-   send_keys that holds `{SHIFT down}` over a long run of small letters, into a text field inside the session that the
-   owner picks, leaves Shift up inside the session too (letters typed there afterwards are small: the release carries
-   the key's scan code, which such clients track keys by). Record what the session shows.
-4. **Dialogs.** (a) The replace prompt with hidden extensions: run `FixtureFileDialogTests` (input tier) with the
-   owner's own "Hide extensions for known file types" setting, and record it. If
-   `FileDialog_SaveWithOverwrite_AnswersTheReplacePromptYes_AndTheFileIsRewritten` fails with `DialogNotCompleted`, the
-   prompt showed neither the file's name with its extension nor its full path (file_dialog no longer takes the name
-   without its extension): record the prompt's text from the result's `prompt`, for BACKLOG.md (RF.F4). (b) A non-modal dialog: in a window
+   checked again). Without `delayMs` the batches go out back to back, in well under a second, so a pause by hand is
+   checked with `delayMs`, where each key is a batch of its own: during a send_keys of 500 small letters with
+   `delayMs` 15 (about 7.5 seconds), press the pause hotkey. The call returns `PausedByUser` with `keysSent` short of
+   500 (the pause stops the call before its next key; `keysSent` counts what went out before it), and no key stays
+   down (get_control_status). The user resumes; the agent never does. Optional (the exception above): the same paused
+   call with `{SHIFT down}` in front of the letters, into the text field inside the session, leaves Shift up inside the
+   session too: letters the owner types there afterwards are small, since the pause's release carries Shift's scan code,
+   which such clients track keys by. Record what the session shows, and whether the pause hotkey reached this computer
+   with the session's window in front.
+4. **Dialogs.** (a) The replace prompt with hidden extensions: run `FixtureFileDialogTests` (input tier) with "Hide
+   extensions for known file types" on (Windows' default; if the owner has it off, turn it on for the run and back
+   afterwards). If `FileDialog_SaveWithOverwrite_AnswersTheReplacePromptYes_AndTheFileIsRewritten` fails with
+   `DialogNotCompleted`, the prompt showed neither the file's name with its extension nor its full path (file_dialog no
+   longer takes the name without its extension). The test's output gives only the prompt's title, so read its text by
+   hand: in the Save As dialog of a program the owner starts, save over an existing `.txt` file in a scratch folder, and
+   record the Confirm Save As prompt's text for BACKLOG.md (RF.F4). (b) A non-modal dialog: in a window
    the check opens itself that shows an owned non-modal dialog (for example a throwaway PowerShell WinForms form that
    opens a second form with `Show(owner)`), respond_to_dialog with the main window's handle and a `button` returns
    `DialogNotFound` naming the open dialog's handle, and nothing is pressed; by the dialog's own handle the press goes
@@ -2942,7 +2959,8 @@ pass, and #11 once item 7 does.
    - press_keys `ctrl+@` gives `resolvedChords` `{"ctrl+@": "ctrl+ralt+2"}`, and the page logs the 2 key with Ctrl and
      AltGr down; `ctrl+^` gives `sentAsCharacters` `["ctrl+^"]` and a SentAsCharacter warning.
    - With Ctrl+Shift+0 as an input-language hotkey: press_keys `ctrl+=` gives `resolvedChords`
-     `{"ctrl+=": "ctrl+shift+0"}` and a SystemHotkey warning that ends "(pressed for 'ctrl+=')". With two input
+     `{"ctrl+=": "ctrl+shift+0"}` and a SystemHotkey warning that starts "SystemHotkey: ctrl+shift+0 (pressed for
+     'ctrl+=')". With two input
      languages installed, press_keys `alt+shift` gives a SystemHotkey warning about the language switch (Windows may
      switch the language: switch it back with the same chord).
    - Optional, where an ABNT2 (Brazilian) layout is installed: `ctrl+/` gives no `resolvedChords` and logs `code`
@@ -3082,8 +3100,9 @@ registers it with `WithServerTools(instance)`, not the SDK's `WithTools(instance
 as the server binds them.
 
 The objects inside the arguments are bound as strictly (3.0.0 review). `Contract/NestedArgumentContractTests` checks
-that every object in a tool's input schema refuses a member it does not take (save_layout's placements, which check
-their own, excepted) and still binds its members in any letter case, that no schema offers null for a required
+that every object in a tool's input schema refuses a member it does not take (save_layout's placements excepted: the
+server checks a placement and its `launch` itself, InvalidPlacement, while their `position` and `normalPosition` ignore
+a member they do not take, BACKLOG.md RF.F15) and still binds its members in any letter case, that no schema offers null for a required
 member, that a set_windows_bounds_batch item without a coordinate or size fails alone, that launch placement bounds
 missing a member are refused with nothing launched, that a binding error names its place in the arguments
 (`steps[1]`, `placement.bounds`), and that `BoundInteger` reads exactly what the SDK binds to an integer parameter (the
@@ -3158,8 +3177,8 @@ typical result over 300 tokens, and tools/list itself, measured in October 2026:
 | `read_table` | Task Manager's first 50 processes, 5 columns with headers | 643 | 1,000 |
 | `get_server_info` | The default deny list, five host processes, two monitors, the resources and prompts (634 before roadmap M6.9) | 707 | 850 |
 | `get_layout` | A preset of 6 placements, each with the captured window identity, its monitor's id and name and its program (529 before M6.8) | 805 | 841 |
-| tools/list | Every tool's name, title, description, schemas and annotations: 78 tools, 263,635 bytes, measured on the 3.0.0 review-fix branch (`ToolList_StaysWithinItsBudget`; the ratchet's comment in ToolPayloadBudgetTests has every step since; before: M5.8's six DOM bridge tools added 2,970, 936 of them their window selectors; M5.8's dialog option and the UI Automation browser_handle_dialog 199 more; M6.1a's additive consolidations 405 more: mouse_click's own click checks 249, set_window_bounds' optional pairs 87, get_browser_url's foreground sentence 41, get_monitors' virtualScreen 28; M6.1b's one-line descriptions of the nine deprecated tools and the descriptions that no longer send the agent to them 2,121 fewer; M6.6's list_processes parameters and fields 361 more and get_window_info's integrity fields 31 more; M6.2's run_steps 1,054 more; M6.4's wait_for_visual 1,072 more; M6.3's read_screen_text and find_text_on_screen in the opt-in `ocr` toolset 2,088 more; M6.7's set_window_zorder (522), the `monitor` parameters beside the deprecated monitorIndex, set_window_bounds' percent placement (233), get_monitors' identity fields and get_server_info's pinnedWindows 1,514 more; M6.5's list_installed_apps and runAsAdmin 357 more; M6.8's save_layout placements and includeMinimized and apply_layout dryRun and placements 775 more; then M7's tools and fields, 3.0.0's removal of the nine replaced tools and the monitorIndex parameters, and the 3.0.0 review's fixes and issues #8 to #10) | 65,909 | 65,923 |
-| Default tools/list | The 62 tools a server serves without WAM_TOOLSETS, WAM_EXCLUDE_TOOLS and WAM_READ_ONLY, 223,459 bytes, measured on the 3.0.0 review-fix branch (`DefaultToolList_StaysWithinItsBudget`, roadmap M6.1; the ratchet's comment has every step since; before: 59,627 before M6.1a, 60,032 after it with 70 tools, 9,027 fewer once M6.1b moved the nine deprecated tools and the three geometry batches to opt-in toolsets, 392 more with M6.6's list_processes and get_window_info fields, 1,055 more with M6.2's run_steps in the `steps` toolset, on by default, 1,187 more with M6.7's set_window_zorder in `windows`, the `monitor` parameters, set_window_bounds' percent placement and the get_monitors and get_server_info fields; 357 more with M6.5's list_installed_apps in the `launch` toolset and runAsAdmin; 775 more with M6.8's layout schema version 2 in the `layouts` toolset, 54,806 then; then M7's tools and fields, 3.0.0's removals and the 3.0.0 review's fixes and issues #8 to #10) | 55,865 | 55,878 |
+| tools/list | Every tool's name, title, description, schemas and annotations: 78 tools, 263,635 bytes, measured on the 3.0.0 review-fix branch (`ToolList_StaysWithinItsBudget`, whose comment in ToolPayloadBudgetTests lists the steps; from M5.8 on: M5.8's six DOM bridge tools added 2,970, 936 of them their window selectors; M5.8's dialog option and the UI Automation browser_handle_dialog 199 more; M6.1a's additive consolidations 405 more: mouse_click's own click checks 249, set_window_bounds' optional pairs 87, get_browser_url's foreground sentence 41, get_monitors' virtualScreen 28; M6.1b's one-line descriptions of the nine deprecated tools and the descriptions that no longer send the agent to them 2,121 fewer; M6.6's list_processes parameters and fields 361 more and get_window_info's integrity fields 31 more; M6.2's run_steps 1,054 more; M6.4's wait_for_visual 1,072 more; M6.3's read_screen_text and find_text_on_screen in the opt-in `ocr` toolset 2,088 more; M6.7's set_window_zorder (522), the `monitor` parameters beside the deprecated monitorIndex, set_window_bounds' percent placement (233), get_monitors' identity fields and get_server_info's pinnedWindows 1,514 more; M6.5's list_installed_apps and runAsAdmin 357 more; M6.8's save_layout placements and includeMinimized and apply_layout dryRun and placements 775 more; then M7's tools and fields, 3.0.0's removal of the nine replaced tools and the monitorIndex parameters, and the 3.0.0 review's fixes and issues #8 to #10) | 65,909 | 65,923 |
+| Default tools/list | The 62 tools a server serves without WAM_TOOLSETS, WAM_EXCLUDE_TOOLS and WAM_READ_ONLY, 223,459 bytes, measured on the 3.0.0 review-fix branch (`DefaultToolList_StaysWithinItsBudget`, roadmap M6.1, whose comment lists the steps; 59,627 before M6.1a, 60,032 after it with 70 tools, 9,027 fewer once M6.1b moved the nine deprecated tools and the three geometry batches to opt-in toolsets, 392 more with M6.6's list_processes and get_window_info fields, 1,055 more with M6.2's run_steps in the `steps` toolset, on by default, 1,187 more with M6.7's set_window_zorder in `windows`, the `monitor` parameters, set_window_bounds' percent placement and the get_monitors and get_server_info fields; 357 more with M6.5's list_installed_apps in the `launch` toolset and runAsAdmin; 775 more with M6.8's layout schema version 2 in the `layouts` toolset, 54,806 then; then M7's tools and fields, 3.0.0's removals and the 3.0.0 review's fixes and issues #8 to #10) | 55,865 | 55,878 |
 
 Every other typical result is at most 300 tokens. When a change makes a result larger on purpose, raise its
 budget in the same change (the failure message gives the new size); when a change shrinks one a lot, lower it.
@@ -3205,8 +3224,7 @@ out of `input` and one out of `browser` into the opt-in `windows-batch` and `dep
 `deprecated` toolset (9 tools, 4,925 tokens) and the monitorIndex parameters, which lowered `windows`, `capture`,
 `launch`, `browser`, `visual`, `windows-batch` and `ocr`. M7.1 raised `capture` (captureMethod, includeCursor,
 gridSpacing and zoom), M7.2 added get_window_events to `windows` and M7.5 the `workspaces` row; M7's other fields and the
-3.0.0 review's fixes moved every other row by less than 100 tokens, and ToolPayloadBudgetTests' comments say which change
-moved which. M6.6 (October 2026) raised
+3.0.0 review's fixes moved every other row by less than 100 tokens. M6.6 (October 2026) raised
 `process` by 361 (list_processes' five parameters and its result fields in the description; 1,921 before) and
 `windows` by 31 (get_window_info's integrity fields in 'full'; 9,921 before), each budget to the measured size plus 36. The `steps` row is measured
 after M6.2 added run_steps (October 2026). M6.4 added the `visual` row
