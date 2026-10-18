@@ -173,7 +173,7 @@ public class SecurityProbeIntegrationTests
     public void GetAncestorProcesses_RealSnapshot_AreTheAncestorIdsWithStartTimes()
     {
         // Act
-        var ancestors = new NativeProcessWrapper().GetAncestorProcesses();
+        var ancestors = new NativeProcessWrapper().GetAncestorProcesses()!;
 
         // Assert - the test host always has a running parent (dotnet test / vstest)
         ancestors.Should().NotBeEmpty();

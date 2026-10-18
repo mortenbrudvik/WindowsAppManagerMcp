@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging;
 using WindowsAppManagerMcp.Models;
 using WindowsAppManagerMcp.Models.Results;
 using WindowsAppManagerMcp.Services;
@@ -56,10 +57,12 @@ internal static class LaunchPlacing
     /// <summary>
     /// Places the windows of the launches that have a plan, all in one go (<see cref="ILaunchPlacementService"/>), and
     /// returns each launch's placement result, in order: null without a plan or for a launch that failed, WindowNotFound
-    /// for a launch that found no window.
+    /// for a launch that found no window. A placement that throws is MoveFailed for each of them, and is logged to
+    /// <paramref name="logger"/> with its exception (review F5): the results carry only its message.
     /// </summary>
     public static async Task<IReadOnlyList<LaunchPlacementResultDto?>> PlaceAsync(
-        ILaunchPlacementService? placementService, IReadOnlyList<LaunchToPlace> launches, CancellationToken cancellationToken)
+        ILaunchPlacementService? placementService, IReadOnlyList<LaunchToPlace> launches, CancellationToken cancellationToken,
+        ILogger? logger = null)
     {
         var placed = new LaunchPlacementResultDto?[launches.Count];
         var placements = new List<(nint Handle, LaunchPlacementPlan Plan)>();
@@ -98,7 +101,9 @@ internal static class LaunchPlacing
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                // A placement failure never hides a successful launch: the launch result stays, the placement reports it
+                // A placement failure never hides a successful launch: the launch result stays, the placement reports it. The
+                // stack trace goes to the log, since an unexpected exception (a bug) is otherwise only its message
+                logger?.LogWarning(ex, "Placing the windows of {Count} launch(es) failed; each placement reports MoveFailed", positions.Count);
                 foreach (var position in positions)
                 {
                     placed[position] = new LaunchPlacementResultDto(null, null, null, Focused: false, Reapplied: false,

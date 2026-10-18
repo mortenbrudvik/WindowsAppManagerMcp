@@ -152,6 +152,24 @@ public sealed class ServerInfoServiceTests : IDisposable
     }
 
     [Fact]
+    public void Read_AHostWhoseAncestorsCouldNotBeRead_IsAWarning()
+    {
+        // Arrange - review F3: the host guard could not read the server's ancestors at start
+        var host = new HostSnapshot(4242, [], 0x1001, new HostWindow(0x2002, new HostProcess(2800, null)), null, 1500)
+        {
+            AncestorsUnknown = true
+        };
+        _safety.Setup(s => s.Read()).Returns(new InputSafetySnapshot(host, TargetPolicySettings.Default, ["%{F4}", "^w"], "default"));
+
+        // Act
+        var info = CreateSut().Read(Connection, 48);
+
+        // Assert
+        info.Warnings.Should().ContainSingle().Which.Should().Contain("ancestor processes").And.Contain("Tell the user");
+        info.Host.Processes.Should().Equal(new AgentHostProcess(4242, "server", "WindowsAppManagerMcp"));
+    }
+
+    [Fact]
     public void Read_ReportsThePauseThePolicyAndThePaths()
     {
         var info = CreateSut().Read(Connection, 48);

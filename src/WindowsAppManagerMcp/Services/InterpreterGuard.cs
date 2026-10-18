@@ -278,7 +278,11 @@ public sealed partial class InterpreterGuard
         }
     }
 
-    private static string? LongPathOf(string path)
+    /// <summary>
+    /// The long form of <paramref name="path"/> from the file system (GetLongPathNameW), or null when it cannot be read (the
+    /// path does not exist). <see cref="ChromiumSwitchGuard"/> expands a --user-data-dir's 8.3 short names with it too.
+    /// </summary>
+    internal static string? LongPathOf(string path)
     {
         var buffer = new char[260];
         var length = NativeMethods.Kernel32.GetLongPathNameW(path, buffer, (uint)buffer.Length);

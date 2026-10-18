@@ -17,22 +17,26 @@ public interface INativeProcessWrapper
     IProcessHandle? StartProcess(ProcessStartInfo startInfo);
 
     /// <summary>
-    /// Opens a running process by ID. Returns null when no such process exists.
+    /// Opens a running process by ID. Returns null when no such process exists. While the returned object is open it holds
+    /// a handle to the process (when one can be opened), so Windows does not give its PID to another process, even after
+    /// it exited (review F4): what the caller checked about the process is still true of the process it closes or ends.
     /// </summary>
     IProcessHandle? OpenProcess(int processId);
 
     /// <summary>
     /// Returns true when the process is an ancestor (parent, grandparent, ...) of the current
-    /// process, such as the terminal or editor that hosts the agent which started this server.
+    /// process, such as the terminal or editor that hosts the agent which started this server. Null when the
+    /// process list cannot be read: the answer is then unknown, not no, so a caller that protects the agent's
+    /// host must refuse (review F3).
     /// </summary>
-    bool IsAncestorOfCurrentProcess(int processId);
+    bool? IsAncestorOfCurrentProcess(int processId);
 
     /// <summary>
     /// Returns the current process's ancestors, parent first, with their start times (UTC; null when
     /// unreadable). Uses the same PID-reuse-aware walk as <see cref="IsAncestorOfCurrentProcess"/>.
-    /// Returns an empty list when the process list cannot be read.
+    /// Returns null when the process list cannot be read: the ancestors are then unknown, not absent (review F3).
     /// </summary>
-    IReadOnlyList<(int ProcessId, DateTime? StartTime)> GetAncestorProcesses();
+    IReadOnlyList<(int ProcessId, DateTime? StartTime)>? GetAncestorProcesses();
 
     /// <summary>
     /// Returns the ancestors of any running process, parent first, with the same PID-reuse-aware walk as
@@ -114,7 +118,8 @@ public interface INativeProcessWrapper
 }
 
 /// <summary>
-/// A process opened by ID or started by this server.
+/// A process opened by ID or started by this server. Until it is disposed it holds a handle to the process, when one could
+/// be opened, so its PID is not given to another process (see <see cref="INativeProcessWrapper.OpenProcess"/>).
 /// </summary>
 public interface IProcessHandle : IDisposable
 {

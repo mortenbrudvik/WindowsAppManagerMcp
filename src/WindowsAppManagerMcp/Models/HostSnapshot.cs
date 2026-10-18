@@ -8,6 +8,7 @@ namespace WindowsAppManagerMcp.Models;
 /// <param name="Ancestors">
 /// The server's ancestor processes, parent first (for example the agent, the shell, the terminal and
 /// whatever started it). The walk stops at a parent that started after its child, since that PID was reused.
+/// Empty, with <see cref="AncestorsUnknown"/>, when they could not be read.
 /// </param>
 /// <param name="ConsoleWindow">GetConsoleWindow() of the server, or zero when it has no console window.</param>
 /// <param name="ConsoleHostWindow">
@@ -41,6 +42,14 @@ public sealed record HostSnapshot(
     /// terminal, but ending it ends the console the agent's shell runs in. Empty when there is no console window.
     /// </summary>
     public IReadOnlyList<HostProcess> ConsoleServerProcesses { get; init; } = [];
+
+    /// <summary>
+    /// True when the server's ancestors could not be read at start (the process list could not be read, review F3):
+    /// <see cref="Ancestors"/> is then empty because they are unknown, not because there are none, and the windows of the
+    /// terminal or editor that started the server are not recognized as the host's. get_server_info warns about it;
+    /// kill_process and close_debug_browser read the ancestors again and refuse when they still cannot.
+    /// </summary>
+    public bool AncestorsUnknown { get; init; }
 }
 
 /// <summary>

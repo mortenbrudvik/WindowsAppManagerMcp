@@ -573,6 +573,49 @@ public class ProcessKillTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
+    public async Task KillProcess_TheServersAncestorsCannotBeRead_IsRefusedInBothModes(bool forceKill)
+    {
+        // Arrange - review F3: the process may be the agent's terminal or editor, and a graceful close has no other check
+        // behind it (Kill(entireProcessTree)'s own check is only for forceKill)
+        _mockProcess.SetupGet(p => p.ProcessName).Returns("WindowsTerminal");
+        _mockWrapper.Setup(w => w.IsAncestorOfCurrentProcess(Pid)).Throws(new InvalidOperationException("The snapshot failed."));
+
+        // Act
+        var result = await CreateSut().KillProcessAsync(Pid, confirm: true, forceKill: forceKill);
+
+        // Assert
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(nameof(ProcessErrorCode.ProcessTreeUnreadable));
+        result.ErrorMessage.Should().Contain("WindowsTerminal").And.Contain("agent's host").And.Contain("Nothing was done");
+        _mockProcess.Verify(p => p.CloseMainWindow(), Times.Never);
+        VerifyNeverForceKilled();
+    }
+
+    [Fact]
+    public void CheckKillTarget_TheServersAncestorsUnknown_IsRefusedBeforeTheUserIsAsked()
+    {
+        _mockProcess.Setup(p => p.RefreshMainWindowHandle()).Returns(0x100);
+        _mockWrapper.Setup(w => w.IsAncestorOfCurrentProcess(Pid)).Returns((bool?)null);
+
+        var check = CreateSut().CheckKillTarget(Pid, forceKill: false, gracefulTimeoutMs: 5000);
+
+        check.Refusal!.ErrorCode.Should().Be(nameof(ProcessErrorCode.ProcessTreeUnreadable));
+    }
+
+    [Fact]
+    public async Task KillProcess_ARecordedHostProcess_IsRefusedAsTheHost_EvenWhenTheAncestorsCannotBeRead()
+    {
+        _hostGuard.Setup(g => g.IsHostProcess(Pid)).Returns(true);
+        _mockWrapper.Setup(w => w.IsAncestorOfCurrentProcess(Pid)).Returns((bool?)null);
+
+        var result = await CreateSut().KillProcessAsync(Pid, confirm: true);
+
+        result.ErrorCode.Should().Be(nameof(ProcessErrorCode.CannotTerminateHost));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
     public async Task KillProcess_HostProcessThatIsNoAncestor_IsRefusedInBothModes(bool forceKill)
     {
         // Arrange - Windows Terminal as the default terminal: it shows the agent's console but is not an
@@ -759,6 +802,58 @@ public class ProcessKillTests
         result.Success.Should().BeFalse();
         result.ErrorCode.Should().Be(nameof(ProcessErrorCode.ProtectedProcess));
         _mockProcess.Verify(p => p.CloseMainWindow(), Times.Never);
+        VerifyNeverForceKilled();
+    }
+
+    [Theory]
+    [InlineData("ApplicationFrameHost", false)]
+    [InlineData("ApplicationFrameHost", true)]
+    [InlineData("applicationframehost", false)]
+    public async Task KillProcess_ApplicationFrameHost_IsRefused_AndPointsAtTheAppsOwnProcess(string processName, bool forceKill)
+    {
+        // Arrange - review F1: its windows are the frames of every Store app, the Windows Security and sign-in windows the
+        // default policy denies among them; its main window may be one of those, and forceKill ends every app's frame
+        _mockProcess.SetupGet(p => p.ProcessName).Returns(processName);
+
+        // Act
+        var result = await CreateSut().KillProcessAsync(Pid, confirm: true, forceKill: forceKill);
+
+        // Assert
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(nameof(ProcessErrorCode.ProtectedProcess));
+        result.ErrorMessage.Should().Contain("Store").And.Contain("close_window").And.Contain("processId").And.Contain("Nothing was done");
+        _mockProcess.Verify(p => p.CloseMainWindow(), Times.Never);
+        VerifyNeverForceKilled();
+    }
+
+    [Fact]
+    public void CheckKillTarget_ApplicationFrameHost_IsRefusedBeforeTheUserIsAsked()
+    {
+        _mockProcess.SetupGet(p => p.ProcessName).Returns("ApplicationFrameHost");
+        _mockProcess.Setup(p => p.RefreshMainWindowHandle()).Returns(0x100);
+
+        var check = CreateSut().CheckKillTarget(Pid, forceKill: false, gracefulTimeoutMs: 5000);
+
+        check.Refusal.Should().NotBeNull();
+        check.Refusal!.ErrorCode.Should().Be(nameof(ProcessErrorCode.ProtectedProcess));
+    }
+
+    [Theory]
+    [InlineData("ApplicationFrameHost.exe")]
+    [InlineData("explorer.exe")]
+    [InlineData("sihost.exe")]
+    public async Task KillProcess_ForceKill_AProtectedProcessInTheTree_RefusesTheWholeTree(string imageName)
+    {
+        // Arrange - a forced kill ends the whole tree, so a protected process in it is ended too
+        _mockWrapper.Setup(w => w.GetDescendantsOf(Pid)).Returns([(5001, "helper.exe"), (5002, imageName)]);
+
+        // Act
+        var result = await CreateSut().KillProcessAsync(Pid, confirm: true, forceKill: true);
+
+        // Assert
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(nameof(ProcessErrorCode.ProtectedProcess));
+        result.ErrorMessage.Should().Contain(imageName).And.Contain("5002").And.Contain("Nothing was terminated");
         VerifyNeverForceKilled();
     }
 

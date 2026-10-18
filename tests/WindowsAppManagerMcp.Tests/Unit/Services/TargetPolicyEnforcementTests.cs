@@ -511,6 +511,8 @@ public class TargetPolicyEnforcementTests
         process.SetupGet(p => p.Id).Returns(KeePassPid);
         process.SetupGet(p => p.ProcessName).Returns(processName);
         wrapper.Setup(w => w.OpenProcess(KeePassPid)).Returns(process.Object);
+        // Not an ancestor of the server; an unread answer (null) is refused before the tree is checked (review F3)
+        wrapper.Setup(w => w.IsAncestorOfCurrentProcess(It.IsAny<int>())).Returns(false);
         var service = new ProcessService(
             TestDataFactory.CreateMockWindowService().Object,
             new Mock<IInputValidationService>().Object,

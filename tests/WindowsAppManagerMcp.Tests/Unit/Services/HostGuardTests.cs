@@ -1,3 +1,5 @@
+using Microsoft.Extensions.Logging;
+
 namespace WindowsAppManagerMcp.Tests.Unit.Services;
 
 /// <summary>
@@ -246,7 +248,36 @@ public class HostGuardTests
 
         // Assert - the server still starts, and the console host is still protected
         sut.Host.Ancestors.Should().BeEmpty();
+        sut.Host.AncestorsUnknown.Should().BeTrue();
         sut.IsHostWindow(TerminalWindow).Should().BeTrue();
+    }
+
+    [Fact]
+    public void Host_TheProcessListCannotBeRead_RecordsTheAncestorsAsUnknown_AndWarns()
+    {
+        // Arrange - review F3: the wrapper answers null, not an exception, when its snapshot fails
+        _processes.Setup(p => p.GetAncestorProcesses()).Returns((IReadOnlyList<(int, DateTime?)>?)null);
+        var logger = new RecordingLogger<HostGuard>();
+
+        // Act
+        var sut = new HostGuard(_windows.Object, _processes.Object, logger);
+
+        // Assert
+        sut.Host.Ancestors.Should().BeEmpty();
+        sut.Host.AncestorsUnknown.Should().BeTrue();
+        logger.Entries.Should().Contain(e => e.Level == LogLevel.Warning && e.Message.Contains("ancestor processes"));
+        sut.IsHostWindow(TerminalWindow).Should().BeTrue("the console host is recorded without the ancestors");
+    }
+
+    [Fact]
+    public void Host_ReadAncestors_AreKnown()
+    {
+        var logger = new RecordingLogger<HostGuard>();
+
+        var sut = new HostGuard(_windows.Object, _processes.Object, logger);
+
+        sut.Host.AncestorsUnknown.Should().BeFalse();
+        logger.Entries.Should().NotContain(e => e.Level == LogLevel.Warning);
     }
 
     #endregion

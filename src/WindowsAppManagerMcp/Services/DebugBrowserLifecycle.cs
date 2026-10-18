@@ -450,10 +450,18 @@ public sealed class DebugBrowserLifecycle : IDebugBrowserLifecycle
                 "the user to close it.");
         }
 
-        if (_hostGuard?.IsHostProcess(pid) == true || IsAncestorOfServer(pid))
+        var isHost = _hostGuard?.IsHostProcess(pid) == true ? true : IsAncestorOfServer(pid);
+        if (isHost == true)
         {
             return Refuse(pid, nameof(ProcessErrorCode.CannotTerminateHost),
                 $"{imageName} (processId {shown}) belongs to the agent's host; closing it would end the agent's own session. Nothing was closed.");
+        }
+
+        if (isHost == null)
+        {
+            return Refuse(pid, nameof(ProcessErrorCode.ProcessTreeUnreadable),
+                $"The process list could not be read, so the server cannot tell whether {imageName} (processId {shown}) is an " +
+                "ancestor of this server (the agent's host); closing it could end the agent's own session. Nothing was closed. Try again.");
         }
 
         var processName = Path.GetFileNameWithoutExtension(imageName);
@@ -695,7 +703,11 @@ public sealed class DebugBrowserLifecycle : IDebugBrowserLifecycle
         }
     }
 
-    private bool IsAncestorOfServer(int processId)
+    /// <summary>
+    /// Whether the process is an ancestor of this server, by a live walk of the process tree; null when the process list
+    /// cannot be read (review F3): unknown, so the close is refused rather than assumed safe.
+    /// </summary>
+    private bool? IsAncestorOfServer(int processId)
     {
         try
         {
@@ -703,7 +715,7 @@ public sealed class DebugBrowserLifecycle : IDebugBrowserLifecycle
         }
         catch (Exception ex) when (ex is InvalidOperationException or Win32Exception)
         {
-            return false;
+            return null;
         }
     }
 
