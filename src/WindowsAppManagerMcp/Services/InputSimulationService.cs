@@ -503,13 +503,17 @@ public partial class InputSimulationService : IInputSimulationService
         var typingMethod = ToolEnum<TextInputMethod>.Name(viaLayout ? TextInputMethod.Keys : TextInputMethod.Unicode);
         var pasteMethod = ToolEnum<TextInputMethod>.Name(TextInputMethod.Paste);
 
+        // Ctrl+V can be the user's pause hotkey, which the agent must never press: method paste is refused, auto types
+        var pasteIsPauseChord = _session.FindPauseChord(PasteKeys(KeyboardLayout.Invariant));
+
         // auto pastes long text where a paste puts in what typing would: not with delayMs, and not when line breaks or tabs
         // are to press keys
         var pastes = method == TextInputMethod.Paste ||
                      (method == TextInputMethod.Auto && _pasteClipboard != null && length > AutoPasteThreshold && delayBetweenKeysMs == 0 &&
-                      (controlChars is null or TextControlChars.Unicode || typed.AsSpan().IndexOfAny('\n', '\t') < 0));
+                      (controlChars is null or TextControlChars.Unicode || typed.AsSpan().IndexOfAny('\n', '\t') < 0) &&
+                      pasteIsPauseChord == null);
         var planned = pastes ? pasteMethod : typingMethod;
-        if (pastes && PasteRefusalBeforeInput(method == TextInputMethod.Paste, length, delayBetweenKeysMs) is { } pasteRefused)
+        if (pastes && PasteRefusalBeforeInput(method == TextInputMethod.Paste, length, delayBetweenKeysMs, pasteIsPauseChord) is { } pasteRefused)
         {
             return new TypeTextResult(false, length, 0, pasteRefused.Error, pasteRefused.Code) { Method = pasteMethod };
         }
@@ -726,8 +730,9 @@ public partial class InputSimulationService : IInputSimulationService
 
     /// <summary>
     /// The events that type <paramref name="typed"/>, one array per character; or why it must not be typed: more than
-    /// <see cref="MaxTypedLength"/> characters (TextTooLong), a line break or tab without controlChars (InvalidArguments), or
-    /// a copy followed by a paste among its control characters (PasteNotAllowed). Nothing is sent.
+    /// <see cref="MaxTypedLength"/> characters (TextTooLong), a line break or tab without controlChars (InvalidArguments),
+    /// keys that press the user's pause hotkey (PauseChordNotAllowed), or a copy followed by a paste among its control
+    /// characters (PasteNotAllowed). Nothing is sent.
     /// </summary>
     private (List<InputEvent[]>? Characters, InputErrorCode Code, string? Error) PrepareTyping(string typed, int length,
         TextControlChars? controlChars, bool viaLayout, InputTarget target)
@@ -748,10 +753,21 @@ public partial class InputSimulationService : IInputSimulationService
         var layout = mode == TextControlChars.Unicode && !viaLayout ? KeyboardLayout.Invariant : LayoutFor(target);
         var characters = CharacterInputs(typed, mode, layout, viaLayout);
 
+        var events = characters.SelectMany(c => c).ToList();
+
+        // The agent must never pause or resume itself, as send_keys and press_keys refuse: the hotkey reads the keys, not the
+        // character, so a character method keys types with AltGr (the left Ctrl and the right Alt) presses a Ctrl+Alt chord
+        if (_session.FindPauseChord(events) is { } pauseChord)
+        {
+            return (null, InputErrorCode.PauseChordNotAllowed,
+                $"Typing the text presses {pauseChord}, the user's pause hotkey, which pauses and resumes this server's input (a " +
+                "character typed with AltGr is Ctrl+Alt with its key to the hotkey). Only the user may press it. Nothing was " +
+                "typed. Type the text with method 'unicode', which presses no keys for its characters.");
+        }
+
         // The text goes out in several batches, each checked on its own: a copy (ETX, CAN) in one and the paste (SYN) in a
         // later one would paste what the copy took unchecked, so the order is checked on the whole text first
-        if (_pasteGuard != null && ClipboardPasteGuard.CopyThenPasteRefusal(characters.SelectMany(c => c).ToList(), receivingClass: null,
-                "Nothing was typed.") is { } copyThenPaste)
+        if (_pasteGuard != null && ClipboardPasteGuard.CopyThenPasteRefusal(events, receivingClass: null, "Nothing was typed.") is { } copyThenPaste)
         {
             return (null, InputErrorCode.PasteNotAllowed, copyThenPaste);
         }
