@@ -406,6 +406,7 @@ public sealed class FileDialogServiceTests : IDisposable
         var result = await CompleteAsync(file, overwrite: true);
 
         result.ErrorCode.Should().Be(nameof(UIElementErrorCode.DialogNotCompleted));
+        result.Error.Should().NotContain("without an extension");
         result.Prompt.Should().Be(_promptContent);
         result.PromptHandled.Should().BeFalse();
         _answers.Should().BeEmpty();
@@ -471,7 +472,9 @@ public sealed class FileDialogServiceTests : IDisposable
 
         var result = await CompleteAsync(file, overwrite: true);
 
+        // The result says why, so the agent reads the prompt and answers it itself rather than call file_dialog again
         result.ErrorCode.Should().Be(nameof(UIElementErrorCode.DialogNotCompleted));
+        result.Error.Should().Contain("without an extension").And.Contain("full path").And.Contain("respond_to_dialog");
         result.PromptHandled.Should().BeFalse();
         _answers.Should().BeEmpty();
     }

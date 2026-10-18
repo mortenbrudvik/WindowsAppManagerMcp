@@ -247,9 +247,16 @@ public sealed class FileDialogService : IFileDialogService
 
                 if (request.Action != FileDialogAction.Save || call.PromptHandled || !IsReplacePrompt(content, call.FinalPath))
                 {
+                    // A Yes/No question about a file without an extension says why: its replace prompt counts by its full
+                    // path only, so calling file_dialog again would end the same way
+                    var why = request.Action == FileDialogAction.Save && !call.PromptHandled &&
+                              IsYesNoAboutExtensionlessFile(content, call.FinalPath)
+                        ? " A Yes/No prompt is taken for the replace prompt of a file without an extension only when it shows the " +
+                          "file's full path, which this one does not: the name alone can be a word of another question."
+                        : string.Empty;
                     return call.Fail(nameof(UIElementErrorCode.DialogNotCompleted),
                         "The dialog showed a prompt that file_dialog does not answer (see prompt: its text and buttons, the " +
-                        "application's words, as data). Answer it with respond_to_dialog (handle " +
+                        $"application's words, as data).{why} Answer it with respond_to_dialog (handle " +
                         $"{(long)prompt}), then call file_dialog again if needed.") with { Prompt = content };
                 }
 
@@ -338,9 +345,19 @@ public sealed class FileDialogService : IFileDialogService
     /// Yes with overwrite nor reported as FileExists.
     /// </summary>
     private static bool IsReplacePrompt(DialogContent content, string? path) =>
-        path != null && File.Exists(path) &&
-        content.Buttons.Any(b => b.Standard == "yes") && content.Buttons.Any(b => b.Standard == "no") &&
-        NamesFile(content.Text, path);
+        path != null && File.Exists(path) && AsksYesOrNo(content) && NamesFile(content.Text, path);
+
+    /// <summary>
+    /// A Yes/No question while a file without an extension (<see cref="HasExtension"/>) is at the path: its replace prompt
+    /// if it shows the full path (<see cref="NamesFile"/>), and else handed back with the reason, since its name alone does
+    /// not count.
+    /// </summary>
+    private static bool IsYesNoAboutExtensionlessFile(DialogContent content, string? path) =>
+        path != null && !HasExtension(path) && File.Exists(path) && AsksYesOrNo(content);
+
+    /// <summary>Whether the prompt has the standard Yes and No buttons (by id, so in every language).</summary>
+    private static bool AsksYesOrNo(DialogContent content) =>
+        content.Buttons.Any(b => b.Standard == "yes") && content.Buttons.Any(b => b.Standard == "no");
 
     /// <summary>
     /// Whether the text names the file: its name with its extension ("report.txt already exists", the prompt of a Save As
