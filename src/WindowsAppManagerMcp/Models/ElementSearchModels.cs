@@ -68,7 +68,7 @@ public enum ElementSearchTruncation
     WindowLimit = 5
 }
 
-/// <summary>A point in physical screen pixels, the same space as click's coordinates.</summary>
+/// <summary>A point in physical screen pixels, mouse_click's default (screen) space.</summary>
 public record ScreenPoint(int X, int Y);
 
 /// <summary>

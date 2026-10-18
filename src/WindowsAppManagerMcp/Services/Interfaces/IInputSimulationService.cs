@@ -55,8 +55,9 @@ public interface IInputSimulationService
     /// mouse_click (roadmap M4.3): <paramref name="clickCount"/> clicks (1 to 3) of any button at a screen point, with
     /// <paramref name="modifiers"/> held around them. The modifier key-downs, the move to the point, the clicks and the
     /// modifier key-ups go in one SendInput batch, after every check <see cref="Click"/> makes; a right or middle click in a
-    /// terminal follows the paste rule (PasteNotAllowed). click, right_click and double_click are this with the primary or
-    /// secondary button and no modifiers.
+    /// terminal follows the paste rule (PasteNotAllowed). <see cref="Click"/>, <see cref="RightClick"/> and
+    /// <see cref="DoubleClick"/>, which only element_action's mouse path calls since 3.0.0 removed the click tools, are this
+    /// with the primary or secondary button and no modifiers.
     /// </summary>
     /// <exception cref="ArgumentOutOfRangeException">clickCount outside 1 to 3.</exception>
     ClickResult MouseClick(int x, int y, MouseButton button, int clickCount, IReadOnlyList<MouseModifier> modifiers, InputTarget target,

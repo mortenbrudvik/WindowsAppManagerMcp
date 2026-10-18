@@ -301,7 +301,10 @@ public enum UIElementErrorCode
 
     /// <summary>
     /// respond_to_dialog, file_dialog: no dialog was found: the window in front (or the window named) is no dialog box and
-    /// has no open dialog, or (file_dialog) the dialog has no file name box, so it is no Open or Save As dialog. Nothing was done.
+    /// has no open dialog, or (file_dialog) the dialog has no file name box, so it is no Open or Save As dialog. Also, for a
+    /// respond_to_dialog press, a window named that is no dialog and that no modal dialog disables: it stands only for its
+    /// modal dialog, so an open dialog that leaves it enabled is pressed only by its own handle (the error names it).
+    /// Nothing was done.
     /// </summary>
     DialogNotFound = 21,
 
@@ -321,8 +324,11 @@ public enum UIElementErrorCode
     /// <summary>
     /// The user's target policy denies the window's app (its process, or for a UWP frame the app it hosts), so none of its
     /// UI elements was read: get_ui_elements, find_ui_elements, get_focused_element, get_element_at_point, read_element_text,
-    /// read_table, wait_for_element and get_active_popups refuse it as the captures do, before any warm-up or read. The same
-    /// name as the input guard's code; no tool argument changes it.
+    /// read_table, wait_for_element and get_active_popups refuse it as the captures do, before any warm-up or read. Inside a
+    /// window the policy allows, an element of a denied app's process (an embedded WebView2, another app's child window) is
+    /// refused by its ref the same way (read_element_text, read_table, wait_for_element, element_action), and so are criteria
+    /// whose only matches are such elements; the walks and searches leave it out with a warning of this code. The same name
+    /// as the input guard's code; no tool argument changes it.
     /// </summary>
     TargetDeniedByPolicy = 24,
 

@@ -74,8 +74,9 @@ public enum WindowErrorCode
     TargetDeniedByPolicy = 25,
 
     /// <summary>
-    /// The user paused the server's input with the pause hotkey (roadmap M1.10), so the window was not
-    /// activated: activating takes the keyboard focus from the user and can send input. Nothing was done.
+    /// Input is paused (roadmap M1.10): the user pressed the pause hotkey, or the server paused itself because it could not
+    /// read the pause it shares with the other servers on the desktop (pausedBy shared_pause_unreadable). So the window was
+    /// not activated: activating takes the keyboard focus from the user and can send input. Nothing was done.
     /// </summary>
     PausedByUser = 26,
 
@@ -271,8 +272,9 @@ public enum LaunchErrorCode
 
     /// <summary>
     /// runAsAdmin on a computer where Windows elevates without asking (User Account Control is off, or administrators are
-    /// not asked for consent), and the user could not be asked to confirm through the client (roadmap M6.5). Nothing was
-    /// started.
+    /// not asked for consent), and the user could not be asked to confirm through the client (roadmap M6.5): the client
+    /// cannot ask, or the item is launch_applications_batch's, which never asks. Also when the user approved one program and
+    /// the request now starts another. Nothing was started.
     /// </summary>
     ElevationNotConfirmed = 20,
 
@@ -414,13 +416,16 @@ public enum LayoutErrorCode
 
     /// <summary>
     /// A placement has no criterion apply_layout's matchBy can use (title_only without titleContains, process_only
-    /// without a process name, or neither), so it was skipped instead of matching every window (roadmap M2.8).
+    /// without a process name, or neither; a process name of only '.exe' or a title of only invisible characters counts as
+    /// none), so it was skipped instead of matching every window (roadmap M2.8).
     /// </summary>
     NoMatchCriterion = 11,
 
     /// <summary>
-    /// A placement save_layout was given is not valid (roadmap M6.8): no matcher, snap with position, a fraction out of range,
-    /// an unknown snap position, state or monitor, and the like. Nothing was saved.
+    /// A placement save_layout was given is not valid (roadmap M6.8): no matcher, a matcher that is blank once normalized,
+    /// snap with position, a fraction out of range, an unknown snap position, state or monitor, and the like. Nothing was
+    /// saved. apply_layout reports it for a placement whose rectangle is less than one pixel wide or high on its monitor,
+    /// which is not arranged.
     /// </summary>
     InvalidPlacement = 12,
 
@@ -602,8 +607,9 @@ public enum BrowserErrorCode
     NotResponding = 15,
 
     /// <summary>
-    /// The UI Automation read of the browser window did not finish within timeoutMs, or earlier reads of the browser are
-    /// still stuck; the browser may be busy or hung.
+    /// The UI Automation read of the browser window did not finish within timeoutMs (the browser may be busy or hung), the
+    /// time ran out before UI Automation was asked (the browser was not asked), or earlier reads of the browser are still
+    /// stuck.
     /// </summary>
     OperationTimedOut = 16,
 
@@ -659,10 +665,17 @@ public enum BrowserErrorCode
     /// <summary>No CDP tab could be matched to the window.</summary>
     CdpTargetNotFound = 32,
 
-    /// <summary>More than one CDP tab matches the window, so the right one cannot be chosen.</summary>
+    /// <summary>
+    /// More than one CDP tab has a title the window shows, and which one it shows cannot be told (Services.CdpShownTab): none
+    /// or several of them are shown, their visibility could not be read, the window is minimized, or they are in several
+    /// browser windows or in one that is not known. The tool never guesses.
+    /// </summary>
     CdpTargetAmbiguous = 33,
 
-    /// <summary>The CDP port is owned by a different process than the window.</summary>
+    /// <summary>
+    /// The CDP port's listener is not the window's browser: another process, none, or it could not be read. It is read again
+    /// once a tab list has come and once a connection is open, before its first command, so nothing was sent.
+    /// </summary>
     CdpPortOwnerMismatch = 34,
 
     /// <summary>The page has a JavaScript dialog (alert/confirm/prompt/beforeunload) open.</summary>

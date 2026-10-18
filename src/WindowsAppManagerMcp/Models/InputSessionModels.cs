@@ -360,7 +360,10 @@ public sealed record HeldInputStatus(
     InputReleaseRecord? LastRelease);
 
 /// <summary>Result of get_control_status.</summary>
-/// <param name="Paused">True while the user has paused the server's input: every input tool returns PausedByUser.</param>
+/// <param name="Paused">
+/// True while input is paused (by the user's hotkey, or by the server itself, as <paramref name="PausedBy"/> says): every
+/// input tool returns PausedByUser.
+/// </param>
 /// <param name="PausedBy">How it was paused ("hotkey", or "shared_pause_unreadable" when the shared pause could not be read); null while running.</param>
 /// <param name="PausedAt">When it was paused; null while running.</param>
 /// <param name="ResumedBy">How it was last resumed; null if never.</param>
@@ -370,7 +373,7 @@ public sealed record HeldInputStatus(
 /// True when the pause is shared by every Windows App Manager server on this desktop: the hotkey pauses and resumes
 /// all of them, and so does resume_input.
 /// </param>
-/// <param name="HeldInput">Keys and buttons that are down.</param>
+/// <param name="HeldInput">The keys and buttons the server could not release, and the modifier keys that are down.</param>
 /// <param name="Message">What this means for the agent.</param>
 /// <param name="Takeover">
 /// Takeover detection (roadmap M7.4): off, warn or stop, and whether its hooks work. Null when the server has none.

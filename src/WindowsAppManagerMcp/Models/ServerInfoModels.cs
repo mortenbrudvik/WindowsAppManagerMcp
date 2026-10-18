@@ -87,7 +87,7 @@ public sealed record ServerProcessInfo(int ProcessId, int? SessionId, IntegrityL
 public sealed record DesktopStateInfo(bool InputDesktopAvailable, bool SessionLocked, int? ForegroundLockTimeoutMs);
 
 /// <summary>A monitor.</summary>
-/// <param name="Index">Its index, as get_monitors and monitorIndex parameters use it.</param>
+/// <param name="Index">Its index, as get_monitors and the monitor parameters use it.</param>
 /// <param name="Name">The device name.</param>
 /// <param name="IsPrimary">True for the primary monitor, whose top-left corner is (0, 0).</param>
 /// <param name="Bounds">Its bounds in physical virtual-screen pixels.</param>
