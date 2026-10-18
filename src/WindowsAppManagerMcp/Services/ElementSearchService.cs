@@ -25,7 +25,8 @@ namespace WindowsAppManagerMcp.Services;
 /// Automation call. The provider still evaluates the criteria on such an element: only that it matched, and whose it is,
 /// shows. So the warm-up warms up a web page of such a process too (<see cref="IAccessibilityWarmup.WarmUpForSearch"/>,
 /// unlike a walk's): Chromium builds a page's tree only once asked, and a search of a page left unbuilt would miss its
-/// matches, come out complete and let element_action or read_element_text take another match for the only one.</para>
+/// matches, come out complete and let element_action or read_element_text take another match for the only one. The
+/// warm-up's info counts only the pages the policy allows, so it shows nothing of such a page either.</para>
 /// <para>Each match is registered with the search's identity criteria as its selector and whether they fit only it in the
 /// window (<see cref="ElementOrigin.Unique"/>), which decides whether a resolution may later move its ref to the element
 /// re-created. Proven only by a complete search of the whole window (not below withinRef): without visibleOnly or

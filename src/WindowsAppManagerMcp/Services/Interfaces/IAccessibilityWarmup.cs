@@ -36,7 +36,8 @@ public interface IAccessibilityWarmup
     /// <param name="window">The window about to be searched.</param>
     /// <param name="budget">The longest wait, as for <see cref="WarmUp"/>.</param>
     /// <param name="cancellationToken">The search's deadline or the caller's cancellation.</param>
-    /// <returns>What the warm-up did, or null when nothing was done.</returns>
+    /// <returns>What the warm-up did with the pages the policy lets a read reach: a page it refuses is waited for, but not
+    /// counted, so nothing of it is returned. Null when nothing was done, or only such pages were warmed up.</returns>
     AccessibilityWarmupInfo? WarmUpForSearch(nint window, TimeSpan budget, CancellationToken cancellationToken);
 
     /// <summary>

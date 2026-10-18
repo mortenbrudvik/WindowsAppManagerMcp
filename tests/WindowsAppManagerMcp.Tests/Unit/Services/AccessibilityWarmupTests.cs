@@ -1634,11 +1634,66 @@ public class AccessibilityWarmupTests
         var info = sut.WarmUpForSearch(Browser, Budget, CancellationToken.None);
         var pages = sut.FindPages(Browser, CancellationToken.None);
 
-        // Assert
-        info!.Status.Should().Be(AccessibilityWarmupStatus.Ready);
-        info.Host.Should().Be(WebContentHost.WebView2);
+        // Assert - and its warm-up is not reported: nothing of the page is returned, its number of elements neither
+        info.Should().BeNull();
         pages.Should().BeEmpty();
         asked.Should().Equal(RenderWidget);
+        sut.RememberedCount.Should().Be(1);
+    }
+
+    [Fact]
+    public void ASearchsWarmUp_WaitsForAPageOfADeniedProcess_ThatIsNotBuiltYet_AndReportsNothingOfIt()
+    {
+        // Arrange - the WebView2 builds its page's tree only once asked, and in the background
+        WpfWithWebView2();
+        var pane = new FakeUiaNode("Pane", "Chrome Legacy Window") { FrameworkId = "Win32" };
+        _tree.WithWindow(RenderWidget, pane);
+        _afterWait = () =>
+        {
+            if (pane.Children.Count == 0)
+            {
+                pane.With(new FakeUiaNode("Text", "Heading") { FrameworkId = "Chrome" },
+                    new FakeUiaNode("Button", "Web button") { FrameworkId = "Chrome" });
+            }
+        };
+        var sut = CreateSut(DeniesWebView2);
+
+        // Act
+        var info = sut.WarmUpForSearch(Browser, Budget, CancellationToken.None);
+        var again = sut.WarmUpForSearch(Browser, Budget, CancellationToken.None);
+
+        // Assert - it waited until the page stopped changing, and the next search does not wait for it again
+        info.Should().BeNull();
+        _waits.Should().HaveCount(2);
+        again.Should().BeNull();
+        _waits.Should().HaveCount(2);
+    }
+
+    [Fact]
+    public void ASearchsWarmUp_OfAWindowWithAnAllowedPage_AndOneOfADeniedProcess_ReportsTheAllowedPageOnly()
+    {
+        // Arrange - Chrome's own page (2 elements) and a page of a WebView2 the policy denies (1 element)
+        const nint deniedHost = 0x104;
+        const nint deniedWidget = 0x103;
+        ChromeWithPage(documentChildren: 2);
+        _desktop[deniedHost] = new FakeWindow("Chrome_WidgetWin_1", WebViewProcess, Browser);
+        _desktop[deniedWidget] = new FakeWindow(AccessibilityWarmup.RenderWidgetHostClass, WebViewProcess, deniedHost);
+        _tree.WithWindow(deniedWidget, new FakeUiaNode("Pane", "Chrome Legacy Window").With(
+            new FakeUiaNode("Button", "Web button") { FrameworkId = "Chrome" }));
+        var asked = new List<nint>();
+        _tree.FromHandleFailure = handle =>
+        {
+            asked.Add(handle);
+            return null;
+        };
+        var sut = CreateSut(DeniesWebView2);
+
+        // Act
+        var info = sut.WarmUpForSearch(Browser, Budget, CancellationToken.None);
+
+        // Assert - both pages were warmed up, and the info counts the elements of the one a read may reach
+        asked.Should().Equal(RenderWidget, deniedWidget);
+        info.Should().Be(new AccessibilityWarmupInfo(AccessibilityWarmupStatus.Ready, WebContentHost.Chromium, 0, 1, 2));
     }
 
     [Fact]
@@ -1691,8 +1746,11 @@ public class AccessibilityWarmupTests
         var walk = sut.WarmUp(App, Budget, CancellationToken.None);
         var pages = sut.FindPages(App, CancellationToken.None);
 
-        // Assert - a window remembered with such a page is not searched for it again for the walk
-        search.Should().Be(new AccessibilityWarmupInfo(AccessibilityWarmupStatus.Ready, WebContentHost.WebView2, 0, 1, 3));
+        // Assert - the search's warm-up looked for the page and is not reported; a window remembered with such a page is
+        // not searched for it again for the walk
+        search.Should().BeNull();
+        fetched.Should().BePositive();
+        sut.RememberedCount.Should().Be(1);
         walk.Should().BeNull();
         pages.Should().BeEmpty();
         asked.Should().BeEmpty();
