@@ -531,6 +531,32 @@ public class CaptureHealthTests
     }
 
     [Fact]
+    public void CaptureRegion_CenteredOnAMonitorWhoseDpiIsUnknown_ReportsThatMonitor_ButNoScaleFactor()
+    {
+        // Arrange - the region's centre is on the second monitor, whose DPI Windows could not report
+        _monitors.Setup(m => m.GetAllMonitors()).Returns(
+        [
+            TestDataFactory.CreateMonitorInfo(index: 0, boundsWidth: 1920, boundsHeight: 1080, scaleFactor: 1.5),
+            TestDataFactory.CreateMonitorInfo(index: 1, isPrimary: false, boundsX: 1920, boundsWidth: 1280, boundsHeight: 720) with
+            {
+                Dpi = 96, DpiUnknown = true
+            }
+        ]);
+        _capture.Setup(c => c.GetVirtualScreenBounds()).Returns((0, 0, 3200, 1080));
+
+        // Act
+        var metadata = CreateSut().CaptureRegion(2000, 100, 200, 200, FullResolution).Metadata;
+        var other = CreateSut().CaptureRegion(100, 100, 200, 200, FullResolution).Metadata;
+
+        // Assert - left out rather than 1 (100%) as fact, as get_monitors leaves it out; a known scale is still reported
+        metadata.Success.Should().BeTrue();
+        metadata.MonitorIndex.Should().Be(1);
+        metadata.ScaleFactor.Should().BeNull();
+        other.MonitorIndex.Should().Be(0);
+        other.ScaleFactor.Should().Be(1.5);
+    }
+
+    [Fact]
     public void CaptureWindow_OnAMonitorWhoseDpiIsUnknown_HasNoDpiWarning_AndNoScaleFactor()
     {
         // Arrange - a per-monitor aware window at 144 DPI: against the made-up 96 it would read as scaled by Windows
