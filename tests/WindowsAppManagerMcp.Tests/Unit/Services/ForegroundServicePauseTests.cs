@@ -68,6 +68,22 @@ public class ForegroundServicePauseTests
     }
 
     [Fact]
+    public void WhileTheServerPausedItself_SaysSo_NotThatTheUserPressedTheHotkey()
+    {
+        // Arrange - the server could not read the pause it shares with the other servers, so it paused itself (review F4)
+        _session.Pause(InputControlSources.SharedPauseUnreadable);
+
+        // Act
+        var outcome = CreateSut().EnsureForeground(Target, timeoutMs: 0);
+
+        // Assert - the same PausedByUser and the same advice; the user did not press the hotkey, so it does not say so
+        outcome.ErrorCode.Should().Be(WindowErrorCode.PausedByUser);
+        outcome.Error.Should().Contain("could not read the pause it shares").And.Contain("paused itself")
+            .And.Contain("Stop and ask the user").And.NotContain("pressed the pause hotkey");
+        _windows.Verify(w => w.SetForegroundWindow(It.IsAny<nint>()), Times.Never);
+    }
+
+    [Fact]
     public void APauseDuringActivation_StopsTheInputUnlock()
     {
         // Arrange - the foreground lock refuses, the attach is refused, and the user presses the hotkey meanwhile

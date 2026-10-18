@@ -37,8 +37,9 @@ namespace WindowsAppManagerMcp.Services;
 /// <item>a --user-data-dir (also as "--user-data-dir &lt;folder&gt;", which Electron apps read) inside a folder named 'User
 /// Data' or its 8.3 short name, where Chrome, Edge and Brave keep the user's real profiles, as launch_browser_with_debug
 /// refuses it; a relative folder is taken in the launch's working directory, and an 8.3 short name on a drive letter is
-/// expanded from the file system. One on a UNC or other device path is refused instead: expanding it would connect to
-/// another computer.</item>
+/// expanded from the file system. One on a UNC or other device path is refused instead, before any path with it is made
+/// full: expanding it would connect to another computer. So is one on a device path whose ".." leaves its drive
+/// (\\.\C:\..\UNC\server), and a relative one in a device-path working directory.</item>
 /// </list>
 /// A list of switch names, not a sandbox: a switch that only weakens the program (--no-sandbox,
 /// --disable-web-security), another app's switch of its own, and electron.exe given a script are not on it.
@@ -60,6 +61,7 @@ public sealed class ChromiumSwitchGuard
     private static readonly string[] SwitchPrefixes = ["--", "-", "/"];
 
     private readonly Func<string, string?> _longPath;
+    private readonly Func<string, string?, string> _fullPath;
 
     /// <summary>Expands 8.3 short names from the real file system.</summary>
     public ChromiumSwitchGuard()
@@ -70,9 +72,24 @@ public sealed class ChromiumSwitchGuard
     /// <param name="longPath">The long form of a fully qualified path that holds a '~', or null when it cannot be read (the
     /// path does not exist).</param>
     public ChromiumSwitchGuard(Func<string, string?> longPath)
+        : this(longPath, FullPathOf)
+    {
+    }
+
+    /// <param name="longPath">The long form of a fully qualified path that holds a '~', or null when it cannot be read (the
+    /// path does not exist).</param>
+    /// <param name="fullPath">Makes a path full, in the base folder when one is given, as Path.GetFullPath does; tests pass a
+    /// recorder. Path.GetFullPath expands 8.3 short names from the file system too, so it is given a path with a '~' only
+    /// when that path, made full by it with every '~' taken out first, is on a drive letter (never on a UNC or other device
+    /// path), and never one inside a 'User Data' folder as written.</param>
+    public ChromiumSwitchGuard(Func<string, string?> longPath, Func<string, string?, string> fullPath)
     {
         _longPath = longPath;
+        _fullPath = fullPath;
     }
+
+    private static string FullPathOf(string path, string? basePath) =>
+        basePath == null ? Path.GetFullPath(path) : Path.GetFullPath(path, basePath);
 
     /// <summary>
     /// Why the launch must not get <paramref name="arguments"/>, as an UnsafeChromiumSwitch refusal, or null when it may.
@@ -129,8 +146,9 @@ public sealed class ChromiumSwitchGuard
 
             // Chromium takes the value after '='; an Electron app such as VS Code also takes the next argument
             if (@switch.Name == UserDataDirSwitch && (@switch.Value ?? next) is { } folder &&
-                ProfileFolderRefusal(folder, workingDirectory) is { } inFolder)
+                CheckProfileFolder(folder, workingDirectory) is { } problem)
             {
+                var inFolder = Explain(problem);
                 return (@switch.Name, inFolder.Why, inFolder.Advice);
             }
         }
@@ -247,25 +265,49 @@ public sealed class ChromiumSwitchGuard
     }
 
     /// <summary>
-    /// Why a --user-data-dir of <paramref name="value"/> is refused, or null when it is not: a folder inside a 'User Data'
-    /// folder as written, as a full path (a relative one taken in <paramref name="workingDirectory"/>), or with its 8.3
-    /// short names expanded; or an 8.3 short name that cannot be expanded without asking another computer.
+    /// Why the Chromium profile folder <paramref name="value"/> is refused, or null when it is not: a folder inside a 'User
+    /// Data' folder as written, as a full path (a relative one taken in <paramref name="workingDirectory"/>), or with its 8.3
+    /// short names expanded; or an 8.3 short name that cannot be expanded without asking another computer. The one check of
+    /// a profile folder: <see cref="Check"/> applies it to a --user-data-dir, and launch_browser_with_debug to its
+    /// userDataDir (BrowserReadingTools.DebugProfileRefusal), so both refuse the same folders.
     /// </summary>
-    private (string Why, string Advice)? ProfileFolderRefusal(string value, string? workingDirectory)
+    /// <param name="value">The folder as given; quotes and white space around it are left out.</param>
+    /// <param name="workingDirectory">The folder a relative <paramref name="value"/> is taken in; null when it is not known
+    /// (then only its text is checked).</param>
+    public ProfileFolderProblem? CheckProfileFolder(string value, string? workingDirectory = null)
     {
+        ArgumentNullException.ThrowIfNull(value);
         var path = value.Trim().Trim('"').Trim();
         if (path.Length == 0)
         {
             return null;
         }
 
+        // Inside 'User Data' as written: refused whatever the path is made full to, so it is not made full (with a '~' on a
+        // network path that would connect to the computer it names)
+        if (HasUserDataSegment(path))
+        {
+            return ProfileFolderProblem.InsideUserData;
+        }
+
+        // The folder the path is taken in: itself when it is fully qualified, else the working directory (null: not known)
+        var baseFolder = Path.IsPathFullyQualified(path) ? null
+            : !string.IsNullOrEmpty(workingDirectory) && Path.IsPathFullyQualified(workingDirectory) ? workingDirectory
+            : null;
+        var where = baseFolder ?? (Path.IsPathFullyQualified(path) ? path : null);
+        if (where != null && (path.Contains('~') || (baseFolder?.Contains('~') ?? false)) && !ShortNamesAreLocal(path, baseFolder, where))
+        {
+            // Path.GetFullPath expands 8.3 short names itself, from the file system (GetLongPathNameW), so on a UNC or other
+            // device path it would connect to that computer as the expansion below would: refused before any path with a '~'
+            // is made full
+            return ProfileFolderProblem.UnexpandedShortName;
+        }
+
         var forms = new List<string> { path };
         string? full = null;
         try
         {
-            full = Path.IsPathFullyQualified(path) ? Path.GetFullPath(path)
-                : !string.IsNullOrEmpty(workingDirectory) && Path.IsPathFullyQualified(workingDirectory) ? Path.GetFullPath(path, workingDirectory)
-                : null;
+            full = where == null ? null : _fullPath(path, baseFolder);
         }
         catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
         {
@@ -284,9 +326,7 @@ public sealed class ChromiumSwitchGuard
             // reaches the real profile's folder: so such a name is refused, not expanded and not let through unread
             if (!IsOnADriveLetter(full))
             {
-                return ("it names a folder by an 8.3 short name ('~') on a network or device path, which the server does not " +
-                        "expand, so it cannot tell whether the folder is a browser's real 'User Data' profile",
-                        "Pass the folder's long name, or a separate folder on a local drive.");
+                return ProfileFolderProblem.UnexpandedShortName;
             }
 
             if (LongFormOf(full) is { } longForm)
@@ -295,24 +335,67 @@ public sealed class ChromiumSwitchGuard
             }
         }
 
-        return forms.Any(HasUserDataSegment)
-            ? ("it names a folder inside a 'User Data' folder, where Chrome, Edge and Brave keep the user's real profiles, " +
-               "with the user's signed-in sessions",
-               "Leave --user-data-dir out, or pass a separate folder.")
-            : null;
+        return forms.Any(HasUserDataSegment) ? ProfileFolderProblem.InsideUserData : null;
     }
+
+    /// <summary>Why a --user-data-dir with <paramref name="problem"/> is refused, and what to do instead.</summary>
+    private static (string Why, string Advice) Explain(ProfileFolderProblem problem) => problem == ProfileFolderProblem.UnexpandedShortName
+        ? ("it names a folder by an 8.3 short name ('~') on a network or device path, which the server does not expand, so it " +
+           "cannot tell whether the folder is a browser's real 'User Data' profile",
+            "Pass the folder's long name, or a separate folder on a local drive.")
+        : ("it names a folder inside a 'User Data' folder, where Chrome, Edge and Brave keep the user's real profiles, with the " +
+           "user's signed-in sessions",
+            "Leave --user-data-dir out, or pass a separate folder.");
+
+    /// <summary>
+    /// Whether the 8.3 short names of <paramref name="path"/>, taken in <paramref name="baseFolder"/> (null when it is fully
+    /// qualified), would be read from this computer's file system, so that making it full may expand them: it is on a drive
+    /// letter as written (<paramref name="where"/>: the path, or the folder it is taken in) and as Windows makes it full. That
+    /// full form is made with every '~' taken out, so Path.GetFullPath has no short name to expand and reads no file
+    /// system; Windows takes a ".." of a device path off its drive (\\.\C:\..\UNC\server is \\.\UNC\server). A relative
+    /// path in a device-path folder (\\.\C:\...) is not taken as local: Path.GetFullPath keeps its ".." on the drive, where
+    /// the program, which makes it full as Windows does, may not. Fails closed: a path that cannot be made full is not local.
+    /// </summary>
+    private bool ShortNamesAreLocal(string path, string? baseFolder, string where)
+    {
+        if (!IsOnADriveLetter(where) || (baseFolder != null && IsDevicePath(baseFolder)))
+        {
+            return false;
+        }
+
+        try
+        {
+            return IsOnADriveLetter(_fullPath(path.Replace('~', '_'), baseFolder?.Replace('~', '_')));
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Whether <paramref name="path"/> starts as a device path does (\\?\, \\.\, \??\, also with '/'), which Windows and
+    /// .NET make full by different rules.
+    /// </summary>
+    private static bool IsDevicePath(string path) =>
+        path.Length >= 4 && path[0] is '\\' or '/' && (path[1] is '\\' or '/' || path[1] == '?') && path[2] is '.' or '?' &&
+        path[3] is '\\' or '/';
 
     /// <summary>
     /// Whether the fully qualified <paramref name="fullPath"/> is on a drive letter (C:\, \\?\C:\, \\.\C:\), whose 8.3
     /// short names are read from this computer's file system; a UNC path (\\server\share, \\?\UNC\...) and any other
-    /// device path (\\?\GLOBALROOT\..., \\?\Volume{...}\...) is not. A mapped network drive's letter counts as a drive:
-    /// the user chose its server.
+    /// device path (\\?\GLOBALROOT\..., \\?\Volume{...}\...) is not, nor a device path with a "." or ".." folder (\\.\C:\..\UNC
+    /// leaves the drive). A mapped network drive's letter counts as a drive: the user chose its server.
     /// </summary>
     private static bool IsOnADriveLetter(string fullPath)
     {
-        var path = fullPath.StartsWith(@"\\?\", StringComparison.Ordinal) || fullPath.StartsWith(@"\\.\", StringComparison.Ordinal)
-            ? fullPath[4..]
-            : fullPath;
+        var device = fullPath.StartsWith(@"\\?\", StringComparison.Ordinal) || fullPath.StartsWith(@"\\.\", StringComparison.Ordinal);
+        var path = device ? fullPath[4..] : fullPath;
+        if (device && path.Split(['\\', '/']).Any(segment => segment.Length > 0 && segment.All(c => c is '.' or ' ')))
+        {
+            return false;
+        }
+
         return path.Length >= 3 && char.IsAsciiLetter(path[0]) && path[1] == ':' && path[2] is '\\' or '/';
     }
 
@@ -397,4 +480,20 @@ public sealed class ChromiumSwitchGuard
                "server does not run commands for the agent or open a program to remote control. Nothing was launched. " +
                refused.Advice;
     }
+}
+
+/// <summary>Why a Chromium profile folder is refused (<see cref="ChromiumSwitchGuard.CheckProfileFolder"/>).</summary>
+public enum ProfileFolderProblem
+{
+    /// <summary>
+    /// It is inside a folder named 'User Data' (also by its 8.3 short name), where Chrome, Edge and Brave keep the user's
+    /// real profiles with their signed-in sessions.
+    /// </summary>
+    InsideUserData,
+
+    /// <summary>
+    /// It names a folder by an 8.3 short name on a UNC or other device path: expanding it would connect to another computer,
+    /// so whether it is a 'User Data' folder cannot be told (fails closed).
+    /// </summary>
+    UnexpandedShortName
 }

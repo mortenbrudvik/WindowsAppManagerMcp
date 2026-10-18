@@ -12,13 +12,17 @@ public class CdpPageServiceTests
 {
     private const int Port = 9222;
 
+    /// <summary>The browser's process: it lists the tab, and listens on its port when each connection opens.</summary>
+    private const int BrowserPid = 4242;
+
     private static readonly TimeSpan LongTimeout = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan HangBound = TimeSpan.FromSeconds(10);
 
-    private static readonly CdpTarget Tab = new("T1", "page", "Form", "https://example.com/form", "ws://127.0.0.1:9222/devtools/page/T1", Port);
+    private static readonly CdpTarget Tab = new("T1", "page", "Form", "https://example.com/form", "ws://127.0.0.1:9222/devtools/page/T1", Port,
+        BrowserPid);
 
     private static CdpPageService CreateSut(FakePage page) =>
-        new(new CdpTransport(FakeCdpHttpHandler.Targets(), new FakeCdpWebSocketFactory(page.Socket)));
+        new(new CdpTransport(FakeCdpHttpHandler.Targets(), new FakeCdpWebSocketFactory(page.Socket), new FakePortOwnerResolver(BrowserPid)));
 
     private static BrowserElementLocator BySelector(string selector, int? index = null) => new(selector, null, null, null, index);
 
@@ -341,7 +345,7 @@ public class CdpPageServiceTests
                     socket.ReplyEmpty(command);
                     break;
             }
-        }))));
+        })), new FakePortOwnerResolver(BrowserPid)));
 
         var result = await sut.LocateAsync(Tab, BySelector("#save"), LongTimeout);
 
@@ -549,6 +553,43 @@ public class CdpPageServiceTests
         page.Commands("Input.dispatchMouseEvent").Select(c => c.GetProperty("params").GetProperty("type").GetString())
             .Should().Equal("mouseMoved");
         gate.Held.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task ClickAsync_APauseTheServerSetItself_SaysSo_NotThatTheUserPressedTheHotkey()
+    {
+        // Arrange - the server paused itself: it could not read the pause it shares with the other servers (review F4)
+        var page = new FakePage();
+        var gate = new RecordingGate
+        {
+            Paused = () => page.Commands("Input.dispatchMouseEvent").Any(),
+            PausedBy = InputControlSources.SharedPauseUnreadable
+        };
+
+        // Act
+        var result = await CreateSut(page).ClickAsync(Tab, BySelector("#save"), MouseButton.Primary, 1, gate.EnterAsync, LongTimeout);
+
+        // Assert - the same PausedByUser and the same advice, but never that the user pressed the hotkey
+        result.ErrorCode.Should().Be(nameof(WindowErrorCode.PausedByUser));
+        result.Error.Should().Contain("could not read the pause it shares").And.Contain("paused itself").And.Contain("0 of 1 click")
+            .And.Contain("Stop and ask the user").And.NotContain("pressed the pause hotkey");
+    }
+
+    [Fact]
+    public async Task TypeAsync_APauseTheUserMade_SaysTheyPressedTheHotkey_WithItsChord()
+    {
+        var page = new FakePage();
+        var gate = new RecordingGate
+        {
+            Paused = () => page.Commands("DOM.focus").Any(),
+            PausedBy = InputControlSources.Hotkey,
+            PauseChord = "Ctrl+Alt+Shift+Pause"
+        };
+
+        var result = await CreateSut(page).TypeAsync(Tab, new BrowserTypeOptions("query", "#q", false, false), gate.EnterAsync, LongTimeout);
+
+        result.ErrorCode.Should().Be(nameof(WindowErrorCode.PausedByUser));
+        result.Error.Should().Contain("the user pressed the pause hotkey (Ctrl+Alt+Shift+Pause)").And.Contain("nothing was typed");
     }
 
     [Fact]
@@ -864,6 +905,12 @@ public class CdpPageServiceTests
         /// <summary>Whether the user has paused input, asked each time the hold is.</summary>
         public Func<bool>? Paused { get; init; }
 
+        /// <summary>How input was paused (InputPauseState.PausedBy), as the hold reports it.</summary>
+        public string? PausedBy { get; init; }
+
+        /// <summary>The pause hotkey's chord, as the hold reports it.</summary>
+        public string? PauseChord { get; init; }
+
         public Task<IDisposable> EnterAsync(CancellationToken cancellationToken)
         {
             Entered++;
@@ -874,6 +921,10 @@ public class CdpPageServiceTests
         private sealed class Release(RecordingGate gate) : ICdpGateHold
         {
             public bool IsPaused => gate.Paused?.Invoke() == true;
+
+            public string? PausedBy => gate.PausedBy;
+
+            public string? PauseChord => gate.PauseChord;
 
             public void Dispose() => gate.Held = false;
         }

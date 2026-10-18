@@ -391,6 +391,42 @@ public class BrowserTabServiceTests
     }
 
     [Fact]
+    public async Task Navigate_NewTab_ThatOpenedButCouldNotBeListed_ReportsTheTabItOpened()
+    {
+        // Arrange - the port changed hands once the tab was opened: it is left on about:blank, and is not navigated
+        _tabs.Setup(t => t.OpenTabAsync(Port, (int)BrowserPid, It.IsAny<CdpGate>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(CdpResult<CdpTarget>.Fail(BrowserErrorCode.CdpPortOwnerMismatch,
+                "The browser opened tab NEW1 on about:blank, but it was not navigated: CDP port 9222 changed hands.") with
+            {
+                OpenedTargetId = "NEW1"
+            });
+
+        // Act
+        var result = await CreateSut().NavigateAsync(ByWindow(), new BrowserNavigateOptions("https://example.com/", true, BrowserWaitUntil.Load, 15_000));
+
+        // Assert - as when a pause stops the navigation: the fields name the tab, not only the message
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(nameof(BrowserErrorCode.CdpPortOwnerMismatch));
+        result.TargetId.Should().Be("NEW1");
+        result.NewTab.Should().BeTrue();
+        result.Error.Should().Contain("NEW1");
+        _tabs.Verify(t => t.NavigateAsync(It.IsAny<CdpTarget>(), It.IsAny<string>(), It.IsAny<BrowserWaitUntil>(), It.IsAny<CdpGate>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>(), It.IsAny<BrowserDialogAnswer?>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task Navigate_NewTab_ThatCouldNotBeOpened_NamesNoTab()
+    {
+        _tabs.Setup(t => t.OpenTabAsync(Port, (int)BrowserPid, It.IsAny<CdpGate>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(CdpResult<CdpTarget>.Fail(BrowserErrorCode.CdpPortOwnerMismatch, "CDP port 9222 belongs to process 999."));
+
+        var result = await CreateSut().NavigateAsync(ByWindow(), new BrowserNavigateOptions("https://example.com/", true, BrowserWaitUntil.Load, 15_000));
+
+        result.ErrorCode.Should().Be(nameof(BrowserErrorCode.CdpPortOwnerMismatch));
+        result.TargetId.Should().BeNull();
+        result.NewTab.Should().BeNull();
+    }
+
+    [Fact]
     public async Task Navigate_NewTab_WhenTheGateRefusesTheNavigation_ReportsTheTabItOpened()
     {
         // The tab is opened inside the gate, which is let go; the user pauses before Page.navigate takes it again
@@ -421,6 +457,39 @@ public class BrowserTabServiceTests
         result.TargetId.Should().Be("NEW1");
         result.NewTab.Should().BeTrue();
         result.Error.Should().Contain("NEW1").And.Contain("about:blank").And.NotContain("Nothing was done");
+    }
+
+    [Fact]
+    public async Task Navigate_NewTab_WhenThePauseTheServerSetItselfRefusesTheNavigation_SaysSo()
+    {
+        // Arrange - as above, but the server paused itself: it could not read the pause it shares (review F4)
+        var opened = Other with { Id = "NEW1" };
+        _tabs.Setup(t => t.OpenTabAsync(Port, (int)BrowserPid, It.IsAny<CdpGate>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .Returns(async (int _, int _, CdpGate gate, TimeSpan _, CancellationToken token) =>
+            {
+                using (await gate(token))
+                {
+                }
+
+                _session.Pause(InputControlSources.SharedPauseUnreadable);
+                return CdpResult<CdpTarget>.Ok(opened);
+            });
+        _tabs.Setup(t => t.NavigateAsync(opened, It.IsAny<string>(), It.IsAny<BrowserWaitUntil>(), It.IsAny<CdpGate>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>(), It.IsAny<BrowserDialogAnswer?>()))
+            .Returns(async (CdpTarget _, string _, BrowserWaitUntil _, CdpGate gate, TimeSpan _, CancellationToken token, BrowserDialogAnswer? _) =>
+            {
+                using (await gate(token))
+                {
+                    return CdpResult<CdpNavigation>.Ok(new CdpNavigation(null, null, null, "load", false));
+                }
+            });
+
+        // Act
+        var result = await CreateSut().NavigateAsync(ByWindow(), new BrowserNavigateOptions("https://example.com/", true, BrowserWaitUntil.Load, 15_000));
+
+        // Assert
+        result.ErrorCode.Should().Be(nameof(WindowErrorCode.PausedByUser));
+        result.Error.Should().Contain("NEW1").And.Contain("could not read the pause it shares").And.Contain("Stop and ask the user")
+            .And.NotContain("not navigated: the user paused input");
     }
 
     [Fact]

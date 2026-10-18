@@ -17,13 +17,13 @@ public class CdpTabServiceTests
     private static readonly TimeSpan LongTimeout = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan HangBound = TimeSpan.FromSeconds(10);
 
-    private static readonly CdpTarget Tab = new("T1", "page", "Docs", "https://example.com/", "ws://127.0.0.1:9222/devtools/page/T1", Port);
+    private static readonly CdpTarget Tab = new("T1", "page", "Docs", "https://example.com/", "ws://127.0.0.1:9222/devtools/page/T1", Port, BrowserPid);
 
     private static CdpTabService CreateSut(
         FakeCdpHttpHandler http, ICdpWebSocketFactory sockets, int? portOwner = BrowserPid, bool listenerTableReadable = true)
     {
-        var transport = new CdpTransport(http, sockets);
         var owners = new FakePortOwnerResolver(portOwner, listenerTableReadable);
+        var transport = new CdpTransport(http, sockets, owners);
         return new CdpTabService(new CdpService(transport, owners), transport, owners);
     }
 
@@ -216,7 +216,7 @@ public class CdpTabServiceTests
         var browser = TwoWindows();
         var gate = new RecordingGate();
         var sut = CreateSut(browser);
-        var tab = new CdpTarget("B", "page", "Docs", "https://example.com/B", "ws://127.0.0.1:9222/devtools/page/B", Port);
+        var tab = new CdpTarget("B", "page", "Docs", "https://example.com/B", "ws://127.0.0.1:9222/devtools/page/B", Port, BrowserPid);
 
         var result = await sut.ActivateAsync(tab, gate.EnterAsync, LongTimeout);
 
@@ -231,7 +231,7 @@ public class CdpTabServiceTests
     public async Task ActivateAsync_ATabThatClosed_IsCdpTargetNotFound()
     {
         var sut = CreateSut(TwoWindows());
-        var gone = new CdpTarget("GONE", "page", "", "", "ws://127.0.0.1:9222/devtools/page/GONE", Port);
+        var gone = new CdpTarget("GONE", "page", "", "", "ws://127.0.0.1:9222/devtools/page/GONE", Port, BrowserPid);
 
         var result = await sut.ActivateAsync(gone, new RecordingGate().EnterAsync, LongTimeout);
 
@@ -245,7 +245,7 @@ public class CdpTabServiceTests
         var browser = TwoWindows();
         var sut = CreateSut(browser);
 
-        var act = () => sut.ActivateAsync(new CdpTarget("A", "page", "Inbox", "", null, Port),
+        var act = () => sut.ActivateAsync(new CdpTarget("A", "page", "Inbox", "", null, Port, BrowserPid),
             _ => throw new ToolErrorException(nameof(WindowErrorCode.PausedByUser), "paused"), LongTimeout);
 
         (await act.Should().ThrowAsync<ToolErrorException>()).Which.ErrorCode.Should().Be(nameof(WindowErrorCode.PausedByUser));
@@ -281,7 +281,36 @@ public class CdpTabServiceTests
         var result = await sut.OpenTabAsync(Port, BrowserPid, new RecordingGate().EnterAsync, TimeSpan.FromMilliseconds(600));
 
         result.ErrorCode.Should().Be(BrowserErrorCode.CdpTargetNotFound);
+        result.OpenedTargetId.Should().Be("NEW1", "the tab was opened, and the result names it");
         stopwatch.Elapsed.Should().BeLessThan(HangBound);
+    }
+
+    [Fact]
+    public async Task OpenTabAsync_ATabListThatFailsOnceTheTabIsOpen_SaysTheTabWasOpened()
+    {
+        // Arrange - the browser opens the tab, then its tab list cannot be read (it stopped answering)
+        var browser = TwoWindows();
+        var owners = new FakePortOwnerResolver(BrowserPid);
+        var transport = new CdpTransport(browser.Http, browser.Sockets, owners);
+        var real = new CdpService(transport, owners);
+        var cdp = new Mock<ICdpService>();
+        cdp.Setup(c => c.GetBrowserVersionAsync(Port, It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .Returns((int port, TimeSpan timeout, CancellationToken token) => real.GetBrowserVersionAsync(port, timeout, token));
+        cdp.Setup(c => c.GetOwnedPageTargetsAsync(Port, BrowserPid, It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(CdpResult<IReadOnlyList<CdpTarget>>.Fail(BrowserErrorCode.CdpUnavailable, "Nothing answered on port 9222."));
+        var sut = new CdpTabService(cdp.Object, transport, owners);
+
+        // Act - a budget the steps before the list (version, connection, Target.createTarget) do not use up under load; the
+        // list is asked for again until it is nearly spent
+        var result = await sut.OpenTabAsync(Port, BrowserPid, new RecordingGate().EnterAsync, TimeSpan.FromSeconds(3));
+
+        // Assert - the list's own error, after what happened to the tab, and what to do with the tab instead of opening another
+        browser.Created.Should().ContainSingle();
+        result.ErrorCode.Should().Be(BrowserErrorCode.CdpUnavailable);
+        result.Error.Should().StartWith("The browser opened tab NEW1 on about:blank, but it was not navigated: ")
+            .And.Contain("Nothing answered on port 9222.")
+            .And.EndWith("The tab stays open, so do not open another one: once list_tabs lists it, navigate it with targetId NEW1.");
+        result.OpenedTargetId.Should().Be("NEW1");
     }
 
     [Fact]

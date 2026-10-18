@@ -31,6 +31,13 @@ public record CdpResult<T>
     /// <summary>What went wrong and what to do, for a failure; a caller may add to it (with).</summary>
     public string? Error { get; init; }
 
+    /// <summary>
+    /// For a failure that came after the browser opened a new tab (ICdpTabService.OpenTabAsync: Target.createTarget answered,
+    /// but the tab could not be listed afterwards), that tab's id, so the caller can name the tab it leaves on about:blank in
+    /// its result's fields as well as in <see cref="Error"/>; null otherwise. <see cref="FailAs{TOther}"/> keeps it.
+    /// </summary>
+    public string? OpenedTargetId { get; init; }
+
     /// <summary>True when the operation succeeded and <see cref="Value"/> is set.</summary>
     [MemberNotNullWhen(true, nameof(Value))]
     public bool Success => ErrorCode == BrowserErrorCode.None && Value is not null;
@@ -55,7 +62,7 @@ public record CdpResult<T>
     /// value.</exception>
     public CdpResult<TOther> FailAs<TOther>() => Success
         ? throw new InvalidOperationException($"FailAs was called on a successful CdpResult<{typeof(T).Name}>; only a failure can be copied.")
-        : new(default, ErrorCode, Error);
+        : new(default, ErrorCode, Error) { OpenedTargetId = OpenedTargetId };
 
     /// <summary>Formats the error as "Code: message" for result fields that carry a CDP error.</summary>
     public string? DescribeError() => Success ? null : $"{ErrorCode}: {Error}";

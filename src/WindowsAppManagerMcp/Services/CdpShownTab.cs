@@ -161,7 +161,8 @@ internal static class CdpShownTab
 
     /// <summary>
     /// Tab <paramref name="target"/>'s document.visibilityState, read on a connection of its own in an isolated world of its
-    /// main frame (<see cref="CdpIsolatedWorld"/>), closed before it returns.
+    /// main frame (<see cref="CdpIsolatedWorld"/>), closed before it returns; the connection is used only while the browser
+    /// that listed the tab still listens on its port (<see cref="CdpTargetConnection"/>).
     /// </summary>
     private static async Task<CdpResult<string>> ReadVisibilityAsync(
         ICdpTransport transport, CdpTarget target, TimeSpan timeout, CancellationToken cancellationToken)
@@ -173,12 +174,7 @@ internal static class CdpShownTab
         }
 
         var stopwatch = Stopwatch.StartNew();
-        var label = $"tab {target.Id}";
-        var webSocketUrl = CdpEndpointValidator.ValidateWebSocketUrl(target.WebSocketDebuggerUrl, target.Port, label);
-        if (!webSocketUrl.Success)
-            return webSocketUrl.FailAs<string>();
-
-        var connected = await transport.ConnectAsync(webSocketUrl.Value, target.Port, label, timeout, cancellationToken).ConfigureAwait(false);
+        var connected = await CdpTargetConnection.OpenAsync(transport, target, timeout, cancellationToken).ConfigureAwait(false);
         if (!connected.Success)
             return connected.FailAs<string>();
 

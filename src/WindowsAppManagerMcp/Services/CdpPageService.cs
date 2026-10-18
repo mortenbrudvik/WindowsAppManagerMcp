@@ -257,7 +257,7 @@ public sealed class CdpPageService : ICdpPageService
             }
 
             if (Paused(hold))
-                return PausedFail("The element was scrolled into view; no mouse event was sent.");
+                return PausedFail(hold, "The element was scrolled into view; no mouse event was sent.");
 
             // The page takes the events as if it had the focus, also in a window behind others; ends with the connection
             await SendQuietlyAsync(connection, "Emulation.setFocusEmulationEnabled", new { enabled = true },
@@ -282,7 +282,7 @@ public sealed class CdpPageService : ICdpPageService
                 // A pause stops the click between events; a press already sent is always released
                 if (type != "mouseReleased" && Paused(hold))
                 {
-                    return PausedFail(index == 0
+                    return PausedFail(hold, index == 0
                         ? "No mouse event was sent."
                         : $"{index / 2} of {clickCount} click(s) were sent; the rest were not.");
                 }
@@ -436,7 +436,7 @@ public sealed class CdpPageService : ICdpPageService
             }
 
             if (Paused(hold))
-                return PausedFail(prepared);
+                return PausedFail(hold, prepared);
 
             await SendQuietlyAsync(connection, "Emulation.setFocusEmulationEnabled", new { enabled = true },
                 Min(InputAckTime, Left(timeout, stopwatch)), cancellationToken).ConfigureAwait(false);
@@ -447,7 +447,7 @@ public sealed class CdpPageService : ICdpPageService
             foreach (var (method, parameters, pausedBefore) in commands)
             {
                 if (pausedBefore != null && Paused(hold))
-                    return PausedFail(pausedBefore);
+                    return PausedFail(hold, pausedBefore);
 
                 var sent = await SendUntilDialogAsync(connection, method, parameters, Min(InputAckTime, Left(timeout, stopwatch)), dialogOpened,
                     cancellationToken).ConfigureAwait(false);
@@ -1060,26 +1060,31 @@ public sealed class CdpPageService : ICdpPageService
     /// <summary>Whether the user paused input since the gate was taken (<see cref="ICdpGateHold"/>).</summary>
     private static bool Paused(IDisposable hold) => hold is ICdpGateHold { IsPaused: true };
 
-    /// <summary>PausedByUser for an action the pause stopped part way, saying what had been sent.</summary>
-    private static CdpPageResult<CdpInputOutcome> PausedFail(string done) =>
-        CdpPageResult<CdpInputOutcome>.Fail(nameof(WindowErrorCode.PausedByUser),
-            $"Input was paused: the user pressed the pause hotkey while this call ran, so it stopped. {done} Stop and ask the user " +
-            "how to continue; do not try to resume input yourself.");
+    /// <summary>
+    /// PausedByUser for an action the pause stopped part way, saying what had been sent and how input was paused
+    /// (<see cref="InputControlSources.PauseCause"/>): the server may have paused itself, which the user did not do.
+    /// </summary>
+    private static CdpPageResult<CdpInputOutcome> PausedFail(IDisposable hold, string done)
+    {
+        var cause = hold is ICdpGateHold held
+            ? InputControlSources.PauseCause(held.PausedBy, held.PauseChord)
+            : InputControlSources.PauseCause(null, null);
+        return CdpPageResult<CdpInputOutcome>.Fail(nameof(WindowErrorCode.PausedByUser),
+            $"Input was paused while this call ran, so it stopped: {cause}. {done} Stop and ask the user how to continue; do not " +
+            "try to resume input yourself.");
+    }
 
     private static TimeSpan Min(TimeSpan a, TimeSpan b) => a < b ? a : b;
 
     private static string FormatMs(TimeSpan timeout) => $"{(long)timeout.TotalMilliseconds} ms";
 
-    /// <summary>The tab's own DevTools connection, at the WebSocket URL its port listed.</summary>
-    private async Task<CdpResult<ICdpConnection>> ConnectAsync(CdpTarget target, TimeSpan timeout, CancellationToken cancellationToken)
-    {
-        var label = $"tab {target.Id}";
-        var webSocketUrl = CdpEndpointValidator.ValidateWebSocketUrl(target.WebSocketDebuggerUrl, target.Port, label);
-        if (!webSocketUrl.Success)
-            return webSocketUrl.FailAs<ICdpConnection>();
-
-        return await _transport.ConnectAsync(webSocketUrl.Value!, target.Port, label, timeout, cancellationToken).ConfigureAwait(false);
-    }
+    /// <summary>
+    /// The tab's own DevTools connection, at the WebSocket URL its port listed, used only while the browser that listed the
+    /// tab still listens on its port once it is open (<see cref="CdpTargetConnection"/>): a program that took the port gets
+    /// none of the commands, browser_type's text and browser_evaluate's script among them.
+    /// </summary>
+    private Task<CdpResult<ICdpConnection>> ConnectAsync(CdpTarget target, TimeSpan timeout, CancellationToken cancellationToken) =>
+        CdpTargetConnection.OpenAsync(_transport, target, timeout, cancellationToken);
 
     /// <summary>An element found in the page: its remote object and how many elements matched.</summary>
     private sealed record FoundElement(string ObjectId, int MatchCount);

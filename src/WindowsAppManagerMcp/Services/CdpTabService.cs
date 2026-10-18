@@ -94,8 +94,10 @@ public sealed class CdpTabService : ICdpTabService
         if (CheckOwner(port, processId) is { } refused)
             return refused.FailAs<CdpTabListing>();
 
+        // The list is used only while the browser still listens on the port once it has come (review F4): another program
+        // that took the port would answer with tabs of its own, whose WebSocket URLs the tab tools would then connect to
         var stopwatch = Stopwatch.StartNew();
-        var listed = await _cdp.GetPageTargetsAsync(port, timeout, cancellationToken).ConfigureAwait(false);
+        var listed = await _cdp.GetOwnedPageTargetsAsync(port, processId, timeout, cancellationToken).ConfigureAwait(false);
         if (!listed.Success)
             return listed.FailAs<CdpTabListing>();
 
@@ -106,7 +108,7 @@ public sealed class CdpTabService : ICdpTabService
             // Best effort: without it the tabs are listed without their windows
             var left = timeout - stopwatch.Elapsed;
             windows = await CdpBrowserWindows.QueryAsync(
-                _cdp, _transport, port, all, left < MaxWindowLookupTime ? left / 2 : MaxWindowLookupTime, cancellationToken)
+                _cdp, _transport, port, processId, all, left < MaxWindowLookupTime ? left / 2 : MaxWindowLookupTime, cancellationToken)
                 .ConfigureAwait(false);
         }
 
@@ -140,8 +142,13 @@ public sealed class CdpTabService : ICdpTabService
         CdpTarget target, CdpGate gate, TimeSpan timeout, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(target);
+
+        // The browser's connection, used only while the browser that listed the tab still listens on its port
+        if (target.OwnerProcessId is not int owner)
+            return CdpTargetConnection.Unowned<CdpTarget>(target);
+
         var stopwatch = Stopwatch.StartNew();
-        var connected = await ConnectToBrowserAsync(target.Port, timeout, cancellationToken).ConfigureAwait(false);
+        var connected = await ConnectToBrowserAsync(target.Port, owner, timeout, cancellationToken).ConfigureAwait(false);
         if (!connected.Success)
             return connected.FailAs<CdpTarget>();
 
@@ -164,9 +171,11 @@ public sealed class CdpTabService : ICdpTabService
         if (CheckOwner(port, processId) is { } refused)
             return refused.FailAs<CdpTarget>();
 
+        // Target.createTarget goes out only once the browser's connection is open and the browser still listens on the port
+        // (the transport reads it again then): a program that took the port meanwhile gets nothing
         var stopwatch = Stopwatch.StartNew();
         string targetId;
-        var connected = await ConnectToBrowserAsync(port, timeout, cancellationToken).ConfigureAwait(false);
+        var connected = await ConnectToBrowserAsync(port, processId, timeout, cancellationToken).ConfigureAwait(false);
         if (!connected.Success)
             return connected.FailAs<CdpTarget>();
 
@@ -190,23 +199,31 @@ public sealed class CdpTabService : ICdpTabService
             }
         }
 
-        // The new tab is listed once the browser has set it up, usually at once
+        // The new tab is listed once the browser has set it up, usually at once; the list only while the browser still
+        // listens on the port, since its WebSocket URL is what browser_navigate connects to next. Every failure from here on
+        // carries the tab's id: the tab is open, on about:blank. A list's own advice ("Try again") is followed by what to do
+        // with that tab, since browser_navigate with newTab again would open a second one
         while (true)
         {
             var remaining = timeout - stopwatch.Elapsed;
-            var listed = await _cdp.GetPageTargetsAsync(port, remaining > TimeSpan.Zero ? remaining : TimeSpan.Zero, cancellationToken)
-                .ConfigureAwait(false);
+            var listed = await _cdp.GetOwnedPageTargetsAsync(port, processId, remaining > TimeSpan.Zero ? remaining : TimeSpan.Zero,
+                cancellationToken).ConfigureAwait(false);
             if (listed.Success && listed.Value!.FirstOrDefault(t => t.Id == targetId) is { } opened)
                 return CdpResult<CdpTarget>.Ok(opened);
 
-            if (timeout - stopwatch.Elapsed <= NewTabListingDelay)
+            // A port that changed hands is not listed again (another program may have it now), nor any port once the time is up
+            if (listed.ErrorCode == BrowserErrorCode.CdpPortOwnerMismatch || timeout - stopwatch.Elapsed <= NewTabListingDelay)
             {
-                return listed.Success
+                var failed = listed.Success
                     ? CdpResult<CdpTarget>.Fail(
                         BrowserErrorCode.CdpTargetNotFound,
                         $"The browser opened tab {targetId}, but did not list it within {FormatMs(timeout)}; it may have been " +
                         "closed at once. Call list_tabs to see the browser's tabs.")
-                    : listed.FailAs<CdpTarget>();
+                    : CdpResult<CdpTarget>.Fail(
+                        listed.ErrorCode,
+                        $"The browser opened tab {targetId} on about:blank, but it was not navigated: {listed.Error} The tab " +
+                        $"stays open, so do not open another one: once list_tabs lists it, navigate it with targetId {targetId}.");
+                return failed with { OpenedTargetId = targetId };
             }
 
             await Task.Delay(NewTabListingDelay, cancellationToken).ConfigureAwait(false);
@@ -671,8 +688,11 @@ public sealed class CdpTabService : ICdpTabService
         ICdpConnection connection, CdpGate gate, string method, object parameters, TimeSpan timeout, CancellationToken cancellationToken) =>
         CdpGatedSend.StartAsync(connection, gate, method, parameters, timeout, cancellationToken);
 
-    /// <summary>The browser-level DevTools connection (/json/version's webSocketDebuggerUrl).</summary>
-    private async Task<CdpResult<ICdpConnection>> ConnectToBrowserAsync(int port, TimeSpan timeout, CancellationToken cancellationToken)
+    /// <summary>
+    /// The browser-level DevTools connection (/json/version's webSocketDebuggerUrl), used only while
+    /// <paramref name="owner"/> still listens on the port once it is open (<see cref="ICdpTransport.ConnectAsync"/>).
+    /// </summary>
+    private async Task<CdpResult<ICdpConnection>> ConnectToBrowserAsync(int port, int owner, TimeSpan timeout, CancellationToken cancellationToken)
     {
         var stopwatch = Stopwatch.StartNew();
         var version = await _cdp.GetBrowserVersionAsync(port, timeout, cancellationToken).ConfigureAwait(false);
@@ -680,19 +700,15 @@ public sealed class CdpTabService : ICdpTabService
             return version.FailAs<ICdpConnection>();
 
         return await _transport.ConnectAsync(
-            version.Value!.WebSocketDebuggerUrl, port, "the browser", Remaining(timeout, stopwatch), cancellationToken).ConfigureAwait(false);
+            version.Value!.WebSocketDebuggerUrl, port, owner, "the browser", Remaining(timeout, stopwatch), cancellationToken).ConfigureAwait(false);
     }
 
-    /// <summary>The tab's own DevTools connection, at the WebSocket URL its port listed.</summary>
-    private async Task<CdpResult<ICdpConnection>> ConnectToTabAsync(CdpTarget target, TimeSpan timeout, CancellationToken cancellationToken)
-    {
-        var label = $"tab {target.Id}";
-        var webSocketUrl = CdpEndpointValidator.ValidateWebSocketUrl(target.WebSocketDebuggerUrl, target.Port, label);
-        if (!webSocketUrl.Success)
-            return webSocketUrl.FailAs<ICdpConnection>();
-
-        return await _transport.ConnectAsync(webSocketUrl.Value!, target.Port, label, timeout, cancellationToken).ConfigureAwait(false);
-    }
+    /// <summary>
+    /// The tab's own DevTools connection, at the WebSocket URL its port listed, on the browser that listed it
+    /// (<see cref="CdpTargetConnection"/>).
+    /// </summary>
+    private Task<CdpResult<ICdpConnection>> ConnectToTabAsync(CdpTarget target, TimeSpan timeout, CancellationToken cancellationToken) =>
+        CdpTargetConnection.OpenAsync(_transport, target, timeout, cancellationToken);
 
     private static TimeSpan Remaining(TimeSpan timeout, Stopwatch stopwatch)
     {

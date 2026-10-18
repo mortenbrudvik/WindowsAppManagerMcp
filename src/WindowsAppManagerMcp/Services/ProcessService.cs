@@ -2621,11 +2621,14 @@ public class ProcessService : IProcessService
     private static readonly TimeSpan AbandonTimeout = TimeSpan.FromSeconds(5);
 
     /// <summary>
-    /// A launch_browser_with_debug call cancelled after the start (roadmap M5.4): the browser it started is ended with its
-    /// process tree, since no result names its PID or port and its debug port has no authentication, and its temporary
-    /// profile is deleted. Only that browser: the PID must still have the start time read when it started (or, when that
-    /// could not be read, the browser's own command line must name the launch's profile), checked while the opened process
-    /// holds a handle that pins its PID until it is ended (review F4). Best effort; never throws.
+    /// A launch_browser_with_debug call cancelled after the start (roadmap M5.4): the browser it started is ended, since no
+    /// result names its PID or port and its debug port has no authentication, and its temporary profile is deleted. Only
+    /// that browser: the PID must still have the start time read when it started (or, when that could not be read, the
+    /// browser's own command line must name the launch's profile), checked while the opened process holds a handle that pins
+    /// its PID until it is ended (review F4). And only what it provably started, as close_debug_browser ends it
+    /// (<see cref="DebugBrowserProcesses"/>): the browser process alone, then what is left of its own child processes, never
+    /// its process tree, which holds what the browser opened (a download's program, the user's own browser that a link
+    /// started). Best effort; never throws.
     /// </summary>
     private async Task AbandonCancelledLaunchAsync(int? processId, DateTime? startTime, string userDataDir, bool temporaryProfile)
     {
@@ -2636,8 +2639,8 @@ public class ProcessService : IProcessService
                 using var process = _processWrapper.OpenProcess(pid);
                 if (process != null && !HasExitedSafe(process) && IsStartedDebugBrowser(pid, startTime, userDataDir))
                 {
-                    process.Kill(entireProcessTree: true);
-                    await process.WaitForExitAsync((int)AbandonTimeout.TotalMilliseconds, CancellationToken.None).ConfigureAwait(false);
+                    await new DebugBrowserProcesses(_processWrapper, _hostGuard)
+                        .EndStartedBrowserAsync(process, pid, userDataDir, AbandonTimeout).ConfigureAwait(false);
                 }
             }
             catch (Exception ex) when (ex is InvalidOperationException or Win32Exception or NotSupportedException or AggregateException)
@@ -2654,8 +2657,10 @@ public class ProcessService : IProcessService
 
     /// <summary>
     /// A launch_browser_with_debug call cancelled while its start still ran (roadmap M5.4): once the start returns, the
-    /// browser it brought is ended with its process tree (the handle is the started process's own, so it cannot be another
-    /// process that got the PID), and only then is the temporary profile deleted. Best effort; never throws.
+    /// browser it brought is ended (the handle is the started process's own, so it cannot be another process that got the
+    /// PID), as close_debug_browser ends it (<see cref="DebugBrowserProcesses"/>): the browser process alone, then what is
+    /// left of its own child processes, never a program it opened. Only then is the temporary profile deleted. Best effort;
+    /// never throws.
     /// </summary>
     private async Task EndAbandonedStartAsync(Task<IProcessHandle?> start, string userDataDir, bool temporaryProfile)
     {
@@ -2677,8 +2682,8 @@ public class ProcessService : IProcessService
                 {
                     if (!HasExitedSafe(process))
                     {
-                        process.Kill(entireProcessTree: true);
-                        await process.WaitForExitAsync((int)AbandonTimeout.TotalMilliseconds, CancellationToken.None).ConfigureAwait(false);
+                        await new DebugBrowserProcesses(_processWrapper, _hostGuard)
+                            .EndStartedBrowserAsync(process, process.Id, userDataDir, AbandonTimeout).ConfigureAwait(false);
                     }
                 }
             }

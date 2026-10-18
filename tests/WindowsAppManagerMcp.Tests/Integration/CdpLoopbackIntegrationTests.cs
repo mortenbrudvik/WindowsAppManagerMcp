@@ -25,8 +25,9 @@ public sealed class CdpLoopbackIntegrationTests : IAsyncLifetime
     public Task InitializeAsync()
     {
         // The constructor the server registers, with the HTTP handler it builds
-        _transport = new CdpTransport(new ClientWebSocketFactory());
-        _sut = new CdpService(_transport, new TcpPortOwnerResolver());
+        var owners = new TcpPortOwnerResolver();
+        _transport = new CdpTransport(new ClientWebSocketFactory(), owners);
+        _sut = new CdpService(_transport, owners);
         return Task.CompletedTask;
     }
 

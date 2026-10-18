@@ -11,7 +11,10 @@ namespace WindowsAppManagerMcp.Services.Interfaces;
 /// <remarks>
 /// The calls that change the browser (activate, open, navigate) take the input gate through <see cref="CdpGate"/> just
 /// around the command that changes it, and release it before they wait for the page, so a slow page never holds up the
-/// input and window tools.
+/// input and window tools. Every tab list is used, and every connection gets a command, only while the browser's process
+/// still listens on the port (review F4): a tab's connection and the browser's connection for a tab are tied to the browser
+/// that listed the tab (<see cref="CdpTarget.OwnerProcessId"/>), and fail with CdpPortOwnerMismatch, nothing sent, when the
+/// port changed hands or its listener cannot be read.
 /// </remarks>
 public interface ICdpTabService
 {
@@ -35,7 +38,9 @@ public interface ICdpTabService
     /// <summary>
     /// Opens a new tab on about:blank in the browser on <paramref name="port"/> (Target.createTarget over the browser's
     /// DevTools connection), which must belong to process <paramref name="processId"/>. The browser puts it in its most
-    /// recently active window and shows it there. Returns the new tab as /json/list lists it.
+    /// recently active window and shows it there. Returns the new tab as /json/list lists it; a failure once the browser has
+    /// opened it (the tab list does not show it, cannot be read, or comes after the port changed hands) carries its id
+    /// (<see cref="CdpResult{T}.OpenedTargetId"/>), since the tab stays open on about:blank.
     /// </summary>
     Task<CdpResult<CdpTarget>> OpenTabAsync(
         int port, int processId, CdpGate gate, TimeSpan timeout, CancellationToken cancellationToken = default);

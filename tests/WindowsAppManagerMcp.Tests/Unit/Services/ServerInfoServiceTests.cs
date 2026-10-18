@@ -361,6 +361,20 @@ public sealed class ServerInfoServiceTests : IDisposable
     }
 
     [Fact]
+    public void Read_APauseTheServerSetItself_IsWarnedAsTheServers_NotTheUsers()
+    {
+        // Arrange - the server could not read the pause it shares with the other servers, so it paused itself (review F4)
+        _session.Pause(InputControlSources.SharedPauseUnreadable);
+
+        // Act
+        var warnings = CreateSut().Read(Connection, 48).Warnings;
+
+        // Assert - the same PausedByUser and the same advice, but the user did not pause, so it does not say they did
+        warnings.Should().ContainSingle(w => w.Contains("PausedByUser")).Which.Should()
+            .Contain("could not read the pause it shares").And.Contain("Stop and ask the user").And.NotContain("by the user");
+    }
+
+    [Fact]
     public void Read_WarnsAboutWhatWillMakeToolsFail()
     {
         // Arrange - everything at once

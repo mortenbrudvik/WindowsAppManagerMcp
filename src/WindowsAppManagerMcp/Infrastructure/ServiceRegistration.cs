@@ -48,7 +48,8 @@ public static class ServiceRegistration
         // CDP (roadmap M5.2): the transport is the only part that talks to a browser's debug port over the network, so the
         // E2E harness refuses it with ICdpService; the port owner check reads the TCP table through a Native wrapper
         services.AddSingleton<ITcpPortOwnerResolver, TcpPortOwnerResolver>();
-        services.AddSingleton<ICdpTransport>(_ => new CdpTransport(new ClientWebSocketFactory()));
+        services.AddSingleton<ICdpTransport>(provider =>
+            new CdpTransport(new ClientWebSocketFactory(), provider.GetRequiredService<ITcpPortOwnerResolver>()));
         services.AddSingleton<ICdpService, CdpService>();
         // launch_browser_with_debug's wait for the DevTools endpoint (roadmap M5.1): /json/version through ICdpService, so
         // the E2E harness's refusal of ICdpService covers it too

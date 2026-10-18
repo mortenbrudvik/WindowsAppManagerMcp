@@ -606,7 +606,7 @@ public class DependencyInjectionTests : IDisposable
         }
 
         public Task<CdpResult<ICdpConnection>> ConnectAsync(
-            Uri webSocketUrl, int expectedPort, string label, TimeSpan timeout, CancellationToken cancellationToken) =>
+            Uri webSocketUrl, int expectedPort, int expectedOwner, string label, TimeSpan timeout, CancellationToken cancellationToken) =>
             throw new InvalidOperationException("No connection is expected.");
     }
 

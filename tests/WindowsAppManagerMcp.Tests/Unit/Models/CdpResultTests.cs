@@ -83,6 +83,17 @@ public class CdpResultTests
     }
 
     [Fact]
+    public void FailAs_KeepsTheTabTheFailureLeftOpen()
+    {
+        // A new tab the browser opened before the call failed: the caller reports it whatever type the failure is copied to
+        var copied = (CdpResult<string>.Fail(BrowserErrorCode.CdpPortOwnerMismatch, "Changed hands.") with { OpenedTargetId = "NEW1" })
+            .FailAs<int>();
+
+        copied.OpenedTargetId.Should().Be("NEW1");
+        CdpResult<string>.Fail(BrowserErrorCode.CdpTimeout, "No answer.").OpenedTargetId.Should().BeNull();
+    }
+
+    [Fact]
     public void FailAs_OnASuccess_Throws()
     {
         // It used to return a result with no error code and no value, which reads as a success whose Value is null

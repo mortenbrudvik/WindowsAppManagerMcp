@@ -170,12 +170,18 @@ public class ChromiumSwitchGuardTests
     public void AShortNameOnANetworkOrDevicePath_IsRefused_WithoutReadingTheFileSystem(string argument, string? workingDirectory)
     {
         // Arrange - expanding it would make the server connect to a computer the agent named, maybe for minutes and with
-        // the user's credentials; and \\localhost\C$ reaches the real profile's folder
+        // the user's credentials; and \\localhost\C$ reaches the real profile's folder. Paths are made full by their text
+        // only (Path.GetFullPath would expand a '~' itself), so a test that fails touches no network either
         var asked = new List<string>();
+        var made = new List<string>();
         var sut = new ChromiumSwitchGuard(path =>
         {
             asked.Add(path);
             return null;
+        }, (path, basePath) =>
+        {
+            made.Add(basePath == null ? path : $"{path} in {basePath}");
+            return basePath == null ? path : Path.Join(basePath, path);
         });
 
         // Act
@@ -186,17 +192,120 @@ public class ChromiumSwitchGuardTests
         refusal!.ErrorCode.Should().Be(nameof(LaunchErrorCode.UnsafeChromiumSwitch));
         refusal.Message.Should().Contain("short name").And.Contain("Nothing was launched");
         asked.Should().BeEmpty();
+        made.Should().BeEmpty();
+    }
+
+    [Theory]
+    [InlineData(@"--user-data-dir=\\10.255.255.1\s\a\b\c~1", null)]
+    [InlineData("--user-data-dir=//10.255.255.1/s/c~1", null)]
+    [InlineData(@"--user-data-dir=\\localhost\C$\Users\me\AppData\Local\Google\Chrome\US1A2B~1", null)]
+    [InlineData("--user-data-dir=c~1", @"\\10.255.255.1\s")]
+    [InlineData("--user-data-dir=profile", @"\\10.255.255.1\PROFIL~1")]
+    public void AShortNameOnANetworkPath_IsRefused_BeforeThePathIsMadeFull(string argument, string? workingDirectory)
+    {
+        // Arrange - Path.GetFullPath expands 8.3 short names itself, from the file system (GetLongPathNameW): on a UNC path
+        // that connects to the computer it names (seen: 21 s for an address that does not answer). The recorder makes a path
+        // full by its text only, so a test that fails touches no network either
+        var made = new List<string>();
+        var sut = new ChromiumSwitchGuard(_ => null, (path, basePath) =>
+        {
+            made.Add(basePath == null ? path : $"{path} in {basePath}");
+            return basePath == null ? path : Path.Join(basePath, path);
+        });
+
+        // Act
+        var refusal = sut.Check(Edge, [argument], workingDirectory);
+
+        // Assert
+        refusal!.Message.Should().Contain("short name").And.Contain("Nothing was launched");
+        made.Should().BeEmpty();
+    }
+
+    [Theory]
+    // A 'User Data' folder on a network path: refused by its text alone
+    [InlineData(@"--user-data-dir=\\10.255.255.1\s\USERDA~1\Default", null, "'User Data' folder")]
+    [InlineData(@"--user-data-dir=\\10.255.255.1\s\User Data\x~1", null, "'User Data' folder")]
+    [InlineData(@"--user-data-dir=\\.\UNC\10.255.255.1\s\USERDA~1", null, "'User Data' folder")]
+    [InlineData(@"--user-data-dir=USERDA~1", @"\\10.255.255.1\s", "'User Data' folder")]
+    // A device path whose ".." leaves its drive: Windows makes \\.\C:\..\UNC\server full as \\.\UNC\server
+    [InlineData(@"--user-data-dir=\\.\C:\..\UNC\10.255.255.1\s\x~1", null, "short name")]
+    [InlineData(@"--user-data-dir=\\?\C:\..\UNC\10.255.255.1\s\x~1", null, "short name")]
+    // A relative folder in a device-path working directory, which the program may take off its drive as Windows does
+    [InlineData("--user-data-dir=x~1", @"\\.\C:\..\UNC\10.255.255.1\s", "short name")]
+    [InlineData(@"--user-data-dir=..\..\UNC\10.255.255.1\s\x~1", @"\\.\C:\work", "short name")]
+    [InlineData("--user-data-dir=profile", @"\\.\C:\..\UNC\10.255.255.1\PROFIL~1", "short name")]
+    public void AShortNameThatWouldBeExpandedOverTheNetwork_IsRefused_BeforeAnyPathWithItIsMadeFull(
+        string argument, string? workingDirectory, string message)
+    {
+        // Arrange - Path.GetFullPath expands a '~' from the file system, over SMB on a network path. The recorder makes a path
+        // with a '~' full by its text only, so a test that fails touches no network; one without a '~' is never expanded
+        var withShortName = new List<string>();
+        var sut = new ChromiumSwitchGuard(_ => null, (path, basePath) =>
+        {
+            if (path.Contains('~') || (basePath?.Contains('~') ?? false))
+            {
+                withShortName.Add(basePath == null ? path : $"{path} in {basePath}");
+                return basePath == null ? path : Path.Join(basePath, path);
+            }
+
+            return basePath == null ? Path.GetFullPath(path) : Path.GetFullPath(path, basePath);
+        });
+
+        // Act
+        var refusal = sut.Check(Edge, [argument], workingDirectory);
+
+        // Assert
+        refusal.Should().NotBeNull();
+        refusal!.ErrorCode.Should().Be(nameof(LaunchErrorCode.UnsafeChromiumSwitch));
+        refusal.Message.Should().Contain(message).And.Contain("Nothing was launched");
+        withShortName.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void AShortName_IsExpandedOnlyWhenItsPathMadeFullWithoutIt_IsOnADrive()
+    {
+        // Arrange - the drive is told from the path as Windows makes it full, with the '~' taken out first (then
+        // Path.GetFullPath has no short name to expand): here a device path that Windows takes off its drive
+        var withShortName = new List<string>();
+        var sut = new ChromiumSwitchGuard(path => path == @"C:\Users\me\AppData\Local\Google\Chrome\US1A2B~1" ? ChromeUserData : null,
+            (path, basePath) =>
+            {
+                if (path.Contains('~') || (basePath?.Contains('~') ?? false))
+                {
+                    withShortName.Add(path);
+                    return basePath == null ? path : Path.Join(basePath, path);
+                }
+
+                return path == @"\\.\C:\odd\x_1" ? @"\\.\UNC\10.255.255.1\s\x_1"
+                    : basePath == null ? Path.GetFullPath(path) : Path.GetFullPath(path, basePath);
+            });
+
+        // Act & Assert
+        sut.Check(Edge, [@"--user-data-dir=\\.\C:\odd\x~1"], null)!.Message.Should().Contain("short name");
+        withShortName.Should().BeEmpty();
+
+        // On a drive, also as a relative folder in a working directory on one, the short name is still expanded
+        sut.Check(Edge, [@"--user-data-dir=C:\Users\me\AppData\Local\Google\Chrome\US1A2B~1"], null)!.Message
+            .Should().Contain("'User Data' folder");
+        sut.Check(Edge, ["--user-data-dir=US1A2B~1"], @"C:\Users\me\AppData\Local\Google\Chrome")!.Message
+            .Should().Contain("'User Data' folder");
+        sut.Check(Edge, [@"--user-data-dir=C:\Temp\PROFIL~1"], null).Should().BeNull();
+        withShortName.Should().HaveCount(3);
     }
 
     [Fact]
     public void ANetworkPathWithoutAShortName_IsCheckedByItsText_WithoutReadingTheFileSystem()
     {
+        // A path with a '~' is made full by its text only (Path.GetFullPath would expand it over SMB), so a test that fails
+        // touches no network either
         var asked = new List<string>();
         var sut = new ChromiumSwitchGuard(path =>
         {
             asked.Add(path);
             return null;
-        });
+        }, (path, basePath) => path.Contains('~') || (basePath?.Contains('~') ?? false)
+            ? basePath == null ? path : Path.Join(basePath, path)
+            : basePath == null ? Path.GetFullPath(path) : Path.GetFullPath(path, basePath));
 
         sut.Check(Edge, [@"--user-data-dir=\\server\s\profiles\debug"], null).Should().BeNull();
         sut.Check(Edge, [@"--user-data-dir=\\localhost\C$\Users\me\AppData\Local\Google\Chrome\User Data"], null).Should().NotBeNull();

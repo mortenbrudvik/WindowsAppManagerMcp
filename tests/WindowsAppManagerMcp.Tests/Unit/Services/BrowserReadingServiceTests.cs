@@ -978,7 +978,7 @@ public class BrowserReadingServiceTests
         var cdp = new CdpService(
             new CdpTransport(
                 FakeCdpHttpHandler.Targets(("A", "Test Page", "https://example.com/a"), ("B", "Test Page", "https://example.com/b")),
-                FakeCdpWebSocketFactory.NeverConnects()),
+                FakeCdpWebSocketFactory.NeverConnects(), new FakePortOwnerResolver(1000)),
             new FakePortOwnerResolver(1000));
         var sut = new BrowserReadingService(
             _mockNativeWrapper.Object, _mockBrowserDetection.Object, cdp, _tree, _worker, _warmup.Object, _policy);

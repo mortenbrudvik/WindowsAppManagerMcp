@@ -201,6 +201,22 @@ public class BrowserPageServiceTests
         ((ICdpGateHold)hold).IsPaused.Should().BeTrue("a click or a typing stops between its commands once the user pauses");
     }
 
+    [Fact]
+    public async Task TheGateHandedToCdp_TellsHowInputWasPaused_SoThePausedByUserMessageNamesTheCause()
+    {
+        CdpGate? handed = null;
+        _pages.Setup(p => p.ClickAsync(Shown, Save, MouseButton.Primary, 1, It.IsAny<CdpGate>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>(), It.IsAny<BrowserDialogAnswer?>()))
+            .Callback((CdpTarget _, BrowserElementLocator _, MouseButton _, int _, CdpGate gate, TimeSpan _, CancellationToken _, BrowserDialogAnswer? _) => handed = gate)
+            .ReturnsAsync(CdpPageResult<CdpInputOutcome>.Ok(new CdpInputOutcome()));
+        await CreateSut().ClickAsync(ByWindow(), Save, MouseButton.Primary, 1);
+
+        using var hold = await handed!(CancellationToken.None);
+        _session.Pause(InputControlSources.SharedPauseUnreadable);
+
+        ((ICdpGateHold)hold).PausedBy.Should().Be(InputControlSources.SharedPauseUnreadable);
+        ((ICdpGateHold)hold).PauseChord.Should().Be(_session.PauseChord);
+    }
+
     #endregion
 
     #region browser_element_rect

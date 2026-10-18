@@ -171,7 +171,11 @@ public sealed class ServerInfoService(
         var shared = session.SharesDesktopPause;
         if (state.Paused)
         {
-            warnings.Add("Input is paused by the user: input tools and every tool that changes windows or starts or stops processes " +
+            // The server's own pause, when the shared one could not be read, is not the user's: the agent must not say it is
+            var pausedBy = state.PausedBy == InputControlSources.SharedPauseUnreadable
+                ? $"because {InputControlSources.PauseCause(state.PausedBy, null)}"
+                : "by the user";
+            warnings.Add($"Input is paused {pausedBy}: input tools and every tool that changes windows or starts or stops processes " +
                          "return PausedByUser. Stop and ask the user; never try to resume input yourself.");
         }
 
