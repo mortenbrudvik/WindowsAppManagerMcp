@@ -477,15 +477,15 @@ public sealed class CdpTabService : ICdpTabService
             var check = await CheckAsync(connection, expression, condition, Bounded(budget > TimeSpan.Zero ? budget : TimeSpan.FromMilliseconds(1)),
                 cancellationToken).ConfigureAwait(false);
             if (!check.Success && IsFinal(check.ErrorCode))
-                return check;
+                return check.FailAs<CdpWaitOutcome>();
 
             // A check the page did not answer in time is skipped; one it answered, even between two documents, is not
             answered |= check.Success;
-            if (check is { Success: true, Value: { } seen })
+            if (check is { Success: true, Value.Outcome: { } seen })
             {
                 last = seen;
                 if (seen.Satisfied)
-                    return check;
+                    return CdpResult<CdpWaitOutcome>.Ok(seen);
             }
 
             first = false;
@@ -511,11 +511,11 @@ public sealed class CdpTabService : ICdpTabService
     }
 
     /// <summary>
-    /// One check of a wait: the condition's result, or null when the page answered but could not be checked this time (it
-    /// was between two documents); CdpTimeout when it did not answer in time (busy, or blocked); a failure that ends the
-    /// wait (a dialog, a closed tab, a selector that is not valid CSS).
+    /// One check of a wait: the condition's result, or a check without an outcome when the page answered but could not be
+    /// checked this time (it was between two documents); CdpTimeout when it did not answer in time (busy, or blocked); a
+    /// failure that ends the wait (a dialog, a closed tab, a selector that is not valid CSS).
     /// </summary>
-    private static async Task<CdpResult<CdpWaitOutcome>> CheckAsync(
+    private static async Task<CdpResult<WaitCheck>> CheckAsync(
         ICdpConnection connection, string expression, BrowserWaitCondition condition, TimeSpan timeout, CancellationToken cancellationToken)
     {
         var evaluated = await connection.SendAsync("Runtime.evaluate", new
@@ -526,16 +526,16 @@ public sealed class CdpTabService : ICdpTabService
         }, timeout, cancellationToken).ConfigureAwait(false);
 
         if (!evaluated.Success)
-            return evaluated.FailAs<CdpWaitOutcome>();
+            return evaluated.FailAs<WaitCheck>();
 
         // An error reply or an exception: the page is between two documents (its context was destroyed); check again
         if (evaluated.Value!.Error != null || ValueOf(evaluated.Value.Result) is not { } value)
-            return CdpResult<CdpWaitOutcome>.Ok(null!);
+            return CdpResult<WaitCheck>.Ok(WaitCheck.NotChecked);
 
         var badSelector = CdpReplies.GetString(value, "badSelector");
         if (badSelector.Length > 0)
         {
-            return CdpResult<CdpWaitOutcome>.Fail(
+            return CdpResult<WaitCheck>.Fail(
                 BrowserErrorCode.CdpEvaluationFailed,
                 $"The selector '{condition.Selector}' is not valid CSS ({badSelector}). Nothing was waited for.");
         }
@@ -552,8 +552,14 @@ public sealed class CdpTabService : ICdpTabService
         if (condition.Selector != null && !IsTrue(value, "selector"))
             missing.Add($"no element matches '{condition.Selector}'");
 
-        return CdpResult<CdpWaitOutcome>.Ok(new CdpWaitOutcome(missing.Count == 0, url, title,
-            missing.Count == 0 ? null : string.Join("; ", missing)));
+        return CdpResult<WaitCheck>.Ok(new WaitCheck(new CdpWaitOutcome(missing.Count == 0, url, title,
+            missing.Count == 0 ? null : string.Join("; ", missing))));
+    }
+
+    /// <summary>What one check of a wait saw: the outcome, or none when the page could not be checked this time.</summary>
+    private sealed record WaitCheck(CdpWaitOutcome? Outcome)
+    {
+        public static WaitCheck NotChecked { get; } = new((CdpWaitOutcome?)null);
     }
 
     /// <summary>
