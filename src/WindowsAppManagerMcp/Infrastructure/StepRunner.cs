@@ -1107,9 +1107,14 @@ public sealed partial class StepRunner
                $"{SkippedAfter(failed.Step, total)}; the steps before it ran and are not undone.";
     }
 
-    private static string Paused(CheckedStep step, bool during) =>
-        $"The user paused input with the pause hotkey {(during ? "during" : "before")} {Label(step, capital: false)}; " +
-        "the run stopped and the steps after it were skipped. Stop and ask the user how to continue; never resume input yourself.";
+    /// <summary>
+    /// The error of a run that a pause stopped, naming how input was paused (<see cref="InputControlSources.PauseCause"/>):
+    /// the user's hotkey, or the server itself when it could not read the pause it shares, which the user did not do.
+    /// </summary>
+    private string Paused(CheckedStep step, bool during) =>
+        $"Input was paused {(during ? "during" : "before")} {Label(step, capital: false)}: " +
+        $"{InputControlSources.PauseCause(_session.PauseState?.PausedBy, _session.PauseChord)}. The run stopped and the steps " +
+        "after it were skipped. Stop and ask the user how to continue; never resume input yourself.";
 
     private static string UserInterrupted(CheckedStep step, bool during) =>
         $"The user used the keyboard or mouse {(during ? "during" : "before")} {Label(step, capital: false)}, so takeover " +

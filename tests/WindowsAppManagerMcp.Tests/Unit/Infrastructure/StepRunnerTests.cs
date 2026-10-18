@@ -591,6 +591,34 @@ public class StepRunnerTests
         _dispatcher.Calls.Should().ContainSingle();
     }
 
+    [Theory]
+    [InlineData(InputControlSources.SharedPauseUnreadable, "this server could not read the pause it shares")]
+    [InlineData(InputControlSources.Hotkey, "the user pressed the pause hotkey (Ctrl+Alt+Pause)")]
+    public async Task APause_TheRunsError_SaysWhatPausedInput_TheServerItselfToo(string pausedBy, string cause)
+    {
+        // Arrange - with the shared pause unreadable, the server paused itself: the user pressed nothing
+        _session.Setup(s => s.PauseState).Returns(() => _paused ? new InputPauseState(true, pausedBy) : InputPauseState.Running);
+        _session.Setup(s => s.PauseChord).Returns("Ctrl+Alt+Pause");
+        _dispatcher.OnCall = call =>
+        {
+            if (call.Number == 1)
+            {
+                _paused = true;
+            }
+        };
+
+        // Act
+        var run = await RunAsync(Step(StepTool.TypeText, """{ "text": "a" }"""), Step(StepTool.TypeText, """{ "text": "b" }"""));
+
+        // Assert
+        run.Result.StoppedBy.Should().Be(StepStopReason.Paused);
+        run.Result.Error.Should().Contain("before step 2 (type_text)").And.Contain(cause).And.Contain("never resume input yourself");
+        if (pausedBy == InputControlSources.SharedPauseUnreadable)
+        {
+            run.Result.Error.Should().NotContain("hotkey", "the user did not pause input");
+        }
+    }
+
     [Fact]
     public async Task AStepThePauseStopped_StopsTheRun_EvenWhenItIsOptional()
     {
