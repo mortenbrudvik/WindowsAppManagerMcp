@@ -22,7 +22,9 @@ namespace WindowsAppManagerMcp.Services;
 /// <para>Target checks: the ref's window is checked first (<see cref="IInputTargetGuard.CheckTarget"/>); an element of
 /// another process (a child or owned window of another program) has its own window checked too
 /// (<see cref="IInputTargetGuard.CheckElementWindow"/>), before its state is read, so a refusal carries no name or value of
-/// it; and a pause the user started while the element was read stops the call before it acts.</para>
+/// it; a pause the user started while the element was read stops the call before it acts; and the window's checks run again
+/// right before a pattern or focus call (<see cref="Recheck"/>), so a modal dialog that opened during the read stops it
+/// (BlockedByModal). The mouse and keyboard paths are checked by the input guard before every batch.</para>
 /// </remarks>
 public sealed partial class ElementActionService : IElementActionService
 {
@@ -342,6 +344,11 @@ public sealed partial class ElementActionService : IElementActionService
 
             case PlanKind.Pattern:
             {
+                if (Recheck(call, target) is { } changed)
+                {
+                    return changed;
+                }
+
                 var outcome = await _runner.RunAsync(targetProcess, plan.Act!, Timeout(request), cancellationToken).ConfigureAwait(false);
                 gate.Dispose();
                 if (Unfinished(call, outcome, windowsBefore, plan.Method) is { } unfinished)
@@ -357,6 +364,11 @@ public sealed partial class ElementActionService : IElementActionService
                 if (Activate(call) is { } notInFront)
                 {
                     return notInFront;
+                }
+
+                if (Recheck(call, target) is { } changed)
+                {
+                    return changed;
                 }
 
                 var outcome = await _runner.RunAsync(targetProcess, () => _tree.SetFocus(element.Node), Timeout(request), cancellationToken)
@@ -397,6 +409,18 @@ public sealed partial class ElementActionService : IElementActionService
 
         return await AfterAsync(call, element, plan.Method, windowsBefore, targetProcess, receiving: null, cancellationToken)
             .ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// The window's target checks run again right before a pattern or focus call (<see cref="IInputTargetGuard.CheckTarget"/>,
+    /// Win32 reads only): the read before it can take up to the timeout, and a modal dialog that opened meanwhile disables
+    /// the window (BlockedByModal) while a pattern call would still reach its element behind the dialog's back. The refusal,
+    /// with nothing done, or null when the window still passes.
+    /// </summary>
+    private ElementActionResult? Recheck(ActionCall call, InputTarget target)
+    {
+        var rechecked = _guard.CheckTarget(target);
+        return rechecked.Allowed ? null : call.Fail(rechecked.ErrorCode.ToString(), rechecked.Error!);
     }
 
     /// <summary>

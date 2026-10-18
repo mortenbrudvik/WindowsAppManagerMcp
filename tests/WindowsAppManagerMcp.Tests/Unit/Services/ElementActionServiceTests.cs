@@ -165,8 +165,52 @@ public sealed class ElementActionServiceTests : IDisposable
         // Act
         await CreateSut().ActAsync(new ElementActionRequest(save, ElementActionKind.Invoke, AllowHostTarget: true));
 
+        // Assert - before the read, and again right before the pattern call
+        _guard.Verify(g => g.CheckTarget(InputTarget.Window(Handle, true)), Times.Exactly(2));
+        _guard.Verify(g => g.CheckTarget(InputTarget.Window(Handle, false)), Times.Never);
+    }
+
+    [Fact]
+    public async Task AModalDialogThatOpensWhileTheElementIsRead_StopsThePatternCall_BlockedByModal()
+    {
+        // Arrange - the window passes its checks before the read; a slow read later, a modal dialog has disabled it (BM_CLICK on
+        // a child button of a disabled window would still click it)
+        var invoke = new FakeInvokePattern();
+        var save = RefOf(Button("Save", invoke));
+        _guard.SetupSequence(g => g.CheckTarget(It.IsAny<InputTarget>()))
+            .Returns(InputGuardResult.Allow(InputTarget.Window(Handle, false), Handle, Main, Handle))
+            .Returns(InputGuardResult.Refuse(InputErrorCode.BlockedByModal, "Window 20736 is disabled by its modal dialog.",
+                InputTarget.Window(Handle, false)));
+
+        // Act
+        var result = await ActAsync(save, ElementActionKind.Invoke);
+
         // Assert
-        _guard.Verify(g => g.CheckTarget(InputTarget.Window(Handle, true)), Times.Once);
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be("BlockedByModal");
+        result.Error.Should().Contain("modal dialog");
+        invoke.Invokes.Should().Be(0);
+        _runner.Runs.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task AModalDialogThatOpensWhileTheElementIsRead_StopsTheFocusCall_BlockedByModal()
+    {
+        // Arrange
+        var field = new FakeUiaNode("Edit", "Name") { ProcessId = Pid, IsKeyboardFocusable = true };
+        var fieldRef = RefOf(field);
+        _guard.SetupSequence(g => g.CheckTarget(It.IsAny<InputTarget>()))
+            .Returns(InputGuardResult.Allow(InputTarget.Window(Handle, false), Handle, Main, Handle))
+            .Returns(InputGuardResult.Refuse(InputErrorCode.BlockedByModal, "Window 20736 is disabled by its modal dialog.",
+                InputTarget.Window(Handle, false)));
+
+        // Act
+        var result = await ActAsync(fieldRef, ElementActionKind.Focus);
+
+        // Assert
+        result.ErrorCode.Should().Be("BlockedByModal");
+        _tree.Reads.Should().NotContain("SetFocus:Name");
+        _runner.Runs.Should().Be(0);
     }
 
     [Fact]
