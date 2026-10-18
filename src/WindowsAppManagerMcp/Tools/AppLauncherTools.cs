@@ -25,8 +25,8 @@ public class AppLauncherTools
         "Where to put the window once it is found (implies waiting for it): snap (a snap_window position) or bounds (the visible " +
         "frame, as set_window_bounds), monitor, state (normal, maximized or minimized) and focus (as focus_window). Checked " +
         "before anything is launched: unknown values fail with InvalidSnapPosition or InvalidState, contradictions (snap with " +
-        "bounds, bounds with monitor, maximized with snap or bounds, focus with minimized, or nothing asked) with " +
-        "InvalidArguments, a monitor that does not exist with InvalidMonitorIndex, MonitorNotFound or AmbiguousMonitor. The " +
+        "bounds, bounds with monitor, maximized with snap or bounds, focus with minimized, or nothing asked) and an unknown " +
+        "or missing member with InvalidArguments, a monitor that does not exist with InvalidMonitorIndex, MonitorNotFound or AmbiguousMonitor. The " +
         "window is then watched for up to 3 s and placed again each time the app moves it back, up to 3 times (reapplied: true)";
 
     private const string ReuseDescription =
