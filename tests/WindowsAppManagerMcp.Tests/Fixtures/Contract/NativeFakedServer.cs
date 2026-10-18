@@ -350,6 +350,9 @@ public sealed class DeniedDesktop
             [AllowedProcessId] = (1, "notepad.exe")
         });
         processes.Setup(p => p.GetAncestorProcesses()).Returns([]);
+        // The server has no ancestor here: a loose mock answers null, which kill_process and close_debug_browser read as an
+        // unreadable process tree and refuse before their policy check
+        processes.Setup(p => p.IsAncestorOfCurrentProcess(It.IsAny<int>())).Returns(false);
         processes.Setup(p => p.GetAncestorsOf(It.IsAny<int>())).Returns([]);
         processes.Setup(p => p.GetDescendantsOf(It.IsAny<int>())).Returns([]);
         var handle = new Mock<IProcessHandle>();

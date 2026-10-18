@@ -42,6 +42,8 @@ public class DependencyInjectionTests : IDisposable
     private ServiceCollection BuildServerServices()
     {
         var services = new ServiceCollection();
+        // The host (Host.CreateApplicationBuilder in Program.cs) registers logging, so the tools' optional loggers resolve
+        services.AddLogging();
         services.AddWindowsAppManagerServices(
             () => LayoutStorageOptions.ForPath(_testLayoutPath),
             () => AuditLogOptions.ForFolder(Path.Combine(_testLayoutPath, "audit")));

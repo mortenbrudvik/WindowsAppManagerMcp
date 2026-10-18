@@ -55,6 +55,9 @@ public class TestCodeNativeWrapperTests
             "lists the running processes and reads the test host's details",
         [("WindowsAppManagerMcp.Tests.Integration.SecurityProbeIntegrationTests", typeof(NativeProcessWrapper))] =
             "reads the test host's ancestors and start time, and records the agent's host with HostGuard, which only reads processes",
+        [("WindowsAppManagerMcp.Tests.Unit.Native.NativeHotkeyWrapperSharedPauseTests", typeof(NativeHotkeyWrapper))] =
+            @"opens only named events of its own (Local\WamTests.SharedPause.<guid>), never the servers' pause, and registers no hotkey; " +
+            "the server's parameterless wrapper is only constructed to read the name it would open",
     };
 
     /// <summary>
@@ -78,6 +81,8 @@ public class TestCodeNativeWrapperTests
         [typeof(NativeWindowWrapper)] = typeof(INativeWindowWrapper).GetMethods().Select(m => m.Name)
             .Except(Tests.Unit.Infrastructure.ReadOnlyNativeWindowWrapperTests.WindowChanges().Select(row => (string)row[0]))
             .Append(".ctor")
+            // A pure helper that turns GetWindowTextW's buffer into the title; it makes no native call
+            .Append(nameof(NativeWindowWrapper.TextFromBuffer))
             .ToHashSet(StringComparer.Ordinal)
     };
 
