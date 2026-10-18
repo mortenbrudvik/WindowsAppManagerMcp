@@ -9,7 +9,8 @@ namespace WindowsAppManagerMcp.Models;
 /// </summary>
 /// <remarks>
 /// Only the factories make one, so <see cref="Success"/> and <see cref="Value"/> cannot disagree: <see cref="Ok"/> needs a
-/// value, <see cref="Fail"/> an error code, and <see cref="FailAs{TOther}"/> copies only a failure. The compiler then knows
+/// value, <see cref="Fail"/> an error code other than <see cref="BrowserErrorCode.None"/>, and <see cref="FailAs{TOther}"/>
+/// copies only a failure. The compiler then knows
 /// that a successful result has its value (<see cref="Success"/>'s <see cref="MemberNotNullWhenAttribute"/>).
 /// </remarks>
 public record CdpResult<T>
@@ -41,7 +42,13 @@ public record CdpResult<T>
             ? throw new ArgumentNullException(nameof(value), "A successful CDP result needs its value.")
             : new(value, BrowserErrorCode.None, null);
 
-    public static CdpResult<T> Fail(BrowserErrorCode errorCode, string error) => new(default, errorCode, error);
+    /// <summary>A failure with <paramref name="errorCode"/> and what to do (<paramref name="error"/>).</summary>
+    /// <exception cref="ArgumentException"><paramref name="errorCode"/> is <see cref="BrowserErrorCode.None"/>: a failure coded
+    /// as a success would read as one, with a default value, when <typeparamref name="T"/> is a value type.</exception>
+    public static CdpResult<T> Fail(BrowserErrorCode errorCode, string error) =>
+        errorCode == BrowserErrorCode.None
+            ? throw new ArgumentException("A failed CDP result needs an error code other than None.", nameof(errorCode))
+            : new(default, errorCode, error);
 
     /// <summary>Copies the error of this failed result into a result of another type.</summary>
     /// <exception cref="InvalidOperationException">This result is a success: its copy would read as a success without a

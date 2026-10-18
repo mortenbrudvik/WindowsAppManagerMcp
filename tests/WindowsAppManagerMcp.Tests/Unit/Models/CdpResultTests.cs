@@ -64,6 +64,15 @@ public class CdpResultTests
     }
 
     [Fact]
+    public void Fail_RefusesTheCodeOfASuccess()
+    {
+        // A failure coded None would read as a success: for a value type, its default Value is not null
+        var fail = () => CdpResult<bool>.Fail(BrowserErrorCode.None, "Nothing went wrong.");
+
+        fail.Should().Throw<ArgumentException>().Which.ParamName.Should().Be("errorCode");
+    }
+
+    [Fact]
     public void FailAs_CopiesTheFailure()
     {
         var copied = CdpResult<string>.Fail(BrowserErrorCode.CdpTargetClosed, "Gone.").FailAs<int>();
