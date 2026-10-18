@@ -114,7 +114,9 @@ public interface IInputSimulationService
     /// again before every batch of characters and right before a paste, and typing stops (TargetLostFocus, with
     /// CharactersTyped) when another window comes to the front, and (ModifiersHeld) when a modifier key goes down. Typing
     /// takes at most <see cref="InputSimulationService.MaxTypedLength"/> characters and a paste at most
-    /// <see cref="InputSimulationService.MaxPasteLength"/> (TextTooLong).
+    /// <see cref="InputSimulationService.MaxPasteLength"/> (TextTooLong). Keys that press the user's pause hotkey chord (an
+    /// AltGr character of method keys, or a paste's Ctrl+V) are refused before anything is sent (PauseChordNotAllowed;
+    /// auto types instead of pasting).
     /// </summary>
     /// <param name="text">The text to type.</param>
     /// <param name="delayBetweenKeysMs">Delay between keystrokes in milliseconds (0-100).</param>
@@ -135,14 +137,17 @@ public interface IInputSimulationService
     /// <summary>
     /// Sends keys and key combinations in send_keys' grammar (<see cref="KeySpecParser"/>), every character mapped with the
     /// keyboard layout of the window they go to. Destructive chords need a target (DestructiveChordNeedsTarget); the user's
-    /// pause hotkey chord is refused (PauseChordNotAllowed).
+    /// pause hotkey chord is refused (PauseChordNotAllowed). At most <see cref="InputSimulationService.MaxSendKeysPresses"/>
+    /// key presses and <see cref="InputSimulationService.MaxSendKeysEvents"/> events (TextTooLong), and at most
+    /// <see cref="InputSimulationService.MaxSendKeysDurationMs"/> of waits (InvalidArguments), refused before anything is sent.
     /// </summary>
     /// <param name="keys">The keys to send.</param>
     /// <param name="target">The target window, or <see cref="InputTarget.None"/>.</param>
     /// <param name="releaseHeldModifiers">Release modifier keys that are down first, instead of returning ModifiersHeld.</param>
     /// <param name="delayMs">
-    /// Milliseconds to wait between keys (0 to <see cref="InputSimulationService.MaxSendKeysDelayMs"/>); 0 sends them all in
-    /// one SendInput call.
+    /// Milliseconds to wait between keys (0 to <see cref="InputSimulationService.MaxSendKeysDelayMs"/>), each key a SendInput
+    /// batch of its own; 0 sends them in batches of whole keys of at most <see cref="InputSimulationService.SendKeysBatchSize"/>
+    /// key-downs (a key with more, such as a long group, goes whole and alone), each checked again right before it.
     /// </param>
     /// <param name="cancellationToken">The request's token: cancelling it stops the keys between batches.</param>
     Task<SendKeysResult> SendKeysAsync(string keys, InputTarget target, bool releaseHeldModifiers, int delayMs, CancellationToken cancellationToken);

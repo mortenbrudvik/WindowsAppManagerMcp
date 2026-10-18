@@ -445,7 +445,10 @@ public enum InputErrorCode
     /// <summary>Another call held the input gate for longer than the wait limit, so nothing was sent.</summary>
     InputBusy = 36,
 
-    /// <summary>send_keys: the keys contain the user's pause hotkey chord, which only the user may press.</summary>
+    /// <summary>
+    /// send_keys, press_keys, type_text: the keys contain the user's pause hotkey chord, which only the user may press
+    /// (type_text: a character method keys types with AltGr on the chord's key, or a paste's Ctrl+V).
+    /// </summary>
     PauseChordNotAllowed = 37,
 
     /// <summary>

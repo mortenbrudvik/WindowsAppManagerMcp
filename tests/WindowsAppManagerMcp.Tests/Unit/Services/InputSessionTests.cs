@@ -12,6 +12,9 @@ public class InputSessionTests
 {
     private const uint KeyDown = 0x0000, KeyUp = 0x0002, LeftDown = 0x0002, LeftUp = 0x0004;
     private const ushort VkControl = 0x11, VkMenu = 0x12, VkC = 0x43, VkLControl = 0xA2, VkLMenu = 0xA4, VkRShift = 0xA1;
+
+    /// <summary>Ctrl's scan code, which a release gives a Ctrl that went down without one (KeyNames.ModifierScanCode).</summary>
+    private const ushort CtrlScan = 0x1D;
     private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(10);
 
     private static readonly InputEvent[] CtrlC =
@@ -64,7 +67,8 @@ public class InputSessionTests
         outcome.Complete.Should().BeFalse();
         outcome.Inserted.Should().Be(2);
         _input.Batches.Should().HaveCount(2);
-        _input.Batches[1].Should().Equal(InputEvent.Key(VkC, KeyUp), InputEvent.Key(VkControl, KeyUp));
+        // Ctrl, which went down without a scan code, goes up with the one it has on every keyboard
+        _input.Batches[1].Should().Equal(InputEvent.Key(VkC, KeyUp), InputEvent.Key(VkControl, KeyUp, CtrlScan));
         _input.IsKeyDown(VkControl).Should().BeFalse();
         sut.ServerHeld.Should().BeEmpty();
         sut.LastRelease!.Reason.Should().Contain("2 of 4");
@@ -114,7 +118,7 @@ public class InputSessionTests
         // Assert - only Ctrl is released; a stray key-up for a key that never went down is not sent
         act.Should().Throw<InvalidOperationException>();
         _input.Batches.Should().HaveCount(2);
-        _input.Batches[1].Should().Equal(InputEvent.Key(VkControl, KeyUp));
+        _input.Batches[1].Should().Equal(InputEvent.Key(VkControl, KeyUp, CtrlScan));
         sut.ServerHeld.Should().BeEmpty();
     }
 
@@ -217,7 +221,7 @@ public class InputSessionTests
         sut.Pause(InputControlSources.Hotkey);
 
         // Assert
-        _input.Batches[^1].Should().Equal(InputEvent.Key(VkControl, KeyUp));
+        _input.Batches[^1].Should().Equal(InputEvent.Key(VkControl, KeyUp, CtrlScan));
         _input.IsKeyDown(VkRShift).Should().BeTrue();
         sut.ServerHeld.Should().BeEmpty();
     }

@@ -5,7 +5,9 @@ namespace WindowsAppManagerMcp.Services;
 
 /// <summary>
 /// The input events of a send_keys string, in steps: each top-level key, chord or group is one step, and so is each
-/// repetition of <c>{KEY n}</c>. send_keys' delayMs waits between steps; without it every step goes in one batch.
+/// repetition of <c>{KEY n}</c>. send_keys' delayMs waits between steps, each a batch of its own; without it the steps go
+/// in batches of whole steps (<see cref="InputSimulationService.SendKeysBatchSize"/> key-downs at most, unless one step has
+/// more), so a step is never split.
 /// </summary>
 public sealed class KeySpec
 {
