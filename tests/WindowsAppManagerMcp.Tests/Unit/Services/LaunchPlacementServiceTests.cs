@@ -267,7 +267,7 @@ public class LaunchPlacementServiceTests
     {
         At(100, () => _desktop[Code] = _desktop[Code] with { State = WindowState.Maximized });
 
-        var outcome = await PlaceOneAsync(Code, new LaunchPlacement(Bounds: new BoundsDto(10, 20, 800, 600)));
+        var outcome = await PlaceOneAsync(Code, new LaunchPlacement(Bounds: new PlacementBounds(10, 20, 800, 600)));
 
         outcome.Reapplied.Should().BeTrue();
         outcome.Window!.State.Should().Be(WindowState.Normal);
@@ -364,7 +364,7 @@ public class LaunchPlacementServiceTests
         _windows.Setup(w => w.SetWindowFrame(It.IsAny<nint>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>()))
             .Throws(new WindowNotRespondingException(Code, "The window did not answer within 5 s."));
 
-        var outcome = await PlaceOneAsync(Code, new LaunchPlacement(Bounds: new BoundsDto(0, 0, 100, 100)));
+        var outcome = await PlaceOneAsync(Code, new LaunchPlacement(Bounds: new PlacementBounds(0, 0, 100, 100)));
 
         outcome.ErrorCode.Should().Be(WindowErrorCode.NotResponding);
         outcome.Error.Should().Contain("did not answer");
@@ -378,7 +378,7 @@ public class LaunchPlacementServiceTests
 
         var outcomes = await CreateSut().PlaceAsync([
             (Code, Plan(new LaunchPlacement(Snap: "left_half"))),
-            (Terminal, Plan(new LaunchPlacement(Bounds: new BoundsDto(10, 20, 800, 600), Focus: true)))
+            (Terminal, Plan(new LaunchPlacement(Bounds: new PlacementBounds(10, 20, 800, 600), Focus: true)))
         ]);
 
         outcomes[0].ErrorCode.Should().Be(WindowErrorCode.MoveFailed);
@@ -409,7 +409,21 @@ public class LaunchPlacementServiceTests
 
         outcome.ErrorCode.Should().Be(WindowErrorCode.ProtectedWindow);
         outcome.FailedStep.Should().Be(LaunchPlacementStep.Check);
-        outcome.Error.Should().Contain("agent's own host").And.Contain("snap_window");
+        outcome.Error.Should().Contain("agent's own host").And.Contain("snap_window").And.NotContain("ancestor processes");
+        _calls.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task AWindowThatCountsAsTheHostOnlyWhileTheAncestorsAreUnknown_IsNeitherMovedNorFocused_AndTheErrorSaysWhy()
+    {
+        // The server cannot read its ancestors, and the launch's window belongs to a program that started before it (say, a
+        // single-instance app that was already running)
+        _desktop[Terminal] = _desktop[Terminal] with { IsAgentHost = true, IsAgentHostOnlyWhileAncestorsUnknown = true };
+
+        var outcome = await PlaceOneAsync(Terminal, new LaunchPlacement(Snap: "right_half", Focus: true));
+
+        outcome.ErrorCode.Should().Be(WindowErrorCode.ProtectedWindow);
+        outcome.Error.Should().Contain(HostGuard.AncestorsUnknownNote).And.Contain("snap_window");
         _calls.Should().BeEmpty();
     }
 
@@ -546,7 +560,7 @@ public class LaunchPlacementServiceTests
     [Fact]
     public void APlan_PlacesTheVisibleFrame_UnlessItSaysOtherwise()
     {
-        Plan(new LaunchPlacement(Bounds: new BoundsDto(10, 20, 800, 600))).Frame.Should().Be(BoundsFrame.Visible);
+        Plan(new LaunchPlacement(Bounds: new PlacementBounds(10, 20, 800, 600))).Frame.Should().Be(BoundsFrame.Visible);
     }
 
     [Fact]
@@ -584,7 +598,7 @@ public class LaunchPlacementServiceTests
         var plans = new List<(nint, LaunchPlacementPlan)>
         {
             (Code, Plan(new LaunchPlacement(Snap: "left_half"))),
-            (Terminal, Plan(new LaunchPlacement(Bounds: new BoundsDto(960, 0, 960, 1040), Focus: true)))
+            (Terminal, Plan(new LaunchPlacement(Bounds: new PlacementBounds(960, 0, 960, 1040), Focus: true)))
         };
 
         var outcomes = await CreateSut().PlaceAsync(plans);
@@ -603,7 +617,7 @@ public class LaunchPlacementServiceTests
         var plans = new List<(nint, LaunchPlacementPlan)>
         {
             (Code, Plan(new LaunchPlacement(Snap: "left_half"))),
-            (Terminal, Plan(new LaunchPlacement(Bounds: new BoundsDto(960, 0, 960, 1040))))
+            (Terminal, Plan(new LaunchPlacement(Bounds: new PlacementBounds(960, 0, 960, 1040))))
         };
 
         var outcomes = await CreateSut().PlaceAsync(plans);
@@ -623,7 +637,7 @@ public class LaunchPlacementServiceTests
         var plans = new List<(nint, LaunchPlacementPlan)>
         {
             (Code, Plan(new LaunchPlacement(Snap: "left_half"))),
-            (Code, Plan(new LaunchPlacement(Bounds: new BoundsDto(10, 20, 800, 600))))
+            (Code, Plan(new LaunchPlacement(Bounds: new PlacementBounds(10, 20, 800, 600))))
         };
 
         var outcomes = await CreateSut().PlaceAsync(plans);

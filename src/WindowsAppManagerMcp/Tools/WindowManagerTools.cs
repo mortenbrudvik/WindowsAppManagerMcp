@@ -1231,12 +1231,21 @@ public class WindowManagerTools
     private static string ForceQuestion(nint handle, WindowInfo? window, string protection)
     {
         var line = window is { } w
-            ? $"{UserConfirmation.Quote(string.IsNullOrEmpty(w.Title) ? w.ClassName : w.Title)} ({w.ProcessName}, PID {w.ProcessId}){(w.IsAgentHost ? ", the agent's own window" : string.Empty)}"
+            ? $"{UserConfirmation.Quote(string.IsNullOrEmpty(w.Title) ? w.ClassName : w.Title)} ({w.ProcessName}, PID {w.ProcessId}){HostLabel(w)}"
             : $"window {handle} (no longer exists)";
         return "The AI agent asks to close a protected window with force: the desktop shell (closing it can open the Shut Down " +
                "dialog) or the window of the terminal, editor or chat app the agent runs in (closing it can end the agent's " +
                $"session and lose unsaved work).\n{line}\n{protection}\nAllow it?";
     }
+
+    /// <summary>
+    /// How a question to the user marks a window of the agent's host: as the agent's own window, or, while the server cannot read
+    /// its ancestor processes and the window counts as the host's only for that (HostGuard), as possibly the agent's own.
+    /// </summary>
+    private static string HostLabel(WindowInfo window) =>
+        !window.IsAgentHost ? string.Empty
+        : window.IsAgentHostOnlyWhileAncestorsUnknown ? ", possibly the agent's own window"
+        : ", the agent's own window";
 
     /// <summary>Why the close guard protects a window: its ProtectedWindow error without the advice to the agent.</summary>
     private static string ProtectionReason(string? error)
@@ -1284,7 +1293,7 @@ public class WindowManagerTools
             .Select((t, i) => (Target: t, Number: i + 1, Protected: force && protectedWindows.Contains(t.Handle)))
             .Where(t => t.Number <= MaxListedInCloseQuestion || t.Protected)
             .Select(t => t.Target.Window is { } w
-                ? $"{t.Number}. {UserConfirmation.Quote(string.IsNullOrEmpty(w.Title) ? w.ClassName : w.Title)} ({w.ProcessName}, PID {w.ProcessId}){(w.IsAgentHost ? ", the agent's own window" : string.Empty)}{(t.Protected ? ", protected" : string.Empty)}"
+                ? $"{t.Number}. {UserConfirmation.Quote(string.IsNullOrEmpty(w.Title) ? w.ClassName : w.Title)} ({w.ProcessName}, PID {w.ProcessId}){HostLabel(w)}{(t.Protected ? ", protected" : string.Empty)}"
                 : $"{t.Number}. window {t.Target.Handle} (no longer exists)")
             .ToList();
         var more = targets.Count > lines.Count ? $"\n... and {targets.Count - lines.Count} more{(force ? " (none of them protected)" : string.Empty)}" : string.Empty;

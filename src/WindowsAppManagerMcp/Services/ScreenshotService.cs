@@ -246,7 +246,15 @@ public class ScreenshotService : IScreenshotService
         List<string> Warnings,
         bool WindowCapture,
         CapturedWindow? Window,
-        CapturedScreen? Screen = null);
+        CapturedScreen? Screen = null)
+    {
+        /// <summary>
+        /// True when <see cref="ScaleFactor"/> was not read from the monitor: Windows could not report its DPI
+        /// (<see cref="MonitorInfo.DpiUnknown"/>), or a window is on no monitor. The scale stays for the server's own arithmetic
+        /// (the raw pixels' OCR), but the capture metadata leaves it out, as get_monitors does, rather than report 100% as fact.
+        /// </summary>
+        public bool ScaleUnknown { get; init; }
+    }
 
     /// <summary>
     /// Resolves <paramref name="target"/> and reads its pixels, with every refusal and warning of the capture tools: an
@@ -300,7 +308,10 @@ public class ScreenshotService : IScreenshotService
         var bounds = monitor.Bounds;
         request?.ThrowIfOutputTooLarge(bounds.Width, bounds.Height);
         var capture = _captureWrapper.CaptureScreenRegion(bounds.X, bounds.Y, bounds.Width, bounds.Height);
-        return new Acquired(capture, monitorIndex, monitor.ScaleFactor, [], WindowCapture: false, Window: null);
+        return new Acquired(capture, monitorIndex, monitor.ScaleFactor, [], WindowCapture: false, Window: null)
+        {
+            ScaleUnknown = monitor.DpiUnknown
+        };
     }
 
     /// <summary>
@@ -389,13 +400,17 @@ public class ScreenshotService : IScreenshotService
 
         // The monitor that contains the region's center, or none (MONITOR_DEFAULTTONULL, not the nearest one)
         var monitor = MonitorContaining(monitors, region.X + region.Width / 2, region.Y + region.Height / 2);
-        return new Acquired(capture, monitor?.Index, monitor?.ScaleFactor, warnings, WindowCapture: false, Window: null);
+        return new Acquired(capture, monitor?.Index, monitor?.ScaleFactor, warnings, WindowCapture: false, Window: null)
+        {
+            ScaleUnknown = monitor?.DpiUnknown == true
+        };
     }
 
     /// <summary>
     /// A window: refused as <see cref="CheckWindow"/> says before any pixel is read, then read as it was before its pixels
     /// (<see cref="ReadCapturedWindow"/>, with the client area the capture shows), its pixels (<see cref="CaptureWindowPixels"/>)
-    /// and the DPI warning of its monitor. A window without a monitor reports scale 1.
+    /// and the DPI warning of its monitor. A window without a monitor, or on one whose DPI is unknown, has scale 1 for the
+    /// arithmetic and none in the metadata (<see cref="Acquired.ScaleUnknown"/>).
     /// </summary>
     private Acquired AcquireWindow(nint windowHandle, bool includeFrame, WindowCaptureMethod method)
     {
@@ -406,7 +421,10 @@ public class ScreenshotService : IScreenshotService
         var monitor = _monitorService.GetMonitorForWindow(windowHandle);
         AddDpiWarning(windowHandle, monitor, warnings);
         return new Acquired(capture, monitor?.Index, monitor?.ScaleFactor ?? 1.0, warnings, WindowCapture: true,
-            WithClientArea(window, capture));
+            WithClientArea(window, capture))
+        {
+            ScaleUnknown = monitor is not { DpiUnknown: false }
+        };
     }
 
     public ScreenCapture<ScreenshotResult> CaptureWindowArea(nint windowHandle, bool includeFrame, BoundsDto area, CaptureOptions options)
@@ -530,7 +548,7 @@ public class ScreenshotService : IScreenshotService
                 ElementCount: finalAnnotations.Count,
                 CaptureElapsedMs: Math.Round(captureMs, 2),
                 AnnotationElapsedMs: Math.Round(annotationMs, 2),
-                MonitorScaleFactor: monitor?.ScaleFactor,
+                MonitorScaleFactor: monitor is { DpiUnknown: false } ? monitor.ScaleFactor : null,
                 FilePath: rendered.FilePath,
                 OriginalWidth: rendered.IsScaled ? capture.Width : null,
                 OriginalHeight: rendered.IsScaled ? capture.Height : null,
@@ -858,13 +876,14 @@ public class ScreenshotService : IScreenshotService
     /// </summary>
     private void AddDpiWarning(nint windowHandle, MonitorInfo? monitor, List<string> warnings)
     {
-        if (monitor == null)
+        // A monitor whose DPI Windows could not report has no DPI to compare with: its 96 only stands in for the arithmetic
+        if (monitor is not { DpiUnknown: false })
         {
             return;
         }
 
         var windowDpi = (int)_windows.GetDpiForWindow(windowHandle);
-        var monitorDpi = (int)Math.Round(monitor.ScaleFactor * 96);
+        var monitorDpi = monitor.Dpi;
         if (windowDpi == 0 || Math.Abs(windowDpi - monitorDpi) <= 1)
         {
             return;
@@ -1015,7 +1034,7 @@ public class ScreenshotService : IScreenshotService
             CapturedRegion: CapturedRegionOf(capture),
             ImageToScreen: TransformOf(capture, rendered),
             MonitorIndex: monitorIndex,
-            ScaleFactor: scaleFactor,
+            ScaleFactor: acquired.ScaleUnknown ? null : scaleFactor,
             FilePath: rendered.FilePath,
             OriginalWidth: rendered.IsScaled ? capture.Width : null,
             OriginalHeight: rendered.IsScaled ? capture.Height : null,

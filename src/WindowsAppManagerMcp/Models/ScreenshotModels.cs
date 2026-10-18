@@ -111,6 +111,14 @@ public record ScreenInfo(
     double ScaleFactor
 );
 
+/// <summary>
+/// The screens a capture can take, for the server's own use: no tool returns it (get_monitors reports the monitors).
+/// </summary>
+/// <param name="PrimaryIndex">
+/// The monitor a capture without a monitor takes: the primary, or monitor 0 when none is marked primary, as the monitor
+/// 'primary' resolves (MonitorSelection). It is a target, not a report: the capture's metadata names the monitor it took by its
+/// own monitorIndex, and get_monitors reports primaryIndex null when no monitor is primary.
+/// </param>
 public record ScreenListResult(
     IReadOnlyList<ScreenInfo> Screens,
     int PrimaryIndex,

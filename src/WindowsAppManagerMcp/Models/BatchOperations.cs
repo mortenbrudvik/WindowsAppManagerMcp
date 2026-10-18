@@ -11,14 +11,15 @@ namespace WindowsAppManagerMcp.Models;
 /// <summary>
 /// A set_windows_bounds_batch item: the visible frame to place the window at, in pixels (it takes no unit, relativeTo or
 /// monitor, which set_window_bounds does). The four numbers are nullable so that an item without one fails alone
-/// (InvalidArguments) instead of binding 0 and moving its window to the origin; they stay required in the input schema.
+/// (InvalidArguments) instead of binding 0 and moving its window to the origin; the input schema lists them as required
+/// integers, without null (<see cref="ToolRequiredAttribute"/>), since a null fails the item too.
 /// </summary>
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 public record WindowBoundsPlacement(
-    int? X,
-    int? Y,
-    int? Width,
-    int? Height,
+    [property: ToolRequired] int? X,
+    [property: ToolRequired] int? Y,
+    [property: ToolRequired] int? Width,
+    [property: ToolRequired] int? Height,
     long? Handle = null,
     bool BringToFront = true,
     WindowSelector? Window = null
@@ -133,8 +134,7 @@ public record LaunchResultItem(
 );
 
 /// <summary>
-/// A rectangle in pixels. Also an argument (a launch placement's bounds), so an unknown member, such as a unit, is refused
-/// (InvalidArguments) rather than ignored; the results that hold it write only these four.
+/// A rectangle in pixels, as the results write it. It is no argument: a launch placement's bounds are
+/// <see cref="PlacementBounds"/>, whose members are checked for being there instead of binding 0 when they are missing.
 /// </summary>
-[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 public record BoundsDto(int X, int Y, int Width, int Height);

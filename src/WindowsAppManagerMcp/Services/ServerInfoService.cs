@@ -67,14 +67,15 @@ public sealed class ServerInfoService(
             connection,
             process,
             desktop,
+            // As get_monitors reports them: the DPI Windows reported, and neither it nor the scale when it could not report one
             monitors.GetAllMonitors()
                 .Select(m => new ServerMonitorInfo(
                     m.Index,
                     m.DeviceName,
                     m.IsPrimary,
                     new BoundsDto(m.Bounds.X, m.Bounds.Y, m.Bounds.Width, m.Bounds.Height),
-                    (int)Math.Round(m.ScaleFactor * 96),
-                    m.ScaleFactor))
+                    m.DpiUnknown ? null : m.Dpi,
+                    m.DpiUnknown ? null : m.ScaleFactor))
                 .ToList(),
             ReadHost(settings.Host, warnings),
             input,
@@ -192,11 +193,15 @@ public sealed class ServerInfoService(
     {
         if (host.AncestorsUnknown)
         {
-            // Review F3: the list below then has no ancestors because they are unknown, not because there are none
-            warnings.Add("The server could not read its ancestor processes when it started, so the terminal or editor that started " +
-                         "it is known only by its console and the window that was in front then: input to its other windows is not " +
-                         "refused as the agent's host. kill_process and close_debug_browser read the ancestors again and refuse " +
-                         "(ProcessTreeUnreadable) when they cannot. Tell the user; restarting the server reads them again.");
+            // Review F3: the list below then has no ancestors because they are unknown, not because there are none. The host
+            // guard reads them again (reading the host above did), so this warns only while they still cannot be read
+            warnings.Add("The server cannot read its ancestor processes (the process list cannot be read), so it does not know the " +
+                         "terminal or editor that started it by its process. Until it can (it tries again at most once a second), " +
+                         "every window of a program that started before the server, except the desktop shell's, counts as the " +
+                         "agent's host: input to it and run_steps on it are refused (TargetIsAgentHost), and so are closing it " +
+                         "without force and placing it after a launch (ProtectedWindow); kill_process and close_debug_browser " +
+                         "refuse (ProcessTreeUnreadable). The window lists mark such windows isAgentHost, and the popup lists " +
+                         "leave out their popups and a desktop search their windows, as for the host. Tell the user.");
         }
 
         var hostWindows = new List<AgentHostWindow>();

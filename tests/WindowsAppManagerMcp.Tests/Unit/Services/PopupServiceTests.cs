@@ -712,7 +712,25 @@ public class PopupServiceTests
 
         // Assert - get_desktop_state's rule: the host in front is not read unless it is named
         AssertRefused(result, UIElementErrorCode.TargetIsAgentHost);
-        result.Error.Should().Contain("host").And.Contain("Name the window").And.NotContain("pwsh");
+        result.Error.Should().Contain("host").And.Contain("Name the window").And.NotContain("pwsh")
+            .And.NotContain("ancestor processes");
+    }
+
+    [Fact]
+    public async Task GetActivePopups_WithoutAWindow_AnAppInFrontThatCountsAsTheHostOnlyWhileTheAncestorsAreUnknown_IsRefused_SayingWhy()
+    {
+        // Arrange - the server cannot read its ancestors, and the app in front started before it
+        var main = AddMain("Untitled - Notepad", processName: "notepad");
+        _desktop.HostGuard.Setup(g => g.IsHostWindow(main)).Returns(true);
+        _desktop.HostGuard.Setup(g => g.IsHostWindowOnlyWhileAncestorsUnknown(main)).Returns(true);
+        _desktop.SetForeground(main);
+
+        // Act
+        var result = await CreateSut().GetActivePopupsAsync(0, TimeSpan.FromSeconds(5), CancellationToken.None);
+
+        // Assert - not called the agent's terminal as fact
+        AssertRefused(result, UIElementErrorCode.TargetIsAgentHost);
+        result.Error.Should().Contain(HostGuard.AncestorsUnknownNote).And.Contain("Name the window");
     }
 
     [Fact]

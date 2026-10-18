@@ -604,8 +604,8 @@ public sealed partial class StepRunner
         if (now.IsAgentHost)
         {
             throw new ToolErrorException(nameof(InputErrorCode.TargetIsAgentHost),
-                $"The run's window {window} ({now.ProcessName}) is your own terminal or chat window, or a window it owns. " +
-                "Nothing was done: name the window you mean to act on.");
+                $"The run's window {window} ({now.ProcessName}) is your own terminal or chat window, or a window it owns." +
+                $"{HostGuard.AncestorsUnknownNoteFor(now)} Nothing was done: name the window you mean to act on.");
         }
 
         return new RunTarget(window, now.ProcessId, !SharedHostProcesses.Contains(now.ProcessName));

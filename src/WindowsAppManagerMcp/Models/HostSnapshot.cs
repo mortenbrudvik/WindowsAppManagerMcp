@@ -8,7 +8,8 @@ namespace WindowsAppManagerMcp.Models;
 /// <param name="Ancestors">
 /// The server's ancestor processes, parent first (for example the agent, the shell, the terminal and
 /// whatever started it). The walk stops at a parent that started after its child, since that PID was reused.
-/// Empty, with <see cref="AncestorsUnknown"/>, when they could not be read.
+/// Empty, with <see cref="AncestorsUnknown"/>, while they could not be read; read on a later check, they are what that read
+/// found (an ancestor that has exited by then, and those above it, are not among them).
 /// </param>
 /// <param name="ConsoleWindow">GetConsoleWindow() of the server, or zero when it has no console window.</param>
 /// <param name="ConsoleHostWindow">
@@ -44,10 +45,11 @@ public sealed record HostSnapshot(
     public IReadOnlyList<HostProcess> ConsoleServerProcesses { get; init; } = [];
 
     /// <summary>
-    /// True when the server's ancestors could not be read at start (the process list could not be read, review F3):
-    /// <see cref="Ancestors"/> is then empty because they are unknown, not because there are none, and the windows of the
-    /// terminal or editor that started the server are not recognized as the host's. get_server_info warns about it;
-    /// kill_process and close_debug_browser read the ancestors again and refuse when they still cannot.
+    /// True while the server's ancestors could not be read (the process list could not be read, review F3): at start, and
+    /// until the host guard reads them on a later check (it tries again at most once a second, and then records them and
+    /// clears this). <see cref="Ancestors"/> is then empty because they are unknown, not because there are none, so the host
+    /// guard counts every window of a process that started before the server as the host's (fail closed). get_server_info
+    /// warns about it; kill_process and close_debug_browser read the ancestors themselves and refuse when they cannot.
     /// </summary>
     public bool AncestorsUnknown { get; init; }
 }

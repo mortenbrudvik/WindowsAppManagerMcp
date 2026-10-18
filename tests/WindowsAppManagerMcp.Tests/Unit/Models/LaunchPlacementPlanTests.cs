@@ -29,7 +29,7 @@ public class LaunchPlacementPlanTests
     [Fact]
     public void Bounds_AreTheRectangle()
     {
-        var (plan, _, _) = Check(new LaunchPlacement(Bounds: new BoundsDto(-1920, 0, 960, 1040), State: "normal"));
+        var (plan, _, _) = Check(new LaunchPlacement(Bounds: new PlacementBounds(-1920, 0, 960, 1040), State: "normal"));
 
         plan!.Bounds.Should().Be(new WindowRect(-1920, 0, 960, 1040));
         plan.State.Should().Be(LaunchWindowState.Normal);
@@ -67,12 +67,12 @@ public class LaunchPlacementPlanTests
 
     public static TheoryData<LaunchPlacement, string, string> Contradictions() => new()
     {
-        { new LaunchPlacement(Snap: "left_half", Bounds: new BoundsDto(0, 0, 10, 10)), "InvalidArguments", "snap or bounds" },
-        { new LaunchPlacement(Bounds: new BoundsDto(0, 0, 10, 10), Monitor: MonitorSelector.OfIndex(1)), "InvalidArguments", "leave out monitor" },
-        { new LaunchPlacement(Bounds: new BoundsDto(0, 0, 10, 10), Monitor: MonitorSelector.Of("left")), "InvalidArguments", "leave out monitor" },
-        { new LaunchPlacement(Bounds: new BoundsDto(0, 0, 0, 10)), "InvalidArguments", "at least 1 pixel" },
+        { new LaunchPlacement(Snap: "left_half", Bounds: new PlacementBounds(0, 0, 10, 10)), "InvalidArguments", "snap or bounds" },
+        { new LaunchPlacement(Bounds: new PlacementBounds(0, 0, 10, 10), Monitor: MonitorSelector.OfIndex(1)), "InvalidArguments", "leave out monitor" },
+        { new LaunchPlacement(Bounds: new PlacementBounds(0, 0, 10, 10), Monitor: MonitorSelector.Of("left")), "InvalidArguments", "leave out monitor" },
+        { new LaunchPlacement(Bounds: new PlacementBounds(0, 0, 0, 10)), "InvalidArguments", "at least 1 pixel" },
         { new LaunchPlacement(Snap: "left_half", State: "maximized"), "InvalidArguments", "maximized" },
-        { new LaunchPlacement(Bounds: new BoundsDto(0, 0, 10, 10), State: "maximized"), "InvalidArguments", "maximized" },
+        { new LaunchPlacement(Bounds: new PlacementBounds(0, 0, 10, 10), State: "maximized"), "InvalidArguments", "maximized" },
         { new LaunchPlacement(State: "minimized", Focus: true), "InvalidArguments", "minimized" },
         { new LaunchPlacement(Monitor: MonitorSelector.OfIndex(-1)), "InvalidMonitorIndex", "start at 0" },
         { new LaunchPlacement(), "InvalidArguments", "asks for nothing" },
@@ -88,6 +88,21 @@ public class LaunchPlacementPlanTests
         plan.Should().BeNull();
         errorCode.Should().Be(expectedCode);
         error.Should().Contain(expectedText);
+    }
+
+    [Theory]
+    [InlineData(null, 0, 10, 10, "placement.bounds has no x:")]
+    [InlineData(0, null, 10, 10, "placement.bounds has no y:")]
+    [InlineData(0, 0, null, 10, "placement.bounds has no width:")]
+    [InlineData(0, 0, 10, null, "placement.bounds has no height:")]
+    [InlineData(null, null, null, null, "placement.bounds has no x, y, width or height:")]
+    public void BoundsWithoutACoordinateOrSize_AreRefused_InsteadOfPlacingAtZero(int? x, int? y, int? width, int? height, string expected)
+    {
+        var (plan, errorCode, error) = Check(new LaunchPlacement(Bounds: new PlacementBounds(x, y, width, height)));
+
+        plan.Should().BeNull();
+        errorCode.Should().Be("InvalidArguments");
+        error.Should().StartWith(expected).And.Contain("x, y, width and height");
     }
 
     [Fact]

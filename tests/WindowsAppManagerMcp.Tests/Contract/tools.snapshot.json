@@ -6602,10 +6602,7 @@
               "properties": {
                 "tool": {
                   "description": "The tool to call",
-                  "type": [
-                    "string",
-                    "null"
-                  ],
+                  "type": "string",
                   "enum": [
                     "focus_window",
                     "find_ui_elements",
@@ -6620,8 +6617,7 @@
                     "wait_for_window",
                     "wait_for_element",
                     "get_focused_element",
-                    "capture_window",
-                    null
+                    "capture_window"
                   ]
                 },
                 "args": {
@@ -7723,28 +7719,16 @@
               "type": "object",
               "properties": {
                 "x": {
-                  "type": [
-                    "integer",
-                    "null"
-                  ]
+                  "type": "integer"
                 },
                 "y": {
-                  "type": [
-                    "integer",
-                    "null"
-                  ]
+                  "type": "integer"
                 },
                 "width": {
-                  "type": [
-                    "integer",
-                    "null"
-                  ]
+                  "type": "integer"
                 },
                 "height": {
-                  "type": [
-                    "integer",
-                    "null"
-                  ]
+                  "type": "integer"
                 },
                 "handle": {
                   "type": [

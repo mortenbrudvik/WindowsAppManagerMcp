@@ -55,6 +55,14 @@ public record WindowInfo(
     public bool IsAgentHost { get; init; }
 
     /// <summary>
+    /// Whether <see cref="IsAgentHost"/> is set only because the server cannot read its ancestor processes
+    /// (IHostGuard.IsHostWindowOnlyWhileAncestorsUnknown): the window's program started before the server, so it may be the
+    /// terminal, but nothing shows that it is. Refusals of such a window say so (HostGuard.AncestorsUnknownNoteFor) rather
+    /// than call it the agent's own window.
+    /// </summary>
+    public bool IsAgentHostOnlyWhileAncestorsUnknown { get; init; }
+
+    /// <summary>
     /// Whether the window is topmost (WS_EX_TOPMOST): it stays above every window that is not, also while another window is
     /// active (roadmap M6.7; set_window_zorder changes it).
     /// </summary>

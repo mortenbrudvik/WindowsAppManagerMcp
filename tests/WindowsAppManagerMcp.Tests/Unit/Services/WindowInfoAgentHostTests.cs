@@ -97,4 +97,25 @@ public class WindowInfoAgentHostTests
         close.ErrorCode.Should().Be(WindowErrorCode.ProtectedWindow);
         sut.GetWindowInfo(Notepad)!.IsAgentHost.Should().BeFalse();
     }
+
+    [Fact]
+    public void AWindowThatIsTheHostsOnlyWhileTheAncestorsAreUnknown_IsMarkedSo_AndAKnownHostWindowIsNot()
+    {
+        // Arrange - the server cannot read its ancestors: Notepad started before it, so it counts as the host's too
+        _hostGuard.Setup(g => g.IsHostWindow(Notepad)).Returns(true);
+        _hostGuard.Setup(g => g.IsHostWindowOnlyWhileAncestorsUnknown(Notepad)).Returns(true);
+        var sut = CreateSut();
+
+        // Act
+        var notepad = sut.GetWindowInfo(Notepad)!;
+        var terminal = sut.GetWindowInfo(Terminal)!;
+
+        // Assert - refusals of Notepad then say why it counts, rather than call it the agent's terminal
+        notepad.IsAgentHost.Should().BeTrue();
+        notepad.IsAgentHostOnlyWhileAncestorsUnknown.Should().BeTrue();
+        HostGuard.AncestorsUnknownNoteFor(notepad).Should().Be(HostGuard.AncestorsUnknownNote);
+        terminal.IsAgentHost.Should().BeTrue();
+        terminal.IsAgentHostOnlyWhileAncestorsUnknown.Should().BeFalse();
+        HostGuard.AncestorsUnknownNoteFor(terminal).Should().BeEmpty();
+    }
 }
