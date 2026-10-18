@@ -39,4 +39,37 @@ public class NativeShellWindowsWrapperTests
         listing.Folders.Should().ContainSingle();
         listing.SkippedWindows.Should().Be(0);
     }
+
+    public static TheoryData<string, Exception> NoFolderViews() => new()
+    {
+        { "a document without a Folder member", new Microsoft.CSharp.RuntimeBinder.RuntimeBinderException("'System.__ComObject' does not contain a definition for 'Folder'") },
+        { "an unknown name (DISP_E_UNKNOWNNAME)", new System.Runtime.InteropServices.COMException("Unknown name.", unchecked((int)0x80020006)) },
+        { "a member not found (DISP_E_MEMBERNOTFOUND)", new System.Runtime.InteropServices.COMException("Member not found.", unchecked((int)0x80020003)) },
+        { "not implemented (E_NOTIMPL)", new System.Runtime.InteropServices.COMException("Not implemented.", unchecked((int)0x80004001)) },
+        { "no such interface (E_NOINTERFACE)", new System.Runtime.InteropServices.COMException("No such interface.", unchecked((int)0x80004002)) },
+    };
+
+    [Theory]
+    [MemberData(nameof(NoFolderViews))]
+    public void AFolderReadThatFindsNoFolderView_MeansTheWindowShowsNoFolder(string why, Exception failure)
+    {
+        // A shell window that shows no folder (a web page in an old browser window) has no Folder to read: not a failure
+        NativeShellWindowsWrapper.IsNoFolderView(failure).Should().BeTrue(why);
+    }
+
+    public static TheoryData<string, Exception> FailedFolderReads() => new()
+    {
+        { "the window went away (RPC_E_DISCONNECTED)", new System.Runtime.InteropServices.COMException("Disconnected.", unchecked((int)0x80010108)) },
+        { "the shell failed (RPC_E_SERVERFAULT)", new System.Runtime.InteropServices.COMException("The server threw an exception.", unchecked((int)0x80010105)) },
+        { "the shell failed (E_FAIL)", new System.Runtime.InteropServices.COMException("Unspecified error.", unchecked((int)0x80004005)) },
+        { "a path of the wrong kind", new InvalidCastException() },
+    };
+
+    [Theory]
+    [MemberData(nameof(FailedFolderReads))]
+    public void AFolderReadThatFails_IsAWindowThatCouldNotBeRead_SoItIsCounted(string why, Exception failure)
+    {
+        // The window may show a folder on disk that is then missing from save_workspace: Collect counts it as skipped
+        NativeShellWindowsWrapper.IsNoFolderView(failure).Should().BeFalse(why);
+    }
 }

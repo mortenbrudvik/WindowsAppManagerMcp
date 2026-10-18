@@ -144,7 +144,11 @@ public sealed class NativeShellWindowsWrapper : INativeShellWindowsWrapper
         }
     }
 
-    /// <summary>The window's folder when it is a folder on disk (a drive or UNC path); null for This PC, a search and the like.</summary>
+    /// <summary>
+    /// The window's folder when it is a folder on disk (a drive or UNC path); null for This PC, a search and the like, and for a
+    /// window that shows no folder view (<see cref="IsNoFolderView"/>). A read that fails otherwise throws, so
+    /// <see cref="Collect"/> counts the window as skipped: it may show a folder that would be missing silently (review finding F8).
+    /// </summary>
     private static string? FolderOf(dynamic window)
     {
         string? path = null;
@@ -156,7 +160,7 @@ public sealed class NativeShellWindowsWrapper : INativeShellWindowsWrapper
             self = folder?.Self;
             path = (string?)self?.Path;
         }
-        catch (Exception)
+        catch (Exception ex) when (IsNoFolderView(ex))
         {
             return null;
         }
@@ -173,4 +177,22 @@ public sealed class NativeShellWindowsWrapper : INativeShellWindowsWrapper
 
         return path is { Length: > 2 } && (path[1] == ':' || path.StartsWith(@"\\", StringComparison.Ordinal)) ? path : null;
     }
+
+    /// <summary>
+    /// Whether reading a shell window's Document.Folder.Self.Path failed because the window shows no folder view, so it has no
+    /// folder to keep: its document has no such member (the late binder finds none, or IDispatch answers DISP_E_UNKNOWNNAME or
+    /// DISP_E_MEMBERNOTFOUND) or does not implement it (E_NOTIMPL, E_NOINTERFACE). Any other failure (the window went away, the
+    /// shell failed) means the window could not be read. Pure, so it is tested directly.
+    /// </summary>
+    public static bool IsNoFolderView(Exception exception) => exception switch
+    {
+        Microsoft.CSharp.RuntimeBinder.RuntimeBinderException => true,
+        COMException com => com.HResult is DispUnknownName or DispMemberNotFound or NotImplemented or NoInterface,
+        _ => false
+    };
+
+    private const int DispUnknownName = unchecked((int)0x80020006);
+    private const int DispMemberNotFound = unchecked((int)0x80020003);
+    private const int NotImplemented = unchecked((int)0x80004001);
+    private const int NoInterface = unchecked((int)0x80004002);
 }
