@@ -1,5 +1,6 @@
 using System.Buffers;
 using System.Diagnostics;
+using System.Globalization;
 using System.Text;
 using WindowsAppManagerMcp.Infrastructure;
 using WindowsAppManagerMcp.Models;
@@ -350,11 +351,12 @@ public sealed class FileDialogService : IFileDialogService
     /// a word of another question ("save", "Documents", "a", "instead": the words of "save in the Documents folder instead?"
     /// that a file can be named), and no length or quoting tells such a word from a file's name. A replace prompt that shows
     /// only that is handed back unanswered, as any other prompt. For the same reason a file without an extension counts only
-    /// by its full path: its name is such a bare word ("save" in C:\Program Files\X\save).
+    /// by its full path: its name is such a bare word ("save" in C:\Program Files\X\save), and so is a name whose
+    /// "extension" holds a blank (<see cref="HasExtension"/>).
     /// </summary>
     private static bool NamesFile(IReadOnlyList<string> text, string path)
     {
-        if (Path.GetExtension(path).Length == 0)
+        if (!HasExtension(path))
         {
             return text.Any(line => HasWholeName(line, path));
         }
@@ -363,6 +365,18 @@ public sealed class FileDialogService : IFileDialogService
         var stem = Path.GetFileNameWithoutExtension(path);
         var pathWithoutExtension = stem.Length > 0 ? Path.Join(Path.GetDirectoryName(path), stem) : null;
         return text.Any(line => HasWholeName(line, name) || (pathWithoutExtension != null && HasWholeName(line, pathWithoutExtension)));
+    }
+
+    /// <summary>
+    /// Whether the file's name ends in an extension that keeps it from being a run of a prompt's words: a full stop and
+    /// something after it with no blank in it ("report.txt"). Not a name without one ("save"; "save." ends in a full stop
+    /// only), nor one whose "extension" holds a blank: "location. Contact" is words of the permission prompt ("save in this
+    /// location. Contact the administrator").
+    /// </summary>
+    private static bool HasExtension(string path)
+    {
+        var extension = Path.GetExtension(path);
+        return extension.Length > 1 && !extension.Any(char.IsWhiteSpace);
     }
 
     private static bool HasWholeName(string text, string name)
@@ -386,20 +400,22 @@ public sealed class FileDialogService : IFileDialogService
 
     /// <summary>
     /// Whether the name that starts at <paramref name="at"/> is the end of a longer one: "my" in "myreport.txt", "my." in
-    /// "my.report.txt", "新" in "新報告書.txt". Any letter or digit continues it, in every script: no prompt writes its words
-    /// onto the front of a name, so the exception <see cref="IsNameCharacter"/> makes for scripts written without spaces holds
-    /// only after it, and before it would take a longer name that ends with the file's for the file.
+    /// "my.report.txt", "新" in "新報告書.txt", "नया" in "नयारिपोर्ट.txt". Any letter, digit or combining mark continues it, in
+    /// every script (<see cref="IsNamePart"/>): no prompt writes its words onto the front of a name, so the exception
+    /// <see cref="ContinuesNameAfter"/> makes for scripts written without spaces holds only after it, and before it would take
+    /// a longer name that ends with the file's for the file.
     /// </summary>
     private static bool ContinuesBefore(string text, int at) =>
         at > 0 && (ContinuesNameBefore(text, at) || (text[at - 1] == '.' && at > 1 && ContinuesNameBefore(text, at - 1)));
 
     /// <summary>
-    /// Whether the character in front of <paramref name="at"/> is a letter, a digit, '_' or '-', read as a whole code point,
-    /// so an ideograph outside the Basic Multilingual Plane (a surrogate pair, no letter as two halves) counts as the letter it is.
+    /// Whether the character in front of <paramref name="at"/> continues the name that starts there (<see cref="IsNamePart"/>),
+    /// read as a whole code point, so a letter outside the Basic Multilingual Plane (a surrogate pair, no letter as two
+    /// halves) counts as the letter it is. Half of a pair cannot be told, so it continues the name.
     /// </summary>
     private static bool ContinuesNameBefore(string text, int at) =>
         Rune.DecodeLastFromUtf16(text.AsSpan(0, at), out var rune, out _) == OperationStatus.Done
-            ? Rune.IsLetterOrDigit(rune) || rune.Value is '_' or '-'
+            ? IsNamePart(rune)
             : char.IsSurrogate(text[at - 1]);
 
     /// <summary>
@@ -407,20 +423,37 @@ public sealed class FileDialogService : IFileDialogService
     /// "report.txt.bak", ".docx" after the path without the extension. A full stop that ends the sentence is no part of it.
     /// </summary>
     private static bool ContinuesAfter(string text, int end) =>
-        end < text.Length && (IsNameCharacter(text[end]) || (text[end] == '.' && end + 1 < text.Length && IsNameCharacter(text[end + 1])));
+        end < text.Length &&
+        (ContinuesNameAfter(text, end) || (text[end] == '.' && end + 1 < text.Length && ContinuesNameAfter(text, end + 1)));
 
     /// <summary>
-    /// A character that continues a file name next to it: a letter, a digit, '_' or '-'. Not a letter of a script written
-    /// without spaces between words (Chinese, Japanese) or one whose particles are written onto the noun (Korean): there
-    /// the prompt's next word follows the name at once ("report.txtは既に存在します", "report.txt이(가) 이미 있습니다").
+    /// Whether the character at <paramref name="at"/> continues a name in front of it (<see cref="IsNamePart"/>), read as a
+    /// whole code point as <see cref="ContinuesNameBefore"/> reads it (half of a pair continues it). Not a letter of a script
+    /// written without spaces between words (Chinese, Japanese) or one whose particles are written onto the noun (Korean):
+    /// there the prompt's next word follows the name at once ("report.txtは既に存在します", "report.txt이(가) 이미 있습니다").
     /// </summary>
-    private static bool IsNameCharacter(char c) => (char.IsLetterOrDigit(c) && !IsWrittenWithoutSpaces(c)) || c is '_' or '-';
+    private static bool ContinuesNameAfter(string text, int at) =>
+        Rune.DecodeFromUtf16(text.AsSpan(at), out var rune, out _) == OperationStatus.Done
+            ? IsNamePart(rune) && !IsWrittenWithoutSpaces(rune)
+            : char.IsSurrogate(text[at]);
+
+    /// <summary>
+    /// A character that is part of a file name next to it: a letter, a digit, '_' or '-', or a combining mark, which belongs
+    /// to the letter in front of it (a vowel sign of Devanagari, a tone mark of Thai, an accent written as a mark of its own).
+    /// </summary>
+    private static bool IsNamePart(Rune rune) =>
+        Rune.IsLetterOrDigit(rune) || rune.Value is '_' or '-' ||
+        Rune.GetUnicodeCategory(rune) is UnicodeCategory.NonSpacingMark or UnicodeCategory.SpacingCombiningMark
+            or UnicodeCategory.EnclosingMark;
 
     /// <summary>
     /// Hangul Jamo, the CJK and kana blocks with their symbols (U+2E80 to U+9FFF), Hangul syllables and Jamo extensions, the
-    /// CJK compatibility ideographs and the full-width and half-width forms. A character outside the Basic Multilingual Plane
-    /// is a surrogate, which is no letter on its own.
+    /// CJK compatibility ideographs, the full-width and half-width forms, and the CJK ideographs outside the Basic
+    /// Multilingual Plane (planes 2 and 3).
     /// </summary>
+    private static bool IsWrittenWithoutSpaces(Rune rune) =>
+        rune.IsBmp ? IsWrittenWithoutSpaces((char)rune.Value) : rune.Value is >= 0x20000 and <= 0x3FFFF;
+
     private static bool IsWrittenWithoutSpaces(char c) =>
         c is (>= '\u1100' and <= '\u11FF') or (>= '\u2E80' and <= '\u9FFF') or (>= '\uA960' and <= '\uA97F') or
             (>= '\uAC00' and <= '\uD7FF') or (>= '\uF900' and <= '\uFAFF') or (>= '\uFF00' and <= '\uFFEF');

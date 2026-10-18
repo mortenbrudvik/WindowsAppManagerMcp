@@ -438,6 +438,9 @@ public sealed class FileDialogServiceTests : IDisposable
     [InlineData("a")]
     [InlineData("instead")]
     [InlineData("folder")]
+    // An "extension" with a blank in it is a run of the prompt's words too ("this location. Contact the administrator")
+    [InlineData("location. Contact")]
+    [InlineData("save in this location. Contact the administrator")]
     public async Task APermissionPrompt_HoldingAnExtensionlessFilesName_IsNoReplacePrompt_EvenWithOverwrite(string name)
     {
         // Saving C:\Program Files\X\save, a file without an extension, over an existing one: its name with its extension is
@@ -474,11 +477,12 @@ public sealed class FileDialogServiceTests : IDisposable
     }
 
     [Theory]
-    [InlineData("{folder}\\save already exists.\nDo you want to replace it?")]
-    [InlineData("{folder}\\SAVE ist bereits vorhanden.")]
-    public async Task Save_WithOverwrite_AnswersAPromptThatNamesAnExtensionlessFile_ByItsFullPath(string text)
+    [InlineData("save", "{folder}\\save already exists.\nDo you want to replace it?")]
+    [InlineData("save", "{folder}\\SAVE ist bereits vorhanden.")]
+    [InlineData("location. Contact", "{folder}\\location. Contact already exists.\nDo you want to replace it?")]
+    public async Task Save_WithOverwrite_AnswersAPromptThatNamesAnExtensionlessFile_ByItsFullPath(string name, string text)
     {
-        var file = ExistingFile("save");
+        var file = ExistingFile(name);
         PressOpensThePrompt();
         _promptContent = YesNoPrompt(text.Replace("{folder}", _folder, StringComparison.Ordinal));
 
@@ -508,9 +512,36 @@ public sealed class FileDialogServiceTests : IDisposable
     }
 
     [Theory]
+    // A combining mark continues the letter in front of it: न+य+ा ("नया", new) and ใ+ห+ม+่ ("ใหม่") end in one
+    [InlineData("रिपोर्ट.txt", "नयारिपोर्ट.txt पहले से मौजूद है।")]
+    [InlineData("รายงาน.txt", "ใหม่รายงาน.txt มีอยู่แล้ว")]
+    // After the name, a letter outside the Basic Multilingual Plane (a surrogate pair) continues it, as any letter does
+    [InlineData("report.txt", "report.txt\U0001D41A already exists.")]
+    [InlineData("report.txt", "report.txt\U00010428 already exists.")]
+    [InlineData("report.txt", "report.txt.\U0001D41A already exists.")]
+    // A half of a pair ({half}, put in below: test data must be valid text) is no character that can be told: it continues
+    // the name, failing closed; and so does a combining mark, which changes the letter in front of it
+    [InlineData("report.txt", "report.txt{half} already exists.")]
+    [InlineData("report.txt", "report.txt́ already exists.")]
+    public async Task AYesNoPrompt_NamingALongerName_IsNoReplacePrompt_WhateverItIsWrittenWith(string name, string text)
+    {
+        var file = ExistingFile(name);
+        PressOpensThePrompt();
+        _promptContent = YesNoPrompt(text.Replace("{half}", "\uD835", StringComparison.Ordinal));
+
+        var result = await CompleteAsync(file, overwrite: true);
+
+        result.ErrorCode.Should().Be(nameof(UIElementErrorCode.DialogNotCompleted));
+        result.PromptHandled.Should().BeFalse();
+        _answers.Should().BeEmpty();
+    }
+
+    [Theory]
     [InlineData("報告書.txtは既に存在します。")]
     [InlineData("「報告書.txt」は既に存在します。")]
     [InlineData("報告書.txt이(가) 이미 있습니다.")]
+    // A CJK ideograph outside the Basic Multilingual Plane ends the name as one inside it does
+    [InlineData("報告書.txt\U00020BB7は既に存在します。")]
     public async Task Save_WithOverwrite_AnswersAPromptThatWritesTheNextWordOntoTheName(string text)
     {
         var file = ExistingFile("報告書.txt");
