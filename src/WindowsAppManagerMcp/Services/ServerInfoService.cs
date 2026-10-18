@@ -193,11 +193,13 @@ public sealed class ServerInfoService(
     {
         if (host.AncestorsUnknown)
         {
-            // Review F3: the list below then has no ancestors because they are unknown, not because there are none
-            warnings.Add("The server could not read its ancestor processes when it started, so the terminal or editor that started " +
-                         "it is known only by its console and the window that was in front then: input to its other windows is not " +
-                         "refused as the agent's host. kill_process and close_debug_browser read the ancestors again and refuse " +
-                         "(ProcessTreeUnreadable) when they cannot. Tell the user; restarting the server reads them again.");
+            // Review F3: the list below then has no ancestors because they are unknown, not because there are none. The host
+            // guard reads them again (reading the host above did), so this warns only while they still cannot be read
+            warnings.Add("The server cannot read its ancestor processes (the process list cannot be read), so it does not know the " +
+                         "terminal or editor that started it by its process. Until it can (it tries again at most once a second), " +
+                         "input, window changes and closes are refused for every window of a program that started before the server " +
+                         "(TargetIsAgentHost, ProtectedWindow), except the desktop shell's, and kill_process and close_debug_browser " +
+                         "refuse (ProcessTreeUnreadable). Tell the user.");
         }
 
         var hostWindows = new List<AgentHostWindow>();

@@ -12,11 +12,16 @@ namespace WindowsAppManagerMcp.Services.Interfaces;
 /// The host is recorded once, when the server starts (<see cref="Host"/>): the server's ancestor
 /// processes, the window that shows its console, and the foreground window at that moment.
 /// Answers are fail-safe: when a recorded process can no longer be verified it still counts as the
-/// host, and only a process ID that was reused by a newer process stops counting.
+/// host, and only a process ID that was reused by a newer process stops counting. When the ancestors
+/// could not be read at start (<see cref="HostSnapshot.AncestorsUnknown"/>), the guard reads them again
+/// on later checks until it can, and <see cref="IsHostWindow"/> fails closed meanwhile.
 /// </remarks>
 public interface IHostGuard
 {
-    /// <summary>What was recorded at server start.</summary>
+    /// <summary>
+    /// What was recorded at server start, with the ancestors once a later read found them when they could not be read at
+    /// start. While they are unknown, reading it tries to read them again (rate-limited).
+    /// </summary>
     HostSnapshot Host { get; }
 
     /// <summary>
@@ -29,6 +34,8 @@ public interface IHostGuard
     /// the server has no console window: the terminal is then neither an ancestor nor the console
     /// host, but killing it closes the agent's terminal. Kill and close-process guards use this.
     /// A recorded ID that now belongs to a process started later (a reused ID) is not the host.
+    /// While the ancestors are unknown it reads them again (rate-limited) but does not fail closed: its callers read the
+    /// process tree themselves and refuse with ProcessTreeUnreadable when they cannot.
     /// </summary>
     /// <remarks>
     /// Fail-safe: when the server starts while an unrelated application is in front, that application
@@ -45,7 +52,10 @@ public interface IHostGuard
     /// application that happened to be in front at startup does not block input to all of its windows.
     /// Windows of the desktop shell (explorer.exe: the taskbar, the desktop and File Explorer) are
     /// excluded from the process rule, because the shell is an ancestor whenever the terminal was
-    /// started from the Start menu or a shortcut.
+    /// started from the Start menu or a shortcut. While the ancestors are unknown (they are read again,
+    /// rate-limited), a window of a process that may be one, that is one not shown to have started after
+    /// the server, counts as the host's too: fail closed for what may be the terminal, while an app that
+    /// started after the server stays usable.
     /// </summary>
     bool IsHostWindow(nint hWnd);
 }

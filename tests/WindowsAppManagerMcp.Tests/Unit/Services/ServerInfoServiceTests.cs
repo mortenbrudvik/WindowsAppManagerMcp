@@ -192,7 +192,7 @@ public sealed class ServerInfoServiceTests : IDisposable
         var info = CreateSut().Read(Connection, 48);
 
         // Assert
-        info.Warnings.Should().ContainSingle().Which.Should().Contain("ancestor processes").And.Contain("Tell the user");
+        info.Warnings.Should().ContainSingle().Which.Should().Contain("ancestor processes").And.Contain("started before the server").And.Contain("Tell the user");
         info.Host.Processes.Should().Equal(new AgentHostProcess(4242, "server", "WindowsAppManagerMcp"));
     }
 

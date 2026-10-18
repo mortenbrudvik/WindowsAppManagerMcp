@@ -549,4 +549,153 @@ public class HostGuardTests
     }
 
     #endregion
+
+    #region Ancestors that could not be read at start
+
+    private const int LaterPid = 9501;   // an application started after the server
+    private static readonly nint LaterWindow = 0x500;
+    private static readonly DateTime ServerStart = T0.AddMinutes(5);
+
+    /// <summary>Whether GetAncestorProcesses can read the process list; false answers null (review F3).</summary>
+    private bool _ancestorsReadable;
+
+    /// <summary>
+    /// A server without a console window, started while nothing was in front, whose ancestors (claude, pwsh, the terminal and
+    /// explorer) are known only through the process list: no window is recorded, so only the ancestors make the terminal's
+    /// windows the host's. The process list cannot be read until <see cref="_ancestorsReadable"/> is set.
+    /// </summary>
+    private ManualClock UseAncestorsUnreadableAtStart()
+    {
+        _processes.Setup(p => p.GetAncestorProcesses()).Returns(() => _ancestorsReadable
+            ? new[] { AgentPid, ShellPid, TerminalPid, ExplorerPid }.Select(pid => (pid, _startTimes[pid])).ToList()
+            : null);
+        _processes.Setup(p => p.GetConsoleWindow()).Returns(nint.Zero);
+        _windows.Setup(w => w.GetForegroundWindow()).Returns(nint.Zero);
+        _startTimes[ServerPid] = ServerStart;
+        _startTimes[LaterPid] = ServerStart.AddMinutes(5);
+        Window(LaterWindow, LaterPid);
+        return new ManualClock();
+    }
+
+    private HostGuard CreateSut(TimeProvider time, ILogger<HostGuard>? logger = null) => new(_windows.Object, _processes.Object, logger, time);
+
+    [Fact]
+    public void AncestorsUnreadableAtStart_AreReadAgainOnALaterCheck_AndTheHostIsKnownFromThen()
+    {
+        // Arrange - a transient failure: the list can be read again a moment later
+        var clock = UseAncestorsUnreadableAtStart();
+        var logger = new RecordingLogger<HostGuard>();
+        var sut = CreateSut(clock, logger);
+        sut.Host.AncestorsUnknown.Should().BeTrue();
+        _ancestorsReadable = true;
+        clock.Advance(HostGuard.AncestorRetryInterval);
+
+        // Act
+        var terminal = sut.IsHostWindow(SecondTerminalWindow);
+
+        // Assert - the terminal is an ancestor; the application in front of nothing is no host
+        terminal.Should().BeTrue();
+        sut.IsHostWindow(OtherWindow).Should().BeFalse("it is no ancestor, now that the ancestors are known");
+        sut.IsHostProcess(ShellPid).Should().BeTrue();
+        sut.Host.AncestorsUnknown.Should().BeFalse("get_server_info stops warning");
+        sut.Host.Ancestors.Select(a => a.ProcessId).Should().Equal(AgentPid, ShellPid, TerminalPid, ExplorerPid);
+        logger.Entries.Should().Contain(e => e.Level == LogLevel.Information && e.Message.Contains("ancestor processes"));
+    }
+
+    [Fact]
+    public void AncestorsThatStayUnreadable_MakeEveryWindowOfAProcessStartedBeforeTheServer_TheHosts()
+    {
+        // Arrange - the list cannot be read at all: any process that started before the server may be an ancestor
+        var clock = UseAncestorsUnreadableAtStart();
+        var sut = CreateSut(clock);
+        clock.Advance(HostGuard.AncestorRetryInterval);
+
+        // Act & Assert - fail closed for what may be the terminal, not for what started after the server
+        sut.IsHostWindow(SecondTerminalWindow).Should().BeTrue("the terminal may be an ancestor");
+        sut.IsHostWindow(OtherWindow).Should().BeTrue("it started before the server, so it may be an ancestor too");
+        sut.IsHostWindow(LaterWindow).Should().BeFalse("a process that started after the server is no ancestor of it");
+        sut.IsHostWindow(ExplorerFolder).Should().BeFalse("the desktop shell's windows are never the host's by their process");
+        sut.Host.AncestorsUnknown.Should().BeTrue();
+    }
+
+    [Fact]
+    public void AncestorsThatStayUnreadable_AWindowWhoseProcessStartTimeIsUnknown_IsTheHosts()
+    {
+        // Arrange
+        var clock = UseAncestorsUnreadableAtStart();
+        _startTimes[LaterPid] = null;
+        var sut = CreateSut(clock);
+
+        // Act & Assert - it cannot be shown to have started after the server
+        sut.IsHostWindow(LaterWindow).Should().BeTrue();
+    }
+
+    [Fact]
+    public void AncestorsThatStayUnreadable_AndTheServersStartTimeUnknown_MakeEveryWindowButTheShellsTheHosts()
+    {
+        // Arrange
+        var clock = UseAncestorsUnreadableAtStart();
+        _startTimes.Remove(ServerPid);
+        var sut = CreateSut(clock);
+
+        // Act & Assert
+        sut.IsHostWindow(LaterWindow).Should().BeTrue();
+        sut.IsHostWindow(ExplorerFolder).Should().BeFalse();
+    }
+
+    [Fact]
+    public void AncestorsThatStayUnreadable_AreReadAgainAtMostOncePerInterval()
+    {
+        // Arrange - find_windows checks every window it lists: one failing read must not become one read per window
+        var clock = UseAncestorsUnreadableAtStart();
+        var sut = CreateSut(clock);
+        _processes.Invocations.Clear();
+
+        // Act - three checks right after the failed read at start, then three after the interval
+        sut.IsHostWindow(SecondTerminalWindow);
+        sut.IsHostWindow(OtherWindow);
+        _ = sut.Host;
+        var beforeTheInterval = _processes.Invocations.Count(i => i.Method.Name == nameof(INativeProcessWrapper.GetAncestorProcesses));
+        clock.Advance(HostGuard.AncestorRetryInterval);
+        sut.IsHostWindow(SecondTerminalWindow);
+        sut.IsHostWindow(OtherWindow);
+        _ = sut.Host;
+
+        // Assert
+        beforeTheInterval.Should().Be(0);
+        _processes.Verify(p => p.GetAncestorProcesses(), Times.Once);
+    }
+
+    [Fact]
+    public void AncestorsThatStayUnreadable_IsHostProcess_DoesNotFailClosed_ItsCallersReadTheTreeThemselves()
+    {
+        // kill_process and close_debug_browser read the ancestors live and refuse with ProcessTreeUnreadable; a CannotTerminateHost
+        // for every older process would name the wrong reason
+        var clock = UseAncestorsUnreadableAtStart();
+        var sut = CreateSut(clock);
+        clock.Advance(HostGuard.AncestorRetryInterval);
+
+        sut.IsHostProcess(OtherPid).Should().BeFalse();
+        sut.IsHostProcess(ShellPid).Should().BeFalse("unknown until the list can be read");
+        _processes.Verify(p => p.GetAncestorProcesses(), Times.Exactly(2), "the check reads the ancestors again");
+    }
+
+    [Fact]
+    public void KnownAncestors_AreNeverReadAgain()
+    {
+        // Arrange
+        var clock = new ManualClock();
+        var sut = CreateSut(clock);
+        clock.Advance(TimeSpan.FromMinutes(10));
+
+        // Act
+        sut.IsHostWindow(OtherWindow);
+        sut.IsHostProcess(OtherPid);
+        _ = sut.Host;
+
+        // Assert
+        _processes.Verify(p => p.GetAncestorProcesses(), Times.Once);
+    }
+
+    #endregion
 }

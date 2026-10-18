@@ -1500,8 +1500,10 @@ public class WindowService : IWindowService
 
         if (_hostGuard.IsHostWindow(handle))
         {
+            // While the ancestors are unknown, a window counts as the host's because it may be (HostGuard): the error says so
+            var unknown = _hostGuard.Host?.AncestorsUnknown == true ? HostGuard.AncestorsUnknownNote : string.Empty;
             return $"Window {handle} belongs to the agent's host: the terminal, editor or chat app this server was " +
-                   "started from, or a window that one owns. Closing it can end the agent's own session. " +
+                   $"started from, or a window that one owns.{unknown} Closing it can end the agent's own session. " +
                    "Nothing was sent. Pass force=true only if the user explicitly asked to close this window.";
         }
 

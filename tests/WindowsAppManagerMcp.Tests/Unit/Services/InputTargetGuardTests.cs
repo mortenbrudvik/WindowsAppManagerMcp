@@ -198,7 +198,24 @@ public class InputTargetGuardTests
         result.Allowed.Should().BeFalse();
         result.ErrorCode.Should().Be(InputErrorCode.TargetIsAgentHost);
         result.ReceivingWindow.Should().Be(new WindowSummary(Terminal, "pwsh", "WindowsTerminal", TerminalPid));
-        result.Error.Should().Contain("agent's own host").And.Contain("windowHandle").And.Contain("allowHostTarget=true");
+        result.Error.Should().Contain("agent's own host").And.Contain("windowHandle").And.Contain("allowHostTarget=true")
+            .And.NotContain("ancestor processes");
+        VerifyNoActivation();
+    }
+
+    [Fact]
+    public void Keyboard_NoTarget_AWindowCountedAsTheHostWhileTheAncestorsAreUnknown_SaysWhy()
+    {
+        // Arrange - the host guard could not read the server's ancestors: it counts the window as the host's because it may be
+        _inFront = Terminal;
+        _hostGuard.Setup(g => g.Host).Returns(new HostSnapshot(ServerPid, [], nint.Zero, null, null, null) { AncestorsUnknown = true });
+
+        // Act
+        var result = CreateSut().CheckKeyboard(InputTarget.None, KeyboardInputKind.Text, null);
+
+        // Assert
+        result.ErrorCode.Should().Be(InputErrorCode.TargetIsAgentHost);
+        result.Error.Should().Contain("could not read its ancestor processes").And.Contain("started before it");
         VerifyNoActivation();
     }
 

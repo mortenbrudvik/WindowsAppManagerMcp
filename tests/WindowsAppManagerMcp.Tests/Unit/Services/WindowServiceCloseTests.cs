@@ -493,6 +493,34 @@ public class WindowServiceCloseTests
         _native.Verify(n => n.PostMessage(wpfDialog, It.IsAny<uint>(), It.IsAny<nint>(), It.IsAny<nint>()), Times.Never);
     }
 
+    [Fact]
+    public void CloseWindow_WhileTheAncestorsAreUnknown_RefusesAWindowOfAProgramStartedBeforeTheServer_ByTheRealHostGuard()
+    {
+        // Arrange - the process list cannot be read, so the terminal is not known by its process: a program that started before
+        // the server may be it, one that started after cannot be
+        var processes = new Mock<INativeProcessWrapper>();
+        var serverStart = new DateTime(2026, 10, 18, 9, 0, 0, DateTimeKind.Utc);
+        var older = AddWindow("CASCADIA_HOSTING_WINDOW_CLASS", processId: 703);
+        var newer = AddWindow("Notepad", processId: 807);
+        processes.Setup(p => p.GetAncestorProcesses()).Returns((IReadOnlyList<(int, DateTime?)>?)null);
+        processes.Setup(p => p.GetProcessStartTime(Environment.ProcessId)).Returns(serverStart);
+        processes.Setup(p => p.GetProcessStartTime(703)).Returns(serverStart.AddHours(-1));
+        processes.Setup(p => p.GetProcessStartTime(807)).Returns(serverStart.AddMinutes(1));
+        var hostGuard = new HostGuard(_native.Object, processes.Object);
+        var sut = new WindowService(TestDataFactory.CreateMockMonitorService().Object, _native.Object, hostGuard);
+
+        // Act
+        var olderResult = sut.CloseWindow(older, force: false);
+        var newerResult = sut.CloseWindow(newer, force: false);
+
+        // Assert
+        olderResult.ErrorCode.Should().Be(WindowErrorCode.ProtectedWindow);
+        olderResult.Error.Should().Contain("agent's host").And.Contain("could not read its ancestor processes");
+        newerResult.Success.Should().BeTrue("a program that started after the server is no ancestor of it");
+        VerifyPosted(newer);
+        _native.Verify(n => n.PostMessage(older, It.IsAny<uint>(), It.IsAny<nint>(), It.IsAny<nint>()), Times.Never);
+    }
+
     #endregion
 
     #region force
