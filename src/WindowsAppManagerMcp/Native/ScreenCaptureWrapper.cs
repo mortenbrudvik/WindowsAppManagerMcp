@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using WindowsAppManagerMcp.Services;
 using WindowsAppManagerMcp.Services.Interfaces;
 
 namespace WindowsAppManagerMcp.Native;
@@ -22,13 +23,13 @@ public class ScreenCaptureWrapper : IScreenCaptureWrapper
     public const long MaxCapturePixels = 64L * 1024 * 1024;
 
     /// <summary>The pixels were copied from the screen: what is on screen there, covering windows included.</summary>
-    internal const string ScreenBitBltMethod = "ScreenBitBlt";
+    internal const string ScreenBitBltMethod = CaptureMethods.ScreenBitBlt;
 
     /// <summary>The window drew itself (PrintWindow): covering windows do not show.</summary>
-    internal const string PrintWindowMethod = "PrintWindow";
+    internal const string PrintWindowMethod = CaptureMethods.PrintWindow;
 
     /// <summary>The window refused PrintWindow, so its device context was copied: covering windows can show.</summary>
-    internal const string BitBltFallbackMethod = "BitBltFallback";
+    internal const string BitBltFallbackMethod = CaptureMethods.BitBltFallback;
 
     /// <summary>The Capture members' reader: one copy of the lent pixels.</summary>
     private static readonly PixelReader<CaptureResult> Copy = static pixels => pixels.ToCaptureResult();
