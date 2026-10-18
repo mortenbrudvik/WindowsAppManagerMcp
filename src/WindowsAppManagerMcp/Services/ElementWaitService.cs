@@ -900,8 +900,9 @@ public sealed class ElementWaitService : IElementWaitService
             }
             catch (TimeoutException ex)
             {
+                // A read the worker did not start says so itself: the application was not asked, so it did not fail to answer
                 return new RefRead(ElementResolution.Failed(UIElementErrorCode.OperationTimedOut,
-                    $"UI Automation did not answer in time: {ex.Message}"));
+                    ex is UiaDeadlinePassedException ? ex.Message : $"UI Automation did not answer in time: {ex.Message}"));
             }
         }
 

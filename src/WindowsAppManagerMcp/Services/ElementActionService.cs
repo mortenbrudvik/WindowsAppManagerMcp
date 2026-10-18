@@ -727,8 +727,11 @@ public sealed partial class ElementActionService : IElementActionService
         catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
         {
             watch.ErrorCode = nameof(UIElementErrorCode.OperationTimedOut);
-            watch.Message = $"UI Automation did not say in time where keyboard focus is ({ex.Message}), so the keys could reach " +
-                            "another control of the window.";
+            watch.Message = ex is UiaDeadlinePassedException
+                ? "The time to check where keyboard focus is ran out before UI Automation was asked (the application was not " +
+                  "asked), so the keys could reach another control of the window."
+                : $"UI Automation did not say in time where keyboard focus is ({ex.Message}), so the keys could reach " +
+                  "another control of the window.";
             return new SelectorRefusal(nameof(InputErrorCode.TargetLostFocus), watch.Message);
         }
 
@@ -868,6 +871,13 @@ public sealed partial class ElementActionService : IElementActionService
         catch (TimeoutException) when (cancellationToken.IsCancellationRequested)
         {
             throw new OperationCanceledException(cancellationToken);
+        }
+        catch (UiaDeadlinePassedException)
+        {
+            // The worker started no read: the application was not asked, so nothing says it does not answer
+            return ReadOutcome<T>.Failed(call.Fail(nameof(UIElementErrorCode.OperationTimedOut),
+                "The call's time ran out before UI Automation was asked to read the element, so the application was not asked. " +
+                "Nothing more was done; read the element again, with a larger timeoutMs, before you retry."));
         }
         catch (TimeoutException ex)
         {

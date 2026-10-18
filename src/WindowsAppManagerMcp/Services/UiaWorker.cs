@@ -18,8 +18,9 @@ namespace WindowsAppManagerMcp.Services;
 /// engine's transaction timeout returns a stuck read within about 5 s.</para>
 /// <para>Reads with an unknown target (process 0) share one count.</para>
 /// <para>A read whose deadline has passed before it is asked for (a token already cancelled, no grace: the caller's
-/// remaining time ran out between two reads) is not started: it fails at once with a TimeoutException that says so, and it
-/// counts against no application, which did nothing wrong.</para>
+/// remaining time ran out between two reads) is not started: it fails at once with a <see cref="UiaDeadlinePassedException"/>
+/// (a TimeoutException) that says so, and it counts against no application, which did nothing wrong. Callers that describe
+/// a timeout tell it apart, so their message never blames an application that was not asked.</para>
 /// </remarks>
 public sealed class UiaWorker : IUiaWorker
 {
@@ -84,8 +85,7 @@ public sealed class UiaWorker : IUiaWorker
             // The deadline (the cancellation plus no grace) is behind the call already: a thread started now would be
             // abandoned at once and counted as stuck against the application, which then looks hung although nothing asked
             // it anything. With a grace the read still gets that long to return what it has, so it runs.
-            throw new TimeoutException(
-                "The time for this UI Automation read had run out before it started, so the application was not asked. Nothing was read.");
+            throw new UiaDeadlinePassedException();
         }
 
         var target = Key(targetProcessId);

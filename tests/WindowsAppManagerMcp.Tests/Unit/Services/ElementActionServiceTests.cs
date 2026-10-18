@@ -60,8 +60,8 @@ public sealed class ElementActionServiceTests : IDisposable
 
     /// <param name="toggleStatePoll">How often a toggle reads the state while it waits for it to change (1 ms by default);
     /// it waits 30 ms of <see cref="_clock"/> at most, so a box that never changes fails fast.</param>
-    private ElementActionService CreateSut(ToolsetSelection? toolsets = null, TimeSpan? toggleStatePoll = null) => new(
-        _tree, _worker, _registry, _guard.Object, _session, _runner, _probe.Object, _input.Object, _foreground.Object,
+    private ElementActionService CreateSut(ToolsetSelection? toolsets = null, TimeSpan? toggleStatePoll = null, IUiaWorker? worker = null) => new(
+        _tree, worker ?? _worker, _registry, _guard.Object, _session, _runner, _probe.Object, _input.Object, _foreground.Object,
         _windows.Object, _clipboard.Object, toolsets)
     {
         SettleDelay = TimeSpan.Zero,
@@ -111,6 +111,25 @@ public sealed class ElementActionServiceTests : IDisposable
             .WithPattern(value);
 
     #region The checks before an action
+
+    [Fact]
+    public async Task AnAction_WhoseTimeRanOutBeforeTheElementWasRead_SaysTheApplicationWasNotAsked_AndDoesNothing()
+    {
+        // Arrange - the call's deadline passed before the read of the element was asked for: the worker starts none
+        var invoke = new FakeInvokePattern();
+        var save = RefOf(Button("Save", invoke));
+        var worker = new ExpiringUiaWorker { Expired = true };
+
+        // Act
+        var result = await CreateSut(worker: worker).ActAsync(new ElementActionRequest(save, ElementActionKind.Invoke));
+
+        // Assert - nothing blames the application, which was never asked, and the call says what to do
+        worker.ExpiredCalls.Should().Be(1);
+        result.ErrorCode.Should().Be("OperationTimedOut");
+        result.Error.Should().Contain("was not asked").And.Contain("larger timeoutMs").And.Contain("Nothing more was done")
+            .And.NotContain("did not answer");
+        invoke.Invokes.Should().Be(0);
+    }
 
     [Fact]
     public async Task Invoke_ThroughTheInvokePattern_ReportsTheMethodAndTheStateBeforeAndAfter()
@@ -1921,6 +1940,30 @@ public sealed class ElementActionServiceTests : IDisposable
         // Assert
         result.ErrorCode.Should().Be("OperationTimedOut");
         result.Error.Should().Contain("keyboard focus").And.Contain("Nothing was typed");
+    }
+
+    [Fact]
+    public async Task SetValue_ModeType_WhenTheFocusRecheckTimeRanOutBeforeItWasAsked_SendsNoKey_AndBlamesNoApplication()
+    {
+        // Arrange - the recheck's deadline passed before its read was asked for: the worker starts none, the application is
+        // never asked where focus is
+        var worker = new ExpiringUiaWorker();
+        var name = RefOf(Edit(new FakeValuePattern("old")));
+        _input.Setup(i => i.SendKeysAsync("^a", It.IsAny<InputTarget>(), false, It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string k, InputTarget target, bool _, int _, CancellationToken _) =>
+            {
+                worker.Expired = true;
+                return SendKeysAsTheGuardWould(k, target);
+            });
+
+        // Act
+        var result = await CreateSut(worker: worker).ActAsync(new ElementActionRequest(name, ElementActionKind.SetValue, "Ada", ElementValueMode.Type));
+
+        // Assert
+        worker.ExpiredCalls.Should().Be(1);
+        result.ErrorCode.Should().Be("OperationTimedOut");
+        result.Error.Should().Contain("keyboard focus").And.Contain("was not asked").And.Contain("Nothing was typed")
+            .And.NotContain("did not say in time").And.NotContain("did not answer");
     }
 
     /// <summary>The input service's answer to keys whose target's focus recheck, run by the guard inside the gate, refuses or not.</summary>

@@ -577,6 +577,23 @@ public class ElementReadServiceTextTests
         result.Error.Should().Contain("stuck");
     }
 
+    [Fact]
+    public async Task ReadText_WhenItsTimeRanOutBeforeTheReadWasAsked_SaysTheApplicationWasNotAsked()
+    {
+        // Arrange - the deadline passed before the read was asked for: the worker starts none, so nothing waited on the app
+        var elementRef = Add(Document("text"));
+        var worker = new ExpiringUiaWorker { Expired = true };
+        var sut = new ElementReadService(_tree, worker, _registry, new ElementSearchService(_tree, _worker, _registry), _windows.Object);
+
+        // Act
+        var result = await sut.ReadTextAsync(new ElementTextRequest(elementRef, null, 0, 100, Timeout));
+
+        // Assert
+        worker.ExpiredCalls.Should().Be(1);
+        result.ErrorCode.Should().Be(UIElementErrorCode.OperationTimedOut);
+        result.Error.Should().Contain("was not asked").And.Contain("larger timeoutMs").And.NotContain("did not answer");
+    }
+
     private Task<ElementTextResult> ReadByQuery(ElementQuery query) =>
         CreateSut().ReadTextAsync(new ElementTextRequest(null, query, 0, 20_000, Timeout));
 

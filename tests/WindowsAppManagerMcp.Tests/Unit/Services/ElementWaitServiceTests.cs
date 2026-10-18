@@ -741,6 +741,25 @@ public class ElementWaitServiceTests
     }
 
     [Fact]
+    public async Task Ref_WhoseChecksRanOutOfTimeBeforeTheirReadWasAsked_TimesOut_WithoutBlamingTheApplication()
+    {
+        // Arrange - every check's deadline passed before its read was asked for: the worker starts none
+        BuildWindow(Button("OK", enabled: false));
+        var okRef = await RefOf("OKBtn");
+        var worker = new ExpiringUiaWorker { Expired = true };
+        var sut = new ElementWaitService(_search, _registry, _windowWait.Object, _tree, worker, _windows.Object, _clock, DelayAsync);
+
+        // Act
+        var result = await sut.WaitAsync(new ElementWaitRequest { Ref = okRef, Condition = ElementWaitCondition.Enabled, TimeoutMs = 600 });
+
+        // Assert - the last state says the check could not tell, and why: nothing claims the application did not answer
+        result.TimedOut.Should().BeTrue();
+        worker.ExpiredCalls.Should().BeGreaterThan(0);
+        result.LastObservedState.Should().StartWith("the last check could not tell (OperationTimedOut)")
+            .And.Contain("was not asked").And.NotContain("did not answer");
+    }
+
+    [Fact]
     public async Task Ref_Gone_IsSatisfiedWhenItsElementIsGone()
     {
         var dialog = Button("Busy");

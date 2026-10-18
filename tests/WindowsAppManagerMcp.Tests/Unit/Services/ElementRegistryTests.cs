@@ -989,6 +989,26 @@ public class ElementRegistryTests
     }
 
     [Fact]
+    public async Task ResolveAsync_WhenItsTimeRanOutBeforeTheReadWasAsked_SaysTheApplicationWasNotAsked()
+    {
+        // Arrange - the deadline passed before the read was asked for: the worker starts none, so nothing waited on the app
+        var worker = new ExpiringUiaWorker();
+        var sut = new ElementRegistry(_tree, worker, _windows.Object, 10, 1, TimeProvider.System);
+        var save = Button("Save");
+        Window(Handle, save);
+        var saveRef = Register(sut, save);
+        worker.Expired = true;
+
+        // Act
+        var resolution = await sut.ResolveAsync(saveRef!, TimeSpan.FromSeconds(5), None);
+
+        // Assert
+        worker.ExpiredCalls.Should().Be(1);
+        resolution.ErrorCode.Should().Be(UIElementErrorCode.OperationTimedOut);
+        resolution.Error.Should().Contain(saveRef).And.Contain("was not asked").And.Contain("Try again").And.NotContain("did not answer");
+    }
+
+    [Fact]
     public void Registration_FromManyThreads_GivesEveryElementItsOwnRef()
     {
         // Arrange
