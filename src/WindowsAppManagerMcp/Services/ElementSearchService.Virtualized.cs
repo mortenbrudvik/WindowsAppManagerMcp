@@ -380,16 +380,25 @@ public sealed partial class ElementSearchService
         return (ordered.Take(MaxVirtualizedContainers).ToList(), skipped);
     }
 
-    /// <summary>The result with what searchVirtualized found: its items after the tree's matches, and the lists with refs.</summary>
+    /// <summary>
+    /// The result with what searchVirtualized found: its items after the tree's matches, and the lists with refs. An item of
+    /// another process than the window's that the target policy refuses is left out, as a tree match is
+    /// (<see cref="LeftOutForProcess"/>).
+    /// </summary>
     private FindElementsResult WithVirtualized(
         FindElementsResult result, VirtualizedLookup lookup, ElementQuery query, ElementCriteria criteria, long generation,
-        CancellationToken token)
+        ForeignMatches foreign, CancellationToken token)
     {
         var window = query.WindowHandle;
         var mayRead = true;
         var items = new List<FoundElement>(lookup.Items.Count);
         foreach (var (item, locator) in lookup.Items)
         {
+            if (LeftOutForProcess(foreign, window, item, query.Detail, ref mayRead, out var identity, token))
+            {
+                continue;
+            }
+
             string? itemRef = null;
             try
             {
@@ -412,7 +421,7 @@ public sealed partial class ElementSearchService
             {
                 try
                 {
-                    found = Read(found, item, query.Detail);
+                    found = Read(found, item, query.Detail, identity);
                 }
                 catch (TimeoutException)
                 {

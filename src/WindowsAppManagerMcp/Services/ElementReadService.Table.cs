@@ -29,7 +29,7 @@ public sealed partial class ElementReadService
             return TableFailure((long)handle, lookup.Ref, startRow, denied, UIElementErrorCode.TargetDeniedByPolicy, stopwatch, null);
         }
 
-        var progress = new TableProgress(startRow, maxColumns);
+        var progress = new TableProgress(startRow, maxColumns, UiaTargets.ForeignElementsOf(_windows, _policy, handle));
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         deadline.CancelAfter(request.Timeout);
         try
@@ -70,7 +70,7 @@ public sealed partial class ElementReadService
 
         try
         {
-            if (Prepare(elementRef, handle, warmupBudget, progress.Warmup, token, out var error, out var code) is not { } resolved)
+            if (Prepare(elementRef, handle, warmupBudget, progress.Warmup, token, out _, out var error, out var code) is not { } resolved)
             {
                 return Failure(error!, code);
             }
@@ -175,7 +175,8 @@ public sealed partial class ElementReadService
         var end = (int)Math.Min((long)progress.StartRow + maxRows, pastCount ? int.MaxValue : dataRows);
         if (byItem)
         {
-            ReadGridByItem(grid, RowHeadersOf(element, rowCount, columnCount, headerRows, token), headerRows, columns, end, progress, token);
+            ReadGridByItem(grid, RowHeadersOf(element, rowCount, columnCount, headerRows, progress, token), headerRows, columns, end,
+                progress, token);
         }
         else
         {
@@ -201,7 +202,7 @@ public sealed partial class ElementReadService
             {
                 token.ThrowIfCancellationRequested();
                 var item = ItemAt(grid, headerRows + row, column);
-                cells[column] = item == null ? null : CellText(TryRead(() => _tree.ReadElement(item)), token);
+                cells[column] = item == null ? null : CellText(TryRead(() => _tree.ReadElement(item)), progress, token);
             }
 
             if (!progress.TryAddRow(cells, rowHeaders?.Invoke(row)))
@@ -264,9 +265,9 @@ public sealed partial class ElementReadService
             }
 
             string?[] texts = cells.Count == 0
-                ? [CellText(child, token)]
-                : cells.Take(columns).Select(cell => CellText(cell, token)).ToArray();
-            if (!progress.TryAddRow(texts, rowHeader == null ? null : CellText(rowHeader, token)))
+                ? [CellText(child, progress, token)]
+                : cells.Take(columns).Select(cell => CellText(cell, progress, token)).ToArray();
+            if (!progress.TryAddRow(texts, rowHeader == null ? null : CellText(rowHeader, progress, token)))
             {
                 return;
             }
@@ -371,7 +372,8 @@ public sealed partial class ElementReadService
     /// its rows hold already. Only the page's headers are read: one per grid row in order, from the grid's first row when there
     /// is one per row, else from its first data row. A row without one, or whose header has no text, gets null.
     /// </summary>
-    private Func<int, string?>? RowHeadersOf(UiaElement grid, int rowCount, int columnCount, int headerRows, CancellationToken token)
+    private Func<int, string?>? RowHeadersOf(
+        UiaElement grid, int rowCount, int columnCount, int headerRows, TableProgress progress, CancellationToken token)
     {
         if ((grid.Patterns & UiaPatterns.Table) == 0 ||
             TryRead(() => _tree.GetPattern<IUiaTablePattern>(grid.Node)?.GetRowHeaders()) is not { Count: > 0 } nodes ||
@@ -381,7 +383,7 @@ public sealed partial class ElementReadService
         }
 
         var first = nodes.Count >= rowCount ? headerRows : 0;
-        return row => first + row < nodes.Count ? CellText(TryRead(() => _tree.ReadElement(nodes[first + row])), token) : null;
+        return row => first + row < nodes.Count ? CellText(TryRead(() => _tree.ReadElement(nodes[first + row])), progress, token) : null;
     }
 
     /// <summary>The grid row of the first of a row's first cells that is a grid item, or null when none says.</summary>
@@ -553,7 +555,7 @@ public sealed partial class ElementReadService
             {
                 if (headerRow != null)
                 {
-                    (headers, headerCount) = HeaderRowTexts(headerRow, rowHeaderColumn, progress.MaxColumns, token);
+                    (headers, headerCount) = HeaderRowTexts(headerRow, rowHeaderColumn, progress, token);
                 }
 
                 progress.Begin(ElementTableSource.Rows, null, null);
@@ -562,11 +564,11 @@ public sealed partial class ElementReadService
             }
 
             string?[] texts = cells.Count == 0
-                ? [CellText(child, token)]
-                : cells.Take(progress.MaxColumns).Select(cell => CellText(cell, token)).ToArray();
+                ? [CellText(child, progress, token)]
+                : cells.Take(progress.MaxColumns).Select(cell => CellText(cell, progress, token)).ToArray();
             columnsSeen = Math.Max(columnsSeen, Math.Max(1, cells.Count));
             progress.SeeColumns(Math.Max(columnsSeen, headerCount));
-            if (!progress.TryAddRow(texts, rowHeader == null ? null : RowHeaderText(rowHeader)))
+            if (!progress.TryAddRow(texts, rowHeader == null ? null : RowHeaderText(rowHeader, progress)))
             {
                 return true;
             }
@@ -578,7 +580,7 @@ public sealed partial class ElementReadService
         {
             if (headerRow != null)
             {
-                (headers, headerCount) = HeaderRowTexts(headerRow, rowHeaderColumn, progress.MaxColumns, token);
+                (headers, headerCount) = HeaderRowTexts(headerRow, rowHeaderColumn, progress, token);
             }
 
             if (rowIndex == 0 && headers == null && !TableTypes.Contains(controlType))
@@ -609,12 +611,12 @@ public sealed partial class ElementReadService
     /// user's language and never decides.
     /// </summary>
     private (List<string?> Names, int Count) HeaderRowTexts(
-        IReadOnlyList<UiaElement> headerRow, bool? rowHeaderColumn, int maxColumns, CancellationToken token)
+        IReadOnlyList<UiaElement> headerRow, bool? rowHeaderColumn, TableProgress progress, CancellationToken token)
     {
-        var corner = rowHeaderColumn ?? (headerRow.Count > 1 && ValueText(headerRow[0]) is not { Length: > 0 } &&
-                                         ValueText(headerRow[1]) is { Length: > 0 });
+        var corner = rowHeaderColumn ?? (headerRow.Count > 1 && ValueText(headerRow[0], progress) is not { Length: > 0 } &&
+                                         ValueText(headerRow[1], progress) is { Length: > 0 });
         var columns = corner ? headerRow.Skip(1).ToList() : headerRow;
-        return (columns.Take(maxColumns).Select(header => CellText(header, token)).ToList(), columns.Count);
+        return (columns.Take(progress.MaxColumns).Select(header => CellText(header, progress, token)).ToList(), columns.Count);
     }
 
     /// <summary>
@@ -622,7 +624,7 @@ public sealed partial class ElementReadService
     /// WinForms DataGridView names each row header "Row n" (n from 0) whatever it shows, and does not expose what it shows,
     /// so its rows get no rowHeaders (roadmap M3.F39).
     /// </summary>
-    private string? RowHeaderText(UiaElement header) => ValueText(header);
+    private string? RowHeaderText(UiaElement header, TableProgress progress) => ValueText(header, progress);
 
     /// <summary>
     /// The element's children, each read, with the children of its Group children in their place (roadmap M3.F15): Explorer's
@@ -698,18 +700,26 @@ public sealed partial class ElementReadService
     /// A cell's text: its value when it has the Value pattern (never a password field's: null), else its name, else the names
     /// of its few children. The value comes first because the name of a cell that has one often describes the cell instead
     /// of holding its text: "Amount Row 1, Not sorted." in a WinForms DataGridView, "Item: ..., Column Display Index: 0" in a
-    /// WPF DataGrid, the column's name in Explorer's details rows. Null for a cell that could not be read or disappeared.
+    /// WPF DataGrid, the column's name in Explorer's details rows. So a cell whose Value pattern fails gives its name, and the
+    /// page's warning says so (<see cref="TableProgress.NoteValueFailure"/>). Null for a cell that could not be read or
+    /// disappeared, and for one of another process that the target policy refuses (<see cref="ForeignElements"/>: checked by
+    /// its own window, when it has one, and by the process its identity names, where that is read).
     /// </summary>
-    private string? CellText(UiaElement? cell, CancellationToken token)
+    private string? CellText(UiaElement? cell, TableProgress progress, CancellationToken token)
     {
         if (cell == null)
         {
             return null;
         }
 
+        if (progress.Foreign.LeavesOutWindow(cell.NativeWindowHandle))
+        {
+            return null;
+        }
+
         if ((cell.Patterns & UiaPatterns.Value) != 0)
         {
-            if (ValueOf(cell) is not { } value)
+            if (ValueOf(cell, progress) is not { } value)
             {
                 return null;
             }
@@ -736,23 +746,37 @@ public sealed partial class ElementReadService
     }
 
     /// <summary>The value of a cell or header that has the Value pattern (see <see cref="ValueOf"/>), else null.</summary>
-    private string? ValueText(UiaElement cell) => (cell.Patterns & UiaPatterns.Value) != 0 ? ValueOf(cell) : null;
+    private string? ValueText(UiaElement cell, TableProgress progress) =>
+        (cell.Patterns & UiaPatterns.Value) != 0 ? ValueOf(cell, progress) : null;
 
     /// <summary>
-    /// The value of a cell with the Value pattern, empty when it has none or the read fails. Null for a password field, or one
-    /// whose flag cannot be read, whose value is never read, and for a cell that is gone: null, as a cell the table no longer
-    /// has (the next GetItem or row read finds a table that is gone).
+    /// The value of a cell with the Value pattern, empty when it has none or the read fails (noted for the page's warning).
+    /// Null for a password field, or one whose flag cannot be read, whose value is never read; for a cell of another process
+    /// than the window's that the target policy refuses (its identity names its process; noted too); and for a cell that is
+    /// gone: null, as a cell the table no longer has (the next GetItem or row read finds a table that is gone).
     /// </summary>
-    private string? ValueOf(UiaElement cell)
+    private string? ValueOf(UiaElement cell, TableProgress progress)
     {
-        if (TryRead(() => _tree.ReadIdentity(cell.Node)) is not { IsPassword: false })
+        if (TryRead(() => _tree.ReadIdentity(cell.Node)) is not { IsPassword: false } identity)
         {
             return null;
         }
 
+        if (progress.Foreign.LeavesOut(identity.ProcessId))
+        {
+            return null;
+        }
+
+        var failures = new List<string>(1);
         try
         {
-            return TryValue(cell.Node) ?? string.Empty;
+            var value = TryValue(cell.Node, failures);
+            if (failures.Count > 0)
+            {
+                progress.NoteValueFailure(failures[0]);
+            }
+
+            return value ?? string.Empty;
         }
         catch (UiaElementUnavailableException)
         {
@@ -799,10 +823,29 @@ public sealed partial class ElementReadService
     /// What a table read has read so far, shared with the caller so that the rows read before the worker abandons a stuck
     /// call are still returned. Whole rows only; every member is thread safe.
     /// </summary>
-    private sealed class TableProgress(int startRow, int maxColumns)
+    private sealed class TableProgress(int startRow, int maxColumns, ForeignElements foreign)
     {
         /// <summary>The bytes of a null cell in the result's JSON, with its comma.</summary>
         private const int NullCellBytes = 5;
+
+        private int _valueFailures;
+        private string? _firstValueFailure;
+
+        /// <summary>The target policy's check of the cells of another process than the window's (see <see cref="CellText"/>).</summary>
+        public ForeignElements Foreign { get; } = foreign;
+
+        /// <summary>
+        /// A cell's or header's Value pattern failed (<paramref name="failure"/> says how), so its name or its children's names
+        /// were taken in its place: the page's warning says how many and the first failure.
+        /// </summary>
+        public void NoteValueFailure(string failure)
+        {
+            lock (_gate)
+            {
+                _valueFailures++;
+                _firstValueFailure ??= failure;
+            }
+        }
 
         private readonly object _gate = new();
         private readonly List<IReadOnlyList<string?>> _rows = [];
@@ -973,7 +1016,14 @@ public sealed partial class ElementReadService
                       $"again with startRow {StartRow} and a larger timeoutMs."
                     : null;
                 var moved = _refMoved ? ElementRefs.MovedWarning(_ref!) : null;
-                var warning = string.Join(" ", new[] { moved, _warning, timedOut, _note }.OfType<string>());
+                var valueFailed = _valueFailures == 0
+                    ? null
+                    : $"{(_valueFailures == 1 ? "1 cell's" : $"{_valueFailures} cells'")} Value pattern failed (first: " +
+                      $"{_firstValueFailure}), so {(_valueFailures == 1 ? "its name was" : "their names were")} returned in its " +
+                      "place: such a name is often a description of the cell (\"Amount Row 1, Not sorted.\") rather than its text. " +
+                      "Read the page again; if it keeps failing, read those cells with read_element_text.";
+                var leftOut = Foreign.LeftOutWarning(null, "those cells are null");
+                var warning = string.Join(" ", new[] { moved, _warning, timedOut, valueFailed, leftOut, _note }.OfType<string>());
                 return new ElementTableResult(
                     Success: true,
                     Ref: _ref,

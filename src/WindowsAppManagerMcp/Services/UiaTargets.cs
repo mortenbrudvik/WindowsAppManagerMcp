@@ -100,6 +100,16 @@ public static class UiaTargets
         "environment and no tool argument changes it; ask the user to do this step.";
 
     /// <summary>
+    /// The check of the elements of other processes inside <paramref name="windowHandle"/>, for one read of a window that
+    /// passed <see cref="ReadVerdict"/> (see <see cref="ForeignElements"/>).
+    /// </summary>
+    /// <param name="windows">The window wrapper, or null to check nothing.</param>
+    /// <param name="policy">The target policy, or null to check nothing.</param>
+    /// <param name="windowHandle">The window read.</param>
+    public static ForeignElements ForeignElementsOf(INativeWindowWrapper? windows, ITargetPolicy? policy, nint windowHandle) =>
+        new(windows, policy, windowHandle);
+
+    /// <summary>
     /// Why the window must not be read, or null when it responds (or cannot be checked): Windows reports its thread hung
     /// (IsHungAppWindow), or it does not answer a no-op message within <see cref="RespondTimeoutMs"/> (SendMessageTimeout
     /// WM_NULL with SMTO_ABORTIFHUNG). For a UWP frame window (an ApplicationFrameWindow, or another window of
@@ -188,5 +198,241 @@ public static class UiaTargets
             // Only the stuck-read count depends on it
             return 0;
         }
+    }
+}
+
+/// <summary>
+/// The target policy's check of the elements of another process than the window read (an embedded WebView2, an app or preview
+/// handler shown as a child window of another app), for one read of a window that passed <see cref="UiaTargets.ReadVerdict"/>:
+/// that verdict is the window's, and UI Automation serves such an element from its own process, which the user may deny. An
+/// element of the window's own process (for a UWP frame also of the app it shows, see <see cref="UiaTargets.TargetProcessId"/>)
+/// is allowed with the window; any other process is matched on its own name, as get_focused_element checks the element it
+/// read (<see cref="TargetPolicyExtensions.EvaluateFailClosed(ITargetPolicy, IReadOnlyCollection{string?})"/>), and fails
+/// closed: an element whose process is not known (0), or whose process cannot be named, is refused while the policy denies
+/// anything. The policy matches process names, so that is the verdict a check of the element's own window would give too,
+/// without the walk up its ancestors to find it. Win32 reads only, each process named once per read; nothing is checked
+/// without a policy that denies anything (<see cref="Active"/>). Thread safe: a walk the worker abandoned can still be
+/// adding to it while its caller reads it.
+/// </summary>
+public sealed class ForeignElements
+{
+    private readonly INativeWindowWrapper? _windows;
+    private readonly ITargetPolicy? _policy;
+    private readonly nint _window;
+    private readonly object _gate = new();
+    private readonly Dictionary<int, (string? Name, TargetPolicyVerdict Verdict)> _verdicts = [];
+    private readonly Dictionary<int, int> _refused = [];
+    private HashSet<int>? _windowProcesses;
+
+    internal ForeignElements(INativeWindowWrapper? windows, ITargetPolicy? policy, nint window)
+    {
+        _windows = windows;
+        _policy = policy;
+        _window = window;
+        Active = windows != null && policy != null && window != nint.Zero && policy.DeniesAnything();
+    }
+
+    /// <summary>Whether anything can be refused: there is a policy that denies anything, and the Win32 reads to check it.</summary>
+    public bool Active { get; }
+
+    /// <summary>
+    /// The verdict on an element that UI Automation says belongs to <paramref name="processId"/> (its ProcessId property):
+    /// allowed for the window's own processes, else by the process's name, failing closed (see the class).
+    /// </summary>
+    public TargetPolicyVerdict Verdict(int processId)
+    {
+        if (!Active)
+        {
+            return TargetPolicyVerdict.Allow;
+        }
+
+        if (processId <= 0)
+        {
+            return TargetPolicyVerdict.Deny(null, "the element's process is not known, so it cannot be checked against the policy");
+        }
+
+        lock (_gate)
+        {
+            if (WindowProcesses().Contains(processId))
+            {
+                return TargetPolicyVerdict.Allow;
+            }
+
+            if (!_verdicts.TryGetValue(processId, out var known))
+            {
+                string? name = null;
+                try
+                {
+                    name = _windows!.GetProcessName((uint)processId);
+                    known = (name, _policy!.EvaluateFailClosed([name]));
+                }
+                catch (Exception)
+                {
+                    known = (name, TargetPolicyVerdict.Unreadable);
+                }
+
+                _verdicts[processId] = known;
+            }
+
+            return known.Verdict;
+        }
+    }
+
+    /// <summary>
+    /// Whether a walk or search leaves out an element that UI Automation says belongs to <paramref name="processId"/>: true
+    /// when <see cref="Verdict"/> refuses it, and then it is counted for <see cref="LeftOutWarning"/>.
+    /// </summary>
+    public bool LeavesOut(int processId)
+    {
+        if (Verdict(processId).Allowed)
+        {
+            return false;
+        }
+
+        lock (_gate)
+        {
+            _refused[processId] = _refused.GetValueOrDefault(processId) + 1;
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Whether a walk or search leaves out the UI Automation element of <paramref name="elementWindow"/> (its
+    /// NativeWindowHandle), by the process of that window (Win32's, see <see cref="LeavesOut"/>). Never for the window read
+    /// itself, nor for no window (0), which says nothing about the element's process.
+    /// </summary>
+    public bool LeavesOutWindow(nint elementWindow) =>
+        Active && elementWindow != nint.Zero && elementWindow != _window && LeavesOut(ProcessOf(elementWindow));
+
+    /// <summary>
+    /// The TargetDeniedByPolicy message of a read that returns an element's value or text (<see cref="RefusalMessage"/>), or
+    /// null when it is allowed: by <paramref name="processId"/>, the process the element's identity names, when that was
+    /// read; else by the process of <paramref name="elementWindow"/>, the window the element is the UI Automation element of,
+    /// when it has one (a Win32 read); else allowed with the window.
+    /// </summary>
+    public string? Refusal(int? processId, nint elementWindow)
+    {
+        if (!Active)
+        {
+            return null;
+        }
+
+        int process;
+        if (processId is { } known)
+        {
+            process = known;
+        }
+        else if (elementWindow == nint.Zero || elementWindow == _window)
+        {
+            return null;
+        }
+        else
+        {
+            process = ProcessOf(elementWindow);
+        }
+
+        return Verdict(process) is { Allowed: false } verdict ? RefusalMessage(process, verdict) : null;
+    }
+
+    /// <summary>The process of a window (Win32), or 0 when it cannot be read.</summary>
+    private int ProcessOf(nint window)
+    {
+        try
+        {
+            return (int)_windows!.GetWindowThreadProcessId(window);
+        }
+        catch (Exception)
+        {
+            return 0;
+        }
+    }
+
+    /// <summary>How many elements were left out unread (<see cref="LeavesOut"/>, <see cref="LeavesOutWindow"/>).</summary>
+    public int LeftOutCount
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _refused.Values.Sum();
+            }
+        }
+    }
+
+    /// <summary>
+    /// The TargetDeniedByPolicy message of a read that returns an element's value or text, refused for the element's own
+    /// process (<paramref name="verdict"/> from <see cref="Verdict"/>).
+    /// </summary>
+    public string RefusalMessage(int processId, TargetPolicyVerdict verdict) =>
+        $"The element belongs to {Describe(processId)}, not to the process of window {(long)_window}, and the server's target " +
+        $"policy refuses it: {verdict.Reason}. Nothing was read: the policy covers an app shown inside another app's window (an " +
+        "embedded web view, a preview, a child window of another program) as it covers the app's own windows. It is set by the " +
+        "user in the server's environment and no tool argument changes it; ask the user to do this step.";
+
+    /// <summary>
+    /// What a walk or search says about the elements it left out unread (<see cref="LeavesOut"/>), after
+    /// <paramref name="code"/> and a colon when one is given; null when it left none out.
+    /// </summary>
+    /// <param name="what">What became of them, such as "those cells are null".</param>
+    public string? LeftOutWarning(string? code, string what)
+    {
+        List<(int ProcessId, int Count)> refused;
+        lock (_gate)
+        {
+            refused = _refused.Select(r => (r.Key, r.Value)).OrderBy(r => r.Key).ToList();
+        }
+
+        if (refused.Count == 0)
+        {
+            return null;
+        }
+
+        var count = refused.Sum(r => r.Count);
+        var processes = string.Join(", ", refused.Select(r => Describe(r.ProcessId)));
+        var reasons = string.Join("; ", refused.Select(r => Verdict(r.ProcessId).Reason).OfType<string>().Distinct());
+        var message =
+            $"{count} element{(count == 1 ? "" : "s")} of window {(long)_window} belong{(count == 1 ? "s" : "")} to {processes}, " +
+            $"not to the window's process, and the server's target policy refuses {(refused.Count == 1 ? "it" : "them")} " +
+            $"({reasons}). Nothing of {(count == 1 ? "it" : "them")} was read: {what}. The policy is set by the user in the " +
+            "server's environment and no tool argument changes it; ask the user to do steps in that app.";
+        return code == null ? message : $"{code}: {message}";
+    }
+
+    /// <summary>"process 4242 ('KeePass')", or without a name when it cannot be read.</summary>
+    private string Describe(int processId)
+    {
+        string? name;
+        lock (_gate)
+        {
+            name = _verdicts.GetValueOrDefault(processId).Name;
+        }
+
+        return processId <= 0
+            ? "a process UI Automation does not name"
+            : string.IsNullOrWhiteSpace(name) ? $"process {processId}" : $"process {processId} ('{name}')";
+    }
+
+    /// <summary>The window's own process, and for a UWP frame the app's (Win32 reads, once). Under the lock.</summary>
+    private HashSet<int> WindowProcesses()
+    {
+        if (_windowProcesses != null)
+        {
+            return _windowProcesses;
+        }
+
+        var processes = new HashSet<int>();
+        try
+        {
+            processes.Add((int)_windows!.GetWindowThreadProcessId(_window));
+        }
+        catch (Exception)
+        {
+            // Not known: every element is then checked by its own process
+        }
+
+        processes.Add(UiaTargets.TargetProcessId(_windows, _window));
+        processes.Remove(0);
+        return _windowProcesses = processes;
     }
 }
