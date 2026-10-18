@@ -17,7 +17,13 @@ namespace WindowsAppManagerMcp.Services;
 /// list row it is in (<see cref="ElementRows"/>: up to 8 ancestors, each read once for all the matches), its ref, its click
 /// point (UI Automation's clickable point, else the centre of its bounds; none for an offscreen element) and, for detail
 /// standard or full, its state, each one call per property group. A withinRef moved to a re-created element
-/// (<see cref="ResolvedElement.Moved"/>) is searched below, and the result says so (refMoved, warning).</para>
+/// (<see cref="ResolvedElement.Moved"/>) is searched below, and the result says so (refMoved, warning). A match of another
+/// process than its window's that the target policy refuses (an element of an embedded WebView2, or of an app shown as a child
+/// window of another app: <see cref="ForeignElements"/>) is left out before its row, ref or details are read, and counted as
+/// a part skipped (truncationReason PartsSkipped, matchCount without it, a warning naming the process), at every detail level:
+/// its process comes with the search's read of it (<see cref="UiaElement.ProcessId"/>), so the check costs no further UI
+/// Automation call. The provider still evaluates the criteria on such an element: only that it matched, and whose it is,
+/// shows.</para>
 /// <para>Each match is registered with the search's identity criteria as its selector and whether they fit only it in the
 /// window (<see cref="ElementOrigin.Unique"/>), which decides whether a resolution may later move its ref to the element
 /// re-created. Proven only by a complete search of the whole window (not below withinRef): without visibleOnly or
@@ -138,7 +144,11 @@ public sealed partial class ElementSearchService : IElementSearchService
         ArgumentNullException.ThrowIfNull(query);
         var stopwatch = Stopwatch.StartNew();
         var handle = query.WindowHandle;
-        var started = new SearchStarted { MaxResults = Math.Clamp(query.MaxResults, 1, MaxResultsLimit) };
+        var started = new SearchStarted
+        {
+            MaxResults = Math.Clamp(query.MaxResults, 1, MaxResultsLimit),
+            Foreign = new ForeignMatches(_windows, _policy)
+        };
 
         FindElementsResult Failure(string error, UIElementErrorCode code, string? title = null) =>
             new(false, (long)handle, title, 0, false, null, Elapsed(stopwatch), query.WithinRef, Error: error, ErrorCode: code,
@@ -215,11 +225,23 @@ public sealed partial class ElementSearchService : IElementSearchService
         {
             // The worker gave up on a search stuck in an application that does not answer: what it found is still returned,
             // described from what the search read
-            return started.Snapshot() is { MatchCount: > 0 } partial
-                ? Result(query, query.WithinRef, started.Title, partial with { Stop = ElementSearchStop.Timeout },
-                    Describe(query, criteria, partial.Matches, started.Generation, mayRead: false, _ => null, default), started.Warmup,
-                    stopwatch) with { Scope = scope }
-                : Failure($"UI Automation did not answer in time: {ex.Message}", UIElementErrorCode.OperationTimedOut, started.Title);
+            if (started.Snapshot() is not { MatchCount: > 0 } partial)
+            {
+                return Failure($"UI Automation did not answer in time: {ex.Message}", UIElementErrorCode.OperationTimedOut, started.Title);
+            }
+
+            // Checked afresh for their process: the abandoned worker may still be counting the matches it left out
+            var foreign = new ForeignMatches(_windows, _policy);
+            var described = Describe(query, criteria, partial.Matches, started.Generation, mayRead: false, _ => null, foreign, default);
+            var leftOut = foreign.Warning();
+            return Result(query, query.WithinRef, started.Title,
+                partial with { Stop = ElementSearchStop.Timeout, MatchCount = Math.Max(0, partial.MatchCount - foreign.LeftOut) },
+                described, started.Warmup, stopwatch) with
+            {
+                Scope = scope,
+                Warning = leftOut,
+                PolicyLeftOut = leftOut == null ? null : new PolicyLeftOutMatches(foreign.LeftOut, leftOut, OtherwiseComplete: false)
+            };
         }
     }
 
@@ -299,10 +321,11 @@ public sealed partial class ElementSearchService : IElementSearchService
             // searchVirtualized (roadmap M3.10): the named window's lists, asked for items they have not realized
             var virtualized = Virtualized(call, token);
             var unique = MayProveUnique(call, virtualized) ? Uniqueness(call, token) : _ => null;
-            var result = Result(call, Describe(call.Query, call.Criteria, call.Total.Matches, call.Generation, mayRead: true, unique, token));
+            var result = Result(call, Describe(call.Query, call.Criteria, call.Total.Matches, call.Generation, mayRead: true, unique,
+                call.Started.Foreign, token));
             if (virtualized != null)
             {
-                result = WithVirtualized(result, virtualized, call.Query, call.Criteria, call.Generation, token);
+                result = WithVirtualized(result, virtualized, call.Query, call.Criteria, call.Generation, call.Started.Foreign, token);
             }
 
             return Finished(call, result);
@@ -507,7 +530,7 @@ public sealed partial class ElementSearchService : IElementSearchService
     private VirtualizedLookup? Virtualized(SearchCall call, CancellationToken token) =>
         call.Query.SearchVirtualized && call.Root != null
             ? SearchVirtualized(call.Criteria, call.Query.WindowHandle, call.Root, call.Query.WithinRef != null, call.Total,
-                call.MaxResults, token)
+                call.MaxResults, call.Started.Foreign.Of(call.Query.WindowHandle), token)
             : null;
 
     /// <summary>
@@ -517,15 +540,40 @@ public sealed partial class ElementSearchService : IElementSearchService
     private static bool MayProveUnique(SearchCall call, VirtualizedLookup? virtualized) =>
         call.Query.WithinRef == null && virtualized is not ({ Items.Count: > 0 } or { Stop: not null });
 
-    private static FindElementsResult Result(SearchCall call, IReadOnlyList<FoundElement> elements) =>
-        Result(call.Query, call.WithinRef, call.Started.Title, call.Total, elements, call.Started.Warmup, call.Stopwatch);
+    /// <summary>
+    /// The result of the described matches. Matches left out for their process (<see cref="ForeignMatches"/>) were found but
+    /// are not counted; <see cref="Finished"/> makes them a part skipped (truncationReason PartsSkipped), so that a caller that
+    /// needs one match (read_element_text, element_action) does not take another for the only one.
+    /// </summary>
+    private static FindElementsResult Result(SearchCall call, IReadOnlyList<FoundElement> elements)
+    {
+        var leftOut = call.Started.Foreign.LeftOut;
+        var total = leftOut == 0 ? call.Total : call.Total with { MatchCount = Math.Max(0, call.Total.MatchCount - leftOut) };
+        return Result(call.Query, call.WithinRef, call.Started.Title, total, elements, call.Started.Warmup, call.Stopwatch);
+    }
 
-    /// <summary>The result with withinRef's move and the scope's fields.</summary>
+    /// <summary>
+    /// The result with withinRef's move, the matches left out for their process (also items of searchVirtualized: a part
+    /// skipped, with a warning that says whose they are, and <see cref="FindElementsResult.PolicyLeftOut"/> for the callers
+    /// that need one match), and the scope's fields.
+    /// </summary>
     private static FindElementsResult Finished(SearchCall call, FindElementsResult result)
     {
         if (call.WithinMoved)
         {
             result = result with { RefMoved = true, Warning = "withinRef: " + ElementRefs.MovedWarning(call.WithinRef!) };
+        }
+
+        if (call.Started.Foreign.Warning() is { } leftOut)
+        {
+            var otherwiseComplete = result.TruncationReason is null or ElementSearchTruncation.MaxResults && call.OverLimit == 0;
+            result = result with
+            {
+                Truncated = true,
+                TruncationReason = MostSerious(result.TruncationReason, ElementSearchTruncation.PartsSkipped),
+                Warning = result.Warning == null ? leftOut : $"{result.Warning} {leftOut}",
+                PolicyLeftOut = new PolicyLeftOutMatches(call.Started.Foreign.LeftOut, leftOut, otherwiseComplete)
+            };
         }
 
         return call.Scope == ElementSearchScope.Window
@@ -823,16 +871,22 @@ public sealed partial class ElementSearchService : IElementSearchService
     /// The kept matches as find_ui_elements returns them, each registered under the window it was found in, with the list
     /// row it is in (<see cref="ElementRows"/>: read up its ancestors, each ancestor once for all the matches). With
     /// <paramref name="mayRead"/> false (an abandoned search, read on the caller's thread) nothing is read: every field
-    /// comes from what the search read, and no row is recorded.
+    /// comes from what the search read, and no row is recorded. A match of another process than its window's that the target
+    /// policy refuses is left out before anything more of it is read or it is registered (<see cref="ForeignMatches"/>).
     /// </summary>
     private List<FoundElement> Describe(
         ElementQuery query, ElementCriteria criteria, IReadOnlyList<(nint Window, UiaElement Element)> matches, long generation,
-        bool mayRead, Func<UiaElement, bool?> unique, CancellationToken token)
+        bool mayRead, Func<UiaElement, bool?> unique, ForeignMatches foreign, CancellationToken token)
     {
         var found = new List<FoundElement>(matches.Count);
         var rows = ElementRows.For(_tree);
         foreach (var (window, match) in matches)
         {
+            if (LeftOutForProcess(foreign, window, match, query.Detail, ref mayRead, out var identity, token))
+            {
+                continue;
+            }
+
             ElementRow? row = null;
             if (mayRead && !token.IsCancellationRequested)
             {
@@ -872,7 +926,7 @@ public sealed partial class ElementSearchService : IElementSearchService
             {
                 try
                 {
-                    element = Read(element, match, query.Detail);
+                    element = Read(element, match, query.Detail, identity);
                 }
                 catch (TimeoutException)
                 {
@@ -886,6 +940,54 @@ public sealed partial class ElementSearchService : IElementSearchService
 
         return found;
     }
+
+    /// <summary>
+    /// Whether <paramref name="match"/>, found in <paramref name="window"/>, is left out for its process: it belongs to another
+    /// process than the window's, which the target policy refuses (<see cref="ForeignMatches"/>). Checked by the process the
+    /// search read with it (<see cref="UiaElement.ProcessId"/>), at every detail level and with no further call. Only a match
+    /// built without that read is checked otherwise: by the process its identity names for detail standard and full, which
+    /// read that identity anyway for the password flag (<paramref name="identity"/>, for the reads after it, which never
+    /// read it again: a value is never read past an identity that could not be read), else by its own window's (a Win32 read).
+    /// A provider that does not answer sets <paramref name="mayRead"/> false, as the reads after it do.
+    /// </summary>
+    private bool LeftOutForProcess(
+        ForeignMatches foreign, nint window, UiaElement match, ElementDetail detail, ref bool mayRead, out KnownIdentity? identity,
+        CancellationToken token)
+    {
+        identity = null;
+        var check = foreign.Of(window);
+        if (!check.Active)
+        {
+            return false;
+        }
+
+        if (match.ProcessId != null || detail == ElementDetail.Minimal)
+        {
+            return check.LeavesOut(match);
+        }
+
+        UiaNodeIdentity? read = null;
+        if (mayRead && !token.IsCancellationRequested)
+        {
+            try
+            {
+                read = Try(() => _tree.ReadIdentity(match.Node));
+            }
+            catch (TimeoutException)
+            {
+                mayRead = false;
+            }
+        }
+
+        identity = new KnownIdentity(read);
+        return check.LeavesOut(match, read?.ProcessId);
+    }
+
+    /// <summary>
+    /// A match's identity as the policy check read it (<see cref="LeftOutForProcess"/>): <paramref name="Value"/> is null when
+    /// that read failed, and then the reads after it leave the value unread rather than read the identity again.
+    /// </summary>
+    private sealed record KnownIdentity(UiaNodeIdentity? Value);
 
     /// <summary>A match as detail minimal reports it, from what the search read (no further call); the click point is the
     /// centre of its bounds. Shared with wait_for_element (roadmap M3.8).</summary>
@@ -906,8 +1008,12 @@ public sealed partial class ElementSearchService : IElementSearchService
             Patterns: UiaPatternNames.All(match.Patterns));
     }
 
-    /// <summary>The click point, and the details <paramref name="detail"/> asks for, read now; a read that fails is left out.</summary>
-    private FoundElement Read(FoundElement element, UiaElement match, ElementDetail detail)
+    /// <summary>
+    /// The click point, and the details <paramref name="detail"/> asks for, read now; a read that fails is left out.
+    /// <paramref name="known"/> is the match's identity when the policy check read it already (or tried to): it is not read
+    /// again, so a value is never read past an identity that could not be read.
+    /// </summary>
+    private FoundElement Read(FoundElement element, UiaElement match, ElementDetail detail, KnownIdentity? known = null)
     {
         var node = match.Node;
         if (!element.IsOffscreen && element.Bounds != null && Try(() => _tree.GetClickablePoint(node)) is { } point)
@@ -921,7 +1027,7 @@ public sealed partial class ElementSearchService : IElementSearchService
         }
 
         var patterns = match.Patterns;
-        var identity = Try(() => _tree.ReadIdentity(node));
+        var identity = known != null ? known.Value : Try(() => _tree.ReadIdentity(node));
         var interaction = Try(() => _tree.ReadInteraction(node));
         var isPassword = identity?.IsPassword == true;
 
@@ -1063,6 +1169,31 @@ public sealed partial class ElementSearchService : IElementSearchService
                 ErrorCode: code, AccessibilityWarmup: started.Warmup);
     }
 
+    /// <summary>
+    /// The target policy's check of the matches whose process is not their window's (an element of an embedded WebView2, of an
+    /// app or preview shown as a child window of another app; see <see cref="ForeignElements"/>), for one call: one check per
+    /// window of the scope, so that each process is named once per window. A refused match is left out unread and counted
+    /// (see <see cref="LeftOutForProcess"/>, <see cref="Result(SearchCall, IReadOnlyList{FoundElement})"/>). Thread safe.
+    /// </summary>
+    private sealed class ForeignMatches(INativeWindowWrapper? windows, ITargetPolicy? policy)
+    {
+        private readonly System.Collections.Concurrent.ConcurrentDictionary<nint, ForeignElements> _checks = new();
+
+        /// <summary>The check of the matches found in <paramref name="window"/>.</summary>
+        public ForeignElements Of(nint window) => _checks.GetOrAdd(window, w => UiaTargets.ForeignElementsOf(windows, policy, w));
+
+        /// <summary>How many matches were left out so far.</summary>
+        public int LeftOut => _checks.Values.Sum(check => check.LeftOutCount);
+
+        /// <summary>What the result says about the matches left out, or null when none was.</summary>
+        public string? Warning() =>
+            string.Join(" ", _checks.OrderBy(c => (long)c.Key)
+                    .Select(c => c.Value.LeftOutWarning(null, "they are left out of the matches, with no ref"))
+                    .OfType<string>()) is { Length: > 0 } warning
+                ? warning
+                : null;
+    }
+
     /// <summary>A window of the scope, searched: its node, its search's outcome and the matches kept from it.</summary>
     /// <param name="Repeated">The outcome's kept matches that a window searched before had kept already (the same runtime
     /// id): not kept again, and not counted.</param>
@@ -1093,6 +1224,9 @@ public sealed partial class ElementSearchService : IElementSearchService
 
         /// <summary>How many matches the call returns, from all its windows together.</summary>
         public int MaxResults { get; init; } = MaxResultsLimit;
+
+        /// <summary>The target policy's check of the matches of other processes than their windows', for the whole call.</summary>
+        public ForeignMatches Foreign { get; init; } = new(null, null);
 
         public string? Title
         {

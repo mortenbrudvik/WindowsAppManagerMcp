@@ -2066,7 +2066,8 @@ public class UIElementServiceTests
     /// The walk with the real warm-up and the element registry over a WinUI 3 window with a WebView2 hosted as a visual
     /// (<see cref="FakeWinUi3WebView2"/>), whose process started an msedgewebview2.exe.
     /// </summary>
-    private (UIElementService Sut, FakeWinUi3WebView2 App) WinUi3Sut(bool withDocument = true)
+    /// <param name="policy">The target policy the walk checks the page's process with; none by default.</param>
+    private (UIElementService Sut, FakeWinUi3WebView2 App) WinUi3Sut(bool withDocument = true, ITargetPolicy? policy = null)
     {
         _win32[Handle] = new Win32Window("WinUIDesktopWin32WindowClass", 0, AppProcess);
         _win32[0x2010] = new Win32Window("Microsoft.UI.Content.DesktopChildSiteBridge", Handle, AppProcess);
@@ -2074,6 +2075,7 @@ public class UIElementServiceTests
         var app = new FakeWinUi3WebView2(withDocument);
         _tree.WithWindow(Handle, app.Window);
         var windows = Win32Windows();
+        windows.Setup(w => w.GetProcessName(AppProcess)).Returns("WamWebCheck");
         var processes = new Mock<INativeProcessWrapper>();
         processes.Setup(p => p.GetProcessList()).Returns(new Dictionary<int, (int ParentProcessId, string ImageName)>
         {
@@ -2082,7 +2084,7 @@ public class UIElementServiceTests
         });
         var warmup = new AccessibilityWarmup(_tree, windows.Object, processes.Object, wait: (_, _) => { });
         var registry = new ElementRegistry(_tree, _worker, windows.Object, ElementRegistry.DefaultCapacity, 1, TimeProvider.System);
-        return (new UIElementService(_tree, _worker, windows.Object, warmup, registry), app);
+        return (new UIElementService(_tree, _worker, windows.Object, warmup, registry, policy), app);
     }
 
     private const string WinUi3Shape =
@@ -2192,6 +2194,165 @@ public class UIElementServiceTests
 
     private static IEnumerable<UIElementInfo> All(IReadOnlyList<UIElementInfo>? elements) =>
         elements?.SelectMany(e => All(e.Children).Prepend(e)) ?? [];
+
+    #endregion
+
+    #region Elements of another process that the target policy refuses
+
+    /// <summary>The default deny list, and the WebView2 runtime on it too.</summary>
+    private static readonly TargetPolicy DeniesWebView2 =
+        new(new TargetPolicySettings([.. TargetPolicySettings.DefaultDeniedProcesses, "msedgewebview2"], null, "test"));
+
+    /// <summary>The walk with the real warm-up and <paramref name="policy"/>, over <see cref="_win32"/>; the window's app is allowed.</summary>
+    private UIElementService PolicySut(ITargetPolicy policy, Action<Mock<INativeWindowWrapper>>? setup = null)
+    {
+        var windows = Win32Windows();
+        windows.Setup(w => w.GetProcessName(AppProcess)).Returns("WamFixture");
+        setup?.Invoke(windows);
+        var warmup = new AccessibilityWarmup(_tree, windows.Object, new Mock<INativeProcessWrapper>().Object, wait: (_, _) => { });
+        return new UIElementService(_tree, _worker, windows.Object, warmup, policy: policy);
+    }
+
+    [Fact]
+    public async Task GetUIElements_LeavesOutAWebView2OfADeniedProcess_ItsPageAndItsWindow_AndSaysSo()
+    {
+        // Arrange - the user denies the WebView2 runtime; the window's own app is allowed
+        WpfWithWebView2();
+
+        // Act
+        var result = await PolicySut(DeniesWebView2).GetUIElementsAsync(Handle, maxDepth: 5);
+
+        // Assert - the page listed under its host, and the host's own subtree, are left out unread and counted
+        result.Success.Should().BeTrue(result.Error);
+        Shape(result.Elements).Should().Be("HwndHost,Native");
+        result.SkippedElementCount.Should().Be(2);
+        result.TruncationReason.Should().Be(UIElementTruncationReason.ElementsSkipped);
+        result.Warnings.Should().ContainSingle(w => w.StartsWith("TargetDeniedByPolicy: ") && w.Contains("msedgewebview2"));
+        var json = System.Text.Json.JsonSerializer.Serialize(result.Elements);
+        json.Should().NotContain("Web button").And.NotContain("Heading").And.NotContain("BrowserRootView");
+    }
+
+    [Fact]
+    public async Task GetUIElements_ListsAWebView2OfAnAllowedProcess_AsBefore()
+    {
+        WpfWithWebView2();
+
+        var result = await PolicySut(new TargetPolicy(TargetPolicySettings.Default)).GetUIElementsAsync(Handle, maxDepth: 5);
+
+        Shape(result.Elements).Should().Be(
+            "HwndHost(WAM fixture web content(Chrome Legacy Window(Heading,Web button)," +
+            "BrowserRootView(NonClientView(EmbeddedBrowserFrameView)))),Native");
+        result.SkippedElementCount.Should().Be(0);
+        result.Warnings.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task GetUIElements_LeavesOutAChildWindowOfADeniedApp_WithEverythingInsideIt()
+    {
+        // Arrange - a password manager's window embedded as a child window of the allowed app
+        const nint vault = 0x2100;
+        const uint vaultProcess = 7300;
+        _win32[vault] = new Win32Window("KeePassEntryView", Handle, vaultProcess);
+        Window(
+            new FakeUiaNode("Pane", "Entry") { NativeWindowHandle = vault }.With(new FakeUiaNode("Text", "Recovery code 4829-1337")),
+            new FakeUiaNode("Button", "OK"));
+
+        // Act
+        var result = await PolicySut(new TargetPolicy(TargetPolicySettings.Default),
+            windows => windows.Setup(w => w.GetProcessName(vaultProcess)).Returns("KeePass")).GetUIElementsAsync(Handle);
+
+        // Assert
+        Shape(result.Elements).Should().Be("OK");
+        result.Warnings.Should().ContainSingle(w => w.Contains("KeePass") && w.Contains("process 7300"));
+        _tree.ChildListings.Should().NotContain("Entry", "nothing inside it is read");
+        System.Text.Json.JsonSerializer.Serialize(result).Should().NotContain("4829");
+    }
+
+    [Fact]
+    public async Task GetUIElements_OfAWinUi3WebView2OfADeniedProcess_LeavesOutItsViewsAndItsPage()
+    {
+        // Arrange - the WebView2's window, Chromium's views and the page hosted as a visual are all served by msedgewebview2;
+        // none of the views has a window of its own, so each is checked by the process read with it
+        var (sut, app) = WinUi3Sut(policy: DeniesWebView2);
+        app.ServeWebViewFrom((int)WebViewProcess);
+
+        // Act
+        var result = await sut.GetUIElementsAsync(Handle, maxDepth: 10);
+
+        // Assert - only the app's own elements are listed; each copy of the WebView2's window is left out with its subtree
+        Shape(result.Elements).Should().Be("Bridge(XAML(Native button,WebView2))");
+        result.Warnings.Should().ContainSingle(w => w.StartsWith("TargetDeniedByPolicy: ") && w.Contains("msedgewebview2"));
+        result.SkippedElementCount.Should().BeGreaterThan(0);
+        var json = System.Text.Json.JsonSerializer.Serialize(result.Elements);
+        json.Should().NotContain("WAM page").And.NotContain("Page button").And.NotContain("NonClientView");
+    }
+
+    [Fact]
+    public async Task GetUIElements_OfAWinUi3WebView2OfAnAllowedProcess_ListsItsPage()
+    {
+        var (sut, app) = WinUi3Sut(policy: new TargetPolicy(TargetPolicySettings.Default));
+        app.ServeWebViewFrom((int)WebViewProcess);
+
+        var result = await sut.GetUIElementsAsync(Handle, maxDepth: 10);
+
+        Shape(result.Elements).Should().Be(WinUi3Shape);
+        result.Warnings.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task GetUIElements_LeavesOutAnElementOfADeniedProcess_WithNoWindowOfItsOwn_WithEverythingInsideIt()
+    {
+        // Arrange - a mail's body shown by an embedded app (no window of its own: only the process read with it says whose)
+        Window(
+            Node("Pane", "Reading pane").With(
+                new FakeUiaNode("Document", "Message body") { ProcessId = 7300 }.With(
+                    new FakeUiaNode("Text", "Recovery code 4829-1337") { ProcessId = 7300 })),
+            Node("Button", "Reply"));
+
+        // Act
+        var result = await PolicySut(new TargetPolicy(TargetPolicySettings.Default),
+            windows => windows.Setup(w => w.GetProcessName(7300u)).Returns("KeePass")).GetUIElementsAsync(Handle);
+
+        // Assert
+        Shape(result.Elements).Should().Be("Reading pane,Reply");
+        result.SkippedElementCount.Should().Be(1);
+        result.Warnings.Should().ContainSingle(w => w.StartsWith("TargetDeniedByPolicy: ") && w.Contains("KeePass"));
+        _tree.ChildListings.Should().NotContain("Message body", "nothing inside it is read");
+        System.Text.Json.JsonSerializer.Serialize(result).Should().NotContain("4829").And.NotContain("Message body");
+    }
+
+    [Fact]
+    public async Task GetUIElements_ReadsAnElementReadOnItsOwn_WithItsProcess_AndLeavesItOutWhenDenied()
+    {
+        // Arrange - the level's cached read fails, so its elements are read one at a time
+        Window(Node("Pane", "Body").With(
+                Node("Button", "Reply"),
+                new FakeUiaNode("Text", "Recovery code 4829-1337") { ProcessId = 7300 }))
+            .Children[0].CachedChildrenException = new System.Runtime.InteropServices.COMException("cache request failed");
+
+        // Act
+        var result = await PolicySut(new TargetPolicy(TargetPolicySettings.Default),
+            windows => windows.Setup(w => w.GetProcessName(7300u)).Returns("KeePass")).GetUIElementsAsync(Handle);
+
+        // Assert - each is read once, with the walk's properties (its process among them), not with its properties alone
+        Shape(result.Elements).Should().Be("Body(Reply)");
+        result.SkippedElementCount.Should().Be(1);
+        _tree.Reads.Should().Contain(["Element:Reply", "Element:Recovery code 4829-1337"])
+            .And.NotContain(["Read:Reply", "Read:Recovery code 4829-1337"]);
+        System.Text.Json.JsonSerializer.Serialize(result).Should().NotContain("4829");
+    }
+
+    [Fact]
+    public async Task GetUIElements_ReadsAnElementReadOnItsOwn_AsBefore_WithoutAPolicyThatDeniesAnything()
+    {
+        Window(Node("Pane", "Body").With(Node("Button", "Reply")))
+            .Children[0].CachedChildrenException = new System.Runtime.InteropServices.COMException("cache request failed");
+
+        var result = await PolicySut(new TargetPolicy(new TargetPolicySettings([], null, "test"))).GetUIElementsAsync(Handle);
+
+        Shape(result.Elements).Should().Be("Body(Reply)");
+        _tree.Reads.Should().Contain("Read:Reply").And.NotContain("Element:Reply");
+    }
 
     #endregion
 

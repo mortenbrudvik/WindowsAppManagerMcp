@@ -275,10 +275,11 @@ public sealed class Uia3Tree : IUiaTree
             RuntimeId: runtimeId,
             ControlTypeId: controlTypeId,
             NativeWindowHandle: values.GetValueOrDefault(UiaIds.NativeWindowHandleProperty) is int handle ? handle : 0,
-            Virtualized: leftOut);
+            Virtualized: leftOut,
+            ProcessId: values.GetValueOrDefault(UiaIds.ProcessIdProperty) is int process ? process : 0);
         return new UiaVirtualizedItem(
             item,
-            values.GetValueOrDefault(UiaIds.ProcessIdProperty) is int processId ? processId : 0,
+            item.ProcessId ?? 0,
             values.TryGetValue(UiaIds.IsPasswordProperty, out var password) && password is bool isPassword ? isPassword : null);
     }
 
@@ -684,7 +685,8 @@ public sealed class Uia3Tree : IUiaTree
             Patterns: CachedPatterns(element),
             RuntimeId: element.GetCachedPropertyValue(UiaIds.RuntimeIdProperty) as int[],
             ControlTypeId: controlTypeId,
-            NativeWindowHandle: CachedInt(element, UiaIds.NativeWindowHandleProperty) ?? 0);
+            NativeWindowHandle: CachedInt(element, UiaIds.NativeWindowHandleProperty) ?? 0,
+            ProcessId: CachedInt(element, UiaIds.ProcessIdProperty) ?? 0);
     }
 
     /// <summary>
@@ -829,7 +831,7 @@ public sealed class Uia3Tree : IUiaTree
                 UiaIds.AutomationIdProperty, UiaIds.ClassNameProperty, UiaIds.BoundingRectangleProperty,
                 UiaIds.IsEnabledProperty, UiaIds.IsOffscreenProperty, UiaIds.IsKeyboardFocusableProperty,
                 UiaIds.RuntimeIdProperty, UiaIds.FrameworkIdProperty, UiaIds.NativeWindowHandleProperty,
-                .. UiaIds.PatternAvailability.Select(p => p.Property)
+                UiaIds.ProcessIdProperty, .. UiaIds.PatternAvailability.Select(p => p.Property)
             ];
             WalkRequest = Request(walkProperties);
             SubtreeRequest = Request(walkProperties);

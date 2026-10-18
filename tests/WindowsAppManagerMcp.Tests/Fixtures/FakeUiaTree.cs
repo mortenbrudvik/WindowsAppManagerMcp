@@ -152,6 +152,12 @@ public sealed class FakeUiaTree : IUiaTree
         var fake = Fake(node);
         _reads.Enqueue($"Identity:{fake.Name}");
         ThrowIfSet(fake.IdentityException);
+        if (fake.IdentityFailures > 0)
+        {
+            fake.IdentityFailures--;
+            throw new InvalidOperationException("The provider failed the call.");
+        }
+
         ThrowIfUnrealized(fake);
         return new UiaNodeIdentity(fake.ClassName, fake.FrameworkId, fake.ProcessId, fake.NativeWindowHandle, fake.IsPassword);
     }
@@ -198,7 +204,8 @@ public sealed class FakeUiaTree : IUiaTree
             fake.RuntimeId,
             UiaControlTypes.GetId(fake.ControlType),
             fake.NativeWindowHandle,
-            Virtualized: true);
+            Virtualized: true,
+            ProcessId: CachedProcessId(fake));
         return new UiaVirtualizedItem(element, fake.ProcessId, IsPassword: null);
     }
 
@@ -451,7 +458,15 @@ public sealed class FakeUiaTree : IUiaTree
             node.Patterns,
             node.RuntimeId,
             UiaControlTypes.GetId(node.ControlType),
-            node.NativeWindowHandle);
+            node.NativeWindowHandle,
+            ProcessId: CachedProcessId(node));
+
+    /// <summary>
+    /// The process a cached read reports for the node (<see cref="UiaElement.ProcessId"/>): its <see cref="FakeUiaNode.ProcessId"/>,
+    /// or null for a node a test gave none (0), which stands for an element of its window's process. The real engines report
+    /// 0 there, which the target policy refuses; a test of that builds the element itself.
+    /// </summary>
+    private static int? CachedProcessId(FakeUiaNode node) => node.ProcessId == 0 ? null : node.ProcessId;
 
     private static IEnumerable<FakeUiaNode> Descendants(FakeUiaNode node) =>
         node.Children.SelectMany(child => Descendants(child).Prepend(child));
@@ -584,7 +599,18 @@ public sealed class FakeUiaNode : IUiaNode
     /// </summary>
     public bool Unrealized { get; set; }
     public string? FrameworkId { get; init; }
+
+    /// <summary>
+    /// The process that provides the element, as its identity and the cached reads report it; 0 (none set) for an element of
+    /// its window's process, which the cached reads then report as not read (null: see <see cref="UiaElement.ProcessId"/>).
+    /// </summary>
     public int ProcessId { get; set; }
+
+    /// <summary>
+    /// How many more times <see cref="FakeUiaTree.ReadIdentity"/> fails for this node before it answers, as a provider that
+    /// fails a call now and then (a page that is loading).
+    /// </summary>
+    public int IdentityFailures { get; set; }
     public nint NativeWindowHandle { get; init; }
     public bool IsPassword { get; init; }
     public string? Value { get; set; }

@@ -182,10 +182,7 @@ public class ElementReadTools
             new ElementTableRequest(NormalizeRef(@ref), startRow, maxRows, maxColumns, ClampTimeout(timeoutMs)), cancellationToken);
     }
 
-    private static string NormalizeRef(string? elementRef) =>
-        ElementRefs.Normalize(elementRef) ?? throw new ToolErrorException(ToolErrorReporting.InvalidArgumentsErrorCode,
-            $"ref '{elementRef}' is not an element ref: refs look like '{ElementRefs.Example}' and come from find_ui_elements, " +
-            "get_ui_elements, get_focused_element, get_element_at_point or capture_with_elements. Nothing was read.");
+    private static string NormalizeRef(string? elementRef) => ElementRefs.Require(elementRef, "ref", "Nothing was read.");
 
     private static TimeSpan ClampTimeout(int timeoutMs) =>
         TimeSpan.FromMilliseconds(Math.Clamp(timeoutMs, MinTimeoutMs, MaxTimeoutMs));

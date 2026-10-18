@@ -126,8 +126,12 @@ public partial class ElementActionTools
         CancellationToken cancellationToken = default)
     {
         var timeout = TimeSpan.FromMilliseconds(Math.Clamp(timeoutMs, MinTimeoutMs, MaxTimeoutMs));
-        var request = new ElementActionRequest(@ref ?? string.Empty, action, value, mode, direction, amount, fallback, allowHostTarget, timeout);
-        if (ElementActionService.ArgumentError(request) is { } argumentError)
+
+        // The request once its element is named by a ref: the one passed, or the one the criteria found
+        ElementActionRequest RequestFor(string elementRef) =>
+            new(elementRef, action, value, mode, direction, amount, fallback, allowHostTarget, timeout);
+
+        if (ElementActionService.ArgumentError(action, value, mode, direction, fallback) is { } argumentError)
         {
             throw new ToolErrorException(ToolErrorReporting.InvalidArgumentsErrorCode, argumentError + " Nothing was done.");
         }
@@ -148,9 +152,8 @@ public partial class ElementActionTools
                     "listRef names the list that realize scrolls with maxScrolls; pass maxScrolls too. Nothing was done.");
             }
 
-            scrollListRef = ElementRefs.Normalize(listRef) ?? throw new ToolErrorException(ToolErrorReporting.InvalidArgumentsErrorCode,
-                $"listRef '{listRef}' is not an element ref: refs look like '{ElementRefs.Example}' (find_ui_elements' " +
-                "virtualized.containers lists the window's lists). Nothing was done.");
+            scrollListRef = ElementRefs.Require(listRef, "listRef", "Nothing was done.",
+                "(find_ui_elements' virtualized.containers lists the window's lists)");
         }
 
         if (ObserveError(observe) is { } observeError)
@@ -175,21 +178,20 @@ public partial class ElementActionTools
                     "both. Nothing was done.");
             }
 
-            var normalized = ElementRefs.Normalize(@ref) ?? throw new ToolErrorException(ToolErrorReporting.InvalidArgumentsErrorCode,
-                $"ref '{@ref}' is not an element ref: refs look like '{ElementRefs.Example}' and come from find_ui_elements, " +
-                "get_ui_elements, get_focused_element, get_element_at_point or capture_with_elements. Nothing was done.");
+            var normalized = ElementRefs.Require(@ref, "ref", "Nothing was done.");
             var lookup = _registry.Lookup(normalized);
             NoteWindow(lookup.WindowHandle);
             if (action == ElementActionKind.MenuPath)
             {
                 // The ref's own window holds the path's first item; a ref the registry no longer knows names no window
                 return await ObserveAsync(lookup.Success
-                    ? await MenuPathAsync(lookup.WindowHandle, normalized, request, scope: null, cancellationToken).ConfigureAwait(false)
+                    ? await MenuPathAsync(lookup.WindowHandle, normalized, value, allowHostTarget, timeout, scope: null, cancellationToken)
+                        .ConfigureAwait(false)
                     : new ElementActionResult(false, "menu_path", normalized, Error: lookup.Error, ErrorCode: lookup.ErrorCode.ToString()),
                     observe, cancellationToken).ConfigureAwait(false);
             }
 
-            return await ObserveAsync(await _actions.ActAsync(request with { Ref = normalized }, cancellationToken).ConfigureAwait(false),
+            return await ObserveAsync(await _actions.ActAsync(RequestFor(normalized), cancellationToken).ConfigureAwait(false),
                 observe, cancellationToken).ConfigureAwait(false);
         }
 
@@ -213,7 +215,8 @@ public partial class ElementActionTools
         {
             var menuWindow = WindowTargeting.Require(_windowService, handle, window);
             NoteWindow(menuWindow);
-            return await ObserveAsync(await MenuPathAsync(menuWindow, startRef: null, request, scope, cancellationToken).ConfigureAwait(false),
+            return await ObserveAsync(
+                await MenuPathAsync(menuWindow, startRef: null, value, allowHostTarget, timeout, scope, cancellationToken).ConfigureAwait(false),
                 observe, cancellationToken).ConfigureAwait(false);
         }
 
@@ -257,8 +260,8 @@ public partial class ElementActionTools
         {
             NoteWindow(windowHandle);
             return await ObserveAsync(
-                await RealizeByScrollingAsync(query, request, Math.Min(maxScrolls, MaxScrollsLimit), scrollListRef, stopwatch, found.Failure,
-                        cancellationToken)
+                await RealizeByScrollingAsync(query, RequestFor, timeout, allowHostTarget, Math.Min(maxScrolls, MaxScrollsLimit), scrollListRef,
+                        stopwatch, found.Failure, cancellationToken)
                     .ConfigureAwait(false),
                 observe, cancellationToken).ConfigureAwait(false);
         }
@@ -274,12 +277,13 @@ public partial class ElementActionTools
             // The element the criteria found holds the path's first item (a menu bar, an open menu), in its own window
             var registered = _registry.Lookup(found.Ref!).WindowHandle;
             return await ObserveAsync(
-                await MenuPathAsync(registered != nint.Zero ? registered : windowHandle, found.Ref, request, scope: null, cancellationToken)
+                await MenuPathAsync(registered != nint.Zero ? registered : windowHandle, found.Ref, value, allowHostTarget, timeout,
+                        scope: null, cancellationToken)
                     .ConfigureAwait(false),
                 observe, cancellationToken).ConfigureAwait(false);
         }
 
-        return await ObserveAsync(await _actions.ActAsync(request with { Ref = found.Ref! }, cancellationToken).ConfigureAwait(false),
+        return await ObserveAsync(await _actions.ActAsync(RequestFor(found.Ref!), cancellationToken).ConfigureAwait(false),
             observe, cancellationToken).ConfigureAwait(false);
     }
 
@@ -294,22 +298,29 @@ public partial class ElementActionTools
         ActionObservation.ResultAsync(result, result.Success, result.WindowHandle, ActionObservation.RefusesWindow(result.ErrorCode), observe,
             (acted, observed) => acted with { Observed = observed }, _desktopState, _windowService, cancellationToken);
 
-    /// <summary>menu_path (roadmap M3.5): the path's items, each acted on through element_action by the menu path service.</summary>
+    /// <summary>
+    /// menu_path (roadmap M3.5): the path's items (<paramref name="path"/>, the value argument), each acted on through
+    /// element_action by the menu path service.
+    /// </summary>
     private async Task<ElementActionResult> MenuPathAsync(
-        nint window, string? startRef, ElementActionRequest request, ElementSearchScope? scope, CancellationToken cancellationToken)
+        nint window, string? startRef, string? path, bool allowHostTarget, TimeSpan timeout, ElementSearchScope? scope,
+        CancellationToken cancellationToken)
     {
         if (_menuPaths == null)
         {
             throw new ToolErrorException(ToolErrorReporting.InvalidArgumentsErrorCode, "menu_path is not available in this server. Nothing was done.");
         }
 
-        var items = MenuPaths.Parse(request.Value, out var error) ??
+        var items = MenuPaths.Parse(path, out var error) ??
                     throw new ToolErrorException(ToolErrorReporting.InvalidArgumentsErrorCode, error + " Nothing was done.");
-        return await _menuPaths.RunAsync(new MenuPathRequest(window, startRef, items, scope, request.AllowHostTarget, request.Timeout),
+        return await _menuPaths.RunAsync(new MenuPathRequest(window, startRef, items, scope, allowHostTarget, timeout),
             cancellationToken).ConfigureAwait(false);
     }
 
-    /// <summary>The ref of the one element the query matches, or the failure: none, several, or a search that did not finish.</summary>
+    /// <summary>
+    /// The ref of the one element the query matches, or the failure: none, several, matches of an app the target policy
+    /// refuses (<see cref="FindElementsResult.PolicyLeftOut"/>), or a search that did not finish.
+    /// </summary>
     private async Task<(string? Ref, ElementActionResult? Failure)> FindOneAsync(ElementQuery query, ElementActionKind action, CancellationToken cancellationToken)
     {
         var actionName = ToolEnum<ElementActionKind>.Name(action);
@@ -347,12 +358,28 @@ public partial class ElementActionTools
                 "of the one you mean."));
         }
 
+        // Matches of an app the target policy refuses, shown inside the window, were left out unread: when they are the only
+        // ones, the policy refuses the action; next to another match, one of them may be the one meant
+        if (result.PolicyLeftOut is { OtherwiseComplete: true } leftOut)
+        {
+            return result.MatchCount == 0 || result.Elements is not { Count: > 0 } allowed
+                ? (null, Fail(nameof(UIElementErrorCode.TargetDeniedByPolicy),
+                    $"The criteria match only {(leftOut.Count == 1 ? "an element" : $"{leftOut.Count} elements")} of an app the " +
+                    $"server's target policy refuses, so nothing was done. {leftOut.Warning}"))
+                : (null, Fail(nameof(UIElementErrorCode.AmbiguousElement),
+                    $"{result.MatchCount + leftOut.Count} elements match the criteria, {leftOut.Count} of them of an app the " +
+                    $"server's target policy refuses (the others: {string.Join(", ", allowed.Select(e => $"{e.Ref} {e.ControlType} '{e.Name}'"))}), " +
+                    "so none was acted on. Narrow the criteria (automationId, controlType), or pass the ref of the one you mean. " +
+                    leftOut.Warning));
+        }
+
         if (unfinished)
         {
             return (null, Fail(nameof(UIElementErrorCode.OperationTimedOut),
                 $"The search for the element did not cover {Covered(result)} ({result.TruncationReason}), so it is not known that " +
                 $"only one element matches ({result.MatchCount} found so far). Nothing was done. Narrow the criteria (automationId, " +
-                "controlType), or find the element with find_ui_elements and pass its ref."));
+                "controlType), or find the element with find_ui_elements and pass its ref." +
+                (result.PolicyLeftOut is { } partlyLeftOut ? $" {partlyLeftOut.Warning}" : string.Empty)));
         }
 
         if (result.MatchCount == 0 || result.Elements is not { Count: > 0 } elements)

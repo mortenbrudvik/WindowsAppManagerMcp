@@ -119,6 +119,44 @@ public class ElementActionToolTests
     }
 
     [Fact]
+    public async Task ASearchThatDidNotCoverTheWindow_AndLeftOutAMatchForThePolicy_SaysBoth()
+    {
+        // Arrange - the search timed out, and had left out a match of an app the target policy refuses
+        const string leftOut = "1 element of window 33024 belongs to process 777 ('KeePass'), ...";
+        _found = Found(0) with
+        {
+            Truncated = true, TruncationReason = ElementSearchTruncation.Timeout,
+            PolicyLeftOut = new PolicyLeftOutMatches(1, leftOut, OtherwiseComplete: false)
+        };
+
+        // Act
+        var result = await CreateSut().ElementAction(ElementActionKind.Invoke, handle: Handle, name: "Save").Payload<ElementActionResult>();
+
+        // Assert - the search may not have reached the element yet: more time can still help
+        result.ErrorCode.Should().Be("OperationTimedOut");
+        result.Error.Should().EndWith(leftOut);
+        _actions.Verify(a => a.ActAsync(It.IsAny<ElementActionRequest>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ASearchWhoseOnlyMatchesThePolicyLeftOut_IsTargetDeniedByPolicy()
+    {
+        const string leftOut = "2 elements of window 33024 belong to process 777 ('KeePass'), ...";
+        _found = Found(0) with
+        {
+            Truncated = true, TruncationReason = ElementSearchTruncation.PartsSkipped,
+            PolicyLeftOut = new PolicyLeftOutMatches(2, leftOut, OtherwiseComplete: true)
+        };
+
+        var result = await CreateSut().ElementAction(ElementActionKind.Invoke, handle: Handle, name: "Save").Payload<ElementActionResult>();
+
+        result.ErrorCode.Should().Be("TargetDeniedByPolicy");
+        result.Error.Should().StartWith("The criteria match only 2 elements of an app the server's target policy refuses, so nothing was done.")
+            .And.EndWith(leftOut);
+        _actions.Verify(a => a.ActAsync(It.IsAny<ElementActionRequest>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
     public async Task ASearchThatDidNotCoverTheWindowAndFoundNothing_IsOperationTimedOut_NotElementNotFound()
     {
         _found = Found(0) with { Truncated = true, TruncationReason = ElementSearchTruncation.SearchLimit };

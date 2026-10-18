@@ -13,7 +13,14 @@ namespace WindowsAppManagerMcp.Services;
 /// Walk rules:
 /// <list type="bullet">
 /// <item>A window of an app the user's target policy denies is not read (TargetDeniedByPolicy, see
-/// <see cref="UiaTargets.ReadVerdict"/>): checked before the walk, the warm-up and the hung-window check.</item>
+/// <see cref="UiaTargets.ReadVerdict"/>): checked before the walk, the warm-up and the hung-window check. Inside a window it
+/// allows, an element of another process (an app or preview handler embedded as a child window, a WebView2's windows,
+/// views and pages) that the policy refuses is left out unread with everything inside it, and so is a render widget's page
+/// of such a process, or a page hosted as a visual whose root names one (<see cref="ForeignElements"/>): counted in
+/// skippedElementCount, with a TargetDeniedByPolicy warning that names the process. The process comes with the element's
+/// read (<see cref="UiaElement.ProcessId"/>): a level's read brings it, and while the policy denies anything an element
+/// read on its own is read with the walk's properties (one call, as its properties alone; one that fails is
+/// skipped).</item>
 /// <item>A window that does not respond is not read (NotResponding): Windows reports it hung, or it does not answer a
 /// message within <see cref="RespondTimeoutMs"/>. Every UI Automation call to it would block until it recovers.</item>
 /// <item>The walk is breadth first (roadmap M3.1): all of a level before the next, so a walk cut short by the timeout
@@ -204,7 +211,7 @@ public class UIElementService : IUIElementService
         {
             WindowState = windowState,
             AccessibilityWarmup = started.Warmup,
-            Warnings = Warnings(windowHandle, result, windowState, root, filter)
+            Warnings = Warnings(windowHandle, result, windowState, root, filter, started.Foreign)
         };
     }
 
@@ -253,11 +260,13 @@ public class UIElementService : IUIElementService
     /// Why the tree may not show what the window holds (roadmap M3.F16, D-UIA-07), or null when nothing says so.
     /// TargetElevated first, whatever the walk returned or why it failed: restoring the window does not make its tree
     /// readable, and no number of elements tells a thin tree from a small window (what Windows itself reports about the
-    /// window's child windows can still be read). Then WindowMinimized, for a walk that succeeded. Nothing for a window
-    /// that was not found or not read.
+    /// window's child windows can still be read). Then WindowMinimized, for a walk that succeeded. Then TargetDeniedByPolicy,
+    /// when the walk left out elements of another process that the target policy refuses (<paramref name="foreign"/>). Nothing
+    /// for a window that was not found or not read.
     /// </summary>
     private IReadOnlyList<string>? Warnings(
-        nint windowHandle, UIElementResult result, WindowState? windowState, nint root, UIElementFilter? filter)
+        nint windowHandle, UIElementResult result, WindowState? windowState, nint root, UIElementFilter? filter,
+        ForeignElements? foreign)
     {
         if (result.ErrorCode is UIElementErrorCode.WindowNotFound or UIElementErrorCode.AutomationUnavailable
             or UIElementErrorCode.NotResponding)
@@ -274,6 +283,12 @@ public class UIElementService : IUIElementService
         if (result.Success && windowState == WindowState.Minimized)
         {
             warnings.Add(MinimizedWarning(root, filter?.VisibleOnly == true));
+        }
+
+        if (result.Success && foreign?.LeftOutWarning(nameof(UIElementErrorCode.TargetDeniedByPolicy),
+                "they are left out of the tree with everything inside them, and counted in skippedElementCount") is { } leftOut)
+        {
+            warnings.Add(leftOut);
         }
 
         return warnings.Count > 0 ? warnings : null;
@@ -340,6 +355,14 @@ public class UIElementService : IUIElementService
     {
         private Walk? _walk;
         private AccessibilityWarmupInfo? _warmup;
+        private ForeignElements? _foreign;
+
+        /// <summary>The target policy's check of the elements of other processes than the window's, once the walk began.</summary>
+        public ForeignElements? Foreign
+        {
+            get => Volatile.Read(ref _foreign);
+            set => Volatile.Write(ref _foreign, value);
+        }
 
         public Walk? Walk
         {
@@ -436,8 +459,10 @@ public class UIElementService : IUIElementService
 
             // Its pages lie below Chromium's own views, deeper than the walk reaches: they are listed under the elements of
             // their render widgets' parent windows (roadmap M3.F35), or, hosted as a visual, in place of the children of the
-            // root of Chromium's views (roadmap M3.F43)
-            var found = _warmup?.FindPages(windowHandle, cancellationToken) ?? [];
+            // root of Chromium's views (roadmap M3.F43). A page of another process than the window's (a WebView2's) that the
+            // target policy refuses is left out unread
+            var foreign = started.Foreign = UiaTargets.ForeignElementsOf(_windows, _policy, windowHandle);
+            var found = (_warmup?.FindPages(windowHandle, cancellationToken) ?? []).Where(page => !LeavesOut(foreign, page)).ToList();
             var pages = found.Where(page => page.ViewsRoot == null).ToList() is { Count: > 0 } hostedByWindows
                 ? hostedByWindows.GroupBy(page => page.Host)
                     .ToDictionary(hosted => hosted.Key, hosted => hosted.Select(page => page.Root).ToList())
@@ -448,7 +473,7 @@ public class UIElementService : IUIElementService
             var refs = _registry == null ? null : new WalkRefs(_registry, windowHandle, _registry.NextGeneration());
             var walk = new Walk(
                 _tree, maxDepth, filter, controlTypes, windowTitle, windowFramework, refs, OwnedWindows.Below(_windows, windowHandle),
-                pages, visualPages, progress, cancellationToken);
+                pages, visualPages, foreign, progress, cancellationToken);
             started.Walk = walk;
 
             // Errors reading the window's own children propagate: an empty tree would look like a
@@ -514,6 +539,37 @@ public class UIElementService : IUIElementService
         }
     }
 
+    /// <summary>
+    /// Whether a page of the window is left out for its process (<see cref="ForeignElements"/>): a render widget's page by its
+    /// render widget's process (a Win32 read), a page hosted as a visual, which has no window of its own, by the process its
+    /// root's identity names (one UI Automation call per such page; one that cannot be read is left out).
+    /// </summary>
+    private bool LeavesOut(ForeignElements foreign, RenderWidgetPage page)
+    {
+        if (!foreign.Active)
+        {
+            return false;
+        }
+
+        if (page.ViewsRoot == null)
+        {
+            return foreign.LeavesOutWindow(page.RenderWidget);
+        }
+
+        int processId;
+        try
+        {
+            processId = _tree.ReadIdentity(page.Root).ProcessId;
+        }
+        catch (Exception)
+        {
+            // Not known: refused while the policy denies anything
+            processId = 0;
+        }
+
+        return foreign.LeavesOut(processId);
+    }
+
     /// <summary>The window's name and UI framework, or nulls when they cannot be read.</summary>
     private (string? Name, string? FrameworkId) TryReadWindow(IUiaNode node)
     {
@@ -554,6 +610,7 @@ public class UIElementService : IUIElementService
         Func<UiaElement, bool>? leaveOut,
         Dictionary<nint, List<IUiaNode>>? pageHosts,
         List<RenderWidgetPage>? visualPages,
+        ForeignElements foreign,
         IProgress<OperationProgress>? progress,
         CancellationToken cancellationToken)
     {
@@ -585,14 +642,17 @@ public class UIElementService : IUIElementService
         private volatile bool _capReached;
         private volatile bool _leftUnread;
 
-        /// <summary>Elements, or lists of children, that could not be read.</summary>
+        /// <summary>
+        /// Elements, or lists of children, that could not be read, and the elements and pages of another process left out
+        /// unread for the target policy (<see cref="ForeignElements"/>).
+        /// </summary>
         public int SkippedElementCount
         {
             get
             {
                 lock (_gate)
                 {
-                    return _skippedElementCount;
+                    return _skippedElementCount + foreign.LeftOutCount;
                 }
             }
         }
@@ -1002,12 +1062,27 @@ public class UIElementService : IUIElementService
             bool included;
             try
             {
+                // While the target policy may refuse an element of another process, an element read on its own is read with
+                // the walk's properties, its process among them: one call, as the read of its properties alone is
+                if (candidate.Cached == null && foreign.Active)
+                {
+                    candidate = candidate with { Cached = tree.ReadElement(candidate.Node) };
+                }
+
                 properties = candidate.Cached?.Properties ?? tree.Read(candidate.Node);
 
                 // An element met before (a page listed under its host and met again among Chromium's views, a subtree a
                 // provider lists twice) is listed only the first time
                 runtimeId = RuntimeIdOf(candidate);
                 if (!FirstMeeting(runtimeId))
+                {
+                    return;
+                }
+
+                // An element of another process than the window's (an app or preview embedded as a child window, a WebView2's
+                // windows, views and pages) that the target policy refuses is left out unread with everything inside it, and
+                // counted: by the process read with it
+                if (candidate.Cached is { } cached && foreign.LeavesOut(cached))
                 {
                     return;
                 }
