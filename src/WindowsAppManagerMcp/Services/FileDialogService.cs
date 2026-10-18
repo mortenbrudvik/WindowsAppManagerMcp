@@ -340,15 +340,21 @@ public sealed class FileDialogService : IFileDialogService
         NamesFile(content.Text, path);
 
     /// <summary>
-    /// Whether the text names the file: its name, or its name without the extension (Explorer hides known extensions), as a
-    /// whole name (not part of a longer one such as "myreport.txt"), ignoring case. A file name is the same in every
-    /// language, unlike the prompt's words, which are never read.
+    /// Whether the text names the file: its name with its extension ("report.txt already exists", the prompt of a Save As
+    /// dialog), or its full path, with or without the extension ("C:\Users\me\report.txt", an old-style dialog's prompt; a
+    /// hidden extension leaves the folder in front), as a whole name (not part of a longer one such as "myreport.txt",
+    /// "report.txtx" or "report.txt.bak"), ignoring case. A file name is the same in every language, unlike the prompt's
+    /// words, which are never read. The name without its extension alone ("report"), quoted or not, does not count: it can be
+    /// a word of another question ("save", "Documents", "a", "instead": the words of "save in the Documents folder instead?"
+    /// that a file can be named), and no length or quoting tells such a word from a file's name. A replace prompt that shows
+    /// only that is handed back unanswered, as any other prompt.
     /// </summary>
     private static bool NamesFile(IReadOnlyList<string> text, string path)
     {
         var name = Path.GetFileName(path);
         var stem = Path.GetFileNameWithoutExtension(path);
-        return text.Any(line => HasWholeName(line, name) || (stem.Length > 0 && HasWholeName(line, stem)));
+        var pathWithoutExtension = stem.Length > 0 ? Path.Join(Path.GetDirectoryName(path), stem) : null;
+        return text.Any(line => HasWholeName(line, name) || (pathWithoutExtension != null && HasWholeName(line, pathWithoutExtension)));
     }
 
     private static bool HasWholeName(string text, string name)
@@ -361,8 +367,7 @@ public sealed class FileDialogService : IFileDialogService
         for (var at = text.IndexOf(name, StringComparison.OrdinalIgnoreCase); at >= 0;
              at = text.IndexOf(name, at + 1, StringComparison.OrdinalIgnoreCase))
         {
-            var end = at + name.Length;
-            if ((at == 0 || !IsNameCharacter(text[at - 1])) && (end == text.Length || !IsNameCharacter(text[end])))
+            if (!ContinuesBefore(text, at) && !ContinuesAfter(text, at + name.Length))
             {
                 return true;
             }
@@ -371,8 +376,32 @@ public sealed class FileDialogService : IFileDialogService
         return false;
     }
 
-    /// <summary>A character that continues a file name next to it: a letter, a digit, '_' or '-'.</summary>
-    private static bool IsNameCharacter(char c) => char.IsLetterOrDigit(c) || c is '_' or '-';
+    /// <summary>Whether the name that starts at <paramref name="at"/> is the end of a longer one: "my" in "myreport.txt", "my." in "my.report.txt".</summary>
+    private static bool ContinuesBefore(string text, int at) =>
+        at > 0 && (IsNameCharacter(text[at - 1]) || (text[at - 1] == '.' && at > 1 && IsNameCharacter(text[at - 2])));
+
+    /// <summary>
+    /// Whether the name that ends at <paramref name="end"/> is the start of a longer one: "x" in "report.txtx", ".bak" in
+    /// "report.txt.bak", ".docx" after the path without the extension. A full stop that ends the sentence is no part of it.
+    /// </summary>
+    private static bool ContinuesAfter(string text, int end) =>
+        end < text.Length && (IsNameCharacter(text[end]) || (text[end] == '.' && end + 1 < text.Length && IsNameCharacter(text[end + 1])));
+
+    /// <summary>
+    /// A character that continues a file name next to it: a letter, a digit, '_' or '-'. Not a letter of a script written
+    /// without spaces between words (Chinese, Japanese) or one whose particles are written onto the noun (Korean): there
+    /// the prompt's next word follows the name at once ("report.txtは既に存在します", "report.txt이(가) 이미 있습니다").
+    /// </summary>
+    private static bool IsNameCharacter(char c) => (char.IsLetterOrDigit(c) && !IsWrittenWithoutSpaces(c)) || c is '_' or '-';
+
+    /// <summary>
+    /// Hangul Jamo, the CJK and kana blocks with their symbols (U+2E80 to U+9FFF), Hangul syllables and Jamo extensions, the
+    /// CJK compatibility ideographs and the full-width and half-width forms. A character outside the Basic Multilingual Plane
+    /// is a surrogate, which is no letter on its own.
+    /// </summary>
+    private static bool IsWrittenWithoutSpaces(char c) =>
+        c is (>= '\u1100' and <= '\u11FF') or (>= '\u2E80' and <= '\u9FFF') or (>= '\uA960' and <= '\uA97F') or
+            (>= '\uAC00' and <= '\uD7FF') or (>= '\uF900' and <= '\uFAFF') or (>= '\uFF00' and <= '\uFFEF');
 
     /// <summary>
     /// The ref of the file name box, found by the control ids that mark a file dialog, so the path is never typed into
