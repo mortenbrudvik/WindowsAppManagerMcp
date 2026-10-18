@@ -592,12 +592,14 @@ public class StepRunnerTests
     }
 
     [Theory]
-    [InlineData(InputControlSources.Hotkey, "the user pressed the pause hotkey", "could not read the pause it shares")]
-    [InlineData(InputControlSources.SharedPauseUnreadable, "could not read the pause it shares", "pressed the pause hotkey")]
+    [InlineData(InputControlSources.Hotkey, "the user pressed the pause hotkey (Ctrl+Alt+Pause)", "could not read the pause it shares")]
+    [InlineData(InputControlSources.SharedPauseUnreadable, "this server could not read the pause it shares", "hotkey")]
     public async Task APause_StopsTheRun_SayingWhyInputIsPaused(string pausedBy, string says, string doesNotSay)
     {
-        // The server pauses itself when it cannot read the shared pause: the agent must not tell the user they paused it
+        // Arrange - the server pauses itself when it cannot read the shared pause: the user pressed nothing, so the agent
+        // must not tell the user they paused it, nor name the hotkey at all
         _session.Setup(s => s.PauseState).Returns(() => _paused ? new InputPauseState(true, pausedBy) : InputPauseState.Running);
+        _session.Setup(s => s.PauseChord).Returns("Ctrl+Alt+Pause");
         _dispatcher.OnCall = call =>
         {
             if (call.Number == 1)
@@ -606,11 +608,14 @@ public class StepRunnerTests
             }
         };
 
+        // Act
         var run = await RunAsync(Step(StepTool.TypeText, """{ "text": "a" }"""), Step(StepTool.TypeText, """{ "text": "b" }"""));
 
+        // Assert
+        run.Result.StoppedBy.Should().Be(StepStopReason.Paused);
         run.Result.ErrorCode.Should().Be("PausedByUser");
         run.Result.Error.Should().Contain("Input is paused").And.Contain(says).And.NotContain(doesNotSay)
-            .And.NotContain("The user paused input").And.Contain("never resume input yourself");
+            .And.Contain("before step 2 (type_text)").And.NotContain("The user paused input").And.Contain("never resume input yourself");
     }
 
     [Fact]
