@@ -45,5 +45,5 @@ The `snap_window` tool supports 14 positions:
 
 ## Tips
 
-- Layout presets can launch missing applications with `launchMissing: true`, but only with a `launchCommand` added to the preset by hand: `save_layout` records none
+- `apply_layout` with `launchMissing: true` starts what each placement whose window is missing names: the program or app `save_layout` recorded for the window (`launch`), or a `launchCommand` added by hand; for a layout an agent wrote (`placements`), only after the user confirms. Leave it false unless the user wants those programs started
 - `list_layouts` also lists the files that are not valid presets (`file`, `error`, `errorCode` `InvalidPresetFile`): they cannot be applied, and the layout tools never change them, so ask the user to fix or delete the file. Its name can be a valid preset's too: `delete_layout` of that name deletes the valid preset, not the file
