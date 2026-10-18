@@ -30,9 +30,10 @@ namespace WindowsAppManagerMcp.Tests.Unit.Architecture;
 /// <item>Server code that a test hands a real wrapper to (a constructor called in the same method) calls only those read members
 /// on it.</item>
 /// <item>Test code builds the server's production container (ServiceRegistration.AddWindowsAppManagerServices), whose services
-/// hold the real input, clipboard, hook, window and process wrappers, only where <see cref="SanctionedProductionContainers"/>
-/// says why that use only reads; and there it calls the server's services and wrappers only through constructors, property
-/// getters, static members and the reads on <see cref="SanctionedProductionContainerCalls"/>. A call that runs the services
+/// hold the real input, clipboard, hook, window and process wrappers, only in the methods where
+/// <see cref="SanctionedProductionContainers"/> says why that use only reads; and a type with such a method calls the server's
+/// services and wrappers only through constructors, property getters, static members and the reads on
+/// <see cref="SanctionedProductionContainerCalls"/>. A call that runs the services
 /// through the framework counts as a call on them: a hosted service's or a host's start, stop or run, a member of a
 /// framework interface a server type implements, a tool's invocation through the MCP SDK, and InProcessMcpServer's start and
 /// tool call.</item>
@@ -153,38 +154,48 @@ public class TestCodeNativeWrapperTests
     };
 
     /// <summary>
-    /// The test types (by full name) that build the server's production container, whose services hold the real native wrappers
-    /// (input, clipboard, hooks, the pause hotkey, windows, processes), and why that use only reads.
+    /// The methods (by test type's full name and source method, with its lambdas and state machine) that build the server's
+    /// production container, whose services hold the real native wrappers (input, clipboard, hooks, the pause hotkey, windows,
+    /// processes), and why that use only reads. Keyed by the method, so a type reviewed for one use is not reviewed for another:
+    /// a server it starts on the production services elsewhere needs its own entry. Field initializers are the constructor's.
     /// </summary>
-    private static readonly Dictionary<string, string> SanctionedProductionContainers = new(StringComparer.Ordinal)
+    private static readonly Dictionary<(string TestType, string Method), string> SanctionedProductionContainers = new()
     {
-        ["WindowsAppManagerMcp.Tests.Integration.DependencyInjectionTests"] =
-            "resolves the services to check their types, lifetimes and what they hold; it acts through none of them, and calls only " +
-            "the reads on SanctionedProductionContainerCalls",
-        ["WindowsAppManagerMcp.Tests.Integration.InputGuardRegistrationTests"] =
+        [("WindowsAppManagerMcp.Tests.Integration.DependencyInjectionTests", "BuildServerServices")] =
+            "the registrations of Program.cs the tests resolve to check their types, lifetimes and what they hold; they act through " +
+            "none of them, and call only the reads on SanctionedProductionContainerCalls",
+        [("WindowsAppManagerMcp.Tests.Integration.DependencyInjectionTests", "AddWindowsAppManagerServices_EveryRegistrationIsASingletonThatResolves")] =
+            "lists the registrations and resolves each to check its lifetime; nothing is called on them",
+        [("WindowsAppManagerMcp.Tests.Integration.DependencyInjectionTests", "TheCaptureRegistry_KeepsSignatures_OnlyWhileWaitForVisualIsServed")] =
+            "resolves the capture registry for a toolset selection and reads whether it keeps signatures",
+        [("WindowsAppManagerMcp.Tests.Integration.DependencyInjectionTests", "AddWindowsAppManagerServices_ByDefault_WritesTheAuditLogWhereFromEnvironmentSays")] =
+            "resolves the audit log and reads its folder; creating it touches no file",
+        [("WindowsAppManagerMcp.Tests.Integration.DependencyInjectionTests", "AddWindowsAppManagerServices_ByDefault_StoresLayoutsWhereFromEnvironmentSays")] =
+            "resolves the layout service and reads its path; creating it touches no file",
+        [("WindowsAppManagerMcp.Tests.Integration.InputGuardRegistrationTests", ".ctor")] =
             "resolves the input guard, the policy and the safety info with the read-only window wrapper, and reads what they hold",
-        ["WindowsAppManagerMcp.Tests.Integration.InputSessionRegistrationTests"] =
+        [("WindowsAppManagerMcp.Tests.Integration.InputSessionRegistrationTests", ".ctor")] =
             "resolves the session and the pause hotkey with the read-only window wrapper and reads what they hold; the hosted " +
             "service that would register the hotkey and share the pause is never started",
-        ["WindowsAppManagerMcp.Tests.Integration.ScrollClipboardRegistrationTests"] =
+        [("WindowsAppManagerMcp.Tests.Integration.ScrollClipboardRegistrationTests", ".ctor")] =
             "resolves the input and clipboard services with the read-only window wrapper and reads what they hold; the clipboard " +
             "wrapper starts its thread only when it is called",
-        ["WindowsAppManagerMcp.Tests.Integration.SecurityServiceRegistrationTests"] =
+        [("WindowsAppManagerMcp.Tests.Integration.SecurityServiceRegistrationTests", ".ctor")] =
             "resolves the host guard and the security probes with the read-only window wrapper; they only read the process tree " +
             "and the console and foreground windows",
-        ["WindowsAppManagerMcp.Tests.Fixtures.ServerToolCatalog"] =
+        [("WindowsAppManagerMcp.Tests.Fixtures.ServerToolCatalog", "DiscoverServedToolNames")] =
             "reads the tool collection's names from the options; no service is resolved",
-        ["WindowsAppManagerMcp.Tests.Contract.DeniedTargetContractTests"] =
+        [("WindowsAppManagerMcp.Tests.Contract.DeniedTargetContractTests", "ServedSchemas")] =
             "reads the served tools' input schemas from the options (no service is resolved); its calls go to NativeFakedServer",
-        ["WindowsAppManagerMcp.Tests.Contract.SelfGatedToolsContractTests"] =
+        [("WindowsAppManagerMcp.Tests.Contract.SelfGatedToolsContractTests", "ProductionRegistrations")] =
             "reads the production registrations' implementation types; no container is built from them",
-        ["WindowsAppManagerMcp.Tests.Fixtures.NativeFakedServer"] =
+        [("WindowsAppManagerMcp.Tests.Fixtures.NativeFakedServer", ".ctor")] =
             "replaces every native seam with a fake before the container is built, and refuses to start when a service still " +
             "holds a real wrapper",
     };
 
     /// <summary>
-    /// The calls a type of <see cref="SanctionedProductionContainers"/> makes on the server's services and wrappers beyond
+    /// The calls a type with a method on <see cref="SanctionedProductionContainers"/> makes on the server's services and wrappers beyond
     /// constructors, property getters and static members, keyed by (the test type's full name, "Type.Member"), and why each only
     /// reads.
     /// </summary>
@@ -210,8 +221,8 @@ public class TestCodeNativeWrapperTests
             "calls tools on NativeFakedServer's host, whose every native seam is a fake; the production container it builds only " +
             "gives the tools' schemas",
         [("WindowsAppManagerMcp.Tests.Contract.SelfGatedToolsContractTests", "InProcessMcpServer.StartAsync")] =
-            "hosts the contract run's mocks (ContractServices) and the tools; the production container is never built, its " +
-            "registrations are only read",
+            "hosts the contract run's mocks (ContractServices) and the tools, not the production services: the type's one call of " +
+            "AddWindowsAppManagerServices (ProductionRegistrations, reviewed on its own) only reads the registrations",
         [("WindowsAppManagerMcp.Tests.Contract.SelfGatedToolsContractTests", "InProcessMcpServer.CallToolAsync")] =
             "calls tools on that host of the contract run's mocks",
     };
@@ -395,18 +406,22 @@ public class TestCodeNativeWrapperTests
     [Fact]
     public void TestCode_BuildsTheProductionContainer_OnlyWhereThatUseOnlyReads()
     {
-        // Act
-        var containers = TypesThatBuildTheProductionContainer(TestCode()).ToList();
+        // Act - each method that builds it, with its lambdas and state machine (a build in the configureServices of a server
+        // the method starts is that method's)
+        var builders = ContainerBuilders(TestCode()).ToList();
+        var samples = ContainerBuilders(SampleCode()).ToList();
 
         // Assert
-        containers.Should().Contain([typeof(Integration.ScrollClipboardRegistrationTests), typeof(NativeFakedServer)],
+        builders.Select(b => b.Owner).Should().Contain([typeof(Integration.ScrollClipboardRegistrationTests), typeof(NativeFakedServer)],
             "the scan must see the registration tests and the faked server build the production container");
-        TypesThatBuildTheProductionContainer(SampleCode()).Should().Contain(typeof(NativeWrapperScanSamples),
-            "the scan must see a sample build the production container");
-        containers.Select(t => t.FullName!).Where(name => !SanctionedProductionContainers.ContainsKey(name)).Should().BeEmpty(
+        samples.Should().Contain(b => b.Owner == typeof(NativeWrapperScanSamples) && b.Method == nameof(NativeWrapperScanSamples.ActsThroughTheProductionContainer) &&
+                                      b.Caller.Name != b.Method,
+            "the scan must see a sample build the production container in the services of a server it starts");
+        builders.Where(b => !SanctionedProductionContainers.ContainsKey((b.Owner.FullName!, b.Method))).Select(b => b.Description).Distinct().Should().BeEmpty(
             "the production container's services hold the real input, clipboard, hook, window and process wrappers: replace them " +
-            "with fakes (NativeFakedServer), or add the type to SanctionedProductionContainers with why its use only reads");
-        SanctionedProductionContainers.Keys.Should().BeSubsetOf(containers.Select(t => t.FullName!), "an entry names a type that builds the container");
+            "with fakes (NativeFakedServer), or add the method to SanctionedProductionContainers with why its use only reads");
+        SanctionedProductionContainers.Keys.Should().BeSubsetOf(builders.Select(b => (b.Owner.FullName!, b.Method)),
+            "an entry names a method that builds the container");
     }
 
     [Fact]
@@ -414,7 +429,7 @@ public class TestCodeNativeWrapperTests
     {
         // Act - in each type that builds the container: the calls on the server's types that may act
         var calls = Calls(TestCode())
-            .Where(c => SanctionedProductionContainers.ContainsKey(c.Owner.FullName!) && MayAct(c.Callee))
+            .Where(c => ProductionContainerTypes.Contains(c.Owner.FullName!) && MayAct(c.Callee))
             .ToList();
 
         // Assert
@@ -572,12 +587,23 @@ public class TestCodeNativeWrapperTests
         return strings.Any(s => s.StartsWith(TestPausePrefix, StringComparison.Ordinal)) && !strings.Any(NamesTheServers);
     }
 
-    /// <summary>The outermost types whose code calls ServiceRegistration.AddWindowsAppManagerServices.</summary>
-    private static IEnumerable<Type> TypesThatBuildTheProductionContainer(IEnumerable<MethodBase> methods) =>
+    /// <summary>A call of ServiceRegistration.AddWindowsAppManagerServices: the outermost type, the source method it is in, and the calling code.</summary>
+    private sealed record ContainerBuilder(Type Owner, string Method, MethodBase Caller)
+    {
+        public string Description => $"{Owner.FullName}.{Method}";
+    }
+
+    /// <summary>
+    /// The calls of ServiceRegistration.AddWindowsAppManagerServices, each by the source method it is in: a call in a lambda, a
+    /// local function or a state machine is the method's that holds it (a configureServices handed to a server it starts).
+    /// </summary>
+    private static IEnumerable<ContainerBuilder> ContainerBuilders(IEnumerable<MethodBase> methods) =>
         Calls(methods)
             .Where(c => c.Callee.DeclaringType == typeof(ServiceRegistration) && c.Callee.Name == nameof(ServiceRegistration.AddWindowsAppManagerServices))
-            .Select(c => c.Owner)
-            .Distinct();
+            .Select(c => new ContainerBuilder(c.Owner, SourceMethodName(c.Caller) ?? c.Caller.Name, c.Caller));
+
+    /// <summary>The test types (by full name) with a method on <see cref="SanctionedProductionContainers"/>: their calls are held to reads.</summary>
+    private static readonly HashSet<string> ProductionContainerTypes = SanctionedProductionContainers.Keys.Select(k => k.TestType).ToHashSet(StringComparer.Ordinal);
 
     /// <summary>
     /// A call on a server type that may act: an instance member that is no constructor, no property getter and no part of a
