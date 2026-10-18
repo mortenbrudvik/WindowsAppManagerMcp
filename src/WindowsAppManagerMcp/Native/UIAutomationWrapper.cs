@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using System.Windows.Automation;
 using WindowsAppManagerMcp.Services.Interfaces;
 
@@ -30,10 +31,25 @@ public class UIAutomationWrapper : IUIAutomationWrapper
             window.Close();
             return true;
         }
-        catch
+        catch (Exception ex) when (IsExpectedCloseFailure(ex))
         {
-            // Gone, not a window, or the provider failed: nothing was closed through UI Automation
+            // Gone, not a window, or not closable through UI Automation now: nothing was closed through it
             return false;
         }
     }
+
+    /// <summary>
+    /// Whether a failure of <see cref="CloseWindow"/> is one a close expects, so it returns false quietly: the window is gone
+    /// (ElementNotAvailableException, or a COM error <see cref="UiaComErrors.Translate"/> reads as gone or disconnected), the
+    /// handle is no window (ArgumentException), the window cannot be closed now or is not enabled (InvalidOperationException),
+    /// its provider does not support the call, or it did not answer in time (TimeoutException). Anything else (a provider that
+    /// failed, a bug) reaches the caller, WindowCloseVerifier, which logs it as a warning and counts the close as not sent, so
+    /// an unexpected failure is never swallowed without a trace (review finding F9).
+    /// </summary>
+    public static bool IsExpectedCloseFailure(Exception exception) => exception switch
+    {
+        ElementNotAvailableException or ArgumentException or InvalidOperationException or TimeoutException => true,
+        COMException com => UiaComErrors.Translate(com) != null,
+        _ => false
+    };
 }

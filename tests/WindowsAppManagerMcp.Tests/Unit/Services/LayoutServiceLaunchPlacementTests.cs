@@ -78,10 +78,9 @@ public class LayoutServiceLaunchPlacementTests : IDisposable
         // The window rect, as apply_layout places an open window (SetWindowBounds), not the visible frame; with its monitor's
         // key and as fractions, so it is placed on that monitor as it is when the window appears (review M6.8 #5)
         _placed.Should().Equal((Notepad.Handle,
-            new LaunchPlacementPlan(null, null, new WindowRect(0, 0, 960, 1040), null, false)
-            {
-                Frame = BoundsFrame.Outer, MonitorKey = @"\\.\DISPLAY1", RelativeBounds = new RelativePosition(0, 0, 0.5, 1.0)
-            }));
+            LaunchPlacementPlan.ForLayout(@"\\.\DISPLAY1", 0, bounds: new WindowRect(0, 0, 960, 1040),
+                relativeBounds: new RelativePosition(0, 0, 0.5, 1.0))));
+        _placed.Single().Plan.Frame.Should().Be(BoundsFrame.Outer);
         _windows.Verify(w => w.SetWindowBounds(It.IsAny<nint>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>()),
             Times.Never, "the placement service places it");
         _windows.Verify(w => w.EvaluateTargetPolicy(It.IsAny<nint>()), Times.Never, "the placement service checks it");
@@ -112,12 +111,10 @@ public class LayoutServiceLaunchPlacementTests : IDisposable
 
         _placed.Single().Plan.Should().Be(state == WindowState.Maximized
             // The monitor is found again by its key when the window is placed (roadmap M6.8); this one has no id
-            ? new LaunchPlacementPlan(null, 0, null, LaunchWindowState.Maximized, false) { MonitorKey = @"\\.\DISPLAY1" }
-            : new LaunchPlacementPlan(null, null, new WindowRect(0, 0, 960, 1040),
-                state == WindowState.Minimized ? LaunchWindowState.Minimized : null, false)
-            {
-                Frame = BoundsFrame.Outer, MonitorKey = @"\\.\DISPLAY1", RelativeBounds = new RelativePosition(0, 0, 0.5, 1.0)
-            });
+            ? LaunchPlacementPlan.ForLayout(@"\\.\DISPLAY1", 0, state: LaunchWindowState.Maximized)
+            : LaunchPlacementPlan.ForLayout(@"\\.\DISPLAY1", 0, bounds: new WindowRect(0, 0, 960, 1040),
+                relativeBounds: new RelativePosition(0, 0, 0.5, 1.0), state: state == WindowState.Minimized ? LaunchWindowState.Minimized : null));
+        _placed.Single().Plan.MonitorIndex.Should().Be(state == WindowState.Maximized ? 0 : null);
     }
 
     [Fact]
@@ -126,10 +123,8 @@ public class LayoutServiceLaunchPlacementTests : IDisposable
         // Review M6.8 #5: as an open window does
         await ApplyAsync(Placement("notepad") with { State = WindowState.Maximized, NormalPosition = new RelativePosition(0.1, 0.1, 0.5, 0.5) });
 
-        _placed.Single().Plan.Should().Be(new LaunchPlacementPlan(null, null, new WindowRect(192, 104, 960, 520), LaunchWindowState.Maximized, false)
-        {
-            Frame = BoundsFrame.Outer, MonitorKey = @"\\.\DISPLAY1", RelativeBounds = new RelativePosition(0.1, 0.1, 0.5, 0.5)
-        });
+        _placed.Single().Plan.Should().Be(LaunchPlacementPlan.ForLayout(@"\\.\DISPLAY1", 0, bounds: new WindowRect(192, 104, 960, 520),
+            relativeBounds: new RelativePosition(0.1, 0.1, 0.5, 0.5), state: LaunchWindowState.Maximized));
     }
 
     [Fact]

@@ -5168,7 +5168,7 @@
     {
       "name": "list_layouts",
       "title": "List Layouts",
-      "description": "List all saved layout presets. Returns preset names, descriptions, and window counts. Presets are JSON files in %LOCALAPPDATA%\\WindowsAppManagerMcp\\layouts (or the folder in the WAM_LAYOUTS_PATH environment variable); the samples work-setup, dual-monitor and focus-mode are added there on first run.",
+      "description": "List the saved layout presets (name, description, window count), then any invalid preset file, with its error. Presets are JSON files in %LOCALAPPDATA%\\WindowsAppManagerMcp\\layouts (or the folder in the WAM_LAYOUTS_PATH environment variable); the samples work-setup, dual-monitor and focus-mode are added on first run.",
       "inputSchema": {
         "type": "object",
         "properties": {}

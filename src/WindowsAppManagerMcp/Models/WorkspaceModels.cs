@@ -66,6 +66,10 @@ public sealed record WorkspaceContentOutcome(
 /// <param name="Layout">The layout applied afterwards, as apply_layout with launchMissing reports it.</param>
 /// <param name="Error">Why the workspace could not be restored at all.</param>
 /// <param name="ErrorCode">PresetNotFound, or LaunchNotConfirmed for a preset an agent wrote; null when it ran.</param>
+/// <param name="Warnings">
+/// What the restore could not be sure of, such as File Explorer windows the shell could not read (a folder one of them shows
+/// looks closed, so it may have been opened a second time); null when there is nothing to say.
+/// </param>
 public sealed record WorkspaceRestoreResult(
     bool Success,
     string Name,
@@ -73,4 +77,5 @@ public sealed record WorkspaceRestoreResult(
     IReadOnlyList<WorkspaceContentOutcome>? Opened = null,
     [property: JsonPropertyName("layout")] LayoutApplyResult? Layout = null,
     string? Error = null,
-    string? ErrorCode = null);
+    string? ErrorCode = null,
+    IReadOnlyList<string>? Warnings = null);

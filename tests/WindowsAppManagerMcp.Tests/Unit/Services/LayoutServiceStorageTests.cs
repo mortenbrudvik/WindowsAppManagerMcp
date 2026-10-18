@@ -199,6 +199,7 @@ public class LayoutServiceStorageTests : IDisposable
         access.SetupSequence(a => a.CheckCanWrite(_layoutsPath))
             .Throws(new UnauthorizedAccessException("denied"))
             .Pass();
+        access.Setup(a => a.ListPresetFiles(_layoutsPath)).Returns(() => new LayoutFolderAccess().ListPresetFiles(_layoutsPath));
         var sut = CreateSut(OptionsWith(samples: [Sample("sample")]), access.Object);
 
         // Act

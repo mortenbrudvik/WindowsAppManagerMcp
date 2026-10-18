@@ -9,45 +9,77 @@ namespace WindowsAppManagerMcp.Native;
 /// </summary>
 public class NativeMonitorWrapper : INativeMonitorWrapper
 {
-    public IReadOnlyList<(nint Handle, MonitorInfo Info)> EnumerateMonitors()
+    /// <summary>
+    /// How often <see cref="EnumerateMonitors"/> enumerates when a pass fails or misses a monitor (the displays changing under
+    /// it) before it gives up and reports none.
+    /// </summary>
+    public const int EnumerationAttempts = 3;
+
+    /// <summary>
+    /// One EnumDisplayMonitors pass: whether it completed, and each monitor's handle with what GetMonitorInfoW read (null
+    /// when it could not read that monitor), in enumeration order.
+    /// </summary>
+    public sealed record MonitorEnumeration(bool Completed, IReadOnlyList<(nint Handle, MonitorInfo? Info)> Monitors);
+
+    public IReadOnlyList<(nint Handle, MonitorInfo Info)> EnumerateMonitors() => ReadMonitors(EnumerateOnce);
+
+    /// <summary>
+    /// The monitors of the first pass that completed with every monitor read, numbered from 0 in its order; tried up to
+    /// <see cref="EnumerationAttempts"/> times, then empty. A pass that skipped a monitor would renumber the ones after it,
+    /// so "monitor: 2" would reach another physical monitor, and one that failed may have listed only some: neither is ever
+    /// returned. Empty is what the callers already handle as "no monitor" (MonitorService enumerates again on its next use).
+    /// Pure, so it is tested directly.
+    /// </summary>
+    public static IReadOnlyList<(nint Handle, MonitorInfo Info)> ReadMonitors(Func<MonitorEnumeration> enumerate)
     {
-        // Built locally on every call, so concurrent callers never share a list that is being filled
-        var monitors = new List<(nint Handle, MonitorInfo Info)>();
+        ArgumentNullException.ThrowIfNull(enumerate);
+        for (var attempt = 0; attempt < EnumerationAttempts; attempt++)
+        {
+            var pass = enumerate();
+            if (pass.Completed && pass.Monitors.All(m => m.Info != null))
+            {
+                return pass.Monitors.Select((m, index) => (m.Handle, m.Info! with { Index = index })).ToList();
+            }
+        }
+
+        return [];
+    }
+
+    /// <summary>
+    /// A monitor as GetMonitorInfoW and GetDpiForMonitor read it, with index 0 (<see cref="ReadMonitors"/> numbers them). A
+    /// DPI that could not be read (<paramref name="dpi"/> null) is not made up: the monitor says so (<see cref="MonitorInfo.DpiUnknown"/>),
+    /// with a scale of 1 for the arithmetic that needs one.
+    /// </summary>
+    public static MonitorInfo ToMonitorInfo(string deviceName, bool isPrimary, MonitorRect bounds, MonitorRect workArea, uint? dpi) =>
+        new(0, deviceName, isPrimary, bounds, workArea, (dpi ?? 96) / 96.0)
+        {
+            Dpi = (int)(dpi ?? 96),
+            DpiUnknown = dpi == null
+        };
+
+    /// <summary>One EnumDisplayMonitors pass, built locally, so concurrent callers never share a list that is being filled.</summary>
+    private static MonitorEnumeration EnumerateOnce()
+    {
+        var monitors = new List<(nint Handle, MonitorInfo? Info)>();
 
         NativeMethods.User32.MonitorEnumProc callback = (nint hMonitor, nint hdcMonitor, ref RECT lprcMonitor, nint dwData) =>
         {
             var mi = MONITORINFOEX.Create();
-            if (NativeMethods.User32.GetMonitorInfoW(hMonitor, ref mi))
-            {
-                var dpi = GetDpi(hMonitor);
-                var info = new MonitorInfo(
-                    Index: monitors.Count,
-                    DeviceName: mi.szDevice,
-                    IsPrimary: (mi.dwFlags & NativeEnums.MONITORINFOF_PRIMARY) != 0,
-                    Bounds: new MonitorRect(
-                        mi.rcMonitor.Left,
-                        mi.rcMonitor.Top,
-                        mi.rcMonitor.Right - mi.rcMonitor.Left,
-                        mi.rcMonitor.Bottom - mi.rcMonitor.Top),
-                    WorkArea: new MonitorRect(
-                        mi.rcWork.Left,
-                        mi.rcWork.Top,
-                        mi.rcWork.Right - mi.rcWork.Left,
-                        mi.rcWork.Bottom - mi.rcWork.Top),
-                    ScaleFactor: dpi / 96.0
-                )
-                {
-                    Dpi = (int)dpi
-                };
-                monitors.Add((hMonitor, info));
-            }
+            monitors.Add((hMonitor, NativeMethods.User32.GetMonitorInfoW(hMonitor, ref mi)
+                ? ToMonitorInfo(
+                    mi.szDevice,
+                    (mi.dwFlags & NativeEnums.MONITORINFOF_PRIMARY) != 0,
+                    new MonitorRect(mi.rcMonitor.Left, mi.rcMonitor.Top, mi.rcMonitor.Right - mi.rcMonitor.Left, mi.rcMonitor.Bottom - mi.rcMonitor.Top),
+                    new MonitorRect(mi.rcWork.Left, mi.rcWork.Top, mi.rcWork.Right - mi.rcWork.Left, mi.rcWork.Bottom - mi.rcWork.Top),
+                    GetDpi(hMonitor))
+                : null));
             return true;
         };
 
-        NativeMethods.User32.EnumDisplayMonitors(nint.Zero, nint.Zero, callback, nint.Zero);
+        var completed = NativeMethods.User32.EnumDisplayMonitors(nint.Zero, nint.Zero, callback, nint.Zero);
         GC.KeepAlive(callback);
 
-        return monitors;
+        return new MonitorEnumeration(completed, monitors);
     }
 
     public nint MonitorFromWindow(nint windowHandle)
@@ -61,8 +93,11 @@ public class NativeMonitorWrapper : INativeMonitorWrapper
         return NativeMethods.User32.MonitorFromPoint(pt, NativeEnums.MONITOR_DEFAULTTONEAREST);
     }
 
-    /// <summary>The effective DPI of a monitor; 96 (no scaling) when it cannot be read.</summary>
-    private static uint GetDpi(nint hMonitor)
+    /// <summary>
+    /// The effective DPI of a monitor; null when it cannot be read (the call fails, or Shcore has no GetDpiForMonitor before
+    /// Windows 8.1), never a made-up 96.
+    /// </summary>
+    private static uint? GetDpi(nint hMonitor)
     {
         try
         {
@@ -72,18 +107,14 @@ public class NativeMonitorWrapper : INativeMonitorWrapper
                 out uint dpiX,
                 out uint _);
 
-            if (result == 0 && dpiX > 0) // S_OK
-            {
-                // Standard DPI is 96; the scale factor is dpi / 96
-                return dpiX;
-            }
+            // S_OK; standard DPI is 96, and the scale factor is dpi / 96
+            return result == 0 && dpiX > 0 ? dpiX : null;
         }
-        catch
+        catch (Exception ex) when (ex is DllNotFoundException or EntryPointNotFoundException)
         {
-            // Fallback for older Windows versions (pre-8.1)
+            // Windows before 8.1
+            return null;
         }
-
-        return 96; // Default to no scaling
     }
 
     /// <summary>How often <see cref="GetDisplayTargets"/> queries when the topology keeps changing under it.</summary>

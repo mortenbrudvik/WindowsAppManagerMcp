@@ -314,7 +314,7 @@ public class MonitorSelectionTests
         // Assert - the index and the monitor come from the same snapshot, the one the next call lists
         resolution.Index.Should().Be(0);
         resolution.Monitor.Should().Be(docked);
-        sut.GetAllMonitors()[resolution.Index].Should().Be(resolution.Monitor);
+        sut.GetAllMonitors()[resolution.Index!.Value].Should().Be(resolution.Monitor);
     }
 
     [Fact]

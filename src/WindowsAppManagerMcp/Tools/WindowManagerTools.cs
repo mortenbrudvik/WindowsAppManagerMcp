@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Globalization;
+using Microsoft.Extensions.Logging;
 using ModelContextProtocol.Server;
 using WindowsAppManagerMcp.Infrastructure;
 using WindowsAppManagerMcp.Models;
@@ -63,6 +64,7 @@ public class WindowManagerTools
     private readonly TimeSpan? _gateWaitTimeout;
     private readonly IWindowCloseVerifier _closeVerifier;
     private readonly IMonitorService? _monitorService;
+    private readonly ILogger<WindowManagerTools>? _logger;
 
     /// <param name="windowService">Reads and changes windows.</param>
     /// <param name="foregroundService">Brings a window to the front (focus_window).</param>
@@ -77,6 +79,7 @@ public class WindowManagerTools
     /// Resolves a `monitor` name (roadmap M6.7) and the monitor set_window_bounds' percentages are of. The server always
     /// passes it; without it a monitor name or unit 'percent' fails.
     /// </param>
+    /// <param name="logger">Logs what goes wrong unexpectedly, such as a close_application window whose close throws.</param>
     public WindowManagerTools(
         IWindowService windowService,
         IForegroundService foregroundService,
@@ -84,7 +87,8 @@ public class WindowManagerTools
         TimeSpan? answerTimeout = null,
         TimeSpan? gateWaitTimeout = null,
         IWindowCloseVerifier? closeVerifier = null,
-        IMonitorService? monitorService = null)
+        IMonitorService? monitorService = null,
+        ILogger<WindowManagerTools>? logger = null)
     {
         _windowService = windowService;
         _foregroundService = foregroundService;
@@ -93,6 +97,7 @@ public class WindowManagerTools
         _gateWaitTimeout = gateWaitTimeout;
         _closeVerifier = closeVerifier ?? new WindowCloseVerifier(windowService);
         _monitorService = monitorService;
+        _logger = logger;
     }
 
     [McpServerTool(Name = "set_window_bounds", Title = "Set Window Bounds", ReadOnly = false, Destructive = false, Idempotent = true, OpenWorld = false)]
@@ -699,6 +704,10 @@ public class WindowManagerTools
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
+                    // Reported for this window alone, as a refusal would be; the exception is logged, since it can be a bug
+                    // (a NullReferenceException) that the message alone would hide
+                    _logger?.LogWarning(ex, "close_application could not send the close to window {Handle} of process {ProcessId}",
+                        target.Handle, target.ProcessId);
                     result = WindowCloseResult.Failed(target.Handle, CloseFailed, $"The close could not be sent: {ex.Message}");
                 }
 
@@ -819,12 +828,17 @@ public class WindowManagerTools
         {
             CloseStatus.Closed or CloseStatus.Hidden or CloseStatus.Requested => (true, CloseNames.Of(observation.Status), null, null, null),
             CloseStatus.PromptShown => (false, CloseNames.Of(CloseStatus.PromptShown), ClosePromptDto.From(observation.Prompt),
-                $"The window did not close: it shows a prompt (see prompt) that waits for an answer. {PromptAdvice}", nameof(PromptShown)),
+                $"The window did not close: it shows a prompt (see prompt) that waits for an answer. {PromptAdvice}" + WarningOf(observation),
+                nameof(PromptShown)),
             _ => (false, CloseNames.Of(CloseStatus.StillOpen), null,
                 $"The close message was sent, but the window was still open after {waitMs} ms and shows no prompt: the app may be busy " +
                 "or slow, or ignore the request (a window that was already hidden or on another virtual desktop counts as open too). " +
-                "Check it with find_windows, or wait longer.", nameof(StillOpen))
+                "Check it with find_windows, or wait longer." + WarningOf(observation), nameof(StillOpen))
         };
+
+    /// <summary>The verifier's warning (a prompt it could not inspect), as a sentence to add to an error; empty without one.</summary>
+    private static string WarningOf(CloseObservation observation) =>
+        observation.Warning is { Length: > 0 } warning ? " " + warning : string.Empty;
 
     /// <summary>No windows: the shown-before set of a close that is not waited for.</summary>
     private static readonly IReadOnlySet<nint> EmptyHandles = new HashSet<nint>();

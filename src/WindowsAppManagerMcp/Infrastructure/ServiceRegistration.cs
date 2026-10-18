@@ -202,7 +202,7 @@ public static class ServiceRegistration
             // packaged app's window by its appId (roadmap M6.8)
             return new LayoutService(windowService, monitorService, processService, foregroundService, createLayoutStorage(),
                 launchPlacement: sp.GetRequiredService<ILaunchPlacementService>(), apps: sp.GetRequiredService<INativeAppsWrapper>(),
-                installedApps: sp.GetRequiredService<IInstalledAppsService>());
+                installedApps: sp.GetRequiredService<IInstalledAppsService>(), logger: sp.GetService<ILogger<LayoutService>>());
         });
 
         // Verified window activation (focus_window, apply_layout, and the input guard): all attach and

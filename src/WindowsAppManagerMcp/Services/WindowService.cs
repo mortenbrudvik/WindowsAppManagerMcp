@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using System.Text.RegularExpressions;
 using WindowsAppManagerMcp.Models;
 using WindowsAppManagerMcp.Native;
@@ -966,8 +967,25 @@ public class WindowService : IWindowService
         if (!already && otherTopmost && !windowTopmost)
         {
             // HWND_TOPMOST takes it to the front of the topmost windows; then behind the one in front of the other, if any
-            if (SetZOrder(handle, window, NativeEnums.HWND_TOPMOST) is { Success: false } notTopmost)
-                return notTopmost;
+            var sent = new StrongBox<bool>();
+            WindowChangeResult madeTopmost;
+            try
+            {
+                madeTopmost = SetZOrder(handle, window, NativeEnums.HWND_TOPMOST, sent);
+            }
+            catch (WindowNotRespondingException ex) when (Volatile.Read(ref sent.Value))
+            {
+                // Sent and given up on: the call can still make the window topmost once its app answers, after any undo. One
+                // that already did is undone; one refused before it was sent changed nothing, and its message says so
+                if (!IsTopmost(window))
+                    throw new WindowNotRespondingException(ex.Window, ex.Message + MayBecomeTopmost);
+                if (!UndoTopmost(handle, window))
+                    throw new WindowNotRespondingException(ex.Window, LeftTopmost(ex.Message));
+                throw;
+            }
+
+            if (!madeTopmost.Success)
+                return madeTopmost;
 
             WindowChangeResult placed;
             try
@@ -976,14 +994,15 @@ public class WindowService : IWindowService
                 if (placed.Success)
                     placed = ReadBackAbove(handle, window, other);
             }
-            catch (WindowNotRespondingException)
+            catch (WindowNotRespondingException ex)
             {
-                UndoTopmost(handle, window);
+                if (!UndoTopmost(handle, window))
+                    throw new WindowNotRespondingException(ex.Window, LeftTopmost(ex.Message));
                 throw;
             }
 
-            if (!placed.Success)
-                UndoTopmost(handle, window);
+            if (!placed.Success && !UndoTopmost(handle, window))
+                placed = placed with { Error = LeftTopmost(placed.Error) };
             return placed;
         }
 
@@ -1022,10 +1041,12 @@ public class WindowService : IWindowService
     }
 
     /// <summary>
-    /// Makes a window the failed 'above' made topmost not topmost again. A refusal or a window that does not answer is left as it
-    /// is: the pin then follows what the window is (TrackPin), so get_server_info still lists it.
+    /// Makes a window the failed 'above' made topmost not topmost again, and says whether it is not topmost afterwards (read
+    /// back, whatever the call returned). A refusal or a window that does not answer is left as it is: the pin then follows
+    /// what the window is (TrackPin), so get_server_info still lists it, and the caller puts <see cref="LeftTopmost"/> before
+    /// its failure, since the contract that a failed call leaves no new topmost window does not hold for it.
     /// </summary>
-    private void UndoTopmost(nint handle, nint window)
+    private bool UndoTopmost(nint handle, nint window)
     {
         try
         {
@@ -1033,14 +1054,45 @@ public class WindowService : IWindowService
         }
         catch (WindowNotRespondingException)
         {
+            // Read back below: a change Windows made before the deadline still counts
         }
+
+        return !IsTopmost(window);
     }
 
+    /// <summary>
+    /// A failed 'above' whose undo failed too, in words: the state first (the window is topmost now) and how to undo it, then
+    /// <paramref name="failure"/>, the step that failed, whose own "nothing was changed" is about that step alone.
+    /// </summary>
+    private static string LeftTopmost(string? failure) =>
+        "The window was left topmost: it was made topmost to go above a topmost window, and making it not topmost again failed " +
+        "too. Call set_window_zorder with mode 'notopmost' for it (get_server_info lists it among the windows the server made " +
+        $"topmost), or ask the user. Placing it above the other window failed: {failure}";
+
+    /// <summary>
+    /// What a failed 'above' adds when the call that makes the window topmost first was sent and given up on: it may still
+    /// happen once the app answers, and then the window stays topmost.
+    /// </summary>
+    private const string MayBecomeTopmost =
+        " Going above a topmost window makes the window topmost first, and that change may still happen once the app answers, so " +
+        "the window may be left topmost: check it with get_window_info (isTopmost), and if it is, call set_window_zorder with mode " +
+        "'notopmost' for it, or ask the user.";
+
     /// <summary>SetWindowZOrder, with a deadline (<see cref="IWindowCallRunner"/>); a refusal as a placement's (AccessDenied).</summary>
+    /// <param name="sent">
+    /// Set when the call is made, before it can block: a <see cref="WindowNotRespondingException"/> with it set was given up on
+    /// and may still happen; without it, the call was refused before it was sent (Windows reports the app hung, or an earlier
+    /// call to it is still stuck) and changed nothing.
+    /// </param>
     /// <exception cref="WindowNotRespondingException">The window did not answer in time.</exception>
-    private WindowChangeResult SetZOrder(nint handle, nint window, nint insertAfter)
+    private WindowChangeResult SetZOrder(nint handle, nint window, nint insertAfter, StrongBox<bool>? sent = null)
     {
-        var placed = _windowCalls.Run(handle, () => _nativeWrapper.SetWindowZOrder(window, insertAfter, ZOrderFlags));
+        var placed = _windowCalls.Run(handle, () =>
+        {
+            if (sent != null)
+                Volatile.Write(ref sent.Value, true);
+            return _nativeWrapper.SetWindowZOrder(window, insertAfter, ZOrderFlags);
+        });
         return placed.Succeeded ? WindowChangeResult.Done(handle) : NotPlaced(handle, placed.Win32Error, WindowErrorCode.ZOrderNotApplied);
     }
 

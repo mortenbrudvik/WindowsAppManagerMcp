@@ -139,6 +139,14 @@ public class LaunchPlacementServiceTests
         return plan!;
     }
 
+    /// <summary>The device name of the monitor a layout's plan names (<see cref="LayoutMonitor"/>).</summary>
+    private const string LayoutMonitorKey = @"\\.\DISPLAY1";
+
+    /// <summary>A layout's plan always names its monitor (LaunchPlacementPlan.ForLayout): this is it, with this work area.</summary>
+    private void LayoutMonitor(MonitorRect workArea) =>
+        _monitors.Setup(m => m.ResolveMonitor(It.Is<MonitorSelector>(s => s.Name == LayoutMonitorKey)))
+            .Returns(MonitorResolution.Found(0, new MonitorInfo(0, LayoutMonitorKey, true, workArea, workArea, 1.0)));
+
     private async Task<LaunchPlacementOutcome> PlaceOneAsync(nint handle, LaunchPlacement placement) =>
         (await CreateSut().PlaceAsync([(handle, Plan(placement))])).Single();
 
@@ -520,8 +528,11 @@ public class LaunchPlacementServiceTests
     [Fact]
     public async Task OuterBounds_PlaceTheWindowRect_AsLayoutsDo()
     {
-        // apply_layout's presets hold the window rect with its invisible borders (roadmap M3.F27)
-        var plan = new LaunchPlacementPlan(null, null, new WindowRect(0, 0, 974, 1047), null, false) { Frame = BoundsFrame.Outer };
+        // apply_layout's presets hold the window rect with its invisible borders (roadmap M3.F27); its monitor's work area is
+        // the rectangle, so the fractions place it there unchanged
+        LayoutMonitor(new MonitorRect(0, 0, 974, 1047));
+        var plan = LaunchPlacementPlan.ForLayout(LayoutMonitorKey, 0, bounds: new WindowRect(0, 0, 974, 1047),
+            relativeBounds: new RelativePosition(0, 0, 1, 1));
 
         var outcome = (await CreateSut().PlaceAsync([(Code, plan)])).Single();
 
@@ -695,10 +706,9 @@ public class LaunchPlacementServiceTests
     public async Task ALayoutsMaximizedPlan_PlacesTheRestoreRectangle_ThenMaximizes()
     {
         // Review M6.8 #5: apply_layout's launched maximized window restores to its saved rectangle
-        var plan = new LaunchPlacementPlan(null, null, new WindowRect(192, 104, 960, 520), LaunchWindowState.Maximized, false)
-        {
-            Frame = BoundsFrame.Outer
-        };
+        LayoutMonitor(new MonitorRect(0, 0, 1920, 1040));
+        var plan = LaunchPlacementPlan.ForLayout(LayoutMonitorKey, 0, bounds: new WindowRect(192, 104, 960, 520),
+            relativeBounds: new RelativePosition(0.1, 0.1, 0.5, 0.5), state: LaunchWindowState.Maximized);
 
         var outcome = (await CreateSut().PlaceAsync([(Code, plan)])).Single();
 
@@ -715,10 +725,8 @@ public class LaunchPlacementServiceTests
             Id = "m-0a1b2c3d"
         };
         _monitors.Setup(m => m.ResolveMonitor(It.Is<MonitorSelector>(s => s.Name == "m-0a1b2c3d"))).Returns(MonitorResolution.Found(2, now));
-        var plan = new LaunchPlacementPlan(null, null, new WindowRect(0, 0, 960, 1040), null, false)
-        {
-            Frame = BoundsFrame.Outer, MonitorKey = "m-0a1b2c3d", RelativeBounds = new RelativePosition(0.5, 0, 0.5, 1)
-        };
+        var plan = LaunchPlacementPlan.ForLayout("m-0a1b2c3d", 1, bounds: new WindowRect(0, 0, 960, 1040),
+            relativeBounds: new RelativePosition(0.5, 0, 0.5, 1));
 
         var outcome = (await CreateSut().PlaceAsync([(Code, plan)])).Single();
 

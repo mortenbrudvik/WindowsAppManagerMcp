@@ -16,6 +16,9 @@ public class LayoutPresetToolsTests
     public LayoutPresetToolsTests()
     {
         _mockLayoutService = new Mock<ILayoutService>();
+
+        // No file in the folder is invalid (LayoutPresetToolsInvalidFileTests covers those that are)
+        _mockLayoutService.Setup(l => l.GetInvalidFiles()).Returns([]);
     }
 
     private LayoutPresetTools CreateSut() => new LayoutPresetTools(_mockLayoutService.Object);

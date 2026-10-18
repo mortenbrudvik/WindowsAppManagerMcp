@@ -98,10 +98,17 @@ public sealed class WorkspaceService : IWorkspaceService
         // its place among the process's windows
         var windows = _windows.GetAllWindows(includeMinimized);
         var warnings = new List<string>();
-        var folders = _shell.GetExplorerFolders();
-        if (folders == null)
+        var listing = _shell.GetExplorerFolders();
+        var folders = listing?.Folders;
+        if (listing == null)
         {
             warnings.Add("File Explorer did not answer, so no folder was kept; save the workspace again to keep them.");
+        }
+        else if (listing.SkippedWindows > 0)
+        {
+            // Their folders are unknown: the placements of those windows are saved without one
+            warnings.Add($"{Windows(listing.SkippedWindows)} could not be read, so the folder each shows was not kept; save the " +
+                         "workspace again to keep it.");
         }
 
         var assigned = new HashSet<nint>();
@@ -252,7 +259,9 @@ public sealed class WorkspaceService : IWorkspaceService
     {
         if (_layouts.GetPreset(name) is not { } preset)
         {
-            return new WorkspaceRestoreResult(false, name, "failed", Error: $"No layout or workspace named '{name}'. list_layouts lists them.",
+            // A file that is no valid preset and may hold it is named (review finding F1)
+            return new WorkspaceRestoreResult(false, name, "failed",
+                Error: $"No layout or workspace named '{name}'. list_layouts lists them." + LayoutService.NotFoundNote(name, _layouts.GetInvalidFiles()),
                 ErrorCode: nameof(LayoutErrorCode.PresetNotFound));
         }
 
@@ -266,7 +275,8 @@ public sealed class WorkspaceService : IWorkspaceService
         }
 
         var outcomes = new List<WorkspaceContentOutcome>();
-        var explorer = preset.Placements.Any(p => p.Content?.Folder != null) ? _shell.GetExplorerFolders() : [];
+        var listing = preset.Placements.Any(p => p.Content?.Folder != null) ? _shell.GetExplorerFolders() : new ExplorerFolderListing([], 0);
+        var explorer = listing?.Folders;
         if (explorer == null)
         {
             // Not knowing which folders are open, opening them could open every one a second time
@@ -304,14 +314,27 @@ public sealed class WorkspaceService : IWorkspaceService
             }
         }
 
+        // A File Explorer window the shell could not read may show a folder that was opened (or would be) as missing
+        List<string>? warnings = null;
+        if (listing is { SkippedWindows: > 0 } &&
+            outcomes.Any(o => o.Kind == "folder" && o.Status is "opened" or "wouldOpen"))
+        {
+            warnings = [$"{Windows(listing.SkippedWindows)} could not be read, so a folder one of them shows looked closed: it " +
+                        $"{(dryRun ? "would be" : "may have been")} opened a second time. Check the File Explorer windows with find_windows."];
+        }
+
         // The windows are there now (or will be launched): the layout puts them in place, as apply_layout with launchMissing
         var layout = await _layouts.ApplyPresetAsync(name, LayoutMatchBy.ProcessAndTitle, launchMissing: true,
             new LayoutApplyOptions(dryRun, null), progress, cancellationToken).ConfigureAwait(false);
         var openFailed = outcomes.Any(o => o.Status is "failed" or "missing" or "unsupported");
         var status = dryRun ? "dryRun" : layout.Success && !openFailed ? "restored" : layout.WindowsArranged > 0 || outcomes.Any(o => o.Status == "opened") ? "partial" : "failed";
         return new WorkspaceRestoreResult(layout.Success && !openFailed, name, status, outcomes, layout,
-            Error: !dryRun && status != "restored" ? "Not everything of the workspace came back; see opened and layout." : null);
+            Error: !dryRun && status != "restored" ? "Not everything of the workspace came back; see opened and layout." : null,
+            Warnings: warnings);
     }
+
+    /// <summary>"1 File Explorer window" or "3 File Explorer windows".</summary>
+    private static string Windows(int count) => $"{count} File Explorer window{(count == 1 ? string.Empty : "s")}";
 
     private async Task<WorkspaceContentOutcome> RestoreFolderAsync(int index, string folder, IReadOnlyList<ExplorerFolder> explorer,
         bool dryRun, CancellationToken cancellationToken)

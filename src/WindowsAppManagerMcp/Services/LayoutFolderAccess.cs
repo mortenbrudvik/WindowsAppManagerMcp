@@ -8,6 +8,12 @@ namespace WindowsAppManagerMcp.Services;
 /// </summary>
 public class LayoutFolderAccess : ILayoutFolderAccess
 {
+    public IReadOnlyList<FileInfo> ListPresetFiles(string folder)
+    {
+        var directory = new DirectoryInfo(folder);
+        return directory.Exists ? directory.EnumerateFiles("*.json").ToList() : [];
+    }
+
     public void CheckCanList(string folder)
     {
         using var entries = Directory.EnumerateFileSystemEntries(folder).GetEnumerator();
