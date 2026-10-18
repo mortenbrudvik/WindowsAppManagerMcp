@@ -16,7 +16,7 @@ namespace WindowsAppManagerMcp.Services.Interfaces;
 /// for the modal dialog it opened) runs on a thread of its own (<see cref="IUiaActionRunner"/>), never on the read worker,
 /// so the agent can still read the dialog; the gate is released when the timeout passes. Mouse and keyboard paths go
 /// through <see cref="IInputSimulationService"/> after the gate is released (it takes the gate itself), so every input
-/// check applies to them as to click and type_text.</para>
+/// check applies to them as to mouse_click and type_text.</para>
 /// <para>Never throws for a refusal or an application error: they come back as the result's errorCode. Throws
 /// <see cref="OperationCanceledException"/> when the request is cancelled, and ToolErrorException (PausedByUser,
 /// InputBusy) from the gate.</para>

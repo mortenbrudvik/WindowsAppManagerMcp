@@ -38,9 +38,10 @@ public static class ToolDocCatalog
             new("wait_for_window", "Wait until a window exists, is gone, in front, visible, retitled or input-idle", "window", "condition", "excludeHandles", "timeoutMs"),
             new("get_window_events", "What windows came up, went, were retitled or came to the front since an earlier call", "sinceSeq", "types", "processName", "limit"),
         ],
-        SkillNote: "Every tool that takes a window's `handle` (or `windowHandle`) also takes `window`, a selector with the filters of " +
-                   "`find_windows` (`titleContains`, `titleEquals`, `titleRegex`, `processName`, `processId`, `className`, `foreground`, " +
-                   "`index`, ...). It must name exactly one window: several matches fail with `AmbiguousWindow` and up to 5 `candidates`, " +
+        SkillNote: "Every tool that takes a window's `handle` (or `windowHandle`) also takes `window`, a selector: `find_windows`' " +
+                   "title, process and class filters (`titleContains`, `titleEquals`, `titleRegex`, `processName`, `processNameContains`, " +
+                   "`processId`, `className`), `handle`, `foreground`, `index`, `includeCloaked` and `includeUntitled`, and no other " +
+                   "member. It must name exactly one window: several matches fail with `AmbiguousWindow` and up to 5 `candidates`, " +
                    "none with `WindowNotFound`. `window.handle` with `processId` or a title refuses a reused handle (`HandleMismatch`)."),
         new("Window Control",
         [
@@ -141,7 +142,7 @@ public static class ToolDocCatalog
                    "modifier key (see `ModifiersHeld` in [errors.md](errors.md#input-refusals))."),
         new("Input Control",
         [
-            new("get_control_status", "Is input paused by the user, is the pause hotkey registered, which keys are down"),
+            new("get_control_status", "Is input paused and why, is the pause hotkey registered, which modifier keys are down"),
             new("resume_input", "Ask the user to resume input after a pause; only their confirmation resumes it"),
             new("release_all_input", "Release stuck keys and mouse buttons", "releaseHeldModifiers"),
         ]),

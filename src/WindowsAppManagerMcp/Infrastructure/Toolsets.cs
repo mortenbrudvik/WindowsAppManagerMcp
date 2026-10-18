@@ -11,13 +11,15 @@ namespace WindowsAppManagerMcp.Infrastructure;
 public sealed record Toolset(string Name, bool OnByDefault, string Description, IReadOnlyList<string> Tools);
 
 /// <summary>
-/// A tool that moved out of a toolset into another one (roadmap M6.1: into the opt-in windows-batch toolset). It is served only while the toolset it came from is on too, so turning its new toolset on never serves a
-/// configuration more than it served before the move, and excluding the toolset it came from by name excludes it too.
+/// A tool that moved out of a toolset into another one (roadmap M6.1: into the opt-in windows-batch toolset). It is served
+/// only while the toolset it came from is on too, so turning its new toolset on never serves a tool that a configuration did
+/// not serve before the move, and excluding the toolset it came from by name excludes it too.
 /// </summary>
 /// <param name="Tool">The tool, by name.</param>
 /// <param name="FormerToolset">The toolset it was in.</param>
-/// <param name="Replacement">What to call instead, as get_server_info names it ("mouse_click with button 'secondary'"),
-/// starting with the replacing tool's name; null when nothing replaces it (it only moved).</param>
+/// <param name="Replacement">What to call instead, as get_server_info names it, starting with the replacing tool's name; null
+/// when nothing replaces it (it only moved). No move of <see cref="Toolsets.Server"/> has one since
+/// 3.0.0 removed the tools 2.2.0 replaced (RemovedTools refuses them); it is kept for a later move that replaces a tool.</param>
 public sealed record MovedTool(string Tool, string FormerToolset, string? Replacement = null);
 
 /// <summary>
@@ -142,7 +144,8 @@ public sealed class ToolsetCatalog
 }
 
 /// <summary>
-/// The server's toolsets (roadmap M2.14). Each tool the server serves is in exactly one of them (ToolsetCatalogTests),
+/// The server's toolsets (roadmap M2.14). Each tool the server serves is in exactly one of them
+/// (ToolsetContractTests.EveryServedTool_IsInOneToolset_AndTheToolsetsNameOnlyServedTools),
 /// and docs/TOOLS.md lists them in a generated region. Every toolset is on by default except workspaces (roadmap M7.5),
 /// browser-actions (roadmap M5.5, M5.8), browser-script (roadmap M5.8), visual (roadmap M6.4), windows-batch (roadmap M6.1)
 /// and ocr (roadmap M6.3). The nine tools 2.2.0 replaced, served by the opt-in deprecated toolset until then, are gone in
@@ -246,9 +249,9 @@ public static class Toolsets
         ],
         // It reports the toolsets in force and why a tool is missing, and the server instructions send the agent to it
         alwaysServedTool: "get_server_info",
-        // Roadmap M6.1: each is served only while the toolset it came from is on too, so 'all' never serves a configuration a
-        // tool it did not serve before 2.2.0, and WAM_EXCLUDE_TOOLS=windows still excludes it; get_server_info says where each
-        // went while it is off
+        // Roadmap M6.1: each is served only while the toolset it came from is on too, so no configuration ('all' included)
+        // serves a tool it did not serve before 2.2.0, and WAM_EXCLUDE_TOOLS=windows still excludes it; get_server_info says
+        // where each went while it is off
         moved:
         [
             new("set_windows_bounds_batch", "windows"),

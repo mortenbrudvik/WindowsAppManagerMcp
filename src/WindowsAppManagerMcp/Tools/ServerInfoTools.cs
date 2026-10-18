@@ -26,7 +26,7 @@ public class ServerInfoTools
                  "force (PerMonitorV2, or PerMonitor on old Windows, means every coordinate is a physical pixel), whether input " +
                  "can reach the desktop (locked " +
                  "session, UAC prompt), the foreground lock timeout, the monitors with their DPI, the agent host windows and " +
-                 "processes input never reaches (TargetIsAgentHost), whether the user paused input and the pause hotkey, the " +
+                 "processes input never reaches (TargetIsAgentHost), whether input is paused and the pause hotkey, the " +
                  "target policy, destructive chords, clipboard setting and URI schemes launch_application opens, the layouts folder and the " +
                  "audit log folder, the toolsets, excluded tools and read-only mode " +
                  "in force (a tool you do not see may be turned off there; moved says where a moved tool went), the UI Automation engine, " +

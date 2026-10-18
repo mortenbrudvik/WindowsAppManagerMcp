@@ -21,13 +21,13 @@ internal static class WindowTargeting
 {
     /// <summary>The description of the window parameter of the tools whose window argument is <c>handle</c>.</summary>
     internal const string WindowDescription =
-        "Alternative to handle: a window selector with find_windows' filters (processName is the whole name; plus foreground, " +
-        "index), resolved to exactly one window or refused (AmbiguousWindow lists candidates).";
+        "Alternative to handle: a window selector (its fields filter as find_windows' do; processName is the whole name), " +
+        "resolved to exactly one window or refused (AmbiguousWindow lists candidates).";
 
     /// <summary>The description of the window parameter of the input tools, whose window argument is <c>windowHandle</c>.</summary>
     internal const string InputWindowDescription =
-        "Alternative to windowHandle: a window selector with find_windows' filters (processName is the whole name; plus foreground, " +
-        "index), resolved to exactly one window and then used as windowHandle. {\"foreground\": true} alone counts as no " +
+        "Alternative to windowHandle: a window selector (its fields filter as find_windows' do; processName is the whole name), " +
+        "resolved to exactly one window and then used as windowHandle. {\"foreground\": true} alone counts as no " +
         "windowHandle, and allowHostTarget needs the window named by handle. A window that no longer matches the selector once " +
         "the call's turn comes (another document or tab) gets nothing (HandleMismatch).";
 

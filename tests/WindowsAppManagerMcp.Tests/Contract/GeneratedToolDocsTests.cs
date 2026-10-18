@@ -1,4 +1,5 @@
 using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
 
 namespace WindowsAppManagerMcp.Tests.Contract;
 
@@ -8,12 +9,16 @@ namespace WindowsAppManagerMcp.Tests.Contract;
 /// (<see cref="ToolDocGenerator"/>), and are up to date. Agents copy these tables, so drift makes them call tools that
 /// do not exist or with wrong arguments. A stale region fails here; the tests rewrite it with UPDATE_SNAPSHOTS=1 (see
 /// TESTING.md). Generated: the tool counts, every tool listed once per table under its category, and the parameter
-/// tables' names, order, types, required flags and defaults. Checked: the skill's key parameters are real parameter
-/// names, and docs/TOOLS.md has one section per tool, under its category, in catalog order.
+/// tables' names, order, types, required flags and defaults, and the tools each annotation hint marks. Checked: the
+/// skill's key parameters are real parameter names, and docs/TOOLS.md has one section per tool, under its category, in
+/// catalog order.
 /// These tests read files in the repository and list the tools of an in-process server; nothing is called.
 /// </summary>
-public class GeneratedToolDocsTests
+public partial class GeneratedToolDocsTests
 {
+    [GeneratedRegex(@"\[(?<name>[a-z_]+)\]\(#\k<name>\)")]
+    private static partial Regex ToolLink();
+
     public static TheoryData<string> Docs()
     {
         var data = new TheoryData<string>();
@@ -154,6 +159,33 @@ public class GeneratedToolDocsTests
             "the tool-tables region is generated, so an edit inside it is overwritten");
         MarkdownRegions.Find(Snapshots.ReadNormalized(ToolDocGenerator.Skill.FullPath)!).Select(r => r.Id).Should().Equal(
             ["count"], "SKILL.md keeps only the tool count; its tables would cost every session that loads the skill");
+    }
+
+    [Fact]
+    public async Task AnnotationsRegion_ListsTheToolsEachHintMarks_FromTheirAnnotations()
+    {
+        // Comment review item 15: the table was written by hand and fell behind the [McpServerTool] flags (it named the
+        // removed move and resize, and left out browser_click, save_workspace, restore_workspace and others)
+        // Arrange
+        var tools = await ToolSurface.ListToolsAsync();
+        var readOnly = ToolDocGenerator.ToolsWith(tools, "readOnlyHint");
+
+        // Act
+        var rows = ToolDocGenerator.AnnotationsTable(tools).Split('\n').Skip(2).Select(ToolDocGenerator.SplitRow).ToList();
+
+        // Assert
+        rows.Select(r => r[0]).Should().Equal(ToolDocGenerator.AnnotationHints.Select(h => $"`{h.Hint}: true`"));
+        foreach (var row in rows)
+        {
+            var hint = row[0].Trim('`')[..^": true".Length];
+            var linked = ToolLink().Matches(row[2]).Select(m => m.Groups["name"].Value).ToList();
+            List<string> named = row[2].StartsWith("The read-only tools, and ", StringComparison.Ordinal) ? [.. readOnly, .. linked] : linked;
+
+            linked.Should().OnlyHaveUniqueItems(hint);
+            named.Should().BeEquivalentTo(
+                tools.Where(t => t!["annotations"]?[hint]?.GetValue<bool>() == true).Select(t => (string)t!["name"]!),
+                "the {0} row lists exactly the tools whose annotations set it", hint);
+        }
     }
 
     [Fact]

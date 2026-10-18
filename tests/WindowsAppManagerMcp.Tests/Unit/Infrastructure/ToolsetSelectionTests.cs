@@ -263,7 +263,8 @@ public class ToolsetSelectionTests
     [Fact]
     public void AToolInNoToolset_IsServedUnlessExcludedOrReadOnly()
     {
-        // The production catalog names every tool (ToolsetCatalogTests); a tool outside it is not the toolsets' to hide
+        // The production catalog names every tool (ToolsetContractTests.EveryServedTool_IsInOneToolset_AndTheToolsetsNameOnlyServedTools);
+        // a tool outside it is not the toolsets' to hide
         Select().Serves("unlisted_tool", readOnlyHint: false).Should().BeTrue();
         Select(readOnly: "1").Serves("unlisted_tool", readOnlyHint: false).Should().BeFalse();
     }

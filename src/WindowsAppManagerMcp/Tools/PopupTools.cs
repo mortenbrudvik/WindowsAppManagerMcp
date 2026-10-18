@@ -33,7 +33,7 @@ public class PopupTools
         long? handle = null,
         [Description(WindowTargeting.WindowDescription)]
         WindowSelector? window = null,
-        [Description("Timeout in milliseconds for reading the popups' elements (default: 5000, min: 1000, max: 30000). A popup not read in time is listed without a ref.")]
+        [Description("Timeout in milliseconds for reading the popups' elements (default: 5000, clamped to 1000-30000). A popup not read in time is listed without a ref.")]
         int timeoutMs = DefaultTimeoutMs,
         CancellationToken cancellationToken = default)
     {

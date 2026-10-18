@@ -31,8 +31,6 @@ public class VisualTools
     private readonly IMonitorService? _monitors;
 
     /// <param name="visual">The waits.</param>
-    /// <param name="windows">Resolves a window selector.</param>
-    /// <param name="visual">The waits.</param>
     /// <param name="windows">Resolves the window selector.</param>
     /// <param name="monitors">Resolves a `monitor` name (roadmap M6.7). The server always passes it; without it a name fails.</param>
     public VisualTools(IVisualChangeService visual, IWindowService windows, IMonitorService? monitors = null)
@@ -45,9 +43,10 @@ public class VisualTools
     [McpServerTool(Name = WaitForVisualTool, Title = "Wait for Visual Change", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
     [Description("Wait on the server until a window, screen region or monitor changes on screen, or stops changing, when UI Automation " +
                  "has nothing to wait on (canvas apps, games, remote desktops, rendering). Frames are compared by a hash per 16-pixel " +
-                 "tile; the result has rectangles, never an image. One target: handle or window (read as capture_window reads it, " +
-                 "covering windows do not count), x/y/width/height or monitor (copied from the screen; windows the user's policy " +
-                 "denies are left out and listed in maskedWindows), or since alone. condition changed (default) compares with since's " +
+                 "tile; the result has rectangles, never an image. One target: handle or window (read as capture_window reads it: " +
+                 "covering windows count only with captureMethod BitBltFallback or ScreenBitBlt), x/y/width/height or monitor " +
+                 "(copied from the screen), or since alone. Where the pixels show other windows, those the user's policy denies are " +
+                 "left out and listed in maskedWindows. condition changed (default) compares with since's " +
                  "capture, else with the wait's first frame, which misses a change made before it: before you act, capture the target " +
                  "with output 'metadata' and pass its captureId as since. stable waits until no frame differs from the one before for " +
                  "stableMs. A text caret the app reports is left out. Returns reason (pixels, resized, closed, minimized, hidden), " +

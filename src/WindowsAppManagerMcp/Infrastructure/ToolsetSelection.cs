@@ -15,7 +15,7 @@ namespace WindowsAppManagerMcp.Infrastructure;
 /// tools/list annotation readOnlyHint).</item>
 /// </list>
 /// A tool that moved out of a toolset (<see cref="ToolsetCatalog.MovedTools"/>, roadmap M6.1) is served only while the
-/// toolset it came from is on too, so <c>all</c> never serves a configuration a tool it did not serve before the move;
+/// toolset it came from is on too, so no configuration (<c>all</c> included) serves a tool it did not serve before the move;
 /// get_server_info says where each moved tool went while its toolset is off (<see cref="Moved"/>). A name a major release
 /// removed (<see cref="ToolsetCatalog.RetiredNames"/>) is a known name that serves nothing: excluding it, or adding or
 /// removing it as a toolset, changes nothing and does not fail closed.
@@ -227,7 +227,9 @@ public sealed class ToolsetSelection
 
     /// <summary>
     /// The warnings about moved tools (roadmap M6.1): a toolset that is on serves some of its tools only with the toolset they
-    /// moved out of, which is off; and tools that something replaced are turned on, which a later release removes.
+    /// moved out of, which is off; and tools that something replaced are turned on, which a later release removes. No move of
+    /// the server's catalog has a replacement since 3.0.0 (<see cref="MovedTool.Replacement"/>), so the second never fires
+    /// for it; it is kept for a later move that replaces a tool.
     /// </summary>
     private IEnumerable<string> MovedWarnings()
     {
@@ -278,9 +280,12 @@ public sealed class ToolsetSelection
 
             if (toolsets == null && catalog.IsRetired(name))
             {
-                // A toolset a major release removed (3.0.0: deprecated): +name or -name changes nothing now, so it is
-                // ignored; a plain name still counts as unknown, so a list of nothing else fails closed as before
-                warnings.Add($"{ToolsetsVariable}: the '{name}' toolset was removed in a major release, so '{entry}' is ignored.");
+                // A toolset a major release removed (3.0.0: deprecated), or a removed tool's name written as a toolset (+click):
+                // +name or -name changes nothing now, so it is ignored; a plain name still counts as unknown, so a list of
+                // nothing else fails closed as before
+                warnings.Add(RemovedTools.Replacements.Keys.Contains(name, StringComparer.OrdinalIgnoreCase)
+                    ? $"{ToolsetsVariable}: '{name}' is a tool 3.0.0 removed, not a toolset, so '{entry}' is ignored."
+                    : $"{ToolsetsVariable}: the '{name}' toolset was removed in a major release, so '{entry}' is ignored.");
                 if (!entry.StartsWith('-') && !entry.StartsWith('+'))
                 {
                     unknown.Add(entry);
@@ -344,8 +349,8 @@ public sealed class ToolsetSelection
         foreach (var entry in Split(value))
         {
             var tool = catalog.ToolNames.FirstOrDefault(name => string.Equals(name, entry, StringComparison.OrdinalIgnoreCase));
-            // A toolset's name stands for its tools and the tools that moved out of it (roadmap M6.1): WAM_EXCLUDE_TOOLS=input
-            // written before 2.2.0 meant click too
+            // A toolset's name stands for its tools and the tools that moved out of it (roadmap M6.1): WAM_EXCLUDE_TOOLS=windows
+            // written before 2.2.0 meant the window batches too
             IReadOnlyList<string>? tools = tool != null
                 ? [tool]
                 : catalog.Find(entry) is { } toolset

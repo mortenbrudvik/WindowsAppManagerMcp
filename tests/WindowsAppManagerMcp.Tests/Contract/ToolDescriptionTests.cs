@@ -336,7 +336,8 @@ public class ToolDescriptionTests
     public void TheWaitsTheServerClamps_StateTheirRange()
     {
         // A batch's delay and a launch's wait for its window are waited out inside the input gate, so the server
-        // clamps them; the agent reads the range in tools/list. press_keys refuses a delayBetweenMs out of its range instead
+        // clamps them; the agent reads the range in tools/list, and that it is clamped, not refused (the review's clamp
+        // finding: documented, behaviour kept). press_keys refuses a delayBetweenMs out of its range instead
         var waits = ServerToolCatalog.AllDescriptions()
             .Where(d => (d.Source.EndsWith(".delayBetweenMs", StringComparison.Ordinal) && !d.Source.StartsWith("press_keys.", StringComparison.Ordinal)) ||
                         d.Source.EndsWith(".waitTimeoutMs", StringComparison.Ordinal))
@@ -350,7 +351,7 @@ public class ToolDescriptionTests
             var range = source.EndsWith(".delayBetweenMs", StringComparison.Ordinal)
                 ? $"0-{WindowService.MaxDelayBetweenMs}"
                 : $"0-{WindowsAppManagerMcp.Tools.AppLauncherTools.MaxWaitTimeoutMs}";
-            text.Should().Contain($"({range}, default: ", source);
+            text.Should().Contain($"(clamped to {range}, default: ", source);
         }
     }
 

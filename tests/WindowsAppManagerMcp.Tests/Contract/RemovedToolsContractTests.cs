@@ -151,6 +151,19 @@ public class RemovedToolsContractTests
     }
 
     [Theory]
+    [InlineData("+click", "click")]
+    [InlineData("all,-Move_Window", "Move_Window")]
+    public void ARemovedToolsName_InWamToolsets_IsIgnoredWithAWarningThatSaysItIsATool(string toolsets, string name)
+    {
+        // Comment review item 10: '+click' names a tool 3.0.0 removed, not a toolset that was removed
+        var selection = Select(toolsets);
+
+        selection.Warnings.Should().Contain(w => w.Contains($"'{name}' is a tool 3.0.0 removed, not a toolset"))
+            .And.NotContain(w => w.Contains("toolset was removed"));
+        selection.Serves("mouse_click", readOnlyHint: false).Should().BeTrue();
+    }
+
+    [Theory]
     [InlineData("deprecated")]
     [InlineData("Deprecated")]
     [InlineData("deprecated,+windows")]

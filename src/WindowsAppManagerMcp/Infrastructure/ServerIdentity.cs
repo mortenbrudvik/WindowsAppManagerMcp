@@ -25,7 +25,7 @@ public static class ServerIdentity
         "- Wait, not sleeping: wait_for_window (opens, closes, front, retitled), wait_for_element (appears, goes, enables), wait_for_browser; what changed: get_window_events.",
         "Coordinates are physical virtual-screen pixels; monitors left of or above the primary one are negative. Capture images are usually scaled: without captureId, map an image point with imageToScreen, never with scaleFactor.",
         "Error codes that mean stop or change course:",
-        "- PausedByUser: the user paused input with the pause hotkey. Stop and tell the user; never resume input yourself (resume_input only when the user asks).",
+        "- PausedByUser: input is paused (the error says why). Stop and tell the user; never resume input yourself (resume_input only when the user asks).",
         "- TargetIsAgentHost: the target is your own terminal or chat window (name the one you mean) or a prompt of this server (ask the user).",
         "- TargetElevated: the window runs as administrator; Windows would drop the input. Ask the user to do the step.",
         "- BlockedByModal: a modal dialog (blockingWindow) blocks the target. Read it and decide deliberately, or ask the user.",

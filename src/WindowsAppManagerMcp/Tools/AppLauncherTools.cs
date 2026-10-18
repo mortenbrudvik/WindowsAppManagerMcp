@@ -25,8 +25,8 @@ public class AppLauncherTools
         "Where to put the window once it is found (implies waiting for it): snap (a snap_window position) or bounds (the visible " +
         "frame, as set_window_bounds), monitor, state (normal, maximized or minimized) and focus (as focus_window). Checked " +
         "before anything is launched: unknown values fail with InvalidSnapPosition or InvalidState, contradictions (snap with " +
-        "bounds, bounds with monitor, maximized with snap or bounds, focus with minimized, or nothing asked) with " +
-        "InvalidArguments, a monitor that does not exist with InvalidMonitorIndex, MonitorNotFound or AmbiguousMonitor. The " +
+        "bounds, bounds with monitor, maximized with snap or bounds, focus with minimized, or nothing asked) and an unknown " +
+        "or missing member with InvalidArguments, a monitor that does not exist with InvalidMonitorIndex, MonitorNotFound or AmbiguousMonitor. The " +
         "window is then watched for up to 3 s and placed again each time the app moves it back, up to 3 times (reapplied: true)";
 
     private const string ReuseDescription =
@@ -68,7 +68,7 @@ public class AppLauncherTools
     /// <param name="answerTimeout">How long kill_process waits for the user's answer; default <see cref="UserConfirmation.DefaultAnswerTimeout"/>.</param>
     /// <param name="gateWaitTimeout">How long kill_process waits for the input gate; default <see cref="InputGateToolFilter.GateWaitTimeout"/>.</param>
     /// <param name="placementService">Places the launches' windows (placement, roadmap M3.13). The server always passes it.</param>
-    /// <param name="monitorService">Checks a placement's monitorIndex before anything is launched; without it the placement reports it.</param>
+    /// <param name="monitorService">Resolves a placement's monitor (index or name) before anything is launched; without it the placement reports it.</param>
     /// <param name="installedApps">Lists the installed apps (list_installed_apps, roadmap M6.5). The server always passes it.</param>
     /// <param name="logger">Logs a placement that throws, with its exception (review F5); the server passes it.</param>
     public AppLauncherTools(
@@ -95,8 +95,8 @@ public class AppLauncherTools
 
     private const string RunAsAdminDescription =
         "Start the .exe as administrator (default false). Windows asks the user (UAC); where it would not, the user is asked " +
-        "here. Not with placement, reuseExisting or a target that is no .exe (InvalidArguments). Input to the elevated window " +
-        "is refused (TargetElevated)";
+        "through the client (a client that cannot ask: ElevationNotConfirmed). Not with placement, reuseExisting or a target " +
+        "that is no .exe (InvalidArguments). Input to the elevated window is refused (TargetElevated)";
 
     /// <summary>The most apps list_installed_apps returns in one call.</summary>
     public const int MaxInstalledApps = 200;
@@ -123,7 +123,7 @@ public class AppLauncherTools
         string? workingDirectory = null,
         [Description("Whether to wait for the application window to appear before returning (default: false)")]
         bool waitForWindow = false,
-        [Description("Maximum time in milliseconds to wait for the window (0-30000, default: 5000)")]
+        [Description("Maximum time in milliseconds to wait for the window (clamped to 0-30000, default: 5000)")]
         int waitTimeoutMs = 5000,
         [Description("With waitForWindow or placement: the window to expect when the server cannot tell it from the started process, such as a URI or a document opened by whatever app is registered for it; a new window that matches every field set counts as the launch's window. With reuseExisting: the open window must match it (a web address needs titleContains)")]
         LaunchWindowHint? expectWindow = null,
@@ -495,18 +495,16 @@ public class AppLauncherTools
     [Description("Launch multiple applications in a single batch operation. " +
                  "Each item is launched as by launch_application, in order; with waitForWindows the windows are then waited for together, " +
                  "and each result has its own launchStatus, window and errorCode. " +
-                 "An item that is null fails alone with InvalidArguments; the others are still launched. " +
-                 "Each item can have a placement, reuseExisting and forceAccessibility, as launch_application takes them: an item " +
-                 "whose placement is invalid fails alone and is not launched, and at most one item may ask for focus (InvalidArguments, " +
-                 "nothing launched). With a placement on any item every window is waited for; the windows are placed after all of them " +
-                 "were found, in order, and watched together until they stay put.")]
+                 "An item that is null fails alone with InvalidArguments; the others are still launched (an unknown member of an item " +
+                 "refuses the whole call). An item whose placement is invalid fails alone and is not launched, and at most one item may " +
+                 "ask for focus (InvalidArguments, nothing launched). With a placement on any item every window is waited for; the " +
+                 "windows are placed after all of them were found, in order, and watched together until they stay put.")]
     public async Task<BatchLaunchResult> LaunchApplicationsBatch(
-        [Description("The applications to launch: executable, and optionally arguments, workingDirectory, expectWindow, placement, " +
-                     "reuseExisting and forceAccessibility")]
+        [Description("The applications to launch, each with launch_application's parameters except waitForWindow and waitTimeoutMs")]
         ApplicationLaunchRequest[] applications,
         [Description("Whether to wait for each application window to appear (default: false)")]
         bool waitForWindows = false,
-        [Description("Maximum time in milliseconds to wait for the windows, all together (0-30000, default: 5000)")]
+        [Description("Maximum time in milliseconds to wait for the windows, all together (clamped to 0-30000, default: 5000)")]
         int waitTimeoutMs = 5000,
         IProgress<ProgressNotificationValue>? progress = null,
         CancellationToken cancellationToken = default)

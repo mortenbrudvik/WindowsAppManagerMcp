@@ -15,8 +15,8 @@ public sealed record MouseBatch(IReadOnlyList<InputEvent> Events, IReadOnlyList<
 /// Builds the one SendInput batch of a mouse operation (roadmap M4.2): an absolute move to the point across the virtual
 /// desktop, then the button or wheel events. SendInput does not interleave other input with the events of one call, so the
 /// press lands on the pixel the guard checked wherever the pointer was before, and a user moving the mouse cannot put it
-/// elsewhere. click, right_click, double_click, mouse_click, drag, mouse_move, scroll and element_action's mouse path build
-/// their batches here. mouse_click and drag (roadmap M4.3) also put modifier keys around the mouse events.
+/// elsewhere. mouse_click, drag, mouse_move, scroll and element_action's mouse path build their batches here. mouse_click
+/// and drag (roadmap M4.3) also put modifier keys around the mouse events.
 /// </summary>
 /// <remarks>
 /// Buttons are the user's (<see cref="MouseButton"/>): with swapped buttons a primary click is sent as the right button's

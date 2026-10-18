@@ -14,10 +14,22 @@ namespace WindowsAppManagerMcp.Tools;
 [McpServerToolType]
 public class WindowManagerTools
 {
-    /// <summary>The errors of the single-window change tools (move, resize, bounds, state, snap, move to a monitor).</summary>
+    /// <summary>
+    /// The errors of the single-window geometry tools (set_window_bounds, snap_window, move_window_to_monitor). Windows'
+    /// refusal of a window running as administrator is AccessDenied for a placement; a state change sees it only as a state
+    /// that was not reached, so set_window_state takes <see cref="StateChangeErrors"/> and its own StateChangeFailed.
+    /// </summary>
     private const string WindowChangeErrors =
-        " errorCode: InvalidHandle; TargetDeniedByPolicy (the user's policy denies the app: nothing is changed, ask the user); " +
-        "AccessDenied (Windows blocked the change: the window belongs to an app running as administrator; ask the user); " +
+        PolicyErrors + "AccessDenied (Windows blocked the change: the window belongs to an app running as administrator; ask the user); " +
+        NotRespondingError;
+
+    /// <summary>The errors of set_window_state, which never returns AccessDenied (see <see cref="WindowChangeErrors"/>).</summary>
+    private const string StateChangeErrors = PolicyErrors + NotRespondingError;
+
+    private const string PolicyErrors =
+        " errorCode: InvalidHandle; TargetDeniedByPolicy (the user's policy denies the app: nothing is changed, ask the user); ";
+
+    private const string NotRespondingError =
         "NotResponding (the window's app is hung or did not answer within 5 s, or an earlier call to it, or 8 calls to apps that " +
         "do not answer, are still blocked; a minimized window may already have been restored, and a call that timed out can still " +
         "take effect once the app answers, so check the window before acting on it).";
@@ -43,18 +55,26 @@ public class WindowManagerTools
     private const string NothingChanged = "Nothing was changed.";
 
     private const string SettleDescription =
-        "Wait up to this many milliseconds (0-5000, default 0) for the window to stop moving before it is read: until two reads " +
+        "Wait up to this many milliseconds (clamped to 0-5000, default 0) for the window to stop moving before it is read: until two reads " +
         "20 ms apart agree. Use it for an app that animates or re-applies its own size after the change.";
 
     private const string BringToFrontDescription =
         "Raise the window to the top of the z-order without activating it: keyboard input does not move to it (use focus_window for that). Default: true";
 
-    /// <summary>The per-window errors of the window batches.</summary>
-    private const string BatchErrors =
+    /// <summary>The per-window errors of the geometry batches (set_windows_bounds_batch, snap_windows_batch).</summary>
+    private const string BatchErrors = BatchItemErrors + "AccessDenied, " + BatchItemResult;
+
+    /// <summary>The per-window errors of set_windows_state_batch, which never returns AccessDenied (see <see cref="WindowChangeErrors"/>).</summary>
+    private const string StateBatchErrors = BatchItemErrors + BatchItemResult;
+
+    private const string BatchItemErrors =
         " Each window is handled on its own and has its own success, error and errorCode: InvalidArguments for an item that is " +
-        "null or misses a field, WindowNotFound, AmbiguousWindow (with candidates) or HandleMismatch for an item whose window " +
-        "selector names no single window, InvalidHandle, TargetDeniedByPolicy (the user's policy denies the app; it is not changed), " +
-        "AccessDenied, NotResponding (the window's app does not answer within 5 s). Each item reports its window afterwards, " +
+        "null or misses a field (an unknown member refuses the whole call), WindowNotFound, AmbiguousWindow (with candidates) or " +
+        "HandleMismatch for an item whose window selector names no single window, InvalidHandle, TargetDeniedByPolicy (the user's " +
+        "policy denies the app; it is not changed), ";
+
+    private const string BatchItemResult =
+        "NotResponding (the window's app does not answer within 5 s). Each item reports its window afterwards, " +
         "failed or not: bounds (visible frame), outerBounds, state and monitorIndex.";
 
     private readonly IWindowService _windowService;
@@ -240,7 +260,7 @@ public class WindowManagerTools
     [McpServerTool(Name = "set_window_state", Title = "Minimize, Maximize or Restore Window", ReadOnly = false, Destructive = false, Idempotent = false, OpenWorld = false)]
     [Description("Set the window state (minimize, maximize, restore). success is true only when the window was seen in that state " +
                  "afterwards (within 300 ms); state reports the state it is in (minimized, maximized or normal)." + GeometryResult +
-                 WindowChangeErrors +
+                 StateChangeErrors +
                  " StateChangeFailed: the window did not reach the state (the app refused or delayed it, or it runs as administrator). " +
                  "An unknown state fails with InvalidState and the allowed values.")]
     public async Task<WindowOperationResult> SetWindowState(
@@ -460,11 +480,12 @@ public class WindowManagerTools
                  "are refused per window with errorCode ProtectedWindow unless force is true, and apps the user's policy denies with TargetDeniedByPolicy; " +
                  "the other windows are still closed. An item that is null, or names its window by both handle and window, fails alone " +
                  "with InvalidArguments; an item whose selector names no single window fails alone with WindowNotFound, " +
-                 "AmbiguousWindow (with candidates) or HandleMismatch. InvalidArguments (the whole call): waitMs is outside 0-30000.")]
+                 "AmbiguousWindow (with candidates) or HandleMismatch. InvalidArguments (the whole call): waitMs is outside 0-30000, or an " +
+                 "item has an unknown member.")]
     public async Task<BatchWindowResult> CloseWindowsBatch(
         [Description("Array of windows to close, each with handle or window (a selector, as close_window takes it)")]
         WindowCloseRequest[] windows,
-        [Description("Delay between operations in milliseconds (0-5000, default: 50)")]
+        [Description("Delay between operations in milliseconds (clamped to 0-5000, default: 50)")]
         int delayBetweenMs = 50,
         [Description("Must be true to close more than 3 windows in one batch, or (with force=true) a protected window, when the client cannot ask the user. Check the list (find_windows) first: closing many windows at once can lose unsaved work.")]
         bool confirm = false,
@@ -590,7 +611,7 @@ public class WindowManagerTools
     public async Task<CloseApplicationResult> CloseApplication(
         [Description("A window of the application (as integer); its process is closed")]
         long? handle = null,
-        [Description("Alternative to handle: a window of the application as a window selector (find_windows' filters), resolved to " +
+        [Description("Alternative to handle: a window of the application as a window selector, resolved to " +
                      "exactly one window; its process is closed.")]
         WindowSelector? window = null,
         [Description("The application's process ID")]
@@ -1083,7 +1104,7 @@ public class WindowManagerTools
         [Description("Array of window placements, each with x, y, width, height (the visible frame), the window as handle or window " +
                      "(a selector, as the single-window tools take it), and optional bringToFront (raises the window without activating it)")]
         WindowBoundsPlacement[] placements,
-        [Description("Delay between operations in milliseconds (0-5000, default: 50)")]
+        [Description("Delay between operations in milliseconds (clamped to 0-5000, default: 50)")]
         int delayBetweenMs = 50,
         CancellationToken cancellationToken = default)
     {
@@ -1127,7 +1148,7 @@ public class WindowManagerTools
                      "tools take it), optional monitor, and optional bringToFront (raises the window without activating it; a " +
                      "minimized or maximized window is restored first, without activating it)")]
         WindowSnapPlacement[] placements,
-        [Description("Delay between operations in milliseconds (0-5000, default: 50)")]
+        [Description("Delay between operations in milliseconds (clamped to 0-5000, default: 50)")]
         int delayBetweenMs = 50,
         CancellationToken cancellationToken = default)
     {
@@ -1180,13 +1201,13 @@ public class WindowManagerTools
 
     [McpServerTool(Name = "set_windows_state_batch", Title = "Set Window States (Batch)", ReadOnly = false, Destructive = false, Idempotent = false, OpenWorld = false)]
     [Description("Set the state (minimize, maximize, restore) of multiple windows in a single batch operation. Each item's success is true only " +
-                 "when its window was seen in that state afterwards, and state reports the state it is in." + BatchErrors +
+                 "when its window was seen in that state afterwards, and state reports the state it is in." + StateBatchErrors +
                  " InvalidState: the item's state is missing or unknown (error lists the states). StateChangeFailed: the window did not reach the state.")]
     public async Task<BatchWindowResult> SetWindowsStateBatch(
         [Description("Array of state changes, each with state ('minimize', 'maximize' or 'restore'; 'minimized', 'maximized' and 'normal' " +
                      "are accepted too) and the window as handle or window (a selector, as the single-window tools take it)")]
         WindowStateChange[] changes,
-        [Description("Delay between operations in milliseconds (0-5000, default: 30)")]
+        [Description("Delay between operations in milliseconds (clamped to 0-5000, default: 30)")]
         int delayBetweenMs = 30,
         CancellationToken cancellationToken = default)
     {

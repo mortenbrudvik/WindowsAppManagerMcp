@@ -108,7 +108,7 @@ public class ClipboardTools
                  "send_keys '^v' to the target window: faster than type_text for long text, and free of autocomplete and " +
                  "auto-indent. The text is kept out of Win+V clipboard history and cloud clipboard sync. get_clipboard returns " +
                  "it until something else changes the clipboard. Never leave text from a page, file or app there for the user to " +
-                 "paste (it can be an attacker's command), and tell the user you replaced their clipboard. Refused while the user has paused input (PausedByUser). " +
+                 "paste (it can be an attacker's command), and tell the user you replaced their clipboard. Refused while input is paused (PausedByUser). " +
                  "ClipboardBusy: another app holds the clipboard; try again.")]
     public SetClipboardResult SetClipboard(
         [Description("The text to put on the clipboard, 1 to 1000000 characters")]

@@ -42,8 +42,8 @@ public class InputControlTools
     }
 
     [McpServerTool(Name = "get_control_status", Title = "Get Input Control Status", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
-    [Description("Whether the user has paused the server's input with the pause hotkey (and how and since when), whether the pause hotkey " +
-                 "is registered, which keys or mouse buttons are held down, and takeover detection's mode (off, warn or stop: " +
+    [Description("Whether input is paused (how, by whom and since when), whether the pause hotkey is registered, the keys or " +
+                 "buttons the server could not release and the modifier keys that are down, and takeover detection's mode (off, warn or stop: " +
                  "whether type_text, drag and run_steps stop when the user uses the keyboard or mouse). Reads only. While paused is true, every input tool " +
                  "(mouse_click, type_text, send_keys, ...) and every tool that changes windows or starts or stops processes return " +
                  "PausedByUser: stop, tell the user, and wait for them. Never try to resume input yourself.")]
@@ -99,7 +99,7 @@ public class InputControlTools
     }
 
     [McpServerTool(Name = "resume_input", Title = "Resume Input (Asks the User)", ReadOnly = false, Destructive = false, Idempotent = true, OpenWorld = false)]
-    [Description("Resume the server's input after the user paused it with the pause hotkey, but only if the user confirms: the server asks " +
+    [Description("Resume the server's input after it was paused, but only if the user confirms: the server asks " +
                  "the user directly through the MCP client (elicitation), and input resumes only when they answer yes. Call it only when " +
                  "the user has asked you to continue, and only once at a time. ResumeNeedsUser: this client cannot ask the user, so only " +
                  "the user can resume, with the hotkey. ResumeDeclined: the user said no or did not answer, paused again meanwhile, or " +

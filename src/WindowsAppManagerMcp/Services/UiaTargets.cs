@@ -16,8 +16,9 @@ public static class UiaTargets
 
     /// <summary>
     /// The target policy's verdict on a UI Automation read of the window: the policy covers the reads of a window as it
-    /// covers captures (capture_window, capture_with_elements), so no element of an app the user denies is read, named or
-    /// not. Matched on the window's process and, for a UWP frame window (an ApplicationFrameWindow, or another window of
+    /// covers captures (capture_window, capture_with_elements), so no window of an app the user denies is read, named or
+    /// not; an element of another process inside a window it allows is checked by its own process
+    /// (<see cref="ForeignElementsOf"/>). Matched on the window's process and, for a UWP frame window (an ApplicationFrameWindow, or another window of
     /// ApplicationFrameHost), on the app whose CoreWindow it hosts (see <see cref="UwpFrames"/>), as the window listings
     /// name them, and then on the window itself, which is refused when it is a security prompt that a shared process shows
     /// (<see cref="ITargetPolicy.EvaluateWindow"/>). Fails closed: a window whose process name cannot be read, or that

@@ -76,8 +76,8 @@ public readonly record struct InputTarget(nint? WindowHandle, bool AllowHostTarg
 /// Result of a mouse click operation.
 /// </summary>
 /// <param name="ClickType">
-/// click, right_click and double_click: "left", "right" or "double"; mouse_click (roadmap M4.3): the button, "primary",
-/// "secondary", "middle", "x1" or "x2".
+/// element_action's mouse path (IInputSimulationService's Click, RightClick and DoubleClick): "left", "right" or "double";
+/// mouse_click (roadmap M4.3): the button, "primary", "secondary", "middle", "x1" or "x2".
 /// </param>
 public record ClickResult(
     bool Success,
@@ -88,7 +88,7 @@ public record ClickResult(
     InputErrorCode ErrorCode = InputErrorCode.None
 )
 {
-    /// <summary>mouse_click: how many clicks the batch holds (1 to 3). Null for click, right_click and double_click.</summary>
+    /// <summary>mouse_click: how many clicks the batch holds (1 to 3). Null for element_action's mouse path.</summary>
     public int? ClickCount { get; init; }
 
     /// <summary>mouse_click: the modifier keys held around the clicks ("ctrl", "shift", "alt", "win"); null without any.</summary>
@@ -409,7 +409,7 @@ public enum InputErrorCode
     /// </summary>
     TargetLostFocus = 24,
 
-    /// <summary>send_keys: the keys contain a chord that closes, quits or locks, and no windowHandle was given.</summary>
+    /// <summary>send_keys, press_keys: the keys contain a chord that closes, quits or locks, and no windowHandle was given.</summary>
     DestructiveChordNeedsTarget = 25,
 
     /// <summary>
@@ -444,7 +444,7 @@ public enum InputErrorCode
     CursorNotAtPoint = 32,
 
     /// <summary>
-    /// send_keys: keys follow a chord that hands the keyboard to another window (Alt+Tab, Alt+Esc, Ctrl+Esc,
+    /// send_keys, press_keys: keys follow a chord that hands the keyboard to another window (Alt+Tab, Alt+Esc, Ctrl+Esc,
     /// the Windows key, Alt+Space or a closing chord), so they would reach a window the guard never checked.
     /// </summary>
     KeysAfterFocusChange = 33,
@@ -452,9 +452,10 @@ public enum InputErrorCode
     // Input session codes (roadmap M1.10). Nothing (more) was sent.
 
     /// <summary>
-    /// The user paused the server's input with the pause hotkey. Nothing (more) was sent: a call that was
-    /// running stopped (CharactersTyped says how much it typed). Only the user resumes input: the hotkey
-    /// again, or resume_input confirmed by the user.
+    /// Input is paused: the user pressed the pause hotkey, or the server paused itself because it could not read the pause
+    /// it shares with the other servers on the desktop (shared_pause_unreadable; the error says which). Nothing (more) was
+    /// sent: a call that was running stopped (CharactersTyped says how much it typed). Only the user resumes input: the
+    /// hotkey again, or resume_input confirmed by the user.
     /// </summary>
     PausedByUser = 34,
 
@@ -560,7 +561,8 @@ public enum InputErrorCode
     /// type_text: the text is longer than its method takes: more than <see cref="Services.InputSimulationService.MaxTypedLength"/>
     /// characters to type (unicode, keys, or auto when it types), or more than
     /// <see cref="Services.InputSimulationService.MaxPasteLength"/> to paste. Nothing was typed. send_keys: the keys press more
-    /// than <see cref="Services.InputSimulationService.MaxSendKeysPresses"/> keys. Nothing was sent.
+    /// than <see cref="Services.InputSimulationService.MaxSendKeysPresses"/> keys, or make more than
+    /// <see cref="Services.InputSimulationService.MaxSendKeysEvents"/> input events. Nothing was sent.
     /// </summary>
     TextTooLong = 49,
 

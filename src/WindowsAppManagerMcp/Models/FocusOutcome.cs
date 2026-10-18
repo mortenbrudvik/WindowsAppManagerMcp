@@ -84,8 +84,8 @@ public sealed record FocusOutcome
     public bool InMenuMode { get; init; }
 
     /// <summary>
-    /// <see cref="WindowErrorCode.None"/> when the target is in front; otherwise InvalidHandle,
-    /// NotResponding, Cloaked, FocusFailed or PausedByUser (the user paused input, roadmap M1.10).
+    /// <see cref="WindowErrorCode.None"/> when the target is in front; otherwise InvalidHandle, NotResponding, Cloaked,
+    /// WindowHidden, TargetDeniedByPolicy, FocusFailed or PausedByUser (input is paused, roadmap M1.10).
     /// </summary>
     public WindowErrorCode ErrorCode { get; init; }
 
