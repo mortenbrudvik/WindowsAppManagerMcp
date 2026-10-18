@@ -12,9 +12,10 @@ namespace WindowsAppManagerMcp.Tests.Fixtures;
 /// with every native seam replaced by a fake: every interface of the server named INative* or *Wrapper, every server interface a
 /// type of the Native namespace implements (IUiaTree, IScreenCaptureWrapper, ITcpPortOwnerResolver, ...) and the CDP transport.
 /// NativeCallGuardTests keeps every action of the server behind those seams, so nothing here can reach the desktop, a process,
-/// the clipboard or a browser: the fakes answer from a small desktop of their own (<see cref="DeniedDesktop"/>). No hosted service
-/// runs (no pause hotkey, no host recording at start). Before any call, the container's services are walked and the harness
-/// refuses to start when one of them holds a real native wrapper.
+/// the clipboard or a browser: the fakes answer from a small desktop of their own (<see cref="DeniedDesktop"/>). A launch's
+/// program is resolved by a fake too (<see cref="DeniedDesktop.Resolve"/>), not from the machine's PATH and App Paths. No hosted
+/// service runs (no pause hotkey, no host recording at start). Before any call, the container's services are walked and the
+/// harness refuses to start when one of them holds a real native wrapper.
 /// </summary>
 public sealed class NativeFakedServer : IDisposable
 {
@@ -50,6 +51,8 @@ public sealed class NativeFakedServer : IDisposable
 
         // The settings the user would set in the server's environment, fixed here so the machine's own do not count
         services.Replace(ServiceDescriptor.Singleton<ITargetPolicy>(new TargetPolicy(policy, Mock<INativeWindowWrapper>().Object)));
+        // A launch's program from this desktop, not from the machine (ProcessService creates the real resolver unless the container has one)
+        services.Replace(ServiceDescriptor.Singleton<IExecutableResolver>(new DeniedDesktopResolver()));
         services.Replace(ServiceDescriptor.Singleton(InputGuardOptions.Default));
         services.Replace(ServiceDescriptor.Singleton(TakeoverOptions.Default));
         services.Replace(ServiceDescriptor.Singleton(new ClipboardOptions(false)));
@@ -68,6 +71,18 @@ public sealed class NativeFakedServer : IDisposable
 
     /// <summary>The test fake behind <typeparamref name="TService"/>, such as <see cref="FakeInputWrapper"/>.</summary>
     public TFake FakeOf<TService, TFake>() where TFake : class => (TFake)_fakes[typeof(TService)];
+
+    /// <summary>
+    /// A ref for <paramref name="node"/> under <paramref name="window"/>, given by the server's own element registry as a read
+    /// of a tool would give it (the agent could hold one from before the user denied the app). The harness reads the node
+    /// itself for it (FakeUiaTree logs it), so a test that checks the tree's reads looks at those made after.
+    /// </summary>
+    public string MintRef(nint window, FakeUiaNode node)
+    {
+        var registry = _provider.GetRequiredService<IElementRegistry>();
+        return registry.Register(window, Desktop.Tree.ReadElement(node), new ElementOrigin(registry.NextGeneration()))
+               ?? throw new InvalidOperationException($"The registry gave '{node.Name}' no ref.");
+    }
 
     /// <summary>Every fake's recorded calls that change something: a window, input, a process, the clipboard, a page, an element.</summary>
     public IReadOnlyList<string> Actions()
@@ -169,8 +184,14 @@ public sealed class NativeFakedServer : IDisposable
         return fake is Mock mock ? mock.Object : fake;
     }
 
-    /// <summary>A member of a seam that changes something, not a read (as the E2E WrapperCatalog classifies them).</summary>
-    private static bool IsAction(Type service, MethodInfo method) => method.Name switch
+    /// <summary>
+    /// A member of a seam that changes something, not a read (as the E2E WrapperCatalog classifies them): a window change, a
+    /// process start or stop, attaching thread input, UI Automation's window close, an app's activation, a DevTools command,
+    /// input (SendInput, SetCursorPos), a clipboard write, and a UI Automation action (IUiaTree.SetFocus, and every method of a
+    /// pattern object but its reads). <see cref="Actions"/> counts the mocks' calls with it, and SelfGatedToolsContractTests the
+    /// calls in a service's IL.
+    /// </summary>
+    public static bool IsAction(Type service, MethodInfo method) => method.Name switch
     {
         _ when service == typeof(INativeWindowWrapper) => method.Name is nameof(INativeWindowWrapper.SetWindowPos)
             or nameof(INativeWindowWrapper.SetWindowZOrder) or nameof(INativeWindowWrapper.ShowWindow)
@@ -183,8 +204,21 @@ public sealed class NativeFakedServer : IDisposable
         _ when service == typeof(INativeAppsWrapper) => method.Name.StartsWith("Activate", StringComparison.Ordinal),
         // A browser's DevTools connection: anything sent is a command to a page
         _ when service == typeof(ICdpTransport) => true,
+        // Input: everything but the pointer's and the keys' state
+        _ when service == typeof(INativeInputWrapper) => method.Name is not (nameof(INativeInputWrapper.GetCursorPos)
+            or nameof(INativeInputWrapper.IsKeyDown) or nameof(INativeInputWrapper.IsKeyToggled)) && !IsGetter(method),
+        _ when service == typeof(INativeClipboardWrapper) => method.Name is nameof(INativeClipboardWrapper.WriteText)
+            or nameof(INativeClipboardWrapper.ReplaceText),
+        _ when service == typeof(IUiaTree) => method.Name is nameof(IUiaTree.SetFocus),
+        // A pattern object: its state reads and text, grid, table and item lookups read; every other method acts
+        _ when typeof(IUiaPattern).IsAssignableFrom(service) => !IsGetter(method) && method.Name is not (nameof(IUiaTextPattern.GetText)
+            or nameof(IUiaTextPattern.GetSelectedText) or nameof(IUiaTextPattern.GetTextPage) or nameof(IUiaGridPattern.GetItem)
+            or nameof(IUiaTablePattern.GetColumnHeaders) or nameof(IUiaTablePattern.GetRowHeaders)
+            or nameof(IUiaItemContainerPattern.FindItemByProperty) or nameof(IUiaWindowPattern.WaitForInputIdle)),
         _ => false
     };
+
+    private static bool IsGetter(MethodInfo method) => method.IsSpecialName && method.Name.StartsWith("get_", StringComparison.Ordinal);
 
     private static HashSet<Type> FindSeams()
     {
@@ -292,6 +326,10 @@ public sealed class NativeFakedServer : IDisposable
 public sealed class DeniedDesktop
 {
     public const long DeniedWindow = 0xD30010;
+
+    /// <summary>The denied window's rectangle on the screen (GetWindowRect); the denied dialog lies inside it.</summary>
+    public static (int Left, int Top, int Right, int Bottom) DeniedWindowRect { get; } = (100, 100, 1300, 900);
+
     public const int DeniedProcessId = 4711;
     public const string DeniedProcessName = "chrome";
     public const long AllowedWindow = 0xD30020;
@@ -314,6 +352,62 @@ public sealed class DeniedDesktop
     /// <summary>The denied window's button's Invoke pattern.</summary>
     public FakeInvokePattern Button { get; } = new();
 
+    /// <summary>The denied window's "Transfer money" button, for a ref (<see cref="NativeFakedServer.MintRef"/>).</summary>
+    public FakeUiaNode ButtonNode { get; } = new("Button", "Transfer money") { ProcessId = DeniedProcessId, ActionPatterns = ["Invoke"] };
+
+    /// <summary>
+    /// The denied window's table of transactions, for read_table's ref, with a row: a search or a walk below it reads an element
+    /// (FakeUiaTree logs it), not only the table.
+    /// </summary>
+    public FakeUiaNode TableNode { get; } = new FakeUiaNode("DataGrid", "Transactions") { ProcessId = DeniedProcessId }
+        .With(new FakeUiaNode("DataItem", "Salary 3,200.00") { ProcessId = DeniedProcessId });
+
+    /// <summary>The denied window's UI Automation element, with <see cref="ButtonNode"/> and <see cref="TableNode"/> in it.</summary>
+    public FakeUiaNode WindowNode { get; private set; } = null!;
+
+    /// <summary>The denied dialog's UI Automation element, with its Save button.</summary>
+    public FakeUiaNode DialogNode { get; private set; } = null!;
+
+    /// <summary>
+    /// The names of every UI Automation element of the denied windows, which the fake tree logs its reads by: read from
+    /// <see cref="WindowNode"/>'s and <see cref="DialogNode"/>'s subtrees, so an element added to them is checked too.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">An element of the denied windows has no name, or a colon in it. The fake tree
+    /// logs a property read as "Kind:Name" (a nameless one as "Kind:"), so a read of it could not be told from a read of another
+    /// window's element: the check would miss it. Give every element of the denied windows a name without a colon.</exception>
+    public IReadOnlySet<string> DeniedElementNames
+    {
+        get
+        {
+            var nodes = new[] { WindowNode, DialogNode }.SelectMany(Subtree).ToList();
+            var unmatched = nodes.Where(node => string.IsNullOrEmpty(node.Name) || node.Name.Contains(':', StringComparison.Ordinal))
+                .Select(node => $"{node.ControlType} '{node.Name}'")
+                .ToList();
+            if (unmatched.Count > 0)
+            {
+                throw new InvalidOperationException(
+                    "Every element of the denied windows needs a name without a colon, which the fake tree logs its reads by " +
+                    $"('Kind:Name'); a read of these would go unseen: {string.Join(", ", unmatched)}.");
+            }
+
+            return nodes.Select(node => node.Name!).ToHashSet(StringComparer.Ordinal);
+        }
+    }
+
+    private static IEnumerable<FakeUiaNode> Subtree(FakeUiaNode node) => node.Children.SelectMany(Subtree).Prepend(node);
+
+    /// <summary>The program the denied process runs, as the launch tools resolve "chrome" (<see cref="Resolve"/>).</summary>
+    public const string DeniedProgram = @"C:\Program Files\Google\Chrome\Application\chrome.exe";
+
+    /// <summary>
+    /// How this desktop resolves a launch's program: "chrome" (or chrome.exe, or its path) is the denied app's program
+    /// (<see cref="DeniedProgram"/>); any other name is found nowhere (ExecutableNotFound), so nothing is looked up on the machine.
+    /// </summary>
+    public static ResolvedLaunchTarget Resolve(string executable) =>
+        executable is DeniedProcessName or "chrome.exe" or DeniedProgram
+            ? new ResolvedLaunchTarget(DeniedProgram, LaunchTargetKind.NativeExecutable)
+            : new ResolvedLaunchTarget(executable, LaunchTargetKind.NativeExecutable, NotFound: true);
+
     /// <summary>The denied dialog's Save button's Invoke pattern.</summary>
     public FakeInvokePattern DialogButton { get; } = new();
 
@@ -323,7 +417,7 @@ public sealed class DeniedDesktop
     internal void SetUp()
     {
         var windows = _server.Mock<INativeWindowWrapper>();
-        Window(windows, DeniedWindow, DeniedProcessId, DeniedProcessName, "Online banking - Google Chrome", "Chrome_WidgetWin_1", (100, 100, 1300, 900));
+        Window(windows, DeniedWindow, DeniedProcessId, DeniedProcessName, "Online banking - Google Chrome", "Chrome_WidgetWin_1", DeniedWindowRect);
         Window(windows, AllowedWindow, AllowedProcessId, "notepad", "notes.txt - Notepad", "Notepad", (1400, 100, 2200, 900));
         Window(windows, DeniedDialog, DeniedProcessId, DeniedProcessName, "Save As", "#32770", (300, 200, 1100, 700));
         windows.Setup(w => w.GetWindow((nint)DeniedDialog, 4u /* GW_OWNER */)).Returns((nint)DeniedWindow);
@@ -337,7 +431,7 @@ public sealed class DeniedDesktop
         windows.Setup(w => w.GetShellWindow()).Returns((nint)0xD30001);
 
         var processes = _server.Mock<INativeProcessWrapper>();
-        processes.Setup(p => p.GetProcessImagePath(DeniedProcessId)).Returns(@"C:\Program Files\Google\Chrome\Application\chrome.exe");
+        processes.Setup(p => p.GetProcessImagePath(DeniedProcessId)).Returns(DeniedProgram);
         processes.Setup(p => p.GetProcessImagePath(AllowedProcessId)).Returns(@"C:\Windows\System32\notepad.exe");
         processes.Setup(p => p.GetProcessStartTime(It.IsAny<int>())).Returns(new DateTime(2026, 10, 18, 8, 0, 0, DateTimeKind.Utc));
         // A debug browser with a temporary profile of the server's own (never created), so close_debug_browser gets to its policy check
@@ -399,17 +493,29 @@ public sealed class DeniedDesktop
             WindowsReadThroughUiAutomation.Enqueue(window);
             return null;
         };
-        Tree.WithWindow((nint)DeniedWindow, new FakeUiaNode("Window", "Online banking - Google Chrome")
+        WindowNode = new FakeUiaNode("Window", "Online banking - Google Chrome")
         {
             ProcessId = DeniedProcessId, NativeWindowHandle = (nint)DeniedWindow, ClassName = "Chrome_WidgetWin_1"
-        }.With(new FakeUiaNode("Button", "Transfer money") { ProcessId = DeniedProcessId, ActionPatterns = ["Invoke"] }.WithPattern<IUiaInvokePattern>(Button)));
-        Tree.WithWindow((nint)DeniedDialog, new FakeUiaNode("Window", "Save As")
+        }.With(ButtonNode.WithPattern<IUiaInvokePattern>(Button), TableNode);
+        DialogNode = new FakeUiaNode("Window", "Save As")
         {
             ProcessId = DeniedProcessId, NativeWindowHandle = (nint)DeniedDialog, ClassName = "#32770"
-        }.With(new FakeUiaNode("Button", "Save") { ProcessId = DeniedProcessId, ActionPatterns = ["Invoke"] }.WithPattern<IUiaInvokePattern>(DialogButton)));
+        }.With(new FakeUiaNode("Button", "Save") { ProcessId = DeniedProcessId, ActionPatterns = ["Invoke"] }.WithPattern<IUiaInvokePattern>(DialogButton));
+        Tree.WithWindow((nint)DeniedWindow, WindowNode);
+        Tree.WithWindow((nint)DeniedDialog, DialogNode);
     }
 
-    /// <summary>The denied process's handle, as OpenProcess hands it out: a kill or a close through it is an action.</summary>
+    /// <summary>
+    /// Makes the denied window the window in front (GetForegroundWindow), for a call that names no window and reaches the one in
+    /// front: the focus, and input without a windowHandle.
+    /// </summary>
+    public void PutTheDeniedWindowInFront() =>
+        _server.Mock<INativeWindowWrapper>().Setup(w => w.GetForegroundWindow()).Returns((nint)DeniedWindow);
+
+    /// <summary>
+    /// The denied process's handle, as OpenProcess hands it out (and StartProcess, for a test that launches the denied app's
+    /// program): a kill or a close through it is an action.
+    /// </summary>
     public Mock<IProcessHandle> ProcessHandle { get; private set; } = null!;
 
     private static void Window(Mock<INativeWindowWrapper> windows, long window, int processId, string processName, string title, string className,
@@ -431,4 +537,10 @@ public sealed class DeniedDesktop
         windows.Setup(w => w.RespondsWithin(handle, It.IsAny<uint>())).Returns(true);
         windows.Setup(w => w.GetWindowPlacement(handle)).Returns(new NativeWindowPlacement(1, 0, (0, 0), (-1, -1), rect));
     }
+}
+
+/// <summary>The faked server's <see cref="IExecutableResolver"/>: <see cref="DeniedDesktop.Resolve"/>, which reads nothing of the machine.</summary>
+internal sealed class DeniedDesktopResolver : IExecutableResolver
+{
+    public ResolvedLaunchTarget Resolve(string executable, string? workingDirectory) => DeniedDesktop.Resolve(executable);
 }

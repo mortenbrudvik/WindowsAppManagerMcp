@@ -1,3 +1,4 @@
+using System.Reflection;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -13,14 +14,19 @@ namespace WindowsAppManagerMcp.Tests.Contract;
 /// checks and its input, and the list check of <see cref="InputGateToolFilterTests"/> would not see it. The list is read from
 /// the filter, and every tool on it needs an entry here that says how its gated work is seen:
 /// <list type="bullet">
-/// <item><see cref="Work"/>: the tool's typical call (EveryToolContractTests' arguments) through the production pipeline, with
-/// its services' mutating calls watched (<see cref="GateObserver"/>): each must run while this test's call holds the gate. A
-/// service the tool hands a gate function to (a debug browser's close, a tab's or a page's CDP commands) is watched by
-/// entering that function: it must take the gate.</item>
+/// <item><see cref="Work"/>: the tool's typical call (EveryToolContractTests' arguments, or a call of the entry's own that
+/// reaches more of its work) through the production pipeline, with every call that may change the desktop watched
+/// (<see cref="GateObserver.WatchEveryChange"/>) on every service of <see cref="NoDesktopChange"/>: each must run while this
+/// test's call holds the gate, and the call must reach the work the entry names. A service the tool hands a gate function to
+/// (a debug browser's close, a tab's or a page's CDP commands) is watched by entering that function: it must take the
+/// gate.</item>
 /// <item><see cref="Through"/>: tools whose every action goes through element_action's service, which takes the gate for each
-/// action (ElementActionServiceTests checks it does). The tool's call must reach the service, and the production
-/// registrations must lead there: each service of the chain is registered with the type that calls the next one, and the last
-/// one takes the gate (read from their IL).</item>
+/// action (ElementActionServiceTests checks it does). Each route's call must reach the route's first service, and every other
+/// service that may change the desktop is watched as for <see cref="Work"/>: the tool may call it only inside the gate. The
+/// production registrations must lead to the gate: each service of the route is registered with the type that calls the next
+/// one and acts only through the services after it (no native action of its own: a window change, input, clipboard write or
+/// UI Automation action, NativeFakedServer.IsAction; and no member of another service that is not one of its reads), followed
+/// into the server's own helpers it calls; the last one takes the gate in its own code (read from their IL).</item>
 /// </list>
 /// The services are the contract run's mocks (ContractServices); nothing touches the desktop, a browser or a process.
 /// </summary>
@@ -31,29 +37,173 @@ public sealed class SelfGatedToolsContractTests : IDisposable
     public void Dispose() => _services.Dispose();
 
     /// <summary>How a tool's gated work is set up to be seen: its services, or the real service over CDP mocks, watched.</summary>
-    /// <param name="Arrange">Replaces the tool's services with watched ones, after the contract run registered its mocks.</param>
+    /// <param name="Arrange">Replaces the tool's services with watched ones, after the contract run registered its mocks and every
+    /// service of <see cref="NoDesktopChange"/> was watched.</param>
+    /// <param name="Reaches">The watched calls ("Interface.Method") the call must reach: one of them, or all with
+    /// <paramref name="ReachesAll"/>.</param>
     /// <param name="Arguments">The call's arguments; null for the tool's typical call (EveryToolContractTests).</param>
+    /// <param name="ReachesAll">The call must reach every call of <paramref name="Reaches"/>.</param>
     public sealed record GatedWork(
         Action<ContractServices, IServiceCollection, GateObserver> Arrange,
+        IReadOnlyList<string> Reaches,
+        IReadOnlyDictionary<string, object?>? Arguments = null,
+        bool ReachesAll = false);
+
+    /// <summary>A route of a tool that acts only through a chain of services whose last one takes the gate for every action.</summary>
+    /// <param name="Service">The service the tool calls.</param>
+    /// <param name="Method">Its method the route's call must reach.</param>
+    /// <param name="Chain">Each service of the chain with the type the server registers for it; each calls the next one's
+    /// interface and acts only through the services after it, and the last one takes the gate.</param>
+    /// <param name="Arguments">The route's call; null for the tool's typical call (EveryToolContractTests).</param>
+    public sealed record GatedThrough(Type Service, string Method, IReadOnlyList<(Type Service, Type Implementation)> Chain,
         IReadOnlyDictionary<string, object?>? Arguments = null);
 
-    /// <summary>A tool that acts only through a chain of services whose last one takes the gate for every action.</summary>
-    /// <param name="Service">The service the tool calls.</param>
-    /// <param name="Method">Its method the tool's typical call must reach.</param>
-    /// <param name="Chain">Each service of the chain with the type the server registers for it; each calls the next one's
-    /// interface, and the last one takes the gate.</param>
-    public sealed record GatedThrough(Type Service, string Method, IReadOnlyList<(Type Service, Type Implementation)> Chain);
+    /// <summary>
+    /// The members of the contract run's services that change nothing on the desktop: reads, checks, waits, a question's answer
+    /// kept, the server's own files. Every other member is watched for every tool (<see cref="GateObserver.WatchEveryChange"/>),
+    /// so a member added to one of these services is watched until it is listed here.
+    /// </summary>
+    private static readonly Dictionary<Type, HashSet<string>> NoDesktopChange = new()
+    {
+        [typeof(IWindowService)] = new(StringComparer.Ordinal)
+        {
+            nameof(IWindowService.GetAllWindows), nameof(IWindowService.FindWindows), nameof(IWindowService.ResolveWindow),
+            nameof(IWindowService.GetWindowDetails), nameof(IWindowService.GetForegroundWindow), nameof(IWindowService.GetWindowInfo),
+            nameof(IWindowService.IsUserFacingAppWindow), nameof(IWindowService.WaitForSettledFrame), nameof(IWindowService.GetNormalBounds),
+            nameof(IWindowService.IsValidWindow), nameof(IWindowService.EvaluateTargetPolicy), nameof(IWindowService.CheckClose),
+            nameof(IWindowService.GetOwnedWindows), nameof(IWindowService.FindBlockingDialog), nameof(IWindowService.GetApplicationWindows),
+            nameof(IWindowService.GetApplicationWindowsOnOtherDesktops)
+        },
+        [typeof(IForegroundService)] = new(StringComparer.Ordinal) { nameof(IForegroundService.IsInFront) },
+        [typeof(IProcessService)] = new(StringComparer.Ordinal)
+        {
+            nameof(IProcessService.GetRunningProcesses), nameof(IProcessService.GetProcessName), nameof(IProcessService.GetProcessPath),
+            nameof(IProcessService.CheckKillTarget), nameof(IProcessService.PreviewElevation), nameof(IProcessService.CheckLaunch)
+        },
+        [typeof(IInputSimulationService)] = new(StringComparer.Ordinal)
+        {
+            nameof(IInputSimulationService.GetCursorPosition), nameof(IInputSimulationService.IsValidScreenCoordinate)
+        },
+        [typeof(IElementActionService)] = new(StringComparer.Ordinal),
+        [typeof(ILayoutService)] = new(StringComparer.Ordinal)
+        {
+            nameof(ILayoutService.GetStorageError), nameof(ILayoutService.GetAllPresets), nameof(ILayoutService.GetPreset),
+            nameof(ILayoutService.GetInvalidFiles), nameof(ILayoutService.AreLaunchesConfirmed), nameof(ILayoutService.ConfirmLaunches),
+            nameof(ILayoutService.SavePresetAsync), nameof(ILayoutService.DeletePresetAsync), nameof(ILayoutService.CaptureCurrentLayoutAsync),
+            nameof(ILayoutService.SaveAuthoredLayoutAsync)
+        },
+        [typeof(IWorkspaceService)] = new(StringComparer.Ordinal) { nameof(IWorkspaceService.SaveAsync) },
+        [typeof(IDebugBrowserLifecycle)] = new(StringComparer.Ordinal) { nameof(IDebugBrowserLifecycle.CheckClose) },
+        [typeof(IWindowCloseVerifier)] = new(StringComparer.Ordinal)
+        {
+            nameof(IWindowCloseVerifier.ShownWindows), nameof(IWindowCloseVerifier.WaitForCloseAsync), nameof(IWindowCloseVerifier.FindPromptAsync),
+            nameof(IWindowCloseVerifier.WaitForProcessesToExitAsync)
+        },
+        [typeof(ILaunchPlacementService)] = new(StringComparer.Ordinal),
+        [typeof(ICdpTabService)] = new(StringComparer.Ordinal) { nameof(ICdpTabService.ListTabsAsync), nameof(ICdpTabService.WaitAsync) },
+        [typeof(ICdpPageService)] = new(StringComparer.Ordinal) { nameof(ICdpPageService.LocateAsync) },
+        // The clipboard's reads, and the question's state the server keeps; SetText writes it
+        [typeof(IClipboardService)] = new(StringComparer.Ordinal)
+        {
+            nameof(IClipboardService.SequenceNumber), nameof(IClipboardService.ReadAsync), nameof(IClipboardService.UserDeclined),
+            nameof(IClipboardService.WasDeclined), nameof(IClipboardService.TryOpenQuestion)
+        },
+        [typeof(IPopupService)] = new(StringComparer.Ordinal)
+        {
+            nameof(IPopupService.GetPopups), nameof(IPopupService.GetPopupList), nameof(IPopupService.IsInForeground),
+            nameof(IPopupService.GetDesktopWindows), nameof(IPopupService.GetActivePopupsAsync), nameof(IPopupService.WaitForNewPopupAsync)
+        },
+        [typeof(IMenuPathService)] = new(StringComparer.Ordinal),
+        [typeof(IDialogService)] = new(StringComparer.Ordinal) { nameof(IDialogService.Locate), nameof(IDialogService.ReadAsync) },
+        [typeof(IFileDialogService)] = new(StringComparer.Ordinal),
+        // NoteShown keeps a JavaScript dialog's message for the read that follows
+        [typeof(IBrowserDialogService)] = new(StringComparer.Ordinal) { nameof(IBrowserDialogService.NoteShown) },
+        [typeof(IBrowserTabService)] = new(StringComparer.Ordinal) { nameof(IBrowserTabService.ListTabsAsync), nameof(IBrowserTabService.WaitAsync) },
+        // A capture may bring a tab that is not shown to the front, and a script may change the page
+        [typeof(IBrowserPageService)] = new(StringComparer.Ordinal) { nameof(IBrowserPageService.GetElementRectAsync) },
+        // The CDP service's reads of a debug browser; CloseBrowserAsync sends Browser.close
+        [typeof(ICdpService)] = new(StringComparer.Ordinal)
+        {
+            nameof(ICdpService.GetPageTargetsAsync), nameof(ICdpService.GetBrowserVersionAsync), nameof(ICdpService.FindTargetForWindowAsync),
+            nameof(ICdpService.FindTargetByIdAsync), nameof(ICdpService.GetPageSnapshotAsync)
+        },
+        // The one way input reaches SendInput: its reads of the pause, the chord and the keys down, and resume_input's question.
+        // A batch, a cursor move, a release and a pause or resume are watched: a self-gated tool sends them inside the gate
+        [typeof(IInputSession)] = new(StringComparer.Ordinal)
+        {
+            nameof(IInputSession.IsPauseChordHeld), nameof(IInputSession.FindPauseChord), nameof(IInputSession.ReadModifiersDown),
+            nameof(IInputSession.TryOpenResumeQuestion)
+        },
+        // The window seam the browser services are handed: every member but its window changes (NativeFakedServer.IsAction)
+        [typeof(INativeWindowWrapper)] = typeof(INativeWindowWrapper).GetMethods()
+            .Where(m => !NativeFakedServer.IsAction(typeof(INativeWindowWrapper), m))
+            .Select(m => m.Name)
+            .ToHashSet(StringComparer.Ordinal),
+    };
+
+    /// <summary>
+    /// The server interfaces a Through route's types call that are neither native seams nor services of
+    /// <see cref="NoDesktopChange"/>, with the members of each that change nothing on the desktop. A route's type that calls a
+    /// member of a server interface on neither list fails the chain check until the interface is classified here.
+    /// </summary>
+    private static readonly Dictionary<Type, HashSet<string>> ChainServiceReads = new()
+    {
+        [typeof(IElementSearchService)] = new(StringComparer.Ordinal) { nameof(IElementSearchService.FindAsync) },
+        // Checks of the target window and the keys; they act on nothing
+        [typeof(IInputTargetGuard)] = typeof(IInputTargetGuard).GetMethods().Select(m => m.Name).ToHashSet(StringComparer.Ordinal),
+        [typeof(ITargetPolicy)] = new(StringComparer.Ordinal) { nameof(ITargetPolicy.Evaluate), nameof(ITargetPolicy.EvaluateWindow) },
+        // The refs the server keeps, and their elements read again
+        [typeof(IElementRegistry)] = new(StringComparer.Ordinal)
+        {
+            nameof(IElementRegistry.NextGeneration), nameof(IElementRegistry.Register), nameof(IElementRegistry.Lookup),
+            nameof(IElementRegistry.Resolve), nameof(IElementRegistry.ResolveAsync)
+        },
+        // Runs the read it is handed on a UI Automation thread: the read is the route type's own code, which the check reads too
+        [typeof(IUiaWorker)] = new(StringComparer.Ordinal) { nameof(IUiaWorker.RunAsync) },
+    };
+
+    /// <summary>
+    /// The contract run's mocks of the services of <see cref="NoDesktopChange"/> it registers, and its input session, watched for
+    /// every tool (the CDP services and the window seam are handed to the browser services by <see cref="BrowserTabs"/> and
+    /// <see cref="BrowserPages"/>).
+    /// </summary>
+    private static IEnumerable<(Type Service, object Mock)> WatchedServices(ContractServices c) =>
+    [
+        (typeof(IWindowService), c.Windows.Object), (typeof(IForegroundService), c.Foreground.Object), (typeof(IProcessService), c.Processes.Object),
+        (typeof(IInputSimulationService), c.Input.Object), (typeof(IElementActionService), c.ElementActions.Object),
+        (typeof(ILayoutService), c.Layouts.Object), (typeof(IWorkspaceService), c.Workspaces.Object),
+        (typeof(IDebugBrowserLifecycle), c.DebugBrowsers.Object), (typeof(IWindowCloseVerifier), c.CloseVerifier.Object),
+        (typeof(ILaunchPlacementService), c.Placement.Object), (typeof(IClipboardService), c.Clipboard.Object),
+        (typeof(IPopupService), c.Popups.Object), (typeof(IMenuPathService), c.MenuPaths.Object), (typeof(IDialogService), c.Dialogs.Object),
+        (typeof(IFileDialogService), c.FileDialogs.Object), (typeof(IBrowserDialogService), c.BrowserDialogs.Object),
+        (typeof(IBrowserTabService), c.BrowserTabs.Object), (typeof(IBrowserPageService), c.BrowserPages.Object),
+        // The real session over the fake input layer: a tool's own batch, cursor move or release goes through it
+        (typeof(IInputSession), c.Session)
+    ];
 
     /// <summary>The tools whose services' mutating calls are watched in a typical call.</summary>
     private static readonly IReadOnlyDictionary<string, GatedWork> Work = new Dictionary<string, GatedWork>(StringComparer.Ordinal)
     {
         // Asks the user first when the client can ask (typical: confirm=true and no elicitation), then kills inside the gate
         ["kill_process"] = Watch<IProcessService>(c => c.Processes.Object, nameof(IProcessService.KillProcessAsync)),
-        ["launch_application"] = Watch<IProcessService>(c => c.Processes.Object, nameof(IProcessService.LaunchApplicationAsync)),
+        // The launch and its placement's window change run inside the gate (roadmap M3.13): a call with a placement reaches both
+        ["launch_application"] = new GatedWork((_, _, _) => { },
+            [Call<IProcessService>(nameof(IProcessService.LaunchApplicationAsync)), Call<ILaunchPlacementService>(nameof(ILaunchPlacementService.PlaceAsync))],
+            Args("""{ "executable": "notepad", "waitForWindow": true, "placement": { "snap": "left_half", "focus": true } }"""),
+            ReachesAll: true),
         ["close_window"] = Watch<IWindowService>(c => c.Windows.Object, nameof(IWindowService.CloseWindow)),
         ["close_windows_batch"] = Watch<IWindowService>(c => c.Windows.Object,
             nameof(IWindowService.CloseWindowsBatchAsync), nameof(IWindowService.CloseWindow)),
-        ["close_application"] = Watch<IWindowService>(c => c.Windows.Object, nameof(IWindowService.CloseWindow)),
+        // A packaged app's frame that does not take WM_CLOSE is asked through UI Automation's Window pattern, inside the gate too
+        ["close_application"] = new GatedWork((c, _, _) =>
+            {
+                c.Windows.Setup(w => w.CloseWindow((nint)CalculatorFrame, false)).Returns(
+                    WindowCloseResult.Failed((nint)CalculatorFrame, WindowErrorCode.CloseFailed, "The frame did not take WM_CLOSE."));
+                c.CloseVerifier.Setup(v => v.CloseWithUiAutomationAsync((nint)CalculatorFrame, It.IsAny<CancellationToken>())).ReturnsAsync(true);
+            },
+            [Call<IWindowService>(nameof(IWindowService.CloseWindow)), Call<IWindowCloseVerifier>(nameof(IWindowCloseVerifier.CloseWithUiAutomationAsync))],
+            Args($$"""{ "handle": {{CalculatorFrame}}, "timeoutMs": 0 }"""),
+            ReachesAll: true),
         ["set_window_bounds"] = Watch<IWindowService>(c => c.Windows.Object,
             nameof(IWindowService.SetWindowFrame), nameof(IWindowService.SetWindowBounds), nameof(IWindowService.MoveWindow),
             nameof(IWindowService.ResizeWindow)),
@@ -74,14 +224,34 @@ public sealed class SelfGatedToolsContractTests : IDisposable
         // Browser.close and an end of a browser that did not exit run inside the gate entry the tool hands the lifecycle (roadmap M5.4)
         ["close_debug_browser"] = Watch<IDebugBrowserLifecycle>(c => c.DebugBrowsers.Object,
             new WatchedCall(nameof(IDebugBrowserLifecycle.CloseAsync), HandsOnTheGate: true)),
-        // The run holds the gate for every step (roadmap M6.2): its focus, element action, typing and keys
-        ["run_steps"] = new GatedWork((c, services, observer) =>
-        {
-            Replace(services, observer, c.Foreground.Object, new WatchedCall(nameof(IForegroundService.EnsureForeground)));
-            Replace(services, observer, c.ElementActions.Object, new WatchedCall(nameof(IElementActionService.ActAsync)));
-            Replace(services, observer, c.Input.Object,
-                new WatchedCall(nameof(IInputSimulationService.TypeTextAsync)), new WatchedCall(nameof(IInputSimulationService.PressKeysAsync)));
-        }),
+        // The run holds the gate for every step (roadmap M6.2): its focus, element action, typing, keys, clicks, drag, pointer
+        // move and scroll on the run's window
+        ["run_steps"] = new GatedWork((_, _, _) => { },
+            [
+                Call<IForegroundService>(nameof(IForegroundService.EnsureForeground)), Call<IElementActionService>(nameof(IElementActionService.ActAsync)),
+                Call<IInputSimulationService>(nameof(IInputSimulationService.TypeTextAsync)),
+                Call<IInputSimulationService>(nameof(IInputSimulationService.SendKeysAsync)),
+                Call<IInputSimulationService>(nameof(IInputSimulationService.PressKeysAsync)),
+                Call<IInputSimulationService>(nameof(IInputSimulationService.MouseClick)), Call<IInputSimulationService>(nameof(IInputSimulationService.DragAsync)),
+                Call<IInputSimulationService>(nameof(IInputSimulationService.MoveMouse)), Call<IInputSimulationService>(nameof(IInputSimulationService.Scroll))
+            ],
+            Args("""
+                {
+                  "window": { "handle": 1706796 },
+                  "steps": [
+                    { "tool": "focus_window" },
+                    { "tool": "element_action", "args": { "ref": "w4120035e17", "action": "set_value", "value": "window layout presets" } },
+                    { "tool": "type_text", "args": { "text": "Meeting notes for Monday" } },
+                    { "tool": "send_keys", "args": { "keys": "{HOME}" } },
+                    { "tool": "press_keys", "args": { "keys": "ctrl+s" } },
+                    { "tool": "mouse_click", "args": { "x": 560, "y": 110 } },
+                    { "tool": "drag", "args": { "fromX": 560, "fromY": 110, "toX": 760, "toY": 110 } },
+                    { "tool": "mouse_move", "args": { "x": 560, "y": 110 } },
+                    { "tool": "scroll", "args": { "deltaY": 3 } }
+                  ]
+                }
+                """),
+            ReachesAll: true),
         // The tab tools (roadmap M5.5) and the DOM bridge's actions (roadmap M5.8): the real services over a debug Chrome's CDP mocks
         ["activate_tab"] = BrowserTabs(nameof(ICdpTabService.ActivateAsync)),
         ["browser_navigate"] = BrowserTabs(nameof(ICdpTabService.NavigateAsync)),
@@ -92,21 +262,41 @@ public sealed class SelfGatedToolsContractTests : IDisposable
         ["browser_screenshot"] = BrowserPages(nameof(ICdpPageService.CaptureAsync)),
     };
 
-    /// <summary>The tools that act only through element_action's service, which takes the gate for each action.</summary>
-    private static readonly IReadOnlyDictionary<string, GatedThrough> Through = new Dictionary<string, GatedThrough>(StringComparer.Ordinal)
-    {
-        // Finds its element without the gate; the service takes it around the pattern call (roadmap M3.6)
-        ["element_action"] = new(typeof(IElementActionService), nameof(IElementActionService.ActAsync),
-            [(typeof(IElementActionService), typeof(ElementActionService))]),
-        // Read the dialog without the gate; press and set through element_action's service (roadmap M3.5, M3.14)
-        ["respond_to_dialog"] = new(typeof(IDialogService), nameof(IDialogService.RespondAsync),
-            [(typeof(IDialogService), typeof(DialogService)), (typeof(IElementActionService), typeof(ElementActionService))]),
-        ["file_dialog"] = new(typeof(IFileDialogService), nameof(IFileDialogService.CompleteAsync),
-            [(typeof(IFileDialogService), typeof(FileDialogService)), (typeof(IElementActionService), typeof(ElementActionService))]),
-        // Reads a JavaScript dialog without the gate; sets a prompt's text and presses its button through element_action's service
-        ["browser_handle_dialog"] = new(typeof(IBrowserDialogService), nameof(IBrowserDialogService.HandleAsync),
-            [(typeof(IBrowserDialogService), typeof(BrowserDialogService)), (typeof(IElementActionService), typeof(ElementActionService))]),
-    };
+    /// <summary>The tools that act only through element_action's service, which takes the gate for each action, by each route.</summary>
+    private static readonly IReadOnlyDictionary<string, IReadOnlyList<GatedThrough>> Through =
+        new Dictionary<string, IReadOnlyList<GatedThrough>>(StringComparer.Ordinal)
+        {
+            ["element_action"] =
+            [
+                // Finds its element without the gate; the service takes it around the pattern call (roadmap M3.6)
+                new(typeof(IElementActionService), nameof(IElementActionService.ActAsync), [(typeof(IElementActionService), typeof(ElementActionService))]),
+                // menu_path (roadmap M3.5): finds each item without the gate, and expands and presses it through element_action's service
+                new(typeof(IMenuPathService), nameof(IMenuPathService.RunAsync),
+                    [(typeof(IMenuPathService), typeof(MenuPathService)), (typeof(IElementActionService), typeof(ElementActionService))],
+                    Args("""{ "handle": 1706796, "action": "menu_path", "value": "File>Save As" }""")),
+            ],
+            // Read the dialog without the gate; press and set through element_action's service (roadmap M3.5, M3.14)
+            ["respond_to_dialog"] =
+            [
+                new(typeof(IDialogService), nameof(IDialogService.RespondAsync),
+                    [(typeof(IDialogService), typeof(DialogService)), (typeof(IElementActionService), typeof(ElementActionService))])
+            ],
+            // Fills and presses through element_action's service, and answers an overwrite prompt through respond_to_dialog's
+            ["file_dialog"] =
+            [
+                new(typeof(IFileDialogService), nameof(IFileDialogService.CompleteAsync),
+                [
+                    (typeof(IFileDialogService), typeof(FileDialogService)), (typeof(IDialogService), typeof(DialogService)),
+                    (typeof(IElementActionService), typeof(ElementActionService))
+                ])
+            ],
+            // Reads a JavaScript dialog without the gate; sets a prompt's text and presses its button through element_action's service
+            ["browser_handle_dialog"] =
+            [
+                new(typeof(IBrowserDialogService), nameof(IBrowserDialogService.HandleAsync),
+                    [(typeof(IBrowserDialogService), typeof(BrowserDialogService)), (typeof(IElementActionService), typeof(ElementActionService))])
+            ],
+        };
 
     public static TheoryData<string> SelfGatedTools()
     {
@@ -132,9 +322,14 @@ public sealed class SelfGatedToolsContractTests : IDisposable
     [MemberData(nameof(SelfGatedTools))]
     public async Task ASelfGatedTool_DoesItsWorkInsideTheInputGate(string tool)
     {
-        if (Through.TryGetValue(tool, out var through))
+        if (Through.TryGetValue(tool, out var routes))
         {
-            await AssertActsOnlyThroughTheGatedService(tool, through);
+            var chains = routes.SelectMany(r => r.Chain).Select(c => c.Service).ToHashSet();
+            foreach (var route in routes)
+            {
+                await AssertActsOnlyThroughTheGatedService(tool, route, chains);
+            }
+
             return;
         }
 
@@ -142,7 +337,8 @@ public sealed class SelfGatedToolsContractTests : IDisposable
             $"'{tool}' takes the input gate itself (InputGateToolFilter.SelfGatedTools): add an entry to {nameof(SelfGatedToolsContractTests)}.{nameof(Work)} " +
             "that watches its mutating service calls, or to Through when a gated service makes them");
 
-        // Arrange - the server's calls run under this test's tag, so the observer sees this test's hold of the gate, not another's
+        // Arrange - the server's calls run under this test's tag, so the observer sees this test's hold of the gate, not another's.
+        // Every call that may change the desktop is watched on every service, then the entry replaces what it watches its own way
         var flow = InputGate.TagFlow();
         var observer = new GateObserver(flow);
         await using var server = await InProcessMcpServer.StartAsync(
@@ -151,6 +347,11 @@ public sealed class SelfGatedToolsContractTests : IDisposable
             configureServices: services =>
             {
                 _services.Register(services);
+                foreach (var (service, mock) in WatchedServices(_services))
+                {
+                    services.Replace(ServiceDescriptor.Singleton(service, observer.WatchEveryChange(service, mock, NoDesktopChange[service], [])));
+                }
+
                 work!.Arrange(_services, services, observer);
             });
 
@@ -159,43 +360,59 @@ public sealed class SelfGatedToolsContractTests : IDisposable
 
         // Assert
         var text = result.Content.OfType<TextContentBlock>().FirstOrDefault()?.Text;
-        observer.Seen.Should().NotBeEmpty("the typical call of '{0}' must reach the work it gates: {1}", tool, text);
+        var reached = work.Reaches.Where(call => observer.Seen.Any(o => o.Call == call || o.Call.StartsWith(call + " (", StringComparison.Ordinal))).ToList();
+        if (work.ReachesAll)
+        {
+            reached.Should().BeEquivalentTo(work.Reaches, "the call of '{0}' must reach all the work it gates: {1}", tool, text);
+        }
+        else
+        {
+            reached.Should().NotBeEmpty("the typical call of '{0}' must reach the work it gates ({1}): {2}", tool, string.Join(", ", work.Reaches), text);
+        }
+
         observer.Seen.Where(o => !o.GateHeld).Select(o => o.Call).Should().BeEmpty(
             "'{0}' is on SelfGatedTools, so the filter does not hold the gate for it: it must hold the input gate itself while it acts", tool);
         InputGate.IsHeldBy(flow).Should().BeFalse("'{0}' releases the gate when it is done", tool);
     }
 
     /// <summary>
-    /// The typical call reaches <see cref="GatedThrough.Service"/>, and the production registrations lead from it to a service
-    /// that takes the gate: each service is registered with the expected type, which calls the next service's interface, and the
-    /// last type takes the gate.
+    /// The route's call reaches <see cref="GatedThrough.Service"/>, the tool calls every other service that may change the
+    /// desktop only inside the gate, and the production registrations lead from the route's service to one that takes the gate:
+    /// each service is registered with the expected type, which calls the next service's interface and acts only through the
+    /// services after it, and the last type takes the gate.
     /// </summary>
-    private async Task AssertActsOnlyThroughTheGatedService(string tool, GatedThrough through)
+    /// <param name="chains">The services of all the tool's routes: the tool calls them without the gate, which they take.</param>
+    private async Task AssertActsOnlyThroughTheGatedService(string tool, GatedThrough through, IReadOnlySet<Type> chains)
     {
-        // Arrange - the call is seen, with or without the gate (the gate is the mocked service's job)
-        var observer = new GateObserver(InputGate.TagFlow());
-        var mock = through.Service switch
-        {
-            _ when through.Service == typeof(IElementActionService) => (object)_services.ElementActions.Object,
-            _ when through.Service == typeof(IDialogService) => _services.Dialogs.Object,
-            _ when through.Service == typeof(IFileDialogService) => _services.FileDialogs.Object,
-            _ when through.Service == typeof(IBrowserDialogService) => _services.BrowserDialogs.Object,
-            _ => throw new InvalidOperationException($"No contract mock for {through.Service.Name}.")
-        };
+        // Arrange - the route's call is seen, with or without the gate (the gate is the mocked service's job); every other
+        // service is watched under this test's tag, as for the Work tools
+        var flow = InputGate.TagFlow();
+        var reach = new GateObserver(flow);
+        var observer = new GateObserver(flow);
+        var mock = WatchedServices(_services).Single(s => s.Service == through.Service).Mock;
         await using var server = await InProcessMcpServer.StartAsync(
             [],
             builder => builder.AddWindowsAppManagerTools(),
             configureServices: services =>
             {
                 _services.Register(services);
-                services.Replace(ServiceDescriptor.Singleton(through.Service, observer.Watch(through.Service, mock, [new WatchedCall(through.Method)])));
+                foreach (var (service, watched) in WatchedServices(_services).Where(s => !chains.Contains(s.Service)))
+                {
+                    services.Replace(ServiceDescriptor.Singleton(service, observer.WatchEveryChange(service, watched, NoDesktopChange[service], [])));
+                }
+
+                services.Replace(ServiceDescriptor.Singleton(through.Service, reach.Watch(through.Service, mock, [new WatchedCall(through.Method)])));
             });
 
         // Act
-        await server.CallToolAsync(tool, EveryToolContractTests.ArgumentsFor(tool));
+        var result = await server.CallToolAsync(tool, through.Arguments ?? EveryToolContractTests.ArgumentsFor(tool));
 
         // Assert
-        observer.Seen.Should().NotBeEmpty("'{0}' acts through {1}.{2}", tool, through.Service.Name, through.Method);
+        var text = result.Content.OfType<TextContentBlock>().FirstOrDefault()?.Text;
+        reach.Seen.Should().NotBeEmpty("'{0}' acts through {1}.{2}: {3}", tool, through.Service.Name, through.Method, text);
+        observer.Seen.Where(o => !o.GateHeld).Select(o => o.Call).Should().BeEmpty(
+            "'{0}' is on SelfGatedTools, so the filter does not hold the gate for it: a service it calls itself must run inside the gate", tool);
+        InputGate.IsHeldBy(flow).Should().BeFalse("'{0}' releases the gate when it is done", tool);
         through.Chain[0].Service.Should().Be(through.Service);
         var registrations = ProductionRegistrations();
         for (var i = 0; i < through.Chain.Count; i++)
@@ -203,18 +420,148 @@ public sealed class SelfGatedToolsContractTests : IDisposable
             var (service, implementation) = through.Chain[i];
             registrations.Should().ContainKey(service).WhoseValue.Should().Be(implementation,
                 "the server registers {0} for {1}", implementation.Name, service.Name);
-            var calls = IlCalls.CallsMadeBy(implementation).ToList();
+            var calls = CallsReachedFrom(implementation);
             if (i < through.Chain.Count - 1)
             {
                 var next = through.Chain[i + 1].Service;
                 calls.Should().Contain(m => m.DeclaringType == next, "{0} acts through {1}", implementation.Name, next.Name);
+                ChainActions(calls, through.Chain.Skip(i + 1).Select(c => c.Service).ToHashSet()).Should().BeEmpty(
+                    "{0} acts only through {1}, which takes the input gate: an action of its own, natively or through another " +
+                    "service, would run outside the gate (a service whose member changes nothing goes on NoDesktopChange or " +
+                    "ChainServiceReads)", implementation.Name, string.Join(" and ", through.Chain.Skip(i + 1).Select(c => c.Implementation.Name)));
             }
             else
             {
-                calls.Any(TakesTheGate).Should().BeTrue("{0} takes the input gate around its actions (ElementActionServiceTests)", implementation.Name);
+                TakesTheGateItself(implementation).Should().BeTrue("{0} takes the input gate around its actions (ElementActionServiceTests)", implementation.Name);
             }
         }
     }
+
+    [Fact]
+    public void TheGateCheck_ReadsOnlyTheLastServicesOwnCode()
+    {
+        // Act & Assert - element_action's service enters the gate in its own code; a sample whose only gate is a helper's does not
+        TakesTheGateItself(typeof(ElementActionService)).Should().BeTrue("element_action's service takes the gate around its actions");
+        TakesTheGateItself(typeof(GateInAHelperSample)).Should().BeFalse(
+            "a gate a helper takes holds only around the helper's own code, not around the actions of the type that calls it");
+    }
+
+    [Fact]
+    public void TheChainCheck_SeesAnActionInAServicesCode()
+    {
+        // Act - a sample's IL, as the check reads a chain service's, with element_action's service after it; and a concrete
+        // wrapper's members, which test code may not call (TestCodeNativeWrapperTests)
+        var after = new HashSet<Type> { typeof(IElementActionService) };
+        var actions = ChainActions(CallsReachedFrom(typeof(NativeActionSample)), after).ToList();
+        var concrete = ChainActions([typeof(NativeWindowWrapper).GetMethod(nameof(NativeWindowWrapper.ShowWindow))!,
+            typeof(NativeWindowWrapper).GetMethod(nameof(NativeWindowWrapper.GetWindowText))!], after).ToList();
+
+        // Assert - a window change, a UI Automation action and a pattern action in a lambda, input and a clipboard write; a
+        // service's window change and focus, and a window change in a helper the sample calls; and a server interface that is
+        // not classified
+        actions.Should().Contain([
+            "INativeWindowWrapper.SetForegroundWindow", "IUIAutomationWrapper.CloseWindow", "IUiaTree.SetFocus", "IUiaInvokePattern.Invoke",
+            "IUiaValuePattern.SetValue", "INativeInputWrapper.SendInput", "INativeClipboardWrapper.WriteText", "IWindowService.SetWindowState",
+            "IForegroundService.EnsureForeground", "INativeWindowWrapper.SetWindowPos", "IInputSession.Send", "ITakeoverMonitor.Watch (not classified)"
+        ]);
+        concrete.Should().Equal(["NativeWindowWrapper.ShowWindow"], "a concrete wrapper acts as its seam does");
+        actions.Should().NotContain([
+            "IUiaTree.GetPattern", "IUiaValuePattern.get_Value", "IUiaTextPattern.GetText", "INativeInputWrapper.GetCursorPos",
+            "IWindowService.GetWindowInfo", "IElementActionService.ActAsync", "INativeWindowWrapper.BringWindowToTop",
+            "IInputSession.ReadModifiersDown"
+        ], "reads are no actions, an action of the service after it is the route's, and a helper's method the sample never calls is not its code");
+    }
+
+    private static readonly Assembly ServerAssembly = typeof(WindowService).Assembly;
+
+    /// <summary>
+    /// The calls the code of <paramref name="type"/> makes (its lambdas, iterators and async state machines included), with
+    /// those of the methods of its own assembly (the server's, for a route's type) it calls, followed as far as they go: an action
+    /// in a static helper, a result's method or another class the type calls is the type's own action. A call through an
+    /// interface is not followed but classified (<see cref="ChainActions"/>), and neither is a call into the Native namespace,
+    /// which holds the seams.
+    /// </summary>
+    private static List<MethodBase> CallsReachedFrom(Type type)
+    {
+        var reached = new HashSet<MethodBase>(IlCalls.MethodsOf(type));
+        var pending = new Queue<MethodBase>(reached);
+        var calls = new List<MethodBase>();
+        while (pending.TryDequeue(out var method))
+        {
+            foreach (var callee in IlCalls.CalledMethods(method))
+            {
+                calls.Add(callee);
+                if (callee.DeclaringType is { IsInterface: false } declaring && declaring.Assembly == type.Assembly && !callee.IsAbstract &&
+                    declaring.Namespace != typeof(NativeWindowWrapper).Namespace)
+                {
+                    foreach (var part in WithItsGeneratedParts(callee).Where(reached.Add))
+                    {
+                        pending.Enqueue(part);
+                    }
+                }
+            }
+        }
+
+        return calls;
+    }
+
+    /// <summary>A method with its lambdas, local functions and state machines, which the compiler names after it (&lt;M&gt;b__0, &lt;M&gt;d__3).</summary>
+    private static IEnumerable<MethodBase> WithItsGeneratedParts(MethodBase method)
+    {
+        var prefix = $"<{method.Name}>";
+        return IlCalls.MethodsOf(IlCalls.OutermostType(method.DeclaringType!))
+            .Where(m => m.Name.StartsWith(prefix, StringComparison.Ordinal) || m.DeclaringType!.Name.StartsWith(prefix, StringComparison.Ordinal))
+            .Prepend(method);
+    }
+
+    /// <summary>
+    /// The calls among <paramref name="calls"/> that act, as "Type.Member": a native seam's action (NativeFakedServer.IsAction,
+    /// also on a concrete wrapper), and a member of another server interface that is not on its reads (<see cref="NoDesktopChange"/>,
+    /// <see cref="ChainServiceReads"/>), unless it is one of the services after the caller in its route
+    /// (<paramref name="through"/>). A server interface on neither list counts too, marked "(not classified)": the check fails
+    /// closed.
+    /// </summary>
+    private static IEnumerable<string> ChainActions(IEnumerable<MethodBase> calls, IReadOnlySet<Type> through) =>
+        calls.OfType<MethodInfo>().Select(m => ChainAction(m, through)).OfType<string>().Distinct();
+
+    private static string? ChainAction(MethodInfo method, IReadOnlySet<Type> through)
+    {
+        if (method.DeclaringType is not { } type || type.Assembly != ServerAssembly || (method.IsSpecialName && method.Name.StartsWith("get_", StringComparison.Ordinal)))
+        {
+            return null;
+        }
+
+        var name = $"{type.Name}.{method.Name}";
+        if (!type.IsInterface)
+        {
+            // A concrete wrapper acts as its seam does; any other class is followed (CallsReachedFrom)
+            var acts = type.Namespace == typeof(NativeWindowWrapper).Namespace && type.GetInterfaces()
+                .Where(NativeFakedServer.Seams.Contains)
+                .SelectMany(seam => seam.GetMethods().Where(m => m.Name == method.Name).Select(m => (seam, m)))
+                .Any(s => NativeFakedServer.IsAction(s.seam, s.m));
+            return acts ? name : null;
+        }
+
+        if (NativeFakedServer.Seams.Contains(type))
+        {
+            return NativeFakedServer.IsAction(type, method) ? name : null;
+        }
+
+        if (through.Contains(type))
+        {
+            return null;
+        }
+
+        return (NoDesktopChange.GetValueOrDefault(type) ?? ChainServiceReads.GetValueOrDefault(type)) is { } reads
+            ? reads.Contains(method.Name) ? null : name
+            : $"{name} (not classified)";
+    }
+
+    /// <summary>
+    /// True when the own code of <paramref name="implementation"/> (its lambdas and state machines included) takes the input
+    /// gate. Unlike the action check, the helpers it calls do not count: a gate a helper takes holds only around the helper's code.
+    /// </summary>
+    private static bool TakesTheGateItself(Type implementation) => IlCalls.CallsMadeBy(implementation).Any(TakesTheGate);
 
     /// <summary>A call that takes the input gate: the filter's EnterAsync or HoldAsync, or one of InputGate's ways in.</summary>
     private static bool TakesTheGate(System.Reflection.MethodBase method) =>
@@ -232,32 +579,52 @@ public sealed class SelfGatedToolsContractTests : IDisposable
 
     // ---- entries ----
 
+    /// <summary>Calculator's frame on the typical desktop (TypicalDesktop.Windows[10]): an ApplicationFrameWindow of a packaged app.</summary>
+    private const long CalculatorFrame = 0x300000 + 10 * 0x1F4;
+
+    private static string Call<T>(string method) => $"{typeof(T).Name}.{method}";
+
+    private static IReadOnlyDictionary<string, object?> Args(string json)
+    {
+        using var document = JsonDocument.Parse(json);
+        return document.RootElement.EnumerateObject().ToDictionary(p => p.Name, p => (object?)p.Value.Clone(), StringComparer.Ordinal);
+    }
+
     private static GatedWork Watch<T>(Func<ContractServices, T> inner, params string[] methods) where T : class =>
         Watch(inner, methods.Select(m => new WatchedCall(m)).ToArray());
 
     private static GatedWork Watch<T>(Func<ContractServices, T> inner, params WatchedCall[] calls) where T : class =>
-        new((c, services, observer) => Replace(services, observer, inner(c), calls));
+        new((c, services, observer) => Replace(services, observer, inner(c), calls), calls.Select(w => Call<T>(w.Method)).ToList());
 
+    /// <summary>Watches every change of <typeparamref name="T"/> (<see cref="NoDesktopChange"/>), <paramref name="calls"/> their own way.</summary>
     private static void Replace<T>(IServiceCollection services, GateObserver observer, T inner, params WatchedCall[] calls) where T : class =>
-        services.Replace(ServiceDescriptor.Singleton(typeof(T), observer.Watch(inner, calls)));
+        services.Replace(ServiceDescriptor.Singleton(typeof(T), observer.WatchEveryChange(typeof(T), inner, NoDesktopChange[typeof(T)], calls)));
 
     private static GatedWork BrowserTabs(string method) => new((c, services, observer) =>
     {
         var browser = new DebugChrome();
-        var tabs = observer.Watch(browser.Tabs.Object, new WatchedCall(method, HandsOnTheGate: true));
+        var tabs = (ICdpTabService)observer.WatchEveryChange(typeof(ICdpTabService), browser.Tabs.Object, NoDesktopChange[typeof(ICdpTabService)],
+            [new WatchedCall(method, HandsOnTheGate: true)]);
         services.Replace(ServiceDescriptor.Singleton<IBrowserTabService>(new BrowserTabService(
-            browser.Windows.Object, new BrowserDetectionService(), browser.Reading.Object, browser.Cdp.Object, tabs, browser.Owners,
-            new TargetPolicy(TargetPolicySettings.Default), browser.Locator.Object, c.Session)));
-    });
+            Watched<INativeWindowWrapper>(observer, browser.Windows.Object), new BrowserDetectionService(), browser.Reading.Object,
+            Watched<ICdpService>(observer, browser.Cdp.Object), tabs, browser.Owners, new TargetPolicy(TargetPolicySettings.Default),
+            browser.Locator.Object, c.Session)));
+    }, [Call<ICdpTabService>(method)]);
 
     private static GatedWork BrowserPages(string method) => new((c, services, observer) =>
     {
         var browser = new DebugChrome();
-        var pages = observer.Watch(browser.Pages.Object, new WatchedCall(method, HandsOnTheGate: true));
+        var pages = (ICdpPageService)observer.WatchEveryChange(typeof(ICdpPageService), browser.Pages.Object, NoDesktopChange[typeof(ICdpPageService)],
+            [new WatchedCall(method, HandsOnTheGate: true)]);
         services.Replace(ServiceDescriptor.Singleton<IBrowserPageService>(new BrowserPageService(
-            browser.Windows.Object, new BrowserDetectionService(), browser.Reading.Object, browser.Cdp.Object, pages, browser.Owners,
-            Mock.Of<IBrowserViewportLocator>(), new TargetPolicy(TargetPolicySettings.Default), browser.Locator.Object, c.Session)));
-    });
+            Watched<INativeWindowWrapper>(observer, browser.Windows.Object), new BrowserDetectionService(), browser.Reading.Object,
+            Watched<ICdpService>(observer, browser.Cdp.Object), pages, browser.Owners, Mock.Of<IBrowserViewportLocator>(),
+            new TargetPolicy(TargetPolicySettings.Default), browser.Locator.Object, c.Session)));
+    }, [Call<ICdpPageService>(method)]);
+
+    /// <summary>A seam or service the browser services are handed, with every change of it watched (<see cref="NoDesktopChange"/>).</summary>
+    private static T Watched<T>(GateObserver observer, T inner) where T : class =>
+        (T)observer.WatchEveryChange(typeof(T), inner, NoDesktopChange[typeof(T)], []);
 
     /// <summary>
     /// The typical desktop's Chrome window (TypicalDesktop.BrowserHandle) as the browser services resolve it: a Chrome process with
@@ -322,5 +689,76 @@ public sealed class SelfGatedToolsContractTests : IDisposable
         public Mock<IDebugPortLocator> Locator { get; } = new();
 
         public FakePortOwnerResolver Owners { get; }
+    }
+}
+
+/// <summary>
+/// A sample for <see cref="SelfGatedToolsContractTests.TheChainCheck_SeesAnActionInAServicesCode"/>, which only scans its IL.
+/// Nothing calls it, and its seams and services would be mocks if anything did. A type of its own: SelfGatedToolsContractTests
+/// reads the production registrations, so TestCodeNativeWrapperTests holds its own calls to reads.
+/// </summary>
+internal static class NativeActionSample
+{
+    public static async Task Acts(INativeWindowWrapper windows, IUIAutomationWrapper automation, IUiaTree tree, IUiaNode node,
+        INativeInputWrapper input, INativeClipboardWrapper clipboard, IWindowService service, IForegroundService foreground,
+        IElementActionService actions, IInputSession session, ITakeoverMonitor takeover)
+    {
+        windows.SetForegroundWindow(0x10010);
+        automation.CloseWindow(0x10010, CancellationToken.None);
+        tree.SetFocus(node);
+        Action press = () => tree.GetPattern<IUiaInvokePattern>(node)?.Invoke();
+        press();
+        if (tree.GetPattern<IUiaValuePattern>(node) is { Value: not null } value && tree.GetPattern<IUiaTextPattern>(node)?.GetText(10) != null)
+        {
+            value.SetValue("sample");
+        }
+
+        _ = input.GetCursorPos();
+        input.SendInput([]);
+        clipboard.WriteText("sample");
+
+        // A service's window change and focus, next to a read and the action of the service after it in the route
+        _ = service.GetWindowInfo(0x10010);
+        service.SetWindowState(0x10010, WindowStateRequest.Minimize);
+        foreground.EnsureForeground(0x10010);
+        await actions.ActAsync(new ElementActionRequest("w4120035e17", ElementActionKind.Invoke));
+
+        // A window change in a helper, a batch of input next to a read of the keys down, and a call through a server interface
+        // no list classifies
+        NativeActionSampleHelper.Moves(windows);
+        _ = session.ReadModifiersDown();
+        session.Send([]);
+        takeover.Watch().Dispose();
+    }
+}
+
+/// <summary>A server-style helper the sample calls, so the chain check must follow it; nothing calls it either.</summary>
+internal static class NativeActionSampleHelper
+{
+    public static void Moves(INativeWindowWrapper windows) => windows.SetWindowPos(0x10010, 0, 0, 800, 600, 0);
+
+    /// <summary>Not called by the sample: not the sample's code.</summary>
+    public static void NeverCalled(INativeWindowWrapper windows) => windows.BringWindowToTop(0x10010);
+}
+
+/// <summary>
+/// A sample for <see cref="SelfGatedToolsContractTests.TheGateCheck_ReadsOnlyTheLastServicesOwnCode"/>: it acts with only a
+/// helper's gate, released before the action. Nothing calls it.
+/// </summary>
+internal static class GateInAHelperSample
+{
+    public static async Task Acts(IInputSession session, INativeWindowWrapper windows)
+    {
+        await GateInAHelperSampleHelper.EnterAndLeaveAsync(session);
+        windows.SetForegroundWindow(0x10010);
+    }
+}
+
+/// <summary>The helper whose gate <see cref="GateInAHelperSample"/> leans on; nothing calls it either.</summary>
+internal static class GateInAHelperSampleHelper
+{
+    public static async Task EnterAndLeaveAsync(IInputSession session)
+    {
+        using var gate = await InputGateToolFilter.EnterAsync(session, CancellationToken.None);
     }
 }

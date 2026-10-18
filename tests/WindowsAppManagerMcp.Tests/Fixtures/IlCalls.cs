@@ -72,7 +72,40 @@ public static class IlCalls
     /// <summary>True when <paramref name="method"/>'s body has an instruction with <paramref name="opCode"/> (calli, for example).</summary>
     public static bool Uses(MethodBase method, OpCode opCode) => Instructions(method).Any(i => i.OpCode == opCode);
 
-    /// <summary>The instructions of a method body: each opcode with its 4-byte token operand, or 0 when it has none.</summary>
+    /// <summary>
+    /// The instructions of <paramref name="method"/>'s body in order, with the method each one names (call, callvirt, newobj,
+    /// ldftn) and the string it loads (ldstr) resolved: for tests that follow where a value comes from, such as the name a
+    /// wrapper is built on.
+    /// </summary>
+    public static IReadOnlyList<IlInstruction> InstructionsOf(MethodBase method)
+    {
+        var typeArguments = method.DeclaringType is { IsGenericType: true } declaring ? declaring.GetGenericArguments() : null;
+        var methodArguments = method.IsGenericMethod ? method.GetGenericArguments() : null;
+        var instructions = new List<IlInstruction>();
+        foreach (var (opCode, operand) in Instructions(method))
+        {
+            MethodBase? callee = null;
+            string? text = null;
+            try
+            {
+                callee = opCode.OperandType == OperandType.InlineMethod ? method.Module.ResolveMethod(operand, typeArguments, methodArguments) : null;
+                text = opCode == OpCodes.Ldstr ? method.Module.ResolveString(operand) : null;
+            }
+            catch (ArgumentException)
+            {
+                // A token that cannot be resolved in this generic context: the instruction is kept without it
+            }
+
+            instructions.Add(new IlInstruction(opCode, operand, callee, text));
+        }
+
+        return instructions;
+    }
+
+    /// <summary>
+    /// The instructions of a method body: each opcode with its operand when it is a 4-byte token or a 1- or 2-byte local or
+    /// argument index or constant, or 0 when it has none (or one of 8 bytes, or a switch table).
+    /// </summary>
     private static IEnumerable<(OpCode OpCode, int Operand)> Instructions(MethodBase method)
     {
         var il = method.GetMethodBody()?.GetILAsByteArray();
@@ -100,7 +133,16 @@ public static class IlCalls
                 OperandType.InlineSwitch => 4 + 4 * BitConverter.ToInt32(il, position),
                 _ => 4
             };
-            yield return (opCode, size == 4 ? BitConverter.ToInt32(il, position) : 0);
+            var operand = opCode.OperandType switch
+            {
+                OperandType.InlineSwitch => 0,
+                _ when size == 4 => BitConverter.ToInt32(il, position),
+                OperandType.ShortInlineVar => il[position],
+                OperandType.ShortInlineI or OperandType.ShortInlineBrTarget => (sbyte)il[position],
+                OperandType.InlineVar => BitConverter.ToUInt16(il, position),
+                _ => 0
+            };
+            yield return (opCode, operand);
             position += size;
         }
     }
@@ -108,3 +150,10 @@ public static class IlCalls
     /// <summary>Every method that the code of <paramref name="type"/> (its nested types included) calls.</summary>
     public static IEnumerable<MethodBase> CallsMadeBy(Type type) => MethodsOf(type).SelectMany(CalledMethods);
 }
+
+/// <summary>One IL instruction of <see cref="IlCalls.InstructionsOf"/>.</summary>
+/// <param name="OpCode">The instruction.</param>
+/// <param name="Operand">Its token, its local's or argument's index, or its constant; 0 when it has none.</param>
+/// <param name="Method">The method it names (call, callvirt, newobj, ldftn), or null.</param>
+/// <param name="Text">The string it loads (ldstr), or null.</param>
+public sealed record IlInstruction(OpCode OpCode, int Operand, MethodBase? Method, string? Text);
