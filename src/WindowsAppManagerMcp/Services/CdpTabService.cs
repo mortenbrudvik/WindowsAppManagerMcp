@@ -106,9 +106,8 @@ public sealed class CdpTabService : ICdpTabService
         if (all.Count is > 0 and <= CdpService.MaxBoundTabs)
         {
             // Best effort: without it the tabs are listed without their windows
-            var left = timeout - stopwatch.Elapsed;
             windows = await CdpBrowserWindows.QueryAsync(
-                _cdp, _transport, port, processId, all, left < MaxWindowLookupTime ? left / 2 : MaxWindowLookupTime, cancellationToken)
+                _cdp, _transport, port, processId, all, WindowLookupTime(timeout - stopwatch.Elapsed), cancellationToken)
                 .ConfigureAwait(false);
         }
 
@@ -125,10 +124,20 @@ public sealed class CdpTabService : ICdpTabService
             : new HashSet<int>();
         var inWindow = all.Where(t => WindowOf(t) is int id && bound.Contains(id)).ToList();
 
+        // Over MaxBoundTabs tabs the list has no windows, but those of the tabs with the window's title are still looked up,
+        // as the reads look them up, to tell which of them it shows; the list stays without windows
+        var placed = windows;
+        if (all.Count > CdpService.MaxBoundTabs && CdpShownTab.CandidatesToPlace(window, all) is { Count: > 0 } candidates)
+        {
+            placed = await CdpBrowserWindows.QueryAsync(
+                _cdp, _transport, port, processId, candidates, WindowLookupTime(timeout - stopwatch.Elapsed), cancellationToken)
+                .ConfigureAwait(false);
+        }
+
         // As the reads pick the tab (CdpService.FindTargetForWindowAsync, the same CdpShownTab): the title among the
         // window's tabs, else among all, and of several, the one shown
         var shown = await CdpShownTab.PickAsync(
-            _transport, window, all, windows, CdpService.BindingBudget(timeout - stopwatch.Elapsed), cancellationToken).ConfigureAwait(false);
+            _transport, window, all, placed, CdpService.BindingBudget(timeout - stopwatch.Elapsed), cancellationToken).ConfigureAwait(false);
 
         var tabs = inWindow.Select(t => new CdpTab(t, WindowOf(t), true))
             .Concat(all.Except(inWindow).Select(t => new CdpTab(t, WindowOf(t), false)))
@@ -664,6 +673,10 @@ public sealed class CdpTabService : ICdpTabService
     /// <summary>How long the main frame's document may be read for before the navigation: at most a second or a quarter of the time.</summary>
     private static TimeSpan PreNavigationLookup(TimeSpan remaining) =>
         Bounded(remaining / 4 < MaxPreNavigationLookup ? remaining / 4 : MaxPreNavigationLookup);
+
+    /// <summary>How long list_tabs' browser-window lookup may take: MaxWindowLookupTime, or half of what is left when less is left.</summary>
+    private static TimeSpan WindowLookupTime(TimeSpan remaining) =>
+        remaining < MaxWindowLookupTime ? remaining / 2 : MaxWindowLookupTime;
 
     /// <summary>The part of a navigation's time kept to ask the tab why Page.navigate got no answer: at most half a second or a quarter.</summary>
     private static TimeSpan UnansweredProbeTime(TimeSpan remaining) =>
