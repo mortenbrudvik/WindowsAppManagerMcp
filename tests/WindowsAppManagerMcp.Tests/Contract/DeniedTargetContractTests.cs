@@ -10,14 +10,17 @@ namespace WindowsAppManagerMcp.Tests.Contract;
 /// <summary>
 /// Contract: the user's target policy (docs/TOOLS.md, Target policy) holds for every tool that names a window or a process. Every
 /// served tool whose input schema takes a window (handle, windowHandle, toWindowHandle, aboveHandle, a window selector, a batch's
-/// windows, placements or changes), an element's ref (ref, withinRef, listRef) or a processId is called with a window, element
-/// or process the policy denies, through the production pipeline and the real services over faked native seams
-/// (<see cref="NativeFakedServer"/>): it must answer TargetDeniedByPolicy, and nothing may act (no window change, input, process
-/// start or stop, clipboard write, UI Automation action or CDP command), read the window through UI Automation (by its handle or
-/// by an element of it) or capture its pixels (the window by its handle, or a screen rectangle over it). The tools that
-/// legitimately do not apply the policy are on <see cref="Exempt"/>, each with the reason; a tool on neither list fails, so a
-/// new tool that takes a window must say which. <see cref="Variants"/> call some tools again by another way of naming the
-/// target: a selector, a process name, a ref.
+/// windows, placements or changes, a launch's expectWindow or placement), an element's ref (ref, withinRef, listRef) or a
+/// processId is called with a window, element or process the policy denies, through the production pipeline and the real
+/// services over faked native seams (<see cref="NativeFakedServer"/>): it must answer TargetDeniedByPolicy, and nothing may act
+/// (no window change, input, process start or stop, clipboard write, UI Automation action or CDP command), read the window
+/// through UI Automation (by its handle, or by an element of it: its properties, a search under it, its children) or capture
+/// its pixels (the window by its handle, or a screen rectangle over it). The tools that legitimately do not apply the policy
+/// are on <see cref="Exempt"/>, each with the reason; the launch tools, which may start the denied app's program but must
+/// neither reuse, place nor focus its window, are on <see cref="Launches"/>; a tool whose refusal this harness cannot reach is
+/// on <see cref="CheckedElsewhere"/> with the test that checks it; a tool on none of the lists fails, so a new tool that takes
+/// a window must say which. <see cref="Variants"/> call some tools again by another way of naming the target: a selector, a
+/// process name, a ref.
 /// </summary>
 /// <remarks>
 /// The denied window is a Chrome window (<see cref="DeniedDesktop"/>, the policy's default deny list plus chrome), so the browser
@@ -137,10 +140,50 @@ public sealed class DeniedTargetContractTests
             ["wait_for_element: by a ref"] = ("wait_for_element",
                 new($$"""{ "ref": "{{DeniedRef}}", "condition": "enabled", "timeoutMs": 200 }""", RefTo: d => d.ButtonNode)),
             ["find_ui_elements: within a ref"] = ("find_ui_elements",
-                new($$"""{ "withinRef": "{{DeniedRef}}", "name": "Transfer money" }""", RefTo: d => d.TableNode)),
-            ["capture_window: cropped to a ref"] = ("capture_window",
-                new($$"""{ "handle": {{Denied}}, "ref": "{{DeniedRef}}" }""", RefTo: d => d.ButtonNode)),
+                new($$"""{ "withinRef": "{{DeniedRef}}", "name": "Salary 3,200.00" }""", RefTo: d => d.TableNode)),
+            // No handle: the window captured is the ref's own, read from the registry
+            ["capture_window: by a ref"] = ("capture_window", new($$"""{ "ref": "{{DeniedRef}}" }""", RefTo: d => d.ButtonNode)),
         };
+
+    /// <summary>A launch tool's call that would reuse, place or focus the denied window.</summary>
+    /// <param name="Tool">The launch tool.</param>
+    /// <param name="Arguments">The call, which launches the denied app's program ("chrome", <see cref="DeniedDesktop.Resolve"/>).</param>
+    /// <param name="Places">The call places the launch's window: the placement must be refused with TargetDeniedByPolicy.
+    /// Otherwise the call would reuse the open denied window: it must start the program instead (documented), not answer
+    /// launchStatus alreadyOpen.</param>
+    public sealed record DeniedLaunch(string Tool, string Arguments, bool Places);
+
+    /// <summary>
+    /// The launch tools' calls that would reuse, place or focus the denied window, keyed by "tool: how". Starting a program is
+    /// no use of a window, and the user's policy does not deny it: the fakes start the denied app's program as the denied process
+    /// (StartProcess returns its handle, whose main window is the denied window), so a placement gets the denied window to place,
+    /// and a reuse finds it open.
+    /// </summary>
+    private static readonly IReadOnlyDictionary<string, DeniedLaunch> Launches = new Dictionary<string, DeniedLaunch>(StringComparer.Ordinal)
+    {
+        ["launch_application: reuseExisting"] = new("launch_application",
+            """{ "executable": "chrome", "reuseExisting": true, "expectWindow": { "processName": "chrome" } }""", Places: false),
+        ["launch_application: placement"] = new("launch_application",
+            """{ "executable": "chrome", "waitTimeoutMs": 100, "placement": { "snap": "left_half", "focus": true } }""", Places: true),
+        ["launch_applications_batch: reuseExisting"] = new("launch_applications_batch",
+            """{ "applications": [ { "executable": "chrome", "reuseExisting": true, "expectWindow": { "processName": "chrome" } } ] }""", Places: false),
+        ["launch_applications_batch: placement"] = new("launch_applications_batch",
+            """{ "applications": [ { "executable": "chrome", "placement": { "snap": "left_half", "focus": true } } ], "waitTimeoutMs": 100 }""",
+            Places: true),
+    };
+
+    /// <summary>
+    /// The tools that take a window and apply the policy to it, but whose refusal this harness cannot reach, each with why and
+    /// the tests that check it instead.
+    /// </summary>
+    private static readonly IReadOnlyDictionary<string, string> CheckedElsewhere = new Dictionary<string, string>(StringComparer.Ordinal)
+    {
+        ["launch_browser_with_debug"] = "its placement is placed by the same service as launch_application's, which refuses a denied " +
+                                        $"window ({nameof(Tests.Unit.Services.LaunchPlacementServiceTests)}.{nameof(Tests.Unit.Services.LaunchPlacementServiceTests.AWindowThePolicyDenies_IsNotTouched)}), " +
+                                        "and its reuseIfRunning refuses a denied browser " +
+                                        $"({nameof(Tests.Unit.Services.DebugBrowserLifecycleTests)}.{nameof(Tests.Unit.Services.DebugBrowserLifecycleTests.ReuseIfRunning_ABrowserThePolicyDenies_IsRefused_WithoutItsProcessIdOrPort)}); " +
+                                        "its launch needs a debug browser that answers on its DevTools port, which the faked harness has none of",
+    };
 
     /// <summary>The tools that take a window or a process but do not apply the policy to it, and why.</summary>
     private static readonly IReadOnlyDictionary<string, string> Exempt = new Dictionary<string, string>(StringComparer.Ordinal)
@@ -158,7 +201,7 @@ public sealed class DeniedTargetContractTests
     private static readonly HashSet<string> TargetProperties = new(StringComparer.Ordinal)
     {
         "handle", "windowHandle", "toWindowHandle", "aboveHandle", "window", "windows", "placements", "changes", "processId",
-        "ref", "withinRef", "listRef"
+        "ref", "withinRef", "listRef", "expectWindow", "placement"
     };
 
     /// <summary>Every call to make: each tool of <see cref="Checked"/> by its name, and each of <see cref="Variants"/> by its key.</summary>
@@ -183,14 +226,19 @@ public sealed class DeniedTargetContractTests
             .ToList();
 
         // Assert
+        var launches = Launches.Values.Select(l => l.Tool).Distinct().ToList();
         targeting.Should().Contain(["close_window", "type_text", "kill_process", "run_steps"], "the scan must see the schemas' window and process parameters");
-        Checked.Keys.Intersect(Exempt.Keys).Should().BeEmpty("a tool is checked or exempt, not both");
-        targeting.Except(Checked.Keys).Except(Exempt.Keys).Should().BeEmpty(
+        Checked.Keys.Concat(Exempt.Keys).Concat(launches).Concat(CheckedElsewhere.Keys).Should().OnlyHaveUniqueItems(
+            "a tool is checked, exempt, a launch or checked elsewhere: one of them");
+        targeting.Except(Checked.Keys).Except(Exempt.Keys).Except(launches).Except(CheckedElsewhere.Keys).Should().BeEmpty(
             "a tool that takes a window or a process must refuse one the user's target policy denies: add it to Checked with a call " +
-            "that names the denied window, or to Exempt with the reason it legitimately does not apply the policy");
-        Checked.Keys.Concat(Exempt.Keys).Except(targeting).Should().BeEmpty("an entry names a served tool that takes a window or a process");
+            "that names the denied window (a launch tool to Launches), or to Exempt with the reason it legitimately does not apply " +
+            "the policy");
+        Checked.Keys.Concat(Exempt.Keys).Concat(launches).Concat(CheckedElsewhere.Keys).Except(targeting).Should().BeEmpty(
+            "an entry names a served tool that takes a window or a process");
         Variants.Values.Select(v => v.Tool).Except(Checked.Keys).Should().BeEmpty("a variant calls a tool that is checked");
         targeting.Should().Contain("read_table", "the scan must see a tool that names its target only by a ref");
+        targeting.Should().Contain(["launch_application", "launch_applications_batch"], "the scan must see a launch's expectWindow and placement");
     }
 
     [Theory]
@@ -211,7 +259,7 @@ public sealed class DeniedTargetContractTests
         var arguments = call.RefTo is { } refTo
             ? call.Arguments.Replace(DeniedRef, desktop.MintRef((nint)Denied, refTo(desktop.Desktop)), StringComparison.Ordinal)
             : call.Arguments;
-        var readsBefore = desktop.Desktop.Tree.Reads.Count;
+        var readsBefore = TreeLog.Of(desktop.Desktop.Tree);
 
         // Act
         var result = await server.CallToolAsync(tool, Arguments(arguments));
@@ -229,11 +277,56 @@ public sealed class DeniedTargetContractTests
         }
 
         desktop.Actions().Should().BeEmpty("'{0}' must do nothing to a window or process the policy denies", tool);
-        desktop.Desktop.WindowsReadThroughUiAutomation.Should().NotContain([(nint)Denied, (nint)DeniedDialog],
-            "'{0}' must not read a denied window through UI Automation", tool);
-        desktop.Desktop.Tree.Reads.Skip(readsBefore).Where(read => ReadsADeniedElement(desktop.Desktop, read))
-            .Should().BeEmpty("'{0}' must not read a denied window's elements through UI Automation", tool);
-        CapturesOfTheDeniedWindow(desktop).Should().BeEmpty("'{0}' must not capture a denied window's pixels", tool);
+        AssertNothingOfTheDeniedWindowWasRead(desktop, readsBefore, tool);
+    }
+
+    public static TheoryData<string> LaunchCalls()
+    {
+        var data = new TheoryData<string>();
+        foreach (var name in Launches.Keys.Order(StringComparer.Ordinal))
+        {
+            data.Add(name);
+        }
+
+        return data;
+    }
+
+    [Theory]
+    [MemberData(nameof(LaunchCalls))]
+    public async Task ALaunch_NeitherReusesNorPlacesADeniedWindow(string name)
+    {
+        // Arrange - the denied app's program starts as the denied process, whose main window is the denied window
+        var launch = Launches[name];
+        using var desktop = new NativeFakedServer(DeniedDesktop.Policy);
+        desktop.Mock<INativeProcessWrapper>().Setup(p => p.StartProcess(It.IsAny<System.Diagnostics.ProcessStartInfo>()))
+            .Returns(desktop.Desktop.ProcessHandle.Object);
+        desktop.Desktop.ProcessHandle.Setup(h => h.RefreshMainWindowHandle()).Returns((nint)Denied);
+        await using var server = await desktop.StartAsync();
+        var readsBefore = TreeLog.Of(desktop.Desktop.Tree);
+
+        // Act
+        var result = await server.CallToolAsync(launch.Tool, Arguments(launch.Arguments));
+
+        // Assert - the program was started, as documented; the denied window was not reused, placed or focused
+        var text = result.Content.OfType<TextContentBlock>().Single().Text;
+        using var payload = JsonDocument.Parse(text);
+        desktop.Mock<INativeProcessWrapper>().Verify(p => p.StartProcess(It.Is<System.Diagnostics.ProcessStartInfo>(s => s.FileName == DeniedDesktop.DeniedProgram)),
+            Times.Once, $"'{name}' starts the denied app's program: the policy denies its windows, not its start: {text}");
+        if (launch.Places)
+        {
+            ErrorCodes(payload.RootElement).Should().Contain(nameof(InputErrorCode.TargetDeniedByPolicy),
+                "'{0}' must refuse to place a window the policy denies: {1}", name, text);
+            Values(payload.RootElement, "windowHandle").Should().Contain(Denied.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                "the launch found the denied window, so its placement was refused: {0}", text);
+        }
+        else
+        {
+            text.Should().NotContain("alreadyOpen", "'{0}' must not reuse a window the policy denies: {1}", name, text);
+        }
+
+        desktop.Actions().Where(a => a != $"{nameof(INativeProcessWrapper)}.{nameof(INativeProcessWrapper.StartProcess)}").Should().BeEmpty(
+            "'{0}' must do nothing to a window the policy denies", name);
+        AssertNothingOfTheDeniedWindowWasRead(desktop, readsBefore, name);
     }
 
     [Fact]
@@ -249,7 +342,72 @@ public sealed class DeniedTargetContractTests
         CapturesOfTheDeniedWindow(desktop).Should().HaveCount(7);
     }
 
+    [Fact]
+    public void TheReadCheck_SeesEveryWayToReadADeniedElement()
+    {
+        // Arrange - the harness's own fake tree (nothing is read: it is in memory)
+        using var desktop = new NativeFakedServer(DeniedDesktop.Policy);
+        var tree = desktop.Desktop.Tree;
+        var before = TreeLog.Of(tree);
+
+        // Act - a search under the table that finds nothing, the children listed, probed and fetched, a property read; and a
+        // read of an element of no denied window
+        tree.FindAll(desktop.Desktop.TableNode, UiaScope.Descendants, new UiaPropertyCondition(UiaProperty.Name, "No such element", false),
+            CancellationToken.None);
+        tree.GetChildren(desktop.Desktop.WindowNode, CancellationToken.None);
+        tree.HasChildren(desktop.Desktop.DialogNode);
+        tree.GetChildElements(desktop.Desktop.TableNode, CancellationToken.None);
+        tree.Read(desktop.Desktop.ButtonNode);
+        tree.Read(new FakeUiaNode("Button", "OK"));
+
+        // Assert - the cached fetch reads the table's row too
+        before.DeniedElementReadsSince(desktop.Desktop).Should().BeEquivalentTo(
+        [
+            "FindAll under Transactions:Descendants", "GetChildren of Online banking - Google Chrome", "HasChildren of Save As",
+            "GetChildElements of Transactions", "Read:Salary 3,200.00", "Read:Transfer money"
+        ]);
+        desktop.Desktop.DeniedElementNames.Should().Contain(["Salary 3,200.00", "Save"], "the names are read from the denied windows' trees");
+    }
+
     // ---- helpers ----
+
+    /// <summary>
+    /// Nothing of the denied windows was read through UI Automation since <paramref name="before"/> (by handle, or by an element:
+    /// its properties, a search under it, its children listed, fetched or probed), and no pixel of them was captured.
+    /// </summary>
+    private static void AssertNothingOfTheDeniedWindowWasRead(NativeFakedServer desktop, TreeLog before, string call)
+    {
+        desktop.Desktop.WindowsReadThroughUiAutomation.Should().NotContain([(nint)Denied, (nint)DeniedDialog],
+            "'{0}' must not read a denied window through UI Automation", call);
+        before.DeniedElementReadsSince(desktop.Desktop)
+            .Should().BeEmpty("'{0}' must not read a denied window's elements through UI Automation", call);
+        CapturesOfTheDeniedWindow(desktop).Should().BeEmpty("'{0}' must not capture a denied window's pixels", call);
+    }
+
+    /// <summary>How far each of the fake UI Automation tree's logs had got.</summary>
+    private sealed record TreeLog(int Reads, int Finds, int ChildListings, int CachedFetches, int ChildProbes)
+    {
+        public static TreeLog Of(FakeUiaTree tree) =>
+            new(tree.Reads.Count, tree.Finds.Count, tree.ChildListings.Count, tree.CachedFetches.Count, tree.ChildProbes.Count);
+
+        /// <summary>
+        /// The entries logged since of an element of a denied window: a read ("Read:Name", "Element:Name",
+        /// "Pattern:IUiaInvokePattern:Name", ...), a search under it ("Name:Descendants"), and its children listed, fetched or
+        /// probed ("Name").
+        /// </summary>
+        public IEnumerable<string> DeniedElementReadsSince(DeniedDesktop desktop)
+        {
+            var denied = desktop.DeniedElementNames;
+            var tree = desktop.Tree;
+            return tree.Reads.Skip(Reads).Where(read => denied.Contains(read[(read.LastIndexOf(':') + 1)..]))
+                .Concat(tree.Finds.Skip(Finds).Where(find => find.LastIndexOf(':') is var colon and >= 0 && denied.Contains(find[..colon]))
+                    .Select(find => $"FindAll under {find}"))
+                .Concat(tree.ChildListings.Skip(ChildListings).Where(denied.Contains).Select(node => $"GetChildren of {node}"))
+                .Concat(tree.CachedFetches.Skip(CachedFetches).Where(denied.Contains).Select(node => $"GetChildElements of {node}"))
+                .Concat(tree.ChildProbes.Skip(ChildProbes).Where(denied.Contains).Select(node => $"HasChildren of {node}"))
+                .ToList();
+        }
+    }
 
     /// <summary>
     /// The captures of a denied window's pixels the fakes were asked for: the window by its handle (CaptureWindow,
@@ -289,10 +447,6 @@ public sealed class DeniedTargetContractTests
         }
     }
 
-    /// <summary>A read the fake UI Automation tree logged ("Read:Name", "Element:Name", ...) of an element of a denied window.</summary>
-    private static bool ReadsADeniedElement(DeniedDesktop desktop, string read) =>
-        read.LastIndexOf(':') is var colon and >= 0 && desktop.DeniedElementNames.Contains(read[(colon + 1)..]);
-
     /// <summary>Every errorCode in a result, at any depth (a batch's items, a run's steps, a layout's placements).</summary>
     private static IEnumerable<string?> ErrorCodes(JsonElement element)
     {
@@ -325,6 +479,15 @@ public sealed class DeniedTargetContractTests
                 break;
         }
     }
+
+    /// <summary>The raw values of every property named <paramref name="name"/> in a result, at any depth.</summary>
+    private static IEnumerable<string> Values(JsonElement element, string name) => element.ValueKind switch
+    {
+        JsonValueKind.Object => element.EnumerateObject()
+            .SelectMany(p => (p.Name == name ? [p.Value.GetRawText()] : Enumerable.Empty<string>()).Concat(Values(p.Value, name))),
+        JsonValueKind.Array => element.EnumerateArray().SelectMany(item => Values(item, name)),
+        _ => []
+    };
 
     private static IReadOnlyDictionary<string, object?> Arguments(string json)
     {
