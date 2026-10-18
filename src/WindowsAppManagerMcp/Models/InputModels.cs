@@ -495,7 +495,9 @@ public enum InputErrorCode
 
     /// <summary>
     /// The window selector could not be checked again once the call held the input gate because of the selector itself
-    /// (a titleRegex that took longer than 100 ms on the window's title), as the window tools report it. Nothing was sent.
+    /// (a titleRegex that took longer than 100 ms on the window's title), as the window tools report it; or type_text's
+    /// arguments cannot be used together; or send_keys' delayMs waits would add up to more than
+    /// <see cref="Services.InputSimulationService.MaxSendKeysDurationMs"/>. Nothing was sent.
     /// </summary>
     InvalidArguments = 45,
 
@@ -531,7 +533,8 @@ public enum InputErrorCode
     /// <summary>
     /// type_text: the text is longer than its method takes: more than <see cref="Services.InputSimulationService.MaxTypedLength"/>
     /// characters to type (unicode, keys, or auto when it types), or more than
-    /// <see cref="Services.InputSimulationService.MaxPasteLength"/> to paste. Nothing was typed.
+    /// <see cref="Services.InputSimulationService.MaxPasteLength"/> to paste. Nothing was typed. send_keys: the keys press more
+    /// than <see cref="Services.InputSimulationService.MaxSendKeysPresses"/> keys. Nothing was sent.
     /// </summary>
     TextTooLong = 49,
 
