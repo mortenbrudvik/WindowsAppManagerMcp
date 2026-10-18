@@ -111,4 +111,45 @@ public class TypeTextPauseChordTests
         _clipboard.Writes.Should().Be(0);
         _input.Events.Should().NotContain(e => e.Kind == InputEventKind.VirtualKey);
     }
+
+    [Fact]
+    public async Task Paste_WhenCtrlVIsThePauseChord_AndTheTextIsTooLongToType_SaysToTypeItInParts()
+    {
+        // 'unicode' alone would be refused as TextTooLong, so the advice must not send the agent there with the whole text
+        var text = new string('x', InputSimulationService.MaxTypedLength + 1);
+
+        var result = await Type("Ctrl+V", text, TextInputMethod.Paste);
+
+        VerifyRefusedBeforeAnythingWasSent(result, "Ctrl+V");
+        result.Error.Should().Contain("in parts of at most 5,000 characters");
+    }
+
+    [Theory]
+    [InlineData(TextInputMethod.Auto)]
+    [InlineData(TextInputMethod.Unicode)]
+    public async Task TooLongToType_WhenCtrlVIsThePauseChord_SaysToTypeItInParts_NotToPasteIt(TextInputMethod method)
+    {
+        // Method paste is refused with this hotkey and auto types, so pasting is no way out
+        var text = new string('x', InputSimulationService.MaxTypedLength + 1);
+
+        var result = await Type("Ctrl+V", text, method);
+
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(InputErrorCode.TextTooLong);
+        result.Error.Should().Contain("Nothing was typed").And.Contain("in parts").And.Contain("Ctrl+V").And.Contain("pause hotkey")
+            .And.NotContain("method 'paste'");
+        _input.Batches.Should().BeEmpty();
+        _clipboard.Writes.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task TooLongToType_WithAnotherPauseChord_StillSaysToPasteIt()
+    {
+        var text = new string('x', InputSimulationService.MaxTypedLength + 1);
+
+        var result = await Type("Ctrl+Alt+Q", text, TextInputMethod.Unicode);
+
+        result.ErrorCode.Should().Be(InputErrorCode.TextTooLong);
+        result.Error.Should().Contain("method 'paste'").And.NotContain("pause hotkey");
+    }
 }

@@ -522,7 +522,7 @@ public partial class InputSimulationService : IInputSimulationService
         List<InputEvent[]>? characters = null;
         if (!pastes)
         {
-            var prepared = PrepareTyping(typed, length, controlChars, viaLayout, target);
+            var prepared = PrepareTyping(typed, length, controlChars, viaLayout, target, pasteIsPauseChord);
             if (prepared.Characters == null)
             {
                 return new TypeTextResult(false, length, 0, prepared.Error, prepared.Code) { Method = typingMethod };
@@ -595,7 +595,7 @@ public partial class InputSimulationService : IInputSimulationService
                     approved = attempt.Approved;
                     notPasted = attempt.NotPasted;
                     back = attempt.Back;
-                    var prepared = PrepareTyping(typed, length, controlChars, viaLayout, target);
+                    var prepared = PrepareTyping(typed, length, controlChars, viaLayout, target, pasteIsPauseChord);
                     if (prepared.Characters == null)
                     {
                         var typingRefused = prepared.Code == InputErrorCode.TextTooLong
@@ -732,16 +732,21 @@ public partial class InputSimulationService : IInputSimulationService
     /// The events that type <paramref name="typed"/>, one array per character; or why it must not be typed: more than
     /// <see cref="MaxTypedLength"/> characters (TextTooLong), a line break or tab without controlChars (InvalidArguments),
     /// keys that press the user's pause hotkey (PauseChordNotAllowed), or a copy followed by a paste among its control
-    /// characters (PasteNotAllowed). Nothing is sent.
+    /// characters (PasteNotAllowed). Nothing is sent. <paramref name="pasteIsPauseChord"/> is the user's pause hotkey when
+    /// it is Ctrl+V: no method pastes then, so the advice for text that is too long is to type it in parts.
     /// </summary>
     private (List<InputEvent[]>? Characters, InputErrorCode Code, string? Error) PrepareTyping(string typed, int length,
-        TextControlChars? controlChars, bool viaLayout, InputTarget target)
+        TextControlChars? controlChars, bool viaLayout, InputTarget target, string? pasteIsPauseChord)
     {
         if (length > MaxTypedLength)
         {
             return (null, InputErrorCode.TextTooLong,
                 $"The text has {Count(length)} characters, more than the {Count(MaxTypedLength)} type_text types, so that a runaway call " +
-                "cannot type for minutes. Nothing was typed. Paste it with method 'paste' (or 'auto'), or type it in parts.");
+                "cannot type for minutes. Nothing was typed. " +
+                (pasteIsPauseChord == null
+                    ? "Paste it with method 'paste' (or 'auto'), or type it in parts."
+                    : $"Type it in parts: it cannot be pasted, because a paste presses Ctrl+V and {pasteIsPauseChord} is the " +
+                      "user's pause hotkey."));
         }
 
         if (controlChars == null && typed.AsSpan().IndexOfAny('\n', '\t') >= 0)

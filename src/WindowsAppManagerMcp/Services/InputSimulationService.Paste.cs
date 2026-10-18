@@ -45,12 +45,15 @@ public partial class InputSimulationService
                 "method 'unicode'. Nothing was typed.");
         }
 
+        // Typing is the only way left, so text longer than typing takes goes in parts: 'unicode' alone would be TextTooLong
         if (explicitPaste && pauseChord != null)
         {
             return (InputErrorCode.PauseChordNotAllowed,
                 $"A paste presses Ctrl+V, and {pauseChord} is the user's pause hotkey, which pauses and resumes this server's " +
-                "input. Only the user may press it. Nothing was typed, and the clipboard was not touched. Type the text with " +
-                "method 'unicode'.");
+                "input. Only the user may press it. Nothing was typed, and the clipboard was not touched. " +
+                (length > MaxTypedLength
+                    ? $"Type the text with method 'unicode', in parts of at most {Count(MaxTypedLength)} characters."
+                    : "Type the text with method 'unicode'."));
         }
 
         return length > MaxPasteLength
