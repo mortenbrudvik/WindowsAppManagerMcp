@@ -300,14 +300,16 @@ public class CdpTabServiceTests
             .ReturnsAsync(CdpResult<IReadOnlyList<CdpTarget>>.Fail(BrowserErrorCode.CdpUnavailable, "Nothing answered on port 9222."));
         var sut = new CdpTabService(cdp.Object, transport, owners);
 
-        // Act
-        var result = await sut.OpenTabAsync(Port, BrowserPid, new RecordingGate().EnterAsync, TimeSpan.FromMilliseconds(600));
+        // Act - a budget the steps before the list (version, connection, Target.createTarget) do not use up under load; the
+        // list is asked for again until it is nearly spent
+        var result = await sut.OpenTabAsync(Port, BrowserPid, new RecordingGate().EnterAsync, TimeSpan.FromSeconds(3));
 
-        // Assert - the list's own error, after what happened to the tab
+        // Assert - the list's own error, after what happened to the tab, and what to do with the tab instead of opening another
         browser.Created.Should().ContainSingle();
         result.ErrorCode.Should().Be(BrowserErrorCode.CdpUnavailable);
         result.Error.Should().StartWith("The browser opened tab NEW1 on about:blank, but it was not navigated: ")
-            .And.Contain("Nothing answered on port 9222.");
+            .And.Contain("Nothing answered on port 9222.")
+            .And.EndWith("The tab stays open, so do not open another one: once list_tabs lists it, navigate it with targetId NEW1.");
         result.OpenedTargetId.Should().Be("NEW1");
     }
 

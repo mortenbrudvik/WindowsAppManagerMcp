@@ -201,7 +201,8 @@ public sealed class CdpTabService : ICdpTabService
 
         // The new tab is listed once the browser has set it up, usually at once; the list only while the browser still
         // listens on the port, since its WebSocket URL is what browser_navigate connects to next. Every failure from here on
-        // carries the tab's id: the tab is open, on about:blank
+        // carries the tab's id: the tab is open, on about:blank. A list's own advice ("Try again") is followed by what to do
+        // with that tab, since browser_navigate with newTab again would open a second one
         while (true)
         {
             var remaining = timeout - stopwatch.Elapsed;
@@ -220,7 +221,8 @@ public sealed class CdpTabService : ICdpTabService
                         "closed at once. Call list_tabs to see the browser's tabs.")
                     : CdpResult<CdpTarget>.Fail(
                         listed.ErrorCode,
-                        $"The browser opened tab {targetId} on about:blank, but it was not navigated: {listed.Error}");
+                        $"The browser opened tab {targetId} on about:blank, but it was not navigated: {listed.Error} The tab " +
+                        $"stays open, so do not open another one: once list_tabs lists it, navigate it with targetId {targetId}.");
                 return failed with { OpenedTargetId = targetId };
             }
 

@@ -101,7 +101,7 @@ public class CdpService : ICdpService
             return CdpResult<IReadOnlyList<CdpTarget>>.Fail(
                 BrowserErrorCode.CdpPortOwnerMismatch,
                 $"CDP port {port} belongs to process {DescribeProcess(owner)}, not to the browser (process " +
-                $"{DescribeProcess(ownerProcessId)}). Nothing was read.");
+                $"{DescribeProcess(ownerProcessId)}). Nothing was read. The browser may have exited; check that it still runs.");
         }
 
         return await ListCheckedPageTargetsAsync(port, ownerProcessId, timeout, cancellationToken).ConfigureAwait(false);

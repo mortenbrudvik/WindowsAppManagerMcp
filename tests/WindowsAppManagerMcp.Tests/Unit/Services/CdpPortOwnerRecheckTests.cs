@@ -413,8 +413,56 @@ public class CdpPortOwnerRecheckTests
         // Assert - its listed WebSocket URL may be another program's, so the tab is not handed on to be navigated
         opened.ErrorCode.Should().Be(BrowserErrorCode.CdpPortOwnerMismatch);
         browser.Created.Should().ContainSingle();
-        opened.Error.Should().Contain("opened tab NEW1").And.Contain("about:blank").And.Contain("not navigated");
+        opened.Error.Should().Contain("opened tab NEW1").And.Contain("about:blank").And.Contain("not navigated")
+            .And.Contain("do not open another one").And.Contain("navigate it with targetId NEW1");
         opened.OpenedTargetId.Should().Be("NEW1", "browser_navigate names the tab it leaves on about:blank");
+    }
+
+    /// <summary>The listener when the new tab's list is about to be asked for: another process, or a table that cannot be read.</summary>
+    public static TheoryData<bool, int?> ListenerBeforeTheList() => new()
+    {
+        { true, OtherPid },
+        { false, null }
+    };
+
+    [Theory]
+    [MemberData(nameof(ListenerBeforeTheList))]
+    public async Task OpenTab_APortThatChangedHandsBeforeTheNewTabIsListed_IsNotAskedForTheList_AndSaysWhatToDoWithTheTab(
+        bool readable, int? owner)
+    {
+        // Arrange - the browser opens the tab (read once before the connection and once when it is open); then the port
+        // changes hands before its tab list is asked for
+        var browser = new FakeCdpBrowser().Tab("T1", "Inbox", 1);
+        var owners = new ChangingPortOwner(Browser, Browser, (readable, owner));
+        var (_, tabs, _) = CreateAll(browser, owners);
+
+        // Act
+        var opened = await tabs.OpenTabAsync(Port, BrowserPid, Gate, LongTimeout);
+
+        // Assert - not "Try again" alone, which would open a second tab: the one left on about:blank is named
+        opened.ErrorCode.Should().Be(BrowserErrorCode.CdpPortOwnerMismatch);
+        browser.Created.Should().ContainSingle();
+        opened.Error.Should().StartWith("The browser opened tab NEW1 on about:blank, but it was not navigated: ")
+            .And.EndWith("The tab stays open, so do not open another one: once list_tabs lists it, navigate it with targetId NEW1.");
+        opened.OpenedTargetId.Should().Be("NEW1");
+        owners.Reads.Should().Be(3, "the port is not read again, nor its list asked for, once it changed hands");
+    }
+
+    [Fact]
+    public async Task ListTabs_APortThatChangedHandsBeforeTheListIsAskedFor_SaysTheBrowserMayHaveExited()
+    {
+        // Arrange - the browser listens when list_tabs checks the port; another process does when the list is asked for
+        var browser = new FakeCdpBrowser().Window(1, 0, 0, 800, 600).Tab("A", "Inbox", 1);
+        var owners = new ChangingPortOwner(Browser, (true, OtherPid));
+        var (_, tabs, _) = CreateAll(browser, owners);
+
+        // Act
+        var listed = await tabs.ListTabsAsync(Port, BrowserPid, window: null, LongTimeout);
+
+        // Assert - what happened, what was not done, and what to do
+        listed.ErrorCode.Should().Be(BrowserErrorCode.CdpPortOwnerMismatch);
+        listed.Error.Should().Contain($"CDP port {Port} belongs to process").And.Contain("Nothing was read")
+            .And.EndWith("The browser may have exited; check that it still runs.");
     }
 
     [Fact]
