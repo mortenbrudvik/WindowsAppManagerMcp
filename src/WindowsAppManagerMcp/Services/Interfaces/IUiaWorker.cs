@@ -25,7 +25,8 @@ public interface IUiaWorker
     /// cancelled, for a read that stops cooperatively and returns a partial result.</param>
     /// <returns>What <paramref name="read"/> returned.</returns>
     /// <exception cref="TimeoutException">The read did not return by the deadline (its thread is
-    /// abandoned and finishes on its own).</exception>
+    /// abandoned and finishes on its own); or the deadline had passed before the call (<paramref name="cancellationToken"/>
+    /// already cancelled, with no <paramref name="grace"/>), so the read was not started and is not counted as stuck.</exception>
     /// <exception cref="UiaReadRefusedException">The read was not started, because earlier reads of the
     /// same target, or too many reads overall, are still stuck: the target application is probably
     /// not responding.</exception>
