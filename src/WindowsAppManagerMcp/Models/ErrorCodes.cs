@@ -417,7 +417,14 @@ public enum LayoutErrorCode
     /// An agent wrote the layout, and the user has not confirmed that it may start programs (roadmap M6.8, owner decision D15):
     /// they declined, or the client cannot ask them. Nothing was launched for the placement.
     /// </summary>
-    LaunchNotConfirmed = 13
+    LaunchNotConfirmed = 13,
+
+    /// <summary>
+    /// A file in the layouts folder is not a valid preset (review finding F1): it is not JSON, lacks a name or placements, or
+    /// has a placement whose position is no rectangle. list_layouts lists it with this code; it cannot be applied until it is
+    /// fixed or deleted.
+    /// </summary>
+    InvalidPresetFile = 14
 }
 
 /// <summary>

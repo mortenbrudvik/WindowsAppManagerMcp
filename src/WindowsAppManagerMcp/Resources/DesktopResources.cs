@@ -65,7 +65,8 @@ public sealed class DesktopResources
 
         return _layouts.GetPreset(name) is { } preset
             ? Json(LayoutPresetTools.ToDetailDto(preset))
-            : throw new McpProtocolException(LayoutPresetTools.PresetNotFoundMessage(name), MissingResourceCode(server.NegotiatedProtocolVersion));
+            : throw new McpProtocolException(LayoutPresetTools.PresetNotFoundMessage(name, _layouts.GetInvalidFiles()),
+                MissingResourceCode(server.NegotiatedProtocolVersion));
     }
 
     /// <summary>

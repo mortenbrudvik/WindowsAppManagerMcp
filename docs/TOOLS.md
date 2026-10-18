@@ -6467,7 +6467,8 @@ If the folder cannot be created or used (for example, `WAM_LAYOUTS_PATH` points 
 | `NoMatchCriterion` | apply_layout | A placement has no criterion the `matchBy` used can match on, so it was skipped |
 | `InvalidMonitorIndex` | apply_layout | A placement's monitor does not exist (for example, after undocking) |
 | `MonitorNotFound` | apply_layout | A placement saved its monitor by identity, that monitor is not connected, and neither its name nor its monitor index fits one |
-| `InvalidPlacement` | save_layout | A placement of `placements` is not valid; nothing was saved |
+| `InvalidPlacement` | save_layout, apply_layout | save_layout: a placement of `placements` is not valid; nothing was saved. apply_layout: a placement's rectangle is less than one pixel on its monitor; it was not arranged |
+| `InvalidPresetFile` | list_layouts | A file in the layouts folder is not a valid preset; it is listed with `file` and `error`, and cannot be applied until it is fixed or deleted |
 | `LaunchNotConfirmed` | apply_layout | An AI agent wrote the layout and the user has not confirmed that it may start programs; nothing was started for that placement |
 | `LaunchFailed` | apply_layout | A missing app could not be launched, or its window did not appear |
 | `ArrangeFailed` | apply_layout | A matched window could not be moved, resized, maximized, minimized or brought to the foreground |
@@ -6478,7 +6479,7 @@ If the folder cannot be created or used (for example, `WAM_LAYOUTS_PATH` points 
 
 ### list_layouts
 
-List all layout presets in the layouts folder, sorted by name.
+List all layout presets in the layouts folder, sorted by name. A `.json` file there that is not a valid preset (it is not JSON, a value has the wrong kind, such as a `state` given as a number, it lacks a name or placements, or a placement's position is no rectangle) is never applied, and never left out silently: it is listed after the presets, with `file`, `error` (why, and what to do) and `errorCode: "InvalidPresetFile"`; its `name` is the one it gives (else its file name), `windowCount` is 0 and both times are when the file was last written. get_layout, apply_layout, delete_layout and restore_workspace name such a file in their `PresetNotFound` error when it may hold the preset asked for. The server logs a warning for each such file once per version of it, and one when the folder cannot be listed (the presets read before are then used, and may be stale).
 
 <!-- tools:begin params:list_layouts -->
 **Parameters:** None
@@ -6510,6 +6511,15 @@ List all layout presets in the layouts folder, sorted by name.
     "windowCount": 1,
     "createdAt": "2024-01-16T09:00:00Z",
     "updatedAt": "2024-01-16T09:00:00Z"
+  },
+  {
+    "name": "old-setup",
+    "windowCount": 0,
+    "createdAt": "2024-01-10T08:00:00.0000000Z",
+    "updatedAt": "2024-01-10T08:00:00.0000000Z",
+    "file": "old-setup.json",
+    "error": "'old-setup.json' is not a valid layout preset, so it cannot be applied: placements[0].position: width 0 and height 1 must be above 0: a window needs a size. Fix or delete the file in the layouts folder.",
+    "errorCode": "InvalidPresetFile"
   }
 ]
 ```
@@ -8462,8 +8472,9 @@ table, it gives more detail.
 | `InvalidOutputMode` | [Screenshot](#screenshot) tools | `output` is not image, file, both or metadata (a tool error that lists them), or `outputPath` was given without a file output |
 | `InvalidOutputPath` | [Screenshot](#screenshot) tools | `outputPath` is not an absolute path on a drive letter (network and device paths are refused), does not end in an extension that matches the format, names a folder, or is in a folder that does not exist |
 | `InvalidPath` | [launch_application](#launch_application), launch_applications_batch | The executable is a partial path (it would be found from the server's current folder), or the executable or working directory is not a valid path |
-| `InvalidPlacement` | [save_layout](#save_layout) | A placement of `placements` is not valid (no processName or titleContains, snap with position, a fraction out of range or a rectangle past the work area, an unknown snap position, state or monitor, focus with minimized, a launch with both or neither of executable and appId or one that is no program name, local path, URI or appId, a field save_layout does not take, a text too long), or the placements start more than 8 programs or apps; `error` starts with its index. Nothing was saved, and the preset that was there is kept |
+| `InvalidPlacement` | [save_layout](#save_layout), [apply_layout](#apply_layout) (per placement) | save_layout: a placement of `placements` is not valid (no processName or titleContains, or one that is blank once normalized, such as a processName of only `.exe` or a titleContains of only invisible characters, snap with position, a fraction out of range or a rectangle past the work area, an unknown snap position, state or monitor, focus with minimized, a launch with both or neither of executable and appId or one that is no program name, local path, URI or appId, a field save_layout does not take, a text too long), or the placements start more than 8 programs or apps; `error` starts with its index. Nothing was saved, and the preset that was there is kept. apply_layout: the placement's rectangle is less than one pixel wide or high on its monitor; that placement was neither arranged nor launched |
 | `InvalidPositioning` | [move_window_to_monitor](#move_window_to_monitor) (tool error) | `positioning` is not center, topleft, topright, bottomleft, bottomright, maximize or restore; nothing was moved |
+| `InvalidPresetFile` | [list_layouts](#list_layouts) (per file) | A file in the layouts folder is not a valid preset: it is not JSON (or a value has the wrong kind, such as a `state` given as a number), lacks a name or placements, or has a placement without a matcher or position, or whose position is no rectangle (not a number, a width or height of 0 or less, or more than 100 work areas away). It cannot be applied (get_layout and apply_layout report `PresetNotFound` and name the file); fix or delete it |
 | `InvalidProcessId` | [kill_process](#kill_process) | `processId` is not a positive integer |
 | `InvalidRegion` | [capture_region](#capture_region), [wait_for_visual](#wait_for_visual), [read_screen_text](#read_screen_text) and [find_text_on_screen](#find_text_on_screen) (a region) | `width` or `height` is not positive, or the part of the region on screen is over the 64-megapixel budget or 16384 pixels on an edge; wait_for_visual: a region or monitor over 32 megapixels, which every check reads |
 | `InvalidSnapPosition` | [snap_window](#snap_window) (tool error), snap_windows_batch (per window), [launch_application](#launch_application) and launch_applications_batch (`placement.snap`; tool error or per item, nothing launched) | `position` (or `placement.snap`) is missing or not a known snap position; `error` lists them |

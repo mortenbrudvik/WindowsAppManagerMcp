@@ -27,6 +27,14 @@ public interface ILayoutService
     /// </summary>
     LayoutPreset? GetPreset(string name);
 
+    /// <summary>
+    /// The *.json files in the folder that are not valid presets, as they are currently on disk, each with why, sorted by file
+    /// name (review finding F1): they are left out of <see cref="GetAllPresets"/>, so list_layouts lists them apart, and a
+    /// preset that is not found names the one that may hold it (<see cref="LayoutService.NotFoundNote"/>). Empty when the
+    /// storage is unavailable.
+    /// </summary>
+    IReadOnlyList<InvalidLayoutFile> GetInvalidFiles();
+
     Task<LayoutSaveResult> SavePresetAsync(LayoutPreset preset, CancellationToken cancellationToken = default);
 
     Task<LayoutDeleteResult> DeletePresetAsync(string name, CancellationToken cancellationToken = default);

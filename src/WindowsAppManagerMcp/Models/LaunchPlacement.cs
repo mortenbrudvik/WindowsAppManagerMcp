@@ -45,20 +45,50 @@ public sealed record LaunchPlacement(
     [property: Description(MonitorSelectorDescriptions.Monitor + " Snapped, else centred or maximized, there; not with bounds")]
     MonitorSelector? Monitor = null);
 
-/// <summary>A <see cref="LaunchPlacement"/> that was checked: the parsed values, consistent with each other.</summary>
-public sealed record LaunchPlacementPlan(
-    SnapPosition? Snap,
-    int? MonitorIndex,
-    WindowRect? Bounds,
-    LaunchWindowState? State,
-    bool Focus)
+/// <summary>
+/// A placement that was checked: the parsed values, consistent with each other. It is made only by its two factories, each
+/// with its own rules: <see cref="TryCreate(LaunchPlacement, int?, out LaunchPlacementPlan?, out string?, out string?)"/> for a
+/// launch tool's placement, and <see cref="ForLayout"/> for a window apply_layout launched. Snap, State and Focus cannot be
+/// changed afterwards, not even with a with expression, so no plan holds a combination its factory refuses.
+/// </summary>
+public sealed record LaunchPlacementPlan
 {
+    private LaunchPlacementPlan(SnapPosition? snap, int? monitorIndex, WindowRect? bounds, LaunchWindowState? state, bool focus)
+    {
+        Snap = snap;
+        MonitorIndex = monitorIndex;
+        Bounds = bounds;
+        State = state;
+        Focus = focus;
+    }
+
+    /// <summary>The snap position the window is snapped to; null for none.</summary>
+    public SnapPosition? Snap { get; }
+
+    /// <summary>
+    /// The monitor, as an index: where the window is snapped, centred or maximized. The placement service sets it again when
+    /// it finds a named monitor again by <see cref="MonitorKey"/>.
+    /// </summary>
+    public int? MonitorIndex { get; init; }
+
+    /// <summary>
+    /// The rectangle in virtual-screen pixels (<see cref="Frame"/> says which frame). The placement service sets it again from
+    /// <see cref="RelativeBounds"/> on the monitor as it is when it places the window.
+    /// </summary>
+    public WindowRect? Bounds { get; init; }
+
+    /// <summary>The state the window is left in; null to leave it as it comes.</summary>
+    public LaunchWindowState? State { get; }
+
+    /// <summary>Whether the window is brought to the front afterwards.</summary>
+    public bool Focus { get; }
+
     /// <summary>
     /// Which frame <see cref="Bounds"/> is: the visible frame (<see cref="BoundsFrame.Visible"/>, as set_window_bounds and the
     /// launch tools' placement take it), or the window rect with its invisible borders (<see cref="BoundsFrame.Outer"/>), the
     /// rect layouts save and apply, for the windows apply_layout launches (roadmap M3.F27).
     /// </summary>
-    public BoundsFrame Frame { get; init; } = BoundsFrame.Visible;
+    public BoundsFrame Frame { get; private init; } = BoundsFrame.Visible;
 
     /// <summary>
     /// The monitor a name resolved to (roadmap M6.7, M6.8): its id, or its device name when it has none. The window appears
@@ -73,7 +103,7 @@ public sealed record LaunchPlacementPlan(
     /// roadmap M6.8): the placement service places them on that monitor's work area as it is when it places the window. Null
     /// when Bounds are pixels as given.
     /// </summary>
-    public RelativePosition? RelativeBounds { get; init; }
+    public RelativePosition? RelativeBounds { get; private init; }
 
     /// <summary>True when the plan moves, sizes or changes the state of the window (anything but focus).</summary>
     public bool ChangesGeometry => Snap != null || Bounds != null || MonitorIndex != null || State != null;
@@ -170,6 +200,53 @@ public sealed record LaunchPlacementPlan(
         errorCode = null;
         error = null;
         return true;
+    }
+
+    /// <summary>
+    /// The plan of a window apply_layout launched for a placement (roadmap M3.F27, M6.8), as LayoutService arranges an open
+    /// window. Its rules are the layout's own, not <see cref="TryCreate(LaunchPlacement, int?, out LaunchPlacementPlan?, out string?, out string?)"/>'s:
+    /// <list type="bullet">
+    /// <item>the monitor is always named by <paramref name="monitorKey"/> (its id, or its device name without one), so the
+    /// placement service finds it again when the window appears;</item>
+    /// <item>exactly one of: <paramref name="snap"/> (snapped on monitor <paramref name="monitorIndex"/>), <paramref name="bounds"/>
+    /// (the window rect, <see cref="BoundsFrame.Outer"/>, with the same rectangle as fractions of the monitor's work area in
+    /// <paramref name="relativeBounds"/>; at least 1 pixel each way), or neither with state maximized (maximized on monitor
+    /// <paramref name="monitorIndex"/>);</item>
+    /// <item>bounds with state maximized are the restore rectangle the window gets before it is maximized, which a launch
+    /// tool's placement refuses; a snap is never maximized;</item>
+    /// <item>focus with state minimized: the window stays minimized and is not brought to the front (minimized wins, as for an
+    /// open window), where a launch tool's placement refuses the pair.</item>
+    /// </list>
+    /// </summary>
+    /// <exception cref="ArgumentException">The arguments break one of these rules: a bug in the caller, never the preset's.</exception>
+    public static LaunchPlacementPlan ForLayout(string monitorKey, int monitorIndex, SnapPosition? snap = null, WindowRect? bounds = null,
+        RelativePosition? relativeBounds = null, LaunchWindowState? state = null, bool focus = false)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(monitorKey);
+        ArgumentOutOfRangeException.ThrowIfNegative(monitorIndex);
+        if (snap != null && bounds != null)
+            throw new ArgumentException("A layout's launch is snapped or given bounds, not both.", nameof(bounds));
+
+        if ((bounds == null) != (relativeBounds == null))
+            throw new ArgumentException("A layout's bounds come with the same rectangle as fractions of the work area.", nameof(relativeBounds));
+
+        if (bounds is { } rect && (rect.Width < 1 || rect.Height < 1))
+            throw new ArgumentOutOfRangeException(nameof(bounds), rect, "A layout's bounds are at least 1 pixel wide and high.");
+
+        if (snap != null && state == LaunchWindowState.Maximized)
+            throw new ArgumentException("A layout's snapped launch is not maximized.", nameof(state));
+
+        if (snap == null && bounds == null && state != LaunchWindowState.Maximized)
+            throw new ArgumentException("A layout's launch without snap or bounds is maximized on its monitor.", nameof(state));
+
+        // Minimized wins over focus: a window the layout minimizes is not brought to the front
+        var focused = focus && state != LaunchWindowState.Minimized;
+        return bounds != null
+            ? new LaunchPlacementPlan(null, null, bounds, state, focused)
+            {
+                Frame = BoundsFrame.Outer, MonitorKey = monitorKey, RelativeBounds = relativeBounds
+            }
+            : new LaunchPlacementPlan(snap, monitorIndex, null, state, focused) { MonitorKey = monitorKey };
     }
 
     private static bool Fail(string code, string message, out string? errorCode, out string? error)

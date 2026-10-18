@@ -90,6 +90,19 @@ public static class LayoutPlanner
             }
 
             plan.NormalTarget = placement.NormalPosition is { } normal ? TargetOf(normal, workArea) : null;
+
+            // A rectangle less than a pixel wide or high on this monitor is no window (SetWindowBounds would take it), and is
+            // given no window: a file's tiny fractions, or an agent's, valid as fractions (review finding F2). Only the
+            // rectangles the window is given count: a snap's position and a maximized placement's are not used
+            var usesPosition = plan.Snap == null && placement.State != WindowState.Maximized;
+            if (((usesPosition ? SizeError(plan.Target, "position") : null) ?? SizeError(plan.NormalTarget, "normalPosition")) is { } tooSmall)
+            {
+                plan.PositionError = $"Did not arrange {plan.Label}: its {tooSmall} on monitor {monitor.Index}'s work area " +
+                                     $"({workArea.Width} x {workArea.Height}), less than one pixel, which is no window. Nothing was changed. " +
+                                     "Save the layout again with a larger width and height.";
+                plan.Target = null;
+                plan.NormalTarget = null;
+            }
         }
 
         // The position of each window among the snapshot's windows of its process, as save_layout counted it
@@ -198,34 +211,49 @@ public static class LayoutPlanner
             (int)(position.Height * workArea.Height));
     }
 
+    /// <summary>"960 x 0 pixels" when a rectangle is less than a pixel wide or high, with what it is; null otherwise.</summary>
+    private static string? SizeError(WindowRect? rect, string name) =>
+        rect is { } r && (r.Width < 1 || r.Height < 1) ? $"{name} is {r.Width} x {r.Height} pixels" : null;
+
     /// <summary>
     /// Why <paramref name="matcher"/> has nothing <paramref name="matchBy"/> can match on, or null when it has. An empty
-    /// criterion used to match every window, so title_only on a captured layout moved arbitrary windows.
+    /// criterion used to match every window, so title_only on a captured layout moved arbitrary windows; so does one that is
+    /// blank once normalized, as the windows are compared (review finding F4): a processName of only '.exe', a
+    /// titleContains of only invisible characters. Such a criterion counts as none, as the window selectors refuse it.
     /// </summary>
     private static string? MissingCriterion(WindowMatcher matcher, LayoutMatchBy matchBy)
     {
-        var hasProcess = !string.IsNullOrEmpty(matcher.ProcessName);
-        var hasTitle = !string.IsNullOrEmpty(matcher.TitleContains);
+        var hasProcess = HasProcessName(matcher);
+        var hasTitle = HasTitle(matcher);
         return matchBy switch
         {
             LayoutMatchBy.TitleOnly when !hasTitle =>
                 "matchBy title_only needs titleContains, and this placement has none (save_layout records the process, " +
-                "not title text); use process_and_title or process_only",
+                "not title text; text of only invisible characters counts as none); use process_and_title or process_only",
             LayoutMatchBy.ProcessOnly when !hasProcess =>
-                "matchBy process_only needs a processName, and this placement has none; use process_and_title or title_only",
+                "matchBy process_only needs a processName, and this placement has none (one of only '.exe' counts as none); " +
+                "use process_and_title or title_only",
             LayoutMatchBy.ProcessAndTitle when !hasProcess && !hasTitle =>
-                "the placement has neither a processName nor titleContains, so it would match any window",
+                "the placement has neither a processName nor titleContains (or only blank ones, such as '.exe'), so it would " +
+                "match any window",
             _ => null
         };
     }
+
+    /// <summary>Whether the matcher's process name names a process once normalized (not null, empty or only '.exe').</summary>
+    private static bool HasProcessName(WindowMatcher matcher) =>
+        !string.IsNullOrEmpty(matcher.ProcessName) && WindowMatching.WithoutExe(matcher.ProcessName).Length > 0;
+
+    /// <summary>Whether the matcher's title text holds something visible once normalized (<see cref="WindowTitles.Normalize"/>).</summary>
+    private static bool HasTitle(WindowMatcher matcher) => WindowTitles.Normalize(matcher.TitleContains).Length > 0;
 
     private static bool Matches(WindowInfo window, WindowMatcher matcher, LayoutMatchBy matchBy) => matchBy switch
     {
         LayoutMatchBy.ProcessOnly => MatchesProcessName(window, matcher),
         LayoutMatchBy.TitleOnly => MatchesTitle(window, matcher),
         LayoutMatchBy.ProcessAndTitle =>
-            (string.IsNullOrEmpty(matcher.ProcessName) || MatchesProcessName(window, matcher)) &&
-            (string.IsNullOrEmpty(matcher.TitleContains) || MatchesTitle(window, matcher)),
+            (!HasProcessName(matcher) || MatchesProcessName(window, matcher)) &&
+            (!HasTitle(matcher) || MatchesTitle(window, matcher)),
         _ => throw new ArgumentOutOfRangeException(nameof(matchBy), matchBy, "Not a matchBy value.")
     };
 
@@ -327,6 +355,13 @@ public sealed class PlannedPlacement(WindowPlacement placement, string label)
     /// <summary>The error code of <see cref="MonitorError"/>: InvalidMonitorIndex, or MonitorNotFound for a monitor saved by identity.</summary>
     public string? MonitorErrorCode { get; internal set; }
 
+    /// <summary>
+    /// Why the placement's rectangle cannot be arranged on its monitor (InvalidPlacement): its position or restore rectangle
+    /// is less than one pixel wide or high there. It is then given no window, no <see cref="Target"/> and no
+    /// <see cref="NormalTarget"/>. Null when it can.
+    /// </summary>
+    public string? PositionError { get; internal set; }
+
     /// <summary>The placement's monitor; null when it is not applicable or its monitor does not exist.</summary>
     public MonitorInfo? Monitor { get; internal set; }
 
@@ -335,7 +370,7 @@ public sealed class PlannedPlacement(WindowPlacement placement, string label)
 
     /// <summary>
     /// The placement's rectangle on its monitor, in virtual-screen pixels: the window rect of its position, or the visible frame of
-    /// its snap position. Null when it is not applicable or its monitor does not exist.
+    /// its snap position. Null when it is not applicable, its monitor does not exist, or it has a <see cref="PositionError"/>.
     /// </summary>
     public WindowRect? Target { get; internal set; }
 

@@ -510,6 +510,7 @@ public sealed class ContractServices : IDisposable
         var preset = TypicalDesktop.Layouts[0];
         Layouts.Setup(l => l.GetStorageError()).Returns((string?)null);
         Layouts.Setup(l => l.GetAllPresets()).Returns(TypicalDesktop.Layouts);
+        Layouts.Setup(l => l.GetInvalidFiles()).Returns([]);
         Layouts.Setup(l => l.GetPreset(It.IsAny<string>())).Returns(preset);
         Layouts.Setup(l => l.CaptureCurrentLayoutAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string[]?>(), It.IsAny<string[]?>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new LayoutSaveResult(true, preset));

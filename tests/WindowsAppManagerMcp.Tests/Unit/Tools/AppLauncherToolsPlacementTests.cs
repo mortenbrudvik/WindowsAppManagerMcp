@@ -68,7 +68,8 @@ public class AppLauncherToolsPlacementTests
 
         _processes.Verify(p => p.LaunchApplicationAsync(It.IsAny<LaunchRequest>(), true, 5000, It.IsAny<CancellationToken>()), Times.Once,
             "a placement needs the window, so it implies waitForWindow");
-        _placed.Single().Single().Should().Be((CodeWindow.Handle, new LaunchPlacementPlan(SnapPosition.LeftHalf, null, null, null, true)));
+        LaunchPlacementPlan.TryCreate(new LaunchPlacement(Snap: "left_half", Focus: true), out var expected, out _, out _).Should().BeTrue();
+        _placed.Single().Single().Should().Be((CodeWindow.Handle, expected!));
         result.Success.Should().BeTrue();
         result.Placement.Should().Be(new LaunchPlacementResultDto(new BoundsDto(0, 0, 960, 1040), "normal", 0, Focused: true, Reapplied: true));
     }

@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Microsoft.Extensions.Logging;
 using WindowsAppManagerMcp.Models;
 using WindowsAppManagerMcp.Models.Results;
 using WindowsAppManagerMcp.Services.Interfaces;
@@ -32,8 +33,9 @@ public class LayoutService : ILayoutService
         WriteIndented = true,
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
 
-        // A placement's state is written as "normal", "maximized" or "minimized"; any case is read back
-        Converters = { new JsonStringEnumConverter(JsonNamingPolicy.CamelCase) }
+        // A placement's state is written as "normal", "maximized" or "minimized"; any case is read back. A number is refused
+        // (review finding F5): "state": 7 would bind a WindowState that does not exist, and no server ever wrote one
+        Converters = { new JsonStringEnumConverter(JsonNamingPolicy.CamelCase, allowIntegerValues: false) }
     };
 
     private static readonly HashSet<string> ReservedDeviceNames = new(StringComparer.OrdinalIgnoreCase)
@@ -52,14 +54,24 @@ public class LayoutService : ILayoutService
     private readonly ILayoutFolderAccess _folderAccess;
     private readonly INativeAppsWrapper? _apps;
     private readonly IInstalledAppsService? _installedApps;
+    private readonly ILogger<LayoutService>? _logger;
 
     private readonly SemaphoreSlim _gate = new(1, 1);
 
-    // Parsed preset files keyed by full path; Preset is null for files that are not valid presets.
+    // Parsed preset files keyed by full path; Preset is null for files that are not valid presets, which keep why (Error)
     private readonly Dictionary<string, CachedPresetFile> _files = new(StringComparer.OrdinalIgnoreCase);
     private bool _storageReady;
 
-    private sealed record CachedPresetFile(DateTime LastWriteTimeUtc, long Length, LayoutPreset? Preset);
+    // Whether the last listing of the folder failed, so its warning is logged once per run of failures
+    private bool _listingFailed;
+
+    /// <summary>
+    /// A file as it was last read: its version (write time and length), and the preset it holds, or why it holds none (with
+    /// the name it gives, when its JSON can be read that far). A file is read again only when its version changes, so an
+    /// invalid one is logged once per version.
+    /// </summary>
+    private sealed record CachedPresetFile(DateTime LastWriteTimeUtc, long Length, LayoutPreset? Preset, string? Error = null,
+        string? DeclaredName = null);
 
     /// <summary>
     /// Creates a service that stores presets in <paramref name="layoutsPath"/> without migrating or seeding
@@ -100,6 +112,7 @@ public class LayoutService : ILayoutService
     /// launch rather than a program inside its package folder (roadmap M6.8). Without it every window records its program.
     /// </param>
     /// <param name="installedApps">Finds a packaged app's AppUserModelID among the installed apps when its window carries none.</param>
+    /// <param name="logger">Logs a file that is not a valid preset (once per version of it), and a folder that cannot be listed.</param>
     public LayoutService(
         IWindowService windowService,
         IMonitorService monitorService,
@@ -109,7 +122,8 @@ public class LayoutService : ILayoutService
         ILayoutFolderAccess? folderAccess = null,
         ILaunchPlacementService? launchPlacement = null,
         INativeAppsWrapper? apps = null,
-        IInstalledAppsService? installedApps = null)
+        IInstalledAppsService? installedApps = null,
+        ILogger<LayoutService>? logger = null)
     {
         _windowService = windowService;
         _monitorService = monitorService;
@@ -120,6 +134,7 @@ public class LayoutService : ILayoutService
         _folderAccess = folderAccess ?? new LayoutFolderAccess();
         _apps = apps;
         _installedApps = installedApps;
+        _logger = logger;
     }
 
     public string LayoutsPath => _options.LayoutsPath;
@@ -170,6 +185,59 @@ public class LayoutService : ILayoutService
         finally
         {
             _gate.Release();
+        }
+    }
+
+    public IReadOnlyList<InvalidLayoutFile> GetInvalidFiles()
+    {
+        _gate.Wait();
+        try
+        {
+            if (EnsureStorage() != null)
+                return [];
+
+            RefreshCache();
+            return InvalidFiles();
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    /// <summary>
+    /// What a "not found" message adds about the files that are not valid presets (review finding F1): the ones that may hold
+    /// the preset <paramref name="name"/> (the name they give, or their file name as save_layout names files, matches), with
+    /// why, and how many others there are. Empty when there are none, so the message stays as it was; it starts with a space
+    /// otherwise.
+    /// </summary>
+    /// <param name="invalidFiles">The folder's invalid files (<see cref="ILayoutService.GetInvalidFiles"/>); null for none known.</param>
+    public static string NotFoundNote(string? name, IReadOnlyList<InvalidLayoutFile>? invalidFiles)
+    {
+        if (invalidFiles is not { Count: > 0 })
+            return string.Empty;
+
+        var wanted = name?.Trim() ?? string.Empty;
+        var matching = invalidFiles.Where(f => wanted.Length > 0 && StandsFor(f, wanted)).Take(3).ToList();
+        var note = string.Concat(matching.Select(f =>
+            $" The file '{f.FileName}' in the layouts folder may hold it, but it is not a valid preset: {f.Error} Fix or delete the file."));
+
+        var others = invalidFiles.Count - matching.Count;
+        if (others > 0)
+        {
+            note += others == 1
+                ? $" {(matching.Count > 0 ? "1 other file" : "1 file")} in the layouts folder is not a valid preset; list_layouts lists it."
+                : $" {others} {(matching.Count > 0 ? "other files" : "files")} in the layouts folder are not valid presets; list_layouts lists them.";
+        }
+
+        return note;
+
+        static bool StandsFor(InvalidLayoutFile file, string name)
+        {
+            var stem = Path.GetFileNameWithoutExtension(file.FileName);
+            return string.Equals(file.DeclaredName?.Trim(), name, StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(stem, name, StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(stem, SanitizeFileName(name), StringComparison.OrdinalIgnoreCase);
         }
     }
 
@@ -255,7 +323,9 @@ public class LayoutService : ILayoutService
 
             if (paths.Count == 0)
             {
-                return new LayoutDeleteResult(false, name, $"Layout preset '{name}' was not found",
+                // A file that is no valid preset is named, never deleted: it is the user's to fix or delete
+                var note = NotFoundNote(name, InvalidFiles());
+                return new LayoutDeleteResult(false, name, $"Layout preset '{name}' was not found" + (note.Length > 0 ? "." + note : string.Empty),
                     nameof(LayoutErrorCode.PresetNotFound));
             }
 
@@ -602,6 +672,7 @@ public class LayoutService : ILayoutService
         var dryRun = options.DryRun;
         string? storageError;
         LayoutPreset? preset = null;
+        var notFoundNote = string.Empty;
 
         await _gate.WaitAsync(cancellationToken);
         try
@@ -609,6 +680,8 @@ public class LayoutService : ILayoutService
             storageError = EnsureStorage();
             if (storageError == null && !string.IsNullOrWhiteSpace(name))
                 preset = FindPreset(name);
+            if (storageError == null && preset == null)
+                notFoundNote = NotFoundNote(name, InvalidFiles());
         }
         finally
         {
@@ -630,7 +703,7 @@ public class LayoutService : ILayoutService
             return new LayoutApplyResult(
                 Success: false,
                 PresetName: name,
-                Errors: [$"Layout preset '{name}' not found"],
+                Errors: [$"Layout preset '{name}' not found" + (notFoundNote.Length > 0 ? "." + notFoundNote : string.Empty)],
                 ErrorCode: nameof(LayoutErrorCode.PresetNotFound),
                 DryRun: dryRun);
         }
@@ -769,6 +842,13 @@ public class LayoutService : ILayoutService
             {
                 return (Result(LayoutPlacementStatus.Failed, null, plan.MonitorErrorCode ?? nameof(WindowErrorCode.InvalidMonitorIndex), monitorError),
                     "was not arranged: its monitor does not exist");
+            }
+
+            // A rectangle less than a pixel on its monitor is neither arranged nor launched (review finding F2)
+            if (plan.PositionError is { } positionError)
+            {
+                return (Result(LayoutPlacementStatus.Failed, null, nameof(LayoutErrorCode.InvalidPlacement), positionError),
+                    "was not arranged: its rectangle is less than a pixel");
             }
 
             var window = plan.Window;
@@ -928,7 +1008,7 @@ public class LayoutService : ILayoutService
                 }
             }
 
-            if (placement.Focus)
+            if (Focuses(placement))
             {
                 var focus = _foregroundService.EnsureForeground(window.Handle);
                 (focusResults ??= []).Add(FocusResult.From(focus));
@@ -956,7 +1036,7 @@ public class LayoutService : ILayoutService
             (LayoutPlacementResult Result, string Outcome) Launched(WindowInfo window, LaunchPlacementOutcome placed)
             {
                 var code = placed.ErrorCode.ToString();
-                bool? focused = placement.Focus ? placed.Activation?.IsForeground == true : null;
+                bool? focused = Focuses(placement) ? placed.Activation?.IsForeground == true : null;
                 return placed.FailedStep switch
                 {
                     LaunchPlacementStep.None when placed.Warning is { } warning => (
@@ -1001,6 +1081,14 @@ public class LayoutService : ILayoutService
             }
         }
     }
+
+    /// <summary>
+    /// Whether the placement's window is brought to the front: when it asks to be, unless its state is minimized. A layout an
+    /// agent writes cannot have both (save_layout refuses them); a file edited by hand can, and then minimized wins, for an open
+    /// window as for one apply_layout launches (<see cref="LaunchPlacementPlan.ForLayout"/>), so the window the layout
+    /// minimizes is not brought back to the front.
+    /// </summary>
+    private static bool Focuses(WindowPlacement placement) => placement.Focus && placement.State != WindowState.Minimized;
 
     /// <summary>
     /// Why a subset of placements cannot be applied: an index that is not a placement of the preset, or one given twice. Null
@@ -1069,7 +1157,9 @@ public class LayoutService : ILayoutService
     /// its monitor when it has none); any other given the placement's rectangle as the window rect
     /// (<see cref="BoundsFrame.Outer"/>), the rect layouts save, and minimized afterwards for state minimized. Every plan keeps
     /// the monitor's id (or device name), and a rectangle also as fractions of the work area, so the window is placed on the
-    /// monitor as it is when the window appears (roadmap M6.8, review #5).
+    /// monitor as it is when the window appears (roadmap M6.8, review #5). The plan is made by
+    /// <see cref="LaunchPlacementPlan.ForLayout"/>, which states and enforces the layout's rules; a placement with focus and
+    /// state minimized stays minimized and is not focused, as <see cref="Focuses"/> has it for an open window.
     /// </summary>
     private static LaunchPlacementPlan LaunchPlan(PlannedPlacement plan)
     {
@@ -1078,21 +1168,19 @@ public class LayoutService : ILayoutService
         var minimized = placement.State == WindowState.Minimized ? LaunchWindowState.Minimized : (LaunchWindowState?)null;
         var key = monitor.Id ?? monitor.DeviceName;
         if (plan.Snap is { } snap)
-            return new LaunchPlacementPlan(snap, monitor.Index, null, minimized, placement.Focus) { MonitorKey = key };
+            return LaunchPlacementPlan.ForLayout(key, monitor.Index, snap: snap, state: minimized, focus: placement.Focus);
 
         // A maximized placement with a restore rectangle is given it before it is maximized, as an open window is
         if (placement.State == WindowState.Maximized && plan.NormalTarget is null)
-            return new LaunchPlacementPlan(null, monitor.Index, null, LaunchWindowState.Maximized, placement.Focus) { MonitorKey = key };
+            return LaunchPlacementPlan.ForLayout(key, monitor.Index, state: LaunchWindowState.Maximized, focus: placement.Focus);
 
         // The rectangle as fractions too, so it is placed on the monitor's work area as it is when the window appears
         var maximized = placement.State == WindowState.Maximized;
-        return new LaunchPlacementPlan(null, null, maximized ? plan.NormalTarget : plan.Target,
-            maximized ? LaunchWindowState.Maximized : minimized, placement.Focus)
-        {
-            Frame = BoundsFrame.Outer,
-            MonitorKey = key,
-            RelativeBounds = maximized ? placement.NormalPosition : placement.Position
-        };
+        return LaunchPlacementPlan.ForLayout(key, monitor.Index,
+            bounds: maximized ? plan.NormalTarget : plan.Target,
+            relativeBounds: maximized ? placement.NormalPosition : placement.Position,
+            state: maximized ? LaunchWindowState.Maximized : minimized,
+            focus: placement.Focus);
     }
 
     /// <summary>
@@ -1375,21 +1463,33 @@ public class LayoutService : ILayoutService
     }
 
     /// <summary>
-    /// Brings the cache in line with the folder, re-parsing only new or changed files.
+    /// Brings the cache in line with the folder, re-parsing only new or changed files. A file that is not a valid preset is
+    /// kept with why, and logged as a warning once per version of it (its write time and length).
     /// </summary>
     private void RefreshCache()
     {
-        List<FileInfo> files;
+        IReadOnlyList<FileInfo> files;
         try
         {
-            var folder = new DirectoryInfo(LayoutsPath);
-            files = folder.Exists ? folder.EnumerateFiles("*.json").ToList() : [];
+            files = _folderAccess.ListPresetFiles(LayoutsPath);
         }
         catch (Exception ex) when (IsFileSystemError(ex))
         {
-            // Keep what we have rather than forgetting every preset on a transient error.
+            // Keep what we have rather than forgetting every preset on a transient error; it may be stale meanwhile, which is
+            // logged when the listing starts to fail, not on every call while it does
+            if (!_listingFailed)
+            {
+                _logger?.LogWarning(ex, "The layouts folder '{Folder}' could not be listed; the presets read from it before are used " +
+                                        "until it can be, and may be stale", LayoutsPath);
+            }
+
+            _listingFailed = true;
             return;
         }
+
+        if (_listingFailed)
+            _logger?.LogInformation("The layouts folder '{Folder}' can be listed again", LayoutsPath);
+        _listingFailed = false;
 
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var file in files)
@@ -1405,7 +1505,16 @@ public class LayoutService : ILayoutService
 
             // If the file cannot be read right now (e.g. it is being written), keep the old entry and retry later.
             if (TryReadFile(file.FullName, out var json))
-                _files[file.FullName] = new CachedPresetFile(file.LastWriteTimeUtc, file.Length, TryParsePreset(json));
+            {
+                var (preset, error) = ParsePreset(json);
+                _files[file.FullName] = new CachedPresetFile(file.LastWriteTimeUtc, file.Length, preset, error,
+                    preset == null ? DeclaredNameOf(json) : null);
+                if (error != null)
+                {
+                    _logger?.LogWarning("Layout file '{File}' is not a valid preset, so it is left out of the presets: {Error}",
+                        file.FullName, error);
+                }
+            }
         }
 
         foreach (var removed in _files.Keys.Where(path => !seen.Contains(path)).ToList())
@@ -1439,6 +1548,14 @@ public class LayoutService : ILayoutService
         RefreshCache();
         return BuildNameIndex().TryGetValue(name, out var entry) ? entry.Preset : null;
     }
+
+    /// <summary>The cached files that are not valid presets, with why, by file name (callers hold the gate).</summary>
+    private List<InvalidLayoutFile> InvalidFiles() => _files
+        .Where(entry => entry.Value.Preset == null)
+        .Select(entry => new InvalidLayoutFile(Path.GetFileName(entry.Key), entry.Value.Error ?? "It is not a valid preset.",
+            entry.Value.LastWriteTimeUtc, entry.Value.DeclaredName))
+        .OrderBy(file => file.FileName, StringComparer.OrdinalIgnoreCase)
+        .ToList();
 
     /// <summary>
     /// A file path for a new preset that no existing file or folder uses.
@@ -1482,27 +1599,72 @@ public class LayoutService : ILayoutService
         return null;
     }
 
-    private static LayoutPreset? TryParsePreset(string json)
+    private static LayoutPreset? TryParsePreset(string json) => ParsePreset(json).Preset;
+
+    /// <summary>
+    /// The preset a file holds, upgraded to schema version 2 in memory (the file is never rewritten, roadmap M6.8), or why it
+    /// holds none, as a sentence: it is not JSON (or has a value of the wrong kind, such as a state given as a number), lacks
+    /// a name or placements, has a placement without a matcher or position, or a position that is no rectangle
+    /// (<see cref="LayoutPresetSchema.LoadedError"/>).
+    /// </summary>
+    private static (LayoutPreset? Preset, string? Error) ParsePreset(string json)
+    {
+        LayoutPreset? preset;
+        try
+        {
+            preset = JsonSerializer.Deserialize<LayoutPreset>(json, JsonOptions);
+        }
+        catch (Exception ex) when (ex is JsonException or NotSupportedException)
+        {
+            return (null, Sentence($"It is not valid layout JSON: {ex.Message}"));
+        }
+
+        // Records do not enforce non-nullable members during deserialization, so check the shape here.
+        if (preset == null)
+            return (null, "It holds no preset (its JSON is null).");
+        if (string.IsNullOrWhiteSpace(preset.Name))
+            return (null, "It has no name.");
+        if (preset.Placements == null)
+            return (null, "It has no placements.");
+
+        for (var i = 0; i < preset.Placements.Count; i++)
+        {
+            var placement = preset.Placements[i];
+            if (placement == null)
+                return (null, $"placements[{i}] is empty.");
+            if (placement.Matcher == null)
+                return (null, $"placements[{i}] has no matcher.");
+            if (placement.Position == null)
+                return (null, $"placements[{i}] has no position.");
+        }
+
+        // A position that is no rectangle a window can have is never applied (review finding F2)
+        if (LayoutPresetSchema.LoadedError(preset) is { } positionError)
+            return (null, Sentence(positionError));
+
+        return (LayoutPresetSchema.Upgrade(preset), null);
+    }
+
+    /// <summary>The name an invalid file gives (its "name" when its JSON can be read that far), trimmed; null otherwise.</summary>
+    private static string? DeclaredNameOf(string json)
     {
         try
         {
-            var preset = JsonSerializer.Deserialize<LayoutPreset>(json, JsonOptions);
-
-            // Records do not enforce non-nullable members during deserialization, so check the shape here.
-            if (preset == null || string.IsNullOrWhiteSpace(preset.Name) || preset.Placements == null)
-                return null;
-
-            if (preset.Placements.Any(p => p == null || p.Matcher == null || p.Position == null))
-                return null;
-
-            // A version 1 file is upgraded here, in memory; the file is never rewritten (roadmap M6.8)
-            return LayoutPresetSchema.Upgrade(preset);
+            using var document = JsonDocument.Parse(json);
+            return document.RootElement.ValueKind == JsonValueKind.Object &&
+                   document.RootElement.TryGetProperty("name", out var name) && name.ValueKind == JsonValueKind.String &&
+                   !string.IsNullOrWhiteSpace(name.GetString())
+                ? name.GetString()!.Trim()
+                : null;
         }
         catch (JsonException)
         {
             return null;
         }
     }
+
+    /// <summary>The text with a full stop at its end, so a message can go on after it.</summary>
+    private static string Sentence(string text) => text.TrimEnd().EndsWith('.') ? text.TrimEnd() : text.TrimEnd() + ".";
 
     private static bool TryReadFile(string path, out string content)
     {

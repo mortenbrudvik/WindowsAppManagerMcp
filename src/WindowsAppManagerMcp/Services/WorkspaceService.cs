@@ -259,7 +259,9 @@ public sealed class WorkspaceService : IWorkspaceService
     {
         if (_layouts.GetPreset(name) is not { } preset)
         {
-            return new WorkspaceRestoreResult(false, name, "failed", Error: $"No layout or workspace named '{name}'. list_layouts lists them.",
+            // A file that is no valid preset and may hold it is named (review finding F1)
+            return new WorkspaceRestoreResult(false, name, "failed",
+                Error: $"No layout or workspace named '{name}'. list_layouts lists them." + LayoutService.NotFoundNote(name, _layouts.GetInvalidFiles()),
                 ErrorCode: nameof(LayoutErrorCode.PresetNotFound));
         }
 

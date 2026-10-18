@@ -34,19 +34,34 @@ public class LayoutPresetTools
     }
 
     [McpServerTool(Name = "list_layouts", Title = "List Layouts", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
-    [Description(@"List all saved layout presets. Returns preset names, descriptions, and window counts. Presets are JSON files in %LOCALAPPDATA%\WindowsAppManagerMcp\layouts (or the folder in the WAM_LAYOUTS_PATH environment variable); the samples work-setup, dual-monitor and focus-mode are added there on first run.")]
+    [Description(@"List the saved layout presets (name, description, window count), then any invalid preset file, with its error. Presets are JSON files in %LOCALAPPDATA%\WindowsAppManagerMcp\layouts (or the folder in the WAM_LAYOUTS_PATH environment variable); the samples work-setup, dual-monitor and focus-mode are added on first run.")]
     public IReadOnlyList<LayoutSummaryDto> ListLayouts()
     {
         ThrowIfStorageUnavailable();
 
         var presets = _layoutService.GetAllPresets();
+
+        // A file that is no valid preset is listed too, after the presets, never left out silently (review finding F1)
+        var invalid = _layoutService.GetInvalidFiles();
         return presets.Select(p => new LayoutSummaryDto(
             Name: p.Name,
             Description: p.Description,
             WindowCount: p.Placements.Count,
             CreatedAt: p.CreatedAt.ToString("O"),
             UpdatedAt: p.UpdatedAt.ToString("O")
-        )).ToList();
+        )).Concat(invalid.Select(file => new LayoutSummaryDto(
+            Name: file.Name,
+            Description: null,
+            WindowCount: 0,
+            CreatedAt: file.LastWriteTimeUtc.ToString("O"),
+            UpdatedAt: file.LastWriteTimeUtc.ToString("O")
+        )
+        {
+            File = file.FileName,
+            Error = $"'{file.FileName}' is not a valid layout preset, so it cannot be applied: {file.Error} Fix or delete the file in " +
+                    "the layouts folder.",
+            ErrorCode = nameof(LayoutErrorCode.InvalidPresetFile)
+        })).ToList();
     }
 
     [McpServerTool(Name = "get_layout", Title = "Get Layout", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
@@ -58,7 +73,7 @@ public class LayoutPresetTools
         ThrowIfStorageUnavailable();
 
         var preset = _layoutService.GetPreset(name)
-            ?? throw new ToolErrorException(nameof(LayoutErrorCode.PresetNotFound), PresetNotFoundMessage(name));
+            ?? throw new ToolErrorException(nameof(LayoutErrorCode.PresetNotFound), PresetNotFoundMessage(name, _layoutService.GetInvalidFiles()));
 
         return ToDetailDto(preset);
     }
@@ -247,9 +262,13 @@ public class LayoutPresetTools
             throw new ToolErrorException(nameof(LayoutErrorCode.StorageUnavailable), storageError);
     }
 
-    /// <summary>What get_layout and the wam://layouts/{name} resource (roadmap M6.9) say about a name no preset has.</summary>
-    internal static string PresetNotFoundMessage(string name) =>
-        $"Layout preset '{name}' was not found. Call list_layouts to see the available presets.";
+    /// <summary>
+    /// What get_layout and the wam://layouts/{name} resource (roadmap M6.9) say about a name no preset has, naming the files
+    /// that are not valid presets (<see cref="LayoutService.NotFoundNote"/>): the one that may hold it, and how many others.
+    /// </summary>
+    /// <param name="invalidFiles">The layouts folder's invalid files; null for none known.</param>
+    internal static string PresetNotFoundMessage(string name, IReadOnlyList<InvalidLayoutFile>? invalidFiles = null) =>
+        $"Layout preset '{name}' was not found. Call list_layouts to see the available presets." + LayoutService.NotFoundNote(name, invalidFiles);
 
     /// <summary>
     /// get_layout's result, which the wam://layouts/{name} resource returns too (roadmap M6.9), so a change to one changes
@@ -291,13 +310,28 @@ public class LayoutPresetTools
     );
 }
 
+/// <summary>
+/// A preset in list_layouts, or a file in the layouts folder that is not a valid preset (review finding F1): then
+/// <see cref="File"/>, <see cref="Error"/> and <see cref="ErrorCode"/> are set, its name is the one the file gives (else
+/// its file name without .json), its window count 0, and both times when the file was last written.
+/// </summary>
 public record LayoutSummaryDto(
     string Name,
     string? Description,
     int WindowCount,
     string CreatedAt,
     string UpdatedAt
-);
+)
+{
+    /// <summary>The file's name in the layouts folder, for a file that is not a valid preset; left out for a preset.</summary>
+    public string? File { get; init; }
+
+    /// <summary>Why the file is not a valid preset, and what to do; left out for a preset.</summary>
+    public string? Error { get; init; }
+
+    /// <summary>InvalidPresetFile for a file that is not a valid preset; left out for a preset.</summary>
+    public string? ErrorCode { get; init; }
+}
 
 /// <param name="AuthoredBy">"agent" when an agent wrote the placements (save_layout placements); null otherwise.</param>
 /// <param name="Warning">Said when a newer server wrote the preset; null otherwise.</param>

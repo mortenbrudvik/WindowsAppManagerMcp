@@ -79,6 +79,22 @@ public class WorkspaceServiceTests : IDisposable
     /// <summary>File Explorer's windows as the shell lists them, every one of them read.</summary>
     private static ExplorerFolderListing Listing(params ExplorerFolder[] folders) => new(folders, 0);
 
+    [Fact]
+    public async Task Restore_OfAWorkspaceWhoseFileIsInvalid_IsPresetNotFound_AndNamesTheFile()
+    {
+        // Arrange - the file is there, but it is no valid preset (review finding F1)
+        _layouts.Setup(l => l.GetPreset("evening")).Returns((LayoutPreset?)null);
+        _layouts.Setup(l => l.GetInvalidFiles()).Returns([new InvalidLayoutFile("evening.json", "It has no placements.", DateTime.UtcNow)]);
+
+        // Act
+        var result = await CreateSut().RestoreAsync("evening", dryRun: false);
+
+        // Assert
+        result.ErrorCode.Should().Be(nameof(LayoutErrorCode.PresetNotFound));
+        result.Error.Should().Contain("evening.json").And.Contain("It has no placements.");
+        _processes.VerifyNoOtherCalls();
+    }
+
     // ---- File Explorer windows the shell could not read ----
 
     [Fact]

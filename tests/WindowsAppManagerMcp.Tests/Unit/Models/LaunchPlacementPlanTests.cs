@@ -18,7 +18,11 @@ public class LaunchPlacementPlanTests
         var (plan, errorCode, _) = Check(new LaunchPlacement(Snap: "Left-Half", Monitor: MonitorSelector.OfIndex(1), Focus: true));
 
         errorCode.Should().BeNull();
-        plan.Should().Be(new LaunchPlacementPlan(SnapPosition.LeftHalf, 1, null, null, true));
+        plan.Should().BeEquivalentTo(new
+        {
+            Snap = (SnapPosition?)SnapPosition.LeftHalf, MonitorIndex = (int?)1, Bounds = (WindowRect?)null, State = (LaunchWindowState?)null,
+            Focus = true, Frame = BoundsFrame.Visible, MonitorKey = (string?)null, RelativeBounds = (RelativePosition?)null
+        });
         plan!.ChangesGeometry.Should().BeTrue();
     }
 
