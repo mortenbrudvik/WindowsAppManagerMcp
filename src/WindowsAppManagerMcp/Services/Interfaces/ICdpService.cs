@@ -47,9 +47,13 @@ public interface ICdpService
     /// window (Browser.getWindowForTarget over the browser's DevTools connection, <see cref="Services.CdpWindowBinder"/>),
     /// and the tab is the one there whose exact title the window shows; CDP reports no active tab, so the title picks it.
     /// When no browser window matches, the binding cannot be read (also when a reply did not come), or the bound window has
-    /// no tab with the title, the title is matched among all tabs. The binding takes at most a third of what is left of
-    /// <paramref name="timeout"/> (at most 2 s). Nothing listening on the port is CdpUnavailable. Fails with
-    /// CdpTargetNotFound or CdpTargetAmbiguous when no single tab matches.
+    /// no tab with the title, the title is matched among all tabs. A page sets its own title, so when several tabs have a
+    /// title the window shows, the one taken is the one whose document.visibilityState, read in an isolated world the
+    /// page's scripts cannot reach, is "visible" (<see cref="Services.CdpShownTab"/>); never the longest title. The binding
+    /// and that read each take at most a third of what is left of <paramref name="timeout"/> (at most 2 s). Nothing
+    /// listening on the port is CdpUnavailable. Fails with CdpTargetNotFound when no tab matches, and CdpTargetAmbiguous
+    /// when several do and exactly one shown tab cannot be told (none or several shown, a read that failed, a minimized
+    /// window, or candidates in several browser windows).
     /// </summary>
     /// <param name="port">The CDP debug port.</param>
     /// <param name="window">The window: its process, its title and, when known, where it is.</param>

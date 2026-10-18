@@ -603,6 +603,225 @@ public class CdpServiceTests
 
     #endregion
 
+    #region FindTargetForWindowAsync: several tabs with a title the window shows
+
+    [Fact]
+    public async Task FindTargetForWindowAsync_ABackgroundTabTitledAsTheWholeWindow_DoesNotTakeTheShownTabsPlace()
+    {
+        // A page in a background tab sets document.title to the window's whole caption: its title also starts the window's
+        // title, and is longer than the shown tab's. Which one is shown is read where the page cannot lie about it
+        var browser = new FakeCdpBrowser()
+            .Window(1, 0, 0, 1000, 700)
+            .Tab("REAL", "Inbox", 1)
+            .Tab("SPOOF", "Inbox - Google Chrome", 1)
+            .Visibility("REAL", "visible")
+            .Visibility("SPOOF", "hidden");
+        var sut = CreateSut(browser);
+
+        var result = await sut.FindTargetForWindowAsync(Port, At("Inbox - Google Chrome", 0, 0, 1000, 700), LongTimeout);
+
+        result.Success.Should().BeTrue(result.Error);
+        result.Value!.Id.Should().Be("REAL");
+    }
+
+    [Fact]
+    public async Task FindTargetForWindowAsync_ABackgroundTabTitledAsTheEdgeProfileSegment_DoesNotTakeTheShownTabsPlace()
+    {
+        // In Edge the window's title goes on with the profile: 'Inbox - Personal' starts it as 'Inbox' does
+        var browser = new FakeCdpBrowser()
+            .Window(1, 0, 0, 1000, 700)
+            .Tab("REAL", "Inbox", 1)
+            .Tab("SPOOF", "Inbox - Personal", 1)
+            .Visibility("REAL", "visible")
+            .Visibility("SPOOF", "hidden");
+        var sut = CreateSut(browser);
+
+        var result = await sut.FindTargetForWindowAsync(
+            Port, At("Inbox - Personal - Microsoft​ Edge", 0, 0, 1000, 700), LongTimeout);
+
+        result.Success.Should().BeTrue(result.Error);
+        result.Value!.Id.Should().Be("REAL");
+    }
+
+    [Fact]
+    public async Task FindTargetForWindowAsync_TheLongerTitle_IsTakenWhenItIsTheShownTab()
+    {
+        // The legitimate case: 'GitHub - Pull requests' is shown, and 'GitHub' is a tab behind it
+        var browser = new FakeCdpBrowser()
+            .Window(1, 0, 0, 1000, 700)
+            .Tab("A", "GitHub", 1)
+            .Tab("B", "GitHub - Pull requests", 1)
+            .Visibility("A", "hidden")
+            .Visibility("B", "visible");
+        browser.MainWorldVisibility = "hidden";
+        var sut = CreateSut(browser);
+
+        var result = await sut.FindTargetForWindowAsync(Port, At("GitHub - Pull requests - Google Chrome", 0, 0, 1000, 700), LongTimeout);
+
+        result.Success.Should().BeTrue(result.Error);
+        result.Value!.Id.Should().Be("B");
+    }
+
+    [Fact]
+    public async Task FindTargetForWindowAsync_ReadsWhichTabIsShown_InAnIsolatedWorldOfItsMainFrame()
+    {
+        // The page's own scripts can redefine document.visibilityState in its main world, not in an isolated world
+        var browser = new FakeCdpBrowser()
+            .Window(1, 0, 0, 1000, 700)
+            .Tab("A", "GitHub", 1)
+            .Tab("B", "GitHub - Pull requests", 1)
+            .Visibility("A", "hidden")
+            .Visibility("B", "visible");
+        var sut = CreateSut(browser);
+
+        await sut.FindTargetForWindowAsync(Port, At("GitHub - Pull requests - Google Chrome", 0, 0, 1000, 700), LongTimeout);
+
+        foreach (var tab in new[] { "A", "B" })
+        {
+            var sent = browser.PageCommands.Where(c => c.TabId == tab).Select(c => c.Command).ToList();
+            sent.Should().Contain(c => c.GetProperty("method").GetString() == "Page.createIsolatedWorld" &&
+                                       c.GetProperty("params").GetProperty("frameId").GetString() == "F-" + tab);
+            var evaluate = sent.Where(c => c.GetProperty("method").GetString() == "Runtime.evaluate").Should().ContainSingle().Subject;
+            evaluate.GetProperty("params").GetProperty("contextId").GetInt32().Should().Be(FakeCdpBrowser.IsolatedContextId);
+            evaluate.GetProperty("params").GetProperty("expression").GetString().Should().Contain("visibilityState");
+        }
+    }
+
+    [Fact]
+    public async Task FindTargetForWindowAsync_SeveralTabsAndNoneShown_IsAmbiguous_NeverTheLongestTitle()
+    {
+        // A covered or minimized window shows none of its tabs as visible: the title alone would take the spoof
+        var browser = new FakeCdpBrowser()
+            .Window(1, 0, 0, 1000, 700)
+            .Tab("REAL", "Inbox", 1, "https://mail.example/")
+            .Tab("SPOOF", "Inbox - Google Chrome", 1, "https://evil.example/")
+            .Visibility("REAL", "hidden")
+            .Visibility("SPOOF", "hidden");
+        var sut = CreateSut(browser);
+
+        var result = await sut.FindTargetForWindowAsync(Port, At("Inbox - Google Chrome", 0, 0, 1000, 700), LongTimeout);
+
+        result.ErrorCode.Should().Be(BrowserErrorCode.CdpTargetAmbiguous, result.Error);
+        result.Error.Should().Contain("targetId REAL (https://mail.example/)").And.Contain("targetId SPOOF (https://evil.example/)")
+            .And.Contain("focus_window").And.Contain("pass one as targetId to get_browser_url or get_browser_content");
+    }
+
+    [Fact]
+    public async Task FindTargetForWindowAsync_SeveralTabsShown_IsAmbiguous()
+    {
+        var browser = new FakeCdpBrowser()
+            .Window(1, 0, 0, 1000, 700)
+            .Tab("A", "Inbox", 1)
+            .Tab("B", "Inbox", 1)
+            .Visibility("A", "visible")
+            .Visibility("B", "visible");
+        var sut = CreateSut(browser);
+
+        var result = await sut.FindTargetForWindowAsync(Port, At("Inbox - Google Chrome", 0, 0, 1000, 700), LongTimeout);
+
+        result.ErrorCode.Should().Be(BrowserErrorCode.CdpTargetAmbiguous, result.Error);
+        result.Error.Should().Contain("targetId A").And.Contain("targetId B");
+    }
+
+    [Fact]
+    public async Task FindTargetForWindowAsync_TwoTabsWithTheSameTitle_TakesTheOneThatIsShown()
+    {
+        var browser = new FakeCdpBrowser()
+            .Window(1, 0, 0, 1000, 700)
+            .Tab("A", "Inbox", 1)
+            .Tab("B", "Inbox", 1)
+            .Visibility("A", "hidden")
+            .Visibility("B", "visible");
+        var sut = CreateSut(browser);
+
+        var result = await sut.FindTargetForWindowAsync(Port, At("Inbox - Google Chrome", 0, 0, 1000, 700), LongTimeout);
+
+        result.Success.Should().BeTrue(result.Error);
+        result.Value!.Id.Should().Be("B");
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task FindTargetForWindowAsync_AVisibilityThatCannotBeRead_IsAmbiguous_NeverAGuess(bool unanswered)
+    {
+        // Fails closed: the shown tab answers, the other does not (blocked by a dialog) or refuses the isolated world
+        var browser = new FakeCdpBrowser()
+            .Window(1, 0, 0, 1000, 700)
+            .Tab("REAL", "Inbox", 1)
+            .Tab("SPOOF", "Inbox - Google Chrome", 1)
+            .Visibility("REAL", "visible");
+        if (unanswered)
+            browser.PagesUnanswered.Add("SPOOF");
+        var sut = CreateSut(browser);
+        var stopwatch = Stopwatch.StartNew();
+
+        var result = await sut.FindTargetForWindowAsync(Port, At("Inbox - Google Chrome", 0, 0, 1000, 700), TimeSpan.FromSeconds(3));
+
+        stopwatch.Stop();
+        result.ErrorCode.Should().Be(BrowserErrorCode.CdpTargetAmbiguous, result.Error);
+        result.Error.Should().Contain("targetId REAL").And.Contain("targetId SPOOF").And.Contain("could not be read");
+        stopwatch.Elapsed.Should().BeLessThan(HangBound);
+    }
+
+    [Fact]
+    public async Task FindTargetForWindowAsync_WithoutTheWindowsBounds_TheTitleAmongAllTabs_AlsoTakesTheShownTab()
+    {
+        var browser = new FakeCdpBrowser()
+            .Window(1, 0, 0, 1000, 700)
+            .Tab("REAL", "Inbox", 1)
+            .Tab("SPOOF", "Inbox - Google Chrome", 1)
+            .Visibility("REAL", "visible")
+            .Visibility("SPOOF", "hidden");
+        var sut = CreateSut(browser);
+
+        var result = await sut.FindTargetForWindowAsync(Port, TitleOnly("Inbox - Google Chrome"), LongTimeout);
+
+        result.Success.Should().BeTrue(result.Error);
+        result.Value!.Id.Should().Be("REAL");
+    }
+
+    [Fact]
+    public async Task FindTargetForWindowAsync_AShownTabOfAnotherBrowserWindow_IsNotTakenForTheWindowsOwn()
+    {
+        // Two maximized windows report the same restored bounds, so both are bound: the spoof is shown in the window in
+        // front, and the window asked for is covered. Being shown says which tab its own window shows, not which window
+        var browser = new FakeCdpBrowser()
+            .Window(1, 100, 100, 800, 600, "maximized")
+            .Window(2, 100, 100, 800, 600, "maximized")
+            .Tab("REAL", "Inbox", 1)
+            .Tab("SPOOF", "Inbox - Google Chrome", 2)
+            .Visibility("REAL", "hidden")
+            .Visibility("SPOOF", "visible");
+        var sut = CreateSut(browser);
+
+        var result = await sut.FindTargetForWindowAsync(
+            Port, At("Inbox - Google Chrome", -8, -8, 1936, 1056, CdpWindowState.Maximized), LongTimeout);
+
+        result.ErrorCode.Should().Be(BrowserErrorCode.CdpTargetAmbiguous, result.Error);
+        result.Error.Should().Contain("more than one browser window");
+    }
+
+    [Fact]
+    public async Task FindTargetForWindowAsync_AMinimizedWindow_TakesNoShownTabOfAnotherWindow()
+    {
+        // A minimized window shows none of its tabs; with the binding unreadable, a tab shown elsewhere is not its own
+        var browser = new FakeCdpBrowser { NotABrowsersVersion = true }
+            .Tab("REAL", "Inbox", 1)
+            .Tab("SPOOF", "Inbox - Google Chrome", 2)
+            .Visibility("REAL", "hidden")
+            .Visibility("SPOOF", "visible");
+        var sut = CreateSut(browser);
+
+        var result = await sut.FindTargetForWindowAsync(
+            Port, At("Inbox - Google Chrome", -32000, -32000, 160, 28, CdpWindowState.Minimized), LongTimeout);
+
+        result.ErrorCode.Should().Be(BrowserErrorCode.CdpTargetAmbiguous, result.Error);
+        result.Error.Should().Contain("minimized");
+    }
+
+    #endregion
+
     #region GetPageSnapshotAsync
 
     [Fact]

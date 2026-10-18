@@ -39,8 +39,9 @@ public sealed record BrowserTabInfo(string TargetId, string Title, string Url, i
 
 /// <summary>
 /// list_tabs' result (roadmap M5.5). With a window: WindowBound says whether it was matched to its browser window (its
-/// tabs then come first, with InWindow), and ShownTargetId is the tab it shows when its title picks exactly one (CDP
-/// reports no active tab). TabCount is every page tab of the browser; at most <see cref="MaxListedTabs"/> are listed
+/// tabs then come first, with InWindow), and ShownTargetId is the tab it shows as the reads pick it: its title, and of
+/// several tabs with it the one that is shown (CDP reports no active tab). TabCount is every page tab of the browser; at
+/// most <see cref="MaxListedTabs"/> are listed
 /// (Truncated).
 /// </summary>
 public sealed record BrowserTabsResult(

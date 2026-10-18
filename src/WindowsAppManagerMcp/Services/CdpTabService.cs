@@ -12,7 +12,8 @@ namespace WindowsAppManagerMcp.Services;
 /// <remarks>
 /// <para>
 /// Tabs are listed from /json/list and placed in their browser windows with Browser.getWindowForTarget (the M5.3
-/// binding). CDP reports no active tab, so the tab a window shows is the one of its tabs whose title the window shows.
+/// binding). CDP reports no active tab, so the tab a window shows is the one of its tabs whose title the window shows, and
+/// of several, the one that is shown (<see cref="CdpShownTab"/>, as the reads pick it).
 /// Activating and opening a tab go over the browser's own DevTools connection (Target.activateTarget,
 /// Target.createTarget), not the /json/activate and /json/new pages.
 /// </para>
@@ -122,10 +123,10 @@ public sealed class CdpTabService : ICdpTabService
             : new HashSet<int>();
         var inWindow = all.Where(t => WindowOf(t) is int id && bound.Contains(id)).ToList();
 
-        // As the reads pick the tab (CdpService.FindTargetForWindowAsync): the title among the window's tabs, else among all
-        var shown = inWindow.Count > 0 ? CdpTargetMatcher.Match(window.Title, inWindow) : null;
-        if (shown is not { Success: true } && shown?.ErrorCode != BrowserErrorCode.CdpTargetAmbiguous)
-            shown = CdpTargetMatcher.Match(window.Title, all);
+        // As the reads pick the tab (CdpService.FindTargetForWindowAsync, the same CdpShownTab): the title among the
+        // window's tabs, else among all, and of several, the one shown
+        var shown = await CdpShownTab.PickAsync(
+            _transport, window, all, windows, CdpService.BindingBudget(timeout - stopwatch.Elapsed), cancellationToken).ConfigureAwait(false);
 
         var tabs = inWindow.Select(t => new CdpTab(t, WindowOf(t), true))
             .Concat(all.Except(inWindow).Select(t => new CdpTab(t, WindowOf(t), false)))

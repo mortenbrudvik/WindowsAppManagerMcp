@@ -19,7 +19,8 @@ public interface ICdpTabService
     /// Lists the page targets (tabs) of the browser on <paramref name="port"/>, which must belong to process
     /// <paramref name="processId"/> (CdpPortOwnerMismatch otherwise, also when its owner cannot be read). With
     /// <paramref name="window"/>, binds it to its browser window as the reads do (<see cref="Services.CdpWindowBinder"/>):
-    /// the listing says which tabs are in it and, when its title picks exactly one of them, which one it shows.
+    /// the listing says which tabs are in it and which one it shows, picked as the reads pick it
+    /// (<see cref="ICdpService.FindTargetForWindowAsync"/>: its title, and of several tabs with it the one that is shown).
     /// </summary>
     Task<CdpResult<CdpTabListing>> ListTabsAsync(
         int port, int processId, CdpWindow? window, TimeSpan timeout, CancellationToken cancellationToken = default);
@@ -77,7 +78,8 @@ public sealed record CdpTab(CdpTarget Target, int? WindowId, bool InWindow);
 /// </summary>
 /// <param name="Tabs">Every page tab, those in the window first.</param>
 /// <param name="WindowBound">Whether the window was matched to its browser window; false without a window.</param>
-/// <param name="Shown">The tab the window shows, when its title picks exactly one; else null.</param>
+/// <param name="Shown">The tab the window shows, picked as the reads pick it (its title, and of several tabs with it the one
+/// that is shown); else null.</param>
 /// <param name="ShownError">Why no tab could be told as the shown one (CdpTargetNotFound, CdpTargetAmbiguous).</param>
 public sealed record CdpTabListing(IReadOnlyList<CdpTab> Tabs, bool WindowBound, CdpTarget? Shown, string? ShownError);
 
