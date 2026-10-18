@@ -8413,7 +8413,7 @@ the new tools; their sections have the rest.
   a typical window instead of about 6,000); pass `format: "tree"` for the JSON tree. The full tools/list is about 65,700
   tokens (78 tools) instead of about 70,900; the default one is unchanged in its tools.
 
-Next release (since 3.0.0: the fixes of the 3.0.0 code review, and GitHub issues #8 to #10):
+Release 3.1.0 (the fixes of the 3.0.0 code review, and GitHub issues #8 to #10):
 
 Many of these changes close a way around a safety rule, so a call that worked with 3.0.0 can now be refused or return
 something else; the bullet says so with **Changed:**, and with **Breaking:** where a result field that 3.0.0 always
