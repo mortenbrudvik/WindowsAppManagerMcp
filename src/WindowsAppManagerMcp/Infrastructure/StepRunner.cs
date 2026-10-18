@@ -874,10 +874,11 @@ public sealed partial class StepRunner
 
     /// <summary>
     /// Why a window the step names is not one of the run's, with the code, or null. A handle is read as its tool binds it
-    /// (<see cref="BoundInteger"/>: a string of digits is that number, also one a reference brought, such as a captureId)
-    /// and passed on as the number; one that is no whole number is not run. A selector (not wait_for_window's, which names
-    /// what it waits for) is resolved here and replaced by the handle it names, so the tool acts on the window this check
-    /// passed rather than resolving the selector again; one that names no single window is not run.
+    /// (<see cref="BoundInteger"/>: a string of digits is that number) and passed on as the number; one that is no whole
+    /// number is not run, such as a ref or captureId that a reference brought (neither is ever digits). A selector (not
+    /// wait_for_window's, which names what it waits for) is resolved here and replaced by the handle it names, so the tool
+    /// acts on the window this check passed rather than resolving the selector again; one that names no single window is
+    /// not run.
     /// </summary>
     private (string Error, string Code)? CheckWindows(CheckedStep step, JsonObject arguments, RunTarget target)
     {
