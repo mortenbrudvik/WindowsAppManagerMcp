@@ -38,7 +38,7 @@ public class BrowserReadingServiceTests
     /// Chromium's address bar class with <paramref name="url"/> (none when null), and a Document "Example" with
     /// <paramref name="content"/> as its text and <paramref name="url"/> as its value (none when the content is null).
     /// </summary>
-    private void ShowPage(nint handle, string? url, string? content = null, string? title = "Example - Google Chrome")
+    private void ShowPage(nint handle, string? url, string? content = null, string? title = "Example - Google Chrome", Exception? textFailure = null)
     {
         var window = new FakeUiaNode("Window", title);
         if (url != null)
@@ -50,7 +50,7 @@ public class BrowserReadingServiceTests
 
         if (content != null)
         {
-            var document = new FakeUiaNode("Document", "Example").WithPattern<IUiaTextPattern>(new FakeTextPattern(content));
+            var document = new FakeUiaNode("Document", "Example").WithPattern<IUiaTextPattern>(new FakeTextPattern(content) { Failure = textFailure });
             window.With(url != null ? document.WithPattern<IUiaValuePattern>(new FakeValuePattern(url)) : document);
         }
 
@@ -442,10 +442,31 @@ public class BrowserReadingServiceTests
         // Act
         var result = await sut.GetBrowserContentAsync(handle);
 
-        // Assert
+        // Assert - an empty page, told from a read that failed
         result.Success.Should().BeFalse();
         result.ErrorCode.Should().Be(BrowserErrorCode.ContentExtractionFailed);
         result.Url.Should().Be("https://example.com");
+        result.Error.Should().Contain("has no text").And.NotContain("failed");
+    }
+
+    [Fact]
+    public async Task GetBrowserContent_AUiAutomationReadThatFails_IsContentExtractionFailed_WithItsCause()
+    {
+        // Arrange - the Document's Text pattern throws, as a provider does whose element went away
+        var handle = new nint(12345);
+        SetupValidBrowserWindow(handle, "chrome", "chrome");
+        ShowPage(handle, "https://example.com", content: "Some text", textFailure: new InvalidOperationException("The element is not available."));
+        var sut = CreateSut();
+
+        // Act
+        var result = await sut.GetBrowserContentAsync(handle);
+
+        // Assert - the cause and what to do, not the message of an empty page
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(BrowserErrorCode.ContentExtractionFailed);
+        result.Url.Should().Be("https://example.com");
+        result.Error.Should().Contain("failed").And.Contain("The element is not available.").And.Contain("CDP")
+            .And.NotContain("has no text");
     }
 
     [Fact]

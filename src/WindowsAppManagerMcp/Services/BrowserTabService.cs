@@ -237,38 +237,12 @@ public sealed class BrowserTabService : IBrowserTabService
     }
 
     /// <summary>
-    /// Why <paramref name="url"/> is not opened as a loopback address a browser listens on, or null: a browser listens on
-    /// this computer only for DevTools, whose /json pages list, show and close tabs when opened (a check of the URL's
-    /// path alone is <see cref="BrowserNavigationUrls.Refusal"/>'s). Fails closed when the port's owner cannot be read; a
-    /// port nothing listens on is opened, and fails as the browser reports it. A page that redirects to such an address
-    /// is not stopped by this check.
+    /// Why <paramref name="url"/> is not opened as a loopback address a browser listens on, or null
+    /// (<see cref="BrowserNavigationUrls.BrowserPortRefusal"/>, which launch_browser_with_debug's url shares).
     /// </summary>
-    private string? DevToolsPortRefusal(string url)
-    {
-        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri) || uri.Scheme is not ("http" or "https") ||
-            !BrowserNavigationUrls.IsLoopback(uri))
-        {
-            return null;
-        }
-
-        if (!_portOwners.TryGetListeningProcessId(uri.Port, out var owner))
-        {
-            return $"url is on this computer, and which program listens on port {uri.Port} could not be read, so it cannot be " +
-                   "told from a browser's DevTools endpoint. Nothing was done.";
-        }
-
-        if (owner is not int processId)
-            return null;
-
-        var processName = _windows.GetProcessName((uint)processId);
-        if (processName != null && !_detection.IsBrowser(processName))
-            return null;
-
-        var listener = processName == null ? $"process {processId}, whose name could not be read," : $"the browser '{processName}'";
-        return $"url is port {uri.Port} on this computer, where {listener} listens. A browser listens on this computer only for " +
-               "DevTools, whose /json pages list, show and close tabs when opened, past the target policy and the tab tools' " +
-               "checks. Use list_tabs and activate_tab instead. Nothing was done.";
-    }
+    private string? DevToolsPortRefusal(string url) =>
+        BrowserNavigationUrls.BrowserPortRefusal(
+            url, _portOwners, processId => _windows.GetProcessName((uint)processId), _detection.IsBrowser, BrowserNavigationUrls.NothingDone);
 
     /// <summary>The tab with <paramref name="targetId"/>, or the one the window shows.</summary>
     private Task<CdpResult<CdpTarget>> FindTabAsync(ResolvedBrowser browser, string? targetId, CancellationToken cancellationToken) =>

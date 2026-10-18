@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.Net.Sockets;
 using System.Runtime.InteropServices;
 using WindowsAppManagerMcp.Services.Interfaces;
 
@@ -6,7 +7,9 @@ namespace WindowsAppManagerMcp.Native;
 
 /// <summary>
 /// Finds the process listening on a TCP port using GetExtendedTcpTable (TCP_TABLE_OWNER_PID_LISTENER).
-/// This works without elevation, like "netstat -ano".
+/// This works without elevation, like "netstat -ano". The owner is the process a connection to 127.0.0.1 reaches: an
+/// IPv4 listener on 127.0.0.1, else on 0.0.0.0, else a dual-mode one on [::]; it is not known (false) unless every table
+/// that could hold that listener was read.
 /// </summary>
 public class TcpPortOwnerResolver : ITcpPortOwnerResolver
 {
@@ -23,6 +26,23 @@ public class TcpPortOwnerResolver : ITcpPortOwnerResolver
     private static readonly byte[] Ipv4Loopback = [127, 0, 0, 1];
     private static readonly byte[] Ipv4Any = [0, 0, 0, 0];
 
+    private readonly Func<AddressFamily, byte[]?> _listenerTable;
+
+    /// <summary>The resolver the server uses: it reads the system's listener tables.</summary>
+    public TcpPortOwnerResolver()
+        : this(family => QueryListenerTable(family == AddressFamily.InterNetworkV6
+            ? NativeMethods.Iphlpapi.AF_INET6
+            : NativeMethods.Iphlpapi.AF_INET))
+    {
+    }
+
+    /// <param name="listenerTable">The raw listener table (MIB_TCPTABLE_OWNER_PID or MIB_TCP6TABLE_OWNER_PID) of
+    /// InterNetwork or InterNetworkV6, or null when it cannot be read; tests pass tables of their own.</param>
+    public TcpPortOwnerResolver(Func<AddressFamily, byte[]?> listenerTable)
+    {
+        _listenerTable = listenerTable;
+    }
+
     /// <inheritdoc />
     public int? GetListeningProcessId(int port) =>
         TryGetListeningProcessId(port, out var processId) ? processId : null;
@@ -36,17 +56,24 @@ public class TcpPortOwnerResolver : ITcpPortOwnerResolver
 
         try
         {
-            var ipv4Table = QueryListenerTable(NativeMethods.Iphlpapi.AF_INET);
-            processId = ipv4Table == null ? null : FindIpv4ListenerProcessId(ipv4Table, port);
+            // The server connects only to 127.0.0.1 (CdpEndpointValidator), where an IPv4 listener on the port takes the
+            // connection: without the IPv4 table, a [::] listener found in the IPv6 table is not known to be the one
+            var ipv4Table = _listenerTable(AddressFamily.InterNetwork);
+            if (ipv4Table == null)
+                return false;
+
+            processId = FindIpv4ListenerProcessId(ipv4Table, port);
             if (processId != null)
                 return true;
 
-            // A dual-mode socket bound to [::] also accepts IPv4 connections to 127.0.0.1.
-            var ipv6Table = QueryListenerTable(NativeMethods.Iphlpapi.AF_INET6);
-            processId = ipv6Table == null ? null : FindIpv6ListenerProcessId(ipv6Table, port);
+            // No IPv4 listener: a dual-mode socket bound to [::] also accepts IPv4 connections to 127.0.0.1, and only its
+            // table tells whether one does
+            var ipv6Table = _listenerTable(AddressFamily.InterNetworkV6);
+            if (ipv6Table == null)
+                return false;
 
-            // Nothing found is only known when both tables were read
-            return processId != null || (ipv4Table != null && ipv6Table != null);
+            processId = FindIpv6ListenerProcessId(ipv6Table, port);
+            return true;
         }
         catch
         {

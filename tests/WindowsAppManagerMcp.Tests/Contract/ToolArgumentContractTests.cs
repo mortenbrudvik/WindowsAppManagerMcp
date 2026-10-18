@@ -273,6 +273,18 @@ public sealed class ToolArgumentContractTests : IDisposable
     [InlineData("""{ "url": "  --utility-cmd-prefix=calc.exe" }""", "url")]
     [InlineData("""{ "url": "/gpu-launcher=calc.exe" }""", "url")]
     [InlineData("""{ "url": "-incognito" }""", "url")]
+    [InlineData("""{ "url": "file:///C:/Users/someone/" }""", "'file:' is not opened")]
+    [InlineData("""{ "url": "FILE:C:/Windows/win.ini" }""", "'file:' is not opened")]
+    [InlineData("""{ "url": "data:text/html,<p>hi</p>" }""", "'data:' is not opened")]
+    [InlineData("""{ "url": "javascript:alert(1)" }""", "'javascript:' is not opened")]
+    [InlineData("""{ "url": "chrome://settings/passwords" }""", "'chrome:' is not opened")]
+    [InlineData("""{ "url": "edge://settings" }""", "'edge:' is not opened")]
+    [InlineData("""{ "url": "about:settings" }""", "'about:' is not opened")]
+    [InlineData("""{ "url": "view-source:https://example.com/" }""", "'view-source:' is not opened")]
+    [InlineData("""{ "url": "C:\\Users\\someone" }""", "'c:' is not opened")]
+    [InlineData("""{ "url": "example.com" }""", "with its scheme")]
+    [InlineData("""{ "url": "..\\..\\Users\\someone" }""", "with its scheme")]
+    [InlineData("""{ "url": "http://127.0.0.1:9222/json/list" }""", "DevTools endpoint")]
     [InlineData("""{ "userDataDir": "C:/Users/someone/AppData/Local/Google/Chrome/User Data" }""", "User Data")]
     [InlineData("""{ "userDataDir": "C:/Users/someone/AppData/Local/Microsoft/Edge/User Data/Default" }""", "User Data")]
     [InlineData("""{ "userDataDir": "C:/Users/someone/AppData/Local/BraveSoftware/Brave-Browser/user data/" }""", "User Data")]
@@ -283,7 +295,10 @@ public sealed class ToolArgumentContractTests : IDisposable
     {
         // Review MCP-S-1: a url that Chromium reads as a switch is a command-line switch of the agent's choosing, and the
         // open debug port on the user's real profile would hand its signed-in sessions to any local program; an
-        // executablePath that is not the browser's own .exe would start another program with the debug switches (M5.1)
+        // executablePath that is not the browser's own .exe would start another program with the debug switches (M5.1).
+        // The url is held to browser_navigate's list: Chromium opens a file: or data: URL, its own pages and a path (an
+        // address without a scheme is looked up as a file relative to its working folder first) from its command line,
+        // and get_browser_content would then read the disk
         var result = await CallAsync("launch_browser_with_debug", arguments);
 
         result.IsError.Should().BeTrue();
@@ -295,7 +310,10 @@ public sealed class ToolArgumentContractTests : IDisposable
 
     [Theory]
     [InlineData("""{ "url": "https://example.com/?q=--flag" }""")]
-    [InlineData("""{ "url": "example.com" }""")]
+    [InlineData("""{ "url": "  https://example.com/  " }""")]
+    [InlineData("""{ "url": "http://localhost:3000/" }""")]
+    [InlineData("""{ "url": "about:blank" }""")]
+    [InlineData("""{ "url": "  " }""")]
     [InlineData("""{ "userDataDir": "C:/Temp/debug-profile" }""")]
     [InlineData("""{ "port": 0 }""")]
     [InlineData("""{ "port": 1024 }""")]

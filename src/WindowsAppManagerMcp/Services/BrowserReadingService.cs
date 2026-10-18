@@ -463,7 +463,8 @@ public class BrowserReadingService : IBrowserReadingService
 
             var uiaContent = shown.Text;
 
-            // Past the end of the text an empty page is the answer; at its start the page has no text to read
+            // Past the end of the text an empty page is the answer; at its start the page has no text to read. A read that
+            // failed says so, and why: it is not an empty page
             if (uiaContent == null || (uiaContent.Length == 0 && shown.Offset == 0))
             {
                 return new BrowserContentResult(
@@ -473,7 +474,13 @@ public class BrowserReadingService : IBrowserReadingService
                     BrowserType: browserType,
                     PageTitle: pageTitle,
                     ContentLength: null,
-                    Error: "Could not extract content from browser",
+                    Error: shown.ReadFailure is { } failure
+                        ? $"Reading the page's text through UI Automation failed ({failure}). Nothing was read. Try again (the page " +
+                          "may have changed while it was read); if it keeps failing, read it through CDP (a browser started with " +
+                          "launch_browser_with_debug, or cdpPort), or look at it with capture_window."
+                        : "The page was found, but it has no text that UI Automation can read: it may still be loading, or show " +
+                          "its content as images or a canvas. Read it again once it has loaded, read it through CDP (a browser " +
+                          "started with launch_browser_with_debug, or cdpPort), or look at it with capture_window.",
                     ErrorCode: BrowserErrorCode.ContentExtractionFailed,
                     Source: BrowserReadSource.Uia,
                     CdpError: cdpError,

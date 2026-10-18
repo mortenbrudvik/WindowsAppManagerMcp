@@ -161,7 +161,7 @@ public class CdpService : ICdpService
             return PortOwnerMismatch<CdpTarget>(port, owner, window.ProcessId);
 
         var stopwatch = Stopwatch.StartNew();
-        var targets = await GetPageTargetsAsync(port, timeout, cancellationToken).ConfigureAwait(false);
+        var targets = await GetOwnedPageTargetsAsync(port, window.ProcessId, timeout, cancellationToken).ConfigureAwait(false);
         if (!targets.Success)
             return targets.FailAs<CdpTarget>();
 
@@ -248,12 +248,59 @@ public class CdpService : ICdpService
                 "The targetId is not a CDP tab id (1 to 128 letters, digits, '.', '_' or '-'), so no tab was looked up.");
         }
 
-        var targets = await GetPageTargetsAsync(port, timeout, cancellationToken).ConfigureAwait(false);
+        var targets = await GetOwnedPageTargetsAsync(port, windowProcessId, timeout, cancellationToken).ConfigureAwait(false);
         if (!targets.Success)
             return targets.FailAs<CdpTarget>();
 
         var target = targets.Value!.FirstOrDefault(t => string.Equals(t.Id, targetId, StringComparison.Ordinal));
         return target != null ? CdpResult<CdpTarget>.Ok(target) : TargetIdNotFound(port, targetId);
+    }
+
+    /// <summary>
+    /// <see cref="GetPageTargetsAsync"/> of a port whose listener was checked to be <paramref name="owner"/>, used only when
+    /// the listener is still that process after the request (<see cref="OwnerChangedSince{T}"/>).
+    /// </summary>
+    private async Task<CdpResult<IReadOnlyList<CdpTarget>>> GetOwnedPageTargetsAsync(
+        int port, int owner, TimeSpan timeout, CancellationToken cancellationToken)
+    {
+        var targets = await GetPageTargetsAsync(port, timeout, cancellationToken).ConfigureAwait(false);
+        if (!targets.Success)
+            return targets;
+
+        return OwnerChangedSince<IReadOnlyList<CdpTarget>>(port, owner, "its tab list was read", "Nothing was read") ?? targets;
+    }
+
+    /// <summary>
+    /// Null when <paramref name="port"/>'s listener is still <paramref name="owner"/>, the process it was checked to be before
+    /// the request; else why what came over the port is not used (review F4). A browser that exits between the check and the
+    /// request frees its port, and another program on this computer that takes it would answer instead: its tab list, or a
+    /// connection that gets the commands. Read again after the answer (or after the connection is open), a listener that is
+    /// the same process shows the answer came from it, as a browser's process does not listen again once it has stopped.
+    /// Fails closed when the listener cannot be read.
+    /// </summary>
+    /// <remarks>
+    /// Only the requests whose caller knows the browser's process are checked so: the tab lists of the reads and the
+    /// browser connection of <see cref="CloseBrowserAsync"/>. A page's or tab's connection is opened from a
+    /// <see cref="CdpTarget"/>, which does not carry it (a known limitation, see the CDP notes of docs/TOOLS.md).
+    /// </remarks>
+    private CdpResult<T>? OwnerChangedSince<T>(int port, int owner, string after, string nothingDone)
+    {
+        if (!_portOwnerResolver.TryGetListeningProcessId(port, out var now))
+        {
+            return CdpResult<T>.Fail(
+                BrowserErrorCode.CdpPortOwnerMismatch,
+                $"Which process listens on CDP port {port} could not be read again after {after}, so what answered cannot be " +
+                $"tied to process {DescribeProcess(owner)}. {nothingDone}. Try again.");
+        }
+
+        if (now == owner)
+            return null;
+
+        var listener = now is int other ? $"process {DescribeProcess(other)} listens on it now" : "nothing listens on it now";
+        return CdpResult<T>.Fail(
+            BrowserErrorCode.CdpPortOwnerMismatch,
+            $"CDP port {port} changed hands while {after}: {listener}, not process {DescribeProcess(owner)}, so what answered " +
+            $"may be another program. {nothingDone}. The browser may have exited; check that it still runs.");
     }
 
     /// <inheritdoc />
@@ -514,6 +561,11 @@ public class CdpService : ICdpService
             return connected.FailAs<bool>();
 
         await using var connection = connected.Value!;
+
+        // The connection is the browser's only while the browser still listens on the port
+        if (OwnerChangedSince<bool>(port, browserProcessId, "the browser's connection was opened", "Nothing was sent") is { } changed)
+            return changed;
+
         left = timeout - stopwatch.Elapsed;
         var reply = await connection
             .SendAsync("Browser.close", null, left > TimeSpan.Zero ? left : TimeSpan.FromMilliseconds(1), cancellationToken)

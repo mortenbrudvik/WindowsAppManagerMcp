@@ -454,6 +454,46 @@ public class BrowserTabServiceTests
     }
 
     [Fact]
+    public async Task Navigate_ToALoopbackPort_WhoseListenerCannotBeRead_IsRefused()
+    {
+        // Fails closed: the port could be a browser's DevTools endpoint
+        _owners = new FakePortOwnerResolver(owner: null, tableReadable: false);
+
+        var result = await CreateSut().NavigateAsync(ByWindow(), new BrowserNavigateOptions("http://127.0.0.1:8080/a", false, BrowserWaitUntil.Load, 15_000));
+
+        result.ErrorCode.Should().Be(ToolErrorReporting.InvalidArgumentsErrorCode);
+        result.Error.Should().Contain("port 8080").And.Contain("could not be read").And.EndWith("Nothing was done.");
+        _tabs.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task Navigate_ToALoopbackPort_WhoseListenersNameCannotBeRead_IsRefused()
+    {
+        // Fails closed: a process whose name is unknown could be a browser
+        _owners = new FakePortOwnerResolver(owner: 777);
+        _windows.Setup(w => w.GetProcessName(777u)).Returns((string?)null);
+
+        var result = await CreateSut().NavigateAsync(ByWindow(), new BrowserNavigateOptions("http://localhost:8080/a", false, BrowserWaitUntil.Load, 15_000));
+
+        result.ErrorCode.Should().Be(ToolErrorReporting.InvalidArgumentsErrorCode);
+        result.Error.Should().Contain("process 777, whose name could not be read").And.Contain("DevTools").And.EndWith("Nothing was done.");
+        _tabs.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task Navigate_ToALoopbackPortNothingListensOn_IsOpened()
+    {
+        // Nothing to tell apart: the navigation fails as the browser reports it
+        _owners = new FakePortOwnerResolver(owner: null);
+        _tabs.Setup(t => t.NavigateAsync(Shown, "http://127.0.0.1:8080/a", BrowserWaitUntil.Load, It.IsAny<CdpGate>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>(), It.IsAny<BrowserDialogAnswer?>()))
+            .ReturnsAsync(CdpResult<CdpNavigation>.Ok(new CdpNavigation("http://127.0.0.1:8080/a", "A", null, "load", false)));
+
+        var result = await CreateSut().NavigateAsync(ByWindow(), new BrowserNavigateOptions("http://127.0.0.1:8080/a", false, BrowserWaitUntil.Load, 15_000));
+
+        result.Success.Should().BeTrue(result.Error);
+    }
+
+    [Fact]
     public async Task Navigate_ToALoopbackPageOfAProgramThatIsNoBrowser_IsOpened()
     {
         _owners = new FakePortOwnerResolver(owner: 777);

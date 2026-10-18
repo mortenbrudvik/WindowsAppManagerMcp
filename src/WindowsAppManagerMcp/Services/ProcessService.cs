@@ -2390,11 +2390,6 @@ public class ProcessService : IProcessService
         ErrorMessage: "Process not found. It may have already exited.",
         ErrorCode: nameof(ProcessErrorCode.ProcessNotFound));
 
-    private static readonly HashSet<string> SupportedBrowsers = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "chrome", "edge", "brave"
-    };
-
     /// <summary>
     /// How long a debug browser started with port 0 may take, after its window wait, to write the DevToolsActivePort file
     /// that names its port (roadmap M5.1); tests shorten it.
@@ -2422,16 +2417,20 @@ public class ProcessService : IProcessService
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(request);
-        var browser = request.Browser;
-        if (!SupportedBrowsers.Contains(browser))
+
+        // The DebugBrowser enum is the list (DebugBrowserLocator has each member's install): only a value outside it is refused
+        if (DebugBrowserLocator.ExecutableName(request.Browser) == null)
         {
-            return DebugLaunchFailure($"Unsupported browser '{browser}'. Supported browsers: chrome, edge, brave.", BrowserErrorCode.UnsupportedBrowser);
+            return DebugLaunchFailure(
+                $"Unsupported browser '{request.Browser}'. Supported browsers: {ToolEnumInfo.Get(typeof(DebugBrowser)).AllowedValues}. Nothing was launched.",
+                BrowserErrorCode.UnsupportedBrowser);
         }
 
-        var location = _debugBrowserLocator.Locate(browser, request.ExecutablePath);
+        var browser = ToolEnum<DebugBrowser>.Name(request.Browser);
+        var location = _debugBrowserLocator.Locate(request.Browser, request.ExecutablePath);
         if (location.Path == null)
         {
-            return DebugLaunchFailure(BrowserNotFoundMessage(browser, request.ExecutablePath, location.Tried), BrowserErrorCode.BrowserNotFound);
+            return DebugLaunchFailure(BrowserNotFoundMessage(request.Browser, request.ExecutablePath, location.Tried), BrowserErrorCode.BrowserNotFound);
         }
 
         var port = request.Port;
@@ -2729,9 +2728,9 @@ public class ProcessService : IProcessService
     private static DebugBrowserLaunchResult DebugLaunchFailure(string error, string errorCode) =>
         new(Success: false, ProcessId: null, WindowHandle: null, CdpPort: null, UserDataDir: null, Error: error, ErrorCode: errorCode);
 
-    private static string BrowserNotFoundMessage(string browser, string? executablePath, IReadOnlyList<string> tried) =>
+    private static string BrowserNotFoundMessage(DebugBrowser browser, string? executablePath, IReadOnlyList<string> tried) =>
         string.IsNullOrWhiteSpace(executablePath)
-            ? $"Browser '{browser}' was not found. Tried: {string.Join("; ", tried)}. Nothing was launched. If it is installed " +
+            ? $"Browser '{ToolEnum<DebugBrowser>.Name(browser)}' was not found. Tried: {string.Join("; ", tried)}. Nothing was launched. If it is installed " +
               $"elsewhere (another channel or a portable copy), pass the full path of its {DebugBrowserLocator.ExecutableName(browser)} as executablePath."
             : $"executablePath '{executablePath.Trim()}' does not exist. Nothing was launched.";
 

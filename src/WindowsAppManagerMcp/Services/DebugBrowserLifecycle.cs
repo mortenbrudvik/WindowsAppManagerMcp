@@ -27,8 +27,8 @@ public sealed class DebugBrowserLifecycle : IDebugBrowserLifecycle
     private const string ProfileSwitch = "user-data-dir";
     private const string TypeSwitch = "type";
 
-    /// <summary>The image names of the browsers launch_browser_with_debug starts.</summary>
-    private static readonly HashSet<string> BrowserImages = new(StringComparer.OrdinalIgnoreCase) { "chrome.exe", "msedge.exe", "brave.exe" };
+    /// <summary>The image names of the browsers launch_browser_with_debug starts (one per <see cref="DebugBrowser"/>).</summary>
+    private static IReadOnlySet<string> BrowserImages => DebugBrowserLocator.ExecutableNames;
 
     /// <summary>How long a reuseIfRunning check waits for the running browser's /json/version.</summary>
     private static readonly TimeSpan ReuseVersionTimeout = TimeSpan.FromSeconds(2);
@@ -139,6 +139,10 @@ public sealed class DebugBrowserLifecycle : IDebugBrowserLifecycle
     }
 
     /// <inheritdoc />
+    /// <remarks>
+    /// Ends what close_debug_browser would end, and nothing else (the server closes only what it provably started): the
+    /// browser process alone, then what is left of its own child processes (<see cref="HelpersOf(int, string, string)"/>).
+    /// </remarks>
     public async Task AbandonAsync(DebugBrowserLaunchResult launch)
     {
         ArgumentNullException.ThrowIfNull(launch);
@@ -154,8 +158,15 @@ public sealed class DebugBrowserLifecycle : IDebugBrowserLifecycle
             {
                 if (process != null && !HasExited(process) && IsLaunchedBrowser(pid, launch))
                 {
-                    process.Kill(entireProcessTree: true);
-                    await process.WaitForExitAsync((int)AbandonTimeout.TotalMilliseconds, CancellationToken.None).ConfigureAwait(false);
+                    // What close_debug_browser would end, and only that: the browser, then what is left of its own child
+                    // processes. Never its process tree, which holds what the browser opened (a download's program, the
+                    // user's own browser that a link started)
+                    var helpers = HelpersOf(pid, launch.UserDataDir);
+                    if (End(process))
+                    {
+                        await process.WaitForExitAsync((int)AbandonTimeout.TotalMilliseconds, CancellationToken.None).ConfigureAwait(false);
+                        await EndHelpersAsync(helpers, CancellationToken.None).ConfigureAwait(false);
+                    }
                 }
             }
 
@@ -472,21 +483,41 @@ public sealed class DebugBrowserLifecycle : IDebugBrowserLifecycle
                 "Ask the user to close it.");
         }
 
-        // The browser's own child processes, to end what is left of them once it exits: the same .exe with a --type and the
-        // browser's own --user-data-dir. Another program it opened is not one, nor is the user's own browser that a link
-        // started (the same .exe, a descendant, but without that profile), nor one whose command line cannot be read
-        var helpers = (_native.GetDescendantsOf(pid) ?? [])
-            .Where(d => string.Equals(d.ImageName, imageName, StringComparison.OrdinalIgnoreCase) && _hostGuard?.IsHostProcess(d.ProcessId) != true &&
-                        IsChildOf(d.ProcessId, profile))
-            .Select(d => (d.ProcessId, _native.GetProcessStartTime(d.ProcessId)))
-            .ToList();
-
+        var helpers = HelpersOf(pid, imageName, profile);
         var deletes = kind == DebugProfileKind.Temporary || (kind == DebugProfileKind.Named && deleteProfile);
         var warning = deleteProfile && kind == DebugProfileKind.Custom
             ? $"deleteProfile does not apply to a userDataDir that was passed: '{profile}' is kept."
             : null;
         return new DebugBrowserCloseCheck(
             new DebugBrowserCloseTarget(pid, processName, startTime, profile, kind, started != null, deletes, helpers, warning), null);
+    }
+
+    /// <summary>
+    /// The browser's own child processes, with their start times, to end what is left of them once it exits: the same .exe
+    /// with a --type and the browser's own --user-data-dir. Another program it opened is not one, nor is the user's own
+    /// browser that a link started (the same .exe, a descendant, but without that profile), nor one whose command line
+    /// cannot be read, nor the agent's host.
+    /// </summary>
+    private List<(int ProcessId, DateTime? StartTime)> HelpersOf(int processId, string imageName, string profile) =>
+        (_native.GetDescendantsOf(processId) ?? [])
+            .Where(d => string.Equals(d.ImageName, imageName, StringComparison.OrdinalIgnoreCase) && _hostGuard?.IsHostProcess(d.ProcessId) != true &&
+                        IsChildOf(d.ProcessId, profile))
+            .Select(d => (d.ProcessId, _native.GetProcessStartTime(d.ProcessId)))
+            .ToList();
+
+    /// <summary>
+    /// <see cref="HelpersOf(int, string, string)"/> of a browser the server just started on <paramref name="userDataDir"/>
+    /// (<see cref="AbandonAsync"/>); none when its image or profile is not known, and then its helpers exit with it.
+    /// </summary>
+    private List<(int ProcessId, DateTime? StartTime)> HelpersOf(int processId, string? userDataDir)
+    {
+        if (userDataDir == null || _native.GetProcessList() is not { } processes || !processes.TryGetValue(processId, out var entry) ||
+            !BrowserImages.Contains(entry.ImageName))
+        {
+            return [];
+        }
+
+        return HelpersOf(processId, entry.ImageName, userDataDir);
     }
 
     /// <summary>Whether a descendant is a Chromium child process of the browser on <paramref name="profile"/>.</summary>
