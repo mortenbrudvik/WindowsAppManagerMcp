@@ -24,6 +24,21 @@ public enum LaunchWindowState
 }
 
 /// <summary>
+/// The visible frame a launch placement puts the window at, in physical virtual-screen pixels: the placement's own input
+/// type, so the results that write a <see cref="BoundsDto"/> keep their non-null members. All four are required: they are
+/// nullable only so that a missing one (or a null) is refused by <see cref="LaunchPlacementPlan.TryCreate"/>
+/// (InvalidArguments, for a batch item alone) instead of binding 0 and putting the window at the origin or making it 0 pixels
+/// wide; the input schema lists them as required integers (<see cref="ToolRequiredAttribute"/>). An unknown member, such as
+/// a unit, is refused (InvalidArguments) rather than ignored.
+/// </summary>
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+public sealed record PlacementBounds(
+    [property: ToolRequired] int? X,
+    [property: ToolRequired] int? Y,
+    [property: ToolRequired] int? Width,
+    [property: ToolRequired] int? Height);
+
+/// <summary>
 /// Where launch_application and a launch_applications_batch item put the launch's window once it is found (roadmap
 /// M3.13): snapped or at bounds (not both), on a monitor, in a state, and in front. The strings are checked by the tool
 /// (<see cref="LaunchPlacementPlan.TryCreate"/>), so a bad batch item fails alone. Monitor (roadmap M6.7) is resolved to an
@@ -36,7 +51,7 @@ public sealed record LaunchPlacement(
     [property: Description("Snap position, as snap_window takes it; not together with bounds")]
     string? Snap = null,
     [property: Description("The visible frame to place the window at: x, y, width and height in physical virtual-screen pixels, as set_window_bounds takes them; not together with snap")]
-    BoundsDto? Bounds = null,
+    PlacementBounds? Bounds = null,
     [property: ToolValues(typeof(LaunchWindowState))]
     [property: Description("normal, maximized (not with snap or bounds; activates the window) or minimized (after it is placed; not with focus)")]
     string? State = null,
@@ -120,10 +135,10 @@ public sealed record LaunchPlacementPlan
 
     /// <summary>
     /// Checks a placement whose monitor resolved to <paramref name="monitorIndex"/>: snap and state must be known values
-    /// (InvalidSnapPosition, InvalidState); snap and bounds, bounds and monitor, snap or bounds with state maximized, and
-    /// focus with state minimized are refused, as are a size below 1 pixel, a negative monitor index (InvalidMonitorIndex)
-    /// and a placement that asks for nothing (InvalidArguments). On failure <paramref name="errorCode"/> and
-    /// <paramref name="error"/> say why.
+    /// (InvalidSnapPosition, InvalidState); bounds without x, y, width or height (missing or null: bound, it would be 0),
+    /// snap and bounds, bounds and monitor, snap or bounds with state maximized, and focus with state minimized are refused,
+    /// as are a size below 1 pixel, a negative monitor index (InvalidMonitorIndex) and a placement that asks for nothing
+    /// (InvalidArguments). On failure <paramref name="errorCode"/> and <paramref name="error"/> say why.
     /// </summary>
     public static bool TryCreate(LaunchPlacement placement, int? monitorIndex, out LaunchPlacementPlan? plan, out string? errorCode,
         out string? error)
@@ -154,6 +169,12 @@ public sealed record LaunchPlacementPlan
         }
 
         const string invalid = "InvalidArguments";
+        if (placement.Bounds is { } given && MissingMembers(given) is { Length: > 0 } missing)
+        {
+            return Fail(invalid, $"placement.bounds has no {missing}: it needs x, y, width and height, in physical virtual-screen pixels.",
+                out errorCode, out error);
+        }
+
         if (snap != null && placement.Bounds != null)
         {
             return Fail(invalid, "placement takes snap or bounds, not both.", out errorCode, out error);
@@ -165,9 +186,9 @@ public sealed record LaunchPlacementPlan
                                  "monitor, or use snap with monitor.", out errorCode, out error);
         }
 
-        if (placement.Bounds is { } bounds && (bounds.Width < 1 || bounds.Height < 1))
+        if (placement.Bounds is { Width: { } width, Height: { } height } && (width < 1 || height < 1))
         {
-            return Fail(invalid, $"placement.bounds width and height must be at least 1 pixel, but they are {bounds.Width} x {bounds.Height}.",
+            return Fail(invalid, $"placement.bounds width and height must be at least 1 pixel, but they are {width} x {height}.",
                 out errorCode, out error);
         }
 
@@ -191,7 +212,7 @@ public sealed record LaunchPlacementPlan
 
         var candidate = new LaunchPlacementPlan(
             snap, monitorIndex,
-            placement.Bounds is { } b ? new WindowRect(b.X, b.Y, b.Width, b.Height) : null,
+            placement.Bounds is { X: { } x, Y: { } y, Width: { } w, Height: { } h } ? new WindowRect(x, y, w, h) : null,
             state, focus);
         if (!candidate.ChangesGeometry && !candidate.Focus)
         {
@@ -250,6 +271,21 @@ public sealed record LaunchPlacementPlan
                 Frame = BoundsFrame.Outer, MonitorKey = monitorKey, RelativeBounds = relativeBounds
             }
             : new LaunchPlacementPlan(snap, monitorIndex, null, state, focused) { MonitorKey = monitorKey };
+    }
+
+    /// <summary>The members <paramref name="bounds"/> lacks, as "x", "x or y", "x, y or width" ...; empty when it has all four.</summary>
+    private static string MissingMembers(PlacementBounds bounds)
+    {
+        var missing = new[] { ("x", bounds.X), ("y", bounds.Y), ("width", bounds.Width), ("height", bounds.Height) }
+            .Where(member => member.Item2 is null)
+            .Select(member => member.Item1)
+            .ToList();
+        return missing.Count switch
+        {
+            0 => string.Empty,
+            1 => missing[0],
+            _ => $"{string.Join(", ", missing[..^1])} or {missing[^1]}"
+        };
     }
 
     private static bool Fail(string code, string message, out string? errorCode, out string? error)

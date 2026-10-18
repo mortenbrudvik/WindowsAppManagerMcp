@@ -99,7 +99,7 @@ public class LaunchPlacementPlanForLayoutTests
     public void TryCreate_StillRefusesWhatALaunchToolsPlacementMayNotAsk()
     {
         // Bounds with maximized, and focus with minimized, stay refused for launch_application
-        LaunchPlacementPlan.TryCreate(new LaunchPlacement(Bounds: new BoundsDto(0, 0, 800, 600), State: "maximized"), out _, out var maximized, out _)
+        LaunchPlacementPlan.TryCreate(new LaunchPlacement(Bounds: new PlacementBounds(0, 0, 800, 600), State: "maximized"), out _, out var maximized, out _)
             .Should().BeFalse();
         LaunchPlacementPlan.TryCreate(new LaunchPlacement(Snap: "left_half", State: "minimized", Focus: true), out _, out var minimized, out _)
             .Should().BeFalse();

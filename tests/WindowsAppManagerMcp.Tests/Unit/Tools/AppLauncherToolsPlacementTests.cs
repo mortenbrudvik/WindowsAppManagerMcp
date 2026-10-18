@@ -354,7 +354,7 @@ public class AppLauncherToolsPlacementTests
         [
             new ApplicationLaunchRequest("code", Placement: new LaunchPlacement(Snap: "left_two_thirds")),
             new ApplicationLaunchRequest("wt", Placement: new LaunchPlacement(Snap: "right_third", Focus: true), ReuseExisting: true),
-            new ApplicationLaunchRequest("bad", Placement: new LaunchPlacement(Snap: "left_half", Bounds: new BoundsDto(0, 0, 10, 10))),
+            new ApplicationLaunchRequest("bad", Placement: new LaunchPlacement(Snap: "left_half", Bounds: new PlacementBounds(0, 0, 10, 10))),
             new ApplicationLaunchRequest("notepad")
         ]);
 

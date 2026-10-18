@@ -63,11 +63,14 @@ public enum StepTool
 /// <remarks>
 /// An unknown member is refused (InvalidArguments), so it is never ignored: a step written with "arguments" for args would
 /// otherwise run without them, and be given the run's window instead of the one it named. <see cref="Tool"/> is nullable
-/// so that a step without one is refused (StepRunner.Check) instead of binding the enum's first value, focus_window.
+/// so that a step without one is refused (StepRunner.Check) instead of binding the enum's first value, focus_window; the
+/// input schema lists it as a required string of the tools, without null (<see cref="ToolRequiredAttribute"/>), since a
+/// null is refused too.
 /// </remarks>
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 public record RunStep(
     [property: Description("The tool to call")]
+    [property: ToolRequired]
     StepTool? Tool,
     [property: Description("The tool's own arguments, as a direct call takes them. A string \"$steps.<id>.<path>\" is an earlier step's ref, handle, captureId or clickPoint x/y")]
     JsonObject? Args = null,

@@ -110,6 +110,56 @@ public class NestedArgumentContractTests
         }
     }
 
+    [Fact]
+    public async Task NoInputSchema_OffersNullForARequiredMember()
+    {
+        // A member that is nullable only so that a missing one is refused alone (a run_steps step's tool, a bounds' x) refuses
+        // null too, so its schema says integer or string, not null; a client that checks against the schema never sends it
+        var offered = new List<string>();
+        foreach (var tool in await ToolSurface.ListToolsAsync())
+        {
+            Walk(tool!["inputSchema"], $"{tool["name"]}");
+        }
+
+        offered.Should().BeEmpty();
+
+        void Walk(JsonNode? schema, string path)
+        {
+            if (schema is not JsonObject node)
+            {
+                return;
+            }
+
+            var required = (node["required"] as JsonArray ?? []).Select(n => n!.GetValue<string>()).ToHashSet(StringComparer.Ordinal);
+            foreach (var (name, property) in node["properties"] as JsonObject ?? [])
+            {
+                if (required.Contains(name) && property is JsonObject member &&
+                    (member["type"] is JsonArray types && types.Any(t => t?.GetValue<string>() == "null") ||
+                     member["enum"] is JsonArray values && values.Any(v => v is null)))
+                {
+                    offered.Add($"{path}.{name}");
+                }
+
+                Walk(property, $"{path}.{name}");
+            }
+
+            Walk(node["items"], $"{path}[]");
+        }
+    }
+
+    [Theory]
+    [InlineData("run_steps", "steps", "tool", "string")]
+    [InlineData("set_windows_bounds_batch", "placements", "x", "integer")]
+    [InlineData("set_windows_bounds_batch", "placements", "height", "integer")]
+    public async Task ARequiredMemberThatIsRefusedWhenMissing_StaysRequired_WithItsOneType(string toolName, string array, string member, string type)
+    {
+        var tool = (await ToolSurface.ListToolsAsync()).Single(t => (string)t!["name"]! == toolName)!;
+        var item = tool["inputSchema"]!["properties"]![array]!["items"]!;
+
+        item["required"]!.AsArray().Select(n => n!.GetValue<string>()).Should().Contain(member);
+        item["properties"]![member]!["type"]!.GetValue<string>().Should().Be(type);
+    }
+
     // ---- set_windows_bounds_batch ----
 
     [Theory]
@@ -135,6 +185,70 @@ public class NestedArgumentContractTests
                 It.Is<IReadOnlyList<(nint Handle, int, int, int, int, bool)>>(p => p.Count == 1 && p[0].Handle == (nint)2821181),
                 It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Once);
         }
+    }
+
+    // ---- A launch placement's bounds ----
+
+    [Theory]
+    [InlineData("""{ "y": 0, "width": 1280, "height": 1392 }""", "x")]
+    [InlineData("""{ "x": 0, "width": 1280, "height": 1392 }""", "y")]
+    [InlineData("""{ "x": 0, "y": 0, "height": 1392 }""", "width")]
+    [InlineData("""{ "x": 0, "y": 0, "width": 1280, "height": null }""", "height")]
+    [InlineData("""{ "width": 1280, "height": 1392 }""", "x or y")]
+    public async Task LaunchApplication_PlacementBoundsWithoutACoordinateOrSize_IsRefused_AndNothingIsLaunched(string bounds, string missing)
+    {
+        var (result, services) = await CallAsync("launch_application", $$"""
+            { "executable": "notepad", "placement": { "bounds": {{bounds}} } }
+            """);
+
+        using (services)
+        {
+            result.IsError.Should().BeTrue();
+            var payload = Payload(result);
+            payload.GetProperty("errorCode").GetString().Should().Be(ToolErrorReporting.InvalidArgumentsErrorCode, payload.GetRawText());
+            payload.GetProperty("error").GetString().Should().Contain($"placement.bounds has no {missing}").And.EndWith("Nothing was launched.");
+            services.Processes.Invocations.Should().NotContain(i => i.Method.Name.StartsWith("Launch", StringComparison.Ordinal));
+            services.Placement.Invocations.Should().BeEmpty();
+        }
+    }
+
+    [Fact]
+    public async Task LaunchApplicationsBatch_AnItemWhosePlacementBoundsMissAMember_FailsAlone_AndTheOthersLaunch()
+    {
+        var (result, services) = await CallAsync("launch_applications_batch", """
+            { "applications": [
+                { "executable": "notepad", "placement": { "bounds": { "x": 0, "width": 1280, "height": 1392 } } },
+                { "executable": "calc" } ] }
+            """);
+
+        using (services)
+        {
+            var payload = Payload(result);
+            var items = payload.GetProperty("results");
+            items[0].GetProperty("success").GetBoolean().Should().BeFalse(payload.GetRawText());
+            items[0].GetProperty("errorCode").GetString().Should().Be(ToolErrorReporting.InvalidArgumentsErrorCode);
+            items[0].GetProperty("error").GetString().Should().Contain("Item 0").And.Contain("placement.bounds has no y")
+                .And.EndWith("Nothing was launched for it.");
+            items[1].GetProperty("success").GetBoolean().Should().BeTrue(payload.GetRawText());
+            services.Processes.Verify(p => p.LaunchApplicationsBatchAsync(
+                It.Is<IReadOnlyList<LaunchRequest>>(apps => apps.Count == 1 && apps[0].Executable == "calc"),
+                It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<IProgress<OperationProgress>?>(), It.IsAny<CancellationToken>()), Times.Once);
+        }
+    }
+
+    [Fact]
+    public async Task LaunchApplication_PlacementBounds_AreRequiredIntegers_InTheInputSchema()
+    {
+        var tool = (await ToolSurface.ListToolsAsync()).Single(t => (string)t!["name"]! == "launch_application")!;
+        var bounds = tool["inputSchema"]!["properties"]!["placement"]!["properties"]!["bounds"]!;
+
+        bounds["required"]!.AsArray().Select(n => n!.GetValue<string>()).Should().BeEquivalentTo("x", "y", "width", "height");
+        foreach (var member in new[] { "x", "y", "width", "height" })
+        {
+            bounds["properties"]![member]!["type"]!.GetValue<string>().Should().Be("integer", member);
+        }
+
+        bounds["additionalProperties"]!.GetValue<bool>().Should().BeFalse();
     }
 
     [Fact]

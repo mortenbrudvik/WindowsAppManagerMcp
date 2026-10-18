@@ -267,7 +267,7 @@ public class LaunchPlacementServiceTests
     {
         At(100, () => _desktop[Code] = _desktop[Code] with { State = WindowState.Maximized });
 
-        var outcome = await PlaceOneAsync(Code, new LaunchPlacement(Bounds: new BoundsDto(10, 20, 800, 600)));
+        var outcome = await PlaceOneAsync(Code, new LaunchPlacement(Bounds: new PlacementBounds(10, 20, 800, 600)));
 
         outcome.Reapplied.Should().BeTrue();
         outcome.Window!.State.Should().Be(WindowState.Normal);
@@ -364,7 +364,7 @@ public class LaunchPlacementServiceTests
         _windows.Setup(w => w.SetWindowFrame(It.IsAny<nint>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>()))
             .Throws(new WindowNotRespondingException(Code, "The window did not answer within 5 s."));
 
-        var outcome = await PlaceOneAsync(Code, new LaunchPlacement(Bounds: new BoundsDto(0, 0, 100, 100)));
+        var outcome = await PlaceOneAsync(Code, new LaunchPlacement(Bounds: new PlacementBounds(0, 0, 100, 100)));
 
         outcome.ErrorCode.Should().Be(WindowErrorCode.NotResponding);
         outcome.Error.Should().Contain("did not answer");
@@ -378,7 +378,7 @@ public class LaunchPlacementServiceTests
 
         var outcomes = await CreateSut().PlaceAsync([
             (Code, Plan(new LaunchPlacement(Snap: "left_half"))),
-            (Terminal, Plan(new LaunchPlacement(Bounds: new BoundsDto(10, 20, 800, 600), Focus: true)))
+            (Terminal, Plan(new LaunchPlacement(Bounds: new PlacementBounds(10, 20, 800, 600), Focus: true)))
         ]);
 
         outcomes[0].ErrorCode.Should().Be(WindowErrorCode.MoveFailed);
@@ -546,7 +546,7 @@ public class LaunchPlacementServiceTests
     [Fact]
     public void APlan_PlacesTheVisibleFrame_UnlessItSaysOtherwise()
     {
-        Plan(new LaunchPlacement(Bounds: new BoundsDto(10, 20, 800, 600))).Frame.Should().Be(BoundsFrame.Visible);
+        Plan(new LaunchPlacement(Bounds: new PlacementBounds(10, 20, 800, 600))).Frame.Should().Be(BoundsFrame.Visible);
     }
 
     [Fact]
@@ -584,7 +584,7 @@ public class LaunchPlacementServiceTests
         var plans = new List<(nint, LaunchPlacementPlan)>
         {
             (Code, Plan(new LaunchPlacement(Snap: "left_half"))),
-            (Terminal, Plan(new LaunchPlacement(Bounds: new BoundsDto(960, 0, 960, 1040), Focus: true)))
+            (Terminal, Plan(new LaunchPlacement(Bounds: new PlacementBounds(960, 0, 960, 1040), Focus: true)))
         };
 
         var outcomes = await CreateSut().PlaceAsync(plans);
@@ -603,7 +603,7 @@ public class LaunchPlacementServiceTests
         var plans = new List<(nint, LaunchPlacementPlan)>
         {
             (Code, Plan(new LaunchPlacement(Snap: "left_half"))),
-            (Terminal, Plan(new LaunchPlacement(Bounds: new BoundsDto(960, 0, 960, 1040))))
+            (Terminal, Plan(new LaunchPlacement(Bounds: new PlacementBounds(960, 0, 960, 1040))))
         };
 
         var outcomes = await CreateSut().PlaceAsync(plans);
@@ -623,7 +623,7 @@ public class LaunchPlacementServiceTests
         var plans = new List<(nint, LaunchPlacementPlan)>
         {
             (Code, Plan(new LaunchPlacement(Snap: "left_half"))),
-            (Code, Plan(new LaunchPlacement(Bounds: new BoundsDto(10, 20, 800, 600))))
+            (Code, Plan(new LaunchPlacement(Bounds: new PlacementBounds(10, 20, 800, 600))))
         };
 
         var outcomes = await CreateSut().PlaceAsync(plans);
