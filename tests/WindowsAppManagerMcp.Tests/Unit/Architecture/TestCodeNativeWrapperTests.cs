@@ -763,7 +763,7 @@ public class TestCodeNativeWrapperTests
     }
 
     private static string Pushed(IlInstruction instruction) =>
-        instruction.Method is { } method ? $"{method.DeclaringType?.Name}.{method.Name}" : instruction.OpCode.Name;
+        instruction.Method is { } method ? $"{method.DeclaringType?.Name}.{method.Name}" : $"{instruction.OpCode.Name}";
 
     /// <summary>
     /// Every construction in <paramref name="methods"/> of the servers' own hotkey wrapper (its parameterless constructor) whose
@@ -1017,7 +1017,8 @@ internal static class NativeWrapperScanSamples
 
     private static NativeHotkeyWrapper ServersHotkeys() => new();
 
-    private static NativeHotkeyWrapper? s_hotkeys;
+    // Never set: the samples only show the IL of a use
+    private static NativeHotkeyWrapper? s_hotkeys = null;
 
     // Naming helpers whose literal is of the test's own but whose name may not be: it comes from a parameter, the servers'
     // literal passed by the caller, or from a field
@@ -1029,7 +1030,7 @@ internal static class NativeWrapperScanSamples
 
     private static string PauseNameOr(string? name) => name ?? @"Local\WamTests.ScanSample";
 
-    private static string? s_pauseName;
+    private static string? s_pauseName = null;
 
     private static string PauseNameOfAField() => s_pauseName ?? @"Local\WamTests.ScanSample";
 }
