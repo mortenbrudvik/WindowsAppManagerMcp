@@ -11,9 +11,12 @@ public class KeySpecParserTests
 
     private static readonly InputEvent ShiftDown = Down(VkShift, 0x2A), ShiftUp = Up(VkShift, 0x2A);
     private static readonly InputEvent CtrlDown = Down(VkControl, 0x1D), CtrlUp = Up(VkControl, 0x1D);
-    private static readonly InputEvent LCtrlDown = Down(VkLControl, 0x1D), LCtrlUp = Up(VkLControl, 0x1D);
+    // The AltGr pair the parser sends for a character: the left Ctrl and the right Alt, tagged as AltGr
+    private static readonly InputEvent LCtrlDown = Down(VkLControl, 0x1D) with { AltGr = true },
+        LCtrlUp = Up(VkLControl, 0x1D) with { AltGr = true };
     private static readonly InputEvent AltDown = Down(VkMenu, 0x38), AltUp = Up(VkMenu, 0x38);
-    private static readonly InputEvent AltGrDown = Down(VkRMenu, 0x38, extended: true), AltGrUp = Up(VkRMenu, 0x38, extended: true);
+    private static readonly InputEvent AltGrDown = Down(VkRMenu, 0x38, extended: true) with { AltGr = true },
+        AltGrUp = Up(VkRMenu, 0x38, extended: true) with { AltGr = true };
     private static readonly InputEvent WinDown = Down(VkLWin, 0x5B, extended: true), WinUp = Up(VkLWin, 0x5B, extended: true);
 
     private static KeyboardLayout Layout(nint layout, bool capsLock = false) =>

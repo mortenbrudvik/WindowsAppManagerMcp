@@ -391,15 +391,26 @@ public static class KeySpecParser
         private void PressKey(KeyStroke stroke, List<ushort> modifiers)
         {
             var pressed = PressModifiers(modifiers);
+            var altGr = new List<ushort>();
             if (stroke.IsAltGr)
             {
-                // The left Ctrl and the right Alt, as a keyboard sends AltGr: the chord checks read that pair as a character,
-                // not as Ctrl+Alt. The right Alt goes down under an explicit % too, so %@ stays Alt with an AltGr character
-                PressIfNotDown(NativeEnums.VK_LCONTROL, KeyModifiers.Control, pressed);
+                // The left Ctrl and the right Alt, as a keyboard sends AltGr, tagged (InputEvent.AltGr) so that the chord checks
+                // read the pair as a character, not as Ctrl+Alt; the same keys spelled out ({LCTRL down}) are not tagged. The right
+                // Alt goes down under an explicit % too, so %@ stays Alt with an AltGr character
+                if (!_held.Concat(pressed).Any(down => SendKeysParser.ModifierOf(down) == KeyModifiers.Control))
+                {
+                    altGr.Add(NativeEnums.VK_LCONTROL);
+                }
+
                 if (!_held.Concat(pressed).Contains(NativeEnums.VK_RMENU))
                 {
-                    Down(NativeEnums.VK_RMENU);
-                    pressed.Add(NativeEnums.VK_RMENU);
+                    altGr.Add(NativeEnums.VK_RMENU);
+                }
+
+                foreach (var key in altGr)
+                {
+                    Down(key, altGr: true);
+                    pressed.Add(key);
                 }
             }
 
@@ -410,7 +421,7 @@ public static class KeySpecParser
 
             Down(stroke.VirtualKey);
             Up(stroke.VirtualKey);
-            ReleaseModifiers(pressed);
+            ReleaseModifiers(pressed, altGr);
         }
 
         private void PressUnicode(char[] characters, List<ushort> modifiers)
@@ -448,29 +459,30 @@ public static class KeySpecParser
             pressed.Add(key);
         }
 
-        private void ReleaseModifiers(List<ushort> pressed)
+        /// <summary>Releases <paramref name="pressed"/>, last first; the keys in <paramref name="altGr"/> go up tagged as AltGr.</summary>
+        private void ReleaseModifiers(List<ushort> pressed, List<ushort>? altGr = null)
         {
             for (var k = pressed.Count - 1; k >= 0; k--)
             {
-                Up(pressed[k]);
+                Up(pressed[k], altGr?.Contains(pressed[k]) == true);
             }
         }
 
-        private void Down(ushort virtualKey)
+        private void Down(ushort virtualKey, bool altGr = false)
         {
-            _current.Add(KeyEvent(virtualKey, NativeEnums.KEYEVENTF_KEYDOWN));
+            _current.Add(KeyEvent(virtualKey, NativeEnums.KEYEVENTF_KEYDOWN, altGr));
             if (virtualKey == NativeEnums.VK_CAPITAL)
             {
                 _capsLock = !_capsLock;
             }
         }
 
-        private void Up(ushort virtualKey) => _current.Add(KeyEvent(virtualKey, NativeEnums.KEYEVENTF_KEYUP));
+        private void Up(ushort virtualKey, bool altGr = false) => _current.Add(KeyEvent(virtualKey, NativeEnums.KEYEVENTF_KEYUP, altGr));
 
-        private InputEvent KeyEvent(ushort virtualKey, uint flags)
+        private InputEvent KeyEvent(ushort virtualKey, uint flags, bool altGr)
         {
             var (scan, extended) = layout.ScanOf(virtualKey);
-            return InputEvent.Key(virtualKey, flags | (extended ? NativeEnums.KEYEVENTF_EXTENDEDKEY : 0), scan);
+            return InputEvent.Key(virtualKey, flags | (extended ? NativeEnums.KEYEVENTF_EXTENDEDKEY : 0), scan) with { AltGr = altGr };
         }
 
         private static ushort ModifierKey(char c) => c switch

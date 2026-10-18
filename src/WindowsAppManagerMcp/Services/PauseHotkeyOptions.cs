@@ -117,10 +117,12 @@ public sealed record PauseHotkeyChord
 
     /// <summary>
     /// True when <paramref name="events"/> press the chord: one of <see cref="VirtualKeys"/> goes down while at
-    /// least the chord's modifiers are held.
+    /// least the chord's modifiers are held. Every left or right Ctrl and Alt counts, the AltGr pair a parser sent for a
+    /// character included (<see cref="InputEvent.AltGr"/>): RegisterHotKey reads the modifier keys, not the character, so
+    /// typing '@' as AltGr+Q fires a Ctrl+Alt+Q hotkey.
     /// </summary>
     public bool IsPressedBy(IReadOnlyList<InputEvent> events) =>
-        SendKeysParser.Chords(events).Any(chord =>
+        SendKeysParser.Chords(events, altGrIsCtrlAlt: true).Any(chord =>
             chord.Kind == InputEventKind.VirtualKey &&
             VirtualKeys.Contains(chord.Code) &&
             (chord.Modifiers & Modifiers) == Modifiers);

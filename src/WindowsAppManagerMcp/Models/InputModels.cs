@@ -334,6 +334,15 @@ public readonly record struct InputEvent(InputEventKind Kind, ushort Code, uint 
     /// </summary>
     public ushort Scan { get; init; }
 
+    /// <summary>
+    /// VirtualKey events: true for a key-down or key-up of the left Ctrl or the right Alt that a key parser
+    /// (<see cref="Services.KeySpecParser"/>, <see cref="Services.PressKeysParser"/>) sent as AltGr, to type a character
+    /// the layout types with AltGr ('@' on a German keyboard). The chord checks read that pair as a character, not as
+    /// Ctrl+Alt (<see cref="Services.SendKeysParser.Chords"/>); the same keys pressed as keys (<c>{LCTRL down}{RALT down}</c>,
+    /// <c>lctrl+ralt</c>) are not tagged and count as Ctrl and Alt, as Windows reads them. Not passed to SendInput.
+    /// </summary>
+    public bool AltGr { get; init; }
+
     public static InputEvent Unicode(char character, uint flags) => new(InputEventKind.Unicode, character, flags);
 }
 

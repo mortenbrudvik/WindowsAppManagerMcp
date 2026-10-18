@@ -56,9 +56,10 @@ public class InputSimulationServiceKeyboardTests
         result.Success.Should().BeTrue();
         _layouts.LayoutQueries.Should().Equal(Target);
         _input.Events.Should().Equal(
-            InputEvent.Key(VkLControl, 0, 0x1D), InputEvent.Key(VkRMenu, Extended, 0x38),
+            InputEvent.Key(VkLControl, 0, 0x1D) with { AltGr = true }, InputEvent.Key(VkRMenu, Extended, 0x38) with { AltGr = true },
             InputEvent.Key('2', 0, 0x03), InputEvent.Key('2', KeyUp, 0x03),
-            InputEvent.Key(VkRMenu, Extended | KeyUp, 0x38), InputEvent.Key(VkLControl, KeyUp, 0x1D));
+            InputEvent.Key(VkRMenu, Extended | KeyUp, 0x38) with { AltGr = true },
+            InputEvent.Key(VkLControl, KeyUp, 0x1D) with { AltGr = true });
         VerifyNothingIsDown();
     }
 

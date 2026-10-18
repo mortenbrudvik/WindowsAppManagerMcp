@@ -32,6 +32,8 @@ public class PressKeysParserTests
 
     private static InputEvent[] One(InputEvent e) => [e];
 
+    private static InputEvent AltGr(InputEvent e) => e with { AltGr = true };
+
     [Fact]
     public void AChord_PressesItsModifiersInOrder_ThenTheKey_ThenReleasesLastPressedFirst()
     {
@@ -106,8 +108,9 @@ public class PressKeysParserTests
     {
         var spec = PressKeysParser.Parse(KeyList.Of("@"), 1, Layout(FakeKeyboardLayoutWrapper.Norwegian));
 
-        spec.Events.Should().Equal(Seq(One(Down(0xA2, 0x1D)), One(Down(VkRMenu, 0x38, extended: true)), Tap('2', 0x03),
-            One(Up(VkRMenu, 0x38, extended: true)), One(Up(0xA2, 0x1D))));
+        // Tagged as AltGr, so the chord checks read the pair as the character
+        spec.Events.Should().Equal(Seq(One(AltGr(Down(0xA2, 0x1D))), One(AltGr(Down(VkRMenu, 0x38, extended: true))), Tap('2', 0x03),
+            One(AltGr(Up(VkRMenu, 0x38, extended: true))), One(AltGr(Up(0xA2, 0x1D)))));
     }
 
     [Fact]

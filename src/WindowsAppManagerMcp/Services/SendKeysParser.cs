@@ -51,32 +51,37 @@ public static class SendKeysParser
     /// the modifier keys themselves are not chords. Reads the events as they would arrive, so a modifier
     /// sent as its own key (<c>{ALT}</c>) is released again before the next key and holds nothing.
     /// </summary>
-    public static IReadOnlyList<KeyChord> Chords(IReadOnlyList<InputEvent> events) =>
-        IndexedChords(events).Select(c => c.Chord).ToList();
+    /// <param name="events">The events.</param>
+    /// <param name="altGrIsCtrlAlt">
+    /// True to read the AltGr pair a parser sent for a character (<see cref="InputEvent.AltGr"/>) as Ctrl and Alt, as a
+    /// hotkey registered with RegisterHotKey reads it; false (the default) to read it as holding nothing (see <see cref="Held"/>).
+    /// </param>
+    public static IReadOnlyList<KeyChord> Chords(IReadOnlyList<InputEvent> events, bool altGrIsCtrlAlt = false) =>
+        IndexedChords(events, altGrIsCtrlAlt).Select(c => c.Chord).ToList();
 
     /// <summary>
     /// The chords of <see cref="Chords"/>, each with the index in <paramref name="events"/> of its key-down, so their
     /// order against other events (a mouse button) can be told.
     /// </summary>
-    public static IReadOnlyList<(KeyChord Chord, int Index)> IndexedChords(IReadOnlyList<InputEvent> events)
+    public static IReadOnlyList<(KeyChord Chord, int Index)> IndexedChords(IReadOnlyList<InputEvent> events, bool altGrIsCtrlAlt = false)
     {
         ArgumentNullException.ThrowIfNull(events);
 
         var chords = new List<(KeyChord, int)>();
-        var down = new List<ushort>();
+        var down = new List<DownModifier>();
         for (var i = 0; i < events.Count; i++)
         {
             var e = events[i];
             var isUp = (e.Flags & NativeEnums.KEYEVENTF_KEYUP) != 0;
             if (e.Kind == InputEventKind.VirtualKey && ModifierOf(e.Code) != KeyModifiers.None)
             {
-                Track(down, e.Code, isUp);
+                Track(down, e, isUp);
                 continue;
             }
 
             if (e.Kind != InputEventKind.Mouse && !isUp)
             {
-                chords.Add((Press(Held(down), e), i));
+                chords.Add((Press(Held(down, altGrIsCtrlAlt), e), i));
             }
         }
 
@@ -93,14 +98,14 @@ public static class SendKeysParser
         ArgumentNullException.ThrowIfNull(events);
 
         var presses = new List<KeyChord>();
-        var down = new List<ushort>();
+        var down = new List<DownModifier>();
         var tapCandidate = (ushort)0;
         foreach (var e in events)
         {
             var isUp = (e.Flags & NativeEnums.KEYEVENTF_KEYUP) != 0;
             if (e.Kind == InputEventKind.VirtualKey && ModifierOf(e.Code) != KeyModifiers.None)
             {
-                Track(down, e.Code, isUp);
+                Track(down, e, isUp);
                 if (!isUp)
                 {
                     tapCandidate = e.Code;
@@ -109,7 +114,7 @@ public static class SendKeysParser
 
                 if (tapCandidate == e.Code)
                 {
-                    presses.Add(new KeyChord(Held(down), InputEventKind.VirtualKey, e.Code));
+                    presses.Add(new KeyChord(Held(down, altGrIsCtrlAlt: false), InputEventKind.VirtualKey, e.Code));
                 }
 
                 tapCandidate = 0;
@@ -118,7 +123,7 @@ public static class SendKeysParser
 
             if (e.Kind != InputEventKind.Mouse && !isUp)
             {
-                presses.Add(Press(Held(down), e));
+                presses.Add(Press(Held(down, altGrIsCtrlAlt: false), e));
                 tapCandidate = 0;
             }
         }
@@ -163,33 +168,43 @@ public static class SendKeysParser
         return modifiers + key;
     }
 
-    private static void Track(List<ushort> down, ushort virtualKey, bool isUp)
+    /// <summary>A modifier key that is down, and whether a parser pressed it as AltGr for a character (<see cref="InputEvent.AltGr"/>).</summary>
+    private readonly record struct DownModifier(ushort VirtualKey, bool AltGr);
+
+    private static void Track(List<DownModifier> down, InputEvent e, bool isUp)
     {
+        var virtualKey = e.Code;
         if (isUp)
         {
-            down.RemoveAll(key => ModifierOf(key) == ModifierOf(virtualKey) && (key == virtualKey || !IsSided(virtualKey) || !IsSided(key)));
+            down.RemoveAll(key => ModifierOf(key.VirtualKey) == ModifierOf(virtualKey) &&
+                                  (key.VirtualKey == virtualKey || !IsSided(virtualKey) || !IsSided(key.VirtualKey)));
         }
-        else if (!down.Contains(virtualKey))
+        else if (!down.Exists(key => key.VirtualKey == virtualKey))
         {
-            down.Add(virtualKey);
+            down.Add(new DownModifier(virtualKey, e.AltGr));
         }
     }
 
     /// <summary>
-    /// The modifiers <paramref name="down"/> holds. The left Ctrl together with the right Alt is AltGr, the way send_keys
-    /// types a character such as '@' on a German or Norwegian keyboard: that pair holds nothing, so typing an address is
-    /// not a Ctrl+Alt chord (Ctrl+Alt+Q would otherwise count as Ctrl+Q). An explicit ^ or % is the generic Ctrl or the left
-    /// Alt, which still count.
+    /// The modifiers <paramref name="down"/> holds. The left Ctrl together with the right Alt that a parser pressed as AltGr
+    /// (both tagged <see cref="InputEvent.AltGr"/>), the way send_keys and press_keys type a character such as '@' on a German
+    /// or Norwegian keyboard, holds nothing unless <paramref name="altGrIsCtrlAlt"/>: typing an address is not a Ctrl+Alt
+    /// chord (Ctrl+Alt+Q would otherwise count as Ctrl+Q). The same keys pressed as keys (<c>{LCTRL down}{RALT down}</c>,
+    /// <c>lctrl+ralt</c>), or only one of them tagged (an explicit <c>{LCTRL down}</c> before an AltGr character), are Ctrl and
+    /// Alt, as Windows reads them: Ctrl+Alt+Tab opens the task switcher, and the pause hotkey fires. An explicit ^ or % is the
+    /// generic Ctrl or the left Alt, which count too.
     /// </summary>
-    private static KeyModifiers Held(List<ushort> down)
+    private static KeyModifiers Held(List<DownModifier> down, bool altGrIsCtrlAlt)
     {
-        var altGr = down.Contains(NativeEnums.VK_LCONTROL) && down.Contains(NativeEnums.VK_RMENU);
+        var altGr = !altGrIsCtrlAlt &&
+                    down.Contains(new DownModifier(NativeEnums.VK_LCONTROL, AltGr: true)) &&
+                    down.Contains(new DownModifier(NativeEnums.VK_RMENU, AltGr: true));
         var held = KeyModifiers.None;
         foreach (var key in down)
         {
-            if (!(altGr && key is NativeEnums.VK_LCONTROL or NativeEnums.VK_RMENU))
+            if (!(altGr && key.AltGr && key.VirtualKey is NativeEnums.VK_LCONTROL or NativeEnums.VK_RMENU))
             {
-                held |= ModifierOf(key);
+                held |= ModifierOf(key.VirtualKey);
             }
         }
 
