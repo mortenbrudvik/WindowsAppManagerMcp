@@ -184,20 +184,21 @@ public sealed record CaptureRequest(
     }
 
     /// <summary>
-    /// Refuses a <paramref name="width"/> x <paramref name="height"/> capture whose output image (<see cref="OutputSize"/>)
-    /// would be larger than a capture may be: <see cref="ScreenCaptureWrapper.MaxCapturePixels"/> (64 megapixels) and
-    /// <see cref="ScreenCaptureWrapper.MaxCaptureSize"/> pixels on an edge. Without <see cref="Zoom"/> an image is never larger
-    /// than its capture, which is held to the same limits; zoom enlarges each edge up to 4 times, 16 times the pixels, and
-    /// maxDimension 0 lifts the only cap after it: capture_region over a 4K monitor would be a 15360 x 8640 bitmap (about
-    /// 530 MB) before the resize, the encoding and base64. Called with the size on the screen before anything is captured,
-    /// and again before the image is made.
+    /// Refuses a <paramref name="width"/> x <paramref name="height"/> capture whose output image (<see cref="OutputSize"/>) is
+    /// enlarged beyond what a capture may be: <see cref="ScreenCaptureWrapper.MaxCapturePixels"/> (64 megapixels) and
+    /// <see cref="ScreenCaptureWrapper.MaxCaptureSize"/> pixels on an edge. Only <see cref="Zoom"/> makes an image larger than
+    /// its capture, which is held to those limits itself, so an image that is not enlarged passes as it is; zoom enlarges
+    /// each edge up to 4 times, 16 times the pixels, and maxDimension 0 lifts the only cap after it: capture_region over a
+    /// 4K monitor would be a 15360 x 8640 bitmap (about 530 MB) before the resize, the encoding and base64. Called with the
+    /// size on the screen before anything is captured, and again before the image is made.
     /// </summary>
     /// <exception cref="CaptureException">InvalidImageSize: the image would be over the budget; nothing was captured.</exception>
     public void ThrowIfOutputTooLarge(int width, int height)
     {
         var (outputWidth, outputHeight) = OutputSize(width, height);
-        if ((long)outputWidth * outputHeight <= ScreenCaptureWrapper.MaxCapturePixels &&
-            outputWidth <= ScreenCaptureWrapper.MaxCaptureSize && outputHeight <= ScreenCaptureWrapper.MaxCaptureSize)
+        if ((outputWidth <= width && outputHeight <= height) ||
+            ((long)outputWidth * outputHeight <= ScreenCaptureWrapper.MaxCapturePixels &&
+             outputWidth <= ScreenCaptureWrapper.MaxCaptureSize && outputHeight <= ScreenCaptureWrapper.MaxCaptureSize))
         {
             return;
         }

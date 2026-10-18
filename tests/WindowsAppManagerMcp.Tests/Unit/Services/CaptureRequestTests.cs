@@ -87,6 +87,7 @@ public class CaptureRequestTests
     [InlineData(2048, 2048, 4.0)] // 8192 x 8192: exactly the 64-megapixel budget
     [InlineData(4096, 10, 4.0)] // 16384 pixels on an edge
     [InlineData(8192, 8192, 1.0)] // without zoom an image is never larger than its capture
+    [InlineData(70000, 1, 1.0)] // nor checked again: its capture was (only a fake makes this one)
     public void ThrowIfOutputTooLarge_AnImageWithinTheBudget_Passes(int width, int height, double zoom)
     {
         var request = CaptureRequest.Resolve(new CaptureOptions { Zoom = zoom, MaxDimension = 0 });
