@@ -154,7 +154,9 @@ public record CdpOptions(
 /// <summary>
 /// What launch_browser_with_debug starts (roadmap M5.1).
 /// </summary>
-/// <param name="Browser">chrome, edge or brave.</param>
+/// <param name="Browser">The browser: the <see cref="DebugBrowser"/> enum is the one list of the browsers a debug launch
+/// starts, which the tool's schema, the browser's .exe and install folder (<see cref="Services.DebugBrowserLocator"/>) and
+/// close_debug_browser's image names all derive from.</param>
 /// <param name="Url">A URL to open, or null.</param>
 /// <param name="Port">The DevTools port: <see cref="EphemeralPort"/> lets the browser pick a free one and report it in
 /// the profile's DevToolsActivePort file; otherwise <see cref="MinExplicitPort"/> to 65535.</param>
@@ -162,7 +164,7 @@ public record CdpOptions(
 /// <param name="ExecutablePath">The browser's .exe, or null to look for it (App Paths, Program Files, %LOCALAPPDATA%).</param>
 /// <param name="WaitTimeoutMs">How long to wait for the browser's window.</param>
 public sealed record DebugBrowserLaunchRequest(
-    string Browser = "chrome",
+    DebugBrowser Browser = DebugBrowser.Chrome,
     string? Url = null,
     int Port = DebugBrowserLaunchRequest.EphemeralPort,
     string? UserDataDir = null,

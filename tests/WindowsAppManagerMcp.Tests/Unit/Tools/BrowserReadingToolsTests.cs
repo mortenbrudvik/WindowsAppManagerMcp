@@ -673,7 +673,7 @@ public class BrowserReadingToolsTests
         await sut.LaunchBrowserWithDebug();
 
         // Assert - port 0 by default: the browser picks a free port (roadmap M5.1)
-        requests.Should().Equal(new DebugBrowserLaunchRequest("chrome", Url: null, Port: 0, UserDataDir: null, ExecutablePath: null));
+        requests.Should().Equal(new DebugBrowserLaunchRequest(DebugBrowser.Chrome, Url: null, Port: 0, UserDataDir: null, ExecutablePath: null));
     }
 
     [Fact]
@@ -689,14 +689,14 @@ public class BrowserReadingToolsTests
 
         // Assert
         requests.Should().Equal(new DebugBrowserLaunchRequest(
-            "edge", "https://example.com", 9224, @"C:\CustomProfile", @"C:\Edge Beta\Application\msedge.exe"));
+            DebugBrowser.Edge, "https://example.com", 9224, @"C:\CustomProfile", @"C:\Edge Beta\Application\msedge.exe"));
     }
 
     [Theory]
-    [InlineData(DebugBrowser.Chrome, "chrome")]
-    [InlineData(DebugBrowser.Edge, "edge")]
-    [InlineData(DebugBrowser.Brave, "brave")]
-    public async Task LaunchBrowserWithDebug_PassesTheBrowsersNameToTheService(DebugBrowser requested, string browser)
+    [InlineData(DebugBrowser.Chrome)]
+    [InlineData(DebugBrowser.Edge)]
+    [InlineData(DebugBrowser.Brave)]
+    public async Task LaunchBrowserWithDebug_PassesTheBrowserToTheService(DebugBrowser requested)
     {
         // Arrange
         var requests = LaunchReturns(Launched);
@@ -705,9 +705,9 @@ public class BrowserReadingToolsTests
         // Act
         var result = await sut.LaunchBrowserWithDebug(requested);
 
-        // Assert
+        // Assert - the enum itself, so a browser the tool takes is one the launch knows (no name to mistype)
         result.Success.Should().BeTrue();
-        requests.Should().ContainSingle().Which.Browser.Should().Be(browser);
+        requests.Should().ContainSingle().Which.Browser.Should().Be(requested);
     }
 
     [Fact]
@@ -918,24 +918,24 @@ public class BrowserReadingToolsTests
     }
 
     [Theory]
-    [InlineData("chrome", @"C:\Program Files\Google\Chrome Beta\Application\chrome.exe")]
-    [InlineData("edge", @"D:\Portable\Edge\MSEDGE.EXE")]
-    [InlineData("brave", @"\\server\share\Brave\brave.exe")]
-    [InlineData("chrome", null)]
-    [InlineData("chrome", "  ")]
-    public void DebugExecutableRefusal_TakesAFullPathToTheBrowsersOwnExe(string browser, string? executablePath)
+    [InlineData(DebugBrowser.Chrome, @"C:\Program Files\Google\Chrome Beta\Application\chrome.exe")]
+    [InlineData(DebugBrowser.Edge, @"D:\Portable\Edge\MSEDGE.EXE")]
+    [InlineData(DebugBrowser.Brave, @"\\server\share\Brave\brave.exe")]
+    [InlineData(DebugBrowser.Chrome, null)]
+    [InlineData(DebugBrowser.Chrome, "  ")]
+    public void DebugExecutableRefusal_TakesAFullPathToTheBrowsersOwnExe(DebugBrowser browser, string? executablePath)
     {
         BrowserReadingTools.DebugExecutableRefusal(browser, executablePath).Should().BeNull();
     }
 
     [Theory]
-    [InlineData("chrome", "chrome.exe", "is not a full path")]
-    [InlineData("chrome", @"Google\Chrome\Application\chrome.exe", "is not a full path")]
-    [InlineData("chrome", @"C:chrome.exe", "is not a full path")]
-    [InlineData("edge", @"C:\Program Files\Google\Chrome\Application\chrome.exe", "must name msedge.exe for browser 'edge'")]
-    [InlineData("chrome", @"C:\Windows\System32\cmd.exe", "must name chrome.exe")]
-    [InlineData("brave", @"C:\Tools\brave.exe.lnk", "must name brave.exe")]
-    public void DebugExecutableRefusal_RefusesARelativePathAndAnotherProgram(string browser, string executablePath, string message)
+    [InlineData(DebugBrowser.Chrome, "chrome.exe", "is not a full path")]
+    [InlineData(DebugBrowser.Chrome, @"Google\Chrome\Application\chrome.exe", "is not a full path")]
+    [InlineData(DebugBrowser.Chrome, @"C:chrome.exe", "is not a full path")]
+    [InlineData(DebugBrowser.Edge, @"C:\Program Files\Google\Chrome\Application\chrome.exe", "must name msedge.exe for browser 'edge'")]
+    [InlineData(DebugBrowser.Chrome, @"C:\Windows\System32\cmd.exe", "must name chrome.exe")]
+    [InlineData(DebugBrowser.Brave, @"C:\Tools\brave.exe.lnk", "must name brave.exe")]
+    public void DebugExecutableRefusal_RefusesARelativePathAndAnotherProgram(DebugBrowser browser, string executablePath, string message)
     {
         BrowserReadingTools.DebugExecutableRefusal(browser, executablePath).Should().Contain(message).And.Contain("Nothing was launched");
     }

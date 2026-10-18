@@ -240,14 +240,13 @@ public partial class BrowserReadingTools
         // One full path for the browser, the port file and the result: the path the check above looked at
         userDataDir = string.IsNullOrWhiteSpace(userDataDir) ? null : Path.GetFullPath(userDataDir.Trim());
 
-        var browserName = ToolEnum<DebugBrowser>.Name(browser);
-        if (DebugExecutableRefusal(browserName, executablePath) is { } badExecutable)
+        if (DebugExecutableRefusal(browser, executablePath) is { } badExecutable)
         {
             throw new ToolErrorException(ToolErrorReporting.InvalidArgumentsErrorCode, badExecutable);
         }
 
         var plan = CheckDebugLaunch(profile, userDataDir, reuseIfRunning, placement);
-        var request = new DebugBrowserLaunchRequest(browserName, url, port, userDataDir, executablePath)
+        var request = new DebugBrowserLaunchRequest(browser, url, port, userDataDir, executablePath)
         {
             ProfileName = profile,
             ReuseIfRunning = reuseIfRunning
@@ -281,7 +280,7 @@ public partial class BrowserReadingTools
     /// path whose file name is the browser's own .exe (chrome.exe for chrome, also for Beta, Dev and Canary), so the tool
     /// starts the browser it names, with the debug switches, and not another program.
     /// </summary>
-    public static string? DebugExecutableRefusal(string browser, string? executablePath)
+    public static string? DebugExecutableRefusal(DebugBrowser browser, string? executablePath)
     {
         if (string.IsNullOrWhiteSpace(executablePath))
         {
@@ -289,6 +288,12 @@ public partial class BrowserReadingTools
         }
 
         var expected = DebugBrowserLocator.ExecutableName(browser);
+        if (expected == null)
+        {
+            // A value outside the enum: the launch refuses it as UnsupportedBrowser
+            return null;
+        }
+
         var path = executablePath.Trim();
         if (path.Any(char.IsControl) || !Path.IsPathFullyQualified(path))
         {
@@ -298,7 +303,7 @@ public partial class BrowserReadingTools
         var fileName = Path.GetFileName(path);
         return string.Equals(fileName, expected, StringComparison.OrdinalIgnoreCase)
             ? null
-            : $"executablePath must name {expected} for browser '{browser}', but it names '{fileName}'. Nothing was launched.";
+            : $"executablePath must name {expected} for browser '{ToolEnum<DebugBrowser>.Name(browser)}', but it names '{fileName}'. Nothing was launched.";
     }
 
     /// <summary>

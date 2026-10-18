@@ -27,8 +27,8 @@ public sealed class DebugBrowserLifecycle : IDebugBrowserLifecycle
     private const string ProfileSwitch = "user-data-dir";
     private const string TypeSwitch = "type";
 
-    /// <summary>The image names of the browsers launch_browser_with_debug starts.</summary>
-    private static readonly HashSet<string> BrowserImages = new(StringComparer.OrdinalIgnoreCase) { "chrome.exe", "msedge.exe", "brave.exe" };
+    /// <summary>The image names of the browsers launch_browser_with_debug starts (one per <see cref="DebugBrowser"/>).</summary>
+    private static IReadOnlySet<string> BrowserImages => DebugBrowserLocator.ExecutableNames;
 
     /// <summary>How long a reuseIfRunning check waits for the running browser's /json/version.</summary>
     private static readonly TimeSpan ReuseVersionTimeout = TimeSpan.FromSeconds(2);

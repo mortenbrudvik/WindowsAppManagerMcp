@@ -134,20 +134,41 @@ public sealed class DebugBrowserLaunchTests : IDisposable
     };
 
     private DebugBrowserLaunchRequest Request(int port = 0, string? url = null, string? executablePath = null) =>
-        new("chrome", url, port, _profile, executablePath);
+        new(DebugBrowser.Chrome, url, port, _profile, executablePath);
 
     private void VerifyNothingStarted() => _processes.Verify(p => p.StartProcess(It.IsAny<ProcessStartInfo>()), Times.Never);
 
     [Fact]
     public async Task UnsupportedBrowser_ReturnsErrorWithoutTouchingProcesses()
     {
-        // Act
-        var result = await CreateSut().LaunchBrowserWithDebugAsync(new DebugBrowserLaunchRequest("firefox"));
+        // Act - a value outside the enum (the tool's schema refuses any other name before this)
+        var result = await CreateSut().LaunchBrowserWithDebugAsync(new DebugBrowserLaunchRequest((DebugBrowser)99));
 
         // Assert
         result.Success.Should().BeFalse();
         result.ErrorCode.Should().Be(nameof(BrowserErrorCode.UnsupportedBrowser));
+        result.Error.Should().Contain("chrome, edge, brave");
         VerifyNothingStarted();
+    }
+
+    [Fact]
+    public async Task EveryBrowserTheToolTakes_IsLaunched_NotUnsupported()
+    {
+        foreach (var browser in Enum.GetValues<DebugBrowser>())
+        {
+            // Arrange - the browser's own .exe where App Paths names it
+            var exe = $@"C:\Browsers\{browser}\{DebugBrowserLocator.ExecutableName(browser)}";
+            var locator = new DebugBrowserLocator(path => path == exe, _ => [exe], FakeFolder);
+            BrowserReportsPort("50123\n/devtools/browser/B1");
+
+            // Act
+            var result = await CreateSut(locator).LaunchBrowserWithDebugAsync(Request() with { Browser = browser });
+
+            // Assert
+            result.ErrorCode.Should().NotBe(nameof(BrowserErrorCode.UnsupportedBrowser), browser.ToString());
+            result.Success.Should().BeTrue($"{browser}: {result.Error}");
+            _started.Last().FileName.Should().Be(exe);
+        }
     }
 
     [Fact]
@@ -325,7 +346,7 @@ public sealed class DebugBrowserLaunchTests : IDisposable
         _browser.SetupGet(p => p.HasExited).Returns(true);
 
         // Act
-        var result = await CreateSut().LaunchBrowserWithDebugAsync(new DebugBrowserLaunchRequest("chrome"));
+        var result = await CreateSut().LaunchBrowserWithDebugAsync(new DebugBrowserLaunchRequest(DebugBrowser.Chrome));
 
         // Assert
         result.ErrorCode.Should().Be(nameof(BrowserErrorCode.DebugLaunchFailed));
@@ -417,7 +438,7 @@ public sealed class DebugBrowserLaunchTests : IDisposable
         var sut = CreateSut();
 
         // Act
-        var result = await sut.LaunchBrowserWithDebugAsync(new DebugBrowserLaunchRequest("chrome", UserDataDir: userDataDir));
+        var result = await sut.LaunchBrowserWithDebugAsync(new DebugBrowserLaunchRequest(DebugBrowser.Chrome, UserDataDir: userDataDir));
 
         // Assert
         result.ErrorCode.Should().Be(ToolErrorReporting.InvalidArgumentsErrorCode);
@@ -780,7 +801,7 @@ public sealed class DebugBrowserLaunchTests : IDisposable
         BrowserReportsPortInItsProfile("50123\n");
 
         // Act
-        var result = await CreateSut().LaunchBrowserWithDebugAsync(new DebugBrowserLaunchRequest("chrome"));
+        var result = await CreateSut().LaunchBrowserWithDebugAsync(new DebugBrowserLaunchRequest(DebugBrowser.Chrome));
 
         // Assert - its path is what lets close_debug_browser prove it is the server's, even after a restart
         result.Success.Should().BeTrue(result.Error);
@@ -798,7 +819,7 @@ public sealed class DebugBrowserLaunchTests : IDisposable
         _browser.SetupGet(p => p.HasExited).Returns(true);
 
         // Act
-        var result = await CreateSut().LaunchBrowserWithDebugAsync(new DebugBrowserLaunchRequest("chrome"));
+        var result = await CreateSut().LaunchBrowserWithDebugAsync(new DebugBrowserLaunchRequest(DebugBrowser.Chrome));
 
         // Assert
         result.ErrorCode.Should().Be(nameof(BrowserErrorCode.DebugLaunchFailed));
@@ -815,7 +836,7 @@ public sealed class DebugBrowserLaunchTests : IDisposable
         _browser.Setup(p => p.WaitForExitAsync(It.IsAny<int>(), It.IsAny<CancellationToken>())).ReturnsAsync(true);
 
         // Act
-        var act = () => CreateSut().LaunchBrowserWithDebugAsync(new DebugBrowserLaunchRequest("chrome"), cancel.Token);
+        var act = () => CreateSut().LaunchBrowserWithDebugAsync(new DebugBrowserLaunchRequest(DebugBrowser.Chrome), cancel.Token);
 
         // Assert
         await act.Should().ThrowAsync<OperationCanceledException>();
@@ -874,7 +895,7 @@ public sealed class DebugBrowserLaunchTests : IDisposable
             FileShare.Read, 1, FileOptions.DeleteOnClose);
 
         // Act
-        var result = await CreateSut().LaunchBrowserWithDebugAsync(new DebugBrowserLaunchRequest("chrome", UserDataDir: named));
+        var result = await CreateSut().LaunchBrowserWithDebugAsync(new DebugBrowserLaunchRequest(DebugBrowser.Chrome, UserDataDir: named));
 
         // Assert
         result.ErrorCode.Should().Be(nameof(BrowserErrorCode.DebugLaunchFailed));
@@ -898,7 +919,7 @@ public sealed class DebugBrowserLaunchTests : IDisposable
         _browser.Setup(p => p.Kill(true)).Callback(() => killed.TrySetResult());
 
         // Act
-        var act = () => CreateSut().LaunchBrowserWithDebugAsync(new DebugBrowserLaunchRequest("chrome"), cancel.Token);
+        var act = () => CreateSut().LaunchBrowserWithDebugAsync(new DebugBrowserLaunchRequest(DebugBrowser.Chrome), cancel.Token);
 
         // Assert - nothing is deleted while the start may still use the profile
         await act.Should().ThrowAsync<OperationCanceledException>();
@@ -924,7 +945,7 @@ public sealed class DebugBrowserLaunchTests : IDisposable
         cancel.Cancel();
 
         // Act
-        var act = () => CreateSut().LaunchBrowserWithDebugAsync(new DebugBrowserLaunchRequest("chrome"), cancel.Token);
+        var act = () => CreateSut().LaunchBrowserWithDebugAsync(new DebugBrowserLaunchRequest(DebugBrowser.Chrome), cancel.Token);
 
         // Assert
         await act.Should().ThrowAsync<OperationCanceledException>();

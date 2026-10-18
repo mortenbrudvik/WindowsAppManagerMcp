@@ -156,7 +156,7 @@ public sealed class DebugBrowserLifecycleTests : IDisposable
             .ReturnsAsync(Started(DebugPid, Path.Combine(_profiles.NamedRoot, "work")));
 
         // Act
-        var result = await CreateSut().LaunchAsync(new DebugBrowserLaunchRequest("chrome") { ProfileName = "work" });
+        var result = await CreateSut().LaunchAsync(new DebugBrowserLaunchRequest(DebugBrowser.Chrome) { ProfileName = "work" });
 
         // Assert
         result.Success.Should().BeTrue();
@@ -171,7 +171,7 @@ public sealed class DebugBrowserLifecycleTests : IDisposable
     public async Task ABadProfileName_IsRefused_AndNothingIsLaunched(string name)
     {
         // Act
-        var result = await CreateSut().LaunchAsync(new DebugBrowserLaunchRequest("chrome") { ProfileName = name });
+        var result = await CreateSut().LaunchAsync(new DebugBrowserLaunchRequest(DebugBrowser.Chrome) { ProfileName = name });
 
         // Assert
         result.Success.Should().BeFalse();
@@ -182,7 +182,7 @@ public sealed class DebugBrowserLifecycleTests : IDisposable
     [Fact]
     public async Task AProfileAndAUserDataDir_AreRefused_AndNothingIsLaunched()
     {
-        var result = await CreateSut().LaunchAsync(new DebugBrowserLaunchRequest("chrome", UserDataDir: @"C:\Profiles\x") { ProfileName = "work" });
+        var result = await CreateSut().LaunchAsync(new DebugBrowserLaunchRequest(DebugBrowser.Chrome, UserDataDir: @"C:\Profiles\x") { ProfileName = "work" });
 
         result.ErrorCode.Should().Be(ToolErrorReporting.InvalidArgumentsErrorCode);
         _processes.VerifyNoOtherCalls();
@@ -191,7 +191,7 @@ public sealed class DebugBrowserLifecycleTests : IDisposable
     [Fact]
     public async Task ReuseIfRunning_WithANewTemporaryProfile_IsRefused()
     {
-        var result = await CreateSut().LaunchAsync(new DebugBrowserLaunchRequest("chrome") { ReuseIfRunning = true });
+        var result = await CreateSut().LaunchAsync(new DebugBrowserLaunchRequest(DebugBrowser.Chrome) { ReuseIfRunning = true });
 
         result.ErrorCode.Should().Be(ToolErrorReporting.InvalidArgumentsErrorCode);
         result.Error.Should().Contain("reuseIfRunning needs profile or userDataDir");
@@ -212,7 +212,7 @@ public sealed class DebugBrowserLifecycleTests : IDisposable
 
         // Act
         var result = await CreateSut().LaunchAsync(
-            new DebugBrowserLaunchRequest("chrome", Url: "https://example.com/") { ProfileName = "work", ReuseIfRunning = true });
+            new DebugBrowserLaunchRequest(DebugBrowser.Chrome, Url: "https://example.com/") { ProfileName = "work", ReuseIfRunning = true });
 
         // Assert
         result.Success.Should().BeTrue();
@@ -238,7 +238,7 @@ public sealed class DebugBrowserLifecycleTests : IDisposable
         Running(UsersPid, CommandLine(profile, debugPort: false));
 
         // Act
-        var result = await CreateSut().LaunchAsync(new DebugBrowserLaunchRequest("chrome", UserDataDir: profile) { ReuseIfRunning = true });
+        var result = await CreateSut().LaunchAsync(new DebugBrowserLaunchRequest(DebugBrowser.Chrome, UserDataDir: profile) { ReuseIfRunning = true });
 
         // Assert
         result.Success.Should().BeFalse();
@@ -258,7 +258,7 @@ public sealed class DebugBrowserLifecycleTests : IDisposable
         _ports.Setup(p => p.Find(DebugPid)).Returns(new DebugPortLookup(DebugPortLookupStatus.HeldByOtherProcess, null, "process 99 listens on it."));
 
         // Act
-        var result = await CreateSut().LaunchAsync(new DebugBrowserLaunchRequest("chrome") { ProfileName = "work", ReuseIfRunning = true });
+        var result = await CreateSut().LaunchAsync(new DebugBrowserLaunchRequest(DebugBrowser.Chrome) { ProfileName = "work", ReuseIfRunning = true });
 
         // Assert
         result.ErrorCode.Should().Be(nameof(BrowserErrorCode.DebugLaunchFailed));
@@ -274,7 +274,7 @@ public sealed class DebugBrowserLifecycleTests : IDisposable
         using var held = HoldLock(profile);
         Running(DebugPid, CommandLine(profile), image: "msedge.exe");
 
-        var result = await CreateSut().LaunchAsync(new DebugBrowserLaunchRequest("chrome") { ProfileName = "work", ReuseIfRunning = true });
+        var result = await CreateSut().LaunchAsync(new DebugBrowserLaunchRequest(DebugBrowser.Chrome) { ProfileName = "work", ReuseIfRunning = true });
 
         result.ErrorCode.Should().Be(nameof(BrowserErrorCode.DebugLaunchFailed));
         result.Error.Should().Contain("msedge.exe").And.Contain("not chrome.exe");
@@ -287,7 +287,7 @@ public sealed class DebugBrowserLifecycleTests : IDisposable
         LaunchReturns(Started(DebugPid, Path.Combine(_profiles.NamedRoot, "work")));
 
         // Act
-        var result = await CreateSut().LaunchAsync(new DebugBrowserLaunchRequest("chrome") { ProfileName = "work", ReuseIfRunning = true });
+        var result = await CreateSut().LaunchAsync(new DebugBrowserLaunchRequest(DebugBrowser.Chrome) { ProfileName = "work", ReuseIfRunning = true });
 
         // Assert
         result.LaunchStatus.Should().Be(LaunchStatus.WindowObserved);
@@ -305,12 +305,12 @@ public sealed class DebugBrowserLifecycleTests : IDisposable
         Directory.SetCreationTimeUtc(left, DateTime.UtcNow - TimeSpan.FromHours(2));
         var sut = CreateSut();
         LaunchReturns(Started(DebugPid, inUse));
-        await sut.LaunchAsync(new DebugBrowserLaunchRequest("chrome", UserDataDir: inUse));
+        await sut.LaunchAsync(new DebugBrowserLaunchRequest(DebugBrowser.Chrome, UserDataDir: inUse));
         Running(DebugPid, CommandLine(inUse));
         LaunchReturns(Started(DebugPid + 10, _profiles.NewTemporaryPath()));
 
         // Act
-        await sut.LaunchAsync(new DebugBrowserLaunchRequest("chrome"));
+        await sut.LaunchAsync(new DebugBrowserLaunchRequest(DebugBrowser.Chrome));
 
         // Assert
         Directory.Exists(left).Should().BeFalse();
@@ -326,11 +326,11 @@ public sealed class DebugBrowserLifecycleTests : IDisposable
         Directory.SetCreationTimeUtc(exited, DateTime.UtcNow - TimeSpan.FromHours(2));
         var sut = CreateSut();
         LaunchReturns(Started(DebugPid, exited));
-        await sut.LaunchAsync(new DebugBrowserLaunchRequest("chrome", UserDataDir: exited));
+        await sut.LaunchAsync(new DebugBrowserLaunchRequest(DebugBrowser.Chrome, UserDataDir: exited));
         LaunchReturns(Started(DebugPid + 10, _profiles.NewTemporaryPath()));
 
         // Act
-        await sut.LaunchAsync(new DebugBrowserLaunchRequest("chrome"));
+        await sut.LaunchAsync(new DebugBrowserLaunchRequest(DebugBrowser.Chrome));
 
         // Assert
         Directory.Exists(exited).Should().BeFalse();
@@ -346,7 +346,7 @@ public sealed class DebugBrowserLifecycleTests : IDisposable
         _policy.Setup(p => p.Evaluate(It.IsAny<IReadOnlyCollection<string?>>())).Returns(TargetPolicyVerdict.Deny("chrome", "chrome is on the deny list"));
 
         // Act
-        var result = await CreateSut().LaunchAsync(new DebugBrowserLaunchRequest("chrome") { ProfileName = "work", ReuseIfRunning = true });
+        var result = await CreateSut().LaunchAsync(new DebugBrowserLaunchRequest(DebugBrowser.Chrome) { ProfileName = "work", ReuseIfRunning = true });
 
         // Assert
         result.Success.Should().BeFalse();
@@ -379,7 +379,7 @@ public sealed class DebugBrowserLifecycleTests : IDisposable
         }
 
         // Act
-        var result = await CreateSut().LaunchAsync(new DebugBrowserLaunchRequest("chrome", UserDataDir: profile) { ReuseIfRunning = true });
+        var result = await CreateSut().LaunchAsync(new DebugBrowserLaunchRequest(DebugBrowser.Chrome, UserDataDir: profile) { ReuseIfRunning = true });
 
         // Assert
         result.ErrorCode.Should().Be(nameof(BrowserErrorCode.DebugLaunchFailed));
@@ -394,13 +394,13 @@ public sealed class DebugBrowserLifecycleTests : IDisposable
         var profile = Path.Combine(_root, "MyProfile");
         var sut = CreateSut();
         LaunchReturns(Started(DebugPid, profile));
-        await sut.LaunchAsync(new DebugBrowserLaunchRequest("chrome", UserDataDir: profile));
+        await sut.LaunchAsync(new DebugBrowserLaunchRequest(DebugBrowser.Chrome, UserDataDir: profile));
         using var held = HoldLock(profile);
         Running(DebugPid, CommandLine(profile));
         _ports.Setup(p => p.Find(DebugPid)).Returns(new DebugPortLookup(DebugPortLookupStatus.HeldByOtherProcess, null, "process 99 listens on it."));
 
         // Act
-        var result = await sut.LaunchAsync(new DebugBrowserLaunchRequest("chrome", UserDataDir: profile) { ReuseIfRunning = true });
+        var result = await sut.LaunchAsync(new DebugBrowserLaunchRequest(DebugBrowser.Chrome, UserDataDir: profile) { ReuseIfRunning = true });
 
         // Assert
         result.Error.Should().Contain("Close it with close_debug_browser");
@@ -414,7 +414,7 @@ public sealed class DebugBrowserLifecycleTests : IDisposable
         using var held = HoldLock(profile);
         Running(UsersPid, CommandLine(profile));
 
-        var result = await CreateSut().LaunchAsync(new DebugBrowserLaunchRequest("chrome", UserDataDir: profile) { ReuseIfRunning = true });
+        var result = await CreateSut().LaunchAsync(new DebugBrowserLaunchRequest(DebugBrowser.Chrome, UserDataDir: profile) { ReuseIfRunning = true });
 
         result.LaunchStatus.Should().Be(LaunchStatus.AlreadyRunning);
         result.Warning.Should().Contain("not started by this server").And.Contain("close_debug_browser does not close it");
@@ -427,7 +427,7 @@ public sealed class DebugBrowserLifecycleTests : IDisposable
         var profile = TemporaryProfile();
         var sut = CreateSut();
         LaunchReturns(Started(DebugPid, profile));
-        var launched = await sut.LaunchAsync(new DebugBrowserLaunchRequest("chrome", UserDataDir: profile));
+        var launched = await sut.LaunchAsync(new DebugBrowserLaunchRequest(DebugBrowser.Chrome, UserDataDir: profile));
         var browser = Running(DebugPid, CommandLine(profile));
 
         // Act
@@ -591,7 +591,7 @@ public sealed class DebugBrowserLifecycleTests : IDisposable
         var profile = Path.Combine(_root, "MyProfile");
         var sut = CreateSut();
         LaunchReturns(Started(DebugPid, profile));
-        await sut.LaunchAsync(new DebugBrowserLaunchRequest("chrome", UserDataDir: profile));
+        await sut.LaunchAsync(new DebugBrowserLaunchRequest(DebugBrowser.Chrome, UserDataDir: profile));
         Running(DebugPid, CommandLine(profile));
 
         // Act
@@ -611,7 +611,7 @@ public sealed class DebugBrowserLifecycleTests : IDisposable
         var profile = Path.Combine(_root, "MyProfile");
         var sut = CreateSut();
         LaunchReturns(Started(DebugPid, profile));
-        await sut.LaunchAsync(new DebugBrowserLaunchRequest("chrome", UserDataDir: profile));
+        await sut.LaunchAsync(new DebugBrowserLaunchRequest(DebugBrowser.Chrome, UserDataDir: profile));
         Running(DebugPid, CommandLine(profile), start: DebugStart.AddMinutes(5));
 
         // Act
@@ -627,7 +627,7 @@ public sealed class DebugBrowserLifecycleTests : IDisposable
         var profile = TemporaryProfile();
         var sut = CreateSut();
         LaunchReturns(Started(DebugPid, profile));
-        await sut.LaunchAsync(new DebugBrowserLaunchRequest("chrome", UserDataDir: profile));
+        await sut.LaunchAsync(new DebugBrowserLaunchRequest(DebugBrowser.Chrome, UserDataDir: profile));
         Running(DebugPid, CommandLine(_profiles.NewTemporaryPath()));
 
         var check = sut.CheckClose(DebugPid, null, false);
@@ -981,7 +981,7 @@ public sealed class DebugBrowserLifecycleTests : IDisposable
         var profile = Path.Combine(_root, "MyProfile");
         var sut = CreateSut();
         LaunchReturns(Started(DebugPid, profile));
-        await sut.LaunchAsync(new DebugBrowserLaunchRequest("chrome", UserDataDir: profile));
+        await sut.LaunchAsync(new DebugBrowserLaunchRequest(DebugBrowser.Chrome, UserDataDir: profile));
         Running(DebugPid, CommandLine(profile));
         await sut.CloseAsync(sut.CheckClose(DebugPid, null, false).Target!, TimeSpan.FromSeconds(5), EnterGate);
 
