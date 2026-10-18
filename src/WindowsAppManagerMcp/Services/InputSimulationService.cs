@@ -1676,7 +1676,8 @@ public partial class InputSimulationService : IInputSimulationService
     {
         var pausedBy = _session.PauseState?.PausedBy;
         return $"{done} Input is paused: {InputControlSources.PauseCause(pausedBy, _session.PauseChord)}. Stop and ask the user " +
-               $"how to continue. Do not try to resume input yourself: {InputControlSources.WhoResumes(pausedBy)}.";
+               "how to continue. Do not try to resume input yourself: " +
+               $"{InputControlSources.WhoResumes(pausedBy, _session.IsSharedPauseUnreadable)}.";
     }
 
     private string BusyMessage(string action) =>

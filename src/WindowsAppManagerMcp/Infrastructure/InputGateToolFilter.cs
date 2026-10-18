@@ -344,6 +344,7 @@ public static class InputGateToolFilter
         var pausedBy = session.PauseState?.PausedBy;
         return $"Nothing was done: input is paused, {InputControlSources.PauseCause(pausedBy, session.PauseChord)}. While paused, " +
                "tools that change windows or start or stop processes do nothing, like the input tools; tools that only read still " +
-               $"work. Stop and ask the user how to continue. Do not try to resume input yourself: {InputControlSources.WhoResumes(pausedBy)}.";
+               "work. Stop and ask the user how to continue. Do not try to resume input yourself: " +
+               $"{InputControlSources.WhoResumes(pausedBy, session.IsSharedPauseUnreadable)}.";
     }
 }

@@ -57,24 +57,32 @@ public class InputControlTools
         var modifiersDown = _session.ReadModifiersDown().Select(k => k.Name).ToList();
 
         // The server's own pause, when the shared one could not be read, is not the user's: the agent must not say it is,
-        // nor that one press of the hotkey resumes it
+        // nor that one press of the hotkey resumes it. While the shared pause cannot be read, another server's hotkey
+        // neither pauses nor resumes this server, whoever paused it
         var selfPaused = state.PausedBy == InputControlSources.SharedPauseUnreadable;
+        var unreadable = _session.IsSharedPauseUnreadable;
         var pausedHow = selfPaused
             ? $"by this server ({state.PausedBy}{Since(state.PausedAt)}): {InputControlSources.PauseCause(state.PausedBy, null)}"
             : $"by the user ({state.PausedBy}{Since(state.PausedAt)})";
-        var resumeHow = selfPaused
-            ? "Only the user can resume, by confirming resume_input when you call it at the user's request. " +
-              (hotkey.State == PauseHotkeyState.Registered
-                  ? $"{hotkey.Chord} does not resume it at once: {SelfPauseHotkeyPresses()}."
-                  : $"The pause hotkey does not resume it: {WhyTheHotkeyCannotResume(hotkey)}.")
-            : "Only the user can resume: " +
-              $"{(hotkey.Chord is { } chord ? $"{chord} again, or " : string.Empty)}by confirming resume_input when you call it at the user's request.";
+        const string byResumeInput = "by confirming resume_input when you call it at the user's request";
+        var resumeHow = HotkeyResumes(state, hotkey) switch
+        {
+            HotkeyResume.Press =>
+                $"Only the user can resume: {(hotkey.Chord is { } chord ? $"{chord} again, or " : string.Empty)}{byResumeInput}.",
+            HotkeyResume.SecondPress =>
+                $"Only the user can resume, {byResumeInput}. {hotkey.Chord ?? "The pause hotkey"} does not resume it at once: " +
+                $"{SelfPauseHotkeyPresses()}.",
+            _ => $"Only the user can resume, {byResumeInput}. The pause hotkey does not resume it: {WhyTheHotkeyCannotResume(hotkey)}."
+        };
         var message = state.Paused
             ? $"Input is paused {pausedHow}. Every input tool and every tool that changes windows " +
               $"or starts or stops processes returns PausedByUser. Stop and ask the user how to continue. {resumeHow}"
             : hotkey.State switch
             {
                 PauseHotkeyState.Registered => $"Input is running. The user can pause it at any time with {hotkey.Chord}.",
+                PauseHotkeyState.OtherServer when unreadable =>
+                    $"Input is running. Another Windows App Manager server has registered {hotkey.Chord}, and this server cannot read the " +
+                    "pause they share, so the hotkey does not pause this server. Tell the user.",
                 PauseHotkeyState.OtherServer when shared =>
                     $"Input is running. The user can pause it at any time with {hotkey.Chord}, which another Windows App Manager server on this " +
                     "desktop has registered; it pauses every server.",
@@ -83,6 +91,12 @@ public class InputControlTools
                     "pause, so the hotkey does not pause this server. Tell the user.",
                 _ => $"Input is running. The pause hotkey is not available ({hotkey.State}){(hotkey.Error is { } error ? $": {error}" : ".")}"
             };
+        if (!state.Paused && unreadable && hotkey.State != PauseHotkeyState.OtherServer)
+        {
+            message += " This server cannot read the pause it shares with the other Windows App Manager servers on this desktop, so a " +
+                       "pause made in another one does not reach it.";
+        }
+
         if (serverHeld.Count > 0)
         {
             message += $" The server could not release {string.Join(", ", serverHeld)}; call release_all_input.";
@@ -111,7 +125,7 @@ public class InputControlTools
     [Description("Resume the server's input after it was paused, but only if the user confirms: the server asks " +
                  "the user directly through the MCP client (elicitation), and input resumes only when they answer yes. Call it only when " +
                  "the user has asked you to continue, and only once at a time. ResumeNeedsUser: this client cannot ask the user, so only " +
-                 "the user can resume, with the hotkey. ResumeDeclined: the user said no or did not answer, paused again meanwhile, or " +
+                 "the user can resume; the error says how. ResumeDeclined: the user said no or did not answer, paused again meanwhile, or " +
                  "another resume_input is already waiting for the answer; input stays paused. Never try to resume any other way, and " +
                  "never send the pause hotkey's keys.")]
     public async Task<ResumeInputResult> ResumeInput(McpServer server, CancellationToken cancellationToken)
@@ -156,18 +170,23 @@ public class InputControlTools
             ? " The pause is shared: resuming lets every Windows App Manager server on this desktop send input again."
             : string.Empty;
         // The user did not make the server's own pause, and after a resume a pause made in another server does not
-        // reach this one while the shared pause cannot be read (InputSession.SyncLocked): the user hears both
+        // reach this one while the shared pause cannot be read (InputSession.SyncLocked), whoever paused it: the user hears both
         var pausedBy = selfPaused
             ? $"This Windows App Manager server paused it itself{Since(state.PausedAt)}, not you: it could not read the pause it " +
               "shares with the other servers on this desktop, so it cannot tell whether you paused input in another one."
             : $"You paused it{(chord == null ? string.Empty : $" with {chord}")}{Since(state.PausedAt)}.";
-        var afterResume = !selfPaused
-            ? string.Empty
-            : _hotkey.Status.State == PauseHotkeyState.Registered
-                ? $" After a resume, {chord ?? "the pause hotkey"} still pauses this server, but while it cannot read the shared pause, " +
-                  "a pause made in another server does not."
-                : $" After a resume, the pause hotkey{(chord == null ? string.Empty : $" ({chord})")} does not pause this server while " +
-                  "it cannot read the shared pause.";
+        var afterResume = string.Empty;
+        if (_session.IsSharedPauseUnreadable)
+        {
+            afterResume = (selfPaused
+                              ? string.Empty
+                              : " This server cannot read the pause it shares with the other servers on this desktop now.") +
+                          (_hotkey.Status.State == PauseHotkeyState.Registered
+                              ? $" After a resume, {chord ?? "the pause hotkey"} still pauses this server, but while it cannot read the shared " +
+                                "pause, a pause made in another server does not."
+                              : $" After a resume, the pause hotkey{(chord == null ? string.Empty : $" ({chord})")} does not pause this server " +
+                                "while it cannot read the shared pause.");
+        }
         var question = new ElicitRequestParams
         {
             Message = $"The AI agent asks to resume keyboard and mouse input. {pausedBy}{everyServer}{afterResume} Resume only if you " +
@@ -307,33 +326,75 @@ public class InputControlTools
 
     /// <summary>
     /// How the user resumes when resume_input cannot ask them (ResumeNeedsUser): a press of the hotkey, or, after the
-    /// server paused itself (<see cref="InputControlSources.SharedPauseUnreadable"/>), a second press in the server that
-    /// registered the chord, since the first one only makes the pause the user's own (InputSession.TogglePauseByHotkey). In
-    /// any other server the hotkey cannot resume it, because its presses reach this one only through the shared pause.
+    /// server paused itself (<see cref="InputControlSources.SharedPauseUnreadable"/>), a second press, since the first one
+    /// only makes the pause the user's own (InputSession.TogglePauseByHotkey); or, when no press reaches this server's pause
+    /// (<see cref="HotkeyResumes"/>), what does instead.
     /// </summary>
     /// <param name="state">The pause the user would resume.</param>
     /// <param name="chord">The pause hotkey's chord; null when it is not known.</param>
     /// <param name="withoutHotkey">What resumes input when the hotkey cannot, on this path.</param>
     private string ResumeWithoutQuestion(InputPauseState state, string? chord, string withoutHotkey)
     {
-        if (state.PausedBy != InputControlSources.SharedPauseUnreadable)
-        {
-            return $"Only the user can resume, by pressing {chord ?? "the pause hotkey"} again.";
-        }
-
         var hotkey = _hotkey.Status;
-        return hotkey.State == PauseHotkeyState.Registered
-            ? $"Only the user can resume, with {chord ?? "the pause hotkey"}: since this server paused itself, {SelfPauseHotkeyPresses()}."
-            : $"The pause hotkey cannot resume it: {WhyTheHotkeyCannotResume(hotkey)}. {withoutHotkey}";
+        return HotkeyResumes(state, hotkey) switch
+        {
+            HotkeyResume.Press => $"Only the user can resume, by pressing {chord ?? "the pause hotkey"} again.",
+            HotkeyResume.SecondPress =>
+                $"Only the user can resume, with {chord ?? "the pause hotkey"}: since this server paused itself, {SelfPauseHotkeyPresses()}.",
+            _ => $"The pause hotkey cannot resume it: {WhyTheHotkeyCannotResume(hotkey)}. {withoutHotkey}"
+        };
     }
 
-    /// <summary>What the presses of the hotkey do to the server's own pause, in the server that registered the chord.</summary>
+    /// <summary>What a press of the pause hotkey does to the pause this server is in.</summary>
+    private enum HotkeyResume
+    {
+        /// <summary>A press resumes, as after any pause the user made.</summary>
+        Press,
+
+        /// <summary>
+        /// The server paused itself (<see cref="InputControlSources.SharedPauseUnreadable"/>): the first press keeps the pause,
+        /// as the user's own, and a second one resumes.
+        /// </summary>
+        SecondPress,
+
+        /// <summary>No press reaches this server's pause.</summary>
+        Never
+    }
+
+    /// <summary>
+    /// What a press of the pause hotkey does to <paramref name="state"/>. The server that registered the chord toggles its own
+    /// pause (InputSession.TogglePauseByHotkey). Another server's presses reach this one only through the shared pause, so not
+    /// while it cannot be read (<see cref="IInputSession.IsSharedPauseUnreadable"/>), whoever paused; and without a server that
+    /// registered the chord, a pause the server made itself has no press that resumes it.
+    /// </summary>
+    private HotkeyResume HotkeyResumes(InputPauseState state, PauseHotkeyStatus hotkey)
+    {
+        var selfPaused = state.PausedBy == InputControlSources.SharedPauseUnreadable;
+        if (hotkey.State == PauseHotkeyState.Registered)
+        {
+            return selfPaused ? HotkeyResume.SecondPress : HotkeyResume.Press;
+        }
+
+        if (_session.IsSharedPauseUnreadable)
+        {
+            return HotkeyResume.Never;
+        }
+
+        return !selfPaused ? HotkeyResume.Press
+            : hotkey.State == PauseHotkeyState.OtherServer ? HotkeyResume.SecondPress
+            : HotkeyResume.Never;
+    }
+
+    /// <summary>What the presses of the hotkey do to the server's own pause.</summary>
     private static string SelfPauseHotkeyPresses() =>
         "the first press keeps the pause, as the user's own (and pauses every Windows App Manager server on this desktop), and a " +
         $"second press more than {InputSession.HotkeyResumeDelay.TotalSeconds.ToString("0.#", CultureInfo.InvariantCulture)} seconds " +
         "later resumes";
 
-    /// <summary>Why the hotkey cannot resume the server's own pause in a server that has not registered the chord.</summary>
+    /// <summary>
+    /// Why no press of the hotkey reaches this server's pause (<see cref="HotkeyResume.Never"/>): another server registered the
+    /// chord and the shared pause cannot be read, or this server has not registered it.
+    /// </summary>
     private static string WhyTheHotkeyCannotResume(PauseHotkeyStatus hotkey) => hotkey.State == PauseHotkeyState.OtherServer
         ? $"another Windows App Manager server has registered {hotkey.Chord ?? "it"}, and its presses reach this server only " +
           "through the shared pause, which this server cannot read (a press pauses or resumes only the other servers)"

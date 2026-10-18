@@ -120,6 +120,19 @@ public sealed class InputSession : IInputSession, IDisposable
     }
 
     /// <inheritdoc />
+    public bool IsSharedPauseUnreadable
+    {
+        get
+        {
+            lock (_lock)
+            {
+                SyncLocked();
+                return _flagUnreadable;
+            }
+        }
+    }
+
+    /// <inheritdoc />
     public IReadOnlyList<HeldInput> ServerHeld
     {
         get
@@ -377,9 +390,11 @@ public sealed class InputSession : IInputSession, IDisposable
     /// <remarks>
     /// A flag that cannot be read fails closed: a pause the user made in another server may be in it, so the first failed
     /// read pauses this server (<see cref="InputControlSources.SharedPauseUnreadable"/>) and is logged. Later failed reads
-    /// change nothing, so the user can still resume here (a confirmed resume_input; a hotkey press first makes the pause
-    /// the user's own, see <see cref="TogglePauseByHotkey"/>, and the next one resumes) while it cannot be read, and a read that
-    /// works again does not resume by itself: what happened meanwhile is not known, so only the user resumes. The named
+    /// change nothing, so the user can still resume here (a confirmed resume_input; in this server, if it registered the
+    /// chord, a hotkey press first makes the pause the user's own, see <see cref="TogglePauseByHotkey"/>, and the next one
+    /// resumes) while it cannot be read, and a read that works again does not resume by itself: what happened meanwhile is
+    /// not known, so only the user resumes. Another server's presses reach this one only through the flag, so while it cannot
+    /// be read they neither pause nor resume this server (<see cref="IsSharedPauseUnreadable"/>). The named
     /// event throws ObjectDisposedException only after <see cref="Dispose"/>, where pausing is right too: a closed session
     /// sends nothing.
     /// </remarks>
