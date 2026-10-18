@@ -43,8 +43,9 @@ public partial class ElementActionTools
     /// <summary>
     /// The scroll fallback: the list (<paramref name="namedList"/>, or the window's one visible list, or of several the one with
     /// a Scroll pattern of its own) scrolled a page at a time (down to its end, then up), searched below its ref after each
-    /// page, until the criteria match or <paramref name="maxScrolls"/> pages or the timeout have passed. When they pass, the
-    /// list is put back where it was before the first page (roadmap M3.F19).
+    /// page, until the criteria match or <paramref name="maxScrolls"/> pages or the timeout have passed. When they pass, or a
+    /// page's search fails other than with several matches (AmbiguousElement, which leaves the list where they are), the list
+    /// is put back where it was before the first page (roadmap M3.F19).
     /// </summary>
     /// <param name="realizeRequest">The realize request for the item's ref, once it is found.</param>
     /// <param name="timeout">The whole search's time (timeoutMs).</param>
@@ -165,7 +166,19 @@ public partial class ElementActionTools
 
                 if (item.Failure is { ErrorCode: not nameof(UIElementErrorCode.ElementNotFound) } failure)
                 {
-                    return failure with { Error = $"{failure.Error} (after scrolling {listName} {pages} pages)" };
+                    var after = $"{failure.Error} (after scrolling {listName} {pages} pages)";
+                    if (failure.ErrorCode == nameof(UIElementErrorCode.AmbiguousElement))
+                    {
+                        // Several items match on this page: the list stays where they are, so the refs the error gives stay on
+                        // screen
+                        return failure with { Error = after };
+                    }
+
+                    // The page's search ended the search without the item (it did not finish, or the policy refuses its only
+                    // matches): the list goes back where it was, as at the end of the search
+                    var putBack = await PutBackAsync(listRef, start, pages, allowHostTarget, timeout, stopwatch, cancellationToken)
+                        .ConfigureAwait(false);
+                    return failure with { Error = $"{after}. {putBack}" };
                 }
             }
 

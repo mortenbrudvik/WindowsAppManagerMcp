@@ -58,18 +58,20 @@ public sealed partial class ElementSearchService
     /// <param name="total">What the tree search found: its kept matches are not reported again.</param>
     /// <param name="foreign">The target policy's check of the window's elements of other processes: a list of a process it
     /// refuses (an app shown inside the window) is neither asked for its items nor listed, and the lookup says so (a part
-    /// skipped).</param>
+    /// skipped); an item it refuses by what was read with it (as <see cref="CheckedWithTheSearch"/> says for
+    /// <paramref name="detail"/>) does not take an allowed item's place among maxResults (<see cref="VirtualizedLookup.Refused"/>).</param>
     private VirtualizedLookup SearchVirtualized(
         ElementCriteria criteria, nint window, IUiaNode root, bool rootIsWithin, SearchTotal total, int maxResults,
-        ForeignElements foreign, CancellationToken token)
+        ForeignElements foreign, ElementDetail detail, CancellationToken token)
     {
         if (total.Stop != ElementSearchStop.None)
         {
             return VirtualizedLookup.Skipped("The tree search did not finish, so the lists were not searched for items that are not realized.");
         }
 
+        // The matches the tree search left out for their process take no place among maxResults
         var room = maxResults - total.Matches.Count;
-        if (room <= 0 || total.MatchCount > total.Matches.Count)
+        if (room <= 0 || total.MatchCount - total.Refused > total.Matches.Count)
         {
             return VirtualizedLookup.Skipped("maxResults matches were found in the tree already, so the lists were not searched.");
         }
@@ -129,6 +131,7 @@ public sealed partial class ElementSearchService
         var untypedKept = 0;
         var known = total.Matches.Select(m => m.Element.RuntimeId).OfType<IReadOnlyList<int>>().ToList();
         var items = new List<VirtualizedItem>();
+        var refusedItems = new List<UiaElement>();
         var more = false;
         var matched = false;
 
@@ -260,6 +263,13 @@ public sealed partial class ElementSearchService
                             known.Add(id);
                         }
 
+                        if (CheckedWithTheSearch(element, detail) && foreign.Refuses(element))
+                        {
+                            // Left out, and counted as such once the result is made (WithVirtualized), without its place
+                            refusedItems.Add(element);
+                            continue;
+                        }
+
                         if (items.Count >= room)
                         {
                             more = true;
@@ -309,7 +319,10 @@ public sealed partial class ElementSearchService
                       "them: they are returned with the control type they have now. element_action realize makes the item real.");
         }
 
-        return new VirtualizedLookup(items, more, containers, notes.Count == 0 ? null : string.Join(" ", notes), stop);
+        return new VirtualizedLookup(items, more, containers, notes.Count == 0 ? null : string.Join(" ", notes), stop)
+        {
+            Refused = refusedItems
+        };
     }
 
     /// <summary>
@@ -405,6 +418,12 @@ public sealed partial class ElementSearchService
     {
         var window = query.WindowHandle;
         var mayRead = true;
+        foreach (var refused in lookup.Refused)
+        {
+            // Counted for the warning, as a tree match left out is (once, also when a tree search left it out); not in matchCount
+            foreign.LeavesOut(window, refused);
+        }
+
         var items = new List<FoundElement>(lookup.Items.Count);
         foreach (var (item, locator) in lookup.Items)
         {
@@ -504,6 +523,12 @@ public sealed partial class ElementSearchService
     private sealed record VirtualizedLookup(
         IReadOnlyList<VirtualizedItem> Items, bool More, IReadOnlyList<UiaElement> Containers, string? Note, ElementSearchTruncation? Stop = null)
     {
+        /// <summary>
+        /// The matching items the target policy refuses by what was read with them: not in <see cref="Items"/> (they took no
+        /// place there), and counted as left out when the result is made.
+        /// </summary>
+        public IReadOnlyList<UiaElement> Refused { get; init; } = [];
+
         public static VirtualizedLookup Skipped(string note, ElementSearchTruncation? stop = null) => new([], false, [], note, stop);
     }
 

@@ -25,12 +25,15 @@ public enum ElementSearchStop
 /// <param name="Candidates">The elements the provider matched before the client filter.</param>
 /// <param name="SkippedParts">Parts of the tree that could not be searched: their elements disappeared or their provider
 /// failed.</param>
+/// <param name="Refused">The matches of <paramref name="MatchCount"/> that the caller's refuse test named: counted, never
+/// kept, so none took the place of a match that is.</param>
 public sealed record ElementSearchOutcome(
     IReadOnlyList<UiaElement> Matches,
     int MatchCount,
     int Candidates,
     ElementSearchStop Stop,
-    int SkippedParts)
+    int SkippedParts,
+    int Refused = 0)
 {
     /// <summary>True when everything below the root was searched.</summary>
     public bool Complete => Stop == ElementSearchStop.None && SkippedParts == 0;
@@ -117,6 +120,7 @@ public sealed class ElementSearch
     private readonly UiaCondition _condition;
     private readonly Func<UiaElement, bool>? _filter;
     private readonly Func<UiaElement, bool>? _leaveOut;
+    private readonly Func<UiaElement, bool>? _refuse;
     private readonly int _keep;
     private readonly int _maxCandidates;
     private readonly List<UiaElement> _matches = [];
@@ -130,6 +134,7 @@ public sealed class ElementSearch
     // The condition with the narrowing, until the engine refuses it; null without one
     private UiaCondition? _narrowed;
     private int _matchCount;
+    private int _refused;
     private int _candidates;
     private int _skippedParts;
     private ElementSearchStop _stop;
@@ -146,9 +151,12 @@ public sealed class ElementSearch
     /// <see cref="OwnedWindows.Below"/> for a window's root), or null to search everything below the root.</param>
     /// <param name="narrowing">A condition every element <paramref name="filter"/> accepts also matches, for the provider to
     /// test under the UIA3 engine (see the remarks: <see cref="ElementCriteria.NameNarrowing"/>), or null.</param>
+    /// <param name="refuse">A test of each match (after <paramref name="filter"/>) that the caller will not return: a match it
+    /// names is counted (<see cref="ElementSearchOutcome.MatchCount"/>, <see cref="ElementSearchOutcome.Refused"/>) but never
+    /// kept, so it does not take the place of a match after it (find_ui_elements' check of the target policy), or null.</param>
     public ElementSearch(
         IUiaTree tree, UiaCondition condition, Func<UiaElement, bool>? filter, int keep, int maxCandidates = MaxCandidates,
-        Func<UiaElement, bool>? leaveOut = null, UiaCondition? narrowing = null)
+        Func<UiaElement, bool>? leaveOut = null, UiaCondition? narrowing = null, Func<UiaElement, bool>? refuse = null)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(keep, 1);
         ArgumentOutOfRangeException.ThrowIfLessThan(maxCandidates, 1);
@@ -156,6 +164,7 @@ public sealed class ElementSearch
         _condition = condition;
         _filter = filter;
         _leaveOut = leaveOut;
+        _refuse = refuse;
         _keep = keep;
         _maxCandidates = Math.Min(maxCandidates, MaxCandidates);
         _narrowed = narrowing != null && tree.Engine == UiaEngine.Uia3 ? UiaCondition.And(condition, narrowing) : null;
@@ -225,7 +234,7 @@ public sealed class ElementSearch
     {
         lock (_gate)
         {
-            return new ElementSearchOutcome(_matches.ToList(), _matchCount, _candidates, _stop, _skippedParts);
+            return new ElementSearchOutcome(_matches.ToList(), _matchCount, _candidates, _stop, _skippedParts, _refused);
         }
     }
 
@@ -382,13 +391,14 @@ public sealed class ElementSearch
         return _tree.FindAll(node, scope, _condition, cancellationToken);
     }
 
-    private static string RuntimeKey(IReadOnlyList<int> runtimeId) =>
+    /// <summary>A runtime id as one key: its parts joined with dots.</summary>
+    internal static string RuntimeKey(IReadOnlyList<int> runtimeId) =>
         string.Join('.', runtimeId.Select(i => i.ToString(CultureInfo.InvariantCulture)));
 
     /// <summary>
-    /// An element the condition matched: counted as a candidate, and kept or counted when it passes the filter. One met
-    /// again (the same runtime id: a provider that lists a subtree under two parents, as a WinUI 3 WebView2 lists its page,
-    /// roadmap M3.F43) was considered already, and is not counted again.
+    /// An element the condition matched: counted as a candidate, and kept or counted when it passes the filter (only counted
+    /// when the refuse test names it). One met again (the same runtime id: a provider that lists a subtree under two parents,
+    /// as a WinUI 3 WebView2 lists its page, roadmap M3.F43) was considered already, and is not counted again.
     /// </summary>
     private void Consider(UiaElement element)
     {
@@ -408,6 +418,7 @@ public sealed class ElementSearch
         }
 
         var passes = _filter == null || _filter(element);
+        var refused = passes && _refuse != null && _refuse(element);
         lock (_gate)
         {
             _candidates++;
@@ -418,7 +429,11 @@ public sealed class ElementSearch
             }
 
             _matchCount++;
-            if (_matches.Count < _keep)
+            if (refused)
+            {
+                _refused++;
+            }
+            else if (_matches.Count < _keep)
             {
                 _matches.Add(element);
             }

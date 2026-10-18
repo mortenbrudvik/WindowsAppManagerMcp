@@ -47,6 +47,25 @@ public class ElementSearchTests
     }
 
     [Fact]
+    public void Run_CountsAMatchTheCallerRefuses_ButNeverKeepsIt_SoTheMatchesAfterItAreKept()
+    {
+        // Arrange - the first two matches in tree order are refused (as find_ui_elements refuses an element the target policy
+        // denies), with room to keep two
+        var root = new FakeUiaNode("Window", "App").With(
+            new FakeUiaNode("Button", "Vault 1"), new FakeUiaNode("Button", "Vault 2"), new FakeUiaNode("Button", "Send"),
+            new FakeUiaNode("Button", "Close"), new FakeUiaNode("Button", "Help"));
+
+        // Act
+        var outcome = new ElementSearch(_tree, IsButton, null, keep: 2,
+            refuse: e => e.Properties.Name!.StartsWith("Vault", StringComparison.Ordinal)).Run(root, None);
+
+        // Assert
+        outcome.Matches.Select(m => m.Properties.Name).Should().Equal("Send", "Close");
+        outcome.MatchCount.Should().Be(5);
+        outcome.Refused.Should().Be(2);
+    }
+
+    [Fact]
     public void Run_SplitsTheTree_SoNoSingleCallSearchesTheWholeWindow()
     {
         // Arrange - a window with a big client area
