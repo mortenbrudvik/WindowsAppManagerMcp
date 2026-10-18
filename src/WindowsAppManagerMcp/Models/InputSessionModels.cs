@@ -12,11 +12,24 @@ namespace WindowsAppManagerMcp.Models;
 /// For a virtual key, KEYEVENTF_EXTENDEDKEY when the key was sent as an extended key; for an X button (MOUSEEVENTF_XDOWN),
 /// which one: XBUTTON1 or XBUTTON2, as in the event's mouseData; otherwise 0.
 /// </param>
-public readonly record struct HeldInput(InputEventKind Kind, ushort Code, uint Flags = 0)
+/// <param name="Scan">
+/// For a virtual key, the scan code it went down with (KEYBDINPUT.wScan, without the 0xE0 prefix, which
+/// <paramref name="Flags"/>' extended flag carries), sent again with its key-up: remote desktop and virtual machine clients
+/// and games track keys by scan code, and a key-up without it leaves the key down there. 0 when not known; otherwise 0.
+/// </param>
+public readonly record struct HeldInput(InputEventKind Kind, ushort Code, uint Flags = 0, ushort Scan = 0)
 {
     /// <summary>A virtual key.</summary>
     public static HeldInput Key(ushort virtualKey, bool extended = false) =>
         new(InputEventKind.VirtualKey, virtualKey, extended ? NativeEnums.KEYEVENTF_EXTENDEDKEY : 0);
+
+    /// <summary>
+    /// A modifier key Windows reports down, which the server did not press (the user's, or a stuck one): with its
+    /// extended flag and the scan code that key has on every keyboard (<see cref="KeyNames.ModifierScanCode"/>), so that
+    /// its release reaches the applications that track keys by scan code.
+    /// </summary>
+    public static HeldInput Modifier(ushort virtualKey) =>
+        Key(virtualKey, KeyNames.IsExtended(virtualKey)) with { Scan = KeyNames.ModifierScanCode(virtualKey) };
 
     /// <summary>A mouse button, by its MOUSEEVENTF_LEFTDOWN, RIGHTDOWN or MIDDLEDOWN flag.</summary>
     public static HeldInput Button(uint downFlag) => new(InputEventKind.Mouse, (ushort)downFlag);
@@ -77,6 +90,23 @@ public static class KeyNames
         NativeEnums.VK_SHIFT or NativeEnums.VK_CONTROL or NativeEnums.VK_MENU or
         NativeEnums.VK_LSHIFT or NativeEnums.VK_RSHIFT or NativeEnums.VK_LCONTROL or NativeEnums.VK_RCONTROL or
         NativeEnums.VK_LMENU or NativeEnums.VK_RMENU or NativeEnums.VK_LWIN or NativeEnums.VK_RWIN;
+
+    /// <summary>
+    /// The scan code (without the 0xE0 prefix) of a modifier key: Shift, Ctrl, Alt or Windows, generic (its left key) or
+    /// left/right; 0 for any other key. The modifiers sit at the same place on every PC keyboard, so their scan codes are
+    /// the same in every layout: left Shift 2A, right Shift 36, Ctrl 1D (the right one E0 1D), Alt 38 (the right one
+    /// E0 38), Windows E0 5B and E0 5C.
+    /// </summary>
+    public static ushort ModifierScanCode(ushort virtualKey) => virtualKey switch
+    {
+        NativeEnums.VK_SHIFT or NativeEnums.VK_LSHIFT => 0x2A,
+        NativeEnums.VK_RSHIFT => 0x36,
+        NativeEnums.VK_CONTROL or NativeEnums.VK_LCONTROL or NativeEnums.VK_RCONTROL => 0x1D,
+        NativeEnums.VK_MENU or NativeEnums.VK_LMENU or NativeEnums.VK_RMENU => 0x38,
+        NativeEnums.VK_LWIN => 0x5B,
+        NativeEnums.VK_RWIN => 0x5C,
+        _ => 0
+    };
 
     /// <summary>
     /// True for the keys Windows sends as extended keys: the right Ctrl and Alt, the Windows keys and the

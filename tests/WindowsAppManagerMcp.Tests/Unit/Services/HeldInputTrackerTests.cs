@@ -116,6 +116,60 @@ public class HeldInputTrackerTests
         events.Should().Equal(InputEvent.Key(VkRControl, ExtendedKey | KeyUp));
     }
 
+    [Fact]
+    public void Apply_KeepsTheScanCodeAndTheExtendedFlagOfTheKeyDown_AndTheReleaseSendsThem()
+    {
+        // The presses carry the layout's scan codes (roadmap M4.1); remote desktop and VM clients and games track keys by
+        // them, so a key-up without one would leave the key down there
+        var tracker = new HeldInputTracker();
+        InputEvent[] batch =
+        [
+            InputEvent.Key(VkLShift, KeyDown, 0x2A), InputEvent.Key(VkRControl, ExtendedKey, 0x1D), InputEvent.Key(VkC, KeyDown, 0x2E),
+            InputEvent.Key(VkC, KeyUp, 0x2E)
+        ];
+
+        tracker.Apply(batch, 3);
+
+        tracker.Held.Should().Equal(
+            HeldInput.Key(VkLShift) with { Scan = 0x2A }, HeldInput.Key(VkRControl, extended: true) with { Scan = 0x1D },
+            HeldInput.Key(VkC) with { Scan = 0x2E });
+        HeldInputTracker.ReleaseEvents(tracker.Held).Should().Equal(
+            InputEvent.Key(VkC, KeyUp, 0x2E), InputEvent.Key(VkRControl, ExtendedKey | KeyUp, 0x1D), InputEvent.Key(VkLShift, KeyUp, 0x2A));
+    }
+
+    [Fact]
+    public void Pressed_KeepsTheScanCodes()
+    {
+        // What a batch that threw pressed is released with the scan codes it was pressed with
+        HeldInputTracker.Pressed([InputEvent.Key(VkControl, KeyDown, 0x1D), InputEvent.Key(VkC, KeyDown, 0x2E)])
+            .Should().Equal(HeldInput.Key(VkControl) with { Scan = 0x1D }, HeldInput.Key(VkC) with { Scan = 0x2E });
+    }
+
+    [Fact]
+    public void ReleaseEvents_AnAltReleaseWithItsScanCode_IsStillMasked()
+    {
+        var events = HeldInputTracker.ReleaseEvents([HeldInput.Key(VkMenu) with { Scan = 0x38 }]);
+
+        events.Should().Equal(
+            InputEvent.Key(HeldInputTracker.MaskKey, KeyDown), InputEvent.Key(HeldInputTracker.MaskKey, KeyUp),
+            InputEvent.Key(VkMenu, KeyUp, 0x38));
+    }
+
+    [Theory]
+    [InlineData((ushort)0xA0, (ushort)0x2A, false)] // left Shift
+    [InlineData((ushort)0xA1, (ushort)0x36, false)] // right Shift
+    [InlineData((ushort)0xA2, (ushort)0x1D, false)] // left Ctrl
+    [InlineData((ushort)0xA3, (ushort)0x1D, true)] // right Ctrl: E0 1D
+    [InlineData((ushort)0xA4, (ushort)0x38, false)] // left Alt
+    [InlineData((ushort)0xA5, (ushort)0x38, true)] // right Alt: E0 38
+    [InlineData((ushort)0x5B, (ushort)0x5B, true)] // left Windows: E0 5B
+    [InlineData((ushort)0x5C, (ushort)0x5C, true)] // right Windows: E0 5C
+    public void Modifier_AKeyWindowsReportsDown_HasTheScanCodeThatKeyHasOnEveryKeyboard(ushort key, ushort scan, bool extended)
+    {
+        // The user's (or a stuck) modifier: the server did not press it, so its release needs the key's own scan code
+        HeldInput.Modifier(key).Should().Be(HeldInput.Key(key, extended) with { Scan = scan });
+    }
+
     [Theory]
     [InlineData(VkMenu)]
     [InlineData(VkLWin)]

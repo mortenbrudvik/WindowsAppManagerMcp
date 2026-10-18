@@ -305,7 +305,7 @@ public sealed class InputSession : IInputSession, IDisposable
     public IReadOnlyList<HeldInput> ReadModifiersDown() =>
         KeyNames.SidedModifiers
             .Where(_input.IsKeyDown)
-            .Select(key => HeldInput.Key(key, KeyNames.IsExtended(key)))
+            .Select(HeldInput.Modifier)
             .ToList();
 
     /// <inheritdoc />
