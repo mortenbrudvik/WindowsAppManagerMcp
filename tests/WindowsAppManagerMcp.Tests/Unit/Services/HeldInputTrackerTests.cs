@@ -105,7 +105,8 @@ public class HeldInputTrackerTests
 
         var events = HeldInputTracker.ReleaseEvents(held);
 
-        events.Should().Equal(InputEvent.Key(VkC, KeyUp), InputEvent.Key(VkLShift, KeyUp), InputEvent.Key(VkControl, KeyUp));
+        // The modifiers, held without a scan code, go up with their own (below)
+        events.Should().Equal(InputEvent.Key(VkC, KeyUp), InputEvent.Key(VkLShift, KeyUp, 0x2A), InputEvent.Key(VkControl, KeyUp, 0x1D));
     }
 
     [Fact]
@@ -113,7 +114,31 @@ public class HeldInputTrackerTests
     {
         var events = HeldInputTracker.ReleaseEvents([HeldInput.Key(VkRControl, extended: true)]);
 
-        events.Should().Equal(InputEvent.Key(VkRControl, ExtendedKey | KeyUp));
+        events.Should().Equal(InputEvent.Key(VkRControl, ExtendedKey | KeyUp, 0x1D));
+    }
+
+    [Theory]
+    [InlineData((ushort)0x10, (ushort)0x2A, false)] // Shift: the left one's
+    [InlineData((ushort)0x11, (ushort)0x1D, false)] // Ctrl: the left one's
+    [InlineData((ushort)0xA1, (ushort)0x36, false)] // right Shift
+    [InlineData((ushort)0xA3, (ushort)0x1D, true)] // right Ctrl: E0 1D
+    [InlineData((ushort)0xA5, (ushort)0x38, true)] // right Alt: E0 38
+    [InlineData((ushort)0x5C, (ushort)0x5C, true)] // right Windows: E0 5C
+    public void ReleaseEvents_AModifierHeldWithoutAScanCode_GoesUpWithTheScanCodeAndExtendedFlagThatKeyHasOnEveryKeyboard(
+        ushort key, ushort scan, bool extended)
+    {
+        // A modifier counted held without the key-down that pressed it (HeldInput.Key): its release must still reach the
+        // remote desktop and VM clients and games that track keys by scan code, whichever path releases it
+        var events = HeldInputTracker.ReleaseEvents([HeldInput.Key(key)]);
+
+        events[^1].Should().Be(InputEvent.Key(key, (extended ? ExtendedKey : 0) | KeyUp, scan));
+    }
+
+    [Fact]
+    public void ReleaseEvents_AnOrdinaryKeyHeldWithoutAScanCode_GoesUpWithout()
+    {
+        // Only a modifier's scan code is the same on every layout
+        HeldInputTracker.ReleaseEvents([HeldInput.Key(VkC)]).Should().Equal(InputEvent.Key(VkC, KeyUp));
     }
 
     [Fact]

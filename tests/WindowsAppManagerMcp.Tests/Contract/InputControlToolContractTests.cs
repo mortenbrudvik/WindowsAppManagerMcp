@@ -682,7 +682,8 @@ public sealed class InputControlToolContractTests : IDisposable
         // a callback of ApplicationStopping, after the token reports the cancellation, so wait for the release itself.
         SpinWait.SpinUntil(() => _session.LastRelease != null, Timeout).Should().BeTrue();
         stopping.IsCancellationRequested.Should().BeTrue();
-        _input.Batches[^1].Should().Equal(InputEvent.Key(VkControl, KeyUp));
+        // Ctrl went down without a scan code: it goes up with the one it has on every keyboard
+        _input.Batches[^1].Should().Equal(InputEvent.Key(VkControl, KeyUp, 0x1D));
         _input.IsKeyDown(VkControl).Should().BeFalse();
         _session.LastRelease!.Reason.Should().Be("the server is stopping");
     }
