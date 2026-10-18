@@ -622,5 +622,89 @@ public class DialogServiceTests
         _acted.Should().ContainSingle().Which.Ref.Should().Be("w1e2");
     }
 
+    [Theory]
+    [InlineData("no")]
+    [InlineData("yes")]
+    [InlineData("cancel")]
+    public async Task Respond_ToANamedAppWindow_WhoseOpenDialogDoesNotDisableIt_IsDialogNotFound_NamingThatDialog_AndPressesNothing(string button)
+    {
+        // A dialog that leaves its window enabled (a Find dialog, or a prompt that came up after the agent read another one) is
+        // not the one the app window stands for: only a modal dialog, which takes the window's input, is
+        _popupsOf[App] = [Popup(Dialog, PopupKind.Dialog, App, title: "Notepad")];
+
+        var result = await RespondAsync(button, App);
+
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(nameof(UIElementErrorCode.DialogNotFound));
+        result.Error.Should().Contain($"handle {(long)Dialog}").And.Contain("'Untitled - Notepad'").And.Contain("Nothing was read or pressed");
+        _search.VerifyNoOtherCalls();
+        _acted.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task Respond_ToANamedAppWindow_WhoseModalDialogIsNoDialog_DoesNotPressInThatWindowsOpenDialog()
+    {
+        // The window in front of the app is modal but no dialog (an owned window without a title bar); its own dialog does
+        // not disable it
+        _shown[0x7100] = ("Custom", 0, App, string.Empty);
+        _popupsOf[App] = [Popup(0x7100, PopupKind.Popup, App, blocking: true)];
+        _popupsOf[0x7100] = [Popup(Dialog, PopupKind.Dialog, 0x7100)];
+
+        var result = await RespondAsync("yes", App);
+
+        result.ErrorCode.Should().Be(nameof(UIElementErrorCode.DialogNotFound));
+        result.Error.Should().Contain($"handle {(long)Dialog}");
+        _acted.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task Respond_WithoutAButton_ToANamedAppWindowWithAnOpenDialog_StillReadsThatDialog_AndSaysToAnswerItByItsHandle()
+    {
+        _popupsOf[App] = [Popup(Dialog, PopupKind.Dialog, App)];
+
+        var result = await RespondAsync(null, App);
+
+        result.Success.Should().BeTrue(result.Error);
+        result.DialogHandle.Should().Be((long)Dialog);
+        result.Warnings.Should().ContainSingle(w => w.Contains($"handle {(long)Dialog}") && w.Contains($"window {(long)App}"));
+        _acted.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task Respond_WithoutAButton_ToANamedAppWindowThatAModalDialogDisables_SaysToAnswerTheDialogByItsHandle()
+    {
+        // The app window stands for its modal dialog at the time of the press, which may be another one by then
+        _popupsOf[App] = [Popup(Dialog, PopupKind.Dialog, App, blocking: true)];
+
+        var result = await RespondAsync(null, App);
+
+        result.Success.Should().BeTrue(result.Error);
+        result.DialogHandle.Should().Be((long)Dialog);
+        result.Warnings.Should().ContainSingle(w => w.Contains($"handle {(long)Dialog}"));
+    }
+
+    [Fact]
+    public async Task Respond_WithoutAButton_ToTheDialogNamedByItsHandle_HasNoWarning()
+    {
+        var result = await RespondAsync(null);
+
+        result.Success.Should().BeTrue(result.Error);
+        result.Warnings.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task Respond_Cancel_Unnamed_StillGoesToTheOpenDialogOfTheWindowInFront()
+    {
+        // Only cancel, which answers nothing, may go to the dialog in front unread, as before
+        _foreground = App;
+        _popupsOf[App] = [Popup(Dialog, PopupKind.Dialog, App)];
+
+        var result = await RespondAsync("cancel", window: 0);
+
+        result.Success.Should().BeTrue(result.Error);
+        result.DialogHandle.Should().Be((long)Dialog);
+        _acted.Should().ContainSingle().Which.Ref.Should().Be("w1e3");
+    }
+
     #endregion
 }

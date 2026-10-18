@@ -18,7 +18,10 @@ namespace WindowsAppManagerMcp.Services.Interfaces;
 /// pressed in the dialog in front unnamed (InvalidArguments otherwise). A dialog named (by handle or selector) that a modal
 /// dialog of its own now disables is refused (BlockedByModal, naming that one) instead of followed to it: the agent read the
 /// dialog it named. Reading follows the chain from any window, and a named window that is no dialog (the application's
-/// window) stands for its modal dialog for a press too.</para>
+/// window) stands for its modal dialog for a press too, but not for an open dialog that leaves it enabled, which a read
+/// takes: that one may have come up after the agent read another (a press is DialogNotFound, naming it, and nothing is
+/// read or pressed). A read through such a window warns that the press should name the dialog by its handle, since the
+/// window stands for whatever modal dialog is in front of it when the press runs.</para>
 /// <para><b>Reading</b> (<see cref="ReadAsync"/>): through find_ui_elements' search (<see cref="IElementSearchService"/>,
 /// scope window) on the UI Automation worker: the visible buttons (Button, SplitButton) with refs, without the title bar's
 /// caption buttons (minimize, maximize, close, help: inside a TitleBar element's bounds), and the Text elements.
