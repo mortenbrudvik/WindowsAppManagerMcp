@@ -836,10 +836,15 @@ public partial class InputSimulationService : IInputSimulationService
         var presses = SendKeysParser.KeyPresses(inputs).Count;
         if (presses > MaxSendKeysPresses)
         {
+            // type_text refuses to paste when Ctrl+V is the user's pause hotkey, so the advice must not send the agent there
+            var pasteIsPauseChord = _session.FindPauseChord(PasteKeys(KeyboardLayout.Invariant));
             return new SendKeysResult(false, keys,
                 $"The keys press {Count(presses)} keys, more than the {Count(MaxSendKeysPresses)} send_keys sends in one call, so that a " +
-                "runaway call cannot type for minutes. Nothing was sent. Send them in parts, or put long text in with type_text " +
-                "(method 'paste').", InputErrorCode.TextTooLong);
+                "runaway call cannot type for minutes. Nothing was sent. " +
+                (pasteIsPauseChord == null
+                    ? "Send them in parts, or put long text in with type_text (method 'paste')."
+                    : $"Send them in parts: long text cannot be pasted with type_text, because a paste presses Ctrl+V and " +
+                      $"{pasteIsPauseChord} is the user's pause hotkey."), InputErrorCode.TextTooLong);
         }
 
         // Every event counts too: a modifier going down and up without a key between (crossed: {SHIFT down}{CTRL down}

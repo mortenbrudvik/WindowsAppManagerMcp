@@ -78,6 +78,33 @@ public class SendKeysLimitsTests
     }
 
     [Fact]
+    public async Task MoreKeysThanTheMaximum_WhenCtrlVIsThePauseChord_SayNotToPasteThem()
+    {
+        // type_text refuses to paste then (PauseChordNotAllowed), so the advice must not send the agent there
+        var session = new InputSession(_input, PauseHotkeyOptions.FromEnvironment(_ => "Ctrl+V"));
+        var sut = new InputSimulationService(TestDataFactory.CreateMockMonitorService().Object, _input, _guard.Object, session);
+
+        var result = await sut.SendKeysAsync(Presses('a', InputSimulationService.MaxSendKeysPresses + 1));
+
+        result.ErrorCode.Should().Be(InputErrorCode.TextTooLong);
+        result.Error.Should().Contain("Nothing was sent").And.Contain("Send them in parts").And.Contain("Ctrl+V")
+            .And.Contain("pause hotkey").And.NotContain("method 'paste'");
+        VerifyNothingCheckedOrSent();
+    }
+
+    [Fact]
+    public async Task MoreKeysThanTheMaximum_WithAnotherPauseChord_StillSayToPasteLongText()
+    {
+        var session = new InputSession(_input, PauseHotkeyOptions.FromEnvironment(_ => "Ctrl+Alt+Q"));
+        var sut = new InputSimulationService(TestDataFactory.CreateMockMonitorService().Object, _input, _guard.Object, session);
+
+        var result = await sut.SendKeysAsync(Presses('a', InputSimulationService.MaxSendKeysPresses + 1));
+
+        result.ErrorCode.Should().Be(InputErrorCode.TextTooLong);
+        result.Error.Should().Contain("method 'paste'").And.NotContain("pause hotkey");
+    }
+
+    [Fact]
     public async Task TheMaximum_IsSent_InBatches()
     {
         var result = await CreateSut().SendKeysAsync(Presses('a', InputSimulationService.MaxSendKeysPresses));
