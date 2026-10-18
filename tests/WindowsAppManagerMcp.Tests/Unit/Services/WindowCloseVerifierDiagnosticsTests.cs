@@ -67,6 +67,20 @@ public class WindowCloseVerifierDiagnosticsTests
     }
 
     [Fact]
+    public async Task AWindowWhoseElementsGoAwayWhileTheyAreRead_IsStillOpen_WithAWarning_ButNoWarningIsLogged()
+    {
+        // Arrange - a closing window: no fault of the server
+        _tree.FromHandleException = new UiaElementUnavailableException("The element is not available.");
+
+        // Act
+        var result = await CreateSut().WaitForCloseAsync([Editor], ShownBefore, Short, CancellationToken.None);
+
+        // Assert
+        result.Single().Warning.Should().Contain("prompt could not be inspected").And.Contain("went away");
+        Warnings.Should().BeEmpty();
+    }
+
+    [Fact]
     public async Task AWindowWhosePromptReadWorks_HasNoWarning()
     {
         _tree.WithWindow(Editor, new FakeUiaNode("Window", "Editor").With(new FakeUiaNode("Document", "Text")));

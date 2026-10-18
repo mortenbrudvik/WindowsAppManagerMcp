@@ -419,6 +419,12 @@ public sealed class WindowCloseVerifier : IWindowCloseVerifier
             _logger?.LogDebug(ex, "Could not {What} for window {Handle} in time", what, window);
             return (fallback, $"UI Automation did not answer within {UiaReadTimeout.TotalMilliseconds:0} ms");
         }
+        catch (UiaElementUnavailableException ex) when (!cancellationToken.IsCancellationRequested)
+        {
+            // The window (or the prompt) went away while it was read, as a closing window does: no fault of the server
+            _logger?.LogDebug(ex, "Could not {What} for window {Handle}: its elements went away", what, window);
+            return (fallback, "its UI Automation elements went away while they were read (it may be closing)");
+        }
         catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
         {
             _logger?.LogWarning(ex, "Could not {What} for window {Handle}: UI Automation failed", what, window);
