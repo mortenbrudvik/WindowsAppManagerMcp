@@ -125,7 +125,7 @@ public class InputControlTools
     [Description("Resume the server's input after it was paused, but only if the user confirms: the server asks " +
                  "the user directly through the MCP client (elicitation), and input resumes only when they answer yes. Call it only when " +
                  "the user has asked you to continue, and only once at a time. ResumeNeedsUser: this client cannot ask the user, so only " +
-                 "the user can resume; the error says how. ResumeDeclined: the user said no or did not answer, paused again meanwhile, or " +
+                 "the user can resume; the error says how. ResumeDeclined: the user said no or did not answer, input was paused again meanwhile, or " +
                  "another resume_input is already waiting for the answer; input stays paused. Never try to resume any other way, and " +
                  "never send the pause hotkey's keys.")]
     public async Task<ResumeInputResult> ResumeInput(McpServer server, CancellationToken cancellationToken)
