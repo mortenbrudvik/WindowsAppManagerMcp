@@ -1,3 +1,5 @@
+using Microsoft.Extensions.Logging;
+
 namespace WindowsAppManagerMcp.Tests.Unit.Services;
 
 /// <summary>
@@ -498,6 +500,87 @@ public class InputSessionTests
 
         pausedWhileTheFlagIsNot.Should().BeTrue();
         sut.IsPaused.Should().BeFalse();
+    }
+
+    public static TheoryData<Exception> ReadFailures => new()
+    {
+        new IOException("the handle broke"),
+        new UnauthorizedAccessException("denied"),
+        new ObjectDisposedException("flag")
+    };
+
+    [Theory]
+    [MemberData(nameof(ReadFailures))]
+    public void AFlagThatCannotBeRead_PausesInput_AndIsLoggedOnce(Exception failure)
+    {
+        // Arrange - another server's pause may be in the flag, so input fails closed (review F4)
+        var logger = new RecordingLogger<InputSession>();
+        var flag = new FakeDesktopPauseFlag { ReadFails = failure };
+        using var sut = new InputSession(_input, PauseHotkeyOptions.Default, _time, logger);
+
+        // Act
+        sut.ShareDesktopPause(flag);
+
+        // Assert
+        sut.IsPaused.Should().BeTrue();
+        sut.PauseState.PausedBy.Should().Be(InputControlSources.SharedPauseUnreadable);
+        sut.Send(CtrlC).PausedByUser.Should().BeTrue();
+        _input.Batches.Should().BeEmpty();
+        // The watcher thread logs its own failure too: a copy, not the live list
+        logger.Entries.ToArray().Count(e => e.Level == LogLevel.Error && e.Message.Contains("could not be read")).Should().Be(1,
+            "an unreadable flag is logged once, not before every batch");
+    }
+
+    [Fact]
+    public void AFlagThatCannotBeRead_StopsRunningCalls_AndReleasesWhatTheServerHolds()
+    {
+        // Arrange - a call is running and holds Ctrl
+        var flag = new FakeDesktopPauseFlag();
+        using var sut = CreateSut();
+        sut.ShareDesktopPause(flag);
+        sut.Send([InputEvent.Key(VkControl, KeyDown)]);
+        var running = sut.PauseToken;
+
+        // Act
+        flag.ReadFails = new IOException("the handle broke");
+        var next = sut.Send(CtrlC);
+
+        // Assert
+        next.PausedByUser.Should().BeTrue();
+        running.IsCancellationRequested.Should().BeTrue();
+        _input.IsKeyDown(VkControl).Should().BeFalse();
+    }
+
+    [Fact]
+    public void AFlagThatCannotBeRead_StaysPaused_UntilTheUserResumes_EvenOnceItCanBeReadAgain()
+    {
+        // Arrange
+        var flag = new FakeDesktopPauseFlag { ReadFails = new IOException("the handle broke") };
+        using var sut = CreateSut();
+        sut.ShareDesktopPause(flag);
+
+        // Act - the flag can be read again, and nobody paused
+        flag.ReadFails = null;
+
+        // Assert - the server cannot tell what it missed meanwhile: only the user resumes
+        sut.IsPaused.Should().BeTrue();
+        sut.Resume(InputControlSources.ResumeInput).Should().BeTrue();
+        sut.IsPaused.Should().BeFalse();
+        sut.Send(CtrlC).Complete.Should().BeTrue();
+    }
+
+    [Fact]
+    public void AFlagThatCannotBeRead_CanBeResumedByTheUser_AndDoesNotPauseAgainUntilItWasReadable()
+    {
+        // The user confirmed resume_input: one unreadable flag pauses once, not before every batch
+        var flag = new FakeDesktopPauseFlag { ReadFails = new IOException("the handle broke") };
+        using var sut = CreateSut();
+        sut.ShareDesktopPause(flag);
+
+        sut.Resume(InputControlSources.ResumeInput).Should().BeTrue();
+
+        sut.IsPaused.Should().BeFalse();
+        sut.Send(CtrlC).Complete.Should().BeTrue();
     }
 
     [Fact]

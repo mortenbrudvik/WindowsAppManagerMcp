@@ -41,6 +41,9 @@ public sealed class InputSession : IInputSession, IDisposable
     private readonly CancellationTokenSource _watcherStop = new();
     private IDesktopPauseFlag? _flag;
     private bool _flagSeen;
+
+    // True from a read of the flag that failed until the next one that works (see SyncLocked)
+    private bool _flagUnreadable;
     private bool _shared;
     private Thread? _watcher;
     private long _pauses;
@@ -360,6 +363,14 @@ public sealed class InputSession : IInputSession, IDisposable
     /// Takes over a change of the flag made by another server: a pause pauses this server too, a resume resumes
     /// it. Only changes count, so a flag that could not be written does not undo this server's own change.
     /// </summary>
+    /// <remarks>
+    /// A flag that cannot be read fails closed: a pause the user made in another server may be in it, so the first failed
+    /// read pauses this server (<see cref="InputControlSources.SharedPauseUnreadable"/>) and is logged. Later failed reads
+    /// change nothing, so the user can still resume here (resume_input or the hotkey) while it cannot be read, and a read that
+    /// works again does not resume by itself: what happened meanwhile is not known, so only the user resumes. The named
+    /// event throws ObjectDisposedException only after <see cref="Dispose"/>, where pausing is right too: a closed session
+    /// sends nothing.
+    /// </remarks>
     private void SyncLocked()
     {
         if (_flag == null)
@@ -374,9 +385,21 @@ public sealed class InputSession : IInputSession, IDisposable
         }
         catch (Exception ex) when (ex is ObjectDisposedException or IOException or UnauthorizedAccessException)
         {
+            if (!_flagUnreadable)
+            {
+                _flagUnreadable = true;
+                _logger?.LogError(ex, "The shared pause could not be read, so this server cannot tell whether the user paused input in " +
+                                      "another server; input is paused until the user resumes it");
+                if (!_state.Paused)
+                {
+                    ApplyPauseLocked(InputControlSources.SharedPauseUnreadable);
+                }
+            }
+
             return;
         }
 
+        _flagUnreadable = false;
         if (paused == _flagSeen)
         {
             return;

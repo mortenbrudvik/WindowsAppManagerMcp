@@ -15,13 +15,16 @@ public sealed class FakeDesktopPauseFlag : IDesktopPauseFlag
     /// <summary>Makes <see cref="Set"/> and <see cref="Reset"/> throw, as a flag that cannot be written would.</summary>
     public Exception? WriteFails { get; set; }
 
+    /// <summary>Makes <see cref="IsSet"/> throw, as a flag that cannot be read would.</summary>
+    public Exception? ReadFails { get; set; }
+
     /// <summary>How many times a session set the flag.</summary>
     public int Sets => Volatile.Read(ref _sets);
 
     /// <summary>How many times a session reset the flag.</summary>
     public int Resets => Volatile.Read(ref _resets);
 
-    public bool IsSet => _event.WaitOne(0);
+    public bool IsSet => ReadFails is { } failure ? throw failure : _event.WaitOne(0);
 
     public WaitHandle WaitHandle => _event;
 
