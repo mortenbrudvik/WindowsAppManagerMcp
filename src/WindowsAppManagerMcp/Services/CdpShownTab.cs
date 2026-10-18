@@ -21,9 +21,14 @@ namespace WindowsAppManagerMcp.Services;
 /// shows, each one's document.visibilityState is read in an isolated world (<see cref="CdpIsolatedWorld"/>), which the
 /// page's scripts cannot redefine, and the one shown is taken. Anything short of exactly one shown tab is
 /// CdpTargetAmbiguous, listing the candidates: none or several shown, a visibility that could not be read, too many
-/// candidates to read, a minimized window (none of its tabs is shown, so one shown is another window's), and candidates in
-/// more than one browser window (a shown tab is the one its own window shows, which need not be this window). It never
-/// guesses.
+/// candidates to read, a minimized window (none of its tabs is shown, so one shown is another window's), candidates in
+/// more than one browser window (a shown tab is the one its own window shows, which need not be this window), and
+/// candidates whose browser window is not known (the binding could not be read, or the browser puts one in no window), as
+/// that rule cannot then be checked. It never guesses.
+/// </para>
+/// <para>
+/// So that rule can be checked, the callers read the tabs' browser windows whenever several tabs have the window's title,
+/// also without the window's bounds.
 /// </para>
 /// </remarks>
 internal static class CdpShownTab
@@ -40,7 +45,8 @@ internal static class CdpShownTab
     /// <param name="transport">Connects to each candidate tab to read whether it is shown.</param>
     /// <param name="window">The window: its title and, when known, where it is.</param>
     /// <param name="all">Every page tab of the browser.</param>
-    /// <param name="windows">The browser window of each tab (Browser.getWindowForTarget), or null when not read.</param>
+    /// <param name="windows">The browser window of each tab (Browser.getWindowForTarget), or null when not read; then
+    /// several tabs with the window's title are CdpTargetAmbiguous.</param>
     /// <param name="visibilityTimeout">How long reading the candidates' visibility may take, all of them together.</param>
     /// <param name="cancellationToken">Cancels the reads.</param>
     /// <returns>The tab, or CdpTargetNotFound / CdpTargetAmbiguous.</returns>
@@ -104,9 +110,18 @@ internal static class CdpShownTab
                 "the window is minimized, so it shows none of its tabs, and a tab that is shown is another window's.");
         }
 
-        // A tab that is shown is the one its own browser window shows, so it tells nothing among several windows
-        if (windows != null &&
-            candidates.Select(t => windows.TryGetValue(t.Id, out var w) ? w.WindowId : (int?)null).Distinct().Count() > 1)
+        // A tab that is shown is the one its own browser window shows, so it tells which tab this window shows only when all
+        // of them are known to be in one browser window. Without the binding (it could not be read, or the browser puts a
+        // tab in no window), a covered window's hidden tab and a tab with its title shown in front by another window would
+        // leave that other window's tab the only one shown: fail closed rather than take it
+        if (windows == null || candidates.Any(t => !windows.ContainsKey(t.Id)))
+        {
+            return CdpTargetMatcher.Ambiguous(window.Title, candidates,
+                "which browser window each of them is in could not be read (Browser.getWindowForTarget), and that a tab is " +
+                "shown tells only that its own window shows it.");
+        }
+
+        if (candidates.Select(t => windows[t.Id].WindowId).Distinct().Count() > 1)
         {
             return CdpTargetMatcher.Ambiguous(window.Title, candidates,
                 "they are in more than one browser window, and that a tab is shown tells only that its own window shows it.");

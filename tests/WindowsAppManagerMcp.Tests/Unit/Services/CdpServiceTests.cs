@@ -779,6 +779,95 @@ public class CdpServiceTests
 
         result.Success.Should().BeTrue(result.Error);
         result.Value!.Id.Should().Be("REAL");
+        browser.WindowQueries.Should().Be(2, "with several tabs to choose from, which browser window each is in must be known");
+    }
+
+    [Fact]
+    public async Task FindTargetForWindowAsync_WithoutTheWindowsBounds_ShownTabsOfSeveralBrowserWindows_AreAmbiguous()
+    {
+        // Without the window's bounds it is not bound, but the browser windows of the tabs are still read: the tab shown
+        // in another window is not the one this window shows
+        var browser = new FakeCdpBrowser()
+            .Window(1, 0, 0, 1000, 700)
+            .Window(2, 1200, 0, 800, 600)
+            .Tab("REAL", "Inbox", 1)
+            .Tab("OTHER", "Inbox", 2)
+            .Visibility("REAL", "hidden")
+            .Visibility("OTHER", "visible");
+        var sut = CreateSut(browser);
+
+        var result = await sut.FindTargetForWindowAsync(Port, TitleOnly("Inbox - Google Chrome"), LongTimeout);
+
+        result.ErrorCode.Should().Be(BrowserErrorCode.CdpTargetAmbiguous, result.Error);
+        result.Error.Should().Contain("more than one browser window").And.Contain("targetId REAL").And.Contain("targetId OTHER");
+    }
+
+    [Theory]
+    [InlineData(true, "Inbox")]
+    [InlineData(true, "Inbox - Google Chrome")]
+    [InlineData(false, "Inbox")]
+    [InlineData(false, "Inbox - Google Chrome")]
+    public async Task FindTargetForWindowAsync_WhenWhichWindowEachTabIsInCannotBeRead_ATabShownElsewhere_IsNotTaken(
+        bool withBounds, string otherTitle)
+    {
+        // The window asked for is covered, so its own tab is hidden; another window shows a tab with its title (the same
+        // title, or a spoof). Without the binding, 'shown' cannot say which window shows it: fail closed, never a guess
+        var browser = new FakeCdpBrowser { NotABrowsersVersion = true }
+            .Window(1, 0, 0, 1000, 700)
+            .Window(2, 1200, 0, 800, 600)
+            .Tab("REAL", "Inbox", 1)
+            .Tab("OTHER", otherTitle, 2)
+            .Visibility("REAL", "hidden")
+            .Visibility("OTHER", "visible");
+        var sut = CreateSut(browser);
+        var window = withBounds ? At("Inbox - Google Chrome", 0, 0, 1000, 700) : TitleOnly("Inbox - Google Chrome");
+
+        var result = await sut.FindTargetForWindowAsync(Port, window, LongTimeout);
+
+        result.ErrorCode.Should().Be(BrowserErrorCode.CdpTargetAmbiguous, result.Error);
+        result.Error.Should().Contain("which browser window each of them is in could not be read")
+            .And.Contain("targetId REAL").And.Contain("targetId OTHER");
+    }
+
+    [Fact]
+    public async Task FindTargetForWindowAsync_ABindingThatStalls_WithATabShownElsewhere_IsAmbiguous_AndBounded()
+    {
+        // The browser's connection takes the window lookup's whole share: as when it cannot be read at all
+        var browser = new FakeCdpBrowser { Unanswered = null }
+            .Window(1, 0, 0, 1000, 700)
+            .Window(2, 1200, 0, 800, 600)
+            .Tab("REAL", "Inbox", 1)
+            .Tab("OTHER", "Inbox", 2)
+            .Visibility("REAL", "hidden")
+            .Visibility("OTHER", "visible");
+        var sut = CreateSut(browser);
+        var stopwatch = Stopwatch.StartNew();
+
+        var result = await sut.FindTargetForWindowAsync(Port, At("Inbox - Google Chrome", 0, 0, 1000, 700), TimeSpan.FromSeconds(3));
+
+        stopwatch.Stop();
+        result.ErrorCode.Should().Be(BrowserErrorCode.CdpTargetAmbiguous, result.Error);
+        result.Error.Should().Contain("could not be read");
+        stopwatch.Elapsed.Should().BeLessThan(HangBound);
+    }
+
+    [Fact]
+    public async Task FindTargetForWindowAsync_ATabTheBrowserPutsInNoWindow_AmongSeveral_IsAmbiguous()
+    {
+        // A page target that is in no browser window (Browser.getWindowForTarget refuses it) is no tab of this window's
+        // tab strip, so being shown says nothing about this window
+        var browser = new FakeCdpBrowser()
+            .Window(1, 0, 0, 1000, 700)
+            .Tab("REAL", "Inbox", 1)
+            .Tab("LOOSE", "Inbox - Google Chrome", null)
+            .Visibility("REAL", "hidden")
+            .Visibility("LOOSE", "visible");
+        var sut = CreateSut(browser);
+
+        var result = await sut.FindTargetForWindowAsync(Port, TitleOnly("Inbox - Google Chrome"), LongTimeout);
+
+        result.ErrorCode.Should().Be(BrowserErrorCode.CdpTargetAmbiguous, result.Error);
+        result.Error.Should().Contain("could not be read").And.Contain("targetId LOOSE");
     }
 
     [Fact]

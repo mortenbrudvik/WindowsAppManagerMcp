@@ -171,8 +171,11 @@ public class CdpService : ICdpService
         if (all.Count == 1 && CdpTargetMatcher.Match(window.Title, all) is { Success: true } only)
             return only;
 
+        // The binding needs the window's bounds to tell its tabs; without them it is still read when several tabs have the
+        // title, as list_tabs reads it, so CdpShownTab can check they are in one browser window (it fails closed without)
         IReadOnlyDictionary<string, CdpBrowserWindow>? windows = null;
-        if (window.Geometry != null && all.Count is >= 1 and <= MaxBoundTabs)
+        if (all.Count is >= 1 and <= MaxBoundTabs &&
+            (window.Geometry != null || CdpTargetMatcher.FindCandidates(window.Title, all) is { Success: true, Value.Count: > 1 }))
         {
             // Best effort, so only a share of the budget: a stalled browser connection leaves the page read its time
             windows = await GetBrowserWindowsAsync(port, all, BindingBudget(timeout - stopwatch.Elapsed), cancellationToken)
