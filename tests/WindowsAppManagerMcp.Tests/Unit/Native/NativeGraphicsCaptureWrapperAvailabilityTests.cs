@@ -1,14 +1,24 @@
 namespace WindowsAppManagerMcp.Tests.Unit.Native;
 
 /// <summary>
-/// <see cref="NativeGraphicsCaptureWrapper.Availability"/> over a scripted support check with a short deadline, so nothing
-/// native runs: "this Windows has no Windows.Graphics.Capture" (an answer, kept) is told apart from "it cannot be asked
-/// now" (a check that missed its deadline or failed, or a call that has not returned; asked again later), and a capture
-/// refused for either reason says which. Only the refusals are captured, and they throw before any window is read.
+/// <see cref="NativeGraphicsCaptureWrapper.Availability"/> over a scripted support check, so nothing native runs: "this
+/// Windows has no Windows.Graphics.Capture" (an answer, kept) is told apart from "it cannot be asked now" (a check that
+/// missed its deadline or failed, or a call that has not returned; asked again later), and a capture refused for either
+/// reason says which. Only the refusals are captured, and they throw before any window is read.
 /// </summary>
 public class NativeGraphicsCaptureWrapperAvailabilityTests
 {
-    private static readonly TimeSpan ShortDeadline = TimeSpan.FromMilliseconds(100);
+    /// <summary>
+    /// The deadline of a check that answers at once: far above a thread's start-up on a loaded machine, so only a check
+    /// that does not answer misses it (TESTING.md), and free, because an answer ends the wait.
+    /// </summary>
+    private static readonly TimeSpan AnswerDeadline = TimeSpan.FromSeconds(30);
+
+    /// <summary>
+    /// The deadline of the test whose first check never answers: the test waits it out once, and the check made after the
+    /// release has as long, still seconds above a thread's start-up.
+    /// </summary>
+    private static readonly TimeSpan StuckDeadline = TimeSpan.FromSeconds(3);
 
     [Theory]
     [InlineData(true, GraphicsCaptureAvailability.Available)]
@@ -16,7 +26,7 @@ public class NativeGraphicsCaptureWrapperAvailabilityTests
     public void AnAnswer_IsKept(bool supported, GraphicsCaptureAvailability expected)
     {
         var checks = 0;
-        using var sut = new NativeGraphicsCaptureWrapper(ShortDeadline, () =>
+        using var sut = new NativeGraphicsCaptureWrapper(AnswerDeadline, () =>
         {
             checks++;
             return supported;
@@ -31,7 +41,7 @@ public class NativeGraphicsCaptureWrapperAvailabilityTests
     public void ACheckThatFails_IsUnknown_AndIsAskedAgain()
     {
         var checks = 0;
-        using var sut = new NativeGraphicsCaptureWrapper(ShortDeadline, () => ++checks == 1 ? throw new InvalidOperationException("RPC busy") : true);
+        using var sut = new NativeGraphicsCaptureWrapper(AnswerDeadline, () => ++checks == 1 ? throw new InvalidOperationException("RPC busy") : true);
 
         sut.Availability.Should().Be(GraphicsCaptureAvailability.Unknown);
         sut.Availability.Should().Be(GraphicsCaptureAvailability.Available);
@@ -44,7 +54,7 @@ public class NativeGraphicsCaptureWrapperAvailabilityTests
         // Arrange - the first check blocks until released, as a stuck graphics driver would
         using var release = new ManualResetEventSlim();
         var checks = 0;
-        using var sut = new NativeGraphicsCaptureWrapper(ShortDeadline, () =>
+        using var sut = new NativeGraphicsCaptureWrapper(StuckDeadline, () =>
         {
             if (Interlocked.Increment(ref checks) == 1)
             {
@@ -73,7 +83,7 @@ public class NativeGraphicsCaptureWrapperAvailabilityTests
     [Fact]
     public void ACaptureOnAComputerWithout_SaysWhatItNeeds()
     {
-        using var sut = new NativeGraphicsCaptureWrapper(ShortDeadline, () => false);
+        using var sut = new NativeGraphicsCaptureWrapper(AnswerDeadline, () => false);
 
         var act = () => sut.CaptureWindow(new nint(0x1234), includeFrame: true);
 
@@ -84,7 +94,7 @@ public class NativeGraphicsCaptureWrapperAvailabilityTests
     [Fact]
     public void ACaptureWhileTheCheckCannotAnswer_SaysToTryAgain()
     {
-        using var sut = new NativeGraphicsCaptureWrapper(ShortDeadline, () => throw new InvalidOperationException("RPC busy"));
+        using var sut = new NativeGraphicsCaptureWrapper(AnswerDeadline, () => throw new InvalidOperationException("RPC busy"));
 
         var act = () => sut.CaptureWindow(new nint(0x1234), includeFrame: true);
 

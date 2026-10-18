@@ -60,13 +60,19 @@ public class CaptureAidsTests
     [Fact]
     public void Zoom_IsHeldToTheBudget_ByTheRegionOnTheScreen_NotTheRegionAsked()
     {
-        // Arrange - a region far larger than the screen is cut to it (1920 x 1080) before the budget is checked
+        // Arrange - a 3000 x 3000 region on a 500 x 500 screen is cut to the screen before the budget is checked. Without a
+        // long-edge limit, zoom 4 makes the region asked a 12000 x 12000 image (144 megapixels, over the budget), but the part
+        // on the screen only a 2000 x 2000 one (4 megapixels)
+        _capture.Setup(c => c.GetVirtualScreenBounds()).Returns((0, 0, 500, 500));
+
         // Act
-        var result = CreateSut().CaptureRegion(0, 0, 100_000, 100_000, Png(o => o with { Zoom = 4 }));
+        var result = CreateSut().CaptureRegion(0, 0, 3000, 3000, Png(o => o with { Zoom = 4, MaxDimension = 0 }));
 
         // Assert
         result.Metadata.Success.Should().BeTrue(result.Metadata.Error);
-        result.Metadata.Width.Should().Be(1568, "the default maxDimension still caps the long edge");
+        result.Metadata.Width.Should().Be(2000);
+        result.Metadata.Height.Should().Be(2000);
+        _capture.Verify(c => c.CaptureScreenRegion(0, 0, 500, 500), Times.Once);
     }
 
     [Fact]
