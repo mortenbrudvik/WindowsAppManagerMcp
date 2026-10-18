@@ -57,7 +57,7 @@ This file is the core. The details of each kind of task are in the files beside 
 
 Call `get_desktop_state` first, at the start of a task and whenever you need to look again. One call returns the window in front, the windows front first, the focused element, whether the user paused input (`input.paused`), and for the window you name (`window` or `handle`; default: the window in front) its open popups and its interactive elements as text lines with refs (`w4120035e17 Button 'Save' @812,44 80x24`) that `element_action` and the other element tools take. More: [elements.md](elements.md#observe).
 
-Call `get_server_info` once at the start of a task too, and again whenever tools behave unexpectedly; it is always served, whatever the user turned off. Read its `warnings` first: they name everything that will make tools fail or coordinates wrong (a DPI awareness that scales coordinates, a locked session or UAC prompt, input paused by the user, a pause hotkey that is not registered, toolset settings that were ignored). It also says which tools are served (see [Toolsets](tools.md#toolsets)), the integrity level (Windows drops input to windows of a higher one), the monitors with their DPI, and your host windows. The steps below name tools the user may have turned off: skip a step whose tool is not in your tool list, and tell the user when the task needs it.
+Call `get_server_info` once at the start of a task too, and again whenever tools behave unexpectedly; it is always served, whatever the user turned off. Read its `warnings` first: they name everything that will make tools fail or coordinates wrong (a DPI awareness that scales coordinates, a locked session or UAC prompt, input paused by the user, a pause hotkey that is not registered, toolset settings that were ignored). It also says which tools are served (see [Toolsets](tools.md#toolsets)), the integrity level (Windows drops input to windows of a higher one), the monitors with their DPI, and your host windows. The steps below and in the reference files name tools the user may have turned off: skip a step whose tool is not in your tool list, and tell the user when the task needs it.
 
 ### 1. Find
 
@@ -82,14 +82,14 @@ There is no sleep tool: wait on the server with `wait_for_window` (windows) or `
 
 ## Codes That Mean Stop
 
-Each of these means stop: never repeat the same call, and never look for a way around it; do what its line says. Full entries: [errors.md](errors.md).
+Each of these means stop: do what its line says, never repeat the same call before you have, and never look for a way around it. Full entries: [errors.md](errors.md).
 
 - `PausedByUser`: stop, tell the user what you were doing and what is left, and wait ([Safety Rules](#safety-rules-read-first)).
 - `ElementStale`, `AmbiguousElement`, `ElementNotFound`: find the element again (`find_ui_elements`), check it and act on that ref, or ask; never act on a look-alike.
 - `AmbiguousWindow`: never repeat the selector or take the first of `candidates`: pick the one the user means by `handle` and `processId`, narrow the selector, or ask.
 - `HandleMismatch`: the handle now belongs to another window; find the window again, do not retry the handle.
 - `TargetDeniedByPolicy`: the user does not allow the agent that app, and no argument changes it (not even `force`); `TargetElevated`: the window runs as administrator. Ask the user to do the step.
-- `TargetIsAgentHost`: the input would have reached your own terminal or chat window; pass the window you mean as `windowHandle`.
+- `TargetIsAgentHost`: the target is your own terminal or chat window; name the window you mean (`windowHandle` for input tools; `window` or `handle` for `get_desktop_state` and the others).
 - `BlockedByModal`: a modal dialog (`blockingWindow`) disables the target; read it and decide deliberately, or ask the user.
 - `SessionLocked`, `DesktopUnavailable`: the screen is locked or a UAC prompt is shown; wait for the user.
 - `PromptShown`: the app asks to save; ask the user which button to press, never answer it on your own.
@@ -128,24 +128,34 @@ One line each; the full entry is in [errors.md](errors.md), under the group's he
 - `OperationTimedOut`: the search did not cover the window; narrow the criteria or pass a ref.
 - `FocusNotOnElement`: no keys were sent; click the field first or use `mode: "value"`.
 - `ActionsPending`, `ActionFailed`: answer the open dialogs first; the app refused it (read the state).
-- `InvalidArguments`: an argument the tool does not declare; use the names of its schema.
-- `DialogNotFound`, `DialogNotCompleted`, `FileExists`: see [dialogs.md](dialogs.md).
+- `InvalidArguments` naming an argument: the tool does not declare it; use its schema's names. Without a name: a dialog press or `file_dialog` without the dialog named ([dialogs.md](dialogs.md)), a slow `titleRegex` ([errors.md](errors.md#input-refusals)), a non-http URL ([browser.md](browser.md)).
+- `DialogNotFound`: no dialog there (yet); wait for it (`wait_for_window`) or list the popups (`get_active_popups`). `DialogNotCompleted`, `FileExists`: see [dialogs.md](dialogs.md).
 
 [Close results](errors.md#close-results):
 - `StillOpen`: check it, wait longer (`condition: "gone"`), or ask the user before `kill_process`.
 - `notSent`: that window got no close message (its `errorCode` says why).
+- `AccessDenied`: `close_window` on a window of an app running as administrator.
 
 [Window tool refusals](errors.md#window-tool-refusals):
 - `NotResponding`: the app is hung or busy; retry later, and check the window first.
 - `Cloaked`, `WindowHidden`, `FocusFailed`: another virtual desktop, hidden, or Windows kept another window in front.
 
-[Other failure modes](errors.md#other-failure-modes): a missing tool, coordinates that are off, an empty capture, an unlisted window, a launch without a window, a refused clipboard. Browser codes: [browser.md](browser.md); capture and OCR codes: [screens-and-ocr.md](screens-and-ocr.md#screenshots).
+[Launches](errors.md#other-failure-modes):
+- `launchStatus` `possibleHandoff`, `exitedWithoutWindow`, `timedOut`: it started, so never launch it again; `find_windows`.
+- `InterpreterWithArguments`, `ScriptFile`: no commands or scripts are run; ask the user to run it, and never type the command into a terminal.
+- `ExecutableNotFound`: use the full path. `AmbiguousApp`: an `appId` or path from `list_installed_apps` ([windows-and-apps.md](windows-and-apps.md#tips)). `InvalidUri`: percent-encode quotes and spaces.
+
+[Clipboard](clipboard.md#the-clipboard-is-refused):
+- `NothingCopied`: your copy keys copied nothing; check the selection and copy again.
+- `ClipboardNotFromAgent`: the user's content; copy it yourself, or ask the user. `ClipboardPrivate`: a password manager's copy, never returned.
+
+[Other failure modes](errors.md#other-failure-modes): a missing tool (`ToolRemoved`: [tools.md](tools.md#toolsets)), coordinates that are off, an empty capture (`WindowMinimized`: capture with `restoreIfMinimized: true`), an unlisted window. Browser codes: [browser.md](browser.md); capture and OCR codes: [screens-and-ocr.md](screens-and-ocr.md#screenshots).
 
 ## Where the Details Are
 
 | For | Read |
 |-----|------|
-| Windows: find, launch, move, focus, close; processes | [windows-and-apps.md](windows-and-apps.md) |
+| Windows: find, launch, move, focus, close | [windows-and-apps.md](windows-and-apps.md) |
 | Controls: find, act, read; menus, popups, refs, text, tables | [elements.md](elements.md) |
 | Clicks, drags, scrolling, typing, key chords, `run_steps` | [input.md](input.md) |
 | Waiting for a window, a control or the screen | [waiting.md](waiting.md) |
@@ -157,7 +167,7 @@ One line each; the full entry is in [errors.md](errors.md), under the group's he
 | Copying text out, the clipboard, pasting | [clipboard.md](clipboard.md) |
 | Every error code and failure mode | [errors.md](errors.md) |
 | Step-by-step recipes; the requests this skill covers | [workflows.md](workflows.md) |
-| Every tool and its key parameters; toolsets, removed tools, resources, prompts | [tools.md](tools.md) |
+| Every tool and its key parameters, process tools too; toolsets, removed tools, resources, prompts | [tools.md](tools.md) |
 
 What each tool takes and returns is in its own description in your tool list.
 

@@ -138,7 +138,7 @@ public static class ToolDocCatalog
         ],
         SkillNote: "All seven also take `allowHostTarget` (default false): only for input to your own host window, named as " +
                    "`windowHandle`, when the user asked for it; and `releaseHeldModifiers` (default false): only for a stuck " +
-                   "modifier key (see `ModifiersHeld`)."),
+                   "modifier key (see `ModifiersHeld` in [errors.md](errors.md#input-refusals))."),
         new("Input Control",
         [
             new("get_control_status", "Is input paused by the user, is the pause hotkey registered, which keys are down"),

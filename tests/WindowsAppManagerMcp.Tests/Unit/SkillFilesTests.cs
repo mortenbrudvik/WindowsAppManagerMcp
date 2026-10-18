@@ -19,11 +19,13 @@ public partial class SkillFilesTests
     /// <summary>
     /// The token budget of SKILL.md (bytes / <see cref="ToolSurface.BytesPerToken"/>, the estimate of the tool budgets).
     /// A ratchet, not a margin: it sits just above the measured size, 5,047 tokens (20,188 bytes, LF line ends), October
-    /// 2026, after issue #11 split the 101,804-byte file into the core and its reference files. When a change adds to the
-    /// core on purpose (a safety rule, a code that means stop), raise it in the same change by what the failure message
-    /// measures; detail for one kind of task goes into its reference file instead.
+    /// 2026, after issue #11 split the 101,804-byte file into the core and its reference files; then 5,388 tokens (21,549
+    /// bytes) after the review of that split gave the error index a line for the launch, clipboard, AccessDenied and
+    /// DialogNotFound codes and scoped the InvalidArguments and TargetIsAgentHost lines. When a change adds to the core on
+    /// purpose (a safety rule, a code that means stop), raise it in the same change by what the failure message measures;
+    /// detail for one kind of task goes into its reference file instead.
     /// </summary>
-    private const int CoreTokenBudget = 5_060;
+    private const int CoreTokenBudget = 5_400;
 
     [GeneratedRegex(@"\[(?<text>[^\]\n]*)\]\((?<target>[^)\s]+)\)")]
     private static partial Regex MarkdownLink();
