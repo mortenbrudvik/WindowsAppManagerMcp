@@ -56,7 +56,7 @@ public sealed class GateObserver
         ArgumentNullException.ThrowIfNull(serviceType);
         ArgumentNullException.ThrowIfNull(noDesktopChange);
         ArgumentNullException.ThrowIfNull(explicitCalls);
-        var methods = serviceType.GetMethods().Concat(serviceType.GetInterfaces().SelectMany(i => i.GetMethods())).ToList();
+        var methods = MethodsOf(serviceType);
         var unknown = noDesktopChange.Where(name => methods.All(m => m.Name != name)).ToList();
         if (unknown.Count > 0)
         {
@@ -83,7 +83,8 @@ public sealed class GateObserver
             throw new ArgumentException($"{inner.GetType()} is no {serviceType}, or {serviceType} is no interface.", nameof(inner));
         }
 
-        var unknown = watched.Select(w => w.Method).Where(name => serviceType.GetMethods().All(m => m.Name != name)).ToList();
+        var methods = MethodsOf(serviceType);
+        var unknown = watched.Select(w => w.Method).Where(name => methods.All(m => m.Name != name)).ToList();
         if (unknown.Count > 0)
         {
             throw new ArgumentException($"{serviceType.Name} has no method {string.Join(", ", unknown)}.", nameof(watched));
@@ -96,6 +97,10 @@ public sealed class GateObserver
         proxy.ServiceName = serviceType.Name;
         return proxy;
     }
+
+    /// <summary>The methods of a service interface: its own and those it inherits from its base interfaces.</summary>
+    private static List<MethodInfo> MethodsOf(Type serviceType) =>
+        serviceType.GetMethods().Concat(serviceType.GetInterfaces().SelectMany(i => i.GetMethods())).ToList();
 
     private void Record(string call, object?[] args, WatchedCall watched)
     {
