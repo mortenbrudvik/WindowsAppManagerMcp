@@ -15,7 +15,8 @@ public sealed record GateObservation(string Call, bool GateHeld);
 /// not its dry run, which takes no gate.</param>
 /// <param name="HandsOnTheGate">The call takes a gate function (CdpGate, or Func&lt;CancellationToken, Task&lt;IDisposable&gt;&gt;)
 /// that the service under it enters around the commands that change something: the observer enters it itself and records
-/// whether that took the input gate, then forwards the call.</param>
+/// whether that took the input gate, then forwards the call. A call handed no gate function (null) is recorded with whether
+/// the gate is held during it, as a call that is not watched this way.</param>
 public sealed record WatchedCall(string Method, Func<object?[], bool>? Selects = null, bool HandsOnTheGate = false);
 
 /// <summary>
@@ -41,6 +42,36 @@ public sealed class GateObserver
 
     /// <summary><paramref name="inner"/>, with <paramref name="watched"/> watched.</summary>
     public T Watch<T>(T inner, params WatchedCall[] watched) where T : class => (T)Watch(typeof(T), inner, watched);
+
+    /// <summary>
+    /// <paramref name="inner"/>, an implementation of <paramref name="serviceType"/>, with every method that may change the desktop
+    /// watched: all but the property getters and <paramref name="noDesktopChange"/> (reads, checks, waits, the server's own
+    /// files), so a member added to the service is watched until it is listed there. A method that takes a gate function is
+    /// watched by entering it (<see cref="WatchedCall.HandsOnTheGate"/>); <paramref name="explicitCalls"/> replace the default for
+    /// their method, to select calls by their arguments for example.
+    /// </summary>
+    /// <exception cref="ArgumentException"><paramref name="noDesktopChange"/> names a method the service does not have.</exception>
+    public object WatchEveryChange(Type serviceType, object inner, IReadOnlySet<string> noDesktopChange, IReadOnlyList<WatchedCall> explicitCalls)
+    {
+        ArgumentNullException.ThrowIfNull(serviceType);
+        ArgumentNullException.ThrowIfNull(noDesktopChange);
+        ArgumentNullException.ThrowIfNull(explicitCalls);
+        var methods = serviceType.GetMethods().Concat(serviceType.GetInterfaces().SelectMany(i => i.GetMethods())).ToList();
+        var unknown = noDesktopChange.Where(name => methods.All(m => m.Name != name)).ToList();
+        if (unknown.Count > 0)
+        {
+            throw new ArgumentException($"{serviceType.Name} has no method {string.Join(", ", unknown)}.", nameof(noDesktopChange));
+        }
+
+        var watched = methods
+            .Where(m => !(m.IsSpecialName && m.Name.StartsWith("get_", StringComparison.Ordinal)) && !noDesktopChange.Contains(m.Name))
+            .GroupBy(m => m.Name, StringComparer.Ordinal)
+            .Select(g => explicitCalls.FirstOrDefault(c => c.Method == g.Key) ??
+                         new WatchedCall(g.Key, HandsOnTheGate: g.Any(m => m.GetParameters().Any(p => IsGateFunctionType(p.ParameterType)))))
+            .Concat(explicitCalls.Where(c => noDesktopChange.Contains(c.Method)))
+            .ToList();
+        return Watch(serviceType, inner, watched);
+    }
 
     /// <summary><paramref name="inner"/>, an implementation of <paramref name="serviceType"/>, with <paramref name="watched"/> watched.</summary>
     public object Watch(Type serviceType, object inner, IReadOnlyList<WatchedCall> watched)
@@ -74,8 +105,14 @@ public sealed class GateObserver
             return;
         }
 
-        var gate = args.OfType<Delegate>().SingleOrDefault(IsGateFunction)
-                   ?? throw new InvalidOperationException($"{call} was handed no gate function.");
+        var gate = args.OfType<Delegate>().SingleOrDefault(IsGateFunction);
+        if (gate == null)
+        {
+            // Handed no gate to enter around its commands: it must then be called under the gate
+            _seen.Enqueue(new GateObservation($"{call} (handed no gate)", InputGate.IsHeldBy(_tag)));
+            return;
+        }
+
         var token = args.OfType<CancellationToken>().FirstOrDefault();
         var held = (Task<IDisposable>)gate.DynamicInvoke(token)!;
         using (held.WaitAsync(TimeSpan.FromSeconds(60)).GetAwaiter().GetResult())
@@ -84,9 +121,16 @@ public sealed class GateObserver
         }
     }
 
-    private static bool IsGateFunction(Delegate candidate)
+    private static bool IsGateFunction(Delegate candidate) => IsGateFunctionType(candidate.GetType());
+
+    private static bool IsGateFunctionType(Type type)
     {
-        var invoke = candidate.GetType().GetMethod("Invoke")!;
+        type = Nullable.GetUnderlyingType(type) ?? type;
+        if (!typeof(Delegate).IsAssignableFrom(type) || type.GetMethod("Invoke") is not { } invoke)
+        {
+            return false;
+        }
+
         return invoke.ReturnType == typeof(Task<IDisposable>) &&
                invoke.GetParameters() is [{ ParameterType: var parameter }] && parameter == typeof(CancellationToken);
     }
