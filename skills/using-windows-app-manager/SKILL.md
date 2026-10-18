@@ -120,12 +120,14 @@ One line each; the full entry is in [errors.md](errors.md), under the group's he
 - `TargetInMenuMode`: a menu is open; `{ESC}`, or click into the field.
 - `ModifiersHeld`: a modifier key is down; the user may be typing: wait and retry.
 - `StaleCapture`, `CaptureNotFound`: nothing was sent; capture again.
+- `CoordinatesOutOfBounds`: a click outside every monitor ([screens-and-ocr.md](screens-and-ocr.md#coordinates)).
 - `InputBusy`: another call held the input for 30 seconds; retry when it has finished.
 
 [Element actions](errors.md#element-actions):
 - `ElementNotEnabled`, `ElementOffscreen`, `ElementReadOnly`: disabled, out of view (`scroll_into_view`, `realize`) or read-only.
 - `PatternNotSupported`: use another action, `fallback: "mouse"` or `mode: "type"`.
 - `OperationTimedOut`: the search did not cover the window; narrow the criteria or pass a ref.
+- `InvalidControlType`: an unknown `controlTypes` name; it lists the valid names ([elements.md](elements.md#tips)).
 - `FocusNotOnElement`: no keys were sent; click the field first or use `mode: "value"`.
 - `ActionsPending`, `ActionFailed`: answer the open dialogs first; the app refused it (read the state).
 - `InvalidArguments` naming an argument: the tool does not declare it; use its schema's names. Without a name: a dialog press or `file_dialog` without the dialog named ([dialogs.md](dialogs.md)), a slow `titleRegex` ([errors.md](errors.md#input-refusals)), a non-http URL ([browser.md](browser.md)).
@@ -139,6 +141,7 @@ One line each; the full entry is in [errors.md](errors.md), under the group's he
 [Window tool refusals](errors.md#window-tool-refusals):
 - `NotResponding`: the app is hung or busy; retry later, and check the window first.
 - `Cloaked`, `WindowHidden`, `FocusFailed`: another virtual desktop, hidden, or Windows kept another window in front.
+- `ArrangeFailed`: an `apply_layout` placement with `focus` did not come to the front ([layouts-and-monitors.md](layouts-and-monitors.md#save-and-restore-a-workspace)).
 
 [Launches](errors.md#other-failure-modes):
 - `launchStatus` `possibleHandoff`, `exitedWithoutWindow`, `timedOut`: it started, so never launch it again; `find_windows`.

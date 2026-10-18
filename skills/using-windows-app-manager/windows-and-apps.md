@@ -1,6 +1,8 @@
 # Windows and Applications
 
-Read this when you find, launch, move, resize, focus or close windows, or start, list or stop programs.
+Read this when you find, launch, move, resize, focus or close windows, or start programs (and list the installed ones).
+
+Ending an app or a process (`close_application`, `kill_process`) is in the core's [Safety Rules](SKILL.md#safety-rules-read-first); the process tools (`list_processes` too) are in [tools.md](tools.md), under App Launch.
 
 ## Find
 

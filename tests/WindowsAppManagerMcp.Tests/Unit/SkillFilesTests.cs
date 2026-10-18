@@ -21,11 +21,14 @@ public partial class SkillFilesTests
     /// A ratchet, not a margin: it sits just above the measured size, 5,047 tokens (20,188 bytes, LF line ends), October
     /// 2026, after issue #11 split the 101,804-byte file into the core and its reference files; then 5,388 tokens (21,549
     /// bytes) after the review of that split gave the error index a line for the launch, clipboard, AccessDenied and
-    /// DialogNotFound codes and scoped the InvalidArguments and TargetIsAgentHost lines. When a change adds to the core on
+    /// DialogNotFound codes and scoped the InvalidArguments and TargetIsAgentHost lines; then 5,487 tokens (21,948 bytes)
+    /// after the second review gave the last three codes of the reference files a line (CoordinatesOutOfBounds,
+    /// InvalidControlType, ArrangeFailed): every error code of the reference files now has a line, or, for the browser and
+    /// the capture and OCR codes, a pointer to the file that lists them. When a change adds to the core on
     /// purpose (a safety rule, a code that means stop), raise it in the same change by what the failure message measures;
     /// detail for one kind of task goes into its reference file instead.
     /// </summary>
-    private const int CoreTokenBudget = 5_400;
+    private const int CoreTokenBudget = 5_500;
 
     [GeneratedRegex(@"\[(?<text>[^\]\n]*)\]\((?<target>[^)\s]+)\)")]
     private static partial Regex MarkdownLink();
