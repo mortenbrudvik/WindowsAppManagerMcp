@@ -2806,8 +2806,10 @@ yet run on a real desktop; before the release that carries it, the owner checks:
    `type_text`, `press_keys` `ctrl+s` and `wait_for_window` for the Save As dialog it owns; then answer the dialog with
    file_dialog, a direct call, to a file under `%TEMP%\wam-m62`. Check that the file holds the text, close Notepad with
    close_window by the noted handle only, and delete the file. Never close or act on a window by its title.
-3. **The pause hotkey, by hand:** during a run of many type_text steps into that Notepad, press the pause hotkey. The
-   run reports `PausedByUser`, nothing more is typed, and the user resumes; the agent never does.
+3. **The pause hotkey, by hand:** with the server started with `WAM_PAUSE_HOTKEY` `Pause`, during a run of many
+   type_text steps into that Notepad, press Pause. The run reports `PausedByUser`, nothing more is typed, and the user
+   resumes; the agent never does. With the default Ctrl+Alt+Shift+Pause, the user's first modifier goes down before
+   Pause, so the type_text step that is typing then fails with `ModifiersHeld`, which stops the run before the pause.
 4. **Taking the foreground, by hand:** during a run with `delayBetweenStepsMs: 2000` on that Notepad, click a second
    Notepad the check opened. The run stops with `TargetNotForeground` and the second Notepad stays in front.
 
@@ -2928,14 +2930,18 @@ does.
 3. **send_keys in batches.** send_keys of 300 small letters, without `delayMs`, into the page's text field (the debug
    browser by its handle) types all of them (`keysSent` 300; the call goes in batches of up to 64 key-downs, each
    checked again). Without `delayMs` the batches go out back to back, in well under a second, so a pause by hand is
-   checked with `delayMs`, where each key is a batch of its own: during a send_keys of 500 small letters with
-   `delayMs` 15 (about 7.5 seconds), press the pause hotkey. The call returns `PausedByUser` with `keysSent` short of
-   500 (the pause stops the call before its next key; `keysSent` counts what went out before it), and no key stays
-   down (get_control_status). The user resumes; the agent never does. Optional (the exception above): the same paused
-   call with `{SHIFT down}` in front of the letters, into the text field inside the session, leaves Shift up inside the
-   session too: letters the owner types there afterwards are small, since the pause's release carries Shift's scan code,
-   which such clients track keys by. Record what the session shows, and whether the pause hotkey reached this computer
-   with the session's window in front.
+   checked with `delayMs`, where each key is a batch of its own. Start the server for this with `WAM_PAUSE_HOTKEY`
+   `Pause` and check that get_control_status shows `hotkey.chord` `Pause`: with the default Ctrl+Alt+Shift+Pause, the
+   user's first modifier goes down before Pause, so the call stops at its next key with `ModifiersHeld` (its error
+   names the pause hotkey), and the pause comes only after the call has ended. During a send_keys of 500 small letters
+   with `delayMs` 15 (about 7.5 seconds), press Pause. The call returns `PausedByUser` with `keysSent` short of 500
+   (the pause stops the call before its next key; `keysSent` counts what went out before it), and no key stays down
+   (get_control_status). The user resumes; the agent never does. Optional (the exception above): the same paused call
+   with `{SHIFT down}` in front of the letters, into the text field inside the session, leaves Shift up inside the
+   session too: letters the owner types there afterwards are small. The key-up that releases Shift carries its scan
+   code, which such clients track keys by: it is the pause's release, or, if Pause did not reach this computer, the
+   release at the end of the call. Record what the session shows, and whether Pause reached this computer with the
+   session's window in front.
 4. **Dialogs.** (a) The replace prompt with hidden extensions: run `FixtureFileDialogTests` (input tier) with "Hide
    extensions for known file types" on (Windows' default; if the owner has it off, turn it on for the run and back
    afterwards). If `FileDialog_SaveWithOverwrite_AnswersTheReplacePromptYes_AndTheFileIsRewritten` fails with
