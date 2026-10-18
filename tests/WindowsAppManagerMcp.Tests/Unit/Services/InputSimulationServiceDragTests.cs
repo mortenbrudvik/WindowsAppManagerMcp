@@ -138,6 +138,72 @@ public class InputSimulationServiceDragTests
         x.Should().BeGreaterThan(100 + 8);
     }
 
+    // ---- A right or middle press in a terminal pastes (review F6) ----
+
+    /// <summary>
+    /// The service with the real paste rule over a fake clipboard that holds what the user copied, and the window at the from
+    /// point (the allowing guard's 0x5150) of class <paramref name="receivingClass"/>.
+    /// </summary>
+    private InputSimulationService CreateSutWithThePasteRule(string receivingClass, FakeClipboardWrapper clipboard)
+    {
+        var origin = new ClipboardOrigin(clipboard, new ManualClock(), System.Threading.Timeout.InfiniteTimeSpan);
+        var windows = new Mock<INativeWindowWrapper>();
+        windows.Setup(w => w.GetClassName(0x5150)).Returns(receivingClass);
+        windows.Setup(w => w.GetWindowThreadProcessId(0x5150)).Returns(77u);
+        windows.Setup(w => w.GetProcessName(77u)).Returns(receivingClass == "Notepad" ? "notepad" : "WindowsTerminal");
+        return new InputSimulationService(_monitors.Object, _input, _guard.Object, _session, systemInfo: _systemInfo.Object,
+            clipboardOrigin: origin, pasteGuard: new ClipboardPasteGuard(clipboard, origin, ClipboardOptions.Default, windows.Object));
+    }
+
+    [Theory]
+    [InlineData(MouseButton.Secondary)]
+    [InlineData(MouseButton.Middle)]
+    public async Task Drag_WithTheRightOrMiddleButton_InATerminal_WithTheUsersClipboard_IsPasteNotAllowed_AndSendsNoPress(MouseButton button)
+    {
+        // Arrange - the press alone would paste what the user copied into the terminal, where the agent can read it
+        var clipboard = new FakeClipboardWrapper();
+        clipboard.UserCopies("hunter2");
+        var sut = CreateSutWithThePasteRule("CASCADIA_HOSTING_WINDOW_CLASS", clipboard);
+
+        // Act
+        var result = await sut.DragAsync(Request(button: button), Source, Source, false, CancellationToken.None);
+
+        // Assert
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(InputErrorCode.PasteNotAllowed);
+        result.Pressed.Should().BeFalse();
+        result.Error.Should().StartWith(NothingDraggedText).And.Contain("terminal").And.NotContain("hunter2");
+        _input.Batches.Should().BeEmpty("nothing is pressed");
+        VerifyNothingIsDown();
+    }
+
+    private const string NothingDraggedText = "Nothing was dragged.";
+
+    [Fact]
+    public async Task Drag_WithThePrimaryButton_InATerminal_IsNotAPaste()
+    {
+        var clipboard = new FakeClipboardWrapper();
+        clipboard.UserCopies("hunter2");
+        var sut = CreateSutWithThePasteRule("CASCADIA_HOSTING_WINDOW_CLASS", clipboard);
+
+        var result = await sut.DragAsync(Request(), Source, Source, false, CancellationToken.None);
+
+        result.Success.Should().BeTrue(result.Error);
+        clipboard.Reads.Should().Be(0, "a left press pastes nothing, so the clipboard is not looked at");
+    }
+
+    [Fact]
+    public async Task Drag_WithTheRightButton_OutsideATerminal_IsNotAPaste()
+    {
+        var clipboard = new FakeClipboardWrapper();
+        clipboard.UserCopies("hunter2");
+        var sut = CreateSutWithThePasteRule("Notepad", clipboard);
+
+        var result = await sut.DragAsync(Request(button: MouseButton.Secondary), Source, Source, false, CancellationToken.None);
+
+        result.Success.Should().BeTrue(result.Error);
+    }
+
     [Fact]
     public async Task Drag_ADropPointTheGuardRefuses_SendsNothing()
     {

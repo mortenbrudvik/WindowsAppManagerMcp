@@ -219,6 +219,46 @@ public class ClipboardPasteGuardTests
         Guard().Check(Keys("^v"), Editor).Should().Contain("did not put there");
     }
 
+    /// <summary>
+    /// set_clipboard's text, numbered as the server's, to which another application added HTML or files under the same
+    /// number (the server cannot see the change in the sequence number it took as its own).
+    /// </summary>
+    private void SetClipboardsTextWith(string extra)
+    {
+        var outcome = _clipboard.WriteText("Meeting notes");
+        _origin.ServerWrote(outcome.SequenceNumber, "Meeting notes");
+        if (extra == "html")
+        {
+            _clipboard.Html = "Version:0.9\r\n<html><body><!--StartFragment-->hunter2<!--EndFragment--></body></html>"u8.ToArray();
+        }
+        else
+        {
+            _clipboard.Files = [@"C:\Users\me\Passwords.kdbx"];
+        }
+    }
+
+    [Theory]
+    [InlineData("html")]
+    [InlineData("files")]
+    public void ContentNumberedAsSetClipboards_ThatCarriesHtmlOrFiles_IsNotTheServers_AndIsRefused(string extra)
+    {
+        // set_clipboard puts only text there: HTML or files are someone else's content (review F6)
+        SetClipboardsTextWith(extra);
+
+        Guard().Check(Keys("^v"), Editor).Should().Contain("did not put there").And.Contain("Nothing was sent");
+    }
+
+    [Theory]
+    [InlineData("html")]
+    [InlineData("files")]
+    public void ContentNumberedAsSetClipboards_ThatCarriesHtmlOrFiles_LosesThePrivateExemption_EvenWithWamAllowUserClipboard(string extra)
+    {
+        // Only set_clipboard's own text may be pasted although it is marked private; as anyone else's content it is never pasted
+        SetClipboardsTextWith(extra);
+
+        Guard(allowUserClipboard: true).Check(Keys("^v"), Editor).Should().Contain("marked private");
+    }
+
     [Fact]
     public void PastingTheAgentsOwnCopy_IsAllowed()
     {
