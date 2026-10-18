@@ -74,7 +74,8 @@ public interface ICdpService
     /// listening on the port is CdpUnavailable. Fails with CdpTargetNotFound when no tab matches, and CdpTargetAmbiguous
     /// when several do and exactly one shown tab cannot be told (none or several shown, a read that failed, a minimized
     /// window, candidates in several browser windows, or a binding that could not be read, which is then asked for also
-    /// without <see cref="CdpWindow.Geometry"/>).
+    /// without <see cref="CdpWindow.Geometry"/>). Over <see cref="Services.CdpService.MaxBoundTabs"/> tabs, only the
+    /// browser windows of the tabs with the title are asked for, when several have it.
     /// </summary>
     /// <param name="port">The CDP debug port.</param>
     /// <param name="window">The window: its process, its title and, when known, where it is.</param>

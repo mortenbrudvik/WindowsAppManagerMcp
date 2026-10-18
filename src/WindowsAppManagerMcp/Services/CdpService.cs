@@ -21,7 +21,8 @@ public class CdpService : ICdpService
     private const string Host = CdpEndpointValidator.Host;
 
     /// <summary>
-    /// The most tabs a window is bound among (one Browser.getWindowForTarget each); with more, the title alone decides.
+    /// The most tabs a window is bound among (one Browser.getWindowForTarget each); with more, the title decides among all
+    /// tabs, and of several tabs with it only their windows are looked up (<see cref="CdpShownTab.CandidatesToPlace"/>).
     /// list_tabs looks up the windows of as many (roadmap M5.5).
     /// </summary>
     internal const int MaxBoundTabs = 200;
@@ -205,13 +206,18 @@ public class CdpService : ICdpService
             return only;
 
         // The binding needs the window's bounds to tell its tabs; without them it is still read when several tabs have the
-        // title, as list_tabs reads it, so CdpShownTab can check they are in one browser window (it fails closed without)
+        // title, as list_tabs reads it, so CdpShownTab can check they are in one browser window (it fails closed without).
+        // Over MaxBoundTabs tabs only the windows of those tabs are read, which is all that check needs
+        var toPlace = all.Count > MaxBoundTabs
+            ? CdpShownTab.CandidatesToPlace(window, all)
+            : window.Geometry != null || CdpTargetMatcher.FindCandidates(window.Title, all) is { Success: true, Value.Count: > 1 }
+                ? all
+                : [];
         IReadOnlyDictionary<string, CdpBrowserWindow>? windows = null;
-        if (all.Count is >= 1 and <= MaxBoundTabs &&
-            (window.Geometry != null || CdpTargetMatcher.FindCandidates(window.Title, all) is { Success: true, Value.Count: > 1 }))
+        if (toPlace.Count > 0)
         {
             // Best effort, so only a share of the budget: a stalled browser connection leaves the page read its time
-            windows = await GetBrowserWindowsAsync(port, window.ProcessId, all, BindingBudget(timeout - stopwatch.Elapsed), cancellationToken)
+            windows = await GetBrowserWindowsAsync(port, window.ProcessId, toPlace, BindingBudget(timeout - stopwatch.Elapsed), cancellationToken)
                 .ConfigureAwait(false);
         }
 

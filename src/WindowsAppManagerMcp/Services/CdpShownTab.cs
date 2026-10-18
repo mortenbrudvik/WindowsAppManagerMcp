@@ -28,7 +28,8 @@ namespace WindowsAppManagerMcp.Services;
 /// </para>
 /// <para>
 /// So that rule can be checked, the callers read the tabs' browser windows whenever several tabs have the window's title,
-/// also without the window's bounds.
+/// also without the window's bounds; over <see cref="CdpService.MaxBoundTabs"/> tabs, too many to look up every one's,
+/// only those tabs' windows (<see cref="CandidatesToPlace"/>).
 /// </para>
 /// </remarks>
 internal static class CdpShownTab
@@ -38,6 +39,21 @@ internal static class CdpShownTab
 
     /// <summary>What a tab's page is asked, in an isolated world.</summary>
     public const string VisibilityExpression = "document.visibilityState";
+
+    /// <summary>
+    /// The tabs whose browser windows to look up for <see cref="PickAsync"/> when the browser has more than
+    /// <see cref="CdpService.MaxBoundTabs"/> tabs, too many to look up every one's: the tabs with <paramref name="window"/>'s
+    /// title when several have it, as their windows are all that tells which of them it shows, and at most MaxBoundTabs of
+    /// them; else none (one such tab is the one shown, and with none the window's only tab cannot be told from the rest).
+    /// </summary>
+    public static IReadOnlyList<CdpTarget> CandidatesToPlace(CdpWindow window, IReadOnlyList<CdpTarget> all)
+    {
+        ArgumentNullException.ThrowIfNull(window);
+        return CdpTargetMatcher.FindCandidates(window.Title, all) is
+            { Success: true, Value: { Count: > 1 and <= CdpService.MaxBoundTabs } candidates }
+            ? candidates
+            : [];
+    }
 
     /// <summary>
     /// The tab <paramref name="window"/> shows among <paramref name="all"/>, the browser's page tabs.
@@ -110,6 +126,14 @@ internal static class CdpShownTab
                 "the window is minimized, so it shows none of its tabs, and a tab that is shown is another window's.");
         }
 
+        // Before the browser windows: whatever they are, which of so many is shown is not read, and over
+        // CdpService.MaxBoundTabs of them their windows are not looked up (CandidatesToPlace)
+        if (candidates.Count > MaxVisibilityReads)
+        {
+            return CdpTargetMatcher.Ambiguous(window.Title, candidates,
+                $"more than {MaxVisibilityReads} tabs have it, so which of them is shown was not read.");
+        }
+
         // A tab that is shown is the one its own browser window shows, so it tells which tab this window shows only when all
         // of them are known to be in one browser window. Without the binding (it could not be read, or the browser puts a
         // tab in no window), a covered window's hidden tab and a tab with its title shown in front by another window would
@@ -125,12 +149,6 @@ internal static class CdpShownTab
         {
             return CdpTargetMatcher.Ambiguous(window.Title, candidates,
                 "they are in more than one browser window, and that a tab is shown tells only that its own window shows it.");
-        }
-
-        if (candidates.Count > MaxVisibilityReads)
-        {
-            return CdpTargetMatcher.Ambiguous(window.Title, candidates,
-                $"more than {MaxVisibilityReads} tabs have it, so which of them is shown was not read.");
         }
 
         var reads = candidates.Select(t => ReadVisibilityAsync(transport, t, visibilityTimeout, cancellationToken)).ToList();

@@ -252,6 +252,43 @@ public class BrowserTabServiceTests
     }
 
     [Fact]
+    public async Task ListTabs_OverTheBoundTabLimit_SaysTheTabsWereTooManyToPlace_NotThatTheWindowCouldNotBeMatched()
+    {
+        // CdpService.MaxBoundTabs (200): over it no tab's browser window is looked up for the list, so none was matched
+        var tabs = Enumerable.Range(0, 201).Select(i => new CdpTab(Shown with { Id = $"T{i}" }, null, false)).ToList();
+        _tabs.Setup(t => t.ListTabsAsync(Port, (int)BrowserPid, It.IsAny<CdpWindow?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(CdpResult<CdpTabListing>.Ok(new CdpTabListing(tabs, false, tabs[7].Target, null)));
+
+        var result = await CreateSut().ListTabsAsync(ByWindow());
+
+        result.ShownTargetId.Should().Be("T7");
+        result.WindowBound.Should().BeFalse();
+        result.Note.Should().Contain("more than 200 tabs").And.NotContain("could not be matched").And.NotContain("No tab could be told");
+    }
+
+    [Theory]
+    [InlineData(201)] // over CdpService.MaxBoundTabs: only the windows of the tabs with the window's title were looked up
+    [InlineData(3)] // not bound: the window could not be matched to its browser window
+    public async Task ListTabs_WhenTheWindowIsNotBound_AndNoTabIsTold_TheNoteSaysWhy(int tabCount)
+    {
+        // Why no tab could be told can be one the agent can act on (here: bring the window to the front), so the note
+        // carries it, as it does for a bound window
+        const string why = "CdpTargetAmbiguous: 2 tabs have the title 'Same', so the tab shown by the window cannot be " +
+                           "identified: none of them is shown. Bring it to the front (focus_window) and try again.";
+        var tabs = Enumerable.Range(0, tabCount).Select(i => new CdpTab(Shown with { Id = $"T{i}" }, null, false)).ToList();
+        _tabs.Setup(t => t.ListTabsAsync(Port, (int)BrowserPid, It.IsAny<CdpWindow?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(CdpResult<CdpTabListing>.Ok(new CdpTabListing(tabs, false, null, why)));
+
+        var result = await CreateSut().ListTabsAsync(ByWindow());
+
+        result.Success.Should().BeTrue(result.Error);
+        result.ShownTargetId.Should().BeNull();
+        result.WindowBound.Should().BeFalse();
+        result.Note.Should().Contain($"No tab could be told as the one it shows ({why}).")
+            .And.Contain(tabCount > 200 ? "more than 200 tabs" : "could not be matched");
+    }
+
+    [Fact]
     public async Task ListTabs_PassesTheWindowsTitleAndBounds_ToTheBinding()
     {
         CdpWindow? passed = null;

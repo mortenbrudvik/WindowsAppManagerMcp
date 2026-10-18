@@ -147,6 +147,27 @@ public class CdpTabServiceTests
     }
 
     [Fact]
+    public async Task ListTabsAsync_OverTheBoundTabLimit_ListsTheTabsWithoutWindows_ButStillTellsTheShownTab()
+    {
+        // CdpService.MaxBoundTabs (200) tabs and two more: too many to look up every one's browser window, so the list has
+        // none; the windows of the two tabs with the window's title are still read, to tell which of them it shows
+        var browser = new FakeCdpBrowser().Window(1, 0, 0, 800, 600);
+        for (var i = 0; i < 200; i++)
+            browser.Tab($"F{i}", $"Filler {i}", 1);
+        browser.Tab("A", "Same", 1).Tab("B", "Same", 1).Visibility("A", "hidden").Visibility("B", "visible");
+        var sut = CreateSut(browser);
+
+        var result = await sut.ListTabsAsync(Port, BrowserPid, At("Same - Google Chrome", 0, 0, 800, 600), LongTimeout);
+
+        result.Success.Should().BeTrue(result.Error);
+        result.Value!.Shown!.Id.Should().Be("B");
+        result.Value.ShownError.Should().BeNull();
+        result.Value.WindowBound.Should().BeFalse();
+        result.Value.Tabs.Should().OnlyContain(t => t.WindowId == null && !t.InWindow);
+        browser.WindowQueries.Should().Be(2);
+    }
+
+    [Fact]
     public async Task ListTabsAsync_AWindowThatMatchesNoBrowserWindow_IsNotBound_AndItsTitlePicksAmongAllTabs()
     {
         var sut = CreateSut(TwoWindows());

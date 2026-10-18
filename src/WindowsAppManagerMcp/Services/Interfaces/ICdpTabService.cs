@@ -24,6 +24,8 @@ public interface ICdpTabService
     /// <paramref name="window"/>, binds it to its browser window as the reads do (<see cref="Services.CdpWindowBinder"/>):
     /// the listing says which tabs are in it and which one it shows, picked as the reads pick it
     /// (<see cref="ICdpService.FindTargetForWindowAsync"/>: its title, and of several tabs with it the one that is shown).
+    /// Over <see cref="Services.CdpService.MaxBoundTabs"/> tabs, the tabs are listed without their windows (not bound), and
+    /// only the windows of the tabs with the window's title are looked up, to tell which of them it shows.
     /// </summary>
     Task<CdpResult<CdpTabListing>> ListTabsAsync(
         int port, int processId, CdpWindow? window, TimeSpan timeout, CancellationToken cancellationToken = default);

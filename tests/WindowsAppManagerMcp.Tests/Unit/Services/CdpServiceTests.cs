@@ -916,6 +916,88 @@ public class CdpServiceTests
         result.Error.Should().Contain("minimized");
     }
 
+    /// <summary>CdpService.MaxBoundTabs: the most tabs whose browser windows are all read.</summary>
+    private const int MaxBoundTabs = 200;
+
+    /// <summary>A browser whose window 1 (0, 0, 1000 x 700 DIPs) has <paramref name="count"/> tabs no test window shows.</summary>
+    private static FakeCdpBrowser BrowserWithTabs(int count)
+    {
+        var browser = new FakeCdpBrowser().Window(1, 0, 0, 1000, 700);
+        for (var i = 0; i < count; i++)
+            browser.Tab($"F{i}", $"Filler {i}", 1);
+
+        return browser;
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task FindTargetForWindowAsync_OverTheBoundTabLimit_ReadsTheWindowsOfTheTabsWithTheTitle_AndTakesTheShownOne(
+        bool withBounds)
+    {
+        // Too many tabs to read every one's browser window: those of the tabs with the window's title are still read, as
+        // that is all that tells which of them the window shows
+        var browser = BrowserWithTabs(MaxBoundTabs)
+            .Tab("A", "GitHub", 1)
+            .Tab("B", "GitHub - Pull requests", 1)
+            .Visibility("A", "hidden")
+            .Visibility("B", "visible");
+        var sut = CreateSut(browser);
+        const string title = "GitHub - Pull requests - Google Chrome";
+
+        var result = await sut.FindTargetForWindowAsync(Port, withBounds ? At(title, 0, 0, 1000, 700) : TitleOnly(title), LongTimeout);
+
+        result.Success.Should().BeTrue(result.Error);
+        result.Value!.Id.Should().Be("B");
+        browser.WindowQueries.Should().Be(2, "only the tabs with the window's title are looked up");
+    }
+
+    [Theory]
+    [InlineData(true, "REAL")]
+    [InlineData(false, null)]
+    public async Task FindTargetForWindowAsync_OverTheBoundTabLimit_TellsTabsOfTwoBrowserWindowsApart(bool withBounds, string? expected)
+    {
+        // The window asked for is covered (its tab hidden), and another window shows a tab with its title: bound, its own
+        // tab; not bound, the tabs are known to be in two windows, which is what the ambiguity says
+        var browser = BrowserWithTabs(MaxBoundTabs)
+            .Window(2, 1200, 0, 800, 600)
+            .Tab("REAL", "Inbox", 1)
+            .Tab("OTHER", "Inbox", 2)
+            .Visibility("REAL", "hidden")
+            .Visibility("OTHER", "visible");
+        var sut = CreateSut(browser);
+        const string title = "Inbox - Google Chrome";
+
+        var result = await sut.FindTargetForWindowAsync(Port, withBounds ? At(title, 0, 0, 1000, 700) : TitleOnly(title), LongTimeout);
+
+        if (expected != null)
+        {
+            result.Success.Should().BeTrue(result.Error);
+            result.Value!.Id.Should().Be(expected);
+        }
+        else
+        {
+            result.ErrorCode.Should().Be(BrowserErrorCode.CdpTargetAmbiguous, result.Error);
+            result.Error.Should().Contain("more than one browser window").And.NotContain("could not be read");
+        }
+    }
+
+    [Fact]
+    public async Task FindTargetForWindowAsync_MoreTabsWithTheTitleThanAreLookedUp_SaysSo_NotThatTheirWindowsCouldNotBeRead()
+    {
+        // Their windows are not asked for, so the ambiguity must not say they could not be read
+        var browser = new FakeCdpBrowser().Window(1, 0, 0, 1000, 700);
+        for (var i = 0; i <= MaxBoundTabs; i++)
+            browser.Tab($"I{i}", "Inbox", 1);
+        var sut = CreateSut(browser);
+
+        var result = await sut.FindTargetForWindowAsync(Port, At("Inbox - Google Chrome", 0, 0, 1000, 700), LongTimeout);
+
+        result.ErrorCode.Should().Be(BrowserErrorCode.CdpTargetAmbiguous, result.Error);
+        result.Error.Should().Contain("more than 8 tabs have it").And.NotContain("could not be read");
+        browser.WindowQueries.Should().Be(0);
+    }
+
     #endregion
 
     #region GetPageSnapshotAsync
