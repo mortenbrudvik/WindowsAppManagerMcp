@@ -172,7 +172,7 @@ public partial class InputSimulationService
     }
 
     /// <summary>A count as the messages write it, the same in every culture: 5,000.</summary>
-    private static string Count(int count) => count.ToString("N0", CultureInfo.InvariantCulture);
+    private static string Count(long count) => count.ToString("N0", CultureInfo.InvariantCulture);
 
     /// <summary>Ctrl+V with the scan codes of <paramref name="layout"/>: Ctrl down, V down and up, Ctrl up.</summary>
     private static List<InputEvent> PasteKeys(KeyboardLayout layout) =>

@@ -97,6 +97,36 @@ public class SendKeysLimitsTests
         result.Success.Should().BeTrue(result.Error);
     }
 
+    /// <summary>Shift and Ctrl down and up again, crossed: four events and two key-downs, but no key press.</summary>
+    private const string CrossedModifiers = "{SHIFT down}{CTRL down}{SHIFT up}{CTRL up}";
+
+    [Fact]
+    public async Task MoreEventsThanTheMaximum_AreTextTooLong_EvenWithoutAKeyPress_AndNothingIsCheckedOrSent()
+    {
+        var keys = string.Concat(Enumerable.Repeat(CrossedModifiers, InputSimulationService.MaxSendKeysEvents / 4 + 1));
+
+        var result = await CreateSut().SendKeysAsync(keys);
+
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(InputErrorCode.TextTooLong);
+        result.Error.Should().Contain("60,004").And.Contain("60,000").And.Contain("Nothing was sent");
+        result.KeysSent.Should().BeNull();
+        VerifyNothingCheckedOrSent();
+    }
+
+    [Fact]
+    public void TheEventMaximum_TakesTheMaximumNumberOfTheHeaviestKey()
+    {
+        // The most events one key press takes: Ctrl, Alt, Shift and Win held for an AltGr character ('@' on a German
+        // keyboard, for which the right Alt goes down too), each down and up again around the key's own down and up
+        var german = KeyboardLayout.Of(new FakeKeyboardLayoutWrapper { Layout = FakeKeyboardLayoutWrapper.German }, 0, capsLock: false);
+        var heaviest = KeySpecParser.Parse("^%+#@", german).Events;
+
+        heaviest.Should().HaveCount(12);
+        SendKeysParser.KeyPresses(heaviest).Should().ContainSingle();
+        (heaviest.Count * InputSimulationService.MaxSendKeysPresses).Should().BeLessThanOrEqualTo(InputSimulationService.MaxSendKeysEvents);
+    }
+
     #endregion
 
     #region How long
@@ -132,6 +162,16 @@ public class SendKeysLimitsTests
         InputSimulationService.MaxSendKeysDurationMs.Should().Be(InputSimulationService.MaxPressKeysDurationMs);
     }
 
+    [Fact]
+    public void TheWaits_AreCountedInLong_SoVeryManyKeysCannotWrapBelowTheMaximum()
+    {
+        // 4,294,969 keys with 500 ms between them wait 2,147,484,000 ms, past int.MaxValue: counted in int, that wraps to a
+        // negative number, which passes the 10,000 ms check and holds the input gate for weeks
+        InputSimulationService.SendKeysWaitMs(4_294_969, 500).Should().Be(2_147_484_000L);
+        InputSimulationService.SendKeysWaitMs(22, 500).Should().Be(10_500);
+        InputSimulationService.SendKeysWaitMs(1, 500).Should().Be(0);
+    }
+
     #endregion
 
     #region Batches without delayMs
@@ -155,6 +195,45 @@ public class SendKeysLimitsTests
         _input.Batches.Select(b => b.Count).Should().Equal(2 * Batch, 2 * Batch, 2 * Batch, 2 * (200 - 3 * Batch));
         _input.Events.Should().HaveCount(400);
         _guard.Verify(g => g.RecheckKeyboard(It.IsAny<InputGuardResult>()), Times.Exactly(4));
+        VerifyNothingIsDown();
+    }
+
+    /// <summary>How many key-downs <paramref name="batch"/> has: every key going down, a modifier's included.</summary>
+    private static int KeyDowns(IReadOnlyList<InputEvent> batch) => batch.Count(e => (e.Flags & KeyUp) == 0);
+
+    [Fact]
+    public async Task ModifierEventsThatPressNoKey_AreSplitIntoBatchesByTheirKeyDowns_EachCheckedAgainFirst()
+    {
+        // 40 x (Shift down, Ctrl down, Shift up, Ctrl up): 80 key-downs, no key press
+        var result = await CreateSut().SendKeysAsync(string.Concat(Enumerable.Repeat(CrossedModifiers, 40)));
+
+        result.Success.Should().BeTrue(result.Error);
+        _input.Batches.Select(KeyDowns).Should().Equal(Batch, 80 - Batch);
+        _guard.Verify(g => g.RecheckKeyboard(It.IsAny<InputGuardResult>()), Times.Exactly(2));
+        VerifyNothingIsDown();
+    }
+
+    [Fact]
+    public async Task AModifierTapSplitAcrossTwoKeys_CountsItsKeyDownInTheBatchSplit()
+    {
+        // {SHIFT down} and {SHIFT up} are two keys: a tap that neither key presses alone
+        var result = await CreateSut().SendKeysAsync(string.Concat(Enumerable.Repeat("{SHIFT down}{SHIFT up}", 100)));
+
+        result.Success.Should().BeTrue(result.Error);
+        result.KeysSent.Should().Be(200);
+        _input.Batches.Select(KeyDowns).Should().Equal(Batch, 100 - Batch);
+        VerifyNothingIsDown();
+    }
+
+    [Fact]
+    public async Task TheModifiersHeldForAKey_CountInTheBatchSplit()
+    {
+        // Every capital is Shift down with its key: two key-downs, so 32 capitals fill a batch
+        var result = await CreateSut().SendKeysAsync(new string('A', 100));
+
+        result.Success.Should().BeTrue(result.Error);
+        result.KeysSent.Should().Be(100);
+        _input.Batches.Select(KeyDowns).Should().Equal(Batch, Batch, Batch, 200 - 3 * Batch);
         VerifyNothingIsDown();
     }
 
@@ -218,7 +297,7 @@ public class SendKeysLimitsTests
         var result = await CreateSut().SendKeysAsync("{SHIFT down}" + Presses('a', 200));
 
         result.ErrorCode.Should().Be(InputErrorCode.PausedByUser);
-        result.KeysSent.Should().Be(1 + Batch, "{SHIFT down} and the first batch's keys");
+        result.KeysSent.Should().Be(Batch, "{SHIFT down} and the keys of the first batch's other key-downs");
         VerifyNothingIsDown();
     }
 

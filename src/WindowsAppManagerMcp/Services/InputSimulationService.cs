@@ -821,8 +821,18 @@ public partial class InputSimulationService : IInputSimulationService
                 "(method 'paste').", InputErrorCode.TextTooLong);
         }
 
+        // Every event counts too: a modifier going down and up without a key between (crossed: {SHIFT down}{CTRL down}
+        // {SHIFT up}{CTRL up}) is no key press
+        if (inputs.Count > MaxSendKeysEvents)
+        {
+            return new SendKeysResult(false, keys,
+                $"The keys make {Count(inputs.Count)} key events (each key's down and up, the modifiers' included), more than the " +
+                $"{Count(MaxSendKeysEvents)} send_keys sends in one call, so that a runaway call cannot type for minutes. Nothing " +
+                "was sent. Send them in parts.", InputErrorCode.TextTooLong);
+        }
+
         delayMs = Math.Clamp(delayMs, 0, MaxSendKeysDelayMs);
-        var waits = (spec.Steps.Count - 1) * delayMs;
+        var waits = SendKeysWaitMs(spec.Steps.Count, delayMs);
         if (waits > MaxSendKeysDurationMs)
         {
             return new SendKeysResult(false, keys,
@@ -838,10 +848,11 @@ public partial class InputSimulationService : IInputSimulationService
     /// <summary>
     /// Sends the steps of send_keys or press_keys (roadmap M4.1, M4.3), after the pause chord, the held input and the guard
     /// (destructive chords, keys after a focus change) have checked all of them. Without <paramref name="delayMs"/> and
-    /// <paramref name="holdMs"/> the steps go in batches of whole steps of at most <paramref name="batchSize"/> key presses
+    /// <paramref name="holdMs"/> the steps go in batches of whole steps of at most <paramref name="batchSize"/> key-downs
     /// (a step with more goes alone), so no other input can come between the keys of a batch; otherwise each step is a batch
     /// of its own, with <paramref name="delayMs"/> before every step but the first. Every batch is checked again right before
-    /// it (the window, the modifiers, the paste rule, then the user's pause), as type_text's are. With
+    /// it (the window, the modifiers, the paste rule, then the user's pause), as type_text's are; the paste rule and the
+    /// clipboard origin read a batch after the first with the modifiers an earlier batch holds down. With
     /// <paramref name="holdMs"/> a step's leading key-downs go first, and its key-ups follow that much later without a check
     /// of their own (they only release what went down; the session releases them anyway if the call stops meanwhile).
     /// </summary>
@@ -916,6 +927,11 @@ public partial class InputSimulationService : IInputSimulationService
 
                     call.Token.ThrowIfCancellationRequested();
 
+                    // From the second batch on, the keys of the batch are pressed with the modifiers an earlier batch holds
+                    // down ({CTRL down}): the chord checks read them in front of the batch, or a Ctrl+V or Ctrl+C split
+                    // across batches would go unseen
+                    var pressedAs = b == 0 ? batch : WithServerHeldModifiers(batch);
+
                     // A release batch only lets go of what the step before it pressed
                     if (!release)
                     {
@@ -944,8 +960,10 @@ public partial class InputSimulationService : IInputSimulationService
                         }
 
                         // Right before the keys: a paste must not put the user's clipboard where the agent can read it. The first
-                        // check reads the whole call, so a copy in one batch and its paste in a later one are refused together
-                        if (PasteRefusal(b == 0 ? inputs : batch, approved) is { } pasteRefused)
+                        // check reads the whole call, so a copy in one batch and its paste in a later one are refused together;
+                        // a later one reads its batch with the modifiers held for it, so a paste whose Ctrl went down earlier
+                        // is checked against the clipboard as it is now
+                        if (PasteRefusal(b == 0 ? inputs : pressedAs, approved) is { } pasteRefused)
                         {
                             return held.Apply(Finish(new SendKeysResult(false, keys,
                                 b == 0 ? pasteRefused : $"{KeysSentSoFar(keysSent, total, approved)} {pasteRefused}", InputErrorCode.PasteNotAllowed)
@@ -955,7 +973,7 @@ public partial class InputSimulationService : IInputSimulationService
                         }
                     }
 
-                    var sent = Send(batch, approved);
+                    var sent = Send(batch, pressedAs, approved);
                     if (sent.PausedByUser)
                     {
                         return held.Apply(Finish(new SendKeysResult(false, keys, PausedMessage(KeysSentSoFar(keysSent, total, approved)),
@@ -996,14 +1014,32 @@ public partial class InputSimulationService : IInputSimulationService
     /// send_keys presses at most this many keys in one call (TextTooLong), as type_text types at most
     /// <see cref="MaxTypedLength"/> characters, so that a runaway call cannot type for minutes: every character, named key,
     /// press of <c>{KEY n}</c> and modifier pressed on its own (<c>{ALT}</c>) counts, the modifiers held for a key do not
-    /// (<see cref="SendKeysParser.KeyPresses"/>).
+    /// (<see cref="SendKeysParser.KeyPresses"/>); their events count in <see cref="MaxSendKeysEvents"/>.
     /// </summary>
     public const int MaxSendKeysPresses = MaxTypedLength;
 
     /// <summary>
-    /// send_keys without delayMs sends its keys in batches of whole keys of at most this many key presses (a group with more
-    /// goes alone), checked again before each as type_text's batches of <see cref="TypeTextBatchSize"/> characters are, so a
-    /// focus change or the user's pause stops a long call within a batch: once inserted, a batch cannot be stopped.
+    /// send_keys sends at most this many events in one call (TextTooLong), each key-down and key-up counting, the modifiers'
+    /// included: <see cref="MaxSendKeysPresses"/> counts no modifier that goes down and up without a key between (crossed:
+    /// <c>{SHIFT down}{CTRL down}{SHIFT up}{CTRL up}</c>), so a call of such events alone would be unbounded. 12 is the most
+    /// events one key press takes (Ctrl, Alt, Shift and Win held for an AltGr character, which adds the right Alt: five
+    /// modifier downs and ups around the key's own), so no call within <see cref="MaxSendKeysPresses"/> is refused by its
+    /// presses' events alone.
+    /// </summary>
+    public const int MaxSendKeysEvents = 12 * MaxSendKeysPresses;
+
+    /// <summary>
+    /// How long send_keys waits between <paramref name="keys"/> keys with <paramref name="delayMs"/>: (keys - 1) x delayMs,
+    /// in long, so that very many keys cannot wrap past int's range below <see cref="MaxSendKeysDurationMs"/> and hold the
+    /// input gate for days.
+    /// </summary>
+    public static long SendKeysWaitMs(int keys, int delayMs) => (long)Math.Max(0, keys - 1) * delayMs;
+
+    /// <summary>
+    /// send_keys without delayMs sends its keys in batches of whole keys of at most this many key-downs, every key going down
+    /// counting, a modifier's included (a key with more, such as a long group, goes whole and alone), checked again before
+    /// each as type_text's batches of <see cref="TypeTextBatchSize"/> characters are, so a focus change or the user's pause
+    /// stops a long call within a batch: once inserted, a batch cannot be stopped.
     /// </summary>
     public const int SendKeysBatchSize = TypeTextBatchSize;
 
@@ -1067,7 +1103,7 @@ public partial class InputSimulationService : IInputSimulationService
 
     /// <summary>
     /// The SendInput batches of <paramref name="spec"/>: without waits, its steps in order, as many whole steps in a batch as
-    /// hold at most <paramref name="batchSize"/> key presses (<see cref="SendKeysParser.KeyPresses"/>; a step with more is a
+    /// hold at most <paramref name="batchSize"/> key-downs (every key going down, a modifier's included; a step with more is a
     /// batch of its own); otherwise each step, after <paramref name="delayMs"/> (not before the first), split with
     /// <paramref name="holdMs"/> into its leading key-downs and, that much later, the rest (a release batch, which
     /// <see cref="SendStepsAsync"/> does not check again). Each batch says how many steps it completes.
@@ -1080,21 +1116,23 @@ public partial class InputSimulationService : IInputSimulationService
         {
             var events = new List<InputEvent>();
             var steps = 0;
-            var presses = 0;
+            var downs = 0;
             foreach (var step in spec.Steps)
             {
-                var stepPresses = SendKeysParser.KeyPresses(step).Count;
-                if (steps > 0 && presses + stepPresses > batchSize)
+                // Every key going down, a modifier's included: a modifier down without a key press ({SHIFT down}, or a tap
+                // split across two steps) still counts, so no run of them goes out in one unchecked batch
+                var stepDowns = step.Count(e => e.Kind != InputEventKind.Mouse && (e.Flags & NativeEnums.KEYEVENTF_KEYUP) == 0);
+                if (steps > 0 && downs + stepDowns > batchSize)
                 {
                     batches.Add((events, 0, false, steps));
                     events = new List<InputEvent>();
                     steps = 0;
-                    presses = 0;
+                    downs = 0;
                 }
 
                 events.AddRange(step);
                 steps++;
-                presses += stepPresses;
+                downs += stepDowns;
             }
 
             if (steps > 0)
@@ -1382,6 +1420,21 @@ public partial class InputSimulationService : IInputSimulationService
         _pasteGuard?.Check(batch, approved.Receiving);
 
     /// <summary>
+    /// <paramref name="batch"/> with a key-down in front of it for every modifier the server holds down now: what the
+    /// batch's keys are pressed with when an earlier batch of the call left a modifier down (<c>{CTRL down}</c>). The chord
+    /// checks read a batch alone, so without these a Ctrl+V or Ctrl+C split across batches would be no chord: the paste
+    /// rule would not check the clipboard again before the V (and paste what the user copied in between), and the clipboard
+    /// origin would take the agent's copy for the user's. Read only, never sent.
+    /// </summary>
+    private IReadOnlyList<InputEvent> WithServerHeldModifiers(IReadOnlyList<InputEvent> batch)
+    {
+        var held = _session.ServerHeld.Where(h => h.IsModifier).ToList();
+        return held.Count == 0
+            ? batch
+            : [.. held.Select(h => InputEvent.Key(h.Code, h.Flags | NativeEnums.KEYEVENTF_KEYDOWN, h.Scan)), .. batch];
+    }
+
+    /// <summary>
     /// Sends a batch through the session. A batch that can copy (copy keys, a left-button press) is reported to the
     /// clipboard origin with the process of the window it goes to, so get_clipboard can tell the copy that application
     /// makes from one the user makes.
@@ -1394,9 +1447,14 @@ public partial class InputSimulationService : IInputSimulationService
     /// </summary>
     private InputSendOutcome Send(MouseBatch batch, InputGuardResult approved) => Send(batch.Events, batch.AsUnswapped, approved);
 
-    private InputSendOutcome Send(IReadOnlyList<InputEvent> batch, IReadOnlyList<InputEvent> asUnswapped, InputGuardResult approved)
+    /// <summary>
+    /// Sends <paramref name="batch"/>; the clipboard origin is told about it as <paramref name="pressedAs"/> presses it: the
+    /// mouse buttons as the user knows them, or the keys with the modifiers an earlier batch of the call holds down
+    /// (<see cref="WithServerHeldModifiers"/>), so a Ctrl+C whose Ctrl went down in an earlier batch counts as the agent's copy.
+    /// </summary>
+    private InputSendOutcome Send(IReadOnlyList<InputEvent> batch, IReadOnlyList<InputEvent> pressedAs, InputGuardResult approved)
     {
-        var copy = _clipboardOrigin?.BeforeInput(asUnswapped, approved.ReceivingWindow?.ProcessId ?? 0, approved.Receiving, approved.Anchor);
+        var copy = _clipboardOrigin?.BeforeInput(pressedAs, approved.ReceivingWindow?.ProcessId ?? 0, approved.Receiving, approved.Anchor);
         var sent = _session.Send(batch);
         if (copy != null && sent.Inserted > 0)
         {
