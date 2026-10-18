@@ -1,7 +1,11 @@
 using System.Diagnostics;
 using System.Reflection;
 using System.Runtime.CompilerServices;
+using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using ModelContextProtocol;
+using ModelContextProtocol.Server;
 using WindowsAppManagerMcp.Infrastructure;
 
 namespace WindowsAppManagerMcp.Tests.Unit.Architecture;
@@ -14,17 +18,22 @@ namespace WindowsAppManagerMcp.Tests.Unit.Architecture;
 /// outside the desktop-gated tests ([DesktopFact] and its kin, which run only when the user opts in):
 /// <list type="bullet">
 /// <item>Test code constructs a real action wrapper (<see cref="ActionWrappers"/>) only where <see cref="SanctionedConstructions"/>
-/// says why that use only reads: the read-only window wrapper and the process-tree reads.</item>
-/// <item>Test code calls a real window or process wrapper only through the members on <see cref="ReadOnlyMembers"/>, and never
-/// closes or kills a process through a process handle. In a type that constructs a real window or process wrapper, calls through
-/// their interfaces (INativeWindowWrapper, INativeProcessWrapper) are held to the same members: the interface may hold the real
-/// one.</item>
+/// says why that use only reads: the read-only window wrapper, the process-tree reads and the shared pause of a name of the
+/// test's own.</item>
+/// <item>Test code calls a real window, process or hotkey wrapper only through the members on <see cref="ReadOnlyMembers"/> (every
+/// sanctioned construction has an entry there), and never closes or kills a process through a process handle. In a type that
+/// constructs one of them, calls through their interfaces (<see cref="WrapperInterfaces"/>) are held to the same members: the
+/// interface may hold the real one. The hotkey wrapper's parameterless constructor names the servers' own pause and chord
+/// marks, so a method that constructs it calls nothing on a hotkey wrapper.</item>
 /// <item>Server code that a test hands a real wrapper to (a constructor called in the same method) calls only those read members
 /// on it.</item>
 /// <item>Test code builds the server's production container (ServiceRegistration.AddWindowsAppManagerServices), whose services
 /// hold the real input, clipboard, hook, window and process wrappers, only where <see cref="SanctionedProductionContainers"/>
 /// says why that use only reads; and there it calls the server's services and wrappers only through constructors, property
-/// getters, static members and the reads on <see cref="SanctionedProductionContainerCalls"/>.</item>
+/// getters, static members and the reads on <see cref="SanctionedProductionContainerCalls"/>. A call that runs the services
+/// through the framework counts as a call on them: a hosted service's or a host's start, stop or run, a member of a
+/// framework interface a server type implements, a tool's invocation through the MCP SDK, and InProcessMcpServer's start and
+/// tool call.</item>
 /// </list>
 /// A Moq setup names a member in an expression tree (ldtoken), not as a call, so mocked members are never counted.
 /// </summary>
@@ -66,12 +75,16 @@ public class TestCodeNativeWrapperTests
             "reads the test host's ancestors and start time, and records the agent's host with HostGuard, which only reads processes",
         [("WindowsAppManagerMcp.Tests.Unit.Native.NativeHotkeyWrapperSharedPauseTests", typeof(NativeHotkeyWrapper))] =
             @"opens only named events of its own (Local\WamTests.SharedPause.<guid>), never the servers' pause, and registers no hotkey; " +
-            "the server's parameterless wrapper is only constructed to read the name it would open",
+            "the server's parameterless wrapper is only constructed to read the name it would open (held: ReadOnlyMembers, and " +
+            "TestCode_ConstructsTheServersHotkeyWrapper_OnlyToReadIt)",
     };
 
     /// <summary>
-    /// The members of the window and process wrappers that only read: the only ones test code may call on a real instance. The
-    /// window wrapper's are every interface member that ReadOnlyNativeWindowWrapperTests does not list as a window change.
+    /// The members of the window, process and hotkey wrappers that only read: the only ones test code may call on a real
+    /// instance. The window wrapper's are every interface member that ReadOnlyNativeWindowWrapperTests does not list as a window
+    /// change. The hotkey wrapper's open no hotkey, mark no chord and post no message: its thread id, whether a server marked a
+    /// chord, and the pause it shares, which only a wrapper of a name of the test's own may open (the parameterless one names
+    /// the servers' pause: <see cref="TestCode_ConstructsTheServersHotkeyWrapper_OnlyToReadIt"/>).
     /// </summary>
     private static readonly Dictionary<Type, HashSet<string>> ReadOnlyMembers = new()
     {
@@ -92,7 +105,12 @@ public class TestCodeNativeWrapperTests
             .Append(".ctor")
             // A pure helper that turns GetWindowTextW's buffer into the title; it makes no native call
             .Append(nameof(NativeWindowWrapper.TextFromBuffer))
-            .ToHashSet(StringComparer.Ordinal)
+            .ToHashSet(StringComparer.Ordinal),
+        [typeof(NativeHotkeyWrapper)] = new(StringComparer.Ordinal)
+        {
+            ".ctor", nameof(NativeHotkeyWrapper.GetCurrentThreadId), nameof(NativeHotkeyWrapper.IsChordHeldByAServer),
+            nameof(NativeHotkeyWrapper.OpenDesktopPause)
+        }
     };
 
     /// <summary>What a process handle does that changes the process: test code never calls these outside desktop-gated tests.</summary>
@@ -101,11 +119,12 @@ public class TestCodeNativeWrapperTests
         nameof(IProcessHandle.Kill), nameof(IProcessHandle.CloseMainWindow)
     };
 
-    /// <summary>The window and process wrappers' interfaces, each with the real wrapper whose <see cref="ReadOnlyMembers"/> it is held to.</summary>
+    /// <summary>The window, process and hotkey wrappers' interfaces, each with the real wrapper whose <see cref="ReadOnlyMembers"/> it is held to.</summary>
     private static readonly Dictionary<Type, Type> WrapperInterfaces = new()
     {
         [typeof(INativeProcessWrapper)] = typeof(NativeProcessWrapper),
-        [typeof(INativeWindowWrapper)] = typeof(NativeWindowWrapper)
+        [typeof(INativeWindowWrapper)] = typeof(NativeWindowWrapper),
+        [typeof(INativeHotkeyWrapper)] = typeof(NativeHotkeyWrapper)
     };
 
     /// <summary>
@@ -160,6 +179,34 @@ public class TestCodeNativeWrapperTests
             "MintRef: a read generation of the faked server's registry, whose every native seam is a fake",
         [("WindowsAppManagerMcp.Tests.Fixtures.NativeFakedServer", "IElementRegistry.Register")] =
             "MintRef: gives a fake element of the faked server's tree a ref; Register makes no UI Automation call",
+        [("WindowsAppManagerMcp.Tests.Fixtures.NativeFakedServer", "InProcessMcpServer.StartAsync")] =
+            "hosts its own services, whose every native seam is a fake (checked before it starts), without their hosted services",
+        [("WindowsAppManagerMcp.Tests.Contract.DeniedTargetContractTests", "InProcessMcpServer.CallToolAsync")] =
+            "calls tools on NativeFakedServer's host, whose every native seam is a fake; the production container it builds only " +
+            "gives the tools' schemas",
+        [("WindowsAppManagerMcp.Tests.Contract.SelfGatedToolsContractTests", "InProcessMcpServer.StartAsync")] =
+            "hosts the contract run's mocks (ContractServices) and the tools; the production container is never built, its " +
+            "registrations are only read",
+        [("WindowsAppManagerMcp.Tests.Contract.SelfGatedToolsContractTests", "InProcessMcpServer.CallToolAsync")] =
+            "calls tools on that host of the contract run's mocks",
+    };
+
+    /// <summary>
+    /// The framework's interfaces and base classes the server's types implement (IHostedService, for example), outside the BCL:
+    /// a call through one of them runs the server's code as a call on the server's own type would.
+    /// </summary>
+    private static readonly HashSet<Type> FrameworkContracts = ServerAssembly.GetTypes()
+        .SelectMany(t => t.GetInterfaces().Concat(BaseTypes(t)))
+        .Select(t => t.IsConstructedGenericType ? t.GetGenericTypeDefinition() : t)
+        .Where(t => t.Assembly != ServerAssembly && t.Namespace is { } ns &&
+                    (ns.StartsWith("Microsoft.Extensions.", StringComparison.Ordinal) || ns.StartsWith("ModelContextProtocol", StringComparison.Ordinal)))
+        .ToHashSet();
+
+    /// <summary>The lifecycle members of the hosting framework: a host's or a hosted service's start, stop and run.</summary>
+    private static readonly HashSet<string> HostingLifecycle = new(StringComparer.Ordinal)
+    {
+        "Start", "StartAsync", "Stop", "StopAsync", "Run", "RunAsync", "WaitForShutdown", "WaitForShutdownAsync", "StartingAsync",
+        "StartedAsync", "StoppingAsync", "StoppedAsync", "ExecuteAsync", "StopApplication"
     };
 
     [Fact]
@@ -182,17 +229,17 @@ public class TestCodeNativeWrapperTests
     }
 
     [Fact]
-    public void TestCode_CallsARealWindowOrProcessWrapper_OnlyThroughItsReadMembers()
+    public void TestCode_CallsARealWindowProcessOrHotkeyWrapper_OnlyThroughItsReadMembers()
     {
         // Act - on the real wrappers, and through their interfaces in the types that construct a real one
-        var calls = CallsOnARealWindowOrProcessWrapper(TestCode()).ToList();
+        var calls = CallsOnARealWrapper(TestCode()).ToList();
 
         // Assert
         calls.Should().Contain(c => c.Owner.Name == "ProcessAncestryTests" && c.Callee.Name == nameof(NativeProcessWrapper.GetDescendantsOf),
             "the scan must see the process tests' calls on the real process wrapper");
         calls.Should().Contain(c => c.Owner == typeof(ReadOnlyNativeWindowWrapper) && c.Callee.DeclaringType == typeof(INativeWindowWrapper),
             "the scan must see the read-only window wrapper's calls through the interface on the real one");
-        var samples = CallsOnARealWindowOrProcessWrapper(SampleCode()).ToList();
+        var samples = CallsOnARealWrapper(SampleCode()).ToList();
         samples.Should().Contain(c => c.Callee.DeclaringType == typeof(NativeProcessWrapper) &&
                                       c.Callee.Name == nameof(NativeProcessWrapper.StartProcess) && !IsReadOnly(c.Callee),
             "the scan must see a sample's process start as an action");
@@ -202,9 +249,49 @@ public class TestCodeNativeWrapperTests
         samples.Should().Contain(c => c.Callee.DeclaringType == typeof(INativeWindowWrapper) &&
                                       c.Callee.Name == nameof(INativeWindowWrapper.SetWindowPos) && !IsReadOnly(c.Callee),
             "the scan must see a window change through the interface, in a type that constructs the real wrapper, as an action");
+        samples.Should().Contain(c => c.Callee.DeclaringType == typeof(INativeHotkeyWrapper) &&
+                                      c.Callee.Name == nameof(INativeHotkeyWrapper.RegisterHotKey) && !IsReadOnly(c.Callee),
+            "the scan must see a hotkey registered through the interface, in a type that constructs the real wrapper, as an action");
+        samples.Should().Contain(c => c.Callee.DeclaringType == typeof(NativeHotkeyWrapper) &&
+                                      c.Callee.Name == nameof(NativeHotkeyWrapper.MarkChordHolder) && !IsReadOnly(c.Callee),
+            "the scan must see a chord marked on the real hotkey wrapper as an action");
+        calls.Should().Contain(c => c.Owner.Name == nameof(Tests.Unit.Native.NativeHotkeyWrapperSharedPauseTests) &&
+                                    c.Callee.Name == nameof(NativeHotkeyWrapper.OpenDesktopPause),
+            "the scan must see the shared pause tests' calls on the real hotkey wrapper");
+        SanctionedConstructions.Keys.Select(k => k.Wrapper).Should().BeSubsetOf(ReadOnlyMembers.Keys,
+            "a real wrapper test code may construct needs the members it may call on it");
         calls.Where(c => !IsReadOnly(c.Callee)).Select(c => c.Description).Should().BeEmpty(
-            "test code may only read through a real window or process wrapper; a member that changes a window or starts a process " +
-            "belongs to a desktop-gated test, or to ReadOnlyMembers after review");
+            "test code may only read through a real window, process or hotkey wrapper; a member that changes a window, starts a " +
+            "process, registers a hotkey or marks a chord belongs to a desktop-gated test, or to ReadOnlyMembers after review");
+    }
+
+    [Fact]
+    public void TestCode_ConstructsTheServersHotkeyWrapper_OnlyToReadIt()
+    {
+        // Arrange - the parameterless constructor opens the servers' own names (Local\WindowsAppManagerMcp.InputPaused and the
+        // chord marks): a method that constructs it, with its lambdas and state machine, may call no hotkey wrapper member
+        static IEnumerable<string> Uses(IEnumerable<MethodBase> methods) =>
+            Calls(methods)
+                .GroupBy(c => (c.Owner, Method: SourceMethodName(c.Caller) ?? c.Caller.Name))
+                .Where(g => g.Any(c => c.Callee is ConstructorInfo { IsStatic: false } ctor && ctor.DeclaringType == typeof(NativeHotkeyWrapper) &&
+                                       ctor.GetParameters().Length == 0))
+                .SelectMany(g => g.Where(c => c.Callee is MethodInfo &&
+                                              (c.Callee.DeclaringType == typeof(NativeHotkeyWrapper) || c.Callee.DeclaringType == typeof(INativeHotkeyWrapper))))
+                .Select(c => c.Description);
+
+        // Act
+        var uses = Uses(TestCode()).ToList();
+
+        // Assert
+        Calls(TestCode()).Should().Contain(c => c.Owner.Name == nameof(Tests.Unit.Native.NativeHotkeyWrapperSharedPauseTests) &&
+                                                c.Callee is ConstructorInfo && c.Callee.DeclaringType == typeof(NativeHotkeyWrapper) &&
+                                                c.Callee.GetParameters().Length == 0,
+            "the scan must see the shared pause tests construct the server's wrapper to read its name");
+        Uses(SampleCode()).Should().Contain(use => use.EndsWith("NativeHotkeyWrapper.OpenDesktopPause", StringComparison.Ordinal),
+            "the scan must see a sample open the servers' pause");
+        uses.Should().BeEmpty(
+            "the server's hotkey wrapper opens the pause and chord marks every server on the desktop shares: construct the wrapper " +
+            "with a name of the test's own (Local\\WamTests.<test>.<guid>) to call it");
     }
 
     [Fact]
@@ -228,7 +315,7 @@ public class TestCodeNativeWrapperTests
             .Where(m => IlCalls.CalledMethods(m).Any(c => c is ConstructorInfo && ReadOnlyMembers.ContainsKey(c.DeclaringType!)))
             .SelectMany(m => IlCalls.CalledMethods(m)
                 .Where(c => c is ConstructorInfo && c.DeclaringType!.Assembly == ServerAssembly && !ActionWrappers.Contains(c.DeclaringType))
-                .Where(c => c.GetParameters().Any(p => p.ParameterType == typeof(INativeProcessWrapper) || p.ParameterType == typeof(INativeWindowWrapper)))
+                .Where(c => c.GetParameters().Any(p => WrapperInterfaces.ContainsKey(p.ParameterType)))
                 .Select(c => IlCalls.OutermostType(c.DeclaringType!)))
             .Distinct()
             .ToList();
@@ -275,7 +362,17 @@ public class TestCodeNativeWrapperTests
             .Contain(c => c.Callee.DeclaringType == typeof(INativeClipboardWrapper) && c.Callee.Name == nameof(INativeClipboardWrapper.WriteText),
                 "the scan must see a sample write the clipboard through a resolved wrapper")
             .And.Contain(c => c.Callee.DeclaringType == typeof(IInputSimulationService),
-                "the scan must see a sample type through a resolved service");
+                "the scan must see a sample type through a resolved service")
+            .And.Contain(c => c.Callee.DeclaringType == typeof(IHostedService) && c.Callee.Name == nameof(IHostedService.StartAsync),
+                "the scan must see a sample start the hosted services, which register the pause hotkey and open the shared pause")
+            .And.Contain(c => c.Callee.DeclaringType == typeof(HostingAbstractionsHostExtensions) && c.Callee.Name == nameof(HostingAbstractionsHostExtensions.Start),
+                "the scan must see a sample start a host")
+            .And.Contain(c => c.Callee.DeclaringType == typeof(InProcessMcpServer) && c.Callee.Name == nameof(InProcessMcpServer.StartAsync),
+                "the scan must see a sample host the production services in the in-process server")
+            .And.Contain(c => c.Callee.DeclaringType == typeof(InProcessMcpServer) && c.Callee.Name == nameof(InProcessMcpServer.CallToolAsync),
+                "the scan must see a sample call a tool on it")
+            .And.Contain(c => c.Callee.DeclaringType == typeof(McpServerTool) && c.Callee.Name == nameof(McpServerTool.InvokeAsync),
+                "the scan must see a sample invoke a tool of the options' collection");
         calls.Where(c => !SanctionedProductionContainerCalls.ContainsKey((c.Owner.FullName!, Member(c.Callee))))
             .Select(c => c.Description)
             .Should().BeEmpty(
@@ -310,10 +407,10 @@ public class TestCodeNativeWrapperTests
         callee is ConstructorInfo { IsStatic: false } && ActionWrappers.Contains(callee.DeclaringType);
 
     /// <summary>
-    /// The calls on a real window or process wrapper, and, in a type that constructs one of them, every call through their
-    /// interfaces: an INativeProcessWrapper there may hold the real one.
+    /// The calls on a real window, process or hotkey wrapper, and, in a type that constructs one of them, every call through
+    /// their interfaces: an INativeProcessWrapper there may hold the real one.
     /// </summary>
-    private static IEnumerable<Call> CallsOnARealWindowOrProcessWrapper(IEnumerable<MethodBase> methods)
+    private static IEnumerable<Call> CallsOnARealWrapper(IEnumerable<MethodBase> methods)
     {
         var calls = Calls(methods).ToList();
         var owners = calls.Where(c => c.Callee is ConstructorInfo { IsStatic: false } && ReadOnlyMembers.ContainsKey(c.Callee.DeclaringType!))
@@ -332,15 +429,47 @@ public class TestCodeNativeWrapperTests
 
     /// <summary>
     /// A call on a server type that may act: an instance member that is no constructor, no property getter and no part of a
-    /// record's copy (its clone and init-only setters), or a static member of a Native wrapper.
+    /// record's copy (its clone and init-only setters), or a static member of a Native wrapper. Or a call that runs the server's
+    /// services through the framework (<see cref="RunsTheServices"/>).
     /// </summary>
     private static bool MayAct(MethodBase callee) =>
-        callee.DeclaringType is { } type && type.Assembly == ServerAssembly &&
-        callee is not ConstructorInfo &&
-        (callee.IsStatic
-            ? type.Namespace == typeof(NativeWindowWrapper).Namespace
-            : !(callee.IsSpecialName && callee.Name.StartsWith("get_", StringComparison.Ordinal)) &&
-              callee.Name != "<Clone>$" && !IsInitOnlySetter(callee));
+        callee.DeclaringType is { } type && callee is not ConstructorInfo &&
+        (type.Assembly == ServerAssembly
+            ? callee.IsStatic
+                ? type.Namespace == typeof(NativeWindowWrapper).Namespace
+                : !IsGetter(callee) && callee.Name != "<Clone>$" && !IsInitOnlySetter(callee)
+            : RunsTheServices(callee, type));
+
+    /// <summary>
+    /// A call outside the server's types that runs its services: a member (no getter, no Dispose) of a framework interface or
+    /// base class a server type implements (<see cref="FrameworkContracts"/>: IHostedService's StartAsync, for example); a host's
+    /// or a hosted service's start, stop or run (<see cref="HostingLifecycle"/>, any type of Microsoft.Extensions.Hosting); an
+    /// MCP session's request or a tool's invocation through the SDK (McpClient, McpServer, McpServerTool, an AIFunction such as
+    /// McpClientTool); and InProcessMcpServer's start and tool call.
+    /// </summary>
+    private static bool RunsTheServices(MethodBase callee, Type type)
+    {
+        if (IsGetter(callee) || callee.Name is nameof(IDisposable.Dispose) or nameof(IAsyncDisposable.DisposeAsync))
+        {
+            return false;
+        }
+
+        var definition = type.IsConstructedGenericType ? type.GetGenericTypeDefinition() : type;
+        return FrameworkContracts.Contains(definition) ||
+               (type.Namespace?.StartsWith("Microsoft.Extensions.Hosting", StringComparison.Ordinal) == true && HostingLifecycle.Contains(callee.Name)) ||
+               typeof(McpSession).IsAssignableFrom(type) || typeof(McpServerTool).IsAssignableFrom(type) || typeof(AIFunction).IsAssignableFrom(type) ||
+               (type == typeof(InProcessMcpServer) && callee.Name is nameof(InProcessMcpServer.StartAsync) or nameof(InProcessMcpServer.CallToolAsync));
+    }
+
+    private static IEnumerable<Type> BaseTypes(Type type)
+    {
+        for (var current = type.BaseType; current != null && current != typeof(object); current = current.BaseType)
+        {
+            yield return current;
+        }
+    }
+
+    private static bool IsGetter(MethodBase callee) => callee.IsSpecialName && callee.Name.StartsWith("get_", StringComparison.Ordinal);
 
     private static bool IsInitOnlySetter(MethodBase callee) =>
         callee is MethodInfo { IsSpecialName: true } setter && setter.Name.StartsWith("set_", StringComparison.Ordinal) &&
@@ -355,11 +484,10 @@ public class TestCodeNativeWrapperTests
     private static bool IsProcessHandleAction(MethodBase callee) =>
         callee.DeclaringType is { } type && typeof(IProcessHandle).IsAssignableFrom(type) && ProcessHandleActions.Contains(callee.Name);
 
-    /// <summary>A call on the window or process wrapper's interface, or on a process handle, that changes something.</summary>
+    /// <summary>A call on the window, process or hotkey wrapper's interface, or on a process handle, that changes something.</summary>
     private static bool IsWrapperAction(MethodBase callee) =>
         IsProcessHandleAction(callee) ||
-        (callee.DeclaringType == typeof(INativeProcessWrapper) && !ReadOnlyMembers[typeof(NativeProcessWrapper)].Contains(callee.Name)) ||
-        (callee.DeclaringType == typeof(INativeWindowWrapper) && !ReadOnlyMembers[typeof(NativeWindowWrapper)].Contains(callee.Name));
+        (callee.DeclaringType is { } type && WrapperInterfaces.TryGetValue(type, out var wrapper) && !ReadOnlyMembers[wrapper].Contains(callee.Name));
 
     private static readonly HashSet<Type> DesktopTestAttributes =
     [
@@ -436,5 +564,31 @@ internal static class NativeWrapperScanSamples
         provider.GetRequiredService<INativeClipboardWrapper>().WriteText("sample");
         await provider.GetRequiredService<IInputSimulationService>().TypeTextAsync(
             "sample", 0, new InputTarget(null), false, null, TextInputMethod.Unicode, CancellationToken.None);
+
+        // Through the framework: the hosted services (the pause hotkey and the shared pause), a host, a tool of the options'
+        // collection, and the in-process server over the production services
+        foreach (var hosted in provider.GetServices<IHostedService>())
+        {
+            await hosted.StartAsync(CancellationToken.None);
+        }
+
+        provider.GetRequiredService<IHost>().Start();
+        await provider.GetServices<McpServerTool>().First().InvokeAsync(null!, CancellationToken.None);
+        await using var server = await InProcessMcpServer.StartAsync([], configureServices: services => services.AddWindowsAppManagerServices());
+        await server.CallToolAsync("type_text", new Dictionary<string, object?> { ["text"] = "sample" });
+    }
+
+    public static bool RegistersAHotkeyThroughItsInterface()
+    {
+        INativeHotkeyWrapper hotkeys = new NativeHotkeyWrapper(@"Local\WamTests.ScanSample");
+        return hotkeys.RegisterHotKey(1, 0x0002, 0x13).Succeeded;
+    }
+
+    public static IDisposable MarksAChord() => new NativeHotkeyWrapper(@"Local\WamTests.ScanSample").MarkChordHolder("sample");
+
+    public static IDesktopPauseFlag OpensTheServersPause()
+    {
+        var hotkeys = new NativeHotkeyWrapper();
+        return hotkeys.OpenDesktopPause();
     }
 }
