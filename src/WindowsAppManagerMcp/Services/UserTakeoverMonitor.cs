@@ -116,6 +116,7 @@ public sealed class UserTakeoverMonitor : ITakeoverMonitor, IDisposable
 
             _watches.Add(watch);
             _active = [.. _watches];
+
             // The first watch starts the thread; a later one starts it again when it stopped on its own, a few times at most
             if (_thread == null && _starts <= MaxRestarts)
             {

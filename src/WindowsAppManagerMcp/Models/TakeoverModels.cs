@@ -31,7 +31,11 @@ public enum TakeoverState
     /// <summary>On, and an operation is being watched now.</summary>
     Watching,
 
-    /// <summary>On, but Windows did not install the hooks: nothing is detected, and operations run as with off.</summary>
+    /// <summary>
+    /// On, but detection does not work: Windows did not install the hooks, a hook failed, or the detection thread stopped.
+    /// The user's input is not (or not reliably) detected, operations run as with off, and type_text's and drag's results
+    /// have a warning that says so.
+    /// </summary>
     Unavailable
 }
 

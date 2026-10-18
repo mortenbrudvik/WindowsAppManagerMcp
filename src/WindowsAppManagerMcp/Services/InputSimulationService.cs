@@ -1706,7 +1706,7 @@ public partial class InputSimulationService : IInputSimulationService
             var unavailable = _unavailable ?? (_monitor?.Status is { State: TakeoverState.Unavailable } now ? now : null);
             return TakeoverMessages.Combine(
                 _takeover.Warns ? TakeoverMessages.Warning(what) : null,
-                unavailable == null ? null : TakeoverMessages.Unavailable(what, _takeover.Mode, unavailable.Error));
+                unavailable == null ? null : TakeoverMessages.Unavailable(what, unavailable.Mode, unavailable.Error));
         }
 
         /// <summary>
