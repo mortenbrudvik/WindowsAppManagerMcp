@@ -67,14 +67,15 @@ public sealed class ServerInfoService(
             connection,
             process,
             desktop,
+            // As get_monitors reports them: the DPI Windows reported, and neither it nor the scale when it could not report one
             monitors.GetAllMonitors()
                 .Select(m => new ServerMonitorInfo(
                     m.Index,
                     m.DeviceName,
                     m.IsPrimary,
                     new BoundsDto(m.Bounds.X, m.Bounds.Y, m.Bounds.Width, m.Bounds.Height),
-                    (int)Math.Round(m.ScaleFactor * 96),
-                    m.ScaleFactor))
+                    m.DpiUnknown ? null : m.Dpi,
+                    m.DpiUnknown ? null : m.ScaleFactor))
                 .ToList(),
             ReadHost(settings.Host, warnings),
             input,

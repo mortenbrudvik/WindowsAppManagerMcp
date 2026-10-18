@@ -639,10 +639,11 @@ public sealed class VisualChangeService : IVisualChangeService
         private Source OpenWindow(nint handle, bool includeFrame, uint expectedProcessId)
         {
             var source = new WindowSource(service, handle, includeFrame, expectedProcessId);
-            if (service._monitors.GetMonitorForWindow(handle) is { } monitor)
+            // A monitor whose DPI Windows could not report has none to compare with: its 96 only stands in for the arithmetic
+            if (service._monitors.GetMonitorForWindow(handle) is { DpiUnknown: false } monitor)
             {
                 var windowDpi = (int)service._windows.GetDpiForWindow(handle);
-                var monitorDpi = (int)Math.Round(monitor.ScaleFactor * 96);
+                var monitorDpi = monitor.Dpi;
                 if (windowDpi != 0 && Math.Abs(windowDpi - monitorDpi) > 1)
                 {
                     source.Warnings.Add(CaptureWarnings.Format(CaptureWarnings.DpiScaledWindow,

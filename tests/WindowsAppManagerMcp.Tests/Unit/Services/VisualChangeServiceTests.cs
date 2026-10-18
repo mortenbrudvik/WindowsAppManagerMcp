@@ -434,6 +434,24 @@ public class VisualChangeServiceTests
     }
 
     [Fact]
+    public async Task AWindowOnAMonitorWhoseDpiIsUnknown_HasNoDpiWarning()
+    {
+        // A per-monitor aware window at 144 DPI on a monitor whose DPI Windows could not report: against the 96 that stands in
+        // for the arithmetic it would read as scaled by Windows
+        _monitors.Setup(m => m.GetMonitorForWindow(Window)).Returns(
+            new MonitorInfo(1, "DISPLAY2", false, new MonitorRect(1920, 0, 2560, 1440), new MonitorRect(1920, 0, 2560, 1400), 1.0)
+            {
+                Dpi = 96, DpiUnknown = true
+            });
+        _windows.Setup(w => w.GetDpiForWindow(Window)).Returns(144u);
+        _screen.Frames(WindowFrame(), WindowFrame().Paint(0, 0, 1, 1, (0, 0, 0)));
+
+        var result = await CreateSut().WaitAsync(Request(TheWindow()));
+
+        (result.Warnings ?? []).Should().NotContain(w => w.StartsWith("DpiScaledWindow:", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task AFrameOfOneColor_Warns_ThatItMayNeverChange()
     {
         _screen.Frames(new VisualFrames(640, 480, 100, 200, (0, 0, 0)));

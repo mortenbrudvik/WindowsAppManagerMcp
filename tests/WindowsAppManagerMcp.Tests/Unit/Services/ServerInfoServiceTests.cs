@@ -1,3 +1,4 @@
+using System.Text.Json;
 using WindowsAppManagerMcp.Infrastructure;
 
 namespace WindowsAppManagerMcp.Tests.Unit.Services;
@@ -134,6 +135,32 @@ public sealed class ServerInfoServiceTests : IDisposable
         info.Monitors.Should().Equal(
             new ServerMonitorInfo(0, @"\\.\DISPLAY1", true, new BoundsDto(0, 0, 2560, 1440), 120, 1.25),
             new ServerMonitorInfo(1, @"\\.\DISPLAY2", false, new BoundsDto(-1920, 0, 1920, 1080), 96, 1.0));
+    }
+
+    [Fact]
+    public void Read_AMonitorWhoseDpiWindowsCouldNotReport_HasNoDpiOrScale_AsInGetMonitors()
+    {
+        // Arrange - the native wrapper's scale of 1 for the arithmetic, which was never read, and a DPI Windows reported as is
+        _monitors.Setup(m => m.GetAllMonitors()).Returns(
+        [
+            new MonitorInfo(0, @"\\.\DISPLAY1", true, new MonitorRect(0, 0, 2560, 1440), new MonitorRect(0, 0, 2560, 1392), 1.0)
+            {
+                Dpi = 96, DpiUnknown = true
+            },
+            new MonitorInfo(1, @"\\.\DISPLAY2", false, new MonitorRect(-1920, 0, 1920, 1080), new MonitorRect(-1920, 0, 1920, 1040), 1.5)
+            {
+                Dpi = 144
+            }
+        ]);
+
+        // Act
+        var monitors = CreateSut().Read(Connection, 48).Monitors;
+
+        // Assert
+        monitors.Should().Equal(
+            new ServerMonitorInfo(0, @"\\.\DISPLAY1", true, new BoundsDto(0, 0, 2560, 1440), Dpi: null, ScaleFactor: null),
+            new ServerMonitorInfo(1, @"\\.\DISPLAY2", false, new BoundsDto(-1920, 0, 1920, 1080), 144, 1.5));
+        JsonSerializer.Serialize(monitors[0], ToolJson.SerializerOptions).Should().NotContain("dpi").And.NotContain("scaleFactor");
     }
 
     [Fact]

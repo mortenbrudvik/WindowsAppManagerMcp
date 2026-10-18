@@ -510,6 +510,88 @@ public class CaptureHealthTests
         metadata.Warnings.Should().BeNull();
     }
 
+    /// <summary>A monitor whose DPI Windows could not report: a scale of 1 and 96 DPI for the arithmetic, never read.</summary>
+    private static MonitorInfo DpiUnknownMonitor() =>
+        TestDataFactory.CreateMonitorInfo() with { Dpi = 96, DpiUnknown = true };
+
+    [Fact]
+    public void CaptureMonitor_OfAMonitorWhoseDpiIsUnknown_ReportsNoScaleFactor_AsGetMonitorsLeavesItOut()
+    {
+        // Arrange
+        _monitors.Setup(m => m.GetAllMonitors()).Returns([DpiUnknownMonitor()]);
+
+        // Act
+        var metadata = CreateSut().CaptureMonitor(0, FullResolution).Metadata;
+        var raw = CreateSut().CapturePixels(new CaptureTarget.Monitor(0));
+
+        // Assert - left out rather than 1 (100%) as fact; the server's own arithmetic keeps its scale of 1
+        metadata.MonitorIndex.Should().Be(0);
+        metadata.ScaleFactor.Should().BeNull();
+        raw.ScaleFactor.Should().Be(1.0);
+    }
+
+    [Fact]
+    public void CaptureWindow_OnAMonitorWhoseDpiIsUnknown_HasNoDpiWarning_AndNoScaleFactor()
+    {
+        // Arrange - a per-monitor aware window at 144 DPI: against the made-up 96 it would read as scaled by Windows
+        _monitors.Setup(m => m.GetMonitorForWindow(Window)).Returns(DpiUnknownMonitor());
+        _windows.Setup(w => w.GetDpiForWindow(Window)).Returns(144u);
+        _capture.Setup(c => c.CaptureWindow(Window, false)).Returns(new CaptureResult(Pattern(100, 80), 100, 80, 0, 0, "PrintWindow"));
+
+        // Act
+        var metadata = CreateSut().CaptureWindow(Window, includeFrame: false, FullResolution).Metadata;
+
+        // Assert
+        metadata.Warnings.Should().BeNull();
+        metadata.ScaleFactor.Should().BeNull();
+    }
+
+    [Fact]
+    public void CaptureWindow_OnNoMonitor_ReportsNoScaleFactor()
+    {
+        // Arrange - Windows names no monitor for the window: there is no monitor whose scale it could be
+        _monitors.Setup(m => m.GetMonitorForWindow(Window)).Returns((MonitorInfo?)null);
+        _capture.Setup(c => c.CaptureWindow(Window, false)).Returns(new CaptureResult(Pattern(100, 80), 100, 80, 0, 0, "PrintWindow"));
+
+        // Act
+        var metadata = CreateSut().CaptureWindow(Window, includeFrame: false, FullResolution).Metadata;
+
+        // Assert
+        metadata.MonitorIndex.Should().BeNull();
+        metadata.ScaleFactor.Should().BeNull();
+    }
+
+    [Fact]
+    public void CaptureWithElements_OnAMonitorWhoseDpiIsUnknown_ReportsNoMonitorScaleFactor()
+    {
+        // Arrange
+        _monitors.Setup(m => m.GetMonitorForWindow(Window)).Returns(DpiUnknownMonitor());
+        _capture.Setup(c => c.CaptureWindow(Window, true)).Returns(new CaptureResult(Pattern(100, 80), 100, 80, 0, 0, "PrintWindow"));
+
+        // Act
+        var metadata = CreateSut().CaptureWindowWithElements(Window, null, [], includeFrame: true,
+            ElementOverlayOptions.Default, FullResolution).Metadata;
+
+        // Assert
+        metadata.Success.Should().BeTrue();
+        metadata.MonitorScaleFactor.Should().BeNull();
+    }
+
+    [Fact]
+    public void CaptureWithElements_OnAMonitorWithAKnownDpi_ReportsItsScaleFactor()
+    {
+        // Arrange
+        _monitors.Setup(m => m.GetMonitorForWindow(Window)).Returns(TestDataFactory.CreateMonitorInfo(scaleFactor: 1.5));
+        _capture.Setup(c => c.CaptureWindow(Window, true)).Returns(new CaptureResult(Pattern(100, 80), 100, 80, 0, 0, "PrintWindow"));
+
+        // Act
+        var metadata = CreateSut().CaptureWindowWithElements(Window, null, [], includeFrame: true,
+            ElementOverlayOptions.Default, FullResolution).Metadata;
+
+        // Assert
+        metadata.MonitorScaleFactor.Should().Be(1.5);
+    }
+
     #endregion
 
     #region Encoding

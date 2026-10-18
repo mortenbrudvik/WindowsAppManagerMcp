@@ -91,9 +91,11 @@ public sealed record DesktopStateInfo(bool InputDesktopAvailable, bool SessionLo
 /// <param name="Name">The device name.</param>
 /// <param name="IsPrimary">True for the primary monitor, whose top-left corner is (0, 0).</param>
 /// <param name="Bounds">Its bounds in physical virtual-screen pixels.</param>
-/// <param name="Dpi">Its effective DPI (96 at 100%).</param>
-/// <param name="ScaleFactor">Dpi / 96, for information only: never multiply coordinates by it.</param>
-public sealed record ServerMonitorInfo(int Index, string Name, bool IsPrimary, BoundsDto Bounds, int Dpi, double ScaleFactor);
+/// <param name="Dpi">Its effective DPI (96 at 100%); left out when Windows could not report it, as get_monitors leaves it out.</param>
+/// <param name="ScaleFactor">
+/// Dpi / 96, for information only: never multiply coordinates by it. Left out with <paramref name="Dpi"/>.
+/// </param>
+public sealed record ServerMonitorInfo(int Index, string Name, bool IsPrimary, BoundsDto Bounds, int? Dpi, double? ScaleFactor);
 
 /// <summary>The agent's host as the server recorded it at start (the input guard's TargetIsAgentHost).</summary>
 /// <param name="Windows">The host windows: the window showing the server's console, and the window in front at start.</param>
