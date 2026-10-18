@@ -252,8 +252,23 @@ public class InputSimulationServiceKeyReportTests
         result.SentAsCharacters.Should().Equal("+", "😀");
         result.Warnings.Should().ContainSingle().Which.Should().StartWith(
             "SentAsCharacter: '+', '😀' went out as characters alone, with no key ('+': an accent typed on a dead key was waiting on " +
-            "the window's keyboard layout, and its key would have typed that accent too; '😀': no key of the window's keyboard layout " +
-            "types it, or only a dead key does).");
+            "the window's keyboard layout, and its key would have typed it with that accent; '😀': no key of the window's keyboard " +
+            "layout types it, or only a dead key does).");
+    }
+
+    [Fact]
+    public async Task SendKeys_WhileAnAccentWaits_BlamesTheAccent_AlsoForALetterItCombinesWith()
+    {
+        // The H, L and O keys would type "`h", "`l" and "`o", and the E key 'è': the accent kept each from its key (review)
+        _layouts.PendingDeadKey = '`';
+
+        var result = await CreateSut().SendKeysAsync("hello", Duetty);
+
+        result.Success.Should().BeTrue(result.Error);
+        result.SentAsCharacters.Should().Equal("h", "e", "l", "o");
+        result.Warnings.Should().ContainSingle().Which.Should().StartWith(
+            "SentAsCharacter: 'h', 'e', 'l', 'o' went out as characters alone, with no key (an accent typed on a dead key was waiting " +
+            "on the window's keyboard layout, and their keys would have typed them with that accent).");
     }
 
     [Theory]
@@ -270,7 +285,7 @@ public class InputSimulationServiceKeyReportTests
         result.SentAsCharacters.Should().Equal(keys);
         result.Warnings.Should().ContainSingle().Which.Should().StartWith(
             $"SentAsCharacter: '{keys}' ('+') went out with its character alone, with no key (an accent typed on a dead key was waiting " +
-            "on the window's keyboard layout, and its key would have typed that accent too).");
+            "on the window's keyboard layout, and its key would have typed it with that accent).");
         _input.Batches.Should().ContainSingle().Which.Should().Contain(InputEvent.Unicode('+', 0)).And.NotContain(e => e.Code == 0xBB);
     }
 

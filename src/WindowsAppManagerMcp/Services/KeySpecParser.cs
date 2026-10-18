@@ -59,8 +59,9 @@ public enum NoKeyReason
     NotOnLayout,
 
     /// <summary>
-    /// Its key would have typed an accent waiting on the layout too (<see cref="KeyboardLayout.DeadKeyPending"/>): text, and a
-    /// press_keys chord without Ctrl, Alt or Win, stay exact then.
+    /// Its key would have typed it with an accent waiting on the layout (<see cref="KeyboardLayout.DeadKeyPending"/>), the
+    /// accent in front or combined with it: text, and a press_keys chord without Ctrl, Alt or Win, stay exact then. Also given
+    /// for a dead key's own character while an accent waits, which cannot be told apart then.
     /// </summary>
     AccentWaiting,
 

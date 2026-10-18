@@ -16,10 +16,10 @@ namespace WindowsAppManagerMcp.Services;
 /// and 'ctrl+1' is the shortcut on any layout. Any other character is the key the layout types it with, plus the Shift or
 /// AltGr it needs; Unicode only when no key types it, and, in a chord without Ctrl, Alt or Win, when its key would also type
 /// an accent waiting on the layout (as send_keys' text). '+', ',' and '*' are written plus, comma and star. A punctuation key
-/// is also named by its virtual key: oem_plus, oem_minus, oem_comma, oem_period, oem_1 to oem_8 and oem_102
-/// (<see cref="KeyTable"/>), sent with the scan code the layout gives it. Which physical key that is depends on the layout
-/// (issue #8): oem_plus is the = key on a US keyboard, the + key right of 0 on a Norwegian one and the + key right of U-umlaut
-/// on a German one.</item>
+/// is also named by its virtual key: oem_plus, oem_minus, oem_comma, oem_period, oem_1 to oem_8 and oem_102, and a Brazilian
+/// keyboard's abnt_c1 and abnt_c2 (<see cref="KeyTable"/>), sent with the scan code the layout gives it. Which physical key
+/// that is depends on the layout (issue #8): oem_plus is the = key on a US keyboard, the + key right of 0 on a Norwegian one
+/// and the + key right of U-umlaut on a German one.</item>
 /// <item>'chord*n' presses the chord n times (1 to <see cref="MaxRepeat"/>). Chords separated by spaces or commas, or the
 /// items of an array that is not one chord (<see cref="KeyList.IsOneChord"/>), follow each other.</item>
 /// </list>
@@ -111,8 +111,10 @@ public static class PressKeysParser
 
     /// <summary>
     /// The name press_keys takes for <paramref name="virtualKey"/>, for the result: a letter or digit as itself ('t', '0'),
-    /// a punctuation key by its virtual key (oem_plus, oem_1, oem_102), a modifier as a chord names it (ctrl, lctrl, ralt),
-    /// another key by its first <see cref="KeyTable"/> name (enter, pgup, f4); "vk_0xNN" for a key without one.
+    /// a punctuation key by its virtual key (oem_plus, oem_1, oem_102, abnt_c1), a modifier as a chord names it (ctrl, lctrl,
+    /// ralt), another key by its first <see cref="KeyTable"/> name (enter, pgup, f4). "vk_0xNN" for a key the table has no
+    /// name for, which press_keys does not take: such a key (one a layout of an old or rare keyboard puts a character on) is
+    /// reported only when a Shift or AltGr was added to it (<see cref="Press"/>).
     /// </summary>
     public static string KeyName(ushort virtualKey)
     {
@@ -123,7 +125,9 @@ public static class PressKeysParser
 
         return ModifierNames.TryGetValue(virtualKey, out var modifier) ? modifier
             : KeyTable.NameOf(virtualKey) is { } name
-                ? name.StartsWith("OEM", StringComparison.Ordinal) ? "oem_" + name[3..].ToLowerInvariant() : name.ToLowerInvariant()
+                ? name.StartsWith("OEM", StringComparison.Ordinal) ? "oem_" + name[3..].ToLowerInvariant()
+                : name.StartsWith("ABNT", StringComparison.Ordinal) ? "abnt_" + name[4..].ToLowerInvariant()
+                : name.ToLowerInvariant()
                 : $"vk_0x{virtualKey:X2}";
     }
 
@@ -249,7 +253,8 @@ public static class PressKeysParser
     /// <summary>
     /// One press of <paramref name="chord"/>: its events, and how its character went out. The resolved chord names the keys
     /// that actually went down, so each name is one press_keys takes (AltGr as lctrl+ralt, less what the chord already
-    /// holds); a chord pressed on a punctuation key with no modifier added is left out, since its name would say nothing new.
+    /// holds); a chord pressed on a punctuation key (or a key without a name) with no modifier added is left out, since its
+    /// name would say nothing new.
     /// </summary>
     private static Pressed Press(ChordSpec chord, KeyboardLayout layout)
     {
@@ -355,7 +360,12 @@ public static class PressKeysParser
 
         void Up(ushort virtualKey) => events.Add(KeyEvent(virtualKey, NativeEnums.KEYEVENTF_KEYUP, altGr: false));
 
-        static bool IsPunctuationKey(ushort virtualKey) => KeyTable.NameOf(virtualKey)?.StartsWith("OEM", StringComparison.Ordinal) == true;
+        // A key of the layout's own characters: an OEM or ABNT key, or one other than A-Z and 0-9 that the key table has no name
+        // for, whose name would say nothing new (and press_keys would not take it back)
+        static bool IsPunctuationKey(ushort virtualKey) =>
+            virtualKey is not (>= 'A' and <= 'Z' or >= '0' and <= '9') &&
+            (KeyTable.NameOf(virtualKey) is not { } name ||
+             name.StartsWith("OEM", StringComparison.Ordinal) || name.StartsWith("ABNT", StringComparison.Ordinal));
 
         InputEvent KeyEvent(ushort virtualKey, uint flags, bool altGr)
         {

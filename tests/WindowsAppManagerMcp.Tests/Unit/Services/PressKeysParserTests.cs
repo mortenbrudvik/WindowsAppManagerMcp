@@ -241,10 +241,60 @@ public class PressKeysParserTests
         KeyboardLayout.Of(new FakeKeyboardLayoutWrapper { Layout = 0 }, 1, capsLock: false).WhyNoKey('+').Should().Be(NoKeyReason.LayoutUnread);
     }
 
+    [Fact]
+    public void WhyNoKey_BlamesTheWaitingAccent_AlsoForACharacterItCombinesWith()
+    {
+        // The E key types 'è' while a grave accent waits: it is the key for 'e', and only the accent kept 'e' from it
+        var waiting = AccentWaiting(FakeKeyboardLayoutWrapper.Norwegian);
+
+        waiting.Map('e', capsLock: false).Should().BeNull("the key would type 'è'");
+        waiting.WhyNoKey('e').Should().Be(NoKeyReason.AccentWaiting);
+        waiting.WhyNoKey('h').Should().Be(NoKeyReason.AccentWaiting, "the H key types \"`h\" now");
+        waiting.WhyNoKey('^').Should().Be(NoKeyReason.AccentWaiting,
+            "the dead ^ key types \"`^\" now, as a key the accent does not combine with does: the two cannot be told apart, so " +
+            "the warning says only what the key would have typed");
+    }
+
+    [Fact]
+    public void ACharacterOnTheBrazilianAbntKey_IsPressedOnIt_AndNamedAsPressKeysTakesIt()
+    {
+        // Issue #10 review: on Brazilian ABNT2 '/' and '?' are VK_ABNT_C1 (0xC1, scan 73), which has no OEM name; 'ctrl+?'
+        // adds Shift, and the key is written abnt_c1, which press_keys takes back
+        var brazilian = Layout(FakeKeyboardLayoutWrapper.Brazilian);
+
+        var spec = PressKeysParser.Parse(KeyList.Of("ctrl+/ ctrl+?"), 1, brazilian);
+
+        spec.Steps[0].Should().Equal(Seq(One(CtrlDown), Tap(0xC1, 0x73), One(CtrlUp)));
+        Resolved(spec).Should().Equal(new Dictionary<string, string> { ["ctrl+?"] = "ctrl+shift+abnt_c1" },
+            "'/' is the key's own character, pressed as asked");
+        PressKeysParser.Parse(KeyList.Of("ctrl+shift+abnt_c1"), 1, brazilian).Events.Should().Equal(spec.Steps[1]);
+    }
+
+    [Fact]
+    public void ACharacterOnAKeyWithoutAName_IsReportedOnlyWhenAModifierWasAdded()
+    {
+        // A key the key table has no name for (here VK 0xE1, an OEM-specific key) is a punctuation key of the layout: as asked
+        // when nothing is added, and written vk_0xE1 when a Shift is
+        var native = new Mock<INativeKeyboardLayoutWrapper>();
+        native.Setup(n => n.GetKeyboardLayout(It.IsAny<nint>())).Returns(1);
+        native.Setup(n => n.VkKeyScan('¤', 1)).Returns(0x00E1);
+        native.Setup(n => n.VkKeyScan('¦', 1)).Returns(0x01E1);
+        native.Setup(n => n.ScanCode(0xE1, 1)).Returns(0x70);
+        native.Setup(n => n.KeyText(0xE1, 0x70, 0, false, 1)).Returns("¤");
+        native.Setup(n => n.KeyText(0xE1, 0x70, 1, false, 1)).Returns("¦");
+
+        var spec = PressKeysParser.Parse(KeyList.Of("ctrl+¤ ctrl+¦"), 1, KeyboardLayout.Of(native.Object, 0, capsLock: false));
+
+        spec.Steps[0].Should().Equal(Seq(One(Down(VkControl, 0)), Tap(0xE1, 0x70), One(Up(VkControl, 0))));
+        Resolved(spec).Should().Equal(new Dictionary<string, string> { ["ctrl+¦"] = "ctrl+shift+vk_0xE1" });
+    }
+
     [Theory]
     [InlineData((ushort)0xBB, "oem_plus")]
     [InlineData((ushort)0xBA, "oem_1")]
     [InlineData((ushort)0xE2, "oem_102")]
+    [InlineData((ushort)0xC1, "abnt_c1")]
+    [InlineData((ushort)0xC2, "abnt_c2")]
     [InlineData((ushort)'T', "t")]
     [InlineData((ushort)'0', "0")]
     [InlineData((ushort)0x0D, "enter")]
@@ -265,7 +315,7 @@ public class PressKeysParserTests
     }
 
     [Fact]
-    public void TheGuard_ReadsAChordWithAKeyNamedByItsPlace_AsItsSendKeysSpelling()
+    public void TheGuard_ReadsAChordWithAKeyNamedByItsVirtualKey_AsItsSendKeysSpelling()
     {
         // A destructive chord configured as ^{OEM_2} (WAM_DESTRUCTIVE_CHORDS) is the press_keys chord ctrl+oem_2
         var options = InputGuardOptions.FromEnvironment(name => name == InputGuardOptions.DestructiveChordsVariable ? "^{OEM_2}" : null);

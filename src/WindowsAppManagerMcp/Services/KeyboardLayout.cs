@@ -114,14 +114,17 @@ public sealed class KeyboardLayout
 
     /// <summary>
     /// Why <paramref name="character"/>, which <see cref="Map"/> gave no key, went out as Unicode, for the SentAsCharacter
-    /// warning (issue #9): the layout was not read; or a key types it only behind the accent waiting on the layout (a key
-    /// pressed as a key would have been used, so the character was text, or a press_keys chord without Ctrl, Alt or Win);
-    /// or no key types it, or only a dead key does. Given per character, so a warning blames the accent only for the
-    /// characters it kept from their keys.
+    /// warning (issue #9): the layout was not read; or the accent waiting on the layout changed what the character's key
+    /// types, putting itself in front ("`+") or combining with it ('è' for 'e'); or no key types it, or only a dead key does.
+    /// Given per character, so a warning blames the accent only for the characters whose key it changed. A dead key's own
+    /// character counts as the accent's too then: ToUnicodeEx gives the accent and the character for it just as for a key the
+    /// accent does not combine with, so the two cannot be told apart while an accent waits, and the warning says only what the
+    /// key would have typed, not that it types the character once the accent is used up.
     /// </summary>
     public NoKeyReason WhyNoKey(char character) =>
         ReadFailed ? NoKeyReason.LayoutUnread
-        : DeadKeyPending && Map(character, capsLock: false, asKey: true) != null ? NoKeyReason.AccentWaiting
+        : DeadKeyPending && LayoutKey(character) is (var virtualKey, var state) &&
+          _native!.KeyText(virtualKey, RawScanCode(virtualKey), state, capsLock: false, _layout) != null ? NoKeyReason.AccentWaiting
         : NoKeyReason.NotOnLayout;
 
     /// <summary>
@@ -156,16 +159,25 @@ public sealed class KeyboardLayout
         return raw;
     }
 
-    private KeyStroke? NativeStroke(char character, bool caps, bool asKey)
+    /// <summary>
+    /// The key VkKeyScanEx gives for <paramref name="character"/> and the shift state it needs; null when the layout has none,
+    /// or the state goes beyond Shift and AltGr (Kana, layout-specific bits), or is Ctrl or Alt alone, which type control
+    /// characters, not text.
+    /// </summary>
+    private (byte VirtualKey, byte State)? LayoutKey(char character)
     {
         var scan = _native!.VkKeyScan(character, _layout);
         var virtualKey = (byte)(scan & 0xFF);
         var state = (byte)((scan >> 8) & 0xFF);
+        return scan == -1 || virtualKey == 0xFF || (state & ~(ShiftState | CtrlState | AltState)) != 0 ||
+               (state & (CtrlState | AltState)) is CtrlState or AltState
+            ? null
+            : (virtualKey, state);
+    }
 
-        // Not on the layout; or a state beyond Shift and AltGr (Kana, layout-specific bits); or Ctrl or Alt alone, which
-        // type control characters, not text
-        if (scan == -1 || virtualKey == 0xFF || (state & ~(ShiftState | CtrlState | AltState)) != 0 ||
-            (state & (CtrlState | AltState)) is CtrlState or AltState)
+    private KeyStroke? NativeStroke(char character, bool caps, bool asKey)
+    {
+        if (LayoutKey(character) is not (var virtualKey, var state))
         {
             return null;
         }
@@ -174,7 +186,7 @@ public sealed class KeyboardLayout
         // pressed as a key may also type it behind an accent that waits on the layout, which ToUnicodeEx puts in front
         var text = character.ToString();
         var rawScan = RawScanCode(virtualKey);
-        var typed = _native.KeyText(virtualKey, rawScan, state, caps, _layout);
+        var typed = _native!.KeyText(virtualKey, rawScan, state, caps, _layout);
         if (typed == text || (asKey && typed is { Length: > 1 } && PendingAccent() is { } accent && typed == accent + text))
         {
             return new KeyStroke(virtualKey, ModifiersOf(state));

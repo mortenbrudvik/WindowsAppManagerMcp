@@ -87,8 +87,8 @@ public partial class InputSimulationService
 
     /// <summary>
     /// The SentAsCharacter warning: which chords or characters went out alone; why, for each (the layout was not read, an accent
-    /// waiting on it kept them from their keys, or no key of it types them), so a reason is given only where it applies; and
-    /// what that means.
+    /// waiting on it would have come out with them on their keys, or no key of it types them), so a reason is given only where
+    /// it applies; and what that means.
     /// </summary>
     private static string SentAsCharacterWarning(IReadOnlyList<CharacterWithoutKey> withoutKeys, bool pressKeys)
     {
@@ -116,8 +116,10 @@ public partial class InputSimulationService
         static string Why(NoKeyReason why, bool one) => why switch
         {
             NoKeyReason.LayoutUnread => "the window's keyboard layout could not be read",
+            // What the key would have typed, the accent in front ("`+") or combined ('è'): not that it types the character
+            // once the accent is used up, which a dead key's own character would not (KeyboardLayout.WhyNoKey)
             NoKeyReason.AccentWaiting => "an accent typed on a dead key was waiting on the window's keyboard layout, and " +
-                                         $"{(one ? "its key" : "their keys")} would have typed that accent too",
+                                         $"{(one ? "its key would have typed it" : "their keys would have typed them")} with that accent",
             _ => $"no key of the window's keyboard layout types {(one ? "it" : "them")}, or only a dead key does"
         };
     }

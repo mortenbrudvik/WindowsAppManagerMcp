@@ -11,8 +11,8 @@ public static class KeyWarnings
     /// <summary>
     /// A chord's character (press_keys) or a character (send_keys) went out as the character alone (KEYEVENTF_UNICODE), with
     /// no key, for the reason the warning gives each: no key of the window's keyboard layout types it (or only a dead key
-    /// does), an accent typed on a dead key was waiting on the layout and its key would have typed that accent too, or the
-    /// layout could not be read. A text field gets the character, but an application that matches the physical key (a
+    /// does), an accent typed on a dead key was waiting on the layout and its key would have typed it with that accent, or
+    /// the layout could not be read. A text field gets the character, but an application that matches the physical key (a
     /// shortcut, KeyboardEvent.code, a scan code or virtual key) sees no key press. The result's sentAsCharacters lists them.
     /// </summary>
     public const string SentAsCharacter = "SentAsCharacter";
