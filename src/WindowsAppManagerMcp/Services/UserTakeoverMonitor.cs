@@ -289,9 +289,16 @@ public sealed class UserTakeoverMonitor : ITakeoverMonitor, IDisposable
         }
         finally
         {
-            // The hooks first: the thread that installed them must remove them, and a new thread may start once this one is gone
-            Unhook();
-            Ended(disposed);
+            // The hooks first: the thread that installed them must remove them, and a new thread may start once this one is
+            // gone, even if removing them failed
+            try
+            {
+                Unhook();
+            }
+            finally
+            {
+                Ended(disposed);
+            }
         }
     }
 
