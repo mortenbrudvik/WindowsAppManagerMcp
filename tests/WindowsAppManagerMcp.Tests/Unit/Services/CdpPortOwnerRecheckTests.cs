@@ -1,11 +1,13 @@
 namespace WindowsAppManagerMcp.Tests.Unit.Services;
 
 /// <summary>
-/// CdpService reads the DevTools port's listener again after its request (review F4): the owner is checked before a
-/// request, but a browser that exits meanwhile frees its port, and another program on this computer that takes it would
-/// answer the request or accept the connection. An answer is used, and a command sent, only while the listener is still
-/// the process that was checked; a listener table that cannot be read fails closed. The browser is the in-process fake
-/// behind the real CdpTransport; the listener is a fake that changes between reads.
+/// The DevTools port's listener is read again after each request and once each connection is open (review F4): the owner
+/// is checked before a request, but a browser that exits meanwhile frees its port, and another program on this computer
+/// that takes it would answer the request or accept the connection. A tab list is used (the reads', list_tabs' and
+/// browser_navigate's new tab's), and a command sent on any connection (the reads, the tab tools, the DOM bridge,
+/// close_debug_browser), only while the listener is still the process that was checked; a listener table that cannot be
+/// read fails closed. The browser is the in-process fake behind the real CdpTransport; the listener is a fake that changes
+/// between reads.
 /// </summary>
 public class CdpPortOwnerRecheckTests
 {
