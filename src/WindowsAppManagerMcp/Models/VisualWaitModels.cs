@@ -86,10 +86,11 @@ public sealed record MaskedWindow(long Handle, int X, int Y, int Width, int Heig
 /// <param name="StableForMs">stable: how long nothing changed.</param>
 /// <param name="CaptureId">The last frame, registered as a capture without an image: since for the next wait.</param>
 /// <param name="CapturedRegion">The screen rectangle the last frame showed.</param>
-/// <param name="CaptureMethod">How the last frame was read: PrintWindow, or ScreenBitBlt (a screen target, or a window that
-/// does not answer).</param>
-/// <param name="MaskedWindows">Region and monitor targets, and a window target copied from the screen: the windows the policy
-/// denies, left out of the comparison.</param>
+/// <param name="CaptureMethod">How the last frame was read: PrintWindow, BitBltFallback (a window that refuses PrintWindow,
+/// copied from its device context, which shows what covers it), or ScreenBitBlt (a screen target, or a window that does not
+/// answer).</param>
+/// <param name="MaskedWindows">Region and monitor targets, and a window target copied from the screen or from its device
+/// context (BitBltFallback): the windows the policy denies, left out of the comparison.</param>
 /// <param name="Warnings">Each starts with its code: ImageBlank, WindowNotResponding, DpiScaledWindow, RegionClipped,
 /// BaselineReset.</param>
 public sealed record VisualWaitResult(

@@ -3022,7 +3022,7 @@ Act on one UI element through its UI Automation patterns: invoke a button, toggl
 | amount | string (one of: `"page"`, `"line"`) | No | "page" | scroll: 'page' (default) or 'line'. |
 | fallback | string (one of: `"none"`, `"mouse"`) | No | "none" | When no pattern does invoke, click or select: 'none' (default: PatternNotSupported, nothing is done) or 'mouse' (bring the window to the front and send a guarded click at the element's click point, with every input check; it moves the pointer and takes the foreground). |
 | allowHostTarget | boolean | No | false | Allow acting on the agent's own host window (its terminal, editor or chat app). Works only with ref or handle (or window.handle); set it only when the user explicitly asked for it. Default: false |
-| maxScrolls | integer | No | 0 | `realize` with element criteria only: when neither the tree nor the list's ItemContainer pattern has the item, scroll the window's one visible list (of several, the one with a Scroll pattern of its own; or `listRef`) a page at a time, at most this many pages (max 100), searching it after each page; when the item is not found, the list is put back where it was. `timeoutMs` bounds the whole search. See [Virtualized lists](#find_ui_elements) |
+| maxScrolls | integer | No | 0 | `realize` with element criteria only: when neither the tree nor the list's ItemContainer pattern has the item, scroll the window's one visible list (of several, the one with a Scroll pattern of its own; or `listRef`) a page at a time, at most this many pages (more than 100 is cut to 100), searching it after each page; when the item is not found, the list is put back where it was. `timeoutMs` bounds the whole search. See [Virtualized lists](#find_ui_elements) |
 | listRef | string | No | - | `realize` with `maxScrolls`: the list to scroll when the window has several that scroll (a ref from find_ui_elements' `virtualized.containers`; an element of another window is `InvalidArguments`). |
 | timeoutMs | integer | No | 5000 | How long the action may block, for example on a dialog it opened, and the bound of each search and read, in milliseconds (default: 5000, clamped to 1000-30000). It bounds each step, not the whole call: see **Time** below. realize with maxScrolls: the whole search; menu_path: `timeoutMs` per item |
 | observe | string (one of: `"none"`, `"state"`, `"screenshot"`) | No | "none" | What to return about the desktop after the action: 'none' (default), 'state' (get_desktop_state's default observation of the element's window, or of the window in front once that closed, as observed; needs get_desktop_state to be served) or 'screenshot' (as state, plus a capture of that window as image content with a captureId; needs capture_window to be served too). |
@@ -4209,7 +4209,7 @@ When several tabs have a title the window shows, `shownTargetId` is the one of t
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | handle | integer | No | - | Browser window handle (from find_windows). Pass handle, window or cdpPort. |
-| window | object | No | - | Alternative to handle: a window selector as in find_windows, resolved to one window. |
+| window | object | No | - | Alternative to handle: a [window selector](#window-selectors), resolved to exactly one window. |
 | cdpPort | integer | No | - | DevTools port (launch_browser_with_debug returns it). With a window it must be that browser's (found when omitted); alone it names the browser listening there. |
 <!-- tools:end params:list_tabs -->
 
@@ -4251,7 +4251,7 @@ Show a tab in its browser window (`Target.activateTarget` over the browser's Dev
 |-----------|------|----------|---------|-------------|
 | targetId | string | Yes | - | Tab id from list_tabs or an earlier result's targetId. |
 | handle | integer | No | - | Browser window handle (from find_windows). Pass handle, window or cdpPort. |
-| window | object | No | - | Alternative to handle: a window selector as in find_windows, resolved to one window. |
+| window | object | No | - | Alternative to handle: a [window selector](#window-selectors), resolved to exactly one window. |
 | cdpPort | integer | No | - | DevTools port (launch_browser_with_debug returns it). With a window it must be that browser's (found when omitted); alone it names the browser listening there. |
 <!-- tools:end params:activate_tab -->
 
@@ -4289,7 +4289,7 @@ Open a URL in a tab of a debug browser and wait for it to load: the tab the wind
 |-----------|------|----------|---------|-------------|
 | url | string | Yes | - | http(s) URL, or about:blank. |
 | handle | integer | No | - | Browser window handle (from find_windows). Pass handle, window or cdpPort. |
-| window | object | No | - | Alternative to handle: a window selector as in find_windows, resolved to one window. |
+| window | object | No | - | Alternative to handle: a [window selector](#window-selectors), resolved to exactly one window. |
 | cdpPort | integer | No | - | DevTools port (launch_browser_with_debug returns it). With a window it must be that browser's (found when omitted); alone it names the browser listening there. |
 | targetId | string | No | - | Tab id from list_tabs or an earlier result's targetId. Default: the tab the window shows. |
 | newTab | boolean | No | false | Open a new tab (in the browser's last active window) instead. Default: false. |
@@ -4350,7 +4350,7 @@ Each check is one `Runtime.evaluate` on one DevTools connection, every 200 ms; a
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | handle | integer | No | - | Browser window handle (from find_windows). Pass handle, window or cdpPort. |
-| window | object | No | - | Alternative to handle: a window selector as in find_windows, resolved to one window. |
+| window | object | No | - | Alternative to handle: a [window selector](#window-selectors), resolved to exactly one window. |
 | cdpPort | integer | No | - | DevTools port (launch_browser_with_debug returns it). With a window it must be that browser's (found when omitted); alone it names the browser listening there. |
 | targetId | string | No | - | Tab id from list_tabs or an earlier result's targetId. Default: the tab the window shows. |
 | urlContains | string | No | - | The page's URL contains this. |
@@ -4437,7 +4437,7 @@ Find an element of a debug browser tab's page and place it on the screen: `scree
 | name | string | No | - | Its accessible name, exactly. |
 | index | integer | No | - | Which match, from 0, when several match (else AmbiguousElement). |
 | handle | integer | No | - | Browser window handle. Pass handle or window. |
-| window | object | No | - | Alternative to handle: a window selector as in find_windows. |
+| window | object | No | - | Alternative to handle: a [window selector](#window-selectors), resolved to exactly one window. |
 | cdpPort | integer | No | - | DevTools port; found from the window when omitted. Alone, it names the browser listening on it. |
 | targetId | string | No | - | Tab id from list_tabs. Default: the tab the window shows. |
 <!-- tools:end params:browser_element_rect -->
@@ -4492,7 +4492,7 @@ Click an element of a debug browser tab's page with CDP's mouse events (`Input.d
 | dialog | string (one of: `"accept"`, `"dismiss"`) | No | - | Answer a JavaScript dialog the action opens: accept or dismiss. Default: report it and leave it open. |
 | promptText | string | No | - | The answer to a prompt dialog it opens (with dialog accept). |
 | handle | integer | No | - | Browser window handle. Pass handle, window or cdpPort. |
-| window | object | No | - | Alternative to handle: a window selector as in find_windows. |
+| window | object | No | - | Alternative to handle: a [window selector](#window-selectors), resolved to exactly one window. |
 | cdpPort | integer | No | - | DevTools port; found from the window when omitted. Alone, it names the browser listening on it. |
 | targetId | string | No | - | Tab id from list_tabs. Default: the tab the window shows. |
 <!-- tools:end params:browser_click -->
@@ -4536,7 +4536,7 @@ A page that does not confirm the text within a second still got it (success with
 | dialog | string (one of: `"accept"`, `"dismiss"`) | No | - | Answer a JavaScript dialog the action opens: accept or dismiss. Default: report it and leave it open. |
 | promptText | string | No | - | The answer to a prompt dialog it opens (with dialog accept). |
 | handle | integer | No | - | Browser window handle. Pass handle, window or cdpPort. |
-| window | object | No | - | Alternative to handle: a window selector as in find_windows. |
+| window | object | No | - | Alternative to handle: a [window selector](#window-selectors), resolved to exactly one window. |
 | cdpPort | integer | No | - | DevTools port; found from the window when omitted. Alone, it names the browser listening on it. |
 | targetId | string | No | - | Tab id from list_tabs. Default: the tab the window shows. |
 <!-- tools:end params:browser_type -->
@@ -4579,7 +4579,7 @@ A confirm or prompt is accepted only once its text was read: by a call without `
 | accept | boolean | No | - | true accepts (OK, Leave), false dismisses (Cancel, Stay). |
 | promptText | string | No | - | The answer to a prompt dialog (with accept). |
 | handle | integer | No | - | Browser window handle. Pass handle, window or cdpPort. |
-| window | object | No | - | Alternative to handle: a window selector as in find_windows. |
+| window | object | No | - | Alternative to handle: a [window selector](#window-selectors), resolved to exactly one window. |
 <!-- tools:end params:browser_handle_dialog -->
 
 **Example:**
@@ -4616,7 +4616,7 @@ A page that is not shown produces no frames, so a tab whose page is not visible 
 |-----------|------|----------|---------|-------------|
 | maxDimension | integer | No | 1568 | Longest edge of the image in pixels; 0 keeps full size. |
 | handle | integer | No | - | Browser window handle. Pass handle, window or cdpPort. |
-| window | object | No | - | Alternative to handle: a window selector as in find_windows. |
+| window | object | No | - | Alternative to handle: a [window selector](#window-selectors), resolved to exactly one window. |
 | cdpPort | integer | No | - | DevTools port; found from the window when omitted. Alone, it names the browser listening on it. |
 | targetId | string | No | - | Tab id from list_tabs. Default: the tab the window shows. |
 <!-- tools:end params:browser_screenshot -->
@@ -4663,7 +4663,7 @@ When the expression throws, or its promise is rejected, the result is `CdpEvalua
 | awaitPromise | boolean | No | true | Wait for a promise it returns. |
 | timeoutMs | integer | No | 5000 | Time limit in ms (100-60000). |
 | handle | integer | No | - | Browser window handle. Pass handle, window or cdpPort. |
-| window | object | No | - | Alternative to handle: a window selector as in find_windows. |
+| window | object | No | - | Alternative to handle: a [window selector](#window-selectors), resolved to exactly one window. |
 | cdpPort | integer | No | - | DevTools port; found from the window when omitted. Alone, it names the browser listening on it. |
 | targetId | string | No | - | Tab id from list_tabs. Default: the tab the window shows. |
 <!-- tools:end params:browser_evaluate -->
@@ -6726,7 +6726,7 @@ Each item of `placements` contains:
 | titleContains | string | No | - | Text the window title contains |
 | snap | string | No | - | A [snap_window](#snap_window) position (`left_half`, `right_third`, ...); or position |
 | position | object | No | - | x, y, width, height: fractions (0-1) of the work area |
-| monitor | integer or string | No | - | A monitor: index, 'primary' (default), 'left', 'right', or an id or name from get_monitors |
+| monitor | integer or string | No | - | A monitor: index, 'primary' (default), 'left', 'right', or an id or device name from get_monitors |
 | state | string (one of: `"normal"`, `"maximized"`, `"minimized"`) | No | - | maximized needs no snap or position |
 | focus | boolean | No | - | - |
 | launch | object | No | - | What launchMissing starts: executable or appId, no arguments |

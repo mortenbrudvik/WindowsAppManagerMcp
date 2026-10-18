@@ -55,7 +55,7 @@ public record WindowStateChange(
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 public record ApplicationLaunchRequest(
     string Executable,
-    [property: Description("Checked as launch_application's arguments are (UnsafeChromiumSwitch, ...)")]
+    [property: Description("Checked as launch_application's arguments are (for example UnsafeChromiumSwitch)")]
     string[]? Arguments = null,
     string? WorkingDirectory = null,
     LaunchWindowHint? ExpectWindow = null,

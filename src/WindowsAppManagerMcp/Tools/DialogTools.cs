@@ -50,7 +50,7 @@ public class DialogTools
                  "instructions), the button pressed, dialogClosed and nextDialog (a further dialog the press opened). A button " +
                  "not found or ambiguous is refused with the buttons listed. Refused, with nothing read or done, for apps the " +
                  "user's policy denies (TargetDeniedByPolicy), the agent's own host (TargetIsAgentHost), elevated apps " +
-                 "(TargetElevated), and, for a press, while the user has paused input (PausedByUser: stop and ask the user, never " +
+                 "(TargetElevated), and, for a press, while input is paused (PausedByUser: stop and ask the user, never " +
                  "try to resume).")]
     [ToolResultPayload(typeof(DialogResponseResult))]
     public async Task<CallToolResult> RespondToDialog(

@@ -29,7 +29,7 @@ public partial class ElementActionTools
         "at most this many pages (down to its end, then back up), searching it after each page, and realize the item once " +
         "exactly one matches (two: AmbiguousElement). " +
         "Every page is an element_action scroll with every check; the list stays where the item was found, or is put back " +
-        "where it was. Default: 0 (no scrolling); max 100. timeoutMs bounds the whole search (each step gets what is left, " +
+        "where it was. Default: 0 (no scrolling); more than 100 is cut to 100. timeoutMs bounds the whole search (each step gets what is left, " +
         "at least a second): raise it for long lists.";
 
     internal const string ListRefDescription =

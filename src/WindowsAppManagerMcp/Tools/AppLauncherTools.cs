@@ -500,7 +500,7 @@ public class AppLauncherTools
                  "ask for focus (InvalidArguments, nothing launched). With a placement on any item every window is waited for; the " +
                  "windows are placed after all of them were found, in order, and watched together until they stay put.")]
     public async Task<BatchLaunchResult> LaunchApplicationsBatch(
-        [Description("The applications to launch, each as launch_application takes it")]
+        [Description("The applications to launch, each with launch_application's parameters except waitForWindow and waitTimeoutMs")]
         ApplicationLaunchRequest[] applications,
         [Description("Whether to wait for each application window to appear (default: false)")]
         bool waitForWindows = false,

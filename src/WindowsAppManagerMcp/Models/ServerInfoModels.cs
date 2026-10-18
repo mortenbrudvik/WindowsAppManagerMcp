@@ -116,7 +116,7 @@ public sealed record AgentHostWindow(long Handle, string Role, int ProcessId, st
 public sealed record AgentHostProcess(int ProcessId, string Role, string? ProcessName);
 
 /// <summary>The user's control over the server's input (get_control_status has the details).</summary>
-/// <param name="Paused">True while the user has paused input: input tools and window changes return PausedByUser.</param>
+/// <param name="Paused">True while input is paused (PausedBy says how): input tools and window changes return PausedByUser.</param>
 /// <param name="PausedBy">How it was paused; null while running.</param>
 /// <param name="PausedAt">When it was paused; null while running.</param>
 /// <param name="Hotkey">The pause hotkey: chord, state, source and error.</param>

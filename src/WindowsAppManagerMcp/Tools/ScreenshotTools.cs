@@ -617,8 +617,9 @@ public class ScreenshotTools
     /// <summary>
     /// Adds what the UI Automation walk left out to a successful capture: the walk's error and code when it failed
     /// (the image then has no overlays), and truncated with its reason whenever the element list is incomplete. The walk's
-    /// warnings (roadmap M3.F16: an elevated window, whose tree UI Automation cannot read; a minimized one is refused before
-    /// the walk) go with the capture's own, which have the same "Code: text" form.
+    /// warnings (roadmap M3.F16: an elevated window, whose tree UI Automation cannot read; elements of a process the policy
+    /// denies, left out (TargetDeniedByPolicy); a minimized window is refused before the walk) go with the capture's own,
+    /// which have the same "Code: text" form.
     /// </summary>
     private static AnnotatedScreenshotResult WithWalk(AnnotatedScreenshotResult metadata, UIElementResult walk, bool walked)
     {

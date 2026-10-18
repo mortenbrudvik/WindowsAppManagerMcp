@@ -56,7 +56,7 @@ public class BrowserTabTools
 
     [McpServerTool(Name = "list_tabs", Title = "List Browser Tabs", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
     [Description("List a debug browser's tabs (targetId, title, url, windowId). With a window, its tabs come first (inWindow) and " +
-                 "shownTargetId is the one it shows, by its title (of several with that title, the one shown)." + CdpOnly)]
+                 "shownTargetId is the tab it shows (of same-titled tabs, the visible one); left out, with a note, when that cannot be told." + CdpOnly)]
     public async Task<BrowserTabsResult> ListTabs(
         [Description(HandleDescription)] long? handle = null,
         [Description(WindowDescription)] WindowSelector? window = null,

@@ -52,7 +52,7 @@ public static class MonitorSelectorDescriptions
     /// <summary>The description of every `monitor` parameter.</summary>
     public const string Monitor =
         "A monitor: index, 'primary', 'left', 'right', 'current' (the foreground window's, maybe your own terminal's), or an id " +
-        "or name from get_monitors.";
+        "or device name from get_monitors.";
 
     /// <summary>The description of a `monitor` parameter that also takes every monitor in one image.</summary>
     public const string MonitorOrAll = Monitor + " 'all' (or -1): every monitor in one image.";

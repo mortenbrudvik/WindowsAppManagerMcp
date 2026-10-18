@@ -74,7 +74,7 @@ public class InputSimulationTools
         SessionNote;
 
     private const string SessionNote =
-        " While the user has paused input with the pause hotkey, nothing is sent (PausedByUser): stop and ask the user, and never try to resume." +
+        " While input is paused, nothing is sent (PausedByUser): stop and ask the user, and never try to resume." +
         " Refused while a modifier key is held down (ModifiersHeld) unless releaseHeldModifiers is true, and after waiting 30 s for another call (InputBusy).";
 
     /// <summary>What takeover detection (roadmap M7.4) does to the operations it watches: type_text and drag (run_steps says it itself).</summary>
@@ -115,7 +115,7 @@ public class InputSimulationTools
                  "(Back/Forward). The modifier key-downs, the move, the clicks and the key-ups go in one batch, so nothing stays held. " +
                  "A right or middle click in a terminal (console, Windows Terminal, PuTTY, and anywhere in VS Code) pastes, so there it " +
                  "follows send_keys' paste rule (PasteNotAllowed)." + ClickTargetNote +
-                 " windowHandle's checks: TargetOccluded, BlockedByModal.")]
+                 " windowHandle adds TargetOccluded and BlockedByModal (see windowHandle).")]
     [ToolResultPayload(typeof(ClickResult))]
     public async Task<CallToolResult> MouseClick(
         [Description(XDescription)]

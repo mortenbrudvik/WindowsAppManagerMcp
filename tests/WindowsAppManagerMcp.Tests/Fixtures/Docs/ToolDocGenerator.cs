@@ -189,7 +189,7 @@ public static partial class ToolDocGenerator
     /// <summary>
     /// The four hints of tools/list's annotations, in the order the annotations table lists them, each with what it tells a
     /// client. Which tools each hint marks is generated from the annotations (<see cref="AnnotationsTable"/>); why a tool
-    /// has a hint is in the hand-written text under the table and in the tool's own section.
+    /// has a hint is not generated: the hand-written paragraph under the table says it for some of the tools.
     /// </summary>
     public static IReadOnlyList<(string Hint, string Says)> AnnotationHints { get; } =
     [

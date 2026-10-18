@@ -105,7 +105,7 @@ public enum StepStopReason
     [JsonStringEnumMemberName("stepFailed")]
     StepFailed,
 
-    /// <summary>The user paused input (PausedByUser).</summary>
+    /// <summary>Input was paused (PausedByUser): by the user, or by the server itself when it could not read the shared pause.</summary>
     [JsonStringEnumMemberName("paused")]
     Paused,
 

@@ -667,8 +667,9 @@ public enum BrowserErrorCode
 
     /// <summary>
     /// More than one CDP tab has a title the window shows, and which one it shows cannot be told (Services.CdpShownTab): none
-    /// or several of them are shown, their visibility could not be read, the window is minimized, or they are in several
-    /// browser windows or in one that is not known. The tool never guesses.
+    /// or several of them are shown, their visibility could not be read, more than 8 have that title (their visibility is not
+    /// read), the window is minimized, or they are in several browser windows or in one that is not known. The tool never
+    /// guesses.
     /// </summary>
     CdpTargetAmbiguous = 33,
 

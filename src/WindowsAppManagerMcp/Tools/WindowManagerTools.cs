@@ -480,7 +480,8 @@ public class WindowManagerTools
                  "are refused per window with errorCode ProtectedWindow unless force is true, and apps the user's policy denies with TargetDeniedByPolicy; " +
                  "the other windows are still closed. An item that is null, or names its window by both handle and window, fails alone " +
                  "with InvalidArguments; an item whose selector names no single window fails alone with WindowNotFound, " +
-                 "AmbiguousWindow (with candidates) or HandleMismatch. InvalidArguments (the whole call): waitMs is outside 0-30000.")]
+                 "AmbiguousWindow (with candidates) or HandleMismatch. InvalidArguments (the whole call): waitMs is outside 0-30000, or an " +
+                 "item has an unknown member.")]
     public async Task<BatchWindowResult> CloseWindowsBatch(
         [Description("Array of windows to close, each with handle or window (a selector, as close_window takes it)")]
         WindowCloseRequest[] windows,

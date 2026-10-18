@@ -99,7 +99,7 @@ public class InputControlTools
     }
 
     [McpServerTool(Name = "resume_input", Title = "Resume Input (Asks the User)", ReadOnly = false, Destructive = false, Idempotent = true, OpenWorld = false)]
-    [Description("Resume the server's input after the user paused it with the pause hotkey, but only if the user confirms: the server asks " +
+    [Description("Resume the server's input after it was paused, but only if the user confirms: the server asks " +
                  "the user directly through the MCP client (elicitation), and input resumes only when they answer yes. Call it only when " +
                  "the user has asked you to continue, and only once at a time. ResumeNeedsUser: this client cannot ask the user, so only " +
                  "the user can resume, with the hotkey. ResumeDeclined: the user said no or did not answer, paused again meanwhile, or " +

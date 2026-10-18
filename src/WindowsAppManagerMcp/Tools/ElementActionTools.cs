@@ -62,7 +62,7 @@ public partial class ElementActionTools
                  "read or returned. Refused, with nothing done, for apps the user's policy denies, also their elements inside another " +
                  "app's window (TargetDeniedByPolicy), the " +
                  "agent's own host window (TargetIsAgentHost), elevated apps (TargetElevated), a window a modal dialog blocks " +
-                 "(BlockedByModal), and while the user has paused input (PausedByUser: stop and ask the user, never try to resume). " +
+                 "(BlockedByModal), and while input is paused (PausedByUser: stop and ask the user, never try to resume). " +
                  "observe 'state' adds get_desktop_state's observation of the window after the action (observed), 'screenshot' " +
                  "also a capture of it as image content.")]
     [ToolResultPayload(typeof(ElementActionResult))]

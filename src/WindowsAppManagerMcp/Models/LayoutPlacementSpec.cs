@@ -19,7 +19,7 @@ public sealed record LayoutPlacementSpec(
     string? Snap = null,
     [property: Description("x, y, width, height: fractions (0-1) of the work area")]
     RelativePosition? Position = null,
-    [property: Description("A monitor: index, 'primary' (default), 'left', 'right', or an id or name from get_monitors")]
+    [property: Description("A monitor: index, 'primary' (default), 'left', 'right', or an id or device name from get_monitors")]
     MonitorSelector? Monitor = null,
     [property: ToolValues(typeof(LaunchWindowState))]
     [property: Description("maximized needs no snap or position")]

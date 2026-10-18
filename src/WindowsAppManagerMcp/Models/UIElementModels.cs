@@ -327,8 +327,9 @@ public enum UIElementErrorCode
     /// read_table, wait_for_element and get_active_popups refuse it as the captures do, before any warm-up or read. Inside a
     /// window the policy allows, an element of a denied app's process (an embedded WebView2, another app's child window) is
     /// refused by its ref the same way (read_element_text, read_table, wait_for_element, element_action), and so are criteria
-    /// whose only matches are such elements; the walks and searches leave it out with a warning of this code. The same name
-    /// as the input guard's code; no tool argument changes it.
+    /// whose only matches are such elements. get_ui_elements' walk (and capture_with_elements') leaves it out with a warning
+    /// of this code; find_ui_elements leaves it out of the matches as a part skipped (PartsSkipped, with a warning), and
+    /// read_table returns its cell as null with a warning. The same name as the input guard's code; no tool argument changes it.
     /// </summary>
     TargetDeniedByPolicy = 24,
 
