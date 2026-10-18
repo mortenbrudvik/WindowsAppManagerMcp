@@ -12,6 +12,7 @@ namespace WindowsAppManagerMcp.Tests.Unit.Services;
 public class CdpTransportTests
 {
     private const int Port = 9222;
+    private const int BrowserPid = 4242;
 
     private static readonly TimeSpan ShortTimeout = TimeSpan.FromMilliseconds(200);
     private static readonly TimeSpan LongTimeout = TimeSpan.FromSeconds(30);
@@ -25,7 +26,7 @@ public class CdpTransportTests
         FakeCdpHttpHandler? http = null,
         ICdpWebSocketFactory? sockets = null,
         CdpTransportLimits? limits = null) =>
-        new(http ?? FakeCdpHttpHandler.Json("[]"), sockets ?? FakeCdpWebSocketFactory.NeverConnects(), limits);
+        new(http ?? FakeCdpHttpHandler.Json("[]"), sockets ?? FakeCdpWebSocketFactory.NeverConnects(), new FakePortOwnerResolver(BrowserPid), limits);
 
     #region GetJsonAsync
 
@@ -199,7 +200,7 @@ public class CdpTransportTests
         var factory = new FakeCdpWebSocketFactory(socket);
         using var sut = CreateSut(sockets: factory);
 
-        var result = await sut.ConnectAsync(TabUrl, Port, "tab TAB1", LongTimeout, CancellationToken.None);
+        var result = await sut.ConnectAsync(TabUrl, Port, BrowserPid, "tab TAB1", LongTimeout, CancellationToken.None);
 
         result.Success.Should().BeTrue();
         await using var connection = result.Value!;
@@ -215,7 +216,7 @@ public class CdpTransportTests
         var factory = new FakeCdpWebSocketFactory(new FakeCdpWebSocket());
         using var sut = CreateSut(sockets: factory);
 
-        var result = await sut.ConnectAsync(new Uri(url), Port, "tab TAB1", LongTimeout, CancellationToken.None);
+        var result = await sut.ConnectAsync(new Uri(url), Port, BrowserPid, "tab TAB1", LongTimeout, CancellationToken.None);
 
         result.ErrorCode.Should().Be(BrowserErrorCode.CdpProtocolError);
         factory.ConnectedUris.Should().BeEmpty();
@@ -226,7 +227,7 @@ public class CdpTransportTests
     {
         using var sut = CreateSut(sockets: FakeCdpWebSocketFactory.NeverConnects());
 
-        var result = await sut.ConnectAsync(TabUrl, Port, "tab TAB1", ShortTimeout, CancellationToken.None);
+        var result = await sut.ConnectAsync(TabUrl, Port, BrowserPid, "tab TAB1", ShortTimeout, CancellationToken.None);
 
         result.ErrorCode.Should().Be(BrowserErrorCode.CdpTimeout);
         result.Error.Should().Contain("WebSocket").And.Contain("200 ms");
@@ -238,7 +239,7 @@ public class CdpTransportTests
         using var sut = CreateSut(sockets: FakeCdpWebSocketFactory.NeverConnects());
         using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
 
-        var act = () => sut.ConnectAsync(TabUrl, Port, "tab TAB1", LongTimeout, cts.Token);
+        var act = () => sut.ConnectAsync(TabUrl, Port, BrowserPid, "tab TAB1", LongTimeout, cts.Token);
 
         await act.Should().ThrowAsync<OperationCanceledException>();
     }
@@ -251,7 +252,7 @@ public class CdpTransportTests
             "The server returned status code '403' when status code '101' was expected.");
         using var sut = CreateSut(sockets: FakeCdpWebSocketFactory.Failing(refused));
 
-        var result = await sut.ConnectAsync(TabUrl, Port, "tab TAB1", LongTimeout, CancellationToken.None);
+        var result = await sut.ConnectAsync(TabUrl, Port, BrowserPid, "tab TAB1", LongTimeout, CancellationToken.None);
 
         result.ErrorCode.Should().Be(BrowserErrorCode.CdpUnavailable);
         result.Error.Should().Contain("403").And.Contain("--remote-allow-origins");
@@ -263,7 +264,7 @@ public class CdpTransportTests
         var failed = new WebSocketException(WebSocketError.Faulted, "Unable to connect to the remote server");
         using var sut = CreateSut(sockets: FakeCdpWebSocketFactory.Failing(failed));
 
-        var result = await sut.ConnectAsync(TabUrl, Port, "tab TAB1", LongTimeout, CancellationToken.None);
+        var result = await sut.ConnectAsync(TabUrl, Port, BrowserPid, "tab TAB1", LongTimeout, CancellationToken.None);
 
         result.ErrorCode.Should().Be(BrowserErrorCode.CdpUnavailable);
         result.Error.Should().Contain("Unable to connect").And.NotContain("--remote-allow-origins");
@@ -275,7 +276,7 @@ public class CdpTransportTests
         var socket = new FakeCdpWebSocket((s, _) => s.EnqueueRaw(new byte[4096]));
         using var sut = CreateSut(sockets: new FakeCdpWebSocketFactory(socket), limits: new CdpTransportLimits(MaxMessageBytes: 1024));
 
-        var connected = await sut.ConnectAsync(TabUrl, Port, "tab TAB1", LongTimeout, CancellationToken.None);
+        var connected = await sut.ConnectAsync(TabUrl, Port, BrowserPid, "tab TAB1", LongTimeout, CancellationToken.None);
         await using var connection = connected.Value!;
         var result = await connection.SendAsync("Runtime.evaluate", null, LongTimeout, CancellationToken.None);
 

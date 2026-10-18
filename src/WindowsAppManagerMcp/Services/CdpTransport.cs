@@ -16,7 +16,8 @@ public record CdpTransportLimits(int MaxHttpBodyBytes = 16 * 1024 * 1024, int Ma
 
 /// <summary>
 /// The DevTools transport over HTTP and WebSockets (roadmap M5.2). It owns its HttpClient; the WebSockets come from
-/// <see cref="ICdpWebSocketFactory"/>, so tests replace the browser with in-memory fakes.
+/// <see cref="ICdpWebSocketFactory"/>, so tests replace the browser with in-memory fakes. Every WebSocket it opens is handed
+/// out only while the port's listener is still the browser's process the caller checked (<see cref="ConnectAsync"/>).
 /// </summary>
 public sealed class CdpTransport : ICdpTransport, IDisposable
 {
@@ -28,24 +29,31 @@ public sealed class CdpTransport : ICdpTransport, IDisposable
 
     private readonly HttpClient _httpClient;
     private readonly ICdpWebSocketFactory _webSocketFactory;
+    private readonly ITcpPortOwnerResolver _portOwners;
     private readonly CdpTransportLimits _limits;
 
     /// <summary>The transport the server uses: its HTTP handler is <see cref="CreateHttpHandler"/>.</summary>
     /// <param name="webSocketFactory">Opens the DevTools WebSockets.</param>
+    /// <param name="portOwners">Reads which process listens on a port, again once each WebSocket is open.</param>
     /// <param name="limits">The size limits, or null for 16 MB per /json body and 64 MB per WebSocket message.</param>
-    public CdpTransport(ICdpWebSocketFactory webSocketFactory, CdpTransportLimits? limits = null)
-        : this(CreateHttpHandler(), webSocketFactory, limits)
+    public CdpTransport(ICdpWebSocketFactory webSocketFactory, ITcpPortOwnerResolver portOwners, CdpTransportLimits? limits = null)
+        : this(CreateHttpHandler(), webSocketFactory, portOwners, limits)
     {
     }
 
     /// <param name="httpHandler">Sends the /json requests; the transport owns and disposes it.</param>
     /// <param name="webSocketFactory">Opens the DevTools WebSockets.</param>
+    /// <param name="portOwners">Reads which process listens on a port, again once each WebSocket is open.</param>
     /// <param name="limits">The size limits, or null for 16 MB per /json body and 64 MB per WebSocket message.</param>
-    public CdpTransport(HttpMessageHandler httpHandler, ICdpWebSocketFactory webSocketFactory, CdpTransportLimits? limits = null)
+    public CdpTransport(
+        HttpMessageHandler httpHandler, ICdpWebSocketFactory webSocketFactory, ITcpPortOwnerResolver portOwners, CdpTransportLimits? limits = null)
     {
+        ArgumentNullException.ThrowIfNull(portOwners);
+
         // Each request is bounded by the per-call timeout token instead.
         _httpClient = new HttpClient(httpHandler) { Timeout = Timeout.InfiniteTimeSpan };
         _webSocketFactory = webSocketFactory;
+        _portOwners = portOwners;
         _limits = limits ?? new CdpTransportLimits();
     }
 
@@ -109,6 +117,7 @@ public sealed class CdpTransport : ICdpTransport, IDisposable
     public async Task<CdpResult<ICdpConnection>> ConnectAsync(
         Uri webSocketUrl,
         int expectedPort,
+        int expectedOwner,
         string label,
         TimeSpan timeout,
         CancellationToken cancellationToken)
@@ -124,6 +133,15 @@ public sealed class CdpTransport : ICdpTransport, IDisposable
         try
         {
             var socket = await connect.WaitAsync(token).ConfigureAwait(false);
+
+            // Before the connection's first command (review F4): it may have reached another program that took the port
+            if (ListenerRefusal(expectedPort, expectedOwner, label) is { } refused)
+            {
+                socket.Abort();
+                socket.Dispose();
+                return refused;
+            }
+
             return CdpResult<ICdpConnection>.Ok(new CdpConnection(socket, label, _limits.MaxMessageBytes));
         }
         catch (Exception) when (timeoutSource.IsCancellationRequested)
@@ -171,6 +189,46 @@ public sealed class CdpTransport : ICdpTransport, IDisposable
 
     /// <inheritdoc />
     public void Dispose() => _httpClient.Dispose();
+
+    /// <summary>
+    /// Null when <paramref name="port"/>'s listener is still <paramref name="owner"/>, the browser's process the caller checked
+    /// before it read the connection's URL; else why the open connection is not used. A browser that exits meanwhile frees its
+    /// port, and another program on this computer that takes it would get the commands. Read once the connection is open, a
+    /// listener that is the same process shows the connection reached it, as a browser's process does not listen again once
+    /// it has stopped. Fails closed when the listener cannot be read.
+    /// </summary>
+    private CdpResult<ICdpConnection>? ListenerRefusal(int port, int owner, string label)
+    {
+        bool readable;
+        int? now;
+        try
+        {
+            readable = _portOwners.TryGetListeningProcessId(port, out now);
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            readable = false;
+            now = null;
+        }
+
+        if (!readable)
+        {
+            return CdpResult<ICdpConnection>.Fail(
+                BrowserErrorCode.CdpPortOwnerMismatch,
+                $"Which process listens on CDP port {port} could not be read again once the connection to {label} was open, so " +
+                $"the connection cannot be tied to the browser (process {owner}). It was closed. Nothing was sent to it. Try again.");
+        }
+
+        if (now == owner)
+            return null;
+
+        var listener = now is int other ? $"process {other} listens on it now" : "nothing listens on it now";
+        return CdpResult<ICdpConnection>.Fail(
+            BrowserErrorCode.CdpPortOwnerMismatch,
+            $"CDP port {port} changed hands before the connection to {label} was open: {listener}, not the browser (process " +
+            $"{owner}), so the connection may be another program's. It was closed. Nothing was sent to it. The browser may have " +
+            "exited; check that it still runs.");
+    }
 
     /// <summary>
     /// The HTTP handler for the /json requests: no proxy, no cookies, and no redirects, which could send a request off

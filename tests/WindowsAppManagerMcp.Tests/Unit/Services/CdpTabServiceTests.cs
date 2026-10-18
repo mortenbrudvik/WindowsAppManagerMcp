@@ -17,13 +17,13 @@ public class CdpTabServiceTests
     private static readonly TimeSpan LongTimeout = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan HangBound = TimeSpan.FromSeconds(10);
 
-    private static readonly CdpTarget Tab = new("T1", "page", "Docs", "https://example.com/", "ws://127.0.0.1:9222/devtools/page/T1", Port);
+    private static readonly CdpTarget Tab = new("T1", "page", "Docs", "https://example.com/", "ws://127.0.0.1:9222/devtools/page/T1", Port, BrowserPid);
 
     private static CdpTabService CreateSut(
         FakeCdpHttpHandler http, ICdpWebSocketFactory sockets, int? portOwner = BrowserPid, bool listenerTableReadable = true)
     {
-        var transport = new CdpTransport(http, sockets);
         var owners = new FakePortOwnerResolver(portOwner, listenerTableReadable);
+        var transport = new CdpTransport(http, sockets, owners);
         return new CdpTabService(new CdpService(transport, owners), transport, owners);
     }
 
@@ -216,7 +216,7 @@ public class CdpTabServiceTests
         var browser = TwoWindows();
         var gate = new RecordingGate();
         var sut = CreateSut(browser);
-        var tab = new CdpTarget("B", "page", "Docs", "https://example.com/B", "ws://127.0.0.1:9222/devtools/page/B", Port);
+        var tab = new CdpTarget("B", "page", "Docs", "https://example.com/B", "ws://127.0.0.1:9222/devtools/page/B", Port, BrowserPid);
 
         var result = await sut.ActivateAsync(tab, gate.EnterAsync, LongTimeout);
 
@@ -231,7 +231,7 @@ public class CdpTabServiceTests
     public async Task ActivateAsync_ATabThatClosed_IsCdpTargetNotFound()
     {
         var sut = CreateSut(TwoWindows());
-        var gone = new CdpTarget("GONE", "page", "", "", "ws://127.0.0.1:9222/devtools/page/GONE", Port);
+        var gone = new CdpTarget("GONE", "page", "", "", "ws://127.0.0.1:9222/devtools/page/GONE", Port, BrowserPid);
 
         var result = await sut.ActivateAsync(gone, new RecordingGate().EnterAsync, LongTimeout);
 
@@ -245,7 +245,7 @@ public class CdpTabServiceTests
         var browser = TwoWindows();
         var sut = CreateSut(browser);
 
-        var act = () => sut.ActivateAsync(new CdpTarget("A", "page", "Inbox", "", null, Port),
+        var act = () => sut.ActivateAsync(new CdpTarget("A", "page", "Inbox", "", null, Port, BrowserPid),
             _ => throw new ToolErrorException(nameof(WindowErrorCode.PausedByUser), "paused"), LongTimeout);
 
         (await act.Should().ThrowAsync<ToolErrorException>()).Which.ErrorCode.Should().Be(nameof(WindowErrorCode.PausedByUser));

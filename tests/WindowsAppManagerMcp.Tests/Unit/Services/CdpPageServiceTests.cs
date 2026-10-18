@@ -12,13 +12,17 @@ public class CdpPageServiceTests
 {
     private const int Port = 9222;
 
+    /// <summary>The browser's process: it lists the tab, and listens on its port when each connection opens.</summary>
+    private const int BrowserPid = 4242;
+
     private static readonly TimeSpan LongTimeout = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan HangBound = TimeSpan.FromSeconds(10);
 
-    private static readonly CdpTarget Tab = new("T1", "page", "Form", "https://example.com/form", "ws://127.0.0.1:9222/devtools/page/T1", Port);
+    private static readonly CdpTarget Tab = new("T1", "page", "Form", "https://example.com/form", "ws://127.0.0.1:9222/devtools/page/T1", Port,
+        BrowserPid);
 
     private static CdpPageService CreateSut(FakePage page) =>
-        new(new CdpTransport(FakeCdpHttpHandler.Targets(), new FakeCdpWebSocketFactory(page.Socket)));
+        new(new CdpTransport(FakeCdpHttpHandler.Targets(), new FakeCdpWebSocketFactory(page.Socket), new FakePortOwnerResolver(BrowserPid)));
 
     private static BrowserElementLocator BySelector(string selector, int? index = null) => new(selector, null, null, null, index);
 
@@ -341,7 +345,7 @@ public class CdpPageServiceTests
                     socket.ReplyEmpty(command);
                     break;
             }
-        }))));
+        })), new FakePortOwnerResolver(BrowserPid)));
 
         var result = await sut.LocateAsync(Tab, BySelector("#save"), LongTimeout);
 

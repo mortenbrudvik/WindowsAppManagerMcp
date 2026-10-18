@@ -11,7 +11,10 @@ namespace WindowsAppManagerMcp.Services.Interfaces;
 /// <remarks>
 /// The calls that change the browser (activate, open, navigate) take the input gate through <see cref="CdpGate"/> just
 /// around the command that changes it, and release it before they wait for the page, so a slow page never holds up the
-/// input and window tools.
+/// input and window tools. Every tab list is used, and every connection gets a command, only while the browser's process
+/// still listens on the port (review F4): a tab's connection and the browser's connection for a tab are tied to the browser
+/// that listed the tab (<see cref="CdpTarget.OwnerProcessId"/>), and fail with CdpPortOwnerMismatch, nothing sent, when the
+/// port changed hands or its listener cannot be read.
 /// </remarks>
 public interface ICdpTabService
 {

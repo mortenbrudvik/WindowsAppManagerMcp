@@ -1078,16 +1078,13 @@ public sealed class CdpPageService : ICdpPageService
 
     private static string FormatMs(TimeSpan timeout) => $"{(long)timeout.TotalMilliseconds} ms";
 
-    /// <summary>The tab's own DevTools connection, at the WebSocket URL its port listed.</summary>
-    private async Task<CdpResult<ICdpConnection>> ConnectAsync(CdpTarget target, TimeSpan timeout, CancellationToken cancellationToken)
-    {
-        var label = $"tab {target.Id}";
-        var webSocketUrl = CdpEndpointValidator.ValidateWebSocketUrl(target.WebSocketDebuggerUrl, target.Port, label);
-        if (!webSocketUrl.Success)
-            return webSocketUrl.FailAs<ICdpConnection>();
-
-        return await _transport.ConnectAsync(webSocketUrl.Value!, target.Port, label, timeout, cancellationToken).ConfigureAwait(false);
-    }
+    /// <summary>
+    /// The tab's own DevTools connection, at the WebSocket URL its port listed, used only while the browser that listed the
+    /// tab still listens on its port once it is open (<see cref="CdpTargetConnection"/>): a program that took the port gets
+    /// none of the commands, browser_type's text and browser_evaluate's script among them.
+    /// </summary>
+    private Task<CdpResult<ICdpConnection>> ConnectAsync(CdpTarget target, TimeSpan timeout, CancellationToken cancellationToken) =>
+        CdpTargetConnection.OpenAsync(_transport, target, timeout, cancellationToken);
 
     /// <summary>An element found in the page: its remote object and how many elements matched.</summary>
     private sealed record FoundElement(string ObjectId, int MatchCount);

@@ -24,7 +24,8 @@ public class CdpServiceTests
         Title: "Inbox",
         Url: "https://mail.example/",
         WebSocketDebuggerUrl: "ws://127.0.0.1:9222/devtools/page/TAB1",
-        Port: Port);
+        Port: Port,
+        OwnerProcessId: BrowserPid);
 
     /// <summary>The whole page's text, as get_browser_content's first page asks for it.</summary>
     private static readonly CdpPageRequest TextPage = new(TextOnly: true, Offset: 0, MaxLength: BrowserContentOptions.DefaultMaxLength);
@@ -41,10 +42,12 @@ public class CdpServiceTests
         ICdpWebSocketFactory? sockets = null,
         int? portOwner = BrowserPid,
         CdpTransportLimits? limits = null,
-        bool listenerTableReadable = true) =>
-        new(
-            new CdpTransport(http ?? FakeCdpHttpHandler.Targets(), sockets ?? FakeCdpWebSocketFactory.NeverConnects(), limits),
-            new FakePortOwnerResolver(portOwner, listenerTableReadable));
+        bool listenerTableReadable = true)
+    {
+        var owners = new FakePortOwnerResolver(portOwner, listenerTableReadable);
+        return new CdpService(
+            new CdpTransport(http ?? FakeCdpHttpHandler.Targets(), sockets ?? FakeCdpWebSocketFactory.NeverConnects(), owners, limits), owners);
+    }
 
     /// <summary>A fake page that answers Runtime.evaluate with the given snapshot.</summary>
     private static FakeCdpWebSocket PageAnswering(object snapshot, int? frameSize = null) =>
@@ -317,7 +320,7 @@ public class CdpServiceTests
     public async Task FindTargetForWindowAsync_RefusesAPortOutsideTheRange_BeforeReadingItsOwner(int port)
     {
         var owners = new Mock<ITcpPortOwnerResolver>(MockBehavior.Strict);
-        var sut = new CdpService(new CdpTransport(FakeCdpHttpHandler.Targets(), FakeCdpWebSocketFactory.NeverConnects()), owners.Object);
+        var sut = new CdpService(new CdpTransport(FakeCdpHttpHandler.Targets(), FakeCdpWebSocketFactory.NeverConnects(), owners.Object), owners.Object);
 
         var result = await sut.FindTargetForWindowAsync(port, TitleOnly("Inbox"), LongTimeout);
 

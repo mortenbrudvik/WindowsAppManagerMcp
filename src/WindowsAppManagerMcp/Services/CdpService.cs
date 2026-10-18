@@ -75,6 +75,39 @@ public class CdpService : ICdpService
     }
 
     /// <inheritdoc />
+    public async Task<CdpResult<IReadOnlyList<CdpTarget>>> GetOwnedPageTargetsAsync(
+        int port,
+        int ownerProcessId,
+        TimeSpan timeout,
+        CancellationToken cancellationToken = default)
+    {
+        var checkedPort = CdpEndpointValidator.ValidatePort(port);
+        if (!checkedPort.Success)
+            return checkedPort.FailAs<IReadOnlyList<CdpTarget>>();
+
+        if (!_portOwnerResolver.TryGetListeningProcessId(port, out var portOwner))
+        {
+            return CdpResult<IReadOnlyList<CdpTarget>>.Fail(
+                BrowserErrorCode.CdpPortOwnerMismatch,
+                $"Could not read which process owns CDP port {port}, so its tab list cannot be tied to the browser (process " +
+                $"{DescribeProcess(ownerProcessId)}). Nothing was read. Try again.");
+        }
+
+        if (portOwner is not int owner)
+            return NothingListens<IReadOnlyList<CdpTarget>>(port, "check that the browser still runs");
+
+        if (owner != ownerProcessId)
+        {
+            return CdpResult<IReadOnlyList<CdpTarget>>.Fail(
+                BrowserErrorCode.CdpPortOwnerMismatch,
+                $"CDP port {port} belongs to process {DescribeProcess(owner)}, not to the browser (process " +
+                $"{DescribeProcess(ownerProcessId)}). Nothing was read.");
+        }
+
+        return await ListCheckedPageTargetsAsync(port, ownerProcessId, timeout, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc />
     public async Task<CdpResult<CdpBrowserVersion>> GetBrowserVersionAsync(
         int port,
         TimeSpan timeout,
@@ -161,7 +194,7 @@ public class CdpService : ICdpService
             return PortOwnerMismatch<CdpTarget>(port, owner, window.ProcessId);
 
         var stopwatch = Stopwatch.StartNew();
-        var targets = await GetOwnedPageTargetsAsync(port, window.ProcessId, timeout, cancellationToken).ConfigureAwait(false);
+        var targets = await ListCheckedPageTargetsAsync(port, window.ProcessId, timeout, cancellationToken).ConfigureAwait(false);
         if (!targets.Success)
             return targets.FailAs<CdpTarget>();
 
@@ -178,7 +211,7 @@ public class CdpService : ICdpService
             (window.Geometry != null || CdpTargetMatcher.FindCandidates(window.Title, all) is { Success: true, Value.Count: > 1 }))
         {
             // Best effort, so only a share of the budget: a stalled browser connection leaves the page read its time
-            windows = await GetBrowserWindowsAsync(port, all, BindingBudget(timeout - stopwatch.Elapsed), cancellationToken)
+            windows = await GetBrowserWindowsAsync(port, window.ProcessId, all, BindingBudget(timeout - stopwatch.Elapsed), cancellationToken)
                 .ConfigureAwait(false);
         }
 
@@ -208,10 +241,11 @@ public class CdpService : ICdpService
     /// </summary>
     private Task<IReadOnlyDictionary<string, CdpBrowserWindow>?> GetBrowserWindowsAsync(
         int port,
+        int owner,
         IReadOnlyList<CdpTarget> targets,
         TimeSpan timeout,
         CancellationToken cancellationToken) =>
-        CdpBrowserWindows.QueryAsync(this, _transport, port, targets, timeout, cancellationToken);
+        CdpBrowserWindows.QueryAsync(this, _transport, port, owner, targets, timeout, cancellationToken);
 
     /// <inheritdoc />
     public async Task<CdpResult<CdpTarget>> FindTargetByIdAsync(
@@ -248,7 +282,7 @@ public class CdpService : ICdpService
                 "The targetId is not a CDP tab id (1 to 128 letters, digits, '.', '_' or '-'), so no tab was looked up.");
         }
 
-        var targets = await GetOwnedPageTargetsAsync(port, windowProcessId, timeout, cancellationToken).ConfigureAwait(false);
+        var targets = await ListCheckedPageTargetsAsync(port, windowProcessId, timeout, cancellationToken).ConfigureAwait(false);
         if (!targets.Success)
             return targets.FailAs<CdpTarget>();
 
@@ -258,30 +292,34 @@ public class CdpService : ICdpService
 
     /// <summary>
     /// <see cref="GetPageTargetsAsync"/> of a port whose listener was checked to be <paramref name="owner"/>, used only when
-    /// the listener is still that process after the request (<see cref="OwnerChangedSince{T}"/>).
+    /// the listener is still that process after the request (<see cref="OwnerChangedSince{T}"/>); each tab then carries
+    /// <paramref name="owner"/>, which every connection to it is checked against once open.
     /// </summary>
-    private async Task<CdpResult<IReadOnlyList<CdpTarget>>> GetOwnedPageTargetsAsync(
+    private async Task<CdpResult<IReadOnlyList<CdpTarget>>> ListCheckedPageTargetsAsync(
         int port, int owner, TimeSpan timeout, CancellationToken cancellationToken)
     {
         var targets = await GetPageTargetsAsync(port, timeout, cancellationToken).ConfigureAwait(false);
         if (!targets.Success)
             return targets;
 
-        return OwnerChangedSince<IReadOnlyList<CdpTarget>>(port, owner, "its tab list was read", "Nothing was read") ?? targets;
+        if (OwnerChangedSince<IReadOnlyList<CdpTarget>>(port, owner, "its tab list was read", "Nothing was read") is { } changed)
+            return changed;
+
+        return CdpResult<IReadOnlyList<CdpTarget>>.Ok(targets.Value!.Select(t => t with { OwnerProcessId = owner }).ToList());
     }
 
     /// <summary>
     /// Null when <paramref name="port"/>'s listener is still <paramref name="owner"/>, the process it was checked to be before
     /// the request; else why what came over the port is not used (review F4). A browser that exits between the check and the
-    /// request frees its port, and another program on this computer that takes it would answer instead: its tab list, or a
-    /// connection that gets the commands. Read again after the answer (or after the connection is open), a listener that is
-    /// the same process shows the answer came from it, as a browser's process does not listen again once it has stopped.
-    /// Fails closed when the listener cannot be read.
+    /// request frees its port, and another program on this computer that takes it would answer instead with its tab list.
+    /// Read again after the answer, a listener that is the same process shows the answer came from it, as a browser's
+    /// process does not listen again once it has stopped. Fails closed when the listener cannot be read.
     /// </summary>
     /// <remarks>
-    /// Only the requests whose caller knows the browser's process are checked so: the tab lists of the reads and the
-    /// browser connection of <see cref="CloseBrowserAsync"/>. A page's or tab's connection is opened from a
-    /// <see cref="CdpTarget"/>, which does not carry it (a known limitation, see the CDP notes of docs/TOOLS.md).
+    /// Every tab list whose caller knows the browser's process is checked so (the reads, list_tabs and browser_navigate's
+    /// new tab, through <see cref="GetOwnedPageTargetsAsync"/>). Every connection is checked the same way by the transport
+    /// once it is open, before its first command (<see cref="ICdpTransport.ConnectAsync"/>): a tab's against the browser
+    /// that listed it (<see cref="CdpTarget.OwnerProcessId"/>), the browser's against the process the caller checked.
     /// </remarks>
     private CdpResult<T>? OwnerChangedSince<T>(int port, int owner, string after, string nothingDone)
     {
@@ -311,15 +349,9 @@ public class CdpService : ICdpService
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(request);
-        var label = $"tab {target.Id}";
-        var webSocketUrl = CdpEndpointValidator.ValidateWebSocketUrl(target.WebSocketDebuggerUrl, target.Port, label);
-        if (!webSocketUrl.Success)
-            return webSocketUrl.FailAs<CdpPageSnapshot>();
-
+        ArgumentNullException.ThrowIfNull(target);
         var stopwatch = Stopwatch.StartNew();
-        var connected = await _transport
-            .ConnectAsync(webSocketUrl.Value!, target.Port, label, timeout, cancellationToken)
-            .ConfigureAwait(false);
+        var connected = await CdpTargetConnection.OpenAsync(_transport, target, timeout, cancellationToken).ConfigureAwait(false);
         if (!connected.Success)
             return connected.FailAs<CdpPageSnapshot>();
 
@@ -554,18 +586,15 @@ public class CdpService : ICdpService
         if (left <= TimeSpan.Zero)
             return CdpResult<bool>.Fail(BrowserErrorCode.CdpTimeout, $"The browser on port {port} did not answer within {FormatMs(timeout)}.");
 
+        // The connection is the browser's only while the browser still listens on the port, which the transport reads again
+        // once it is open, before Browser.close is sent
         var connected = await _transport
-            .ConnectAsync(version.Value!.WebSocketDebuggerUrl, port, "the browser", left, cancellationToken)
+            .ConnectAsync(version.Value!.WebSocketDebuggerUrl, port, browserProcessId, "the browser", left, cancellationToken)
             .ConfigureAwait(false);
         if (!connected.Success)
             return connected.FailAs<bool>();
 
         await using var connection = connected.Value!;
-
-        // The connection is the browser's only while the browser still listens on the port
-        if (OwnerChangedSince<bool>(port, browserProcessId, "the browser's connection was opened", "Nothing was sent") is { } changed)
-            return changed;
-
         left = timeout - stopwatch.Elapsed;
         var reply = await connection
             .SendAsync("Browser.close", null, left > TimeSpan.Zero ? left : TimeSpan.FromMilliseconds(1), cancellationToken)
