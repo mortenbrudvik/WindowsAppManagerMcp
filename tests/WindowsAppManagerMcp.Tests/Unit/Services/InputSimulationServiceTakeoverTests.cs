@@ -158,7 +158,7 @@ public class InputSimulationServiceTakeoverTests
                                        "mouse: installed), so the user's input is not detected.";
 
     private static StubTakeoverMonitor Unavailable(TakeoverMode mode) =>
-        new(mode) { State = TakeoverState.Unavailable, Error = HooksFailed };
+        new(mode) { State = TakeoverState.Unavailable, Error = HooksFailed, UnwatchedBecause = HooksFailed };
 
     [Theory]
     [InlineData(TakeoverMode.Stop, "stop")]
@@ -196,8 +196,7 @@ public class InputSimulationServiceTakeoverTests
         {
             if (++sent == 2)
             {
-                monitor.State = TakeoverState.Unavailable;
-                monitor.Error = "The takeover detection thread stopped, so the user's input is no longer detected.";
+                monitor.StopWorking("The takeover detection thread stopped, so the user's input is no longer detected.");
             }
         };
 
@@ -207,6 +206,73 @@ public class InputSimulationServiceTakeoverTests
         // Assert
         result.Success.Should().BeTrue();
         result.Warning.Should().Contain("did not work").And.Contain("thread stopped");
+    }
+
+    [Fact]
+    public async Task TypeText_AStatusStillUnavailableFromAnEarlierOperation_WhileThisCallIsWatched_HasNoWarning()
+    {
+        // Arrange - the status still shows an earlier failure (it clears when the hooks are next installed), but this
+        // call's own watch works: the call is not blamed for it (review F1)
+        var monitor = new StubTakeoverMonitor(TakeoverMode.Stop) { State = TakeoverState.Unavailable, Error = HooksFailed };
+
+        // Act
+        var result = await CreateSut(monitor).TypeTextAsync(new string('x', 200));
+
+        // Assert
+        result.Success.Should().BeTrue();
+        result.Warning.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task TypeText_ModeStop_TheUsersInputSeen_AfterDetectionFailedForPartOfTheCall_IsUserInterrupted_WithNoUnwatchedWarning()
+    {
+        // Arrange - detection fails while batch 1 goes in, and still sees the user's input in batch 2: saying it would not
+        // have stopped the call contradicts the UserInterrupted it returns
+        var monitor = new StubTakeoverMonitor(TakeoverMode.Stop);
+        var sent = 0;
+        _input.BeforeSend = _ =>
+        {
+            switch (++sent)
+            {
+                case 1:
+                    monitor.StopWorking("The takeover detection hook failed while it handled an input event.");
+                    break;
+                case 2:
+                    monitor.Last!.Signal();
+                    break;
+            }
+        };
+
+        // Act
+        var result = await CreateSut(monitor).TypeTextAsync(new string('x', 200));
+
+        // Assert
+        result.ErrorCode.Should().Be(InputErrorCode.UserInterrupted);
+        (result.Warning ?? string.Empty).Should().NotContain("did not work");
+    }
+
+    [Fact]
+    public async Task TypeText_ModeWarn_TheUsersInputSeen_AfterDetectionFailedForPartOfTheCall_HasOnlyTheTakeoverWarning()
+    {
+        var monitor = new StubTakeoverMonitor(TakeoverMode.Warn);
+        var sent = 0;
+        _input.BeforeSend = _ =>
+        {
+            switch (++sent)
+            {
+                case 1:
+                    monitor.StopWorking("The takeover detection hook failed while it handled an input event.");
+                    break;
+                case 2:
+                    monitor.Last!.Signal();
+                    break;
+            }
+        };
+
+        var result = await CreateSut(monitor).TypeTextAsync(new string('x', 200));
+
+        result.Success.Should().BeTrue();
+        result.Warning.Should().Contain("WAM_TAKEOVER_DETECTION=warn").And.NotContain("did not work");
     }
 
     [Fact]

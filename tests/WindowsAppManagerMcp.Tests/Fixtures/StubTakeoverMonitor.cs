@@ -8,11 +8,20 @@ public sealed class StubTakeoverMonitor(TakeoverMode mode) : ITakeoverMonitor
 {
     public TakeoverMode Mode => mode;
 
-    /// <summary>The state <see cref="Status"/> reports: Ready unless the test says otherwise (Unavailable: detection does not work).</summary>
+    /// <summary>
+    /// The state <see cref="Status"/> reports: Ready unless the test says otherwise. Only the status: whether a watch worked
+    /// is <see cref="UnwatchedBecause"/> (or <see cref="StopWorking"/>), as the real monitor marks the watch itself.
+    /// </summary>
     public TakeoverState State { get; set; } = TakeoverState.Ready;
 
     /// <summary>The error <see cref="Status"/> reports with it.</summary>
     public string? Error { get; set; }
+
+    /// <summary>
+    /// When set, every watch started is marked unwatched with this reason at once, as the real monitor marks a watch no hook
+    /// can cover (Windows did not install them, or the detection thread is not started again).
+    /// </summary>
+    public string? UnwatchedBecause { get; set; }
 
     public TakeoverStatus Status => new(mode, State, TakeoverOptions.EnvironmentVariable, Error);
 
@@ -26,7 +35,23 @@ public sealed class StubTakeoverMonitor(TakeoverMode mode) : ITakeoverMonitor
     {
         Watches++;
         Last = new TrackedWatch(mode);
+        if (UnwatchedBecause is { } why)
+        {
+            Last.Watch.MarkUnwatched(why);
+        }
+
         return Last.Watch;
+    }
+
+    /// <summary>
+    /// Detection stops working while the last watch runs, as when the real monitor's thread dies: the status says so, and
+    /// that watch is marked unwatched.
+    /// </summary>
+    public void StopWorking(string error)
+    {
+        State = TakeoverState.Unavailable;
+        Error = error;
+        Last?.Watch.MarkUnwatched(error);
     }
 }
 

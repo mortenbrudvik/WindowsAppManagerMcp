@@ -244,7 +244,7 @@ public sealed partial class StepRunner
         var ran = new List<Ran>(steps.Count);
         StepStopReason? stop = null;
         string? stopCode = null, stopError = null;
-        var userActed = false;
+        string? takeoverWarning = null;
 
         using (var lease = await InputGateToolFilter.HoldAsync(_session, cancellationToken).ConfigureAwait(false))
         {
@@ -373,13 +373,15 @@ public sealed partial class StepRunner
             {
                 // Every input call releases what it pressed itself; this only makes sure nothing outlives the run
                 _session.ReleaseHeldInput("the end of run_steps");
-                userActed = takeover.Warns;
+
+                // The user acted (mode warn), or detection did not work for some of the run (warn or stop)
+                takeoverWarning = TakeoverMessages.For(takeover, "the steps ran");
             }
         }
 
         var outcome = Outcome(steps, ran, stop, stopCode, stopError, _time.GetElapsedTime(started));
-        return userActed
-            ? outcome with { Result = outcome.Result with { Warning = TakeoverMessages.Warning("the steps ran") } }
+        return takeoverWarning != null
+            ? outcome with { Result = outcome.Result with { Warning = takeoverWarning } }
             : outcome;
     }
 

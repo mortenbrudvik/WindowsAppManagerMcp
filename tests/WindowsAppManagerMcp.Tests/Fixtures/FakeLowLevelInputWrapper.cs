@@ -13,6 +13,7 @@ public sealed class FakeLowLevelInputWrapper : INativeLowLevelInputWrapper
     private readonly ConcurrentDictionary<nint, (bool Keyboard, LowLevelInputCallback Callback)> _hooks = new();
     private readonly ConcurrentQueue<(bool Keyboard, int Thread)> _installed = new();
     private readonly ConcurrentQueue<int> _loopThreads = new();
+    private readonly ConcurrentQueue<Thread> _threads = new();
     private int _nextHook = 0x100;
     private int _stopsPosted;
     private int _callbackExceptions;
@@ -28,6 +29,18 @@ public sealed class FakeLowLevelInputWrapper : INativeLowLevelInputWrapper
 
     /// <summary>Every managed thread that created a message queue (one per monitor thread started), in order.</summary>
     public IReadOnlyList<int> LoopThreads => _loopThreads.ToArray();
+
+    /// <summary>
+    /// How many of the threads that created a message queue are still running: 0 once a monitor thread that stopped has
+    /// really ended (its last bookkeeping done), which <see cref="ActiveHooks"/> alone does not show.
+    /// </summary>
+    public int RunningLoopThreads => _threads.Count(t => t.IsAlive);
+
+    /// <summary>Makes <see cref="Unhook"/> throw, as removing a hook that failed in an unexpected way would.</summary>
+    public Exception? UnhookFails { get; set; }
+
+    /// <summary>Runs in <see cref="Unhook"/> before the hook is removed, on the thread that removes it.</summary>
+    public Action? OnUnhook { get; set; }
 
     /// <summary>True once the loop's thread created its message queue.</summary>
     public bool QueueCreated { get; private set; }
@@ -68,6 +81,7 @@ public sealed class FakeLowLevelInputWrapper : INativeLowLevelInputWrapper
     {
         LoopThread = Environment.CurrentManagedThreadId;
         _loopThreads.Enqueue(Environment.CurrentManagedThreadId);
+        _threads.Enqueue(Thread.CurrentThread);
         QueueCreated = true;
     }
 
@@ -75,7 +89,11 @@ public sealed class FakeLowLevelInputWrapper : INativeLowLevelInputWrapper
 
     public LowLevelHookResult SetMouseHook(LowLevelInputCallback callback) => Install(keyboard: false, callback);
 
-    public bool Unhook(nint hook) => _hooks.TryRemove(hook, out _);
+    public bool Unhook(nint hook)
+    {
+        OnUnhook?.Invoke();
+        return UnhookFails is { } failure ? throw failure : _hooks.TryRemove(hook, out _);
+    }
 
     public WinEventLoopMessage WaitForMessage()
     {

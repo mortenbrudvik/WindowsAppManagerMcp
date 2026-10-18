@@ -1,4 +1,5 @@
 using WindowsAppManagerMcp.Models;
+using WindowsAppManagerMcp.Services.Interfaces;
 
 namespace WindowsAppManagerMcp.Services;
 
@@ -17,16 +18,31 @@ public static class TakeoverMessages
         "mixed into it, or the focus or the pointer may have moved. Check the result before you go on.";
 
     /// <summary>
-    /// The warning when detection is on but did not work during the operation (its status was Unavailable when the watch
-    /// started or when the operation ended): the user's input was not watched, so it neither stopped nor flagged the
+    /// The warning when detection is on but did not work for all or part of the operation (the monitor marked its watch,
+    /// <see cref="TakeoverWatch.Unwatched"/>): the user's input was not watched then, so it neither stopped nor flagged the
     /// operation. <paramref name="what"/> names the operation as for <see cref="Warning"/>; <paramref name="why"/> is the
-    /// status's error.
+    /// reason the monitor gave.
     /// </summary>
     public static string Unavailable(string what, TakeoverMode mode, string? why) =>
-        $"Takeover detection (WAM_TAKEOVER_DETECTION={mode.ToString().ToLowerInvariant()}) did not work while {what}, so the " +
-        "user's keyboard and mouse were not watched: had the user used them, the operation would not have " +
-        $"{(mode == TakeoverMode.Stop ? "stopped" : "said so")}. {why ?? "Its hooks were not installed."} get_control_status " +
-        "shows its state. Check the result before you go on.";
+        $"Takeover detection (WAM_TAKEOVER_DETECTION={mode.ToString().ToLowerInvariant()}) did not work while {what} (for all " +
+        "of it or part of it), so the user's keyboard and mouse were not watched then: had the user used them, the operation " +
+        $"would not have {(mode == TakeoverMode.Stop ? "stopped" : "said so")}. {why ?? "Its hooks were not installed."} " +
+        "get_control_status shows its state now. Check the result before you go on.";
+
+    /// <summary>
+    /// The warning the result of a watched operation (type_text, drag, run_steps) carries about takeover detection, or null:
+    /// with mode warn, that the user acted (<see cref="Warning"/>); with warn or stop, that detection did not work for some
+    /// of it (<see cref="Unavailable"/>), unless the user's input was seen all the same, which the result already reports
+    /// (this warning, or UserInterrupted), so it is not contradicted. Read from <paramref name="watch"/> itself, never from
+    /// the monitor's status, which can still show an earlier failure. Call it before the watch is disposed or right after.
+    /// </summary>
+    public static string? For(TakeoverWatch watch, string what)
+    {
+        ArgumentNullException.ThrowIfNull(watch);
+        return Combine(
+            watch.Warns ? Warning(what) : null,
+            watch.Unwatched && !watch.UserActed ? Unavailable(what, watch.Mode, watch.UnwatchedBecause) : null);
+    }
 
     /// <summary><paramref name="first"/> and <paramref name="second"/> as one warning; null when both are.</summary>
     public static string? Combine(string? first, string? second) =>

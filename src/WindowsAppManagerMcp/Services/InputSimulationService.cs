@@ -1670,10 +1670,6 @@ public partial class InputSimulationService : IInputSimulationService
         private CancellationTokenSource _linked;
         private CancellationTokenSource? _beforeWatch;
         private TakeoverWatch _takeover = TakeoverWatch.None;
-        private ITakeoverMonitor? _monitor;
-
-        // Detection's status when the watch started, while it did not work; null when it did
-        private TakeoverStatus? _unavailable;
 
         public InputCall(IInputSession session, CancellationToken requestToken)
         {
@@ -1697,17 +1693,11 @@ public partial class InputSimulationService : IInputSimulationService
 
         /// <summary>
         /// The warning the result carries about takeover detection (roadmap M7.4), or null: with mode warn, that the user used
-        /// the keyboard or mouse during the watched part; with warn or stop, that detection did not work during it (its status
-        /// was Unavailable when the watch started or is now), so the user's input was not watched. <paramref name="what"/>
-        /// names the operation, such as "the text was typed". Call it before the call is disposed.
+        /// the keyboard or mouse during the watched part; with warn or stop, that detection did not work for some of it, so the
+        /// user's input was not watched then (<see cref="TakeoverMessages.For"/>, from the watch itself).
+        /// <paramref name="what"/> names the operation, such as "the text was typed".
         /// </summary>
-        public string? TakeoverWarning(string what)
-        {
-            var unavailable = _unavailable ?? (_monitor?.Status is { State: TakeoverState.Unavailable } now ? now : null);
-            return TakeoverMessages.Combine(
-                _takeover.Warns ? TakeoverMessages.Warning(what) : null,
-                unavailable == null ? null : TakeoverMessages.Unavailable(what, unavailable.Mode, unavailable.Error));
-        }
+        public string? TakeoverWarning(string what) => TakeoverMessages.For(_takeover, what);
 
         /// <summary>
         /// Watches for the user's input from now on (roadmap M7.4): with mode stop, <see cref="Token"/> is cancelled too when
@@ -1721,10 +1711,6 @@ public partial class InputSimulationService : IInputSimulationService
             }
 
             _takeover = monitor.Watch();
-            _monitor = monitor;
-
-            // Read after the watch: a monitor thread that stopped is started again by it, but its first moments go unwatched
-            _unavailable = monitor.Status is { State: TakeoverState.Unavailable } status ? status : null;
             _beforeWatch = _linked;
             _linked = CancellationTokenSource.CreateLinkedTokenSource(_requestToken, _pauseToken, _takeover.Token);
         }

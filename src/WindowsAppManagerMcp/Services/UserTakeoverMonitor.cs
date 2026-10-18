@@ -18,11 +18,14 @@ namespace WindowsAppManagerMcp.Services;
 /// running, queues their signal to the thread pool: Windows waits for a low-level hook before the input reaches any window,
 /// so it must return at once. A watch whose hooks are not installed yet (the first moments after it starts) misses
 /// input.</para>
-/// <para>Whatever stops detection shows in <see cref="Status"/> as Unavailable, with why, so the operations' results can warn
-/// that the user's input was not watched: hooks Windows did not install (with its error), a callback that failed (it throws
-/// nothing back into Windows), and a thread that stopped on its own (an exception, or its message loop failed or ended).
-/// Such a thread is started again by the next watch, at most <see cref="MaxRestarts"/> times; then detection stays
-/// unavailable until the server restarts.</para>
+/// <para>Whatever stops detection shows in <see cref="Status"/> as Unavailable, with why, for get_control_status: hooks Windows
+/// did not install (with its error), a callback that failed (it throws nothing back into Windows), and a thread that stopped
+/// on its own (an exception, or its message loop failed or ended). Such a thread is started again by the next watch, at most
+/// <see cref="MaxRestarts"/> times; then detection stays unavailable until the server restarts.</para>
+/// <para>The operations' results warn from the watch itself (<see cref="TakeoverWatch.MarkUnwatched"/>), not from the status,
+/// which still shows an earlier failure until the hooks are next installed: every failure marks the watches it leaves
+/// unwatched (the ones running when the hooks fail, a callback fails or the thread stops, and one that starts while no thread
+/// can watch it). A watch that starts while the hooks are failed for earlier ones has the thread install them again.</para>
 /// </remarks>
 public sealed class UserTakeoverMonitor : ITakeoverMonitor, IDisposable
 {
@@ -56,6 +59,9 @@ public sealed class UserTakeoverMonitor : ITakeoverMonitor, IDisposable
 
     // How many monitor threads were started: the first one and the restarts
     private int _starts;
+
+    // True when the monitor thread could not install the hooks for the running watches, until a watch asks it to try again
+    private bool _hooksFailed;
 
     // 1 once a failing hook callback was logged, until the hooks are installed again
     private int _callbackFailureLogged;
@@ -126,8 +132,18 @@ public sealed class UserTakeoverMonitor : ITakeoverMonitor, IDisposable
                 _thread.Start();
             }
 
-            // The first watch wants the hooks. A thread whose queue does not exist yet looks for itself once it does
-            update = _watches.Count == 1 ? _threadId : 0;
+            if (_thread == null)
+            {
+                // Started too often (Ended said why): nothing will watch this operation
+                watch.MarkUnwatched(_hookError ?? "The takeover detection thread is not started again.");
+                return watch;
+            }
+
+            // The first watch wants the hooks, and so does one that starts while Windows did not install them for the
+            // others: the thread tries again, and marks every running watch if that fails too. A thread whose queue does not
+            // exist yet looks for itself once it does
+            update = _watches.Count == 1 || _hooksFailed ? _threadId : 0;
+            _hooksFailed = false;
         }
 
         if (update != 0)
@@ -194,8 +210,9 @@ public sealed class UserTakeoverMonitor : ITakeoverMonitor, IDisposable
 
     /// <summary>
     /// The hook callback, on the monitor thread, which Windows called: nothing may be thrown back. A failure means the input,
-    /// which may have been the user's, was not looked at, so the status says detection is unavailable until the hooks are
-    /// installed again (the next operation); it is logged once in that time, not on every event.
+    /// which may have been the user's, was not looked at, so the running watches are marked unwatched and the status says
+    /// detection is unavailable until the hooks are installed again (the next operation); it is logged once in that time,
+    /// not on every event.
     /// </summary>
     private void OnHookInput(LowLevelInput input)
     {
@@ -205,7 +222,13 @@ public sealed class UserTakeoverMonitor : ITakeoverMonitor, IDisposable
         }
         catch (Exception ex)
         {
-            _hookError = "The takeover detection hook failed while it handled an input event, so the user's input may not be detected.";
+            const string error = "The takeover detection hook failed while it handled an input event, so the user's input may not be detected.";
+            _hookError = error;
+            foreach (var watch in Volatile.Read(ref _active))
+            {
+                watch.MarkUnwatched(error);
+            }
+
             if (Interlocked.Exchange(ref _callbackFailureLogged, 1) == 0)
             {
                 _logger?.LogWarning(ex, "The takeover detection hook callback failed; takeovers may not be detected (logged once until the hooks are installed again)");
@@ -289,34 +312,54 @@ public sealed class UserTakeoverMonitor : ITakeoverMonitor, IDisposable
         }
         finally
         {
-            // The hooks first: the thread that installed them must remove them, and a new thread may start once this one is
-            // gone, even if removing them failed
-            try
-            {
-                Unhook();
-            }
-            finally
-            {
-                Ended(disposed);
-            }
+            Ended(disposed);
         }
     }
 
     /// <summary>
-    /// On the monitor thread, as it ends: lets the next watch start a new one, unless the monitor is disposed or the thread
-    /// has already been started again <see cref="MaxRestarts"/> times; then the status says detection is off for good.
+    /// On the monitor thread, as it ends: removes its hooks, marks the watches it leaves unwatched, and lets the next watch
+    /// start a new thread, unless the monitor is disposed or the thread has already been started again
+    /// <see cref="MaxRestarts"/> times; then the status says detection is off for good. Never throws: an exception that
+    /// left the thread would end the server.
     /// </summary>
+    /// <remarks>
+    /// All under the lock, so a watch that starts meanwhile is either among the watches this thread marks or finds the
+    /// thread gone and starts a new one: it never only posts to a thread that is about to end and stays unmarked.
+    /// </remarks>
     private void Ended(bool disposed)
     {
         lock (_lock)
         {
+            // The thread that installed the hooks must remove them
+            try
+            {
+                Unhook();
+            }
+            catch (Exception ex)
+            {
+                _hooks.Clear();
+                _hooked = false;
+                _logger?.LogWarning(ex, "The takeover detection thread could not remove its hooks as it ended");
+            }
+
             _thread = null;
             _threadId = 0;
-            if (!disposed && !_disposed && _starts > MaxRestarts)
+            if (disposed || _disposed)
+            {
+                return;
+            }
+
+            _hookError ??= "The takeover detection thread stopped, so the user's input is no longer detected.";
+            if (_starts > MaxRestarts)
             {
                 _hookError = $"{_hookError} It stopped {_starts} times, so it is not started again: takeovers are not detected " +
                              "until the server is restarted.";
                 _logger?.LogWarning("The takeover detection thread stopped {Starts} times and is not started again", _starts);
+            }
+
+            foreach (var watch in _watches)
+            {
+                watch.MarkUnwatched(_hookError);
             }
         }
     }
@@ -355,8 +398,19 @@ public sealed class UserTakeoverMonitor : ITakeoverMonitor, IDisposable
         {
             // Half a detection would stop on keys and miss the mouse, or the other way round: none at all is clearer
             Unhook();
-            _hookError = $"Windows did not install the low-level keyboard and mouse hooks (keyboard: {Describe(keyboard)}; mouse: " +
-                         $"{Describe(mouse)}), so the user's input is not detected.";
+            var error = $"Windows did not install the low-level keyboard and mouse hooks (keyboard: {Describe(keyboard)}; mouse: " +
+                        $"{Describe(mouse)}), so the user's input is not detected.";
+            _hookError = error;
+            lock (_lock)
+            {
+                // Every running watch goes unwatched; the next one to start has the thread try again
+                _hooksFailed = true;
+                foreach (var watch in _watches)
+                {
+                    watch.MarkUnwatched(error);
+                }
+            }
+
             _logger?.LogWarning("The takeover detection hooks could not be installed (keyboard: {Keyboard}; mouse: {Mouse}); takeovers are not detected",
                 Describe(keyboard), Describe(mouse));
             return;
@@ -365,6 +419,10 @@ public sealed class UserTakeoverMonitor : ITakeoverMonitor, IDisposable
         _hookError = null;
         Interlocked.Exchange(ref _callbackFailureLogged, 0);
         _hooked = true;
+        lock (_lock)
+        {
+            _hooksFailed = false;
+        }
     }
 
     /// <summary>"installed", or the Windows error of a hook that was not.</summary>
