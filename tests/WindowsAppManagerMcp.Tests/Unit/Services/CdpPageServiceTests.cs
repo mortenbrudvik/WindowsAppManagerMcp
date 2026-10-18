@@ -552,6 +552,43 @@ public class CdpPageServiceTests
     }
 
     [Fact]
+    public async Task ClickAsync_APauseTheServerSetItself_SaysSo_NotThatTheUserPressedTheHotkey()
+    {
+        // Arrange - the server paused itself: it could not read the pause it shares with the other servers (review F4)
+        var page = new FakePage();
+        var gate = new RecordingGate
+        {
+            Paused = () => page.Commands("Input.dispatchMouseEvent").Any(),
+            PausedBy = InputControlSources.SharedPauseUnreadable
+        };
+
+        // Act
+        var result = await CreateSut(page).ClickAsync(Tab, BySelector("#save"), MouseButton.Primary, 1, gate.EnterAsync, LongTimeout);
+
+        // Assert - the same PausedByUser and the same advice, but never that the user pressed the hotkey
+        result.ErrorCode.Should().Be(nameof(WindowErrorCode.PausedByUser));
+        result.Error.Should().Contain("could not read the pause it shares").And.Contain("paused itself").And.Contain("0 of 1 click")
+            .And.Contain("Stop and ask the user").And.NotContain("pressed the pause hotkey");
+    }
+
+    [Fact]
+    public async Task TypeAsync_APauseTheUserMade_SaysTheyPressedTheHotkey_WithItsChord()
+    {
+        var page = new FakePage();
+        var gate = new RecordingGate
+        {
+            Paused = () => page.Commands("DOM.focus").Any(),
+            PausedBy = InputControlSources.Hotkey,
+            PauseChord = "Ctrl+Alt+Shift+Pause"
+        };
+
+        var result = await CreateSut(page).TypeAsync(Tab, new BrowserTypeOptions("query", "#q", false, false), gate.EnterAsync, LongTimeout);
+
+        result.ErrorCode.Should().Be(nameof(WindowErrorCode.PausedByUser));
+        result.Error.Should().Contain("the user pressed the pause hotkey (Ctrl+Alt+Shift+Pause)").And.Contain("nothing was typed");
+    }
+
+    [Fact]
     public async Task ClickAsync_APauseAfterAPress_StillReleasesIt_AndSendsNoFurtherClick()
     {
         var page = new FakePage();
@@ -864,6 +901,12 @@ public class CdpPageServiceTests
         /// <summary>Whether the user has paused input, asked each time the hold is.</summary>
         public Func<bool>? Paused { get; init; }
 
+        /// <summary>How input was paused (InputPauseState.PausedBy), as the hold reports it.</summary>
+        public string? PausedBy { get; init; }
+
+        /// <summary>The pause hotkey's chord, as the hold reports it.</summary>
+        public string? PauseChord { get; init; }
+
         public Task<IDisposable> EnterAsync(CancellationToken cancellationToken)
         {
             Entered++;
@@ -874,6 +917,10 @@ public class CdpPageServiceTests
         private sealed class Release(RecordingGate gate) : ICdpGateHold
         {
             public bool IsPaused => gate.Paused?.Invoke() == true;
+
+            public string? PausedBy => gate.PausedBy;
+
+            public string? PauseChord => gate.PauseChord;
 
             public void Dispose() => gate.Held = false;
         }

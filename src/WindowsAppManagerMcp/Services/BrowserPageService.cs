@@ -370,6 +370,10 @@ public sealed class BrowserPageService : IBrowserPageService
     {
         public bool IsPaused => session?.IsPaused == true;
 
+        public string? PausedBy => session?.PauseState?.PausedBy;
+
+        public string? PauseChord => session?.PauseChord;
+
         public void Dispose() => gate.Dispose();
     }
 }

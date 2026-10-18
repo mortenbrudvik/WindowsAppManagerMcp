@@ -424,6 +424,39 @@ public class BrowserTabServiceTests
     }
 
     [Fact]
+    public async Task Navigate_NewTab_WhenThePauseTheServerSetItselfRefusesTheNavigation_SaysSo()
+    {
+        // Arrange - as above, but the server paused itself: it could not read the pause it shares (review F4)
+        var opened = Other with { Id = "NEW1" };
+        _tabs.Setup(t => t.OpenTabAsync(Port, (int)BrowserPid, It.IsAny<CdpGate>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .Returns(async (int _, int _, CdpGate gate, TimeSpan _, CancellationToken token) =>
+            {
+                using (await gate(token))
+                {
+                }
+
+                _session.Pause(InputControlSources.SharedPauseUnreadable);
+                return CdpResult<CdpTarget>.Ok(opened);
+            });
+        _tabs.Setup(t => t.NavigateAsync(opened, It.IsAny<string>(), It.IsAny<BrowserWaitUntil>(), It.IsAny<CdpGate>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>(), It.IsAny<BrowserDialogAnswer?>()))
+            .Returns(async (CdpTarget _, string _, BrowserWaitUntil _, CdpGate gate, TimeSpan _, CancellationToken token, BrowserDialogAnswer? _) =>
+            {
+                using (await gate(token))
+                {
+                    return CdpResult<CdpNavigation>.Ok(new CdpNavigation(null, null, null, "load", false));
+                }
+            });
+
+        // Act
+        var result = await CreateSut().NavigateAsync(ByWindow(), new BrowserNavigateOptions("https://example.com/", true, BrowserWaitUntil.Load, 15_000));
+
+        // Assert
+        result.ErrorCode.Should().Be(nameof(WindowErrorCode.PausedByUser));
+        result.Error.Should().Contain("NEW1").And.Contain("could not read the pause it shares").And.Contain("Stop and ask the user")
+            .And.NotContain("not navigated: the user paused input");
+    }
+
+    [Fact]
     public async Task Navigate_ADownload_IsNavigationFailed_SayingTheTabKeptItsPage()
     {
         _tabs.Setup(t => t.NavigateAsync(It.IsAny<CdpTarget>(), It.IsAny<string>(), It.IsAny<BrowserWaitUntil>(), It.IsAny<CdpGate>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>(), It.IsAny<BrowserDialogAnswer?>()))

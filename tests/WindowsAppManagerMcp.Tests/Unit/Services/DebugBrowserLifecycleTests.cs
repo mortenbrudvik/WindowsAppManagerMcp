@@ -66,9 +66,9 @@ public sealed class DebugBrowserLifecycleTests : IDisposable
         }
     }
 
-    private DebugBrowserLifecycle CreateSut() => new(
+    private DebugBrowserLifecycle CreateSut(IInputSession? session = null) => new(
         _processes.Object, _native.Object, _ports.Object, new FakePortOwnerResolver(_portOwner), _cdp.Object, _windows.Object,
-        _profiles, _policy.Object, _host.Object);
+        _profiles, _policy.Object, _host.Object, session);
 
     private string TemporaryProfile()
     {
@@ -843,6 +843,37 @@ public sealed class DebugBrowserLifecycleTests : IDisposable
         result.Exited.Should().BeFalse();
         browser.Verify(h => h.Kill(It.IsAny<bool>()), Times.Never);
         Directory.Exists(profile).Should().BeTrue();
+    }
+
+    [Theory]
+    [InlineData(InputControlSources.SharedPauseUnreadable, "could not read the pause it shares", "pressed the pause hotkey")]
+    [InlineData(InputControlSources.Hotkey, "the user pressed the pause hotkey", "could not read the pause it shares")]
+    public async Task Close_WhenThePauseRefusesTheGateBeforeTheEnd_SaysHowInputWasPaused(string pausedBy, string says, string doesNotSay)
+    {
+        // Arrange - Browser.close was accepted, and input is paused during the wait: by the user, or by the server itself
+        // because it could not read the pause it shares with the other servers (review F4)
+        var profile = TemporaryProfile();
+        Running(DebugPid, CommandLine(profile), exitsWhenClosed: false);
+        using var session = new InputSession(new FakeInputWrapper());
+        var sut = CreateSut(session);
+        var target = sut.CheckClose(DebugPid, null, false).Target!;
+        var entries = 0;
+        Task<IDisposable> PausedTheSecondTime(CancellationToken _)
+        {
+            if (++entries == 1)
+                return Task.FromResult<IDisposable>(new NoopDisposable());
+
+            session.Pause(pausedBy);
+            return Task.FromException<IDisposable>(new ToolErrorException(nameof(WindowErrorCode.PausedByUser), "Nothing was done: input is paused."));
+        }
+
+        // Act
+        var result = await sut.CloseAsync(target, TimeSpan.FromSeconds(1), PausedTheSecondTime);
+
+        // Assert
+        result.ErrorCode.Should().Be(nameof(WindowErrorCode.PausedByUser));
+        result.Error.Should().Contain("Browser.close was sent").And.Contain(says).And.NotContain(doesNotSay)
+            .And.Contain("Stop and ask the user");
     }
 
     [Fact]

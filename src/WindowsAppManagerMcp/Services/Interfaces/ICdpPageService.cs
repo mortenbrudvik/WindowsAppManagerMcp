@@ -112,6 +112,15 @@ public interface ICdpGateHold : IDisposable
 {
     /// <summary>True once the user has paused input.</summary>
     bool IsPaused { get; }
+
+    /// <summary>
+    /// How input was paused (<see cref="InputPauseState.PausedBy"/>), so the PausedByUser message names the cause
+    /// (<see cref="InputControlSources.PauseCause"/>): the server may have paused itself; null when it is not known.
+    /// </summary>
+    string? PausedBy => null;
+
+    /// <summary>The pause hotkey's chord, for the same message; null when it is not known.</summary>
+    string? PauseChord => null;
 }
 
 /// <summary>

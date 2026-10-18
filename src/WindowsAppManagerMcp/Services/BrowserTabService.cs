@@ -151,7 +151,7 @@ public sealed class BrowserTabService : IBrowserTabService
             // The gate was let go once the tab was opened, and the pause or a busy gate came before Page.navigate took it
             // again: the tab is there, so the result names it instead of the gate's "nothing was done"
             var why = refused.ErrorCode == nameof(WindowErrorCode.PausedByUser)
-                ? "the user paused input"
+                ? $"input is paused ({InputControlSources.PauseCause(_session?.PauseState?.PausedBy, null)})"
                 : "another input or window call held the input gate";
             return BrowserNavigateResult.Failed(refused.ErrorCode,
                 $"A new tab {targetId} was opened on about:blank, but it was not navigated: {why}. " +
