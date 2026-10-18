@@ -244,6 +244,29 @@ public record SendKeysResult(
     /// </summary>
     public int? KeysSent { get; init; }
 
+    /// <summary>
+    /// press_keys, on success (issue #10): each chord whose character went out on a key of another name, with the keys that
+    /// went down on the window's keyboard layout, in names press_keys takes: a Shift or AltGr the chord does not name
+    /// ({"ctrl+=": "ctrl+shift+0"} where '=' is Shift+0; AltGr as the keys it is, {"ctrl+@": "ctrl+ralt+2"}), or a letter or
+    /// digit key ({"ctrl+-": "ctrl+6"} on French AZERTY). Null when every chord was pressed as written, so a typical result
+    /// stays small.
+    /// </summary>
+    public IReadOnlyDictionary<string, string>? ResolvedChords { get; init; }
+
+    /// <summary>
+    /// On success (issue #9): what went out as its character alone, with no key and no scan code (KEYEVENTF_UNICODE): press_keys'
+    /// chords, send_keys' characters, at most 20 (the SentAsCharacter warning counts them all). A text field gets the character,
+    /// but an application that matches the physical key does not see a key press; the warning says why. Null when everything
+    /// went as keys.
+    /// </summary>
+    public IReadOnlyList<string>? SentAsCharacters { get; init; }
+
+    /// <summary>
+    /// On success: what to know about keys that went through, each starting with its code (<see cref="KeyWarnings"/>):
+    /// SentAsCharacter, KeyboardLayoutUnknown, SystemHotkey. Null when there is nothing to say.
+    /// </summary>
+    public IReadOnlyList<string>? Warnings { get; init; }
+
     /// <inheritdoc cref="TypeTextResult.ReceivingWindow"/>
     public WindowSummary? ReceivingWindow { get; init; }
 

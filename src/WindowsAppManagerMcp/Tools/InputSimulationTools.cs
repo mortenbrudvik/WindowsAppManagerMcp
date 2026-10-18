@@ -81,6 +81,8 @@ public class InputSimulationTools
 
     private const string ModifiersDescription = "Modifier keys held down around the mouse events. Default: none";
 
+    private const string ScrollModifiersDescription = "Modifier keys held down around the wheel: ctrl zooms, shift scrolls sideways. Default: none";
+
     private readonly IInputSimulationService _inputService;
     private readonly IWindowService? _windowService;
     private readonly ICoordinateSpaceResolver? _coordinates;
@@ -299,6 +301,8 @@ public class InputSimulationTools
         int deltaY = 0,
         [Description("Horizontal wheel notches: positive scrolls right, negative scrolls left, at most 100 either way. Default: 0")]
         int deltaX = 0,
+        [Description(ScrollModifiersDescription)]
+        MouseModifier[]? modifiers = null,
         [Description(AllowHostTargetDescription)]
         bool allowHostTarget = false,
         [Description(ReleaseHeldModifiersDescription)]
@@ -331,8 +335,8 @@ public class InputSimulationTools
                 return new ScrollResult(false, pointX, pointY, deltaY, deltaX, failure.Error, failure.ErrorCode) { Requested = point.Requested };
             }
 
-            return Echo(_inputService.Scroll(point.X, point.Y, deltaY, deltaX, point.Target, releaseHeldModifiers, cancellationToken),
-                point.Requested);
+            return Echo(_inputService.Scroll(point.X, point.Y, deltaY, deltaX, modifiers ?? [], point.Target, releaseHeldModifiers,
+                cancellationToken), point.Requested);
         }
 
         if ((space != null && space != CoordinateSpace.Screen) || captureId != null)
@@ -351,7 +355,7 @@ public class InputSimulationTools
                 "x and y. {\"foreground\": true} alone names no window here. Nothing was scrolled.");
         }
 
-        return _inputService.Scroll(null, null, deltaY, deltaX, target, releaseHeldModifiers, cancellationToken);
+        return _inputService.Scroll(null, null, deltaY, deltaX, modifiers ?? [], target, releaseHeldModifiers, cancellationToken);
     }
 
     [McpServerTool(Name = "type_text", Title = "Type Text", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = false)]
@@ -453,7 +457,8 @@ public class InputSimulationTools
         [Description("A chord of names joined by '+' (modifiers ctrl, shift, alt, win, then one key), or chords separated by " +
                      "spaces, each optionally '*n' (n presses, 1-100); or an array: one chord (['ctrl','shift','t']) or a sequence " +
                      "(['ctrl+a','delete']). Keys: enter, tab, esc, space, backspace, delete, up, down, left, right, home, end, " +
-                     "pgup, pgdn, f1-f24 and send_keys' other names, or one character (a letter or digit is its key, so 'ctrl+1' " +
+                     "pgup, pgdn, f1-f24, oem_plus, oem_minus, oem_1-oem_8 (VK_OEM keys, placed by the layout) and send_keys' " +
+                     "other names, or one character (a letter or digit is its key, so 'ctrl+1' " +
                      "works on any layout); write + , * as plus, comma, star.")]
         KeyList keys,
         [Description("How often to press the whole sequence, 1-100 (at most 200 presses in all). Default: 1")]

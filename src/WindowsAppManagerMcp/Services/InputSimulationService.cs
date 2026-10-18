@@ -247,8 +247,24 @@ public partial class InputSimulationService : IInputSimulationService
         }
     }
 
+    /// <summary>scroll without modifier keys.</summary>
     public ScrollResult Scroll(int? x, int? y, int deltaY, int deltaX, InputTarget target = default, bool releaseHeldModifiers = false,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default) =>
+        Scroll(x, y, deltaY, deltaX, [], target, releaseHeldModifiers, cancellationToken);
+
+    public ScrollResult Scroll(int? x, int? y, int deltaY, int deltaX, IReadOnlyList<MouseModifier> modifiers, InputTarget target = default,
+        bool releaseHeldModifiers = false, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(modifiers);
+        var held = modifiers.Distinct().ToList();
+        return ScrollAtPointOrCentre(x, y, deltaY, deltaX, held, target, releaseHeldModifiers, cancellationToken) with
+        {
+            Modifiers = ModifierNames(held)
+        };
+    }
+
+    private ScrollResult ScrollAtPointOrCentre(int? x, int? y, int deltaY, int deltaX, IReadOnlyList<MouseModifier> modifiers,
+        InputTarget target, bool releaseHeldModifiers, CancellationToken cancellationToken)
     {
         if (x.HasValue != y.HasValue || (!x.HasValue && !target.HasWindow))
         {
@@ -290,17 +306,20 @@ public partial class InputSimulationService : IInputSimulationService
                 InputErrorCode.CoordinatesOutOfBounds);
         }
 
-        return ScrollAt(pointX, pointY, deltaY, deltaX, target, releaseHeldModifiers, cancellationToken);
+        return ScrollAt(pointX, pointY, deltaY, deltaX, modifiers, target, releaseHeldModifiers, cancellationToken);
     }
 
     /// <summary>
     /// scroll at a checked point, as a click: the guard checks the window at the point before the pointer moves and
     /// again right before the wheel, together with where Windows sends the wheel. The wheel notches go in one SendInput
     /// call with a move to the checked point (<see cref="InputBatchBuilder"/>), so no other input can come between them; a
-    /// pointer that is not at the point afterwards is CursorClamped.
+    /// pointer that is not at the point afterwards is CursorClamped. <paramref name="modifiers"/> go down before the move and
+    /// up after the notches in the same batch (issue #8: Ctrl+wheel zooms, Shift+wheel scrolls sideways), as mouse_click's go
+    /// around its clicks, so none stays down whatever happens to the call; a key the user holds is refused (ModifiersHeld) as
+    /// for every call, before and right before the batch.
     /// </summary>
-    private ScrollResult ScrollAt(int x, int y, int deltaY, int deltaX, InputTarget target, bool releaseHeldModifiers,
-        CancellationToken cancellationToken)
+    private ScrollResult ScrollAt(int x, int y, int deltaY, int deltaX, IReadOnlyList<MouseModifier> modifiers, InputTarget target,
+        bool releaseHeldModifiers, CancellationToken cancellationToken)
     {
         const string NothingScrolled = "Nothing was scrolled.";
 
@@ -406,7 +425,10 @@ public partial class InputSimulationService : IInputSimulationService
                     return held.Apply(Finish(new ScrollResult(false, x, y, deltaY, deltaX, elsewhereNow, InputErrorCode.WheelFollowsFocus), approved));
                 }
 
-                var sent = Send(NewBatch().MoveTo(x, y).Wheel(deltaY, deltaX).Build(), approved);
+                // The modifiers take the scan codes of the target's layout, as mouse_click's do; a plain scroll reads no layout
+                var batch = NewBatch(modifiers.Count > 0 ? LayoutFor(target) : null)
+                    .ModifiersDown(modifiers).MoveTo(x, y).Wheel(deltaY, deltaX).ModifiersUp(modifiers).Build();
+                var sent = Send(batch, approved);
                 if (sent.PausedByUser)
                 {
                     return held.Apply(Finish(new ScrollResult(false, x, y, deltaY, deltaX, PausedMessage(NothingScrolled), InputErrorCode.PausedByUser), approved));
@@ -414,10 +436,8 @@ public partial class InputSimulationService : IInputSimulationService
 
                 if (!sent.Complete)
                 {
-                    return held.Apply(Finish(new ScrollResult(false, x, y, deltaY, deltaX,
-                        $"SendInput inserted {sent.Inserted} of {sent.Requested} events (the move to the point, then one per notch), so " +
-                        $"{Math.Max(0, sent.Inserted - 1)} of {Math.Abs(deltaY) + Math.Abs(deltaX)} notches were scrolled. Check the window " +
-                        "before scrolling again.", InputErrorCode.SendInputFailed), approved));
+                    return held.Apply(Finish(new ScrollResult(false, x, y, deltaY, deltaX, ScrollBatchCutShort(sent, deltaY, deltaX, modifiers.Count),
+                        InputErrorCode.SendInputFailed), approved));
                 }
 
                 if (PointerAwayAfterBatch(x, y) is { } at)
@@ -438,6 +458,21 @@ public partial class InputSimulationService : IInputSimulationService
                 _session.ReleaseHeldInput("the end of the input call");
             }
         }
+    }
+
+    /// <summary>
+    /// The SendInputFailed message of a scroll batch SendInput inserted only part of: how many of its notches went in. The
+    /// session has already released the modifier keys that went down.
+    /// </summary>
+    private static string ScrollBatchCutShort(InputSendOutcome sent, int deltaY, int deltaX, int modifiers)
+    {
+        var notches = Math.Abs(deltaY) + Math.Abs(deltaX);
+        var scrolled = Math.Clamp(sent.Inserted - modifiers - 1, 0, notches);
+        var events = modifiers == 0
+            ? "the move to the point, then one per notch"
+            : "the modifier keys, the move to the point, one per notch, then the release of the modifier keys, which was sent at once";
+        return $"SendInput inserted {sent.Inserted} of {sent.Requested} events ({events}), so {scrolled} of {notches} notches were " +
+               "scrolled. Check the window before scrolling again.";
     }
 
     /// <summary>
@@ -800,9 +835,10 @@ public partial class InputSimulationService : IInputSimulationService
         }
 
         KeySpec spec;
+        var layout = LayoutFor(target);
         try
         {
-            spec = KeySpecParser.Parse(keys, LayoutFor(target));
+            spec = KeySpecParser.Parse(keys, layout);
         }
         catch (KeySyntaxException ex)
         {
@@ -868,7 +904,7 @@ public partial class InputSimulationService : IInputSimulationService
         }
 
         return await SendStepsAsync(keys, spec, target, releaseHeldModifiers, delayMs, holdMs: 0, SendKeysBatchSize,
-            cancellationToken).ConfigureAwait(false);
+            ReportKeys(spec, layout, pressKeys: false), cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -880,10 +916,11 @@ public partial class InputSimulationService : IInputSimulationService
     /// it (the window, the modifiers, the paste rule, then the user's pause), as type_text's are; the paste rule and the
     /// clipboard origin read a batch after the first with the modifiers an earlier batch holds down. With
     /// <paramref name="holdMs"/> a step's leading key-downs go first, and its key-ups follow that much later without a check
-    /// of their own (they only release what went down; the session releases them anyway if the call stops meanwhile).
+    /// of their own (they only release what went down; the session releases them anyway if the call stops meanwhile). A
+    /// call that goes through carries <paramref name="report"/>: how the keys went out on the layout, and its warnings.
     /// </summary>
     private async Task<SendKeysResult> SendStepsAsync(string keys, KeySpec spec, InputTarget target, bool releaseHeldModifiers,
-        int delayMs, int holdMs, int batchSize, CancellationToken cancellationToken)
+        int delayMs, int holdMs, int batchSize, KeyReport report, CancellationToken cancellationToken)
     {
         var inputs = spec.Events;
 
@@ -1019,7 +1056,7 @@ public partial class InputSimulationService : IInputSimulationService
                     keysSent += steps;
                 }
 
-                return held.Apply(Finish(new SendKeysResult(Success: true, Keys: keys) { KeysSent = keysSent }, approved));
+                return held.Apply(Finish(report.ApplyTo(new SendKeysResult(Success: true, Keys: keys) { KeysSent = keysSent }), approved));
             }
             catch (OperationCanceledException) when (call.IsPaused)
             {
@@ -1099,9 +1136,10 @@ public partial class InputSimulationService : IInputSimulationService
         ArgumentOutOfRangeException.ThrowIfGreaterThan(delayBetweenMs, MaxPressKeysDelayMs);
 
         KeySpec spec;
+        var layout = LayoutFor(target);
         try
         {
-            spec = PressKeysParser.Parse(keys, repeat, LayoutFor(target));
+            spec = PressKeysParser.Parse(keys, repeat, layout);
         }
         catch (KeySyntaxException ex)
         {
@@ -1111,7 +1149,9 @@ public partial class InputSimulationService : IInputSimulationService
         {
             return new SendKeysResult(false, keys.Text,
                 $"{ex.Message}. Key names: ctrl, shift, alt, win, enter, tab, esc, space, backspace, delete, up, down, left, right, " +
-                "home, end, pgup, pgdn, f1-f24, plus, comma, star, or a single character. Nothing was sent.", InputErrorCode.UnknownKey);
+                "home, end, pgup, pgdn, f1-f24, plus, comma, star, a punctuation key by its virtual key (oem_plus, oem_minus, oem_comma, " +
+                "oem_period, oem_1 to oem_8, oem_102; which key each is depends on the layout), or a single character. Nothing was sent.",
+                InputErrorCode.UnknownKey);
         }
 
         var duration = (long)spec.Steps.Count * (holdMs + delayBetweenMs);
@@ -1124,7 +1164,7 @@ public partial class InputSimulationService : IInputSimulationService
 
         // At most MaxPresses presses: without waits they all go in one batch
         return await SendStepsAsync(keys.Text, spec, target, releaseHeldModifiers, delayBetweenMs, holdMs, batchSize: int.MaxValue,
-            cancellationToken).ConfigureAwait(false);
+            ReportKeys(spec, layout, pressKeys: true), cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>

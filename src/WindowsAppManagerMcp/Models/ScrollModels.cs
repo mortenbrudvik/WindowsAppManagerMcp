@@ -37,6 +37,9 @@ public record ScrollResult(
     string? Error = null,
     InputErrorCode ErrorCode = InputErrorCode.None)
 {
+    /// <summary>The modifier keys held around the wheel ("ctrl", "shift", "alt", "win", issue #8); null without any.</summary>
+    public IReadOnlyList<string>? Modifiers { get; init; }
+
     /// <summary>
     /// The top-level window under the pointer: where the wheel went (Windows sends it to the window under the
     /// pointer), or would have gone when the call was refused. Null when nothing was checked.
