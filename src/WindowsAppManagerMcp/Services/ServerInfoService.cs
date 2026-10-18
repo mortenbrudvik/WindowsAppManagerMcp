@@ -76,7 +76,7 @@ public sealed class ServerInfoService(
                     (int)Math.Round(m.ScaleFactor * 96),
                     m.ScaleFactor))
                 .ToList(),
-            ReadHost(settings.Host),
+            ReadHost(settings.Host, warnings),
             input,
             new SafetySettingsInfo(
                 settings.Policy.DeniedProcesses,
@@ -188,8 +188,17 @@ public sealed class ServerInfoService(
         return new InputControlInfo(state.Paused, state.PausedBy, state.PausedAt, status, shared);
     }
 
-    private AgentHostInfo ReadHost(HostSnapshot host)
+    private AgentHostInfo ReadHost(HostSnapshot host, List<string> warnings)
     {
+        if (host.AncestorsUnknown)
+        {
+            // Review F3: the list below then has no ancestors because they are unknown, not because there are none
+            warnings.Add("The server could not read its ancestor processes when it started, so the terminal or editor that started " +
+                         "it is known only by its console and the window that was in front then: input to its other windows is not " +
+                         "refused as the agent's host. kill_process and close_debug_browser read the ancestors again and refuse " +
+                         "(ProcessTreeUnreadable) when they cannot. Tell the user; restarting the server reads them again.");
+        }
+
         var hostWindows = new List<AgentHostWindow>();
         AddWindow(host.ConsoleHostWindow, "console");
         AddWindow(host.StartupForegroundWindow, "startupForeground");

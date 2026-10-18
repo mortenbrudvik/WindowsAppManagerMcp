@@ -138,10 +138,25 @@ public sealed class HostGuard : IHostGuard
 
     private HostSnapshot Record()
     {
+        // Null when they could not be read (review F3): the wrapper answers null when its process list cannot be read, and
+        // Read gives null (and logs) when it throws. Either way they are recorded as unknown, not as "no ancestors"
+        var unreadable = false;
         var ancestors = Read(
             "ancestor processes",
-            () => _processes.GetAncestorProcesses().Select(a => new HostProcess(a.ProcessId, a.StartTime)).ToList(),
-            []);
+            () =>
+            {
+                var read = _processes.GetAncestorProcesses();
+                unreadable = read == null;
+                return read?.Select(a => new HostProcess(a.ProcessId, a.StartTime)).ToList();
+            },
+            null);
+        if (unreadable)
+        {
+            _logger?.LogWarning(
+                "Agent host guard could not read the ancestor processes (the process list could not be read); it protects less " +
+                "of the host: windows of the terminal or editor that started the server are not recognized as the host's. " +
+                "kill_process and close_debug_browser read the ancestors again and refuse when they cannot.");
+        }
 
         var shellWindow = Read("shell window", _windows.GetShellWindow, nint.Zero);
         var shellProcessId = shellWindow == nint.Zero
@@ -164,13 +179,14 @@ public sealed class HostGuard : IHostGuard
 
         return new HostSnapshot(
             ServerProcessId: Environment.ProcessId,
-            Ancestors: ancestors,
+            Ancestors: ancestors ?? [],
             ConsoleWindow: consoleWindow,
             ConsoleHostWindow: consoleHostWindow,
             StartupForegroundWindow: startupForeground,
             ShellProcessId: shellProcessId == 0 ? null : shellProcessId)
         {
-            ConsoleServerProcesses = consoleServers
+            ConsoleServerProcesses = consoleServers,
+            AncestorsUnknown = ancestors == null
         };
     }
 

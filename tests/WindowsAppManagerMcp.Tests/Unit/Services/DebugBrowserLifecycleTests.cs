@@ -43,6 +43,8 @@ public sealed class DebugBrowserLifecycleTests : IDisposable
         _native.Setup(n => n.GetProcessStartTime(It.IsAny<int>())).Returns((int pid) => _startTimes.GetValueOrDefault(pid));
         _native.Setup(n => n.OpenProcess(It.IsAny<int>())).Returns((int pid) => _handles.TryGetValue(pid, out var h) ? h.Object : null);
         _native.Setup(n => n.GetDescendantsOf(It.IsAny<int>())).Returns(() => _descendants.ToList());
+        // No browser here is an ancestor of the server; an unread answer (null) would refuse every close (review F3)
+        _native.Setup(n => n.IsAncestorOfCurrentProcess(It.IsAny<int>())).Returns(false);
         _ports.Setup(p => p.Find(It.IsAny<int>())).Returns((int pid) => new DebugPortLookup(DebugPortLookupStatus.Found, Port, $"process {pid} listens on {Port}"));
         _cdp.Setup(c => c.GetBrowserVersionAsync(It.IsAny<int>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((int port, TimeSpan _, CancellationToken _) => CdpResult<CdpBrowserVersion>.Ok(
@@ -687,6 +689,20 @@ public sealed class DebugBrowserLifecycleTests : IDisposable
         _host.Setup(h => h.IsHostProcess(DebugPid)).Returns(true);
 
         CreateSut().CheckClose(DebugPid, null, false).Refusal!.ErrorCode.Should().Be(nameof(ProcessErrorCode.CannotTerminateHost));
+    }
+
+    [Fact]
+    public void CheckClose_WhenTheServersAncestorsCannotBeRead_IsRefused()
+    {
+        // Review F3: the browser may be an ancestor of the server (an agent started from it), and nothing else checks that
+        Running(DebugPid, CommandLine(TemporaryProfile()));
+        _native.Setup(n => n.IsAncestorOfCurrentProcess(DebugPid)).Throws(new InvalidOperationException("The snapshot failed."));
+
+        var refusal = CreateSut().CheckClose(DebugPid, null, false).Refusal;
+
+        refusal.Should().NotBeNull();
+        refusal!.ErrorCode.Should().Be(nameof(ProcessErrorCode.ProcessTreeUnreadable));
+        refusal.Error.Should().Contain("agent's host").And.Contain("Nothing was closed");
     }
 
     #endregion

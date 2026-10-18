@@ -274,7 +274,16 @@ public enum LaunchErrorCode
     /// not asked for consent), and the user could not be asked to confirm through the client (roadmap M6.5). Nothing was
     /// started.
     /// </summary>
-    ElevationNotConfirmed = 20
+    ElevationNotConfirmed = 20,
+
+    /// <summary>
+    /// An argument is a switch with which Chromium, an Electron or a CEF app runs a command line of the caller's choosing,
+    /// loads code or opens itself to remote control (--*-cmd-prefix, --gpu-launcher, --remote-debugging-port,
+    /// --load-extension, --inspect, ...), or a --user-data-dir inside a browser's real 'User Data' profile (review F2,
+    /// Services.ChromiumSwitchGuard). Any program's arguments are checked, since a launcher hands them on. Nothing was
+    /// started.
+    /// </summary>
+    UnsafeChromiumSwitch = 21
 }
 
 /// <summary>

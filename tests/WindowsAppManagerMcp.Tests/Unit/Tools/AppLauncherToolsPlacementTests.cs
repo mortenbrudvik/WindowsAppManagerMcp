@@ -268,6 +268,43 @@ public class AppLauncherToolsPlacementTests
     }
 
     [Fact]
+    public async Task APlacementThatThrows_IsLoggedWithItsException_AndEachItemStillReportsIt()
+    {
+        // Review F5: the item's result carries only the message, so a bug's stack trace goes to the log
+        BatchReturns(
+            new LaunchResult(true, 600, CodeWindow.Handle, Status: LaunchStatus.WindowObserved, Window: CodeWindow),
+            new LaunchResult(true, 700, TerminalWindow.Handle, Status: LaunchStatus.WindowObserved, Window: TerminalWindow));
+        var bug = new NullReferenceException("Object reference not set to an instance of an object.");
+        _placer.Setup(p => p.PlaceAsync(It.IsAny<IReadOnlyList<(nint, LaunchPlacementPlan)>>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(bug);
+        var logger = new ExceptionRecordingLogger();
+        var sut = new AppLauncherTools(_processes.Object, placementService: _placer.Object, monitorService: _monitors.Object, logger: logger);
+
+        var result = await sut.LaunchApplicationsBatch(
+        [
+            new ApplicationLaunchRequest("code", Placement: new LaunchPlacement(Snap: "left_half")),
+            new ApplicationLaunchRequest("wt", Placement: new LaunchPlacement(Snap: "right_half"))
+        ]);
+
+        result.Results.Should().OnlyContain(r => r.Success && r.Placement!.ErrorCode == nameof(WindowErrorCode.MoveFailed));
+        logger.Entries.Should().ContainSingle(e => e.Level == Microsoft.Extensions.Logging.LogLevel.Warning)
+            .Which.Exception.Should().BeSameAs(bug);
+    }
+
+    /// <summary>A logger that keeps each entry's level and exception.</summary>
+    private sealed class ExceptionRecordingLogger : Microsoft.Extensions.Logging.ILogger<AppLauncherTools>
+    {
+        public List<(Microsoft.Extensions.Logging.LogLevel Level, Exception? Exception)> Entries { get; } = [];
+
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+        public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel logLevel) => true;
+
+        public void Log<TState>(Microsoft.Extensions.Logging.LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state,
+            Exception? exception, Func<TState, Exception?, string> formatter) => Entries.Add((logLevel, exception));
+    }
+
+    [Fact]
     public async Task ACancelledPlacement_IsStillCancelled()
     {
         LaunchReturns(new LaunchResult(true, 600, CodeWindow.Handle, Status: LaunchStatus.WindowObserved, Window: CodeWindow));

@@ -68,6 +68,13 @@ public sealed record LaunchRequest(
     /// Without it, the handle is released when it comes. No tool parameter sets it.
     /// </summary>
     public Action<Task<Services.Interfaces.IProcessHandle?>>? OnStartAbandoned { get; init; }
+
+    /// <summary>
+    /// launch_browser_with_debug's own start (review F2): the plan lets its --remote-debugging-port through, which the server
+    /// builds itself next to a profile the tool checked (review MCP-S-1); every other refused switch is still refused
+    /// (Services.ChromiumSwitchGuard). No tool parameter sets it.
+    /// </summary>
+    public bool DebugBrowserLaunch { get; init; }
 }
 
 /// <summary>
