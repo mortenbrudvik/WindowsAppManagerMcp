@@ -198,6 +198,18 @@ public sealed class BrowserDialogService : IBrowserDialogService
             return await _worker.RunAsync(UiaTargets.TargetProcessId(_windows, window), token => Read(window, token), deadline.Token,
                 TimeSpan.Zero).ConfigureAwait(false);
         }
+        catch (TimeoutException) when (cancellationToken.IsCancellationRequested)
+        {
+            // The request was cancelled, not timed out: let the SDK report it
+            throw new OperationCanceledException(cancellationToken);
+        }
+        catch (UiaDeadlinePassedException)
+        {
+            // The worker started no read, so the browser was asked nothing and is not said to be busy
+            return (null, BrowserDialogResult.Failed(nameof(UIElementErrorCode.OperationTimedOut),
+                "The time to read the browser window ran out before UI Automation was asked, so the browser was not asked. " +
+                "Nothing was read or pressed. Try again.", window));
+        }
         catch (Exception ex) when (ex is TimeoutException or UiaReadRefusedException ||
                                    (ex is OperationCanceledException && !cancellationToken.IsCancellationRequested))
         {
