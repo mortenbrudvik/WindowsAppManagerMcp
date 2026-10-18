@@ -889,6 +889,65 @@ public class BrowserReadingToolsTests
     }
 
     [Theory]
+    [InlineData(@"C:\Users\me\AppData\Local\Google\Chrome\USERDA~1\Default", "inside a 'User Data' folder")]
+    [InlineData(@"C:\Users\me\AppData\Local\Google\Chrome\User Data::$INDEX_ALLOCATION\Default", "inside a 'User Data' folder")]
+    [InlineData(@"C:\Users\me\AppData\Local\Google\Chrome\User Data:stream", "inside a 'User Data' folder")]
+    [InlineData(@"C:\Users\me\AppData\Local\Google\Chrome\User Data. .\Default", "inside a 'User Data' folder")]
+    [InlineData(@"\\localhost\C$\Users\me\AppData\Local\Google\Chrome\US1A2B~1", "short name")]
+    [InlineData(@"\\10.255.255.1\s\PROFIL~1", "short name")]
+    [InlineData(@"\\?\UNC\10.255.255.1\s\c~1", "short name")]
+    public async Task LaunchBrowserWithDebug_RefusesAUserDataDirTheLaunchToolsRefuse_AndLaunchesNothing(string userDataDir, string message)
+    {
+        // Arrange - the launch tools' --user-data-dir check (ChromiumSwitchGuard), one implementation: an alternate data
+        // stream and trailing dots and spaces are left out as Windows reads a name, and a short name on a network or device
+        // path is refused, since expanding it would connect to another computer (\\localhost\C$ reaches the real profile)
+        var sut = CreateSut();
+
+        // Act
+        var act = () => sut.LaunchBrowserWithDebug(userDataDir: userDataDir);
+
+        // Assert
+        var refused = (await act.Should().ThrowAsync<ToolErrorException>()).Which;
+        refused.ErrorCode.Should().Be(ToolErrorReporting.InvalidArgumentsErrorCode);
+        refused.Message.Should().Contain(message).And.Contain("Nothing was launched");
+        _mockProcessService.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public void DebugProfileRefusal_ExpandsAShortNameOnADrive_AsTheLaunchToolsDo()
+    {
+        // Arrange - a hashed 8.3 name of the real profile's folder, which no pattern of the name catches
+        const string userData = @"C:\Users\me\AppData\Local\Google\Chrome\User Data";
+        var guard = new ChromiumSwitchGuard(path => path == @"C:\Users\me\AppData\Local\Google\Chrome\US1A2B~1" ? userData : null);
+
+        // Act & Assert
+        BrowserReadingTools.DebugProfileRefusal(@"C:\Users\me\AppData\Local\Google\Chrome\US1A2B~1\Default", guard)
+            .Should().Contain("inside a 'User Data' folder").And.Contain("Nothing was launched");
+        BrowserReadingTools.DebugProfileRefusal(@"C:\Temp\PROFIL~1", guard).Should().BeNull();
+        BrowserReadingTools.DebugProfileRefusal(@"\\server\share\profiles\debug", guard).Should().BeNull("a network path without a short name is read by its text");
+    }
+
+    [Fact]
+    public void DebugProfileRefusal_RefusesAShortNameOnANetworkPath_BeforeAnyPathIsMadeFull()
+    {
+        // Arrange - Path.GetFullPath expands 8.3 short names from the file system, which on a UNC path connects to that
+        // computer; the guard's recorder makes paths full by their text only
+        var made = new List<string>();
+        var guard = new ChromiumSwitchGuard(_ => null, (path, basePath) =>
+        {
+            made.Add(path);
+            return basePath == null ? path : Path.Join(basePath, path);
+        });
+
+        // Act
+        var refusal = BrowserReadingTools.DebugProfileRefusal(@"\\10.255.255.1\s\PROFIL~1", guard);
+
+        // Assert
+        refusal.Should().Contain("short name").And.Contain("Nothing was launched");
+        made.Should().BeEmpty();
+    }
+
+    [Theory]
     [InlineData("  C:/Temp/debug-profile  ", @"C:\Temp\debug-profile")]
     [InlineData(@"C:\Temp\a\..\debug-profile", @"C:\Temp\debug-profile")]
     [InlineData("   ", null)]

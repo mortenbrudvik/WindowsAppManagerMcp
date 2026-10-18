@@ -384,6 +384,9 @@ public partial class BrowserReadingTools
         return BrowserNavigationUrls.Refusal(trimmed, "launch_browser_with_debug", NothingLaunched);
     }
 
+    /// <summary>The launch tools' --user-data-dir check, which launch_browser_with_debug's userDataDir shares.</summary>
+    private static readonly ChromiumSwitchGuard ProfileFolderGuard = new();
+
     /// <summary>
     /// Why launch_browser_with_debug refuses <paramref name="userDataDir"/>, or null: a path inside a folder named
     /// 'User Data' (also as its 8.3 short name), where Chrome, Edge, Brave and other Chromium browsers keep the user's
@@ -391,8 +394,20 @@ public partial class BrowserReadingTools
     /// A profile the user keeps elsewhere cannot be told apart. A relative path is refused too: the server would resolve it
     /// against its own current directory, the browser against its install folder.
     /// </summary>
-    public static string? DebugProfileRefusal(string? userDataDir)
+    public static string? DebugProfileRefusal(string? userDataDir) => DebugProfileRefusal(userDataDir, ProfileFolderGuard);
+
+    /// <summary>
+    /// <see cref="DebugProfileRefusal(string?)"/> with the launch tools' own check of a profile folder
+    /// (<see cref="ChromiumSwitchGuard.CheckProfileFolder"/>), one implementation for both: a folder inside 'User Data' as
+    /// written, with an alternate data stream or trailing dots and spaces left out as Windows reads a name, or with its 8.3
+    /// short names expanded (on a drive letter); a short name on a UNC or device path is refused without any file-system
+    /// call, since expanding it would connect to another computer.
+    /// </summary>
+    /// <param name="userDataDir">The userDataDir the agent passed.</param>
+    /// <param name="switchGuard">Checks the folder; tests pass one whose 8.3 short names are a fake's.</param>
+    public static string? DebugProfileRefusal(string? userDataDir, ChromiumSwitchGuard switchGuard)
     {
+        ArgumentNullException.ThrowIfNull(switchGuard);
         if (string.IsNullOrWhiteSpace(userDataDir))
         {
             return null;
@@ -405,25 +420,27 @@ public partial class BrowserReadingTools
                    "Leave it out to use a new temporary profile.";
         }
 
-        string fullPath;
+        // First: Path.GetFullPath expands 8.3 short names from the file system, which on a network path would connect to
+        // the computer it names, and the check refuses such a name without that
+        switch (switchGuard.CheckProfileFolder(path))
+        {
+            case ProfileFolderProblem.UnexpandedShortName:
+                return "userDataDir names a folder by an 8.3 short name ('~') on a network or device path, which the server does " +
+                       "not expand (that would connect to another computer), so it cannot tell whether the folder is a browser's " +
+                       "real 'User Data' profile. Nothing was launched. Pass the folder's long name, or a separate folder on a local drive.";
+            case ProfileFolderProblem.InsideUserData:
+                return "userDataDir is inside a 'User Data' folder, where Chrome, Edge and Brave keep the user's real profiles. The " +
+                       "unauthenticated debug port would expose that profile's signed-in sessions to any program on this computer. " +
+                       "Nothing was launched. Leave userDataDir out to use a new temporary profile, or pass a separate folder.";
+        }
+
         try
         {
-            fullPath = Path.GetFullPath(path);
+            _ = Path.GetFullPath(path);
         }
         catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
         {
             return $"userDataDir is not a valid path ({ex.Message}). Nothing was launched. Leave it out to use a new temporary profile.";
-        }
-
-        var segments = fullPath.Split([Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar], StringSplitOptions.RemoveEmptyEntries)
-            .Select(segment => segment.TrimEnd('.', ' '));
-        if (segments.Any(segment => string.Equals(segment, "User Data", StringComparison.OrdinalIgnoreCase) ||
-                                    (segment.StartsWith("USERDA~", StringComparison.OrdinalIgnoreCase) && segment.Length > 7 &&
-                                     segment[7..].All(char.IsAsciiDigit))))
-        {
-            return "userDataDir is inside a 'User Data' folder, where Chrome, Edge and Brave keep the user's real profiles. The " +
-                   "unauthenticated debug port would expose that profile's signed-in sessions to any program on this computer. " +
-                   "Nothing was launched. Leave userDataDir out to use a new temporary profile, or pass a separate folder.";
         }
 
         return null;

@@ -188,6 +188,32 @@ public class ChromiumSwitchGuardTests
         asked.Should().BeEmpty();
     }
 
+    [Theory]
+    [InlineData(@"--user-data-dir=\\10.255.255.1\s\a\b\c~1", null)]
+    [InlineData("--user-data-dir=//10.255.255.1/s/c~1", null)]
+    [InlineData(@"--user-data-dir=\\localhost\C$\Users\me\AppData\Local\Google\Chrome\US1A2B~1", null)]
+    [InlineData("--user-data-dir=c~1", @"\\10.255.255.1\s")]
+    [InlineData("--user-data-dir=profile", @"\\10.255.255.1\PROFIL~1")]
+    public void AShortNameOnANetworkPath_IsRefused_BeforeThePathIsMadeFull(string argument, string? workingDirectory)
+    {
+        // Arrange - Path.GetFullPath expands 8.3 short names itself, from the file system (GetLongPathNameW): on a UNC path
+        // that connects to the computer it names (seen: 21 s for an address that does not answer). The recorder makes a path
+        // full by its text only, so a test that fails touches no network either
+        var made = new List<string>();
+        var sut = new ChromiumSwitchGuard(_ => null, (path, basePath) =>
+        {
+            made.Add(basePath == null ? path : $"{path} in {basePath}");
+            return basePath == null ? path : Path.Join(basePath, path);
+        });
+
+        // Act
+        var refusal = sut.Check(Edge, [argument], workingDirectory);
+
+        // Assert
+        refusal!.Message.Should().Contain("short name").And.Contain("Nothing was launched");
+        made.Should().BeEmpty();
+    }
+
     [Fact]
     public void ANetworkPathWithoutAShortName_IsCheckedByItsText_WithoutReadingTheFileSystem()
     {
