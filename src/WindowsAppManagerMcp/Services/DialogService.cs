@@ -83,7 +83,13 @@ public sealed class DialogService : IDialogService
     public TimeSpan PollInterval { get; init; } = TimeSpan.FromMilliseconds(50);
 
     /// <inheritdoc />
-    public DialogLocation Locate(nint window)
+    public DialogLocation Locate(nint window) => Locate(window, openDialogs: true);
+
+    /// <summary>
+    /// <see cref="Locate(nint)"/>; without <paramref name="openDialogs"/>, a window that is no dialog stands only for the
+    /// modal dialog that disables it, never for an open dialog that leaves it enabled (DialogNotFound, naming that dialog).
+    /// </summary>
+    private DialogLocation Locate(nint window, bool openDialogs)
     {
         var start = window;
         if (start == nint.Zero)
@@ -123,7 +129,7 @@ public sealed class DialogService : IDialogService
         var open = _popups.GetPopups(current).FirstOrDefault(p => p.Kind == PopupKind.Dialog);
         if (open != null)
         {
-            return new DialogLocation(open.Handle);
+            return openDialogs ? new DialogLocation(open.Handle) : OpenDialogRefused(current, open);
         }
 
         var title = _windows.GetWindowText(current);
@@ -136,10 +142,13 @@ public sealed class DialogService : IDialogService
     }
 
     /// <summary>
-    /// The dialog to press a button of: as <see cref="Locate"/>, except for a dialog named (by handle or selector) that a
+    /// The dialog to press a button of: as <see cref="Locate(nint)"/>, except for a dialog named (by handle or selector) that a
     /// modal dialog of its own now disables. The agent read the dialog it named, not that one, so the chain is not followed:
     /// BlockedByModal, naming the modal dialog, and nothing is pressed. A named window that is no dialog (the application's
-    /// window) still stands for its modal dialog, down to the front one of the chain.
+    /// window) still stands for its modal dialog, down to the front one of the chain, but never for an open dialog that
+    /// leaves it enabled (a Find dialog, an unowned dialog box of its process, or a prompt that came up after the agent read
+    /// another one): that one is pressed only when named by its own handle (DialogNotFound otherwise, naming it). Unnamed
+    /// (only cancel gets here, see <see cref="RespondAsync"/>), the dialog in front is taken as a read takes it.
     /// </summary>
     private DialogLocation LocateToPress(nint window)
     {
@@ -153,8 +162,20 @@ public sealed class DialogService : IDialogService
                 "and no button), then answer it by its handle, or ask the user.");
         }
 
-        return Locate(window);
+        return Locate(window, openDialogs: window == nint.Zero);
     }
+
+    /// <summary>
+    /// The refusal of a press through <paramref name="window"/>, which is no dialog and which no modal dialog disables, in
+    /// its open dialog <paramref name="open"/>: the window does not stand for a dialog that leaves it enabled, which may not
+    /// be the one the agent read.
+    /// </summary>
+    private DialogLocation OpenDialogRefused(nint window, PopupWindow open) =>
+        DialogLocation.Failed(nameof(UIElementErrorCode.DialogNotFound),
+            $"Window {(long)window}{TitleOf(_windows.GetWindowText(window))} is no dialog box and no modal dialog disables it, so it " +
+            $"names no dialog to press a button of: its open dialog, handle {(long)open.Handle}{TitleOf(open.Title)}, leaves it " +
+            "enabled, and may not be the dialog you read. Nothing was read or pressed. Read that dialog (respond_to_dialog with " +
+            $"handle {(long)open.Handle} and no button), then answer it by its handle.");
 
     /// <summary>" ('title')" for a message, cut; empty for no title.</summary>
     private static string TitleOf(string? title) => string.IsNullOrEmpty(title) ? string.Empty : $" ('{AppText.Cut(title, MaxTitleLength)}')";
@@ -261,13 +282,13 @@ public sealed class DialogService : IDialogService
 
             if (name.Length > MaxTextLength)
             {
-                name = name[..MaxTextLength];
+                name = Start(name, MaxTextLength);
                 cut = true;
             }
 
             if (total + name.Length > MaxTotalText)
             {
-                name = name[..(MaxTotalText - total)];
+                name = Start(name, MaxTotalText - total);
                 cut = true;
                 if (name.Length > 0)
                 {
@@ -282,6 +303,22 @@ public sealed class DialogService : IDialogService
         }
 
         return (kept, cut);
+    }
+
+    /// <summary>
+    /// The start of <paramref name="text"/> in at most <paramref name="maxLength"/> characters, never ending on the first half
+    /// of a surrogate pair (<see cref="TextPages.FittingLength"/>): rather none than half of one, which no result can carry.
+    /// </summary>
+    private static string Start(string text, int maxLength)
+    {
+        var length = TextPages.FittingLength(text, maxLength, int.MaxValue);
+        if (length < text.Length && length > 0 && char.IsHighSurrogate(text[length - 1]))
+        {
+            // FittingLength keeps a lone first character so that a page is never empty; a dialog's text can do without it
+            length--;
+        }
+
+        return text[..length];
     }
 
     /// <inheritdoc />
@@ -351,7 +388,15 @@ public sealed class DialogService : IDialogService
         var warnings = new List<string>(read.Warnings ?? []);
         if (request.Button is not { } buttonAsked)
         {
-            // Read only: the agent decides on the text, then answers this dialog by its handle
+            // Read only: the agent decides on the text, then answers this dialog by its handle. Read through another window
+            // (the application's), the press must name the dialog: by then the window may stand for another one
+            if (request.Window != nint.Zero && request.Window != dialog)
+            {
+                warnings.Add($"Read through window {(long)request.Window}: answer this dialog by its own handle {(long)dialog} " +
+                             "(dialogHandle), not by the window, which stands for whatever modal dialog is in front of it when " +
+                             "the press runs (and for no dialog that leaves it enabled).");
+            }
+
             return With(new DialogResponseResult(true, (long)dialog, Warnings: warnings.Count == 0 ? null : warnings), content, stopwatch);
         }
 

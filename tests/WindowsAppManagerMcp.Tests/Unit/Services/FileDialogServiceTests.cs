@@ -123,11 +123,15 @@ public sealed class FileDialogServiceTests : IDisposable
 
     private string NewFile => Path.Combine(_folder, "report.txt");
 
-    private string ExistingFile()
+    private string ExistingFile(string name = "report.txt")
     {
-        File.WriteAllText(NewFile, "x");
-        return NewFile;
+        var file = Path.Combine(_folder, name);
+        File.WriteAllText(file, "x");
+        return file;
     }
+
+    /// <summary>Whether <paramref name="text"/> holds half of a surrogate pair without the other half (UTF-8 replaces it).</summary>
+    private static bool HasLoneSurrogate(string text) => System.Text.Encoding.UTF8.GetString(System.Text.Encoding.UTF8.GetBytes(text)) != text;
 
     private Task<FileDialogResult> CompleteAsync(string path, FileDialogAction action = FileDialogAction.Save, bool overwrite = false,
         TimeSpan? timeout = null)
@@ -190,6 +194,30 @@ public sealed class FileDialogServiceTests : IDisposable
         result.ErrorCode.Should().Be(nameof(UIElementErrorCode.DialogNotFound));
         result.Error.Should().Contain("no file name box");
         _acted.Should().BeEmpty();
+    }
+
+    [Theory]
+    [InlineData(FileDialogAction.Save)]
+    [InlineData(FileDialogAction.Open)]
+    public async Task ALongTitleInAMessage_IsNeverCutBetweenTheHalvesOfASurrogatePair(FileDialogAction action)
+    {
+        // Arrange - an emoji (two UTF-16 units) across the title's cut at 200 characters; save: no file name box; open: a Save
+        // As dialog
+        var start = new string('t', DialogService.MaxTitleLength - 1);
+        _windows.Setup(w => w.GetWindowText(Dialog)).Returns(start + "\U0001F600 and more");
+        if (action == FileDialogAction.Save)
+        {
+            _combos = [];
+            _edits = [];
+        }
+
+        // Act
+        var result = await CompleteAsync(action == FileDialogAction.Save ? NewFile : ExistingFile(), action);
+
+        // Assert
+        result.ErrorCode.Should().Be(nameof(UIElementErrorCode.DialogNotFound));
+        result.Error.Should().Contain($"('{start}')");
+        HasLoneSurrogate(result.Error!).Should().BeFalse();
     }
 
     [Fact]
@@ -361,12 +389,19 @@ public sealed class FileDialogServiceTests : IDisposable
         "Would you like to save in the Documents folder instead?")]
     [InlineData("myreport.txt ist bereits vorhanden.", "Möchten Sie sie ersetzen?")]
     [InlineData("report2.txt ist bereits vorhanden.", "Möchten Sie sie ersetzen?")]
+    [InlineData("report.txtx ist bereits vorhanden.", "Möchten Sie sie ersetzen?")]
+    [InlineData("report.txt.bak ist bereits vorhanden.", "Möchten Sie sie ersetzen?")]
+    [InlineData("my.report.txt ist bereits vorhanden.", "Möchten Sie sie ersetzen?")]
+    [InlineData("{folder}\\report.docx already exists.", "Do you want to replace it?")]
+    // The name without its extension, alone or quoted, is no proof: it can be a word of another question (see below)
+    [InlineData("report already exists.", "Do you want to replace it?")]
+    [InlineData("'report' already exists.", "Do you want to replace it?")]
     public async Task AYesNoPrompt_ThatDoesNotNameTheFile_IsNoReplacePrompt_EvenWithOverwrite(string first, string second)
     {
         // The file exists, but the question is another one (or about another file): Yes would answer it blind
         var file = ExistingFile();
         PressOpensThePrompt();
-        _promptContent = YesNoPrompt(first, second);
+        _promptContent = YesNoPrompt(first.Replace("{folder}", _folder, StringComparison.Ordinal), second);
 
         var result = await CompleteAsync(file, overwrite: true);
 
@@ -377,12 +412,35 @@ public sealed class FileDialogServiceTests : IDisposable
     }
 
     [Theory]
+    [InlineData("save.txt")]
+    [InlineData("documents.txt")]
+    [InlineData("a.txt")]
+    [InlineData("instead.txt")]
+    public async Task APermissionPrompt_HoldingTheFilesNameWithoutItsExtension_IsNoReplacePrompt_EvenWithOverwrite(string name)
+    {
+        // Saving C:\Program Files\X\save.txt over an existing file: Windows asks whether to save in Documents instead, and
+        // its words hold "save", "Documents", "a" and "instead" as whole words. Yes would answer that question blind.
+        var file = ExistingFile(name);
+        PressOpensThePrompt();
+        _promptContent = YesNoPrompt("You don't have permission to save in this location. Contact the administrator to obtain permission.",
+            "Would you like to save in the Documents folder instead? It is a folder you can write to.");
+
+        var result = await CompleteAsync(file, overwrite: true);
+
+        result.ErrorCode.Should().Be(nameof(UIElementErrorCode.DialogNotCompleted));
+        result.PromptHandled.Should().BeFalse();
+        _answers.Should().BeEmpty();
+    }
+
+    [Theory]
     [InlineData("report.txt ist bereits vorhanden.")]
     [InlineData("REPORT.TXT already exists.")]
-    [InlineData("report already exists.")] // Explorer hides the known extension
     [InlineData("report.txtは既に存在します。")]
+    [InlineData("report.txt이(가) 이미 있습니다.")]
+    [InlineData("文件“report.txt”已存在。")]
     [InlineData("«report.txt» existe déjà.")]
     [InlineData("{folder}\\report.txt already exists.\nDo you want to replace it?")] // the old-style dialog shows the full path
+    [InlineData("{folder}\\report already exists.")] // the full path without the extension, which Explorer may hide
     public async Task Save_WithOverwrite_AnswersAYesNoPromptThatNamesTheFile_InAnyLanguage(string text)
     {
         var file = ExistingFile();

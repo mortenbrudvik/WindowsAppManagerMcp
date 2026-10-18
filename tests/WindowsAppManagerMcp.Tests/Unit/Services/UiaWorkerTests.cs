@@ -247,6 +247,46 @@ public class UiaWorkerTests
     }
 
     [Fact]
+    public async Task RunAsync_WhenTheDeadlineHasAlreadyPassed_ThrowsTimeoutWithoutStartingTheRead_OrCountingItAsStuck()
+    {
+        // Arrange - the token is cancelled before the call, with no grace: the deadline is behind it already
+        var sut = new UiaWorker(maxStuckCallsPerTarget: 1, maxStuckCalls: 4);
+        using var deadline = new CancellationTokenSource();
+        deadline.Cancel();
+        var started = false;
+
+        // Act
+        var act = () => sut.RunAsync(HungApp, _ => started = true, deadline.Token, TimeSpan.Zero);
+
+        // Assert - what a read that missed its deadline throws, but nothing says the application does not answer
+        var thrown = (await act.Should().ThrowAsync<TimeoutException>()).Which;
+        thrown.Should().NotBeOfType<UiaReadRefusedException>();
+        thrown.Message.Should().NotContain("not responding").And.NotContain("did not answer");
+        started.Should().BeFalse("no thread is started for a read that could not be waited for");
+        sut.StuckCalls.Should().Be(0);
+        sut.StuckCallsFor(HungApp).Should().Be(0);
+
+        // A read of the application right after it is not refused as though the application were hung
+        (await sut.RunAsync(HungApp, _ => 42, CancellationToken.None, TimeSpan.Zero)).Should().Be(42);
+    }
+
+    [Fact]
+    public async Task RunAsync_WithATokenAlreadyCancelled_AndAGrace_StillLetsTheReadReturnWhatItHas()
+    {
+        // Arrange - the deadline is the cancellation plus the grace: a read that stops on the token returns its partial result
+        var sut = new UiaWorker();
+        using var deadline = new CancellationTokenSource();
+        deadline.Cancel();
+
+        // Act
+        var result = await sut.RunAsync(HungApp, token => token.IsCancellationRequested ? "partial" : "whole", deadline.Token, Long);
+
+        // Assert
+        result.Should().Be("partial");
+        sut.StuckCalls.Should().Be(0);
+    }
+
+    [Fact]
     public async Task RunAsync_WithATokenThatIsNeverCancelled_WaitsForTheRead()
     {
         // Arrange
