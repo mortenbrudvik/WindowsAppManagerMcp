@@ -976,14 +976,15 @@ public class WindowService : IWindowService
                 if (placed.Success)
                     placed = ReadBackAbove(handle, window, other);
             }
-            catch (WindowNotRespondingException)
+            catch (WindowNotRespondingException ex)
             {
-                UndoTopmost(handle, window);
+                if (!UndoTopmost(handle, window))
+                    throw new WindowNotRespondingException(ex.Window, ex.Message + LeftTopmost);
                 throw;
             }
 
-            if (!placed.Success)
-                UndoTopmost(handle, window);
+            if (!placed.Success && !UndoTopmost(handle, window))
+                placed = placed with { Error = placed.Error + LeftTopmost };
             return placed;
         }
 
@@ -1022,10 +1023,12 @@ public class WindowService : IWindowService
     }
 
     /// <summary>
-    /// Makes a window the failed 'above' made topmost not topmost again. A refusal or a window that does not answer is left as it
-    /// is: the pin then follows what the window is (TrackPin), so get_server_info still lists it.
+    /// Makes a window the failed 'above' made topmost not topmost again, and says whether it is not topmost afterwards (read
+    /// back, whatever the call returned). A refusal or a window that does not answer is left as it is: the pin then follows
+    /// what the window is (TrackPin), so get_server_info still lists it, and the caller adds <see cref="LeftTopmost"/> to its
+    /// failure, since the contract that a failed call leaves no new topmost window does not hold for it.
     /// </summary>
-    private void UndoTopmost(nint handle, nint window)
+    private bool UndoTopmost(nint handle, nint window)
     {
         try
         {
@@ -1033,8 +1036,16 @@ public class WindowService : IWindowService
         }
         catch (WindowNotRespondingException)
         {
+            // Read back below: a change Windows made before the deadline still counts
         }
+
+        return !IsTopmost(window);
     }
+
+    /// <summary>What a failed 'above' adds when its undo failed too: the window stays topmost, and how to undo it.</summary>
+    private const string LeftTopmost =
+        " The window was left topmost: making it not topmost again failed too. Call set_window_zorder with mode 'notopmost' " +
+        "for it (get_server_info lists it among the windows the server made topmost), or ask the user.";
 
     /// <summary>SetWindowZOrder, with a deadline (<see cref="IWindowCallRunner"/>); a refusal as a placement's (AccessDenied).</summary>
     /// <exception cref="WindowNotRespondingException">The window did not answer in time.</exception>
