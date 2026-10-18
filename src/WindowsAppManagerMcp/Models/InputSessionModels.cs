@@ -219,7 +219,7 @@ public static class KeyNames
 }
 
 /// <summary>
-/// What <c>IInputSession.Send</c> did with one batch: refused it because the user paused input, or passed
+/// What <c>IInputSession.Send</c> did with one batch: refused it because input is paused, or passed
 /// it to SendInput, which inserted <see cref="Inserted"/> of <see cref="Requested"/> events.
 /// </summary>
 public readonly record struct InputSendOutcome(bool PausedByUser, int Inserted, int Requested)
@@ -231,7 +231,7 @@ public readonly record struct InputSendOutcome(bool PausedByUser, int Inserted, 
 /// <summary>What a release of held input did.</summary>
 /// <param name="Released">The keys and buttons whose up event was sent.</param>
 /// <param name="StillHeld">The keys and buttons that could not be released (SendInput inserted too few events, or failed).</param>
-/// <param name="PausedByUser">True when the release was refused because the user paused input (user-held keys only).</param>
+/// <param name="PausedByUser">True when the release was refused because input is paused (user-held keys only).</param>
 /// <param name="Error">Why SendInput failed, when it threw.</param>
 public sealed record InputReleaseOutcome(
     IReadOnlyList<string> Released,
@@ -242,7 +242,7 @@ public sealed record InputReleaseOutcome(
     /// <summary>Nothing was down, so nothing was sent.</summary>
     public static InputReleaseOutcome Nothing { get; } = new([], []);
 
-    /// <summary>Refused: the user paused input.</summary>
+    /// <summary>Refused: input is paused.</summary>
     public static InputReleaseOutcome Paused { get; } = new([], [], PausedByUser: true);
 
     /// <summary>True when nothing is left down.</summary>
@@ -262,7 +262,7 @@ public sealed record InputReleaseRecord(
     IReadOnlyList<string> StillHeld,
     string? Error = null);
 
-/// <summary>Whether the user paused the server's input, and since when.</summary>
+/// <summary>Whether the server's input is paused (by the user or by the server itself), and since when.</summary>
 /// <param name="Paused">True while input is paused.</param>
 /// <param name="PausedBy">How it was paused ("hotkey", or "shared_pause_unreadable" when the shared pause could not be read); null while running.</param>
 /// <param name="PausedAt">When this server paused; null while running.</param>

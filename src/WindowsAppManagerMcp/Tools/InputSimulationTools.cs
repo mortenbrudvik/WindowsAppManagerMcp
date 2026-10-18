@@ -172,7 +172,7 @@ public class InputSimulationTools
                  "it, and to as well unless toWindowHandle names the drop's window; both are checked as a click's point before the " +
                  "press (TargetOccluded, BlockedByModal, TargetIsAgentHost, MouseInUse), and to again right before the drop. A drag " +
                  "stopped after the press (to refused then, the pointer kept off it, a cancelled request) goes back to from and " +
-                 "releases there; the user's pause releases where the pointer is. pressed says whether anything was sent; nothing " +
+                 "releases there; a pause releases where the pointer is. pressed says whether anything was sent; nothing " +
                  "stays held after the call." + TakeoverNote + GuardNote)]
     [ToolResultPayload(typeof(DragResult))]
     public async Task<CallToolResult> Drag(
@@ -366,7 +366,7 @@ public class InputSimulationTools
     [Description("Type text by simulating Unicode keyboard input (any language), or paste it (method)." + KeyboardTargetNote +
                  " The foreground window is checked again every 64 characters: if another window comes to the front, typing stops with " +
                  "TargetLostFocus and charactersTyped says how much was typed. Refused while a menu is open (TargetInMenuMode)." +
-                 " Cancelling the request, or the user's pause, stops typing between batches. Typing takes at most 5000 characters, " +
+                 " Cancelling the request, or a pause, stops typing between batches. Typing takes at most 5000 characters, " +
                  "a paste 1,000,000 (TextTooLong). The result has the text's length, never the text." + TakeoverNote)]
     [ToolResultPayload(typeof(TypeTextResult))]
     public async Task<CallToolResult> TypeText(

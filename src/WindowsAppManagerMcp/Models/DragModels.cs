@@ -76,8 +76,8 @@ public record DragResult(
 
     /// <summary>
     /// True once the button went down. False: nothing was sent. True without success: the drag was stopped after the press,
-    /// and the error says where the button was released (back at the from point, or, after the user's pause, where the
-    /// pointer was).
+    /// and the error says where the button was released (back at the from point, or, after a pause, where the pointer
+    /// was).
     /// </summary>
     public bool Pressed { get; init; }
 

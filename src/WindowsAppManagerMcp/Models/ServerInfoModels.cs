@@ -7,7 +7,7 @@ namespace WindowsAppManagerMcp.Models;
 /// <param name="Desktop">Whether input can reach the desktop now, and the foreground lock timeout.</param>
 /// <param name="Monitors">The monitors with their DPI, in get_monitors order.</param>
 /// <param name="Host">The agent's host as recorded at server start: windows and processes input never reaches.</param>
-/// <param name="Input">The user's pause and the pause hotkey.</param>
+/// <param name="Input">The pause and the pause hotkey.</param>
 /// <param name="Safety">The target policy and the destructive chords in force.</param>
 /// <param name="Paths">Where the server keeps its files.</param>
 /// <param name="Toolsets">The toolsets, exclusions and read-only mode in force.</param>
