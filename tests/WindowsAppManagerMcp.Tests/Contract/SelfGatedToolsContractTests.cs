@@ -19,8 +19,9 @@ namespace WindowsAppManagerMcp.Tests.Contract;
 /// entering that function: it must take the gate.</item>
 /// <item><see cref="Through"/>: tools whose every action goes through element_action's service, which takes the gate for each
 /// action (ElementActionServiceTests checks it does). The tool's call must reach the service, and the production
-/// registrations must lead there: each service of the chain is registered with the type that calls the next one, and the last
-/// one takes the gate (read from their IL).</item>
+/// registrations must lead there: each service of the chain is registered with the type that calls the next one and makes no
+/// native action of its own (no window change, input, clipboard write or UI Automation action: NativeFakedServer.IsAction),
+/// and the last one takes the gate (read from their IL).</item>
 /// </list>
 /// The services are the contract run's mocks (ContractServices); nothing touches the desktop, a browser or a process.
 /// </summary>
@@ -208,11 +209,61 @@ public sealed class SelfGatedToolsContractTests : IDisposable
             {
                 var next = through.Chain[i + 1].Service;
                 calls.Should().Contain(m => m.DeclaringType == next, "{0} acts through {1}", implementation.Name, next.Name);
+                NativeActions(calls).Should().BeEmpty(
+                    "{0} acts only through {1}, which takes the input gate: a native action of its own would run outside the gate",
+                    implementation.Name, through.Chain[^1].Implementation.Name);
             }
             else
             {
                 calls.Any(TakesTheGate).Should().BeTrue("{0} takes the input gate around its actions (ElementActionServiceTests)", implementation.Name);
             }
+        }
+    }
+
+    [Fact]
+    public void TheChainCheck_SeesANativeActionInAServicesCode()
+    {
+        // Act - a sample's IL, as the check reads a chain service's
+        var actions = NativeActions(IlCalls.CallsMadeBy(typeof(NativeActionSample))).ToList();
+
+        // Assert - a window change, a UI Automation action and a pattern action in a lambda, input and a clipboard write
+        actions.Should().Contain([
+            "INativeWindowWrapper.SetForegroundWindow", "IUIAutomationWrapper.CloseWindow", "IUiaTree.SetFocus", "IUiaInvokePattern.Invoke",
+            "IUiaValuePattern.SetValue", "INativeInputWrapper.SendInput", "INativeClipboardWrapper.WriteText"
+        ]);
+        actions.Should().NotContain(["IUiaTree.GetPattern", "IUiaValuePattern.get_Value", "IUiaTextPattern.GetText", "INativeInputWrapper.GetCursorPos"],
+            "reads are no actions");
+    }
+
+    /// <summary>The calls among <paramref name="calls"/> that act on a native seam (NativeFakedServer.IsAction), as "Interface.Member".</summary>
+    private static IEnumerable<string> NativeActions(IEnumerable<System.Reflection.MethodBase> calls) =>
+        calls.OfType<System.Reflection.MethodInfo>()
+            .Where(m => m.DeclaringType != null && NativeFakedServer.IsAction(m.DeclaringType, m))
+            .Select(m => $"{m.DeclaringType!.Name}.{m.Name}")
+            .Distinct();
+
+    /// <summary>
+    /// A sample for <see cref="TheChainCheck_SeesANativeActionInAServicesCode"/>, which only scans its IL. Nothing calls it, and
+    /// its seams would be mocks if anything did.
+    /// </summary>
+    private static class NativeActionSample
+    {
+        public static void Acts(INativeWindowWrapper windows, IUIAutomationWrapper automation, IUiaTree tree, IUiaNode node,
+            INativeInputWrapper input, INativeClipboardWrapper clipboard)
+        {
+            windows.SetForegroundWindow(0x10010);
+            automation.CloseWindow(0x10010, CancellationToken.None);
+            tree.SetFocus(node);
+            Action press = () => tree.GetPattern<IUiaInvokePattern>(node)?.Invoke();
+            press();
+            if (tree.GetPattern<IUiaValuePattern>(node) is { Value: not null } value && tree.GetPattern<IUiaTextPattern>(node)?.GetText(10) != null)
+            {
+                value.SetValue("sample");
+            }
+
+            _ = input.GetCursorPos();
+            input.SendInput([]);
+            clipboard.WriteText("sample");
         }
     }
 

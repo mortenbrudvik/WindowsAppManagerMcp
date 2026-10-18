@@ -169,8 +169,14 @@ public sealed class NativeFakedServer : IDisposable
         return fake is Mock mock ? mock.Object : fake;
     }
 
-    /// <summary>A member of a seam that changes something, not a read (as the E2E WrapperCatalog classifies them).</summary>
-    private static bool IsAction(Type service, MethodInfo method) => method.Name switch
+    /// <summary>
+    /// A member of a seam that changes something, not a read (as the E2E WrapperCatalog classifies them): a window change, a
+    /// process start or stop, attaching thread input, UI Automation's window close, an app's activation, a DevTools command,
+    /// input (SendInput, SetCursorPos), a clipboard write, and a UI Automation action (IUiaTree.SetFocus, and every method of a
+    /// pattern object but its reads). <see cref="Actions"/> counts the mocks' calls with it, and SelfGatedToolsContractTests the
+    /// calls in a service's IL.
+    /// </summary>
+    public static bool IsAction(Type service, MethodInfo method) => method.Name switch
     {
         _ when service == typeof(INativeWindowWrapper) => method.Name is nameof(INativeWindowWrapper.SetWindowPos)
             or nameof(INativeWindowWrapper.SetWindowZOrder) or nameof(INativeWindowWrapper.ShowWindow)
@@ -183,8 +189,21 @@ public sealed class NativeFakedServer : IDisposable
         _ when service == typeof(INativeAppsWrapper) => method.Name.StartsWith("Activate", StringComparison.Ordinal),
         // A browser's DevTools connection: anything sent is a command to a page
         _ when service == typeof(ICdpTransport) => true,
+        // Input: everything but the pointer's and the keys' state
+        _ when service == typeof(INativeInputWrapper) => method.Name is not (nameof(INativeInputWrapper.GetCursorPos)
+            or nameof(INativeInputWrapper.IsKeyDown) or nameof(INativeInputWrapper.IsKeyToggled)) && !IsGetter(method),
+        _ when service == typeof(INativeClipboardWrapper) => method.Name is nameof(INativeClipboardWrapper.WriteText)
+            or nameof(INativeClipboardWrapper.ReplaceText),
+        _ when service == typeof(IUiaTree) => method.Name is nameof(IUiaTree.SetFocus),
+        // A pattern object: its state reads and text, grid, table and item lookups read; every other method acts
+        _ when typeof(IUiaPattern).IsAssignableFrom(service) => !IsGetter(method) && method.Name is not (nameof(IUiaTextPattern.GetText)
+            or nameof(IUiaTextPattern.GetSelectedText) or nameof(IUiaTextPattern.GetTextPage) or nameof(IUiaGridPattern.GetItem)
+            or nameof(IUiaTablePattern.GetColumnHeaders) or nameof(IUiaTablePattern.GetRowHeaders)
+            or nameof(IUiaItemContainerPattern.FindItemByProperty) or nameof(IUiaWindowPattern.WaitForInputIdle)),
         _ => false
     };
+
+    private static bool IsGetter(MethodInfo method) => method.IsSpecialName && method.Name.StartsWith("get_", StringComparison.Ordinal);
 
     private static HashSet<Type> FindSeams()
     {
