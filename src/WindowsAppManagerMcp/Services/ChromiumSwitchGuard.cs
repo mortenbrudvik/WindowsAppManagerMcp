@@ -37,8 +37,9 @@ namespace WindowsAppManagerMcp.Services;
 /// <item>a --user-data-dir (also as "--user-data-dir &lt;folder&gt;", which Electron apps read) inside a folder named 'User
 /// Data' or its 8.3 short name, where Chrome, Edge and Brave keep the user's real profiles, as launch_browser_with_debug
 /// refuses it; a relative folder is taken in the launch's working directory, and an 8.3 short name on a drive letter is
-/// expanded from the file system. One on a UNC or other device path is refused instead: expanding it would connect to
-/// another computer.</item>
+/// expanded from the file system. One on a UNC or other device path is refused instead, before any path with it is made
+/// full: expanding it would connect to another computer. So is one on a device path whose ".." leaves its drive
+/// (\\.\C:\..\UNC\server), and a relative one in a device-path working directory.</item>
 /// </list>
 /// A list of switch names, not a sandbox: a switch that only weakens the program (--no-sandbox,
 /// --disable-web-security), another app's switch of its own, and electron.exe given a script are not on it.
@@ -78,8 +79,9 @@ public sealed class ChromiumSwitchGuard
     /// <param name="longPath">The long form of a fully qualified path that holds a '~', or null when it cannot be read (the
     /// path does not exist).</param>
     /// <param name="fullPath">Makes a path full, in the base folder when one is given, as Path.GetFullPath does; tests pass a
-    /// recorder. Path.GetFullPath expands 8.3 short names from the file system too, so it is never given one on a UNC or
-    /// device path.</param>
+    /// recorder. Path.GetFullPath expands 8.3 short names from the file system too, so it is given a path with a '~' only
+    /// when that path, made full by it with every '~' taken out first, is on a drive letter (never on a UNC or other device
+    /// path), and never one inside a 'User Data' folder as written.</param>
     public ChromiumSwitchGuard(Func<string, string?> longPath, Func<string, string?, string> fullPath)
     {
         _longPath = longPath;
@@ -281,16 +283,23 @@ public sealed class ChromiumSwitchGuard
             return null;
         }
 
+        // Inside 'User Data' as written: refused whatever the path is made full to, so it is not made full (with a '~' on a
+        // network path that would connect to the computer it names)
+        if (HasUserDataSegment(path))
+        {
+            return ProfileFolderProblem.InsideUserData;
+        }
+
         // The folder the path is taken in: itself when it is fully qualified, else the working directory (null: not known)
         var baseFolder = Path.IsPathFullyQualified(path) ? null
             : !string.IsNullOrEmpty(workingDirectory) && Path.IsPathFullyQualified(workingDirectory) ? workingDirectory
             : null;
         var where = baseFolder ?? (Path.IsPathFullyQualified(path) ? path : null);
-        if (!HasUserDataSegment(path) && where != null && !IsOnADriveLetter(where) &&
-            (path.Contains('~') || (baseFolder?.Contains('~') ?? false)))
+        if (where != null && (path.Contains('~') || (baseFolder?.Contains('~') ?? false)) && !ShortNamesAreLocal(path, baseFolder, where))
         {
             // Path.GetFullPath expands 8.3 short names itself, from the file system (GetLongPathNameW), so on a UNC or other
-            // device path it would connect to that computer as the expansion below would: refused before any path is made full
+            // device path it would connect to that computer as the expansion below would: refused before any path with a '~'
+            // is made full
             return ProfileFolderProblem.UnexpandedShortName;
         }
 
@@ -339,16 +348,54 @@ public sealed class ChromiumSwitchGuard
             "Leave --user-data-dir out, or pass a separate folder.");
 
     /// <summary>
+    /// Whether the 8.3 short names of <paramref name="path"/>, taken in <paramref name="baseFolder"/> (null when it is fully
+    /// qualified), would be read from this computer's file system, so that making it full may expand them: it is on a drive
+    /// letter as written (<paramref name="where"/>: the path, or the folder it is taken in) and as Windows makes it full. That
+    /// full form is made with every '~' taken out, so Path.GetFullPath has no short name to expand and reads no file
+    /// system; Windows takes a ".." of a device path off its drive (\\.\C:\..\UNC\server is \\.\UNC\server). A relative
+    /// path in a device-path folder (\\.\C:\...) is not taken as local: Path.GetFullPath keeps its ".." on the drive, where
+    /// the program, which makes it full as Windows does, may not. Fails closed: a path that cannot be made full is not local.
+    /// </summary>
+    private bool ShortNamesAreLocal(string path, string? baseFolder, string where)
+    {
+        if (!IsOnADriveLetter(where) || (baseFolder != null && IsDevicePath(baseFolder)))
+        {
+            return false;
+        }
+
+        try
+        {
+            return IsOnADriveLetter(_fullPath(path.Replace('~', '_'), baseFolder?.Replace('~', '_')));
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Whether <paramref name="path"/> starts as a device path does (\\?\, \\.\, \??\, also with '/'), which Windows and
+    /// .NET make full by different rules.
+    /// </summary>
+    private static bool IsDevicePath(string path) =>
+        path.Length >= 4 && path[0] is '\\' or '/' && (path[1] is '\\' or '/' || path[1] == '?') && path[2] is '.' or '?' &&
+        path[3] is '\\' or '/';
+
+    /// <summary>
     /// Whether the fully qualified <paramref name="fullPath"/> is on a drive letter (C:\, \\?\C:\, \\.\C:\), whose 8.3
     /// short names are read from this computer's file system; a UNC path (\\server\share, \\?\UNC\...) and any other
-    /// device path (\\?\GLOBALROOT\..., \\?\Volume{...}\...) is not. A mapped network drive's letter counts as a drive:
-    /// the user chose its server.
+    /// device path (\\?\GLOBALROOT\..., \\?\Volume{...}\...) is not, nor a device path with a "." or ".." folder (\\.\C:\..\UNC
+    /// leaves the drive). A mapped network drive's letter counts as a drive: the user chose its server.
     /// </summary>
     private static bool IsOnADriveLetter(string fullPath)
     {
-        var path = fullPath.StartsWith(@"\\?\", StringComparison.Ordinal) || fullPath.StartsWith(@"\\.\", StringComparison.Ordinal)
-            ? fullPath[4..]
-            : fullPath;
+        var device = fullPath.StartsWith(@"\\?\", StringComparison.Ordinal) || fullPath.StartsWith(@"\\.\", StringComparison.Ordinal);
+        var path = device ? fullPath[4..] : fullPath;
+        if (device && path.Split(['\\', '/']).Any(segment => segment.Length > 0 && segment.All(c => c is '.' or ' ')))
+        {
+            return false;
+        }
+
         return path.Length >= 3 && char.IsAsciiLetter(path[0]) && path[1] == ':' && path[2] is '\\' or '/';
     }
 

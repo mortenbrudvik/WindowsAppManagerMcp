@@ -948,6 +948,35 @@ public class BrowserReadingToolsTests
     }
 
     [Theory]
+    [InlineData(@"\\10.255.255.1\s\USERDA~1\Default", "inside a 'User Data' folder")]
+    [InlineData(@"\\10.255.255.1\s\User Data\x~1", "inside a 'User Data' folder")]
+    [InlineData(@"\\.\C:\..\UNC\10.255.255.1\s\x~1", "short name")]
+    public void DebugProfileRefusal_RefusesANetworkPathWithAShortName_WithoutMakingItFull(string userDataDir, string message)
+    {
+        // Arrange - a 'User Data' folder on a network path, and a device path whose ".." leaves its drive for a server
+        // (Windows makes \\.\C:\..\UNC\server full as \\.\UNC\server): Path.GetFullPath would expand the '~' over SMB. The
+        // recorder makes a path with a '~' full by its text only
+        var withShortName = new List<string>();
+        var guard = new ChromiumSwitchGuard(_ => null, (path, basePath) =>
+        {
+            if (path.Contains('~') || (basePath?.Contains('~') ?? false))
+            {
+                withShortName.Add(path);
+                return basePath == null ? path : Path.Join(basePath, path);
+            }
+
+            return basePath == null ? Path.GetFullPath(path) : Path.GetFullPath(path, basePath);
+        });
+
+        // Act
+        var refusal = BrowserReadingTools.DebugProfileRefusal(userDataDir, guard);
+
+        // Assert
+        refusal.Should().Contain(message).And.Contain("Nothing was launched");
+        withShortName.Should().BeEmpty();
+    }
+
+    [Theory]
     [InlineData("  C:/Temp/debug-profile  ", @"C:\Temp\debug-profile")]
     [InlineData(@"C:\Temp\a\..\debug-profile", @"C:\Temp\debug-profile")]
     [InlineData("   ", null)]
