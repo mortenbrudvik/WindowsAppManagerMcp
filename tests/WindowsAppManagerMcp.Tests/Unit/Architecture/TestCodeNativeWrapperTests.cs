@@ -156,6 +156,10 @@ public class TestCodeNativeWrapperTests
             "the recording transport's own member, and a disposed transport sent to a port the test listens on: nothing is sent",
         [("WindowsAppManagerMcp.Tests.Integration.InputGuardRegistrationTests", "IInputSafetyInfo.Read")] =
             "reads the host, the policy and the chords the guard was given",
+        [("WindowsAppManagerMcp.Tests.Fixtures.NativeFakedServer", "IElementRegistry.NextGeneration")] =
+            "MintRef: a read generation of the faked server's registry, whose every native seam is a fake",
+        [("WindowsAppManagerMcp.Tests.Fixtures.NativeFakedServer", "IElementRegistry.Register")] =
+            "MintRef: gives a fake element of the faked server's tree a ref; Register makes no UI Automation call",
     };
 
     [Fact]

@@ -10,11 +10,14 @@ namespace WindowsAppManagerMcp.Tests.Contract;
 /// <summary>
 /// Contract: the user's target policy (docs/TOOLS.md, Target policy) holds for every tool that names a window or a process. Every
 /// served tool whose input schema takes a window (handle, windowHandle, toWindowHandle, aboveHandle, a window selector, a batch's
-/// windows, placements or changes) or a processId is called with a window or process the policy denies, through the production
-/// pipeline and the real services over faked native seams (<see cref="NativeFakedServer"/>): it must answer TargetDeniedByPolicy,
-/// and nothing may act (no window change, input, process start or stop, clipboard write, UI Automation action or CDP command),
-/// read the window through UI Automation or capture its pixels. The tools that legitimately do not apply the policy are on
-/// <see cref="Exempt"/>, each with the reason; a tool on neither list fails, so a new tool that takes a window must say which.
+/// windows, placements or changes), an element's ref (ref, withinRef, listRef) or a processId is called with a window, element
+/// or process the policy denies, through the production pipeline and the real services over faked native seams
+/// (<see cref="NativeFakedServer"/>): it must answer TargetDeniedByPolicy, and nothing may act (no window change, input, process
+/// start or stop, clipboard write, UI Automation action or CDP command), read the window through UI Automation (by its handle or
+/// by an element of it) or capture its pixels (the window by its handle, or a screen rectangle over it). The tools that
+/// legitimately do not apply the policy are on <see cref="Exempt"/>, each with the reason; a tool on neither list fails, so a
+/// new tool that takes a window must say which. <see cref="Variants"/> call some tools again by another way of naming the
+/// target: a selector, a process name, a ref.
 /// </summary>
 /// <remarks>
 /// The denied window is a Chrome window (<see cref="DeniedDesktop"/>, the policy's default deny list plus chrome), so the browser
@@ -38,10 +41,16 @@ public sealed class DeniedTargetContractTests
     }
 
     /// <summary>A call that targets the denied window or process, and where its refusal is reported.</summary>
-    /// <param name="Arguments">The call's arguments, as JSON.</param>
+    /// <param name="Arguments">The call's arguments, as JSON; <see cref="DeniedRef"/> stands for the ref of <paramref name="RefTo"/>.</param>
     /// <param name="At">Where the refusal is reported.</param>
     /// <param name="Before">A call made first that must succeed, such as saving the layout the call applies.</param>
-    public sealed record DeniedCall(string Arguments, RefusalAt At = RefusalAt.Result, (string Tool, string Arguments)? Before = null);
+    /// <param name="RefTo">The denied window's element whose ref the server's registry gives before the call, as a read would
+    /// have given it to the agent.</param>
+    public sealed record DeniedCall(string Arguments, RefusalAt At = RefusalAt.Result, (string Tool, string Arguments)? Before = null,
+        Func<DeniedDesktop, FakeUiaNode>? RefTo = null);
+
+    /// <summary>The placeholder in <see cref="DeniedCall.Arguments"/> for the ref of <see cref="DeniedCall.RefTo"/>.</summary>
+    private const string DeniedRef = "{deniedRef}";
 
     /// <summary>The tools that must refuse the denied window or process, with the call that names it.</summary>
     private static readonly IReadOnlyDictionary<string, DeniedCall> Checked = new Dictionary<string, DeniedCall>(StringComparer.Ordinal)
@@ -80,6 +89,8 @@ public sealed class DeniedTargetContractTests
         ["find_ui_elements"] = new($$"""{ "handle": {{Denied}}, "name": "Transfer money" }"""),
         ["get_active_popups"] = new($$"""{ "handle": {{Denied}} }"""),
         ["read_element_text"] = new($$"""{ "window": { "handle": {{Denied}} }, "name": "Transfer money" }"""),
+        // A table of the denied window by a ref the agent holds (it takes nothing else)
+        ["read_table"] = new($$"""{ "ref": "{{DeniedRef}}" }""", RefTo: d => d.TableNode),
         ["wait_for_element"] = new($$"""{ "window": { "handle": {{Denied}} }, "name": "Transfer money", "timeoutMs": 200 }"""),
         // Succeeds with what it may read, and lists the window it left out in errors (documented)
         ["get_desktop_state"] = new($$"""{ "handle": {{Denied}} }""", RefusalAt.AnItem),
@@ -110,6 +121,27 @@ public sealed class DeniedTargetContractTests
             RefusalAt.AnItem),
     };
 
+    /// <summary>
+    /// More calls of tools on <see cref="Checked"/>, each naming the denied target another way: a window selector or a process
+    /// name instead of a handle, or a ref of the denied window's element. Keyed by "tool: how".
+    /// </summary>
+    private static readonly IReadOnlyDictionary<string, (string Tool, DeniedCall Call)> Variants =
+        new Dictionary<string, (string Tool, DeniedCall Call)>(StringComparer.Ordinal)
+        {
+            ["focus_window: by a window selector"] = ("focus_window", new("""{ "window": { "processName": "chrome", "className": "Chrome_WidgetWin_1" } }""")),
+            ["set_window_bounds: by a window selector"] = ("set_window_bounds",
+                new("""{ "window": { "processName": "chrome", "titleContains": "Online banking" }, "x": 0, "y": 0 }""")),
+            ["close_application: by its process name"] = ("close_application", new("""{ "processName": "chrome", "confirm": true }""")),
+            ["element_action: by a ref"] = ("element_action", new($$"""{ "ref": "{{DeniedRef}}", "action": "invoke" }""", RefTo: d => d.ButtonNode)),
+            ["read_element_text: by a ref"] = ("read_element_text", new($$"""{ "ref": "{{DeniedRef}}" }""", RefTo: d => d.ButtonNode)),
+            ["wait_for_element: by a ref"] = ("wait_for_element",
+                new($$"""{ "ref": "{{DeniedRef}}", "condition": "enabled", "timeoutMs": 200 }""", RefTo: d => d.ButtonNode)),
+            ["find_ui_elements: within a ref"] = ("find_ui_elements",
+                new($$"""{ "withinRef": "{{DeniedRef}}", "name": "Transfer money" }""", RefTo: d => d.TableNode)),
+            ["capture_window: cropped to a ref"] = ("capture_window",
+                new($$"""{ "handle": {{Denied}}, "ref": "{{DeniedRef}}" }""", RefTo: d => d.ButtonNode)),
+        };
+
     /// <summary>The tools that take a window or a process but do not apply the policy to it, and why.</summary>
     private static readonly IReadOnlyDictionary<string, string> Exempt = new Dictionary<string, string>(StringComparer.Ordinal)
     {
@@ -122,18 +154,20 @@ public sealed class DeniedTargetContractTests
         ["save_layout"] = "writes a layout file: its placements name windows by matchers and it acts on none; a window whose process cannot be named is saved without its title",
     };
 
-    /// <summary>The window and process properties of a tool's input schema, found at any depth.</summary>
+    /// <summary>The window, element and process properties of a tool's input schema, found at any depth.</summary>
     private static readonly HashSet<string> TargetProperties = new(StringComparer.Ordinal)
     {
-        "handle", "windowHandle", "toWindowHandle", "aboveHandle", "window", "windows", "placements", "changes", "processId"
+        "handle", "windowHandle", "toWindowHandle", "aboveHandle", "window", "windows", "placements", "changes", "processId",
+        "ref", "withinRef", "listRef"
     };
 
+    /// <summary>Every call to make: each tool of <see cref="Checked"/> by its name, and each of <see cref="Variants"/> by its key.</summary>
     public static TheoryData<string> CheckedTools()
     {
         var data = new TheoryData<string>();
-        foreach (var tool in Checked.Keys.Order(StringComparer.Ordinal))
+        foreach (var name in Checked.Keys.Concat(Variants.Keys).Order(StringComparer.Ordinal))
         {
-            data.Add(tool);
+            data.Add(name);
         }
 
         return data;
@@ -155,14 +189,16 @@ public sealed class DeniedTargetContractTests
             "a tool that takes a window or a process must refuse one the user's target policy denies: add it to Checked with a call " +
             "that names the denied window, or to Exempt with the reason it legitimately does not apply the policy");
         Checked.Keys.Concat(Exempt.Keys).Except(targeting).Should().BeEmpty("an entry names a served tool that takes a window or a process");
+        Variants.Values.Select(v => v.Tool).Except(Checked.Keys).Should().BeEmpty("a variant calls a tool that is checked");
+        targeting.Should().Contain("read_table", "the scan must see a tool that names its target only by a ref");
     }
 
     [Theory]
     [MemberData(nameof(CheckedTools))]
-    public async Task ACallThatNamesADeniedWindowOrProcess_IsTargetDeniedByPolicy_AndNothingIsDone(string tool)
+    public async Task ACallThatNamesADeniedWindowOrProcess_IsTargetDeniedByPolicy_AndNothingIsDone(string name)
     {
         // Arrange
-        var call = Checked[tool];
+        var (tool, call) = Checked.TryGetValue(name, out var named) ? (name, named) : Variants[name];
         using var desktop = new NativeFakedServer(DeniedDesktop.Policy);
         await using var server = await desktop.StartAsync();
 
@@ -172,8 +208,13 @@ public sealed class DeniedTargetContractTests
             prepared.IsError.Should().NotBe(true, "{0} prepares the call: {1}", before, prepared.Content.OfType<TextContentBlock>().FirstOrDefault()?.Text);
         }
 
+        var arguments = call.RefTo is { } refTo
+            ? call.Arguments.Replace(DeniedRef, desktop.MintRef((nint)Denied, refTo(desktop.Desktop)), StringComparison.Ordinal)
+            : call.Arguments;
+        var readsBefore = desktop.Desktop.Tree.Reads.Count;
+
         // Act
-        var result = await server.CallToolAsync(tool, Arguments(call.Arguments));
+        var result = await server.CallToolAsync(tool, Arguments(arguments));
 
         // Assert
         var text = result.Content.OfType<TextContentBlock>().Single().Text;
@@ -190,14 +231,67 @@ public sealed class DeniedTargetContractTests
         desktop.Actions().Should().BeEmpty("'{0}' must do nothing to a window or process the policy denies", tool);
         desktop.Desktop.WindowsReadThroughUiAutomation.Should().NotContain([(nint)Denied, (nint)DeniedDialog],
             "'{0}' must not read a denied window through UI Automation", tool);
-        desktop.Mock<IScreenCaptureWrapper>().Invocations
-            .Where(i => i.Method.Name.StartsWith("CaptureWindow", StringComparison.Ordinal) && i.Arguments.Contains((nint)Denied))
-            .Should().BeEmpty("'{0}' must not capture a denied window's pixels", tool);
-        desktop.Mock<IGraphicsCaptureWrapper>().Invocations.Where(i => i.Arguments.Contains((nint)Denied))
-            .Should().BeEmpty("'{0}' must not capture a denied window's pixels", tool);
+        desktop.Desktop.Tree.Reads.Skip(readsBefore).Where(read => ReadsADeniedElement(desktop.Desktop, read))
+            .Should().BeEmpty("'{0}' must not read a denied window's elements through UI Automation", tool);
+        CapturesOfTheDeniedWindow(desktop).Should().BeEmpty("'{0}' must not capture a denied window's pixels", tool);
+    }
+
+    [Fact]
+    public void TheCaptureCheck_SeesEveryWayToReadTheDeniedWindowsPixels()
+    {
+        // Arrange - the captures a tool could make, on the harness's own fakes (nothing is captured: they are mocks)
+        using var desktop = new NativeFakedServer(DeniedDesktop.Policy);
+
+        // Act
+        DeniedCaptureSamples.Capture(desktop.Mock<IScreenCaptureWrapper>().Object, desktop.Mock<IGraphicsCaptureWrapper>().Object);
+
+        // Assert - the seven of the denied window, and not the three beside it
+        CapturesOfTheDeniedWindow(desktop).Should().HaveCount(7);
     }
 
     // ---- helpers ----
+
+    /// <summary>
+    /// The captures of a denied window's pixels the fakes were asked for: the window by its handle (CaptureWindow,
+    /// CaptureWindowFromScreen, WithPixels of a PixelSource.Window or WindowFromScreen, Windows.Graphics.Capture), or a screen
+    /// rectangle over it (CaptureScreenRegion, WithPixels of a PixelSource.Screen).
+    /// </summary>
+    private static IEnumerable<string> CapturesOfTheDeniedWindow(NativeFakedServer desktop)
+    {
+        var screen = desktop.Mock<IScreenCaptureWrapper>().Invocations
+            .Where(i => i.Method.Name switch
+            {
+                nameof(IScreenCaptureWrapper.CaptureWindow) or nameof(IScreenCaptureWrapper.CaptureWindowFromScreen) =>
+                    i.Arguments[0] is nint handle && IsDenied(handle),
+                nameof(IScreenCaptureWrapper.CaptureScreenRegion) =>
+                    OverTheDeniedWindow((int)i.Arguments[0], (int)i.Arguments[1], (int)i.Arguments[2], (int)i.Arguments[3]),
+                nameof(IScreenCaptureWrapper.WithPixels) => i.Arguments[0] switch
+                {
+                    PixelSource.Window window => IsDenied(window.Handle),
+                    PixelSource.WindowFromScreen window => IsDenied(window.Handle),
+                    PixelSource.Screen area => OverTheDeniedWindow(area.X, area.Y, area.Width, area.Height),
+                    _ => true
+                },
+                _ => false
+            })
+            .Select(i => $"{i.Method.Name}({string.Join(", ", i.Arguments)})");
+        var graphics = desktop.Mock<IGraphicsCaptureWrapper>().Invocations
+            .Where(i => i.Arguments.OfType<nint>().Any(IsDenied))
+            .Select(i => $"Windows.Graphics.Capture {i.Method.Name}({string.Join(", ", i.Arguments)})");
+        return screen.Concat(graphics).ToList();
+
+        static bool IsDenied(nint handle) => handle == (nint)Denied || handle == (nint)DeniedDialog;
+
+        static bool OverTheDeniedWindow(int x, int y, int width, int height)
+        {
+            var (left, top, right, bottom) = DeniedDesktop.DeniedWindowRect;
+            return width > 0 && height > 0 && x < right && x + (long)width > left && y < bottom && y + (long)height > top;
+        }
+    }
+
+    /// <summary>A read the fake UI Automation tree logged ("Read:Name", "Element:Name", ...) of an element of a denied window.</summary>
+    private static bool ReadsADeniedElement(DeniedDesktop desktop, string read) =>
+        read.LastIndexOf(':') is var colon and >= 0 && desktop.DeniedElementNames.Contains(read[(colon + 1)..]);
 
     /// <summary>Every errorCode in a result, at any depth (a batch's items, a run's steps, a layout's placements).</summary>
     private static IEnumerable<string?> ErrorCodes(JsonElement element)
@@ -287,5 +381,30 @@ public sealed class DeniedTargetContractTests
                 yield return nested;
             }
         }
+    }
+}
+
+/// <summary>
+/// The captures of <see cref="DeniedTargetContractTests.TheCaptureCheck_SeesEveryWayToReadTheDeniedWindowsPixels"/>, made on the
+/// fakes it is given: seven of the denied window's pixels (by its handle, its dialog's, and screen rectangles over it) and three
+/// beside them.
+/// </summary>
+internal static class DeniedCaptureSamples
+{
+    public static void Capture(IScreenCaptureWrapper screen, IGraphicsCaptureWrapper graphics)
+    {
+        var (left, top, right, bottom) = DeniedDesktop.DeniedWindowRect;
+        screen.CaptureWindow((nint)DeniedDesktop.DeniedWindow, includeFrame: true);
+        screen.CaptureWindowFromScreen((nint)DeniedDesktop.DeniedDialog, includeFrame: false);
+        screen.WithPixels(new PixelSource.Window((nint)DeniedDesktop.DeniedWindow, false), _ => 0);
+        screen.WithPixels(new PixelSource.WindowFromScreen((nint)DeniedDesktop.DeniedWindow, true), _ => 0);
+        screen.CaptureScreenRegion(right - 1, bottom - 1, 50, 50);
+        screen.WithPixels(new PixelSource.Screen(0, 0, left + 1, top + 1), _ => 0);
+        graphics.CaptureWindow((nint)DeniedDesktop.DeniedWindow, includeFrame: false);
+
+        // Not of the denied window: another window, and screen rectangles beside it
+        screen.CaptureWindow((nint)DeniedDesktop.AllowedWindow, includeFrame: true);
+        screen.CaptureScreenRegion(right, top, 100, 100);
+        screen.WithPixels(new PixelSource.Screen(0, 0, left, 2000), _ => 0);
     }
 }

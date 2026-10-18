@@ -69,6 +69,18 @@ public sealed class NativeFakedServer : IDisposable
     /// <summary>The test fake behind <typeparamref name="TService"/>, such as <see cref="FakeInputWrapper"/>.</summary>
     public TFake FakeOf<TService, TFake>() where TFake : class => (TFake)_fakes[typeof(TService)];
 
+    /// <summary>
+    /// A ref for <paramref name="node"/> under <paramref name="window"/>, given by the server's own element registry as a read
+    /// of a tool would give it (the agent could hold one from before the user denied the app). The harness reads the node
+    /// itself for it (FakeUiaTree logs it), so a test that checks the tree's reads looks at those made after.
+    /// </summary>
+    public string MintRef(nint window, FakeUiaNode node)
+    {
+        var registry = _provider.GetRequiredService<IElementRegistry>();
+        return registry.Register(window, Desktop.Tree.ReadElement(node), new ElementOrigin(registry.NextGeneration()))
+               ?? throw new InvalidOperationException($"The registry gave '{node.Name}' no ref.");
+    }
+
     /// <summary>Every fake's recorded calls that change something: a window, input, a process, the clipboard, a page, an element.</summary>
     public IReadOnlyList<string> Actions()
     {
@@ -311,6 +323,10 @@ public sealed class NativeFakedServer : IDisposable
 public sealed class DeniedDesktop
 {
     public const long DeniedWindow = 0xD30010;
+
+    /// <summary>The denied window's rectangle on the screen (GetWindowRect); the denied dialog lies inside it.</summary>
+    public static (int Left, int Top, int Right, int Bottom) DeniedWindowRect { get; } = (100, 100, 1300, 900);
+
     public const int DeniedProcessId = 4711;
     public const string DeniedProcessName = "chrome";
     public const long AllowedWindow = 0xD30020;
@@ -333,6 +349,16 @@ public sealed class DeniedDesktop
     /// <summary>The denied window's button's Invoke pattern.</summary>
     public FakeInvokePattern Button { get; } = new();
 
+    /// <summary>The denied window's "Transfer money" button, for a ref (<see cref="NativeFakedServer.MintRef"/>).</summary>
+    public FakeUiaNode ButtonNode { get; } = new("Button", "Transfer money") { ProcessId = DeniedProcessId, ActionPatterns = ["Invoke"] };
+
+    /// <summary>The denied window's table of transactions, for read_table's ref.</summary>
+    public FakeUiaNode TableNode { get; } = new("DataGrid", "Transactions") { ProcessId = DeniedProcessId };
+
+    /// <summary>The names of the denied windows' UI Automation elements, which the fake tree logs its reads by.</summary>
+    public IReadOnlySet<string> DeniedElementNames { get; } =
+        new HashSet<string>(StringComparer.Ordinal) { "Online banking - Google Chrome", "Transfer money", "Transactions", "Save As", "Save" };
+
     /// <summary>The denied dialog's Save button's Invoke pattern.</summary>
     public FakeInvokePattern DialogButton { get; } = new();
 
@@ -342,7 +368,7 @@ public sealed class DeniedDesktop
     internal void SetUp()
     {
         var windows = _server.Mock<INativeWindowWrapper>();
-        Window(windows, DeniedWindow, DeniedProcessId, DeniedProcessName, "Online banking - Google Chrome", "Chrome_WidgetWin_1", (100, 100, 1300, 900));
+        Window(windows, DeniedWindow, DeniedProcessId, DeniedProcessName, "Online banking - Google Chrome", "Chrome_WidgetWin_1", DeniedWindowRect);
         Window(windows, AllowedWindow, AllowedProcessId, "notepad", "notes.txt - Notepad", "Notepad", (1400, 100, 2200, 900));
         Window(windows, DeniedDialog, DeniedProcessId, DeniedProcessName, "Save As", "#32770", (300, 200, 1100, 700));
         windows.Setup(w => w.GetWindow((nint)DeniedDialog, 4u /* GW_OWNER */)).Returns((nint)DeniedWindow);
@@ -421,7 +447,7 @@ public sealed class DeniedDesktop
         Tree.WithWindow((nint)DeniedWindow, new FakeUiaNode("Window", "Online banking - Google Chrome")
         {
             ProcessId = DeniedProcessId, NativeWindowHandle = (nint)DeniedWindow, ClassName = "Chrome_WidgetWin_1"
-        }.With(new FakeUiaNode("Button", "Transfer money") { ProcessId = DeniedProcessId, ActionPatterns = ["Invoke"] }.WithPattern<IUiaInvokePattern>(Button)));
+        }.With(ButtonNode.WithPattern<IUiaInvokePattern>(Button), TableNode));
         Tree.WithWindow((nint)DeniedDialog, new FakeUiaNode("Window", "Save As")
         {
             ProcessId = DeniedProcessId, NativeWindowHandle = (nint)DeniedDialog, ClassName = "#32770"
