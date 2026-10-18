@@ -2067,7 +2067,9 @@ public class UIElementServiceTests
     /// (<see cref="FakeWinUi3WebView2"/>), whose process started an msedgewebview2.exe.
     /// </summary>
     /// <param name="policy">The target policy the walk checks the page's process with; none by default.</param>
-    private (UIElementService Sut, FakeWinUi3WebView2 App) WinUi3Sut(bool withDocument = true, ITargetPolicy? policy = null)
+    /// <param name="warmupChecksPolicy">Whether the warm-up is given <paramref name="policy"/> too, as the server wires it.</param>
+    private (UIElementService Sut, FakeWinUi3WebView2 App) WinUi3Sut(
+        bool withDocument = true, ITargetPolicy? policy = null, bool warmupChecksPolicy = false)
     {
         _win32[Handle] = new Win32Window("WinUIDesktopWin32WindowClass", 0, AppProcess);
         _win32[0x2010] = new Win32Window("Microsoft.UI.Content.DesktopChildSiteBridge", Handle, AppProcess);
@@ -2082,7 +2084,8 @@ public class UIElementServiceTests
             [(int)AppProcess] = (1, "WamWebCheck.exe"),
             [(int)WebViewProcess] = ((int)AppProcess, "msedgewebview2.exe")
         });
-        var warmup = new AccessibilityWarmup(_tree, windows.Object, processes.Object, wait: (_, _) => { });
+        var warmup = new AccessibilityWarmup(_tree, windows.Object, processes.Object, wait: (_, _) => { },
+            policy: warmupChecksPolicy ? policy : null);
         var registry = new ElementRegistry(_tree, _worker, windows.Object, ElementRegistry.DefaultCapacity, 1, TimeProvider.System);
         return (new UIElementService(_tree, _worker, windows.Object, warmup, registry, policy), app);
     }
@@ -2312,6 +2315,28 @@ public class UIElementServiceTests
         Shape(result.Elements).Should().Be("Bridge(XAML(Native button,WebView2))");
         result.Warnings.Should().ContainSingle(w => w.StartsWith("TargetDeniedByPolicy: ") && w.Contains("msedgewebview2"));
         result.SkippedElementCount.Should().BeGreaterThan(0);
+        var json = System.Text.Json.JsonSerializer.Serialize(result.Elements);
+        json.Should().NotContain("WAM page").And.NotContain("Page button").And.NotContain("NonClientView");
+    }
+
+    [Fact]
+    public async Task GetUIElements_OfAWinUi3WebView2OfADeniedProcess_AsTheServerWiresTheWarmUp_NeverGoesDownIntoTheWebView2()
+    {
+        // Arrange - the warm-up checks the policy too, so it does not search the window's tree for the page hosted as a
+        // visual, which would list the WebView2's window and Chromium's views below it
+        var (sut, app) = WinUi3Sut(policy: DeniesWebView2, warmupChecksPolicy: true);
+        app.ServeWebViewFrom((int)WebViewProcess);
+
+        // Act
+        var result = await sut.GetUIElementsAsync(Handle, maxDepth: 10);
+
+        // Assert - the app's own elements only, the warning, and nothing below the WebView2's window listed or read
+        result.Success.Should().BeTrue(result.Error);
+        Shape(result.Elements).Should().Be("Bridge(XAML(Native button,WebView2))");
+        result.AccessibilityWarmup.Should().BeNull();
+        result.Warnings.Should().ContainSingle(w => w.StartsWith("TargetDeniedByPolicy: ") && w.Contains("msedgewebview2"));
+        _tree.CachedFetches.Concat(_tree.ChildListings).Should().NotContain(
+            ["WAM page", "WAM page - Web content", "NonClientView", "View"]);
         var json = System.Text.Json.JsonSerializer.Serialize(result.Elements);
         json.Should().NotContain("WAM page").And.NotContain("Page button").And.NotContain("NonClientView");
     }

@@ -1275,7 +1275,7 @@ public class ElementWaitServiceTests
     public async Task TheWarmUp_RunsOnTheFirstCheckOnly_AndIsReported()
     {
         var info = new AccessibilityWarmupInfo(AccessibilityWarmupStatus.Ready, WebContentHost.Chromium, 300, 2, 5, null);
-        _warmup.Setup(w => w.WarmUp(Handle, It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>())).Returns(info);
+        _warmup.Setup(w => w.WarmUpForSearch(Handle, It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>())).Returns(info);
         var body = BuildWindow();
         At(900, () => body.With(Button("OK")));
 
@@ -1284,7 +1284,7 @@ public class ElementWaitServiceTests
         result.Satisfied.Should().BeTrue();
         result.Polls.Should().BeGreaterThan(3);
         result.AccessibilityWarmup.Should().Be(info);
-        _warmup.Verify(w => w.WarmUp(Handle, It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()), Times.Once);
+        _warmup.Verify(w => w.WarmUpForSearch(Handle, It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -1292,7 +1292,7 @@ public class ElementWaitServiceTests
     {
         // Arrange - the window does not respond at the first check, which so ends before the warm-up
         var info = new AccessibilityWarmupInfo(AccessibilityWarmupStatus.Ready, WebContentHost.Chromium, 300, 2, 5, null);
-        _warmup.Setup(w => w.WarmUp(Handle, It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>())).Returns(info);
+        _warmup.Setup(w => w.WarmUpForSearch(Handle, It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>())).Returns(info);
         BuildWindow(Button("OK"));
         _windows.Setup(w => w.IsHungAppWindow(Handle)).Returns(true);
         At(200, () => _windows.Setup(w => w.IsHungAppWindow(Handle)).Returns(false));
@@ -1304,7 +1304,7 @@ public class ElementWaitServiceTests
         result.Satisfied.Should().BeTrue();
         result.Polls.Should().BeGreaterThan(1);
         result.AccessibilityWarmup.Should().Be(info);
-        _warmup.Verify(w => w.WarmUp(Handle, It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()), Times.Once);
+        _warmup.Verify(w => w.WarmUpForSearch(Handle, It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]

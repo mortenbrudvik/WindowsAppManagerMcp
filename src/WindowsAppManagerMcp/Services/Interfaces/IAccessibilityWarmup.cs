@@ -21,8 +21,23 @@ public interface IAccessibilityWarmup
     /// <returns>What the warm-up did, or null when nothing was done: the window shows no web content, or an earlier call
     /// already warmed it up.</returns>
     /// <remarks>Never throws for a provider's failure: the warm-up is a courtesy, and the read that follows reports its
-    /// own errors.</remarks>
+    /// own errors. A page of another process that the user's target policy refuses is not warmed up: the walk and the reads
+    /// that follow leave its elements out unread, so nothing of it is asked for (see
+    /// <see cref="Services.AccessibilityWarmup"/>).</remarks>
     AccessibilityWarmupInfo? WarmUp(nint window, TimeSpan budget, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// <see cref="WarmUp"/> before a search of the window (find_ui_elements, and the tools that search by criteria): it also
+    /// warms up a page of another process that the target policy refuses. The search's provider evaluates its criteria on
+    /// that page's elements anyway, and leaves the matches out after, counted (a part skipped); a page left unbuilt would
+    /// hide them, so a search would come out complete, and one match taken for the only one, when the page holds another.
+    /// It gives the walk nothing: <see cref="FindPages"/> after it looks for the pages itself.
+    /// </summary>
+    /// <param name="window">The window about to be searched.</param>
+    /// <param name="budget">The longest wait, as for <see cref="WarmUp"/>.</param>
+    /// <param name="cancellationToken">The search's deadline or the caller's cancellation.</param>
+    /// <returns>What the warm-up did, or null when nothing was done.</returns>
+    AccessibilityWarmupInfo? WarmUpForSearch(nint window, TimeSpan budget, CancellationToken cancellationToken);
 
     /// <summary>
     /// The pages of the visible render widgets inside <paramref name="window"/>, which a walk of the window lists under the
@@ -32,7 +47,8 @@ public interface IAccessibilityWarmup
     /// render widgets the warm-up found, so a window without web content costs no further call. A window without render
     /// widgets whose WebView2 page is hosted as a visual (roadmap M3.F43) gives that page, to be listed in place of the
     /// children of the root of Chromium's views (<see cref="RenderWidgetPage.ViewsRoot"/>): the one its warm-up found, or,
-    /// for a window warmed up before, the one a bounded search finds again.
+    /// for a window warmed up before, the one a bounded search finds again. Never a page of another process that the target
+    /// policy refuses, and no page hosted as a visual in a window whose render widget the policy refuses.
     /// </summary>
     /// <param name="window">The window about to be walked.</param>
     /// <param name="cancellationToken">The read's deadline: ends the search with the pages found so far.</param>
