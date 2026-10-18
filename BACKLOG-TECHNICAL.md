@@ -419,6 +419,7 @@ This document contains granular, actionable testing tasks following TDD principl
 | T7: Integration | ✅ Complete | 37 | - |
 | T8: CI/CD | ✅ Complete | - | - |
 | T9: Screenshot | ✅ Complete | 63 | 90%+ |
+| T10: 3.0.0 review | 🔶 Partial | - | - |
 
 *\* MonitorService coverage limited because tests use a helper method to test the algorithm logic without P/Invoke.*
 
@@ -523,12 +524,13 @@ Optional enhancements in BACKLOG.md:
 | T10.2 | Contract: every tool that names a window, element or process refuses a denied one | P0 | [x] | `DeniedTargetContractTests` over `NativeFakedServer` (F2, T1, T2): no action, UI Automation read or capture of the denied window; Exempt, Launches and CheckedElsewhere lists with reasons; the tools docs/TOOLS.md lists under the policy must be on a list |
 | T10.3 | Contract: a question the user does not answer is never a yes | P1 | [x] | `UserConfirmationFailClosedContractTests` (F3): every tool that asks, with a deadline that passes and a client that fails to ask |
 | T10.4 | Release the input gate when a test fails | P1 | [x] | `InputGateTests` and `InputGateToolFilterTests` hold every lease with `using` (F4) |
-| T10.5 | Wall-clock bounds that a loaded machine cannot break | P2 | [~] | F5: margins of a second or more (`PopupServiceTests`, `CdpServiceTests`, `ForegroundThreadTests`, `CdpTabServiceTests`, `CdpPageServiceTests`), and `CommandLineRedactorTests` pins linear time by structure (NonBacktracking with a timeout). Left: the fixed-delay "nothing happened" checks (`InProcessMcpServer.AssertNoResponseSentAsync`, `RunStepsContractTests`, `WindowEventSourceTests`, `ElementEventSourceTests`, `InstalledAppsServiceTests`) have no signal to wait for, so under load they can pass without testing anything (BACKLOG.md RF.F17) |
+| T10.5 | Wall-clock bounds that a loaded machine cannot break | P2 | [x] | F5, in part: margins of a second or more (`PopupServiceTests`, `CdpServiceTests`, `ForegroundThreadTests`, `CdpTabServiceTests`, `CdpPageServiceTests`), and `CommandLineRedactorTests` pins linear time by structure (NonBacktracking with a timeout). The rest is T10.11 |
 | T10.6 | Scan the test code for real native wrappers, and the server for managed desktop APIs | P1 | [x] | `TestCodeNativeWrapperTests` (F6, T5: constructions, read-only members, the hotkey wrapper's name traced to `Local\WamTests.`, each method that builds the production container reviewed) and `ManagedDesktopApiTests` (F6, T6). `DependencyInjectionTests` and `InputGuardRegistrationTests` run in the RealUiAutomation collection |
-| T10.7 | Close the test-code scan's blind spots | P3 | [ ] | A real wrapper registered by type through DI, and a hotkey wrapper built without parameters, kept in a field and used in another method, are not seen; neither is in the test code today (BACKLOG.md RF.F18) |
+| T10.7 | Close the test-code scan's blind spots | P3 | [ ] | A real wrapper registered by type through DI, and a hotkey wrapper built without parameters, kept in a field and used in another method, are not seen; neither is in the test code today |
 | T10.8 | DI tests that do not depend on the developer's environment | P2 | [x] | F7: the takeover assertion follows `WAM_TAKEOVER_DETECTION`; one theory resolves every tool class's constructor parameters from the server's container |
 | T10.9 | Every declared P/Invoke has a caller | P2 | [x] | `NativeCallGuardTests.EveryDeclaredNativeApi_HasACallerInTheServer` (T7), with an empty allow-list; the uncalled User32 declarations are removed |
 | T10.10 | Contracts for the arguments inside a tool's arguments | P1 | [x] | `NestedArgumentContractTests`, `RunStepsArgumentContractTests`, `AuditArgumentContractTests` and `AuditLogFilterWarningContractTests` (unit `fix-run-steps-args`, BACKLOG.md RF.1) |
+| T10.11 | Fixed-delay "nothing happened" checks that wait for a signal | P3 | [ ] | The rest of F5: `InProcessMcpServer.AssertNoResponseSentAsync`, `RunStepsContractTests`, `WindowEventSourceTests`, `ElementEventSourceTests` and `InstalledAppsServiceTests` wait a fixed time for something not to happen and have no signal to wait for, so under load they can pass without testing anything. Best effort until then ([TESTING.md](TESTING.md)) |
 
 **Bisecting:** commits 14e7aa9 and a31bf00 each leave `TestCode_ThatBuildsTheProductionContainer_CallsItsServicesOnlyThroughReads` failing until f2532ed.
 
