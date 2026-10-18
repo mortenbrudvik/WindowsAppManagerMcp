@@ -773,13 +773,15 @@ public class ScreenshotService : IScreenshotService
 
     /// <summary>
     /// The window through Windows.Graphics.Capture (roadmap M7.1), or null with <paramref name="why"/> when there is no
-    /// such capture here or it failed.
+    /// such capture here, it cannot be asked right now (an earlier call is stuck, or the support check did not answer: try
+    /// again later), or it failed.
     /// </summary>
     private CaptureResult? GraphicsCapture(nint windowHandle, bool includeFrame, out string why)
     {
-        if (_graphicsCapture is not { IsSupported: true } graphics)
+        var availability = _graphicsCapture?.Availability ?? GraphicsCaptureAvailability.Unsupported;
+        if (_graphicsCapture is not { } graphics || availability != GraphicsCaptureAvailability.Available)
         {
-            why = "Windows.Graphics.Capture is not available on this computer (it needs Windows 10 1903 or later and Direct3D 11).";
+            why = GraphicsCaptureAvailabilityText.Why(availability);
             return null;
         }
 

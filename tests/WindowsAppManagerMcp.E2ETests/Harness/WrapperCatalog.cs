@@ -231,7 +231,7 @@ public static class WrapperCatalog
             // Direct3D device of the server's own; it changes no window and sends no input
             [typeof(IGraphicsCaptureWrapper)] = new Dictionary<string, WrapperMember>
             {
-                ["get_" + nameof(IGraphicsCaptureWrapper.IsSupported)] = WrapperMember.Read,
+                ["get_" + nameof(IGraphicsCaptureWrapper.Availability)] = WrapperMember.Read,
                 [nameof(IGraphicsCaptureWrapper.CaptureWindow)] = WrapperMember.Read
             },
             // Windows OCR (roadmap M6.3): recognizes text in pixels the server already holds, through the WinRT projection of

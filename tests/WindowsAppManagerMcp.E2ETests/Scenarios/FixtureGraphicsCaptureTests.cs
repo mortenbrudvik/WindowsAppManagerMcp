@@ -23,7 +23,7 @@ public class FixtureGraphicsCaptureTests
         using var e2e = E2ESession.Start(DesktopTier.NoInput, _output);
         var main = e2e.Fixture.MainWindowHandle;
         var graphics = e2e.Server.Get<IGraphicsCaptureWrapper>();
-        graphics.IsSupported.Should().BeTrue("Windows.Graphics.Capture should be available on a Windows 10 1903+ desktop");
+        graphics.Availability.Should().Be(GraphicsCaptureAvailability.Available, "Windows.Graphics.Capture should be available on a Windows 10 1903+ desktop");
         var screenshots = e2e.Server.Get<IScreenshotService>();
 
         // Act
