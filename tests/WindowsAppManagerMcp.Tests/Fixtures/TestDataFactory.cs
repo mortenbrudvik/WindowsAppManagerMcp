@@ -169,6 +169,20 @@ public static class TestDataFactory
         return mock;
     }
 
+    /// <summary>
+    /// Gives a mock monitor service's GetMonitorForWindow, with which save_layout's capture looks up each window's monitor
+    /// (final review), the monitor that GetMonitorIndex names, as the real service does: the first monitor, unless a test
+    /// sets GetMonitorIndex up for a window. <see cref="CreateMockMonitorService"/> leaves it null, as the capture tools'
+    /// tests expect.
+    /// </summary>
+    public static Mock<IMonitorService> WithWindowMonitors(this Mock<IMonitorService> mock)
+    {
+        mock.Setup(m => m.GetMonitorForWindow(It.IsAny<nint>()))
+            .Returns((nint handle) => mock.Object.GetAllMonitors().ElementAtOrDefault(mock.Object.GetMonitorIndex(handle)));
+
+        return mock;
+    }
+
     public static Mock<IProcessService> CreateMockProcessService()
     {
         var mock = new Mock<IProcessService>();

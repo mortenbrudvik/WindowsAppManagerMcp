@@ -19,7 +19,7 @@ public class LayoutServiceStorageTests : IDisposable
     private readonly string _layoutsPath;
     private readonly string _legacyPath;
     private readonly Mock<IWindowService> _mockWindowService = TestDataFactory.CreateMockWindowService();
-    private readonly Mock<IMonitorService> _mockMonitorService = TestDataFactory.CreateMockMonitorService();
+    private readonly Mock<IMonitorService> _mockMonitorService = TestDataFactory.CreateMockMonitorService().WithWindowMonitors();
     private readonly Mock<IProcessService> _mockProcessService = TestDataFactory.CreateMockProcessService();
 
     public LayoutServiceStorageTests()

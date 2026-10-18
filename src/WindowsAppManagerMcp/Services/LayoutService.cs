@@ -367,7 +367,13 @@ public class LayoutService : ILayoutService
             return new LayoutSaveResult(false, null, ErrorMessage: descriptionError, ErrorCode: Infrastructure.ToolErrorReporting.InvalidArgumentsErrorCode);
 
         var windows = _windowService.GetAllWindows(includeMinimized);
-        var monitors = _monitorService.GetAllMonitors();
+        if (_monitorService.GetAllMonitors().Count == 0)
+        {
+            // Every pass of the monitor enumeration failed or missed a monitor (a dock or undock under way), so there is no work
+            // area to record a window's position in
+            return MonitorsUnreadable(name, "No monitor could be read");
+        }
+
         var placements = new List<WindowPlacement>();
         var ordinals = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         var exePaths = new Dictionary<int, string?>();
@@ -388,8 +394,20 @@ public class LayoutService : ILayoutService
                     continue;
             }
 
+            // The window's monitor, looked up again: a listing gives monitor index 0 also to a window whose monitor could not
+            // be read while it was listed (the displays changing), and on monitor 0 the window would be recorded on another
+            // monitor than its own, at a position measured against that monitor's work area. Its index, identity and work
+            // area are then all of the one monitor read now
+            if (_monitorService.GetMonitorForWindow(window.Handle) is not { } monitor)
+            {
+                // A window that has closed since it was listed is not part of the layout
+                if (_windowService.GetWindowInfo(window.Handle) == null)
+                    continue;
+
+                return MonitorsUnreadable(name, $"The monitor of a window of {window.ProcessName} could not be read");
+            }
+
             // Calculate relative position within monitor work area
-            var monitor = monitors.ElementAtOrDefault(window.MonitorIndex) ?? monitors[0];
             var workArea = monitor.WorkArea;
 
             // A maximized or minimized window also records where it returns to (roadmap M6.8). A normal window's restore
@@ -428,7 +446,7 @@ public class LayoutService : ILayoutService
                     ExePath = exePath,
                     Ordinal = ordinal
                 },
-                MonitorIndex: window.MonitorIndex,
+                MonitorIndex: monitor.Index,
                 Position: position,
                 LaunchCommand: null,
                 Focus: false,
@@ -468,6 +486,15 @@ public class LayoutService : ILayoutService
 
         return await SavePresetAsync(preset, cancellationToken);
     }
+
+    /// <summary>
+    /// save_layout's failure when the monitors cannot be read: nothing is saved, so an existing preset of that name is kept.
+    /// </summary>
+    private static LayoutSaveResult MonitorsUnreadable(string name, string what) => new(false, null,
+        ErrorMessage: $"{what} (Windows did not list the displays, as happens while they are changing), so nothing was saved " +
+                      $"and any preset named '{name}' was kept. Try again in a moment; get_monitors lists the monitors once they " +
+                      "can be read.",
+        ErrorCode: nameof(WindowErrorCode.MonitorNotFound));
 
     /// <summary>
     /// A rectangle as fractions of a work area, clamped as save_layout has always clamped it (x and y 0 to 1, sizes 0.1 to 1),
