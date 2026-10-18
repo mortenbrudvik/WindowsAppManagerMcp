@@ -391,7 +391,7 @@ public class InputControlTools
     /// <summary>What the presses of the hotkey do to the server's own pause.</summary>
     private static string SelfPauseHotkeyPresses() =>
         "the first press keeps the pause, as the user's own (and pauses every Windows App Manager server on this desktop), and a " +
-        $"second press more than {InputSession.HotkeyResumeDelay.TotalSeconds.ToString("0.#", CultureInfo.InvariantCulture)} seconds " +
+        $"second press {InputSession.HotkeyResumeDelay.TotalSeconds.ToString("0.#", CultureInfo.InvariantCulture)} seconds or more " +
         "later resumes";
 
     /// <summary>

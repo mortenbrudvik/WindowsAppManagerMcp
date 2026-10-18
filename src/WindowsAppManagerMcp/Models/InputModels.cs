@@ -455,9 +455,11 @@ public enum InputErrorCode
     /// Input is paused: the user pressed the pause hotkey, or the server paused itself because it could not read the pause
     /// it shares with the other servers on the desktop (shared_pause_unreadable; the error says which). Nothing (more) was
     /// sent: a call that was running stopped (CharactersTyped says how much it typed). Only the user resumes input: the
-    /// hotkey again, or resume_input confirmed by the user. After the server paused itself, or while it cannot read the
-    /// shared pause, the hotkey resumes it only in the server that registered the chord (after the server paused itself, at
-    /// the second press): the error names resume_input, and get_control_status says what the hotkey does.
+    /// hotkey again, or resume_input confirmed by the user. After the server paused itself, the first press of the hotkey
+    /// keeps the pause, as the user's own, and only a second one resumes; the presses of another server's chord reach this
+    /// server only once it can read the shared pause again. While it cannot read the shared pause, whoever paused, only the
+    /// hotkey of the server that registered the chord reaches it. In both cases the error names resume_input, and
+    /// get_control_status says what the hotkey does.
     /// </summary>
     PausedByUser = 34,
 
@@ -485,7 +487,11 @@ public enum InputErrorCode
     /// </summary>
     ResumeNeedsUser = 38,
 
-    /// <summary>resume_input: the user declined or dismissed the question, or did not answer in time. Input stays paused.</summary>
+    /// <summary>
+    /// resume_input: the user declined or dismissed the question, or did not answer in time; or input was paused again
+    /// meanwhile (the answer was for the earlier pause); or another question is open (another resume_input is waiting for its
+    /// answer). Input stays paused.
+    /// </summary>
     ResumeDeclined = 39,
 
     /// <summary>

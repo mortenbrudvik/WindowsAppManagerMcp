@@ -282,7 +282,7 @@ public sealed class InputControlToolContractTests : IDisposable
 
         result.GetProperty("errorCode").GetString().Should().Be(nameof(InputErrorCode.ResumeNeedsUser));
         result.GetProperty("error").GetString().Should().Contain("the first press keeps the pause")
-            .And.Contain("a second press more than 2 seconds later resumes");
+            .And.Contain("a second press 2 seconds or more later resumes");
     }
 
     [Theory]
@@ -612,7 +612,7 @@ public sealed class InputControlToolContractTests : IDisposable
         result.GetProperty("errorCode").GetString().Should().Be(nameof(InputErrorCode.ResumeNeedsUser));
         result.GetProperty("error").GetString().Should().NotContain("paused by the user").And.Contain("this server paused itself")
             .And.NotContain("Ctrl+Alt+Shift+Pause again").And.Contain("the first press keeps the pause")
-            .And.Contain("a second press more than 2 seconds later resumes");
+            .And.Contain("a second press 2 seconds or more later resumes");
         session.IsPaused.Should().BeTrue();
     }
 
@@ -644,7 +644,7 @@ public sealed class InputControlToolContractTests : IDisposable
 
         result.GetProperty("errorCode").GetString().Should().Be(nameof(InputErrorCode.ResumeNeedsUser));
         result.GetProperty("error").GetString().Should().Contain("could not be asked")
-            .And.NotContain("Ctrl+Alt+Shift+Pause again").And.Contain("a second press more than 2 seconds later resumes");
+            .And.NotContain("Ctrl+Alt+Shift+Pause again").And.Contain("a second press 2 seconds or more later resumes");
         session.IsPaused.Should().BeTrue();
     }
 
@@ -681,7 +681,7 @@ public sealed class InputControlToolContractTests : IDisposable
         var status = Payload(await server.CallToolAsync("get_control_status"));
 
         status.GetProperty("message").GetString().Should().Contain("by this server").And.NotContain("Ctrl+Alt+Shift+Pause again")
-            .And.Contain("does not resume it at once").And.Contain("a second press more than 2 seconds later resumes")
+            .And.Contain("does not resume it at once").And.Contain("a second press 2 seconds or more later resumes")
             .And.NotContain("cannot read");
         flag.SetByAnotherServer();
         session.IsPaused.Should().BeTrue();
