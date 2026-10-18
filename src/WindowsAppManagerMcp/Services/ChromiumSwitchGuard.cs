@@ -13,10 +13,13 @@ namespace WindowsAppManagerMcp.Services;
 /// <remarks>
 /// An argument is read the way Chromium reads a switch on Windows: white space trimmed, a "--", "-" or "/" prefix, the name
 /// in any letter case up to the first "=", the value after it. Node.js, inside Electron, also takes "_" for "-". A switch
-/// inside another switch's value, and the arguments of one argument that holds several (split with the Windows rules), are
-/// read too, a few levels deep: a launcher (Squirrel's Update.exe --process-start-args, chrome_proxy.exe) hands them on to
-/// the browser. Every program's arguments are checked, not only those of a program <see cref="ChromiumPrograms"/>
-/// recognizes: such a launcher or helper is not one, and the switches mean nothing to any other program. Refused:
+/// inside another switch's value, and the arguments of one argument that holds several or holds quotes (split and unquoted
+/// with the Windows rules), are read too, up to <see cref="MaxDepth"/> levels deep: a launcher (Squirrel's Update.exe
+/// --process-start-args, chrome_proxy.exe) hands them on to the browser as raw command line, whose quotes the program's
+/// parser takes off, so "--inspect" in quotes is --inspect to it. What holds more than those levels can read is refused,
+/// not let through unread. Every program's arguments are checked, not only those of a program
+/// <see cref="ChromiumPrograms"/> recognizes: such a launcher or helper is not one, and the switches mean nothing to any
+/// other program. Refused:
 /// <list type="bullet">
 /// <item>every *-cmd-prefix and *-launcher switch (utility, renderer, GPU, plugin) and --browser-subprocess-path, with which
 /// Chromium starts its child processes through a command line or program of the caller's choosing;</item>
@@ -25,19 +28,27 @@ namespace WindowsAppManagerMcp.Services;
 /// --remote-debugging-port, which it builds next to a separate profile it checked;</item>
 /// <item>--load-extension and --disable-extensions-except, which load an unpacked extension: code that runs in the browser
 /// with access to its pages;</item>
-/// <item>Electron's (Node.js's) --inspect and every --inspect-* (VS Code's --inspect-extensions too), which open a debugger
-/// port that runs any code sent to it, and --js-flags;</item>
+/// <item>VS Code's --extensionDevelopmentPath, --extensionTestsPath, --extensionEnvironment, --extensions-dir,
+/// --builtin-extensions-dir, --install-extension and --install-builtin-extension, which load, run or install an extension
+/// or a test script of the caller's choosing, with Node.js;</item>
+/// <item>Electron's (Node.js's) --inspect and every --inspect-* (VS Code's --inspect-extensions too, and its older
+/// --debugPluginHost and --debugBrkPluginHost), which open a debugger port that runs any code sent to it, and
+/// --js-flags;</item>
 /// <item>a --user-data-dir (also as "--user-data-dir &lt;folder&gt;", which Electron apps read) inside a folder named 'User
 /// Data' or its 8.3 short name, where Chrome, Edge and Brave keep the user's real profiles, as launch_browser_with_debug
-/// refuses it; a relative folder is taken in the launch's working directory, and an 8.3 short name is expanded from the
-/// file system.</item>
+/// refuses it; a relative folder is taken in the launch's working directory, and an 8.3 short name on a drive letter is
+/// expanded from the file system. One on a UNC or other device path is refused instead: expanding it would connect to
+/// another computer.</item>
 /// </list>
-/// A list of switch names, not a sandbox: a switch an app adds of its own (VS Code's --install-extension, for example) is
-/// not on it.
+/// A list of switch names, not a sandbox: a switch that only weakens the program (--no-sandbox,
+/// --disable-web-security), another app's switch of its own, and electron.exe given a script are not on it.
 /// </remarks>
 public sealed class ChromiumSwitchGuard
 {
-    /// <summary>How deep a switch inside a switch's value, or an argument inside an argument, is read.</summary>
+    /// <summary>
+    /// How deep a switch inside a switch's value, or an argument inside an argument, is read; text that holds more at this
+    /// depth is refused.
+    /// </summary>
     private const int MaxDepth = 4;
 
     private const int MaxArgumentLengthInMessages = 80;
@@ -98,48 +109,67 @@ public sealed class ChromiumSwitchGuard
     }
 
     /// <summary>
-    /// The refused switch in <paramref name="text"/> (its name and why), or null: the text as a switch, the value of that
-    /// switch, and each argument of a text that holds several.
+    /// The refused switch in <paramref name="text"/> (its name, why, and what to do instead), or null: the text as a
+    /// switch, the value of that switch, and each argument of a text that holds several. The name is null when the text
+    /// holds more than <see cref="MaxDepth"/> levels can read.
     /// </summary>
-    private (string Name, string Why, string? Advice)? Refusal(
+    private (string? Name, string Why, string Advice)? Refusal(
         string text, string? next, string? workingDirectory, bool debugBrowserLaunch, int depth)
     {
         var trimmed = text.Trim();
-        if (SwitchOf(trimmed) is { } found)
+        var found = SwitchOf(trimmed);
+        if (found is { } @switch)
         {
-            // A name with other characters is no switch Chromium knows ("--foo --gpu-launcher" up to '='); the split below
-            // reads the switch inside it
-            if (IsSwitchName(found.Name) && Why(found.Name, debugBrowserLaunch) is { } why)
+            // A name with other characters is no switch Chromium knows ("--foo --gpu-launcher" up to '=', --"inspect"); the
+            // split below reads the switch inside it
+            if (IsSwitchName(@switch.Name) && Why(@switch.Name, debugBrowserLaunch) is { } why)
             {
-                return (found.Name, why.Why, why.Advice);
+                return (@switch.Name, why.Why, why.Advice);
             }
 
             // Chromium takes the value after '='; an Electron app such as VS Code also takes the next argument
-            if (found.Name == UserDataDirSwitch && (found.Value ?? next) is { } folder && IsInUserDataFolder(folder, workingDirectory))
+            if (@switch.Name == UserDataDirSwitch && (@switch.Value ?? next) is { } folder &&
+                ProfileFolderRefusal(folder, workingDirectory) is { } inFolder)
             {
-                return (found.Name,
-                    "it names a folder inside a 'User Data' folder, where Chrome, Edge and Brave keep the user's real profiles, " +
-                    "with the user's signed-in sessions",
-                    "Leave --user-data-dir out, or pass a separate folder.");
-            }
-
-            if (found.Value is { Length: > 0 } value && depth < MaxDepth &&
-                Refusal(value, null, workingDirectory, debugBrowserLaunch, depth + 1) is { } inValue)
-            {
-                return inValue;
+                return (@switch.Name, inFolder.Why, inFolder.Advice);
             }
         }
 
-        if (depth < MaxDepth && trimmed.Any(char.IsWhiteSpace))
+        // A quote counts as much as white space: a launcher (Squirrel's Update.exe --process-start-args) hands the text on
+        // as raw command line, whose quotes the program's parser takes off, so "--inspect" is --inspect to it
+        var value = found?.Value is { Length: > 0 } v ? v : null;
+        var holdsSeveral = trimmed.Any(c => char.IsWhiteSpace(c) || c == '"');
+        if (value == null && !holdsSeveral)
         {
-            // A whole command line in one argument, as a launcher hands it on; "x" stands for the program's name, which the
-            // split skips
+            return null;
+        }
+
+        if (depth >= MaxDepth)
+        {
+            // Fail closed: what is left unread could hold a switch of the list
+            return (null,
+                "which holds switches inside switch values or arguments nested deeper than the server reads them " +
+                $"({MaxDepth} levels), so it cannot be checked for a Chromium or Electron switch that runs a command, loads " +
+                "code or opens the program to remote control",
+                "Pass the arguments without nesting them that deep.");
+        }
+
+        if (value != null && Refusal(value, null, workingDirectory, debugBrowserLaunch, depth + 1) is { } inValue)
+        {
+            return inValue;
+        }
+
+        if (holdsSeveral)
+        {
+            // A whole command line in one argument, or a quoted switch, as a launcher hands it on; "x" stands for the
+            // program's name, which the split skips. The last part's next argument is the one after the text, as a
+            // launcher that joins its arguments would pass it.
             var parts = ChromiumCommandLine.Split("x " + trimmed).Skip(1).ToList();
             if (parts.Count > 1 || (parts.Count == 1 && parts[0] != trimmed))
             {
                 for (var i = 0; i < parts.Count; i++)
                 {
-                    if (Refusal(parts[i], i + 1 < parts.Count ? parts[i + 1] : null, workingDirectory, debugBrowserLaunch, depth + 1) is { } inPart)
+                    if (Refusal(parts[i], i + 1 < parts.Count ? parts[i + 1] : next, workingDirectory, debugBrowserLaunch, depth + 1) is { } inPart)
                     {
                         return inPart;
                     }
@@ -173,7 +203,7 @@ public sealed class ChromiumSwitchGuard
         name.Length > 0 && name.All(c => char.IsAsciiLetterLower(c) || char.IsAsciiDigit(c) || c == '-');
 
     /// <summary>Why a switch is refused whatever its value, with what to do instead; null when its name is not refused.</summary>
-    private static (string Why, string? Advice)? Why(string name, bool debugBrowserLaunch)
+    private static (string Why, string Advice)? Why(string name, bool debugBrowserLaunch)
     {
         if (name.EndsWith("-cmd-prefix", StringComparison.Ordinal) || name.EndsWith("-launcher", StringComparison.Ordinal) ||
             name == "browser-subprocess-path")
@@ -193,51 +223,97 @@ public sealed class ChromiumSwitchGuard
 
         if (name is "load-extension" or "disable-extensions-except")
         {
-            return ("it loads an unpacked extension: code that runs in the browser with access to its pages", null);
+            return ("it loads an unpacked extension: code that runs in the browser with access to its pages",
+                    "Ask the user to load the extension.");
         }
 
-        if (name == "inspect" || name.StartsWith("inspect-", StringComparison.Ordinal) || name == "js-flags")
+        // VS Code (an Electron app) reads these names in camel case; SwitchOf has lower-cased them
+        if (name is "extensiondevelopmentpath" or "extensiontestspath" or "extensionenvironment" or "extensions-dir" or
+            "builtin-extensions-dir" or "install-extension" or "install-builtin-extension")
+        {
+            return ("it makes VS Code load, run or install an extension or a test script of the caller's choosing, or set the " +
+                    "environment its extensions run in: code that runs with Node.js and the user's rights",
+                    "Ask the user to install or run the extension.");
+        }
+
+        if (name == "inspect" || name.StartsWith("inspect-", StringComparison.Ordinal) ||
+            name is "debugpluginhost" or "debugbrkpluginhost" or "js-flags")
         {
             return ("it opens an Electron app's Node.js inspector, a debugger port that runs any code sent to it, or passes flags " +
-                    "to its JavaScript engine", null);
+                    "to its JavaScript engine", "Ask the user to start the program with it.");
         }
 
         return null;
     }
 
     /// <summary>
-    /// Whether <paramref name="value"/> names a folder inside a 'User Data' folder: as written, as a full path (a relative
-    /// one taken in <paramref name="workingDirectory"/>), and with its 8.3 short names expanded.
+    /// Why a --user-data-dir of <paramref name="value"/> is refused, or null when it is not: a folder inside a 'User Data'
+    /// folder as written, as a full path (a relative one taken in <paramref name="workingDirectory"/>), or with its 8.3
+    /// short names expanded; or an 8.3 short name that cannot be expanded without asking another computer.
     /// </summary>
-    private bool IsInUserDataFolder(string value, string? workingDirectory)
+    private (string Why, string Advice)? ProfileFolderRefusal(string value, string? workingDirectory)
     {
         var path = value.Trim().Trim('"').Trim();
         if (path.Length == 0)
         {
-            return false;
+            return null;
         }
 
         var forms = new List<string> { path };
+        string? full = null;
         try
         {
-            var full = Path.IsPathFullyQualified(path) ? Path.GetFullPath(path)
+            full = Path.IsPathFullyQualified(path) ? Path.GetFullPath(path)
                 : !string.IsNullOrEmpty(workingDirectory) && Path.IsPathFullyQualified(workingDirectory) ? Path.GetFullPath(path, workingDirectory)
                 : null;
-            if (full != null)
-            {
-                forms.Add(full);
-                if (full.Contains('~') && LongFormOf(full) is { } longForm)
-                {
-                    forms.Add(longForm);
-                }
-            }
         }
         catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
         {
             // Not a path Windows takes; only its text is checked
         }
 
-        return forms.Any(HasUserDataSegment);
+        if (full != null)
+        {
+            forms.Add(full);
+        }
+
+        if (!forms.Any(HasUserDataSegment) && full != null && full.Contains('~'))
+        {
+            // Expanding a short name on a UNC or other device path would make the server connect, during planning, to a
+            // computer the agent named (with the user's credentials, and for as long as SMB waits), and \\localhost\C$
+            // reaches the real profile's folder: so such a name is refused, not expanded and not let through unread
+            if (!IsOnADriveLetter(full))
+            {
+                return ("it names a folder by an 8.3 short name ('~') on a network or device path, which the server does not " +
+                        "expand, so it cannot tell whether the folder is a browser's real 'User Data' profile",
+                        "Pass the folder's long name, or a separate folder on a local drive.");
+            }
+
+            if (LongFormOf(full) is { } longForm)
+            {
+                forms.Add(longForm);
+            }
+        }
+
+        return forms.Any(HasUserDataSegment)
+            ? ("it names a folder inside a 'User Data' folder, where Chrome, Edge and Brave keep the user's real profiles, " +
+               "with the user's signed-in sessions",
+               "Leave --user-data-dir out, or pass a separate folder.")
+            : null;
+    }
+
+    /// <summary>
+    /// Whether the fully qualified <paramref name="fullPath"/> is on a drive letter (C:\, \\?\C:\, \\.\C:\), whose 8.3
+    /// short names are read from this computer's file system; a UNC path (\\server\share, \\?\UNC\...) and any other
+    /// device path (\\?\GLOBALROOT\..., \\?\Volume{...}\...) is not. A mapped network drive's letter counts as a drive:
+    /// the user chose its server.
+    /// </summary>
+    private static bool IsOnADriveLetter(string fullPath)
+    {
+        var path = fullPath.StartsWith(@"\\?\", StringComparison.Ordinal) || fullPath.StartsWith(@"\\.\", StringComparison.Ordinal)
+            ? fullPath[4..]
+            : fullPath;
+        return path.Length >= 3 && char.IsAsciiLetter(path[0]) && path[1] == ':' && path[2] is '\\' or '/';
     }
 
     /// <summary>
@@ -310,13 +386,15 @@ public sealed class ChromiumSwitchGuard
         return false;
     }
 
-    private static string Message(string executable, string argument, (string Name, string Why, string? Advice) refused)
+    private static string Message(string executable, string argument, (string? Name, string Why, string Advice) refused)
     {
         var shown = argument.Length > MaxArgumentLengthInMessages ? argument[..MaxArgumentLengthInMessages] + "..." : argument;
-        return $"'{executable}' would get the argument '{shown}', which Chromium (a browser such as Chrome or Edge, an Electron app " +
-               $"such as VS Code, or a CEF app, also through a launcher that hands its arguments on) reads as the switch " +
-               $"--{refused.Name}: {refused.Why}. The launch tools do not pass it to any program: the server does not run commands " +
-               "for the agent or open a program to remote control. Nothing was launched." +
-               (refused.Advice is { } advice ? $" {advice}" : string.Empty);
+        var what = refused.Name is { } name
+            ? "which Chromium (a browser such as Chrome or Edge, an Electron app such as VS Code, or a CEF app, also through a " +
+              $"launcher that hands its arguments on) reads as the switch --{name}: {refused.Why}"
+            : refused.Why;
+        return $"'{executable}' would get the argument '{shown}', {what}. The launch tools do not pass it to any program: the " +
+               "server does not run commands for the agent or open a program to remote control. Nothing was launched. " +
+               refused.Advice;
     }
 }

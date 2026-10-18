@@ -58,6 +58,27 @@ public class ChromiumSwitchGuardTests
     [InlineData("--process-start-args=--gpu-launcher=calc.exe")]
     [InlineData(@"--process-start-args=""--foo --utility-cmd-prefix=calc""")]
     [InlineData("--foo --renderer-cmd-prefix=calc")]
+    // A quoted switch without white space: a launcher hands it on as raw text, which the program unquotes (Squirrel's
+    // Update.exe --process-start-args)
+    [InlineData(@"""--gpu-launcher=C:\x\e.exe""")]
+    [InlineData(@"""--inspect=9229""")]
+    [InlineData(@"--""inspect""")]
+    [InlineData(@"--process-start-args=""--inspect""")]
+    [InlineData(@"--process-start-args=""--remote-debugging-port=9222""")]
+    // VS Code's switches that load and run an extension or a test script, or install one, and its old inspector switches
+    [InlineData(@"--extensionDevelopmentPath=C:\Temp\ext")]
+    [InlineData(@"--extensionTestsPath=C:\Temp\tests.js")]
+    [InlineData("--extensionEnvironment={}")]
+    [InlineData(@"--extensions-dir=C:\Temp\extensions")]
+    [InlineData(@"--builtin-extensions-dir=C:\Temp\extensions")]
+    [InlineData(@"--install-extension=C:\Temp\ext.vsix")]
+    [InlineData("--install-extension")]
+    [InlineData("--install-builtin-extension")]
+    [InlineData("--debugPluginHost=9333")]
+    [InlineData("--debugBrkPluginHost=9333")]
+    // Nested deeper than the guard reads: refused, not let through unread
+    [InlineData("--a=--b=--c=--d=--e=--gpu-launcher=calc.exe")]
+    [InlineData(@"--a=--b=--c=--d=""--e --gpu-launcher=calc.exe""")]
     public void ASwitchThatRunsACommand_LoadsCode_OrOpensTheProgramToRemoteControl_IsRefused(string argument)
     {
         // Act
@@ -85,6 +106,11 @@ public class ChromiumSwitchGuardTests
     [InlineData("--inspector-notes")]
     [InlineData(@"/select,C:\Users\me\Documents")]
     [InlineData("")]
+    [InlineData(@"""C:\Program Files\notes.txt""")]
+    [InlineData(@"""https://example.com/?a=b""")]
+    [InlineData(@"--process-start-args=""--foo \""C:\My Files\x.txt\""""")]
+    [InlineData("--a=--b=--c=--d=e")]
+    [InlineData("--extensions-download-dir-notes")]
     public void AnyOtherArgument_IsAllowed(string argument)
     {
         CreateSut().Check(Edge, [argument], workingDirectory: null).Should().BeNull();
@@ -104,6 +130,10 @@ public class ChromiumSwitchGuardTests
         CreateSut().Check(Edge, ["--user-data-dir", ChromeUserData], null)!.ErrorCode
             .Should().Be(nameof(LaunchErrorCode.UnsafeChromiumSwitch));
         CreateSut().Check(Edge, ["--user-data-dir", @"C:\Temp\profile"], null).Should().BeNull();
+
+        // Also when the switch is quoted, as a launcher hands it on
+        CreateSut().Check(Edge, ["\"--user-data-dir\"", ChromeUserData], null)!.ErrorCode
+            .Should().Be(nameof(LaunchErrorCode.UnsafeChromiumSwitch));
     }
 
     [Fact]
@@ -124,6 +154,54 @@ public class ChromiumSwitchGuardTests
         CreateSut().Check(Edge, [@"--user-data-dir=C:\Users\me\AppData\Local\Google\Chrome\US1A2B~1"], null).Should().NotBeNull();
         CreateSut().Check(Edge, [@"--user-data-dir=C:\Users\me\AppData\Local\Google\Chrome\US1A2B~1\New"], null).Should().NotBeNull();
         CreateSut().Check(Edge, [@"--user-data-dir=C:\Temp\PROFIL~1"], null).Should().BeNull();
+
+        // A drive letter's device path is local too
+        _longPaths[@"\\?\C:\Users\me\AppData\Local\Google\Chrome\US1A2B~1"] = @"\\?\" + ChromeUserData;
+        CreateSut().Check(Edge, [@"--user-data-dir=\\?\C:\Users\me\AppData\Local\Google\Chrome\US1A2B~1"], null).Should().NotBeNull();
+    }
+
+    [Theory]
+    [InlineData(@"--user-data-dir=\\10.255.255.1\s\a\b\c~1", null)]
+    [InlineData("--user-data-dir=//10.255.255.1/s/c~1", null)]
+    [InlineData(@"--user-data-dir=\\?\UNC\10.255.255.1\s\c~1", null)]
+    [InlineData(@"--user-data-dir=\\?\GLOBALROOT\Device\Mup\10.255.255.1\s\c~1", null)]
+    [InlineData(@"--user-data-dir=\\localhost\C$\Users\me\AppData\Local\Google\Chrome\US1A2B~1", null)]
+    [InlineData("--user-data-dir=c~1", @"\\10.255.255.1\s")]
+    public void AShortNameOnANetworkOrDevicePath_IsRefused_WithoutReadingTheFileSystem(string argument, string? workingDirectory)
+    {
+        // Arrange - expanding it would make the server connect to a computer the agent named, maybe for minutes and with
+        // the user's credentials; and \\localhost\C$ reaches the real profile's folder
+        var asked = new List<string>();
+        var sut = new ChromiumSwitchGuard(path =>
+        {
+            asked.Add(path);
+            return null;
+        });
+
+        // Act
+        var refusal = sut.Check(Edge, [argument], workingDirectory);
+
+        // Assert
+        refusal.Should().NotBeNull();
+        refusal!.ErrorCode.Should().Be(nameof(LaunchErrorCode.UnsafeChromiumSwitch));
+        refusal.Message.Should().Contain("short name").And.Contain("Nothing was launched");
+        asked.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void ANetworkPathWithoutAShortName_IsCheckedByItsText_WithoutReadingTheFileSystem()
+    {
+        var asked = new List<string>();
+        var sut = new ChromiumSwitchGuard(path =>
+        {
+            asked.Add(path);
+            return null;
+        });
+
+        sut.Check(Edge, [@"--user-data-dir=\\server\s\profiles\debug"], null).Should().BeNull();
+        sut.Check(Edge, [@"--user-data-dir=\\localhost\C$\Users\me\AppData\Local\Google\Chrome\User Data"], null).Should().NotBeNull();
+        sut.Check(Edge, [@"--user-data-dir=\\localhost\C$\Users\me\AppData\Local\Google\Chrome\USERDA~1"], null).Should().NotBeNull();
+        asked.Should().BeEmpty();
     }
 
     [Fact]
@@ -134,6 +212,31 @@ public class ChromiumSwitchGuardTests
 
         var command = CreateSut().Check(Edge, ["--gpu-launcher=calc.exe"], null)!;
         command.Message.Should().Contain("--gpu-launcher").And.Contain("command");
+    }
+
+    [Theory]
+    [InlineData(@"--load-extension=C:\Temp\ext")]
+    [InlineData(@"--extensionTestsPath=C:\Temp\tests.js")]
+    [InlineData("--inspect=9229")]
+    [InlineData("--js-flags=--allow-natives-syntax")]
+    [InlineData("--a=--b=--c=--d=--e=--gpu-launcher=calc.exe")]
+    public void EveryRefusal_SaysWhatToDoInstead(string argument)
+    {
+        // Act
+        var message = CreateSut().Check(Edge, [argument], null)!.Message;
+
+        // Assert - what happened, what was not done, then what to do
+        const string notDone = "Nothing was launched. ";
+        message.Should().Contain(notDone);
+        message[(message.IndexOf(notDone, StringComparison.Ordinal) + notDone.Length)..].Should().NotBeNullOrWhiteSpace();
+    }
+
+    [Fact]
+    public void ASwitchNestedTooDeep_IsRefusedAsUnread_NotNamedAsASwitch()
+    {
+        var message = CreateSut().Check(Edge, ["--a=--b=--c=--d=--e=--gpu-launcher=calc.exe"], null)!.Message;
+
+        message.Should().Contain("deeper than").And.NotContain("as the switch --e");
     }
 
     [Fact]

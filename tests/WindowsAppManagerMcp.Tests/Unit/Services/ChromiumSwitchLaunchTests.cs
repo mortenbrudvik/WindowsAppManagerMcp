@@ -60,6 +60,9 @@ public class ChromiumSwitchLaunchTests
     [InlineData(@"C:\Users\me\AppData\Local\Programs\Microsoft VS Code\Code.exe", "--inspect-extensions=9333")]
     [InlineData(@"C:\Users\me\AppData\Local\slack\Update.exe", "--process-start-args=--gpu-launcher=calc.exe")]
     [InlineData("notepad", "--gpu-launcher=calc.exe")]
+    [InlineData(@"C:\Users\me\AppData\Local\Programs\Microsoft VS Code\Code.exe", @"--extensionTestsPath=C:\Temp\tests.js")]
+    [InlineData(@"C:\Users\me\AppData\Local\Programs\Microsoft VS Code\Code.exe", @"--extensionDevelopmentPath=C:\Temp\ext")]
+    [InlineData(@"C:\Users\me\AppData\Local\Discord\Update.exe", @"--process-start-args=""--inspect""")]
     public async Task LaunchApplication_WithASwitchThatRunsACommandOrOpensRemoteControl_StartsNothing(string executable, string argument)
     {
         // Act - a helper or launcher (Squirrel's Update.exe, chrome_proxy.exe) hands its arguments on, so any program counts
@@ -67,6 +70,23 @@ public class ChromiumSwitchLaunchTests
 
         // Assert
         result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(nameof(LaunchErrorCode.UnsafeChromiumSwitch));
+        result.ErrorMessage.Should().Contain("Nothing was launched");
+        VerifyNothingStarted();
+    }
+
+    [Theory]
+    [InlineData(@"""--gpu-launcher=C:\x\e.exe""")]
+    [InlineData(@"""--inspect=9229""")]
+    [InlineData(@"""--remote-debugging-port=9222""")]
+    public async Task LaunchApplication_ALauncherGivenAQuotedSwitchToHandOn_StartsNothing(string handedOn)
+    {
+        // Act - Squirrel's Update.exe hands --process-start-args to the app as raw text, and the app's command line parser
+        // takes the quotes off: the switch must not get through because it holds no white space
+        var result = await CreateSut().LaunchApplicationAsync(@"C:\Users\me\AppData\Local\Discord\Update.exe",
+            ["--processStart", "Discord.exe", "--process-start-args", handedOn]);
+
+        // Assert
         result.ErrorCode.Should().Be(nameof(LaunchErrorCode.UnsafeChromiumSwitch));
         result.ErrorMessage.Should().Contain("Nothing was launched");
         VerifyNothingStarted();

@@ -279,9 +279,9 @@ public enum LaunchErrorCode
     /// <summary>
     /// An argument is a switch with which Chromium, an Electron or a CEF app runs a command line of the caller's choosing,
     /// loads code or opens itself to remote control (--*-cmd-prefix, --gpu-launcher, --remote-debugging-port,
-    /// --load-extension, --inspect, ...), or a --user-data-dir inside a browser's real 'User Data' profile (review F2,
-    /// Services.ChromiumSwitchGuard). Any program's arguments are checked, since a launcher hands them on. Nothing was
-    /// started.
+    /// --load-extension, VS Code's --extensionDevelopmentPath, --inspect, ...), or a --user-data-dir inside a browser's
+    /// real 'User Data' profile (review F2, Services.ChromiumSwitchGuard). Any program's arguments are checked, since a
+    /// launcher hands them on, quoted or not; arguments nested too deep to read are refused too. Nothing was started.
     /// </summary>
     UnsafeChromiumSwitch = 21
 }
@@ -355,7 +355,9 @@ public enum ProcessErrorCode
     /// <summary>
     /// forceKill: the process list could not be read, or did not list the process (it may just have exited), so
     /// the child processes the forced kill would also end could not be checked against the target policy and the
-    /// host guard. Nothing was terminated.
+    /// host guard. Nothing was terminated. Also in both kill_process modes, and for close_debug_browser's host check,
+    /// when the process list could not be read to check that the process is no ancestor of this server (the agent's
+    /// host; review F3): nothing was done.
     /// </summary>
     ProcessTreeUnreadable = 15,
 
