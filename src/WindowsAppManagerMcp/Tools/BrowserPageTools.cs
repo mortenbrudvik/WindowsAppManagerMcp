@@ -13,7 +13,7 @@ namespace WindowsAppManagerMcp.Tools;
 /// browser-actions, off by default) and browser_evaluate (toolset browser-script, off by default) on a debug browser's tab
 /// through CDP only, and browser_handle_dialog (browser-actions) on a Chrome or Edge window through UI Automation. Anything
 /// richer (snapshots of the page, forms, file uploads,
-/// network) is Playwright MCP's, attached to the debug browser with --cdp-endpoint (docs/TOOLS.md, SKILL.md).
+/// network) is Playwright MCP's, attached to the debug browser with --cdp-endpoint (docs/TOOLS.md, the skill's browser.md).
 /// </summary>
 /// <remarks>
 /// The tools that change the page are refused while the user has paused input, take the input gate only for the commands

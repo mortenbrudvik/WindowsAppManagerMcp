@@ -330,7 +330,7 @@ dotnet test --filter "Category!=Desktop" --collect:"XPlat Code Coverage"
 - **Contract tests** call every tool over MCP through an in-process server, hold each typical result to a
   token budget, and compare the tools/list the server sends with a checked-in snapshot
   (`tests/WindowsAppManagerMcp.Tests/Contract/tools.snapshot.json`). The tool tables in this README,
-  docs/TOOLS.md and the plugin skill are generated from it. After a deliberate change to the tools, run the
+  docs/TOOLS.md and the plugin skill (skills/using-windows-app-manager/tools.md) are generated from it. After a deliberate change to the tools, run the
   tests once with `UPDATE_SNAPSHOTS=1` to regenerate both, and review the diff
   (see [TESTING.md](TESTING.md#tool-surface-snapshot))
 - By default a test run sends no keyboard or mouse input, launches or kills no
@@ -371,7 +371,8 @@ WindowsAppManagerMcp/
 │   └── marketplace.json # Marketplace distribution manifest
 ├── skills/              # Claude Code skills
 │   └── using-windows-app-manager/
-│       └── SKILL.md     # Usage guidance and trigger patterns
+│       ├── SKILL.md     # The core the skill loads: trigger patterns, safety rules, the loop, error codes
+│       └── *.md         # Reference files SKILL.md names, read when a task needs them (browser, dialogs, errors, tools, ...)
 ├── bin/                 # Pre-built plugin executable (refreshed only by scripts/Publish-Plugin.ps1)
 ├── scripts/             # Release scripts: Set-Version, Publish-Plugin, Test-PluginBinary
 ├── Directory.Build.props # Product version (single source of truth)

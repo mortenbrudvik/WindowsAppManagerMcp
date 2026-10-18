@@ -2826,7 +2826,7 @@ UPDATE_SNAPSHOTS=1 dotnet test --filter "FullyQualifiedName~ToolSurfaceSnapshotT
 ```
 
 `UPDATE_SNAPSHOTS=1` only makes these tests rewrite their files instead of failing: the three snapshots, and the
-generated regions of README.md, docs/TOOLS.md and SKILL.md. It changes nothing else about a run (desktop
+generated regions of README.md, docs/TOOLS.md and the skill (its SKILL.md and tools.md). It changes nothing else about a run (desktop
 tests stay skipped). Without it, CI fails on a stale snapshot or table. A run where `CI`, `GITHUB_ACTIONS` or
 `TF_BUILD` is set to anything but `false` or `0` refuses it (the tests fail with a message), because there it would turn the guards into rewrites
 that pass. Each regenerated file replaces the old one in one step, so a test that reads it in parallel never sees it
@@ -2862,12 +2862,12 @@ The tool tables of the docs are generated into marked regions, between `<!-- too
 | docs/TOOLS.md | `read-only` | The tools served in read-only mode (generated from the readOnlyHint annotations) |
 | docs/TOOLS.md | `params:TOOL` | The parameter table of each tool, and a field table for each array-of-objects parameter |
 | docs/TOOLS.md | `resources` | The resources and prompts (roadmap M6.9): each resource's URI, mirrored tool and description, and each prompt's arguments, needed tools and description (generated from `ResourcesAndPrompts` and the attributes, not from the lists) |
-| SKILL.md | `count` | The sentence with the tool count |
-| SKILL.md | `tool-tables` | The whole "Available Tools" section: a table per category with summaries and key parameters |
+| skills/using-windows-app-manager/SKILL.md | `count` | The sentence with the tool count |
+| skills/using-windows-app-manager/tools.md | `tool-tables` | The whole "Available Tools" section: a table per category with summaries and key parameters, in the reference file rather than the core the skill loads (issue #11) |
 
 Tool names, counts, categories and the parameter tables' names, order, types, required flags and defaults
 are generated. ToolDocCatalog holds what tools/list does not have: each tool's category, its one-line summary
-and the key parameters SKILL.md names (the test checks they are real parameters). The Description cells of the
+and the key parameters the skill's tool tables name (the test checks they are real parameters). The Description cells of the
 parameter tables, and a Default cell that explains a null default in words ("primary", "temp file"), are
 written by hand in docs/TOOLS.md and kept when a table is regenerated; a new parameter starts with the
 description from its schema. Everything outside the regions (the prose, examples and responses) is written by
@@ -2883,6 +2883,19 @@ To add a tool to the docs:
 
 A new tool also needs a toolset: add it to one of `Toolsets.Server` (src/WindowsAppManagerMcp/Infrastructure/Toolsets.cs);
 `ToolsetContractTests` fails until every served tool is in one, and the `toolsets` region lists it.
+
+### The plugin skill's files
+
+The plugin skill (skills/using-windows-app-manager, issue #11) is a core and reference files. A client loads SKILL.md
+whole whenever the skill triggers, so it holds only the safety rules, the loop, the codes that mean stop with a one-line
+index of the others, and a "Where the Details Are" table that names the reference files beside it (browser.md,
+clipboard.md, dialogs.md, elements.md, errors.md, input.md, layouts-and-monitors.md, lists.md, screens-and-ocr.md,
+tools.md, waiting.md, windows-and-apps.md, workflows.md); an agent reads one when its task needs it. The whole skills/
+folder ships with the plugin. `Unit/SkillFilesTests` checks that every relative link in the skill's files names a file
+in the skill's folder and a heading of that file, that the core links every reference file, that each reference file
+says right below its title when to read it, that the front matter is there, and that SKILL.md stays within its token
+budget (a ratchet like the tool-list budgets: a change that adds to the core on purpose raises it in the same change;
+detail for one kind of task goes into its reference file instead).
 
 ### Every tool over MCP and payload budgets
 
