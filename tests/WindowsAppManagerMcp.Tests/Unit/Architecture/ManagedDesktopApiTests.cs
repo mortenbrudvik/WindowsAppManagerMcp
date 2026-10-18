@@ -79,8 +79,8 @@ public class ManagedDesktopApiTests
         // Act
         var uses = ServerCode()
             .SelectMany(m => IlCalls.CalledMethods(m).Select(callee => (Owner: IlCalls.OutermostType(m.DeclaringType!), Caller: m, Callee: callee)))
-            .Select(c => (c.Owner, c.Caller, c.Callee, Api: DeniedApiOf(c.Callee)))
-            .Where(c => c.Api != null)
+            .Select(c => (c.Owner, c.Caller, c.Callee, Api: DeniedApiOf(c.Callee) ?? string.Empty))
+            .Where(c => c.Api.Length > 0)
             .ToList();
 
         // Assert - the scan sees framework calls of the WPF reference, the reviewed uses, and the Marshal class
