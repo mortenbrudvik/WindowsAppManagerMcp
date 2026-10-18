@@ -7,8 +7,10 @@ namespace WindowsAppManagerMcp.Tests.Unit.Architecture;
 /// The doors around <see cref="NativeCallGuardTests"/>: that scan follows P/Invoke (NativeMethods), COM interfaces, UI Automation and
 /// WinRT, but the server also references the Windows Desktop framework (Microsoft.WindowsDesktop.App.WPF, for UI Automation), whose
 /// managed APIs reach the same desktop without a P/Invoke of the server's own: the clipboard (System.Windows.Clipboard), keyboard
-/// and mouse state and focus (System.Windows.Input), windows of its own (System.Windows.Window, Application, HwndSource), and
-/// Windows Forms' SendKeys, Clipboard and Cursor. And native code can be called without a declared P/Invoke at all: a library
+/// and mouse state and focus (System.Windows.Input), windows of its own (System.Windows.Window, Application, HwndSource, a
+/// MessageBox, WindowInteropHelper.EnsureHandle, an HwndHost, a Popup and the rest of WPF's UI), Windows Forms' SendKeys,
+/// Clipboard and Cursor, and the Visual Basic runtime's Shell, AppActivate and SendKeys, which start a process, take the
+/// foreground and type. And native code can be called without a declared P/Invoke at all: a library
 /// loaded and an export looked up (NativeLibrary), a function pointer turned into a delegate (Marshal.GetDelegateForFunctionPointer)
 /// or called directly (the calli instruction), a COM class created by its ProgID or CLSID, or a late-bound COM call (dynamic). So
 /// the server's own code (its WindowsAppManagerMcp namespaces; the generated WinRT projection is pinned by NativeCallGuardTests)
@@ -18,7 +20,10 @@ public class ManagedDesktopApiTests
 {
     private static readonly Assembly ServerAssembly = typeof(NativeWindowWrapper).Assembly;
 
-    /// <summary>The managed APIs, by declaring type's full name or namespace, that would act on the desktop or call native code unseen.</summary>
+    /// <summary>
+    /// The managed APIs, by declaring type's full name, base type, namespace or assembly, that would act on the desktop or call
+    /// native code unseen. A use is named by the first entry it matches, so the specific entries come before the broad ones.
+    /// </summary>
     private static readonly (string Name, Func<MethodBase, bool> Matches)[] DeniedApis =
     [
         ("System.Windows.Clipboard", m => m.DeclaringType?.FullName == "System.Windows.Clipboard"),
@@ -32,6 +37,19 @@ public class ManagedDesktopApiTests
         ("Type.GetTypeFromProgID or GetTypeFromCLSID (create a COM class)", m => m.DeclaringType == typeof(Type) &&
             m.Name is nameof(Type.GetTypeFromProgID) or nameof(Type.GetTypeFromCLSID)),
         ("late-bound calls (dynamic, Microsoft.CSharp.RuntimeBinder)", m => InNamespace(m, "Microsoft.CSharp.RuntimeBinder")),
+        ("System.Windows.MessageBox (shows a message box)", m => m.DeclaringType?.FullName == "System.Windows.MessageBox"),
+        ("WPF window interop (WindowInteropHelper.EnsureHandle, HwndHost)", m => m.DeclaringType?.FullName == "System.Windows.Interop.WindowInteropHelper" ||
+            IsOrDerivesFrom(m.DeclaringType, "System.Windows.Interop.HwndHost")),
+        ("System.Windows.Controls.Primitives.Popup (opens a window of its own)", m => IsOrDerivesFrom(m.DeclaringType, "System.Windows.Controls.Primitives.Popup")),
+        // Interaction.Shell starts a process, AppActivate brings a window to the front, CreateObject creates a COM class, and
+        // Devices.Keyboard.SendKeys (Microsoft.VisualBasic.Forms) types
+        ("Microsoft.VisualBasic (Interaction.Shell, AppActivate, CreateObject, Devices.Keyboard.SendKeys)", m => InNamespace(m, "Microsoft.VisualBasic")),
+        // Last, so a use is named by the specific entries above: the rest of WPF's UI, which the server never needs (it uses
+        // WPF's UI Automation client and WindowsBase's Point and Rect): a ToolTip or ContextMenu opens a window, a dialog shows one
+        ("WPF's UI (PresentationFramework, PresentationCore: windows, dialogs, popups, menus, controls)", m =>
+            m.DeclaringType?.Assembly.GetName().Name is { } assembly &&
+            (assembly.StartsWith("PresentationFramework", StringComparison.Ordinal) ||
+             assembly is "PresentationCore" or "PresentationUI" or "System.Windows.Controls.Ribbon" or "ReachFramework")),
     ];
 
     /// <summary>The reviewed uses: (the server type, the denied API's name) and why it is safe. Each is in a Native wrapper tests fake.</summary>
@@ -61,7 +79,8 @@ public class ManagedDesktopApiTests
         // Act
         var uses = ServerCode()
             .SelectMany(m => IlCalls.CalledMethods(m).Select(callee => (Owner: IlCalls.OutermostType(m.DeclaringType!), Caller: m, Callee: callee)))
-            .SelectMany(c => DeniedApis.Where(d => d.Matches(c.Callee)).Select(d => (c.Owner, c.Caller, c.Callee, Api: d.Name)))
+            .Select(c => (c.Owner, c.Caller, c.Callee, Api: DeniedApiOf(c.Callee)))
+            .Where(c => c.Api != null)
             .ToList();
 
         // Assert - the scan sees framework calls of the WPF reference, the reviewed uses, and the Marshal class
@@ -79,6 +98,27 @@ public class ManagedDesktopApiTests
             .Should().BeEmpty(
                 "these reach the desktop or native code past the native wrappers the tests fake and the scans that pin them; put the " +
                 "call in a Native wrapper behind an interface, and review it onto SanctionedUses");
+    }
+
+    [Theory]
+    [InlineData(nameof(ManagedDesktopApiSamples.ShowsAMessageBox), "System.Windows.MessageBox (shows a message box)")]
+    [InlineData(nameof(ManagedDesktopApiSamples.CreatesAWindowsHandle), "WPF window interop (WindowInteropHelper.EnsureHandle, HwndHost)")]
+    [InlineData(nameof(ManagedDesktopApiSamples.HostsAWindow), "WPF window interop (WindowInteropHelper.EnsureHandle, HwndHost)")]
+    [InlineData(nameof(ManagedDesktopApiSamples.OpensAPopup), "System.Windows.Controls.Primitives.Popup (opens a window of its own)")]
+    [InlineData(nameof(ManagedDesktopApiSamples.OpensAContextMenu), "WPF's UI (PresentationFramework, PresentationCore: windows, dialogs, popups, menus, controls)")]
+    [InlineData(nameof(ManagedDesktopApiSamples.StartsAProcessThroughVisualBasic), "Microsoft.VisualBasic (Interaction.Shell, AppActivate, CreateObject, Devices.Keyboard.SendKeys)")]
+    [InlineData(nameof(ManagedDesktopApiSamples.ActivatesAWindowThroughVisualBasic), "Microsoft.VisualBasic (Interaction.Shell, AppActivate, CreateObject, Devices.Keyboard.SendKeys)")]
+    public void TheScan_SeesADeniedApi(string sample, string api)
+    {
+        // Arrange - a sample's calls, as the scan reads a server method's
+        var calls = IlCalls.MethodsOf(typeof(ManagedDesktopApiSamples))
+            .Where(m => m.Name == sample)
+            .SelectMany(IlCalls.CalledMethods)
+            .ToList();
+
+        // Assert
+        calls.Should().NotBeEmpty("the sample {0} makes calls", sample);
+        calls.Select(DeniedApiOf).Should().Contain(api, "the scan must see what {0} reaches", sample);
     }
 
     [Fact]
@@ -114,6 +154,54 @@ public class ManagedDesktopApiTests
                         (IlCalls.OutermostType(t) is { Namespace: null } outer && !outer.Name.StartsWith('<')))
             .SelectMany(t => t.GetMethods(IlCalls.DeclaredMembers).Cast<MethodBase>().Concat(t.GetConstructors(IlCalls.DeclaredMembers)));
 
+    /// <summary>The first of <see cref="DeniedApis"/> that <paramref name="callee"/> is, or null: the specific ones come first.</summary>
+    private static string? DeniedApiOf(MethodBase callee) => DeniedApis.FirstOrDefault(d => d.Matches(callee)).Name;
+
+    /// <summary>True when <paramref name="type"/> is the type named <paramref name="fullName"/> or derives from it.</summary>
+    private static bool IsOrDerivesFrom(Type? type, string fullName)
+    {
+        for (var current = type; current != null; current = current.BaseType)
+        {
+            if (current.FullName == fullName)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private static bool InNamespace(MethodBase method, string ns) =>
         method.DeclaringType?.Namespace is { } name && (name == ns || name.StartsWith(ns + ".", StringComparison.Ordinal));
+}
+
+/// <summary>
+/// Samples for <see cref="ManagedDesktopApiTests"/>' canaries, which only scan their IL. Nothing calls them, and nothing may: they
+/// would show a message box, open windows, start a process or bring another app's window to the front for real.
+/// </summary>
+internal static class ManagedDesktopApiSamples
+{
+    public static void ShowsAMessageBox() => System.Windows.MessageBox.Show("sample");
+
+    public static nint CreatesAWindowsHandle(System.Windows.Window window) => new System.Windows.Interop.WindowInteropHelper(window).EnsureHandle();
+
+    public static object HostsAWindow() => new SampleHwndHost();
+
+    public static object OpensAPopup() => new System.Windows.Controls.Primitives.Popup { IsOpen = true };
+
+    public static object OpensAContextMenu() => new System.Windows.Controls.ContextMenu { IsOpen = true };
+
+    public static int StartsAProcessThroughVisualBasic() => Microsoft.VisualBasic.Interaction.Shell("notepad.exe");
+
+    public static void ActivatesAWindowThroughVisualBasic() => Microsoft.VisualBasic.Interaction.AppActivate(4711);
+
+    /// <summary>A WPF host of a native child window: its base class creates the window.</summary>
+    private sealed class SampleHwndHost : System.Windows.Interop.HwndHost
+    {
+        protected override System.Runtime.InteropServices.HandleRef BuildWindowCore(System.Runtime.InteropServices.HandleRef hwndParent) => new(this, nint.Zero);
+
+        protected override void DestroyWindowCore(System.Runtime.InteropServices.HandleRef hwnd)
+        {
+        }
+    }
 }
