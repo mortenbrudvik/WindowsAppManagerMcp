@@ -51,8 +51,8 @@ namespace WindowsAppManagerMcp.Services;
 /// Value pattern (never a password field's: null), else its name, else the names of its children; a cell that disappears is
 /// null. A cell whose Value pattern fails gives its name too, and the page's warning says how many did and why: such a name
 /// is often a description of the cell ("Amount Row 1, Not sorted."). A cell of another process than the window's that the
-/// target policy refuses (<see cref="ForeignElements"/>; checked where its identity is read for the password flag, and for a
-/// cell with a window of its own) is null, and the warning says so. The read stops at the timeout (whole rows only), at
+/// target policy refuses (<see cref="ForeignElements"/>; checked by the process read with it, with no further call) is null,
+/// and the warning says so; each cell counts once in the warnings. The read stops at the timeout (whole rows only), at
 /// <see cref="MaxTableTextBytes"/> bytes of JSON, and between cells when the token is cancelled; the rows read until the
 /// worker abandons a stuck call, or until the table itself
 /// disappears, are still returned. A page that timed out before its first row has no nextStartRow (roadmap M3.F15).</para>
@@ -259,9 +259,11 @@ public sealed partial class ElementReadService : IElementReadService
 
     /// <summary>
     /// The ref of the one element the criteria found, or null with why not, with element_action's codes: several
-    /// (AmbiguousElement, also from a search that did not finish: more search cannot make them one), a search that did not
-    /// cover the whole window, so another match (or the only one) may be in the rest (OperationTimedOut), or none
-    /// (ElementNotFound).
+    /// (AmbiguousElement, also from a search that did not finish: more search cannot make them one), matches left out because
+    /// the target policy refuses their process (<see cref="FindElementsResult.PolicyLeftOut"/>, a search that covered the rest:
+    /// TargetDeniedByPolicy when they are the only ones, else AmbiguousElement, since one of them may be the one meant), a
+    /// search that did not cover the whole window, so another match (or the only one) may be in the rest (OperationTimedOut,
+    /// with the policy's warning when it left matches out too), or none (ElementNotFound).
     /// </summary>
     private static string? Unique(FindElementsResult found, ElementQuery query, out string? error, out UIElementErrorCode code)
     {
@@ -284,6 +286,24 @@ public sealed partial class ElementReadService : IElementReadService
             return null;
         }
 
+        // Matches of an app the target policy refuses, shown inside the window, were left out unread
+        if (found.PolicyLeftOut is { OtherwiseComplete: true } leftOut)
+        {
+            if (found.MatchCount == 0)
+            {
+                error = $"The criteria match only {(leftOut.Count == 1 ? "an element" : $"{leftOut.Count} elements")} of an app " +
+                        $"the server's target policy refuses, so nothing was read. {leftOut.Warning}";
+                code = UIElementErrorCode.TargetDeniedByPolicy;
+                return null;
+            }
+
+            error = $"{found.MatchCount + leftOut.Count} elements match the criteria, {leftOut.Count} of them of an app the " +
+                    "server's target policy refuses, so none was read: a read never picks one for you. Pass the ref of the one " +
+                    $"you mean (candidates lists the others), or narrow the criteria. {leftOut.Warning}";
+            code = UIElementErrorCode.AmbiguousElement;
+            return null;
+        }
+
         if (unfinished)
         {
             var covered = found.Scope is ElementSearchScope.WindowAndPopups or ElementSearchScope.Desktop
@@ -293,7 +313,8 @@ public sealed partial class ElementReadService : IElementReadService
                     (found.MatchCount == 0
                         ? "the element may be in the part it did not search: it found none so far."
                         : "the one element it found may not be the only match.") +
-                    " Nothing was read. Pass the element's ref, narrow the criteria, or give more time.";
+                    " Nothing was read. Pass the element's ref, narrow the criteria, or give more time." +
+                    (found.PolicyLeftOut is { } partlyLeftOut ? $" {partlyLeftOut.Warning}" : string.Empty);
             code = UIElementErrorCode.OperationTimedOut;
             return null;
         }
@@ -549,9 +570,9 @@ public sealed partial class ElementReadService : IElementReadService
     /// The hung-window check, the warm-up, the ref's resolution and the target policy's check of the element's own process, on
     /// the worker thread: the live element, or null with the error and its code. The window passed the policy before; an
     /// element of another process inside it (an embedded WebView2, a child window of another app) is checked by its own
-    /// process (<see cref="ForeignElements"/>: TargetDeniedByPolicy), which takes its identity: <paramref name="identity"/> is
-    /// that read, for the password check after it, or null when it was not read (no policy that denies anything, or an item
-    /// its list has not realized, which fails it).
+    /// process (<see cref="ForeignElements"/>: TargetDeniedByPolicy), as the resolution read it and as its identity names it:
+    /// <paramref name="identity"/> is that read, for the password check after it, or null when it was not read (no policy that
+    /// denies anything, or an item its list has not realized, which fails it).
     /// </summary>
     private ResolvedElement? Prepare(
         string elementRef, nint handle, TimeSpan warmupBudget, WarmupSlot warmup, CancellationToken token,
@@ -611,7 +632,7 @@ public sealed partial class ElementReadService : IElementReadService
             return null;
         }
 
-        if (foreign.Refusal(processId, resolved.Element.NativeWindowHandle) is { } refused)
+        if (foreign.Refusal(resolved.Element, processId) is { } refused)
         {
             identity = null;
             error = refused;

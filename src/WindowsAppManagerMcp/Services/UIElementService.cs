@@ -14,12 +14,13 @@ namespace WindowsAppManagerMcp.Services;
 /// <list type="bullet">
 /// <item>A window of an app the user's target policy denies is not read (TargetDeniedByPolicy, see
 /// <see cref="UiaTargets.ReadVerdict"/>): checked before the walk, the warm-up and the hung-window check. Inside a window it
-/// allows, the element of a window of another process (an app or preview handler embedded as a child window, a WebView2's
-/// windows) that the policy refuses is left out unread with everything inside it, and so is a render widget's page of such a
-/// process, or a page hosted as a visual whose root names one (<see cref="ForeignElements"/>): counted in
-/// skippedElementCount, with a TargetDeniedByPolicy warning that names the process. The process is the window's (a Win32
-/// read); the window handle comes with a level's read, and an element read on its own reads it only for a Pane or a
-/// Window (one call; one that fails is skipped).</item>
+/// allows, an element of another process (an app or preview handler embedded as a child window, a WebView2's windows,
+/// views and pages) that the policy refuses is left out unread with everything inside it, and so is a render widget's page
+/// of such a process, or a page hosted as a visual whose root names one (<see cref="ForeignElements"/>): counted in
+/// skippedElementCount, with a TargetDeniedByPolicy warning that names the process. The process comes with the element's
+/// read (<see cref="UiaElement.ProcessId"/>): a level's read brings it, and while the policy denies anything an element
+/// read on its own is read with the walk's properties (one call, as its properties alone; one that fails is
+/// skipped).</item>
 /// <item>A window that does not respond is not read (NotResponding): Windows reports it hung, or it does not answer a
 /// message within <see cref="RespondTimeoutMs"/>. Every UI Automation call to it would block until it recovers.</item>
 /// <item>The walk is breadth first (roadmap M3.1): all of a level before the next, so a walk cut short by the timeout
@@ -961,9 +962,7 @@ public class UIElementService : IUIElementService
         /// still to be listed. Or the pages hosted as a visual listed in place of its children, when it is the root of
         /// Chromium's views they lie below (<paramref name="runtimeId"/>, roadmap M3.F43). Null when it hosts none.
         /// </summary>
-        /// <param name="ownWindow">The element's window handle, as <see cref="OwnWindowOf"/> read it; null when it was not read.</param>
-        private HostedPages? PagesHostedBy(
-            Candidate candidate, UiaNodeProperties properties, IReadOnlyList<int>? runtimeId, nint? ownWindow)
+        private HostedPages? PagesHostedBy(Candidate candidate, UiaNodeProperties properties, IReadOnlyList<int>? runtimeId)
         {
             if (runtimeId != null && TakeVisualPages(runtimeId) is { } visual)
             {
@@ -980,39 +979,16 @@ public class UIElementService : IUIElementService
                 return TakePages(cached.NativeWindowHandle);
             }
 
-            // Of an element read on its own, only a Pane's handle was read (not known to host a page when that failed)
-            return string.Equals(properties.ControlType, "Pane", StringComparison.OrdinalIgnoreCase) && ownWindow is { } handle
-                ? TakePages(handle)
-                : null;
-        }
-
-        /// <summary>
-        /// The window handle of the element (its NativeWindowHandle): from its level's read, or for an element read on its own
-        /// by one more call (its identity), only for a Pane or a Window, the control types of a window hosted in another
-        /// window: while the target policy may refuse an element of another process (<see cref="ForeignElements"/>), or, for a
-        /// Pane, while pages are still to be listed (<see cref="PagesHostedBy"/>). Null when it was not read. A read that fails
-        /// throws while the policy may refuse, so the element is skipped (fails closed); otherwise it is null.
-        /// </summary>
-        private nint? OwnWindowOf(Candidate candidate, UiaNodeProperties properties, int level)
-        {
-            if (candidate.Cached is { } cached)
-            {
-                return cached.NativeWindowHandle;
-            }
-
-            var pane = string.Equals(properties.ControlType, "Pane", StringComparison.OrdinalIgnoreCase);
-            var forPolicy = foreign.Active && (pane || string.Equals(properties.ControlType, "Window", StringComparison.OrdinalIgnoreCase));
-            var forPages = pane && level < maxDepth && pageHosts is { Count: > 0 };
-            if (!forPolicy && !forPages)
+            if (!string.Equals(properties.ControlType, "Pane", StringComparison.OrdinalIgnoreCase))
             {
                 return null;
             }
 
             try
             {
-                return tree.ReadIdentity(candidate.Node).NativeWindowHandle;
+                return TakePages(tree.ReadIdentity(candidate.Node).NativeWindowHandle);
             }
-            catch (Exception) when (!forPolicy)
+            catch (Exception)
             {
                 // Not known to host a page
                 return null;
@@ -1083,10 +1059,16 @@ public class UIElementService : IUIElementService
         {
             UiaNodeProperties properties;
             IReadOnlyList<int>? runtimeId;
-            nint? ownWindow;
             bool included;
             try
             {
+                // While the target policy may refuse an element of another process, an element read on its own is read with
+                // the walk's properties, its process among them: one call, as the read of its properties alone is
+                if (candidate.Cached == null && foreign.Active)
+                {
+                    candidate = candidate with { Cached = tree.ReadElement(candidate.Node) };
+                }
+
                 properties = candidate.Cached?.Properties ?? tree.Read(candidate.Node);
 
                 // An element met before (a page listed under its host and met again among Chromium's views, a subtree a
@@ -1097,11 +1079,10 @@ public class UIElementService : IUIElementService
                     return;
                 }
 
-                // The element of a window of another process than the window's (an app or preview embedded as a child
-                // window, a WebView2's) that the target policy refuses is left out unread with everything inside it, and
-                // counted (a Win32 read of the window's process)
-                ownWindow = OwnWindowOf(candidate, properties, level);
-                if (ownWindow is { } handle && foreign.LeavesOutWindow(handle))
+                // An element of another process than the window's (an app or preview embedded as a child window, a WebView2's
+                // windows, views and pages) that the target policy refuses is left out unread with everything inside it, and
+                // counted: by the process read with it
+                if (candidate.Cached is { } cached && foreign.LeavesOut(cached))
                 {
                     return;
                 }
@@ -1141,7 +1122,7 @@ public class UIElementService : IUIElementService
             // Registered outside the walk's lock: the registry has its own, and makes no UI Automation call
             var elementRef = included ? refs?.Register(candidate, properties, runtimeId, indexPath, row) : null;
             var node = new WalkNode(properties, included, elementRef, indexPath) { Row = rowBelow };
-            var hosted = level < maxDepth ? PagesHostedBy(candidate, properties, runtimeId, ownWindow) : null;
+            var hosted = level < maxDepth ? PagesHostedBy(candidate, properties, runtimeId) : null;
             lock (_gate)
             {
                 parent.Children.Add(node);

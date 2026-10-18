@@ -56,8 +56,12 @@ public sealed partial class ElementSearchService
     /// <param name="window">The named window, whose root is <paramref name="root"/> unless <paramref name="rootIsWithin"/>.</param>
     /// <param name="rootIsWithin">The root is withinRef's element: it is the list itself when it is one.</param>
     /// <param name="total">What the tree search found: its kept matches are not reported again.</param>
+    /// <param name="foreign">The target policy's check of the window's elements of other processes: a list of a process it
+    /// refuses (an app shown inside the window) is neither asked for its items nor listed, and the lookup says so (a part
+    /// skipped).</param>
     private VirtualizedLookup SearchVirtualized(
-        ElementCriteria criteria, nint window, IUiaNode root, bool rootIsWithin, SearchTotal total, int maxResults, CancellationToken token)
+        ElementCriteria criteria, nint window, IUiaNode root, bool rootIsWithin, SearchTotal total, int maxResults,
+        ForeignElements foreign, CancellationToken token)
     {
         if (total.Stop != ElementSearchStop.None)
         {
@@ -81,6 +85,16 @@ public sealed partial class ElementSearchService
             return VirtualizedLookup.Skipped(
                 $"The lists could not be looked for: {ex.Message}",
                 ex is TimeoutException or OperationCanceledException ? ElementSearchTruncation.Timeout : ElementSearchTruncation.PartsSkipped);
+        }
+
+        if (containers.Count(foreign.Refuses) is > 0 and var refused)
+        {
+            containers = containers.Where(c => !foreign.Refuses(c)).ToList();
+            var note = (refused == 1
+                           ? "1 list of another process that the server's target policy refuses was"
+                           : $"{refused} lists of other processes that the server's target policy refuses were") +
+                       " not searched (an app shown inside the window): ask the user to do steps in that app.";
+            containersSkipped = containersSkipped == null ? note : $"{containersSkipped} {note}";
         }
 
         if (containers.Count == 0)

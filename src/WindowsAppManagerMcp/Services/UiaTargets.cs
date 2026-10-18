@@ -210,9 +210,11 @@ public static class UiaTargets
 /// read (<see cref="TargetPolicyExtensions.EvaluateFailClosed(ITargetPolicy, IReadOnlyCollection{string?})"/>), and fails
 /// closed: an element whose process is not known (0), or whose process cannot be named, is refused while the policy denies
 /// anything. The policy matches process names, so that is the verdict a check of the element's own window would give too,
-/// without the walk up its ancestors to find it. Win32 reads only, each process named once per read; nothing is checked
-/// without a policy that denies anything (<see cref="Active"/>). Thread safe: a walk the worker abandoned can still be
-/// adding to it while its caller reads it.
+/// without the walk up its ancestors to find it. An element is checked by the process UI Automation read with it
+/// (<see cref="UiaElement.ProcessId"/>: part of every walk's and search's read, so no further call), which covers the elements
+/// with no window of their own, such as every element of a web page. Win32 reads only, each process named once per read;
+/// nothing is checked without a policy that denies anything (<see cref="Active"/>). Thread safe: a walk the worker abandoned
+/// can still be adding to it while its caller reads it.
 /// </summary>
 public sealed class ForeignElements
 {
@@ -222,6 +224,8 @@ public sealed class ForeignElements
     private readonly object _gate = new();
     private readonly Dictionary<int, (string? Name, TargetPolicyVerdict Verdict)> _verdicts = [];
     private readonly Dictionary<int, int> _refused = [];
+    private readonly HashSet<string> _countedRuntimeIds = [];
+    private readonly HashSet<IUiaNode> _countedNodes = new(ReferenceEqualityComparer.Instance);
     private HashSet<int>? _windowProcesses;
 
     internal ForeignElements(INativeWindowWrapper? windows, ITargetPolicy? policy, nint window)
@@ -279,8 +283,9 @@ public sealed class ForeignElements
     }
 
     /// <summary>
-    /// Whether a walk or search leaves out an element that UI Automation says belongs to <paramref name="processId"/>: true
-    /// when <see cref="Verdict"/> refuses it, and then it is counted for <see cref="LeftOutWarning"/>.
+    /// Whether a walk or search leaves out an element that UI Automation says belongs to <paramref name="processId"/> (a page
+    /// whose root's identity was read): true when <see cref="Verdict"/> refuses it, and then it is counted for
+    /// <see cref="LeftOutWarning"/>, once per call.
     /// </summary>
     public bool LeavesOut(int processId)
     {
@@ -298,41 +303,105 @@ public sealed class ForeignElements
     }
 
     /// <summary>
-    /// Whether a walk or search leaves out the UI Automation element of <paramref name="elementWindow"/> (its
-    /// NativeWindowHandle), by the process of that window (Win32's, see <see cref="LeavesOut"/>). Never for the window read
-    /// itself, nor for no window (0), which says nothing about the element's process.
+    /// Whether a walk leaves out the UI Automation element of <paramref name="elementWindow"/> (its NativeWindowHandle), by
+    /// the process of that window (Win32's, see <see cref="LeavesOut(int)"/>): for a page found by its window rather than
+    /// read as an element. Never for the window read itself, nor for no window (0), which says nothing about the element's
+    /// process.
     /// </summary>
     public bool LeavesOutWindow(nint elementWindow) =>
         Active && elementWindow != nint.Zero && elementWindow != _window && LeavesOut(ProcessOf(elementWindow));
 
     /// <summary>
-    /// The TargetDeniedByPolicy message of a read that returns an element's value or text (<see cref="RefusalMessage"/>), or
-    /// null when it is allowed: by <paramref name="processId"/>, the process the element's identity names, when that was
-    /// read; else by the process of <paramref name="elementWindow"/>, the window the element is the UI Automation element of,
-    /// when it has one (a Win32 read); else allowed with the window.
+    /// Whether a walk, search or table read leaves out <paramref name="element"/>, as a read of the tree returned it: true
+    /// when <see cref="Verdict"/> refuses a process it is known to belong to (<see cref="Refused"/>). Counted once per element
+    /// for <see cref="LeftOutWarning"/>, however often it is checked (by its runtime id, else by its node).
     /// </summary>
-    public string? Refusal(int? processId, nint elementWindow)
+    /// <param name="element">The element as read.</param>
+    /// <param name="identityProcessId">The process its identity names, when that was read too; null otherwise.</param>
+    public bool LeavesOut(UiaElement element, int? identityProcessId = null)
+    {
+        ArgumentNullException.ThrowIfNull(element);
+        if (Refused(element, identityProcessId) is not { } process)
+        {
+            return false;
+        }
+
+        lock (_gate)
+        {
+            var first = element.RuntimeId is { Count: > 0 } runtimeId
+                ? _countedRuntimeIds.Add(string.Join('.', runtimeId))
+                : _countedNodes.Add(element.Node);
+            if (first)
+            {
+                _refused[process] = _refused.GetValueOrDefault(process) + 1;
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Whether the policy refuses <paramref name="element"/>, as <see cref="LeavesOut(UiaElement, int?)"/> decides, without
+    /// counting it: for an element that is neither returned nor reported left out, such as a list searchVirtualized would ask
+    /// for its items.
+    /// </summary>
+    public bool Refuses(UiaElement element)
+    {
+        ArgumentNullException.ThrowIfNull(element);
+        return Refused(element, null) != null;
+    }
+
+    /// <summary>
+    /// The TargetDeniedByPolicy message of a read that returns <paramref name="element"/>'s value or text
+    /// (<see cref="RefusalMessage"/>), or null when it is allowed (<see cref="Refused"/>).
+    /// </summary>
+    /// <param name="element">The element as read (the resolution of its ref reads it).</param>
+    /// <param name="identityProcessId">The process its identity names, when that was read too; null otherwise.</param>
+    public string? Refusal(UiaElement element, int? identityProcessId = null)
+    {
+        ArgumentNullException.ThrowIfNull(element);
+        return Refused(element, identityProcessId) is { } process ? RefusalMessage(process, Verdict(process)) : null;
+    }
+
+    /// <summary>
+    /// The process of <paramref name="element"/> that <see cref="Verdict"/> refuses, or null when none is: the process UI
+    /// Automation read with it (<see cref="UiaElement.ProcessId"/>, 0 when it did not say, which is refused), and the one its
+    /// identity names (<paramref name="identityProcessId"/>), when that was read; the element is refused when either is. Only
+    /// an element built without its process, and whose identity was not read, is checked by the process of its own window
+    /// instead (a Win32 read), and is allowed with the window when it has none.
+    /// </summary>
+    private int? Refused(UiaElement element, int? identityProcessId)
     {
         if (!Active)
         {
             return null;
         }
 
-        int process;
-        if (processId is { } known)
+        IEnumerable<int> processes;
+        if (element.ProcessId == null && identityProcessId == null)
         {
-            process = known;
-        }
-        else if (elementWindow == nint.Zero || elementWindow == _window)
-        {
-            return null;
+            var window = element.NativeWindowHandle;
+            if (window == nint.Zero || window == _window)
+            {
+                return null;
+            }
+
+            processes = [ProcessOf(window)];
         }
         else
         {
-            process = ProcessOf(elementWindow);
+            processes = new[] { element.ProcessId, identityProcessId }.OfType<int>().Distinct();
         }
 
-        return Verdict(process) is { Allowed: false } verdict ? RefusalMessage(process, verdict) : null;
+        foreach (var process in processes)
+        {
+            if (!Verdict(process).Allowed)
+            {
+                return process;
+            }
+        }
+
+        return null;
     }
 
     /// <summary>The process of a window (Win32), or 0 when it cannot be read.</summary>
@@ -348,7 +417,10 @@ public sealed class ForeignElements
         }
     }
 
-    /// <summary>How many elements were left out unread (<see cref="LeavesOut"/>, <see cref="LeavesOutWindow"/>).</summary>
+    /// <summary>
+    /// How many elements were left out unread (<see cref="LeavesOut(int)"/>, <see cref="LeavesOut(UiaElement, int?)"/>,
+    /// <see cref="LeavesOutWindow"/>).
+    /// </summary>
     public int LeftOutCount
     {
         get
@@ -371,7 +443,7 @@ public sealed class ForeignElements
         "user in the server's environment and no tool argument changes it; ask the user to do this step.";
 
     /// <summary>
-    /// What a walk or search says about the elements it left out unread (<see cref="LeavesOut"/>), after
+    /// What a walk or search says about the elements it left out unread (<see cref="LeftOutCount"/>), after
     /// <paramref name="code"/> and a colon when one is given; null when it left none out.
     /// </summary>
     /// <param name="what">What became of them, such as "those cells are null".</param>

@@ -30,7 +30,8 @@ public sealed class UiaTree : IUiaTree
         AutomationElement.NameProperty, AutomationElement.ControlTypeProperty, AutomationElement.LocalizedControlTypeProperty,
         AutomationElement.AutomationIdProperty, AutomationElement.ClassNameProperty, AutomationElement.BoundingRectangleProperty,
         AutomationElement.IsEnabledProperty, AutomationElement.IsOffscreenProperty, AutomationElement.IsKeyboardFocusableProperty,
-        AutomationElement.RuntimeIdProperty, AutomationElement.FrameworkIdProperty, AutomationElement.NativeWindowHandleProperty
+        AutomationElement.RuntimeIdProperty, AutomationElement.FrameworkIdProperty, AutomationElement.NativeWindowHandleProperty,
+        AutomationElement.ProcessIdProperty
     ];
 
     private static readonly (AutomationProperty Property, UiaPatterns Pattern)[] PatternAvailability =
@@ -314,10 +315,11 @@ public sealed class UiaTree : IUiaTree
             RuntimeId: runtimeId,
             ControlTypeId: controlType?.Id,
             NativeWindowHandle: values.GetValueOrDefault(AutomationElement.NativeWindowHandleProperty) is int handle ? handle : 0,
-            Virtualized: leftOut);
+            Virtualized: leftOut,
+            ProcessId: values.GetValueOrDefault(AutomationElement.ProcessIdProperty) is int processId ? processId : 0);
         return new UiaVirtualizedItem(
             item,
-            values.GetValueOrDefault(AutomationElement.ProcessIdProperty) is int processId ? processId : 0,
+            item.ProcessId ?? 0,
             values.TryGetValue(AutomationElement.IsPasswordProperty, out var password) && password is bool isPassword ? isPassword : null);
     }
 
@@ -597,7 +599,8 @@ public sealed class UiaTree : IUiaTree
             RuntimeId: element.GetCachedPropertyValue(AutomationElement.RuntimeIdProperty) as int[],
             // The managed client knows no id it has no ControlType for
             ControlTypeId: controlType?.Id,
-            NativeWindowHandle: cached.NativeWindowHandle);
+            NativeWindowHandle: cached.NativeWindowHandle,
+            ProcessId: element.GetCachedPropertyValue(AutomationElement.ProcessIdProperty) is int processId ? processId : 0);
     }
 
     private static TreeScope ToTreeScope(UiaScope scope) => scope switch

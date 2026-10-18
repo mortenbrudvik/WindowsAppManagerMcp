@@ -317,7 +317,10 @@ public partial class ElementActionTools
             cancellationToken).ConfigureAwait(false);
     }
 
-    /// <summary>The ref of the one element the query matches, or the failure: none, several, or a search that did not finish.</summary>
+    /// <summary>
+    /// The ref of the one element the query matches, or the failure: none, several, matches of an app the target policy
+    /// refuses (<see cref="FindElementsResult.PolicyLeftOut"/>), or a search that did not finish.
+    /// </summary>
     private async Task<(string? Ref, ElementActionResult? Failure)> FindOneAsync(ElementQuery query, ElementActionKind action, CancellationToken cancellationToken)
     {
         var actionName = ToolEnum<ElementActionKind>.Name(action);
@@ -355,12 +358,28 @@ public partial class ElementActionTools
                 "of the one you mean."));
         }
 
+        // Matches of an app the target policy refuses, shown inside the window, were left out unread: when they are the only
+        // ones, the policy refuses the action; next to another match, one of them may be the one meant
+        if (result.PolicyLeftOut is { OtherwiseComplete: true } leftOut)
+        {
+            return result.MatchCount == 0 || result.Elements is not { Count: > 0 } allowed
+                ? (null, Fail(nameof(UIElementErrorCode.TargetDeniedByPolicy),
+                    $"The criteria match only {(leftOut.Count == 1 ? "an element" : $"{leftOut.Count} elements")} of an app the " +
+                    $"server's target policy refuses, so nothing was done. {leftOut.Warning}"))
+                : (null, Fail(nameof(UIElementErrorCode.AmbiguousElement),
+                    $"{result.MatchCount + leftOut.Count} elements match the criteria, {leftOut.Count} of them of an app the " +
+                    $"server's target policy refuses (the others: {string.Join(", ", allowed.Select(e => $"{e.Ref} {e.ControlType} '{e.Name}'"))}), " +
+                    "so none was acted on. Narrow the criteria (automationId, controlType), or pass the ref of the one you mean. " +
+                    leftOut.Warning));
+        }
+
         if (unfinished)
         {
             return (null, Fail(nameof(UIElementErrorCode.OperationTimedOut),
                 $"The search for the element did not cover {Covered(result)} ({result.TruncationReason}), so it is not known that " +
                 $"only one element matches ({result.MatchCount} found so far). Nothing was done. Narrow the criteria (automationId, " +
-                "controlType), or find the element with find_ui_elements and pass its ref."));
+                "controlType), or find the element with find_ui_elements and pass its ref." +
+                (result.PolicyLeftOut is { } partlyLeftOut ? $" {partlyLeftOut.Warning}" : string.Empty)));
         }
 
         if (result.MatchCount == 0 || result.Elements is not { Count: > 0 } elements)

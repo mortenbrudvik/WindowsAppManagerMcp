@@ -146,6 +146,25 @@ public class ElementReadFallbackTests
     }
 
     [Fact]
+    public async Task ReadTable_AHeaderWhoseValuePatternFails_IsCountedOnce_ThoughTheCornerCheckReadsItToo()
+    {
+        // Arrange - a WinForms DataGridView's header row with no data rows: its first two headers are read to tell whether
+        // the first is the corner above the row headers, then each header for its text
+        var gridRef = Add(new FakeUiaNode("Table", "Payments").With(
+            new FakeUiaNode("Custom", "Top Row").With(
+                new FakeUiaNode("Header", "Amount Column Header") { ActionPatterns = ["Value"], ValueException = ProviderFailure() },
+                new FakeUiaNode("Header", "Date"))));
+
+        // Act
+        var result = await CreateSut().ReadTableAsync(new ElementTableRequest(gridRef, 0, 50, 20, Timeout));
+
+        // Assert
+        result.Success.Should().BeTrue(result.Error);
+        result.Headers.Should().Equal("Amount Column Header", "Date");
+        result.Warning.Should().StartWith("1 cell's Value pattern failed");
+    }
+
+    [Fact]
     public async Task ReadTable_WithoutAFailure_HasNoWarning()
     {
         var gridRef = Add(new FakeUiaNode("List", "Payments").With(

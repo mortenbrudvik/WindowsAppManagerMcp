@@ -193,7 +193,24 @@ public record FindElementsResult(
     /// </summary>
     public FindElementsResult Bounded() =>
         this with { WindowTitle = AppText.Cut(WindowTitle), Elements = Elements?.Select(e => e.Bounded()).ToList() };
+
+    /// <summary>
+    /// The matches the search left out for their process: an element of another process than its window's that the target
+    /// policy refuses (an embedded WebView2, a child window of another app; see <see cref="Services.ForeignElements"/>). Null
+    /// when it left none out. For the callers that need one match (read_element_text, element_action by criteria), so that
+    /// they can say the policy refused it rather than that the search did not finish; find_ui_elements' output says it with
+    /// <see cref="Warning"/> and truncationReason PartsSkipped, so this is not part of it.
+    /// </summary>
+    [JsonIgnore]
+    public PolicyLeftOutMatches? PolicyLeftOut { get; init; }
 }
+
+/// <summary>The matches a search left out for the target policy (<see cref="FindElementsResult.PolicyLeftOut"/>).</summary>
+/// <param name="Count">How many matches were left out.</param>
+/// <param name="Warning">What the result's warning says about them: whose they are and why the policy refuses them.</param>
+/// <param name="OtherwiseComplete">Whether the search covered the rest of its scope (no timeout, search limit, window limit or
+/// other part skipped), so that these are the only matches it did not return.</param>
+public sealed record PolicyLeftOutMatches(int Count, string Warning, bool OtherwiseComplete);
 
 /// <summary>
 /// What find_ui_elements' searchVirtualized searched (roadmap M3.10): the lists of the window (or of withinRef's element),

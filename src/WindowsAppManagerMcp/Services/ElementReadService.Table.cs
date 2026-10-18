@@ -703,7 +703,8 @@ public sealed partial class ElementReadService
     /// WPF DataGrid, the column's name in Explorer's details rows. So a cell whose Value pattern fails gives its name, and the
     /// page's warning says so (<see cref="TableProgress.NoteValueFailure"/>). Null for a cell that could not be read or
     /// disappeared, and for one of another process that the target policy refuses (<see cref="ForeignElements"/>: checked by
-    /// its own window, when it has one, and by the process its identity names, where that is read).
+    /// the process read with it, and by the one its identity names where that is read); a child of another such process is
+    /// left out of the names.
     /// </summary>
     private string? CellText(UiaElement? cell, TableProgress progress, CancellationToken token)
     {
@@ -712,7 +713,7 @@ public sealed partial class ElementReadService
             return null;
         }
 
-        if (progress.Foreign.LeavesOutWindow(cell.NativeWindowHandle))
+        if (progress.Foreign.LeavesOut(cell))
         {
             return null;
         }
@@ -739,21 +740,26 @@ public sealed partial class ElementReadService
         if (children is { Count: > 0 and <= CellChildrenLimit } &&
             TryRead(() => _tree.GetChildElements(cell.Node, token)) is { } texts)
         {
-            return string.Join(" ", texts.Select(t => t.Properties.Name).Where(n => !string.IsNullOrEmpty(n)));
+            return string.Join(" ", texts.Where(t => !progress.Foreign.LeavesOut(t)).Select(t => t.Properties.Name)
+                .Where(n => !string.IsNullOrEmpty(n)));
         }
 
         return string.Empty;
     }
 
-    /// <summary>The value of a cell or header that has the Value pattern (see <see cref="ValueOf"/>), else null.</summary>
+    /// <summary>
+    /// The value of a cell or header that has the Value pattern (see <see cref="ValueOf"/>), else null; null too for one of
+    /// another process that the target policy refuses (see <see cref="CellText"/>).
+    /// </summary>
     private string? ValueText(UiaElement cell, TableProgress progress) =>
-        (cell.Patterns & UiaPatterns.Value) != 0 ? ValueOf(cell, progress) : null;
+        (cell.Patterns & UiaPatterns.Value) != 0 && !progress.Foreign.LeavesOut(cell) ? ValueOf(cell, progress) : null;
 
     /// <summary>
-    /// The value of a cell with the Value pattern, empty when it has none or the read fails (noted for the page's warning).
-    /// Null for a password field, or one whose flag cannot be read, whose value is never read; for a cell of another process
-    /// than the window's that the target policy refuses (its identity names its process; noted too); and for a cell that is
-    /// gone: null, as a cell the table no longer has (the next GetItem or row read finds a table that is gone).
+    /// The value of a cell with the Value pattern, empty when it has none or the read fails (noted for the page's warning, once
+    /// per cell). Null for a password field, or one whose flag cannot be read, whose value is never read; for a cell of another
+    /// process than the window's that the target policy refuses (its identity names its process too; noted once per cell);
+    /// and for a cell that is gone: null, as a cell the table no longer has (the next GetItem or row read finds a table that
+    /// is gone).
     /// </summary>
     private string? ValueOf(UiaElement cell, TableProgress progress)
     {
@@ -762,7 +768,7 @@ public sealed partial class ElementReadService
             return null;
         }
 
-        if (progress.Foreign.LeavesOut(identity.ProcessId))
+        if (progress.Foreign.LeavesOut(cell, identity.ProcessId))
         {
             return null;
         }
@@ -773,7 +779,7 @@ public sealed partial class ElementReadService
             var value = TryValue(cell.Node, failures);
             if (failures.Count > 0)
             {
-                progress.NoteValueFailure(failures[0]);
+                progress.NoteValueFailure(cell, failures[0]);
             }
 
             return value ?? string.Empty;
@@ -830,20 +836,30 @@ public sealed partial class ElementReadService
 
         private int _valueFailures;
         private string? _firstValueFailure;
+        private readonly HashSet<string> _failedRuntimeIds = [];
+        private readonly HashSet<IUiaNode> _failedNodes = new(ReferenceEqualityComparer.Instance);
 
         /// <summary>The target policy's check of the cells of another process than the window's (see <see cref="CellText"/>).</summary>
         public ForeignElements Foreign { get; } = foreign;
 
         /// <summary>
-        /// A cell's or header's Value pattern failed (<paramref name="failure"/> says how), so its name or its children's names
-        /// were taken in its place: the page's warning says how many and the first failure.
+        /// The Value pattern of <paramref name="cell"/>, a cell or header, failed (<paramref name="failure"/> says how), so its
+        /// name or its children's names were taken in its place: the page's warning says how many and the first failure. Each
+        /// cell counts once (by its runtime id, else by its node), although the header row's first cells are read twice, the
+        /// first time to tell whether they include a corner.
         /// </summary>
-        public void NoteValueFailure(string failure)
+        public void NoteValueFailure(UiaElement cell, string failure)
         {
             lock (_gate)
             {
-                _valueFailures++;
-                _firstValueFailure ??= failure;
+                var first = cell.RuntimeId is { Count: > 0 } runtimeId
+                    ? _failedRuntimeIds.Add(string.Join('.', runtimeId))
+                    : _failedNodes.Add(cell.Node);
+                if (first)
+                {
+                    _valueFailures++;
+                    _firstValueFailure ??= failure;
+                }
             }
         }
 

@@ -14,9 +14,9 @@ namespace WindowsAppManagerMcp.Services;
 /// a warning). A ref and withinRef name their window through the element registry, with no wait. A window of an app the
 /// user's target policy denies ends the wait before the first check (TargetDeniedByPolicy, <see cref="UiaTargets.ReadVerdict"/>):
 /// nothing of it is read. So does a ref whose element belongs to another process than its window's that the policy refuses
-/// (an embedded WebView2, a child window of another app: <see cref="ForeignElements"/>, checked by the process its identity
-/// names when value_equals reads it, else by its own window's when it has one); criteria never match such an element
-/// (find_ui_elements leaves it out, a part skipped).</para>
+/// (an embedded WebView2, a child window of another app: <see cref="ForeignElements"/>, checked under every condition by the
+/// process the ref's resolution read with it); criteria never match such an element (find_ui_elements leaves it out, a part
+/// skipped, so a check of them is never complete while one matches).</para>
 /// <para><b>Each check.</b> Criteria run find_ui_elements' search (<see cref="IElementSearchService"/>: the provider
 /// evaluates them under a cache request, the window's hung check comes first) with visibleOnly and enabledOnly off, since
 /// the condition decides what counts, and at most <see cref="CandidateLimit"/> matches described (detail standard only for
@@ -1014,18 +1014,21 @@ public sealed class ElementWaitService : IElementWaitService
         var node = resolved.Node;
 
         // An element of another process than the window's (an embedded WebView2, a child window of another app) that the
-        // target policy refuses is not read: checked by the process its identity names when its value is read, which reads
-        // that identity anyway, and otherwise by its own window's process when it has one (a Win32 read)
-        var foreign = UiaTargets.ForeignElementsOf(_windows, _policy, window);
+        // target policy refuses is not read: checked by the process the resolution read with it, under every condition. Only
+        // an element read without it is checked by the process its identity names when value_equals reads that anyway (and
+        // then never read again: a value is not read past an identity that could not be read), else by its own window's
         UiaNodeIdentity? identity = null;
+        var identityRead = false;
+        var foreign = UiaTargets.ForeignElementsOf(_windows, _policy, window);
         if (foreign.Active)
         {
-            if ((needs & Needs.Value) != 0)
+            if (resolved.Element.ProcessId == null && (needs & Needs.Value) != 0)
             {
                 identity = Try(() => _tree.ReadIdentity(node));
+                identityRead = true;
             }
 
-            if (foreign.Refusal(identity?.ProcessId, resolved.Element.NativeWindowHandle) is { } refused)
+            if (foreign.Refusal(resolved.Element, identity?.ProcessId) is { } refused)
             {
                 return new RefRead(ElementResolution.Failed(UIElementErrorCode.TargetDeniedByPolicy, refused));
             }
@@ -1058,7 +1061,11 @@ public sealed class ElementWaitService : IElementWaitService
         if ((needs & Needs.Value) != 0)
         {
             // A password field's value is never read, not even to compare it
-            identity ??= Try(() => _tree.ReadIdentity(node));
+            if (!identityRead)
+            {
+                identity = Try(() => _tree.ReadIdentity(node));
+            }
+
             var isPassword = identity?.IsPassword == true;
             if (identity != null && !isPassword && (patterns & UiaPatterns.Value) != 0)
             {

@@ -33,6 +33,7 @@ namespace WindowsAppManagerMcp.Tests.Fixtures;
 public sealed class FakeWinUi3WebView2
 {
     private readonly Dictionary<string, IReadOnlyList<int>> _ids = [];
+    private readonly List<FakeUiaNode> _hosts = [];
     private readonly bool _withDocument;
 
     /// <param name="withDocument">False: Chromium has not built the page's tree yet (<see cref="AddDocument"/> adds it).</param>
@@ -65,6 +66,24 @@ public sealed class FakeWinUi3WebView2
 
     /// <summary>The runtime id of the root of Chromium's views.</summary>
     public IReadOnlyList<int> ViewsRootId => Id("WAM page - Web content");
+
+    /// <summary>
+    /// Gives every element of the WebView2's part (each copy of the "WAM page" window, Chromium's views and the page) the
+    /// process that serves it, as on a real desktop: msedgewebview2.exe's, not the app's. Without it they report none (an
+    /// element of the window's process, as every other node of the fixture).
+    /// </summary>
+    public void ServeWebViewFrom(int processId)
+    {
+        foreach (var host in _hosts)
+        {
+            foreach (var node in Subtree(host))
+            {
+                node.ProcessId = processId;
+            }
+        }
+    }
+
+    private static IEnumerable<FakeUiaNode> Subtree(FakeUiaNode node) => node.Children.SelectMany(Subtree).Prepend(node);
 
     /// <summary>Chromium builds the page's tree: its Document appears in the first copy, with <paramref name="children"/> elements.</summary>
     public FakeUiaNode AddDocument(int children = 3)
@@ -103,7 +122,9 @@ public sealed class FakeWinUi3WebView2
                                 Node("Pane", "MultiContentsView", "Chrome").With(documentParent))),
                         Node("Pane", "EmbeddedBrowserDownloadView", "Chrome")))),
             Node("Pane", "TopContainerOverlayView", "Chrome"));
-        return Node("Pane", "WAM page", "Win32", "host").With(Node("Pane", "Intermediate D3D Window", "Win32"), viewsRoot);
+        var host = Node("Pane", "WAM page", "Win32", "host").With(Node("Pane", "Intermediate D3D Window", "Win32"), viewsRoot);
+        _hosts.Add(host);
+        return host;
     }
 
     private FakeUiaNode NewDocument(int children)
