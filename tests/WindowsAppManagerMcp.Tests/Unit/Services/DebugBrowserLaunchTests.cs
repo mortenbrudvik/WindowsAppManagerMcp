@@ -838,10 +838,86 @@ public sealed class DebugBrowserLaunchTests : IDisposable
         // Act
         var act = () => CreateSut().LaunchBrowserWithDebugAsync(new DebugBrowserLaunchRequest(DebugBrowser.Chrome), cancel.Token);
 
+        // Assert - the browser process alone, never its process tree, which holds what the browser opened
+        await act.Should().ThrowAsync<OperationCanceledException>();
+        _browser.Verify(p => p.Kill(false), Times.Once);
+        _browser.Verify(p => p.Kill(true), Times.Never);
+        TemporaryProfilesLeft().Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task ACallCancelledDuringTheWindowWait_EndsWhatIsLeftOfTheBrowsersOwnProcesses_NeverAProgramItOpened()
+    {
+        // Arrange - the server ends only what it provably started, as close_debug_browser does: a renderer of the browser
+        // (its .exe, a --type, the launch's profile), but not a program a download opened, the user's own browser that a
+        // link started (the same .exe without a --type), nor a child process of another profile
+        using var cancel = CancelDuringTheWindowWait();
+        BrowserCanBeOpened();
+        _browser.Setup(p => p.WaitForExitAsync(It.IsAny<int>(), It.IsAny<CancellationToken>())).ReturnsAsync(true);
+        var (helper, opened, users, otherProfile) = BrowserChildren();
+
+        // Act
+        var act = () => CreateSut().LaunchBrowserWithDebugAsync(Request(), cancel.Token);
+
         // Assert
         await act.Should().ThrowAsync<OperationCanceledException>();
-        _browser.Verify(p => p.Kill(true), Times.Once);
-        TemporaryProfilesLeft().Should().BeEmpty();
+        _browser.Verify(p => p.Kill(false), Times.Once);
+        helper.Verify(p => p.Kill(false), Times.Once);
+        helper.Verify(p => p.Kill(true), Times.Never);
+        opened.Verify(p => p.Kill(It.IsAny<bool>()), Times.Never);
+        users.Verify(p => p.Kill(It.IsAny<bool>()), Times.Never);
+        otherProfile.Verify(p => p.Kill(It.IsAny<bool>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ACancelledCall_LeavesAHelperWhoseStartTimeChanged_Running()
+    {
+        // Arrange - the renderer's PID went to another process after the browser was ended: its start time is read again
+        using var cancel = CancelDuringTheWindowWait();
+        BrowserCanBeOpened();
+        _browser.Setup(p => p.WaitForExitAsync(It.IsAny<int>(), It.IsAny<CancellationToken>())).ReturnsAsync(true);
+        var (helper, _, _, _) = BrowserChildren();
+        var helperStarts = new Queue<DateTime?>([BrowserStart.AddSeconds(1), BrowserStart.AddMinutes(5)]);
+        _processes.Setup(p => p.GetProcessStartTime(HelperProcessId)).Returns(() => helperStarts.Count > 0 ? helperStarts.Dequeue() : null);
+
+        // Act
+        var act = () => CreateSut().LaunchBrowserWithDebugAsync(Request(), cancel.Token);
+
+        // Assert
+        await act.Should().ThrowAsync<OperationCanceledException>();
+        _browser.Verify(p => p.Kill(false), Times.Once);
+        helper.Verify(p => p.Kill(It.IsAny<bool>()), Times.Never);
+    }
+
+    private const int HelperProcessId = BrowserProcessId + 1;
+
+    /// <summary>
+    /// What the started browser has in its process tree: its own renderer, a program a download opened, the user's own
+    /// browser that a link started, and a child process of another profile; each can be opened and ended.
+    /// </summary>
+    private (Mock<IProcessHandle> Helper, Mock<IProcessHandle> Opened, Mock<IProcessHandle> Users, Mock<IProcessHandle> OtherProfile) BrowserChildren()
+    {
+        const int opened = 9000, users = 9001, otherProfile = 9002;
+        _processes.Setup(p => p.GetDescendantsOf(BrowserProcessId)).Returns(
+        [
+            (HelperProcessId, "chrome.exe"), (opened, "notepad.exe"), (users, "chrome.exe"), (otherProfile, "chrome.exe")
+        ]);
+        _processes.Setup(p => p.GetProcessCommandLine(HelperProcessId)).Returns($"\"{Chrome}\" --type=renderer --user-data-dir=\"{_profile}\"");
+        _processes.Setup(p => p.GetProcessCommandLine(opened)).Returns(@"""C:\Windows\notepad.exe"" C:\Users\me\Downloads\a.txt");
+        _processes.Setup(p => p.GetProcessCommandLine(users)).Returns($"\"{Chrome}\" --user-data-dir=\"{_profile}\" https://example.com/");
+        _processes.Setup(p => p.GetProcessCommandLine(otherProfile)).Returns($"\"{Chrome}\" --type=renderer --user-data-dir=\"C:\\Users\\me\\Other\"");
+
+        Mock<IProcessHandle> Child(int pid)
+        {
+            var handle = new Mock<IProcessHandle>();
+            handle.SetupGet(h => h.Id).Returns(pid);
+            handle.Setup(h => h.WaitForExitAsync(It.IsAny<int>(), It.IsAny<CancellationToken>())).ReturnsAsync(true);
+            _processes.Setup(p => p.OpenProcess(pid)).Returns(handle.Object);
+            _processes.Setup(p => p.GetProcessStartTime(pid)).Returns(BrowserStart.AddSeconds(1));
+            return handle;
+        }
+
+        return (Child(HelperProcessId), Child(opened), Child(users), Child(otherProfile));
     }
 
     [Fact]
@@ -864,7 +940,8 @@ public sealed class DebugBrowserLaunchTests : IDisposable
 
         // Assert
         await act.Should().ThrowAsync<OperationCanceledException>();
-        _browser.Verify(p => p.Kill(true), Times.Once);
+        _browser.Verify(p => p.Kill(false), Times.Once);
+        _browser.Verify(p => p.Kill(true), Times.Never);
         Directory.Exists(_profile).Should().BeTrue("a userDataDir the agent passed is never deleted");
     }
 
@@ -916,7 +993,7 @@ public sealed class DebugBrowserLaunchTests : IDisposable
             cancel.Cancel();
             release.Wait(TimeSpan.FromSeconds(10));
         };
-        _browser.Setup(p => p.Kill(true)).Callback(() => killed.TrySetResult());
+        _browser.Setup(p => p.Kill(false)).Callback(() => killed.TrySetResult());
 
         // Act
         var act = () => CreateSut().LaunchBrowserWithDebugAsync(new DebugBrowserLaunchRequest(DebugBrowser.Chrome), cancel.Token);
@@ -934,7 +1011,38 @@ public sealed class DebugBrowserLaunchTests : IDisposable
             await Task.Delay(20);
 
         TemporaryProfilesLeft().Should().BeEmpty();
+        _browser.Verify(p => p.Kill(true), Times.Never);
         _browser.Verify(p => p.Dispose(), Times.AtLeastOnce);
+    }
+
+    [Fact]
+    public async Task ACallCancelledWhileTheStartIsStillRunning_EndsOnlyTheBrowsersOwnProcesses_WhenTheStartReturns()
+    {
+        // Arrange - as above, with what the browser has in its process tree by the time the start returns
+        using var cancel = new CancellationTokenSource();
+        using var release = new ManualResetEventSlim();
+        _whenStarted = () =>
+        {
+            cancel.Cancel();
+            release.Wait(TimeSpan.FromSeconds(10));
+        };
+        _browser.Setup(p => p.WaitForExitAsync(It.IsAny<int>(), It.IsAny<CancellationToken>())).ReturnsAsync(true);
+        var (helper, opened, users, otherProfile) = BrowserChildren();
+        var helperEnded = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        helper.Setup(p => p.Kill(false)).Callback(() => helperEnded.TrySetResult());
+
+        // Act
+        var act = () => CreateSut().LaunchBrowserWithDebugAsync(Request(), cancel.Token);
+        await act.Should().ThrowAsync<OperationCanceledException>();
+        release.Set();
+        await helperEnded.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+        // Assert
+        _browser.Verify(p => p.Kill(false), Times.Once);
+        _browser.Verify(p => p.Kill(true), Times.Never);
+        opened.Verify(p => p.Kill(It.IsAny<bool>()), Times.Never);
+        users.Verify(p => p.Kill(It.IsAny<bool>()), Times.Never);
+        otherProfile.Verify(p => p.Kill(It.IsAny<bool>()), Times.Never);
     }
 
     [Fact]

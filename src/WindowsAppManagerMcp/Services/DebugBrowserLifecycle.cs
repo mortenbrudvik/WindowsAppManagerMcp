@@ -24,8 +24,7 @@ namespace WindowsAppManagerMcp.Services;
 public sealed class DebugBrowserLifecycle : IDebugBrowserLifecycle
 {
     private const string PortSwitch = "remote-debugging-port";
-    private const string ProfileSwitch = "user-data-dir";
-    private const string TypeSwitch = "type";
+    private const string TypeSwitch = DebugBrowserProcesses.TypeSwitch;
 
     /// <summary>The image names of the browsers launch_browser_with_debug starts (one per <see cref="DebugBrowser"/>).</summary>
     private static IReadOnlySet<string> BrowserImages => DebugBrowserLocator.ExecutableNames;
@@ -55,6 +54,7 @@ public sealed class DebugBrowserLifecycle : IDebugBrowserLifecycle
     private readonly ITargetPolicy? _targetPolicy;
     private readonly IHostGuard? _hostGuard;
     private readonly IInputSession? _session;
+    private readonly DebugBrowserProcesses _browserProcesses;
 
     /// <summary>The browsers this server started, by PID, with the start time and profile they were started with.</summary>
     private readonly ConcurrentDictionary<int, StartedBrowser> _started = new();
@@ -94,6 +94,7 @@ public sealed class DebugBrowserLifecycle : IDebugBrowserLifecycle
         _targetPolicy = targetPolicy;
         _hostGuard = hostGuard;
         _session = session;
+        _browserProcesses = new DebugBrowserProcesses(native, hostGuard);
     }
 
     /// <inheritdoc />
@@ -146,7 +147,7 @@ public sealed class DebugBrowserLifecycle : IDebugBrowserLifecycle
     /// <inheritdoc />
     /// <remarks>
     /// Ends what close_debug_browser would end, and nothing else (the server closes only what it provably started): the
-    /// browser process alone, then what is left of its own child processes (<see cref="HelpersOf(int, string, string)"/>).
+    /// browser process alone, then what is left of its own child processes (<see cref="DebugBrowserProcesses"/>).
     /// </remarks>
     public async Task AbandonAsync(DebugBrowserLaunchResult launch)
     {
@@ -161,17 +162,12 @@ public sealed class DebugBrowserLifecycle : IDebugBrowserLifecycle
 
             using (var process = _native.OpenProcess(pid))
             {
-                if (process != null && !HasExited(process) && IsLaunchedBrowser(pid, launch))
+                if (process != null && !DebugBrowserProcesses.HasExited(process) && IsLaunchedBrowser(pid, launch))
                 {
                     // What close_debug_browser would end, and only that: the browser, then what is left of its own child
                     // processes. Never its process tree, which holds what the browser opened (a download's program, the
                     // user's own browser that a link started)
-                    var helpers = HelpersOf(pid, launch.UserDataDir);
-                    if (End(process))
-                    {
-                        await process.WaitForExitAsync((int)AbandonTimeout.TotalMilliseconds, CancellationToken.None).ConfigureAwait(false);
-                        await EndHelpersAsync(helpers, CancellationToken.None).ConfigureAwait(false);
-                    }
+                    await _browserProcesses.EndStartedBrowserAsync(process, pid, launch.UserDataDir, AbandonTimeout).ConfigureAwait(false);
                 }
             }
 
@@ -195,7 +191,7 @@ public sealed class DebugBrowserLifecycle : IDebugBrowserLifecycle
             return _native.GetProcessStartTime(processId) == launch.StartTime;
 
         return launch.UserDataDir != null &&
-               DebugBrowserProfiles.SamePath(ProfileOf(ChromiumCommandLine.Parse(_native.GetProcessCommandLine(processId))), launch.UserDataDir);
+               DebugBrowserProfiles.SamePath(DebugBrowserProcesses.ProfileOf(ChromiumCommandLine.Parse(_native.GetProcessCommandLine(processId))), launch.UserDataDir);
     }
 
     /// <summary>Forgets the browsers this server started whose PID no longer has the start time they were started with.</summary>
@@ -339,7 +335,7 @@ public sealed class DebugBrowserLifecycle : IDebugBrowserLifecycle
                 continue;
 
             var switches = ChromiumCommandLine.Parse(_native.GetProcessCommandLine(processId));
-            if (switches.ContainsKey(TypeSwitch) || ProfileOf(switches) is not { } profile)
+            if (switches.ContainsKey(TypeSwitch) || DebugBrowserProcesses.ProfileOf(switches) is not { } profile)
                 continue;
 
             if (DebugBrowserProfiles.SamePath(profile, userDataDir))
@@ -347,26 +343,6 @@ public sealed class DebugBrowserLifecycle : IDebugBrowserLifecycle
         }
 
         return null;
-    }
-
-    /// <summary>The --user-data-dir of a command line as a full path, or null when it has none or a relative one.</summary>
-    private static string? ProfileOf(IReadOnlyDictionary<string, string> switches)
-    {
-        if (!switches.TryGetValue(ProfileSwitch, out var profile) || string.IsNullOrWhiteSpace(profile))
-            return null;
-
-        var trimmed = profile.Trim();
-        if (!Path.IsPathFullyQualified(trimmed))
-            return null;
-
-        try
-        {
-            return DebugBrowserProfiles.Normalize(trimmed);
-        }
-        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
-        {
-            return null;
-        }
     }
 
     /// <inheritdoc />
@@ -439,7 +415,7 @@ public sealed class DebugBrowserLifecycle : IDebugBrowserLifecycle
                 "Pass the processId launch_browser_with_debug returned.");
         }
 
-        if (!switches.ContainsKey(PortSwitch) || ProfileOf(switches) is not { } profile)
+        if (!switches.ContainsKey(PortSwitch) || DebugBrowserProcesses.ProfileOf(switches) is not { } profile)
         {
             return Refuse(pid, nameof(BrowserErrorCode.NotADebugBrowser),
                 $"{imageName} (processId {shown}) was not started with a DevTools port and a profile folder, so it is not a " +
@@ -488,48 +464,13 @@ public sealed class DebugBrowserLifecycle : IDebugBrowserLifecycle
                 "Ask the user to close it.");
         }
 
-        var helpers = HelpersOf(pid, imageName, profile);
+        var helpers = _browserProcesses.HelpersOf(pid, imageName, profile);
         var deletes = kind == DebugProfileKind.Temporary || (kind == DebugProfileKind.Named && deleteProfile);
         var warning = deleteProfile && kind == DebugProfileKind.Custom
             ? $"deleteProfile does not apply to a userDataDir that was passed: '{profile}' is kept."
             : null;
         return new DebugBrowserCloseCheck(
             new DebugBrowserCloseTarget(pid, processName, startTime, profile, kind, started != null, deletes, helpers, warning), null);
-    }
-
-    /// <summary>
-    /// The browser's own child processes, with their start times, to end what is left of them once it exits: the same .exe
-    /// with a --type and the browser's own --user-data-dir. Another program it opened is not one, nor is the user's own
-    /// browser that a link started (the same .exe, a descendant, but without that profile), nor one whose command line
-    /// cannot be read, nor the agent's host.
-    /// </summary>
-    private List<(int ProcessId, DateTime? StartTime)> HelpersOf(int processId, string imageName, string profile) =>
-        (_native.GetDescendantsOf(processId) ?? [])
-            .Where(d => string.Equals(d.ImageName, imageName, StringComparison.OrdinalIgnoreCase) && _hostGuard?.IsHostProcess(d.ProcessId) != true &&
-                        IsChildOf(d.ProcessId, profile))
-            .Select(d => (d.ProcessId, _native.GetProcessStartTime(d.ProcessId)))
-            .ToList();
-
-    /// <summary>
-    /// <see cref="HelpersOf(int, string, string)"/> of a browser the server just started on <paramref name="userDataDir"/>
-    /// (<see cref="AbandonAsync"/>); none when its image or profile is not known, and then its helpers exit with it.
-    /// </summary>
-    private List<(int ProcessId, DateTime? StartTime)> HelpersOf(int processId, string? userDataDir)
-    {
-        if (userDataDir == null || _native.GetProcessList() is not { } processes || !processes.TryGetValue(processId, out var entry) ||
-            !BrowserImages.Contains(entry.ImageName))
-        {
-            return [];
-        }
-
-        return HelpersOf(processId, entry.ImageName, userDataDir);
-    }
-
-    /// <summary>Whether a descendant is a Chromium child process of the browser on <paramref name="profile"/>.</summary>
-    private bool IsChildOf(int processId, string profile)
-    {
-        var switches = ChromiumCommandLine.Parse(_native.GetProcessCommandLine(processId));
-        return switches.ContainsKey(TypeSwitch) && ProfileOf(switches) is { } own && DebugBrowserProfiles.SamePath(own, profile);
     }
 
     /// <inheritdoc />
@@ -551,14 +492,14 @@ public sealed class DebugBrowserLifecycle : IDebugBrowserLifecycle
         using (var process = _native.OpenProcess(pid))
         {
             var now = _native.GetProcessStartTime(pid);
-            exited = process == null || HasExited(process) || now == null;
+            exited = process == null || DebugBrowserProcesses.HasExited(process) || now == null;
             if (!exited && target.StartTime != null && now != target.StartTime)
             {
                 // The browser exited while the user was asked, and its PID went to another process: that one is not touched
                 exited = true;
             }
 
-            if (!exited && !DebugBrowserProfiles.SamePath(ProfileOf(ChromiumCommandLine.Parse(_native.GetProcessCommandLine(pid))), target.UserDataDir))
+            if (!exited && !DebugBrowserProfiles.SamePath(DebugBrowserProcesses.ProfileOf(ChromiumCommandLine.Parse(_native.GetProcessCommandLine(pid))), target.UserDataDir))
             {
                 return Result(target, false, nameof(BrowserErrorCode.NotADebugBrowser),
                     $"Process {shown} no longer runs with the profile '{target.UserDataDir}'. Nothing was closed.");
@@ -591,7 +532,7 @@ public sealed class DebugBrowserLifecycle : IDebugBrowserLifecycle
                     catch (ToolErrorException ex) when (close.Sent)
                     {
                         // Browser.close went out, so "nothing was done" is not true: report what was done
-                        if (!HasExited(process!))
+                        if (!DebugBrowserProcesses.HasExited(process!))
                         {
                             return Result(target, false, ex.ErrorCode,
                                 $"Browser.close was sent to {target.ProcessName} (processId {shown}), but it had not exited when the wait " +
@@ -613,11 +554,11 @@ public sealed class DebugBrowserLifecycle : IDebugBrowserLifecycle
                             // Still the browser the user agreed to close
                             if (_native.GetProcessStartTime(pid) is { } stillRunning && (target.StartTime == null || stillRunning == target.StartTime))
                             {
-                                forced = End(process!);
+                                forced = DebugBrowserProcesses.End(process!);
                             }
                         }
 
-                        exited = HasExited(process!) ||
+                        exited = DebugBrowserProcesses.HasExited(process!) ||
                                  await process!.WaitForExitAsync((int)EndedExitTimeout.TotalMilliseconds, cancellationToken).ConfigureAwait(false);
                         warning = Combine(warning, !close.Sent
                             ? $"It was ended without Browser.close: {close.Problem}"
@@ -636,7 +577,7 @@ public sealed class DebugBrowserLifecycle : IDebugBrowserLifecycle
         }
 
         _started.TryRemove(pid, out _);
-        var helpersEnded = await EndHelpersAsync(target.Helpers, cancellationToken).ConfigureAwait(false);
+        var helpersEnded = await _browserProcesses.EndHelpersAsync(target.Helpers, EndedExitTimeout, cancellationToken).ConfigureAwait(false);
         if (helpersEnded > 0)
             warning = Combine(warning, $"{helpersEnded} of its own processes still ran after it exited and were ended.");
 
@@ -682,66 +623,6 @@ public sealed class DebugBrowserLifecycle : IDebugBrowserLifecycle
         ? $"input is paused: {InputControlSources.PauseCause(_session?.PauseState?.PausedBy, _session?.PauseChord)}. Stop and ask " +
           "the user how to continue."
         : "another input or window call held the input gate. Call close_debug_browser again when your other calls have finished.";
-
-    /// <summary>Ends what is left of the browser's own child processes (only those that still have their start time).</summary>
-    private async Task<int> EndHelpersAsync(IReadOnlyList<(int ProcessId, DateTime? StartTime)> helpers, CancellationToken cancellationToken)
-    {
-        var ended = new List<IProcessHandle>();
-        try
-        {
-            foreach (var (processId, startTime) in helpers)
-            {
-                if (startTime == null || _native.GetProcessStartTime(processId) != startTime)
-                    continue;
-
-                var helper = _native.OpenProcess(processId);
-                if (helper == null)
-                    continue;
-
-                if (HasExited(helper) || !End(helper))
-                {
-                    helper.Dispose();
-                    continue;
-                }
-
-                ended.Add(helper);
-            }
-
-            await Task.WhenAll(ended.Select(h => h.WaitForExitAsync((int)EndedExitTimeout.TotalMilliseconds, cancellationToken))).ConfigureAwait(false);
-            return ended.Count;
-        }
-        finally
-        {
-            foreach (var helper in ended)
-                helper.Dispose();
-        }
-    }
-
-    /// <summary>Ends one process (not its tree); false when it could not be ended (it exited meanwhile, or access is denied).</summary>
-    private static bool End(IProcessHandle process)
-    {
-        try
-        {
-            process.Kill(entireProcessTree: false);
-            return true;
-        }
-        catch (Exception ex) when (ex is InvalidOperationException or Win32Exception or NotSupportedException)
-        {
-            return false;
-        }
-    }
-
-    private static bool HasExited(IProcessHandle process)
-    {
-        try
-        {
-            return process.HasExited;
-        }
-        catch (Exception ex) when (ex is InvalidOperationException or Win32Exception)
-        {
-            return false;
-        }
-    }
 
     /// <summary>
     /// Whether the process is an ancestor of this server, by a live walk of the process tree; null when the process list
