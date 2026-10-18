@@ -529,6 +529,17 @@ public static partial class LayoutPresetSchema
     }
 
     /// <summary>
+    /// The criterion of a placement's matcher, read from a file, that is given but blank once normalized (review finding F4),
+    /// with why, as <see cref="TryBuildPlacement"/> refuses it in what an agent writes: apply_layout does not apply such a
+    /// placement. Text of only whitespace counts as left out, as save_layout takes it. Null when neither criterion is blank.
+    /// </summary>
+    public static string? BlankCriterion(WindowMatcher matcher)
+    {
+        ArgumentNullException.ThrowIfNull(matcher);
+        return BlankMatcherError(Trimmed(matcher.ProcessName), Trimmed(matcher.TitleContains));
+    }
+
+    /// <summary>
     /// The field of a matcher that is given but blank once normalized, as apply_layout and the window selectors compare it, with
     /// why: a processName that is nothing but '.exe', or a titleContains of only invisible format characters (a zero-width
     /// space, bidirectional marks). Either normalizes to "", which matches every window. Null when neither is blank.

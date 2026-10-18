@@ -132,4 +132,46 @@ public class LayoutServiceApplySafetyTests : IDisposable
         _processes.Verify(p => p.LaunchApplicationAsync(It.IsAny<LaunchRequest>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<CancellationToken>()),
             Times.Never);
     }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ABlankProcessNameBesideARealTitle_LaunchesNothing_SoNoNewWindowOfAnyProcessIsTakenForIt(bool dryRun)
+    {
+        // Arrange - no window has the title, so launchMissing would launch; its expected window would have been any process's
+        // ('.exe' is "" once normalized, and every process name contains "")
+        _windows.Setup(w => w.GetAllWindows(It.IsAny<bool>())).Returns([Notepad]);
+        var sut = CreateSut();
+        (await sut.SavePresetAsync(new LayoutPreset("hand-edited", null, [Placement(processName: ".exe", titleContains: "Quarterly report")])))
+            .Success.Should().BeTrue();
+
+        // Act
+        var result = await sut.ApplyPresetAsync("hand-edited", launchMissing: true, options: new LayoutApplyOptions(DryRun: dryRun));
+
+        // Assert
+        var placement = result.Placements!.Single();
+        placement.Status.Should().Be(LayoutPlacementStatus.NotApplicable);
+        placement.ErrorCode.Should().Be(nameof(LayoutErrorCode.NoMatchCriterion));
+        placement.Error.Should().Contain("processName '.exe'").And.Contain("every window");
+        _processes.Verify(p => p.CheckLaunch(It.IsAny<LaunchRequest>()), Times.Never);
+        _processes.Verify(p => p.LaunchApplicationAsync(It.IsAny<LaunchRequest>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task ALaunchedPlacementsExpectedWindow_IsItsProcess()
+    {
+        // Arrange - the hint the launch waits with names the placement's process, as before
+        LaunchRequest? request = null;
+        _processes.Setup(p => p.LaunchApplicationAsync(It.IsAny<LaunchRequest>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .Callback<LaunchRequest, bool, int, CancellationToken>((r, _, _, _) => request = r)
+            .ReturnsAsync(new LaunchResult(true, ProcessId: 502, WindowHandle: Notepad.Handle));
+
+        // Act
+        var result = await ApplyAsync(Placement(processName: "notepad.exe"), launchMissing: true);
+
+        // Assert
+        result.WindowsLaunched.Should().Be(1);
+        request!.ExpectWindow.Should().Be(new LaunchWindowHint(ProcessName: "notepad.exe"));
+    }
 }

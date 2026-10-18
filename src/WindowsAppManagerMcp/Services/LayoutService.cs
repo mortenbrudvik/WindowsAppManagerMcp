@@ -1146,10 +1146,12 @@ public class LayoutService : ILayoutService
 
     /// <summary>
     /// The window a layout's launch expects: one of the placement's process (part of its name), which tells the launch's window
-    /// apart when the program hands the launch to another process or app (roadmap M6.8). Null without a process name.
+    /// apart when the program hands the launch to another process or app (roadmap M6.8). Null without a process name, and for
+    /// one that names none once normalized ('.exe', review finding F4): the launch would take a new window of any process. The
+    /// planner refuses such a placement before it launches; this keeps the hint from ever being looser than the matcher.
     /// </summary>
     private static LaunchWindowHint? ExpectedWindow(WindowPlacement placement) =>
-        string.IsNullOrWhiteSpace(placement.Matcher.ProcessName) ? null : new LaunchWindowHint(ProcessName: placement.Matcher.ProcessName);
+        LayoutPlanner.NamesAProcess(placement.Matcher.ProcessName) ? new LaunchWindowHint(ProcessName: placement.Matcher.ProcessName) : null;
 
     /// <summary>
     /// The launch placement plan of a placement whose window was launched (roadmap M3.F27), as <see cref="Arrange"/> places an

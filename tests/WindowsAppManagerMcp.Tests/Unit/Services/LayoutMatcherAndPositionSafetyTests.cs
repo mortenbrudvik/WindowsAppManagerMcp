@@ -3,8 +3,8 @@ namespace WindowsAppManagerMcp.Tests.Unit.Services;
 /// <summary>
 /// Layout placements that would act on the wrong windows or on no rectangle (review findings F2 and F4): a processName that
 /// is blank once '.exe' is taken off, or a titleContains of only invisible characters, normalizes to "", which matches every
-/// window, so save_layout refuses it (as the window selectors do) and apply_layout skips a file's placement that has
-/// nothing else (NoMatchCriterion); a position read from a file must be a rectangle a window can have (LoadedError); and a
+/// window, so save_layout refuses it (as the window selectors do) and apply_layout skips a file's placement that has one,
+/// whatever else it has (NoMatchCriterion); a position read from a file must be a rectangle a window can have (LoadedError); and a
 /// rectangle less than a pixel on its monitor is not arranged.
 /// </summary>
 public class LayoutMatcherAndPositionSafetyTests
@@ -71,10 +71,33 @@ public class LayoutMatcherAndPositionSafetyTests
         plan.Window.Should().BeNull();
     }
 
-    [Fact]
-    public void ABlankProcessNameBesideATitle_MatchesByTheTitleAlone()
+    [Theory]
+    [InlineData(".exe", "Visual Studio Code", false, LayoutMatchBy.ProcessAndTitle, "processName")]
+    [InlineData(".exe", "Visual Studio Code", true, LayoutMatchBy.ProcessAndTitle, "processName")]
+    [InlineData(" .EXE ", "Visual Studio Code", false, LayoutMatchBy.TitleOnly, "processName")]
+    [InlineData("Code", "​", false, LayoutMatchBy.ProcessOnly, "titleContains")]
+    [InlineData("Code", "‎‏", true, LayoutMatchBy.ProcessAndTitle, "titleContains")]
+    public void ABlankCriterionBesideARealOne_IsNotApplicable_AsTheWindowSelectorsRefuseIt(
+        string processName, string titleContains, bool exactProcessName, LayoutMatchBy matchBy, string field)
     {
-        var plan = LayoutPlanner.Plan([Placement(new WindowMatcher("Visual Studio Code", ".exe"))], [Notepad, Code], OneMonitor,
+        // Arrange - a file a person edited: the blank criterion is corrupt, so the placement is not applied on the other alone,
+        // which would widen it (an exact '.exe' matched no window), and its launch would expect a window of any process
+        var placement = Placement(new WindowMatcher(titleContains, processName) { ExactProcessName = exactProcessName });
+
+        // Act
+        var plan = LayoutPlanner.Plan([placement], [Notepad, Code], OneMonitor, matchBy, NoExePath).Single();
+
+        // Assert
+        plan.NotApplicable.Should().Contain(field).And.Contain("every window");
+        plan.Window.Should().BeNull();
+    }
+
+    [Theory]
+    [InlineData("   ", "Visual Studio Code")]
+    [InlineData("Code", "   ")]
+    public void AWhitespaceCriterion_CountsAsLeftOut_AsSaveLayoutTreatsIt(string processName, string titleContains)
+    {
+        var plan = LayoutPlanner.Plan([Placement(new WindowMatcher(titleContains, processName))], [Notepad, Code], OneMonitor,
             LayoutMatchBy.ProcessAndTitle, NoExePath).Single();
 
         plan.NotApplicable.Should().BeNull();

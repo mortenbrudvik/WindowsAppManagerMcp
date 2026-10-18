@@ -54,6 +54,16 @@ public static class LayoutPlanner
         foreach (var plan in plans)
         {
             var placement = plan.Placement;
+
+            // A criterion given but blank once normalized ('.exe', invisible characters) is a corrupt file, never a match on the
+            // other criterion alone: that would widen an exact '.exe' (which matched nothing), and its launch would take a new
+            // window of any process (review finding F4). Refused whatever matchBy uses, as the window selectors refuse it
+            if (LayoutPresetSchema.BlankCriterion(placement.Matcher) is { } blank)
+            {
+                plan.NotApplicable = $"Skipped {plan.Label}: its {blank} Correct the placement in the layout's file, or save the layout again.";
+                continue;
+            }
+
             if (MissingCriterion(placement.Matcher, matchBy) is { } missing)
             {
                 plan.NotApplicable = $"Skipped {plan.Label}: {missing}";
@@ -217,9 +227,9 @@ public static class LayoutPlanner
 
     /// <summary>
     /// Why <paramref name="matcher"/> has nothing <paramref name="matchBy"/> can match on, or null when it has. An empty
-    /// criterion used to match every window, so title_only on a captured layout moved arbitrary windows; so does one that is
-    /// blank once normalized, as the windows are compared (review finding F4): a processName of only '.exe', a
-    /// titleContains of only invisible characters. Such a criterion counts as none, as the window selectors refuse it.
+    /// criterion used to match every window, so title_only on a captured layout moved arbitrary windows; so does one of only
+    /// whitespace, which counts as left out, as save_layout takes it. A criterion that is blank once normalized but not
+    /// whitespace ('.exe', invisible characters) is refused before this (<see cref="LayoutPresetSchema.BlankCriterion"/>).
     /// </summary>
     private static string? MissingCriterion(WindowMatcher matcher, LayoutMatchBy matchBy)
     {
@@ -229,20 +239,25 @@ public static class LayoutPlanner
         {
             LayoutMatchBy.TitleOnly when !hasTitle =>
                 "matchBy title_only needs titleContains, and this placement has none (save_layout records the process, " +
-                "not title text; text of only invisible characters counts as none); use process_and_title or process_only",
+                "not title text); use process_and_title or process_only",
             LayoutMatchBy.ProcessOnly when !hasProcess =>
-                "matchBy process_only needs a processName, and this placement has none (one of only '.exe' counts as none); " +
-                "use process_and_title or title_only",
+                "matchBy process_only needs a processName, and this placement has none; use process_and_title or title_only",
             LayoutMatchBy.ProcessAndTitle when !hasProcess && !hasTitle =>
-                "the placement has neither a processName nor titleContains (or only blank ones, such as '.exe'), so it would " +
-                "match any window",
+                "the placement has neither a processName nor titleContains, so it would match any window",
             _ => null
         };
     }
 
-    /// <summary>Whether the matcher's process name names a process once normalized (not null, empty or only '.exe').</summary>
-    private static bool HasProcessName(WindowMatcher matcher) =>
-        !string.IsNullOrEmpty(matcher.ProcessName) && WindowMatching.WithoutExe(matcher.ProcessName).Length > 0;
+    /// <summary>
+    /// Whether <paramref name="processName"/> names a process once normalized as the windows are compared: not null, whitespace
+    /// or only '.exe' (review finding F4). A layout's launch expects a window of that process only then: "" is part of every
+    /// process name.
+    /// </summary>
+    public static bool NamesAProcess(string? processName) =>
+        !string.IsNullOrEmpty(processName) && WindowMatching.WithoutExe(processName).Length > 0;
+
+    /// <summary>Whether the matcher's process name names a process once normalized (<see cref="NamesAProcess"/>).</summary>
+    private static bool HasProcessName(WindowMatcher matcher) => NamesAProcess(matcher.ProcessName);
 
     /// <summary>Whether the matcher's title text holds something visible once normalized (<see cref="WindowTitles.Normalize"/>).</summary>
     private static bool HasTitle(WindowMatcher matcher) => WindowTitles.Normalize(matcher.TitleContains).Length > 0;
