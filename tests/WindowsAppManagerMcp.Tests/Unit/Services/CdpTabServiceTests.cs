@@ -473,7 +473,10 @@ public class CdpTabServiceTests
 
         result.Success.Should().BeTrue(result.Error);
         result.Value!.LoadState.Should().Be("notWaited");
-        stopwatch.Elapsed.Should().BeLessThan(CdpTabService.GateHold + TimeSpan.FromSeconds(2));
+        // The call returns once GateHold (a second) has passed; waiting for the answer that never comes would take the whole
+        // LongTimeout. HangBound sits far from both, so a loaded test run does not fail this and a wait for the answer does
+        stopwatch.Elapsed.Should().BeLessThan(HangBound);
+        HangBound.Should().BeLessThan(LongTimeout);
         tab.NavigatedTo.Should().Equal("https://example.com/slow");
     }
 
@@ -492,7 +495,9 @@ public class CdpTabServiceTests
         result.Value!.TimedOut.Should().BeTrue();
         result.Value.LoadState.Should().Be("loading");
         result.Value.Url.Should().BeNull("the tab still shows the old page, which is not the one asked for");
-        stopwatch.Elapsed.Should().BeLessThan(TimeSpan.FromSeconds(4));
+        // The call ends at its 1.5 s limit; the reply never comes, so a call that ignored the limit would not end at all.
+        // HangBound catches that without failing a loaded test run that is slow to fire the limit's timer
+        stopwatch.Elapsed.Should().BeLessThan(HangBound);
     }
 
     [Fact]

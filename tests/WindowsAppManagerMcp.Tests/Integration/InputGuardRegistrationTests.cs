@@ -10,6 +10,11 @@ namespace WindowsAppManagerMcp.Tests.Integration;
 /// guard. Resolving the services only reads (the process list, the console and foreground windows, the
 /// environment); nothing is changed, and the window wrapper is the read-only one.
 /// </summary>
+/// <remarks>
+/// In the <see cref="RealUiAutomationCollection"/>: ScreenshotTools, resolved below, holds the production UI Automation tree,
+/// which starts the real client on its first read (as DependencyInjectionTests).
+/// </remarks>
+[Collection(RealUiAutomationCollection.Name)]
 public sealed class InputGuardRegistrationTests : IDisposable
 {
     private readonly ServiceProvider _provider = new ServiceCollection()

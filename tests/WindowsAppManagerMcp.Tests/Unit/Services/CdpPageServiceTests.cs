@@ -137,15 +137,21 @@ public class CdpPageServiceTests
         var gate = new RecordingGate();
         var page = new FakePage { ScriptHangs = true, GateHeld = () => gate.Held };
         var stopwatch = Stopwatch.StartNew();
+        var scriptLimit = TimeSpan.FromSeconds(5);
 
-        var evaluate = CreateSut(page).EvaluateAsync(Tab, "new Promise(() => {})", true, gate.EnterAsync, TimeSpan.FromSeconds(2));
-        await Task.Delay(CdpTabService.GateHold + TimeSpan.FromMilliseconds(300));
-        var heldWhileWaiting = gate.Held;
+        // Act - wait until the gate was taken and let go again, at most well before the script's own limit: the gate is let
+        // go after GateHold (a second), while a call that held it for the script's work would hold it until the limit. The
+        // margins are seconds on both sides, so a loaded test run neither fails a correct call nor passes a wrong one
+        var evaluate = CreateSut(page).EvaluateAsync(Tab, "new Promise(() => {})", true, gate.EnterAsync, scriptLimit);
+        var letGoWhileWaiting = await Task.Run(() =>
+            SpinWait.SpinUntil(() => gate.Entered > 0 && !gate.Held, scriptLimit - TimeSpan.FromMilliseconds(1500)));
+        var stillWaitingForTheScript = !evaluate.IsCompleted;
         var result = await evaluate;
 
         result.ErrorCode.Should().Be(nameof(BrowserErrorCode.CdpTimeout));
         result.Error.Should().Contain("promise").And.Contain("browser_handle_dialog").And.NotContain("respond_to_dialog");
-        heldWhileWaiting.Should().BeFalse("the gate is let go after at most a second, not held for a script's work");
+        letGoWhileWaiting.Should().BeTrue("the gate is let go after at most a second, not held for a script's work");
+        stillWaitingForTheScript.Should().BeTrue("the gate was let go while the call still waited for the script");
         stopwatch.Elapsed.Should().BeLessThan(HangBound);
     }
 
