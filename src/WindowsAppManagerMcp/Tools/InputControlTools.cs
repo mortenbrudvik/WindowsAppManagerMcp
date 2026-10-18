@@ -365,8 +365,10 @@ public class InputControlTools
     /// <summary>
     /// What a press of the pause hotkey does to <paramref name="state"/>. The server that registered the chord toggles its own
     /// pause (InputSession.TogglePauseByHotkey). Another server's presses reach this one only through the shared pause, so not
-    /// while it cannot be read (<see cref="IInputSession.IsSharedPauseUnreadable"/>), whoever paused; and without a server that
-    /// registered the chord, a pause the server made itself has no press that resumes it.
+    /// while it cannot be read (<see cref="IInputSession.IsSharedPauseUnreadable"/>), whoever paused; once it can, a press there
+    /// sets it, which makes the pause the server made itself the user's (InputSession.SyncLocked), so the next press resumes,
+    /// and a pause the user made there meanwhile is the user's already. Without a server that registered the chord, a pause
+    /// the server made itself has no press that resumes it.
     /// </summary>
     private HotkeyResume HotkeyResumes(InputPauseState state, PauseHotkeyStatus hotkey)
     {

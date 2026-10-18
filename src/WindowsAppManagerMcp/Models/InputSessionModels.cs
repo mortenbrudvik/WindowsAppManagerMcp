@@ -321,10 +321,10 @@ public static class InputControlSources
 
     /// <summary>
     /// Who resumes, as the PausedByUser messages tell the agent: only the user, with the hotkey or by confirming
-    /// resume_input. For <see cref="SharedPauseUnreadable"/> a press of the hotkey does not resume: in the server that
-    /// registered the chord the first press makes the pause the user's own and only a second one resumes, and in another
-    /// server the hotkey never does. While the shared pause cannot be read, whoever paused, the hotkey reaches only the
-    /// server that registered the chord. Those messages do not know which server registered it, so in both cases they name
+    /// resume_input. For <see cref="SharedPauseUnreadable"/> a press of the hotkey does not resume: the first press makes the
+    /// pause the user's own and only a second one resumes, and the presses of another server's chord reach this server only
+    /// once it can read the shared pause again. While the shared pause cannot be read, whoever paused, the hotkey reaches only
+    /// the server that registered the chord. Those messages do not know which server registered it, so in both cases they name
     /// resume_input and leave the hotkey to get_control_status.
     /// </summary>
     /// <param name="pausedBy">How it was paused (<see cref="InputPauseState.PausedBy"/>).</param>

@@ -394,7 +394,10 @@ public sealed class InputSession : IInputSession, IDisposable
     /// chord, a hotkey press first makes the pause the user's own, see <see cref="TogglePauseByHotkey"/>, and the next one
     /// resumes) while it cannot be read, and a read that works again does not resume by itself: what happened meanwhile is
     /// not known, so only the user resumes. Another server's presses reach this one only through the flag, so while it cannot
-    /// be read they neither pause nor resume this server (<see cref="IsSharedPauseUnreadable"/>). The named
+    /// be read they neither pause nor resume this server (<see cref="IsSharedPauseUnreadable"/>). Once it can be read, a set
+    /// flag makes the server's own pause the user's (pausedBy hotkey, a new pause, as a press here makes it): the user paused
+    /// in another server while this one could not read the flag, or another server's first press since did, so the press
+    /// that resumes the other servers resumes this one too. The named
     /// event throws ObjectDisposedException only after <see cref="Dispose"/>, where pausing is right too: a closed session
     /// sends nothing.
     /// </remarks>
@@ -427,6 +430,19 @@ public sealed class InputSession : IInputSession, IDisposable
         }
 
         _flagUnreadable = false;
+        if (paused && _state is { Paused: true, PausedBy: InputControlSources.SharedPauseUnreadable })
+        {
+            // The pause in force is the user's: they paused with the hotkey, in whichever server registered it, while this
+            // server could not read the flag or since. The pause stays and is the user's own from now on, as after a press
+            // here (TogglePauseByHotkey), so the press that resumes the other servers resumes this one too, and a resume_input
+            // answer about the server's own pause does not resume it
+            _logger?.LogWarning("The shared pause is set while this server had paused itself (it could not read the shared pause); " +
+                                "input stays paused, now by the user");
+            _flagSeen = true;
+            ApplyPauseLocked(InputControlSources.Hotkey);
+            return;
+        }
+
         if (paused == _flagSeen)
         {
             return;

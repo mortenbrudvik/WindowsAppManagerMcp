@@ -654,6 +654,51 @@ public class InputSessionTests
     }
 
     [Fact]
+    public void AUsersPauseInAnotherServer_WhileTheFlagCouldNotBeRead_MakesTheServersOwnPauseTheUsers_OnceItCanBeReadAgain()
+    {
+        // Arrange - the server paused itself, and meanwhile the user paused with the hotkey another server registered
+        var flag = new FakeDesktopPauseFlag { ReadFails = new IOException("the handle broke") };
+        using var sut = CreateSut();
+        sut.ShareDesktopPause(flag);
+        var ownPause = sut.PauseState.PauseNumber;
+        flag.SetByAnotherServer();
+
+        // Act - the flag can be read again
+        flag.ReadFails = null;
+        var state = sut.PauseState;
+
+        // Assert - the pause in force is the user's, so it is the user's here too: that server's next press resumes every
+        // server, this one too, and an answer about the server's own pause is not one about the user's
+        state.Paused.Should().BeTrue();
+        state.PausedBy.Should().Be(InputControlSources.Hotkey);
+        state.PauseNumber.Should().NotBe(ownPause);
+        sut.PauseState.PauseNumber.Should().Be(state.PauseNumber, "the pause is made the user's once, not at every read");
+        flag.ResetByAnotherServer();
+        sut.IsPaused.Should().BeFalse();
+        sut.PauseState.ResumedBy.Should().Be(InputControlSources.OtherServer);
+    }
+
+    [Fact]
+    public void AnotherServersFirstPress_AfterTheServerPausedItself_KeepsThePause_AsTheUsersOwn_AndItsSecondResumes()
+    {
+        // Arrange - the server paused itself, and the flag can be read again with no pause in it
+        var flag = new FakeDesktopPauseFlag { ReadFails = new IOException("the handle broke") };
+        using var sut = CreateSut();
+        sut.ShareDesktopPause(flag);
+        flag.ReadFails = null;
+        sut.PauseState.PausedBy.Should().Be(InputControlSources.SharedPauseUnreadable);
+
+        // Act - the first press in the server that registered the chord pauses every server
+        flag.SetByAnotherServer();
+
+        // Assert - the pause stays, as the user's own, so the second press resumes it as any pause the user made
+        sut.IsPaused.Should().BeTrue();
+        sut.PauseState.PausedBy.Should().Be(InputControlSources.Hotkey);
+        flag.ResetByAnotherServer();
+        sut.IsPaused.Should().BeFalse();
+    }
+
+    [Fact]
     public void ShareDesktopPause_Twice_Throws()
     {
         using var sut = CreateSut();
