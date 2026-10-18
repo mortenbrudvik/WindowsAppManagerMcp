@@ -182,6 +182,18 @@ public class DependencyInjectionTests : IDisposable
     }
 
     [Fact]
+    public void RunSteps_GetsTheKeyboardLayoutQueries()
+    {
+        // A step's keys are read on the layout of the window they go to (BACKLOG.md RF.F11): built without the queries, the
+        // runner would read them on the invariant layout only, where ctrl+ц is no Ctrl+W
+        static object? Field(object service, string name) =>
+            service.GetType().GetField(name, BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(service);
+
+        var runner = Field(_serviceProvider.GetRequiredService<StepSequenceTools>(), "_runner")!;
+        Field(runner, "_keyboardLayout").Should().BeSameAs(_serviceProvider.GetRequiredService<INativeKeyboardLayoutWrapper>());
+    }
+
+    [Fact]
     public void TheDialogAndMenuPathServices_ActOnlyThroughTheOneElementActionService_AndTheirToolsResolve()
     {
         // respond_to_dialog, file_dialog and menu_path (roadmap M3.5, M3.14) press, set and expand through element_action's

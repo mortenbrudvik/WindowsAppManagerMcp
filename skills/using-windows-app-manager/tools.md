@@ -138,7 +138,7 @@ All seven also take `allowHostTarget` (default false): only for input to your ow
 |------|-------------|----------------|
 | `run_steps` | Several steps on one window in one call, under one input gate hold; stops at the first failure | window, steps (tool, args, id, optional, return), maxDurationMs |
 
-A step is a tool of the list with that tool's own `args`. A step that names no window gets the run's; `"$steps.<id>.<path>"` takes an earlier step's ref, handle, captureId or clickPoint. No paste, file output, window_close, scope desktop, allowHostTarget or closing chord (ctrl+w, ctrl+q) in a step. Off with `WAM_TOOLSETS=-steps`.
+A step is a tool of the list with that tool's own `args`. A step that names no window gets the run's; `"$steps.<id>.<path>"` takes an earlier step's ref, handle, captureId or clickPoint. No paste, file output, window_close, scope desktop, allowHostTarget or closing chord (ctrl+w, ctrl+q, also on the window's layout: ctrl+ц on a Russian one) in a step. Off with `WAM_TOOLSETS=-steps`.
 
 ### App Launch (5 tools)
 

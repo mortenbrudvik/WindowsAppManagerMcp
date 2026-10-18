@@ -153,7 +153,8 @@ public static class ToolDocCatalog
         ],
         SkillNote: "A step is a tool of the list with that tool's own `args`. A step that names no window gets the run's; " +
                    "`\"$steps.<id>.<path>\"` takes an earlier step's ref, handle, captureId or clickPoint. No paste, file output, " +
-                   "window_close, scope desktop, allowHostTarget or closing chord (ctrl+w, ctrl+q) in a step. Off with `WAM_TOOLSETS=-steps`."),
+                   "window_close, scope desktop, allowHostTarget or closing chord (ctrl+w, ctrl+q, also on the window's layout: " +
+                   "ctrl+ц on a Russian one) in a step. Off with `WAM_TOOLSETS=-steps`."),
         new("App Launch",
         [
             new("launch_application", "Launch app by path/name/appId/URI", "executable", "arguments", "workingDirectory", "waitForWindow", "placement", "reuseExisting", "runAsAdmin"),
