@@ -4,13 +4,21 @@ using System.Text.Json.Serialization;
 namespace WindowsAppManagerMcp.Models;
 
 // Input models for batch operations. Each item names its window by handle or by a window selector (roadmap M2.4), not both.
+// An unknown member of an item is refused (InvalidArguments) rather than ignored, as WindowSelector's and LaunchPlacement's
+// are: a misspelled field would otherwise act without it (a launch without its arguments, a placement in pixels that meant
+// percent).
 
-/// <summary>A set_windows_bounds_batch item: the visible frame to place the window at.</summary>
+/// <summary>
+/// A set_windows_bounds_batch item: the visible frame to place the window at, in pixels (it takes no unit, relativeTo or
+/// monitor, which set_window_bounds does). The four numbers are nullable so that an item without one fails alone
+/// (InvalidArguments) instead of binding 0 and moving its window to the origin; they stay required in the input schema.
+/// </summary>
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 public record WindowBoundsPlacement(
-    int X,
-    int Y,
-    int Width,
-    int Height,
+    int? X,
+    int? Y,
+    int? Width,
+    int? Height,
     long? Handle = null,
     bool BringToFront = true,
     WindowSelector? Window = null
@@ -35,6 +43,7 @@ public record WindowSnapPlacement(
 /// A set_windows_state_batch item. State is checked per item (an unknown one fails that item with InvalidState); the
 /// input schema lists the states.
 /// </summary>
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 public record WindowStateChange(
     [ToolValues(typeof(WindowStateRequest))] string State,
     long? Handle = null,
@@ -42,6 +51,7 @@ public record WindowStateChange(
 );
 
 /// <summary>A launch_applications_batch item: what launch_application takes for one application.</summary>
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 public record ApplicationLaunchRequest(
     string Executable,
     string[]? Arguments = null,
@@ -59,6 +69,7 @@ public record ApplicationLaunchRequest(
 );
 
 /// <summary>A close_windows_batch item: the window to close.</summary>
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 public record WindowCloseRequest(long? Handle = null, WindowSelector? Window = null);
 
 // Output models for batch operations
@@ -121,4 +132,9 @@ public record LaunchResultItem(
     string? Elevation = null
 );
 
+/// <summary>
+/// A rectangle in pixels. Also an argument (a launch placement's bounds), so an unknown member, such as a unit, is refused
+/// (InvalidArguments) rather than ignored; the results that hold it write only these four.
+/// </summary>
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 public record BoundsDto(int X, int Y, int Width, int Height);

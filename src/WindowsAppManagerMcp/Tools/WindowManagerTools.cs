@@ -1061,8 +1061,9 @@ public class WindowManagerTools
     }
 
     [McpServerTool(Name = "set_windows_bounds_batch", Title = "Set Window Bounds (Batch)", ReadOnly = false, Destructive = false, Idempotent = true, OpenWorld = false)]
-    [Description("Move and resize multiple windows in a single batch operation, as set_window_bounds does: x, y, width and height are " +
-                 "each window's visible frame. More efficient than multiple individual calls." + PlacementRules + BatchErrors +
+    [Description("Move and resize multiple windows in a single batch operation: each item's x, y, width and height, all four in " +
+                 "pixels, are its window's visible frame (no unit, relativeTo or monitor: use set_window_bounds for percent). More " +
+                 "efficient than multiple individual calls." + PlacementRules + BatchErrors +
                  " MoveFailed: Windows did not place the window, or it did not return to normal from minimized or maximized.")]
     public async Task<BatchWindowResult> SetWindowsBoundsBatch(
         [Description("Array of window placements, each with x, y, width, height (the visible frame), the window as handle or window " +
@@ -1075,10 +1076,10 @@ public class WindowManagerTools
         RequireItems(placements, nameof(placements));
         InputGateToolFilter.ThrowIfPaused(_session);
 
-        // Each item's window, resolved before the gate (roadmap M2.4); an item that names no single window fails alone
+        // Each item's window, resolved before the gate (roadmap M2.4); an item that names no single window, or misses a
+        // coordinate or size (which would otherwise bind 0 and move its window to the origin), fails alone
         var items = ResolveItems(placements, nameof(placements), "x, y, width, height and a handle or window", p => p.Handle, p => p.Window);
-        var invalid = items.Select((t, i) => t.Refusal ?? ItemSizeRefusal(t.Handle.ToInt64(), placements[i].Width, placements[i].Height))
-            .ToList();
+        var invalid = items.Select((t, i) => t.Refusal ?? ItemBoundsRefusal(i, t.Handle.ToInt64(), placements[i])).ToList();
 
         using (await EnterGateAsync(cancellationToken).ConfigureAwait(false))
         {
@@ -1090,8 +1091,9 @@ public class WindowManagerTools
             {
                 if (refusals[i] == null)
                 {
+                    // Every item that is not refused has all four (ItemBoundsRefusal)
                     var p = placements[i];
-                    servicePlacements.Add((items[i].Handle, p.X, p.Y, p.Width, p.Height, p.BringToFront));
+                    servicePlacements.Add((items[i].Handle, p.X!.Value, p.Y!.Value, p.Width!.Value, p.Height!.Value, p.BringToFront));
                 }
             }
 
@@ -1463,6 +1465,27 @@ public class WindowManagerTools
         width >= 1 && height >= 1
             ? null
             : new WindowResultItem(handle, false, Error: SizeMessage(width, height), ErrorCode: ToolErrorReporting.InvalidArgumentsErrorCode);
+
+    /// <summary>
+    /// InvalidArguments for a set_windows_bounds_batch item without x, y, width or height (missing or null: bound, it would
+    /// be 0, and the window would go to the origin), or with a size below 1; null when it has all four. Nothing is sent for it.
+    /// </summary>
+    private static WindowResultItem? ItemBoundsRefusal(int index, long handle, WindowBoundsPlacement placement)
+    {
+        var missing = new[] { ("x", placement.X), ("y", placement.Y), ("width", placement.Width), ("height", placement.Height) }
+            .Where(field => field.Item2 is null)
+            .Select(field => field.Item1)
+            .ToList();
+        if (missing.Count > 0)
+        {
+            return new WindowResultItem(handle, false,
+                Error: $"Item {index} of placements has no {string.Join(" or ", missing)}: each item needs x, y, width and height, in " +
+                       "pixels. Nothing was done for it.",
+                ErrorCode: ToolErrorReporting.InvalidArgumentsErrorCode);
+        }
+
+        return ItemSizeRefusal(handle, placement.Width!.Value, placement.Height!.Value);
+    }
 
     /// <summary>
     /// InvalidArguments for set_window_bounds' optional pairs (roadmap M6.1): x goes with y and width with height, at least one
