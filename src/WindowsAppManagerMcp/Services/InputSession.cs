@@ -30,6 +30,9 @@ public sealed class InputSession : IInputSession, IDisposable
     /// <summary>While the shared pause is on, how often the watcher looks whether another server resumed.</summary>
     public static readonly TimeSpan SharedResumePoll = TimeSpan.FromMilliseconds(250);
 
+    /// <summary>While the shared pause cannot be read, how often the watcher tries again.</summary>
+    public static readonly TimeSpan SharedPauseRetry = TimeSpan.FromSeconds(1);
+
     private static readonly TimeSpan WatcherStopTimeout = TimeSpan.FromSeconds(2);
 
     private readonly INativeInputWrapper _input;
@@ -413,19 +416,9 @@ public sealed class InputSession : IInputSession, IDisposable
         {
             paused = _flag.IsSet;
         }
-        catch (Exception ex) when (ex is ObjectDisposedException or IOException or UnauthorizedAccessException)
+        catch (Exception ex) when (IsFlagFailure(ex))
         {
-            if (!_flagUnreadable)
-            {
-                _flagUnreadable = true;
-                _logger?.LogError(ex, "The shared pause could not be read, so this server cannot tell whether the user paused input in " +
-                                      "another server; input is paused until the user resumes it");
-                if (!_state.Paused)
-                {
-                    ApplyPauseLocked(InputControlSources.SharedPauseUnreadable);
-                }
-            }
-
+            ReadFailedLocked(ex);
             return;
         }
 
@@ -454,11 +447,36 @@ public sealed class InputSession : IInputSession, IDisposable
             // Only the pause hotkey pauses, in whichever server registered it
             ApplyPauseLocked(InputControlSources.Hotkey);
         }
-        else if (!paused && _state.Paused)
+        else if (!paused && _state.Paused && _state.PausedBy != InputControlSources.SharedPauseUnreadable)
         {
+            // Never the server's own pause, which only the user resumes. A reset still reaches here during it when the server
+            // took the flag as set (a resume of its own could not reset it) before it could no longer read it
             ApplyResumeLocked(InputControlSources.OtherServer);
         }
     }
+
+    /// <summary>
+    /// A read of the flag failed (<see cref="SyncLocked"/>, or the watcher's wait): the first failure pauses this server, as
+    /// <see cref="InputControlSources.SharedPauseUnreadable"/>, and is logged; later ones change nothing until a read works.
+    /// </summary>
+    private void ReadFailedLocked(Exception ex)
+    {
+        if (_flagUnreadable)
+        {
+            return;
+        }
+
+        _flagUnreadable = true;
+        _logger?.LogError(ex, "The shared pause could not be read, so this server cannot tell whether the user paused input in " +
+                              "another server; input is paused until the user resumes it");
+        if (!_state.Paused)
+        {
+            ApplyPauseLocked(InputControlSources.SharedPauseUnreadable);
+        }
+    }
+
+    /// <summary>The ways reading or writing the named event fails (ObjectDisposedException only after <see cref="Dispose"/>).</summary>
+    private static bool IsFlagFailure(Exception ex) => ex is ObjectDisposedException or IOException or UnauthorizedAccessException;
 
     private void WriteFlagLocked(bool paused)
     {
@@ -480,7 +498,7 @@ public sealed class InputSession : IInputSession, IDisposable
 
             _flagSeen = paused;
         }
-        catch (Exception ex) when (ex is ObjectDisposedException or IOException or UnauthorizedAccessException)
+        catch (Exception ex) when (IsFlagFailure(ex))
         {
             _logger?.LogError(ex, "The shared pause could not be {Change}; only this server is {State}",
                 paused ? "set" : "reset", paused ? "paused" : "resumed");
@@ -516,8 +534,10 @@ public sealed class InputSession : IInputSession, IDisposable
     }
 
     /// <summary>
-    /// The watcher thread: waits until the shared pause is set, takes it over (which cancels running calls),
-    /// then looks every <see cref="SharedResumePoll"/> whether it was reset.
+    /// The watcher thread: reads the shared pause under the lock (<see cref="SyncLocked"/>, which takes over a pause and
+    /// cancels running calls), then waits until it is set, or, while it is set, looks every <see cref="SharedResumePoll"/>
+    /// whether it was reset. A read that fails pauses this server, as every failed read does, and the watcher tries again
+    /// every <see cref="SharedPauseRetry"/> until a read works, so it keeps watching once the flag can be read again.
     /// </summary>
     private void Watch(IDesktopPauseFlag flag, CancellationToken stop)
     {
@@ -526,21 +546,35 @@ public sealed class InputSession : IInputSession, IDisposable
             var handles = new[] { flag.WaitHandle, stop.WaitHandle };
             while (!stop.IsCancellationRequested)
             {
-                if (!flag.IsSet)
-                {
-                    if (WaitHandle.WaitAny(handles) == 1)
-                    {
-                        return;
-                    }
-                }
-                else if (stop.WaitHandle.WaitOne(SharedResumePoll))
-                {
-                    return;
-                }
-
+                bool unreadable, set;
                 lock (_lock)
                 {
                     SyncLocked();
+                    unreadable = _flagUnreadable;
+                    set = _flagSeen;
+                }
+
+                bool stopped;
+                try
+                {
+                    stopped = unreadable ? stop.WaitHandle.WaitOne(SharedPauseRetry)
+                        : set ? stop.WaitHandle.WaitOne(SharedResumePoll)
+                        : WaitHandle.WaitAny(handles) == 1;
+                }
+                catch (Exception ex) when (IsFlagFailure(ex))
+                {
+                    // The wait on the flag failed as a read can: fail closed, then try again
+                    lock (_lock)
+                    {
+                        ReadFailedLocked(ex);
+                    }
+
+                    stopped = stop.WaitHandle.WaitOne(SharedPauseRetry);
+                }
+
+                if (stopped)
+                {
+                    return;
                 }
             }
         }

@@ -1969,8 +1969,10 @@ Rules for new tests:
   `FakeNamedObjects` two fakes can share (two servers on one desktop), and never start the hosted
   service with the real wrapper. A session that is not shared keeps its pause to itself, so
   `new InputSession(...)` touches nothing; `FakeDesktopPauseFlag` stands in for the shared pause (`ReadFails` and
-  `WriteFails` make its reads or writes throw, as a pause that cannot be read or written would; a read that fails
-  pauses the session, pausedBy `shared_pause_unreadable`).
+  `WriteFails` make its reads or writes throw, as a pause that cannot be read or written would; a read that fails,
+  also the session watcher's, which tries again every second, pauses the session, pausedBy `shared_pause_unreadable`;
+  a read, a write and a change of `ReadFails` each happen at once, so a watcher that reads while the test changes the
+  flag sees it before or after the change).
   `HotkeyMethods_AreOnlyCalledByNativeHotkeyWrapper` pins the RegisterHotKey and GetMessage calls to
   that wrapper. `NamedWaitHandles_AreOnlyOpenedByNativeHotkeyWrapper` pins to it every constructor of a
   `WaitHandle` type (`EventWaitHandle`, `Mutex`, `Semaphore`) that takes a name, every `OpenExisting` and
