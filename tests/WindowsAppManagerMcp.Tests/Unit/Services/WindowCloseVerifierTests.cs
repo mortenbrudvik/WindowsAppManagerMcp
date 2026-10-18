@@ -284,7 +284,9 @@ public class WindowCloseVerifierTests
 
         var result = await CreateSut().WaitForCloseAsync([Editor], ShownBefore, Short, CancellationToken.None);
 
-        result.Should().Equal(new CloseObservation(Editor, CloseStatus.StillOpen));
+        // Still open, with a warning that the prompt could not be inspected (WindowCloseVerifierDiagnosticsTests)
+        result.Should().ContainSingle().Which.Should().BeEquivalentTo(new { Handle = Editor, Status = CloseStatus.StillOpen, Prompt = (ClosePrompt?)null });
+        result[0].Warning.Should().NotBeNull();
     }
 
     #endregion

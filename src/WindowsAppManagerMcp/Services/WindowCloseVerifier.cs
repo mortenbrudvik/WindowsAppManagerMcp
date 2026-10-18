@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using Microsoft.Extensions.Logging;
 using WindowsAppManagerMcp.Models;
 using WindowsAppManagerMcp.Services.Interfaces;
 
@@ -44,6 +45,7 @@ public sealed class WindowCloseVerifier : IWindowCloseVerifier
     private readonly IProcessService? _processes;
     private readonly TimeSpan _pollInterval;
     private readonly TimeSpan _promptCheckInterval;
+    private readonly ILogger<WindowCloseVerifier>? _logger;
 
     /// <param name="windows">Polls and reads the windows.</param>
     /// <param name="tree">Reads prompts through UI Automation; without it (or <paramref name="worker"/>) only Win32 prompts are found.</param>
@@ -52,6 +54,7 @@ public sealed class WindowCloseVerifier : IWindowCloseVerifier
     /// <param name="processes">Looks up whether a process still runs (<see cref="WaitForProcessesToExitAsync"/>).</param>
     /// <param name="pollInterval">How often IsWindow is polled; default <see cref="DefaultPollInterval"/>. Tests pass a short one.</param>
     /// <param name="promptCheckInterval">How often Win32 prompts are looked for; default <see cref="DefaultPromptCheckInterval"/>.</param>
+    /// <param name="logger">Logs a UI Automation read or close that failed unexpectedly (a COMException), with the exception.</param>
     public WindowCloseVerifier(
         IWindowService windows,
         IUiaTree? tree = null,
@@ -59,7 +62,8 @@ public sealed class WindowCloseVerifier : IWindowCloseVerifier
         IUIAutomationWrapper? automation = null,
         IProcessService? processes = null,
         TimeSpan? pollInterval = null,
-        TimeSpan? promptCheckInterval = null)
+        TimeSpan? promptCheckInterval = null,
+        ILogger<WindowCloseVerifier>? logger = null)
     {
         _windows = windows ?? throw new ArgumentNullException(nameof(windows));
         _tree = tree;
@@ -68,6 +72,7 @@ public sealed class WindowCloseVerifier : IWindowCloseVerifier
         _processes = processes;
         _pollInterval = pollInterval ?? DefaultPollInterval;
         _promptCheckInterval = promptCheckInterval ?? DefaultPromptCheckInterval;
+        _logger = logger;
     }
 
     /// <inheritdoc />
@@ -148,59 +153,81 @@ public sealed class WindowCloseVerifier : IWindowCloseVerifier
         return handles.Select(h => byHandle[h]).ToList();
     }
 
-    private async Task<CloseObservation> PromptShownAsync(nint handle, ClosePrompt prompt, CancellationToken cancellationToken) =>
-        new(handle, CloseStatus.PromptShown, await CompleteAsync(prompt, handle, cancellationToken).ConfigureAwait(false));
+    private async Task<CloseObservation> PromptShownAsync(nint handle, ClosePrompt prompt, CancellationToken cancellationToken)
+    {
+        var (complete, warning) = await CompleteAsync(prompt, handle, cancellationToken).ConfigureAwait(false);
+        return new CloseObservation(handle, CloseStatus.PromptShown, complete) { Warning = warning };
+    }
 
     /// <summary>
     /// What became of a window that did not close or show a prompt during the wait, read once more now. Hidden needs a
     /// window the user could see before the close: one that was already hidden or cloaked (on another virtual desktop) and
-    /// still exists did not react to the close, so it is StillOpen.
+    /// still exists did not react to the close, so it is StillOpen. A StillOpen window whose prompt could not be inspected
+    /// says so (<see cref="CloseObservation.Warning"/>): it may show a prompt nobody saw.
     /// </summary>
     private async Task<CloseObservation> ObserveAsync(nint handle, bool wasShown, CancellationToken cancellationToken)
     {
-        if (await FindPromptAsync(handle, cancellationToken).ConfigureAwait(false) is { } prompt)
-            return new CloseObservation(handle, CloseStatus.PromptShown, prompt);
+        var (prompt, warning) = await FindPromptOrWhyNotAsync(handle, cancellationToken).ConfigureAwait(false);
+        if (prompt != null)
+            return new CloseObservation(handle, CloseStatus.PromptShown, prompt) { Warning = warning };
 
         return _windows.GetWindowInfo(handle) switch
         {
             null => new CloseObservation(handle, CloseStatus.Closed),
             { IsVisible: false } or { IsCloaked: true } when wasShown => new CloseObservation(handle, CloseStatus.Hidden),
-            _ => new CloseObservation(handle, CloseStatus.StillOpen)
+            _ => new CloseObservation(handle, CloseStatus.StillOpen) { Warning = warning }
         };
     }
 
     /// <inheritdoc />
-    public async Task<ClosePrompt?> FindPromptAsync(nint window, CancellationToken cancellationToken)
+    public async Task<ClosePrompt?> FindPromptAsync(nint window, CancellationToken cancellationToken) =>
+        (await FindPromptOrWhyNotAsync(window, cancellationToken).ConfigureAwait(false)).Prompt;
+
+    /// <summary>
+    /// <see cref="FindPromptAsync"/>, with a warning when UI Automation could not answer: that the window's prompt could not be
+    /// inspected (finding none then proves nothing), or that a Win32 prompt's text and buttons could not be read.
+    /// </summary>
+    private async Task<(ClosePrompt? Prompt, string? Warning)> FindPromptOrWhyNotAsync(nint window, CancellationToken cancellationToken)
     {
         if (!_windows.IsValidWindow(window))
-            return null;
+            return (null, null);
 
         if (_windows.FindBlockingDialog(window) is { } dialog)
             return await CompleteAsync(dialog, window, cancellationToken).ConfigureAwait(false);
 
-        return await RunUiaAsync<ClosePrompt?>(window, token => FindInWindowDialog(window, token), null, cancellationToken)
-            .ConfigureAwait(false);
+        var (found, failure) = await RunUiaAsync<ClosePrompt?>(window, token => FindInWindowDialog(window, token), null,
+            "look for a prompt inside it", cancellationToken).ConfigureAwait(false);
+        return (found, failure == null
+            ? null
+            : $"Its prompt could not be inspected: {failure}, so a prompt the app draws inside the window may be there unseen. " +
+              "Look at the window with capture_window or get_ui_elements before you take it as open without a prompt.");
     }
 
     /// <summary>
     /// A Win32 prompt with its text and buttons: read through UI Automation when its controls have none (a task dialog
     /// draws them in a DirectUIHWND). The read counts against <paramref name="window"/>'s application, whose prompt it is.
+    /// When that read fails, the prompt comes back as it was found, with a warning that its text and buttons could not be read.
     /// </summary>
-    private async Task<ClosePrompt> CompleteAsync(ClosePrompt prompt, nint window, CancellationToken cancellationToken)
+    private async Task<(ClosePrompt Prompt, string? Warning)> CompleteAsync(ClosePrompt prompt, nint window, CancellationToken cancellationToken)
     {
         if (prompt.Text != null && prompt.Buttons.Count > 0)
-            return prompt;
+            return (prompt, null);
 
-        var content = await RunUiaAsync<PromptContent?>(
-            window, token => _tree!.FromHandle(prompt.Handle) is { } node ? ReadContent(node, token) : null, null, cancellationToken)
-            .ConfigureAwait(false);
-        return content == null
-            ? prompt
-            : prompt with
-            {
-                Text = prompt.Text ?? content.Text,
-                Buttons = prompt.Buttons.Count > 0 ? prompt.Buttons : content.Buttons
-            };
+        var (content, failure) = await RunUiaAsync<PromptContent?>(
+            window, token => _tree!.FromHandle(prompt.Handle) is { } node ? ReadContent(node, token) : null, null,
+            "read its prompt's text and buttons", cancellationToken).ConfigureAwait(false);
+        if (content == null)
+        {
+            return (prompt, failure == null
+                ? null
+                : $"The prompt's text and buttons could not be read: {failure}. Look at it with capture_window before you ask the user.");
+        }
+
+        return (prompt with
+        {
+            Text = prompt.Text ?? content.Text,
+            Buttons = prompt.Buttons.Count > 0 ? prompt.Buttons : content.Buttons
+        }, null);
     }
 
     /// <summary>
@@ -332,8 +359,11 @@ public sealed class WindowCloseVerifier : IWindowCloseVerifier
             // Given up on, but a close already under way may still happen
             return null;
         }
-        catch (Exception) when (!cancellationToken.IsCancellationRequested)
+        catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
         {
+            // Not asked (no Window pattern, the window is gone) or failed: the close counts as not sent. Logged, since an
+            // unexpected failure (a COMException) would otherwise leave no trace
+            _logger?.LogWarning(ex, "The UI Automation close of window {Handle} failed", window);
             return false;
         }
     }
@@ -360,24 +390,39 @@ public sealed class WindowCloseVerifier : IWindowCloseVerifier
 
     /// <summary>
     /// Runs a UI Automation read of <paramref name="window"/>'s application on the worker, under <see cref="UiaReadTimeout"/>.
-    /// A read that fails, times out or is refused (the app is not responding) returns <paramref name="fallback"/>: UI
-    /// Automation only adds detail to a close result and must never fail it. Cancelling the call still cancels.
+    /// A read that fails, times out or is refused (the app is not responding) returns <paramref name="fallback"/> with why, in
+    /// words for a warning: UI Automation only adds detail to a close result and must never fail it, but the caller says what
+    /// it could not find out. An unexpected failure (a COMException) is logged as a warning, a slow or hung app at debug level.
+    /// Without UI Automation the fallback comes back without a failure: nothing was tried. Cancelling the call still cancels.
     /// </summary>
-    private async Task<T> RunUiaAsync<T>(nint window, Func<CancellationToken, T> read, T fallback, CancellationToken cancellationToken)
+    /// <param name="what">What the read does, for the log ("look for a prompt inside it").</param>
+    private async Task<(T Value, string? Failure)> RunUiaAsync<T>(nint window, Func<CancellationToken, T> read, T fallback, string what,
+        CancellationToken cancellationToken)
     {
         if (_worker == null || _tree == null)
-            return fallback;
+            return (fallback, null);
 
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         deadline.CancelAfter(UiaReadTimeout);
         try
         {
-            return await _worker.RunAsync(_windows.GetWindowInfo(window)?.ProcessId ?? 0, read, deadline.Token, UiaGrace)
-                .ConfigureAwait(false);
+            return (await _worker.RunAsync(_windows.GetWindowInfo(window)?.ProcessId ?? 0, read, deadline.Token, UiaGrace)
+                .ConfigureAwait(false), null);
         }
-        catch (Exception) when (!cancellationToken.IsCancellationRequested)
+        catch (UiaReadRefusedException ex) when (!cancellationToken.IsCancellationRequested)
         {
-            return fallback;
+            _logger?.LogDebug(ex, "Did not {What} for window {Handle}: earlier UI Automation calls into its app are stuck", what, window);
+            return (fallback, "its app does not answer UI Automation (earlier calls into it are still stuck)");
+        }
+        catch (Exception ex) when (ex is TimeoutException or OperationCanceledException && !cancellationToken.IsCancellationRequested)
+        {
+            _logger?.LogDebug(ex, "Could not {What} for window {Handle} in time", what, window);
+            return (fallback, $"UI Automation did not answer within {UiaReadTimeout.TotalMilliseconds:0} ms");
+        }
+        catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
+        {
+            _logger?.LogWarning(ex, "Could not {What} for window {Handle}: UI Automation failed", what, window);
+            return (fallback, $"UI Automation failed ({ex.GetType().Name}: {ex.Message})");
         }
     }
 
