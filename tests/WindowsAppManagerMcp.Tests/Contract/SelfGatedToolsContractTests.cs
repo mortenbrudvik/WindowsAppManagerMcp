@@ -26,7 +26,7 @@ namespace WindowsAppManagerMcp.Tests.Contract;
 /// production registrations must lead to the gate: each service of the route is registered with the type that calls the next
 /// one and acts only through the services after it (no native action of its own: a window change, input, clipboard write or
 /// UI Automation action, NativeFakedServer.IsAction; and no member of another service that is not one of its reads), followed
-/// into the server's own helpers it calls; the last one takes the gate (read from their IL).</item>
+/// into the server's own helpers it calls; the last one takes the gate in its own code (read from their IL).</item>
 /// </list>
 /// The services are the contract run's mocks (ContractServices); nothing touches the desktop, a browser or a process.
 /// </summary>
@@ -127,6 +127,13 @@ public sealed class SelfGatedToolsContractTests : IDisposable
             nameof(ICdpService.GetPageTargetsAsync), nameof(ICdpService.GetBrowserVersionAsync), nameof(ICdpService.FindTargetForWindowAsync),
             nameof(ICdpService.FindTargetByIdAsync), nameof(ICdpService.GetPageSnapshotAsync)
         },
+        // The one way input reaches SendInput: its reads of the pause, the chord and the keys down, and resume_input's question.
+        // A batch, a cursor move, a release and a pause or resume are watched: a self-gated tool sends them inside the gate
+        [typeof(IInputSession)] = new(StringComparer.Ordinal)
+        {
+            nameof(IInputSession.IsPauseChordHeld), nameof(IInputSession.FindPauseChord), nameof(IInputSession.ReadModifiersDown),
+            nameof(IInputSession.TryOpenResumeQuestion)
+        },
         // The window seam the browser services are handed: every member but its window changes (NativeFakedServer.IsAction)
         [typeof(INativeWindowWrapper)] = typeof(INativeWindowWrapper).GetMethods()
             .Where(m => !NativeFakedServer.IsAction(typeof(INativeWindowWrapper), m))
@@ -156,8 +163,9 @@ public sealed class SelfGatedToolsContractTests : IDisposable
     };
 
     /// <summary>
-    /// The contract run's mocks of the services of <see cref="NoDesktopChange"/> it registers, watched for every tool (the CDP
-    /// services and the window seam are handed to the browser services by <see cref="BrowserTabs"/> and <see cref="BrowserPages"/>).
+    /// The contract run's mocks of the services of <see cref="NoDesktopChange"/> it registers, and its input session, watched for
+    /// every tool (the CDP services and the window seam are handed to the browser services by <see cref="BrowserTabs"/> and
+    /// <see cref="BrowserPages"/>).
     /// </summary>
     private static IEnumerable<(Type Service, object Mock)> WatchedServices(ContractServices c) =>
     [
@@ -168,7 +176,9 @@ public sealed class SelfGatedToolsContractTests : IDisposable
         (typeof(ILaunchPlacementService), c.Placement.Object), (typeof(IClipboardService), c.Clipboard.Object),
         (typeof(IPopupService), c.Popups.Object), (typeof(IMenuPathService), c.MenuPaths.Object), (typeof(IDialogService), c.Dialogs.Object),
         (typeof(IFileDialogService), c.FileDialogs.Object), (typeof(IBrowserDialogService), c.BrowserDialogs.Object),
-        (typeof(IBrowserTabService), c.BrowserTabs.Object), (typeof(IBrowserPageService), c.BrowserPages.Object)
+        (typeof(IBrowserTabService), c.BrowserTabs.Object), (typeof(IBrowserPageService), c.BrowserPages.Object),
+        // The real session over the fake input layer: a tool's own batch, cursor move or release goes through it
+        (typeof(IInputSession), c.Session)
     ];
 
     /// <summary>The tools whose services' mutating calls are watched in a typical call.</summary>
@@ -422,9 +432,18 @@ public sealed class SelfGatedToolsContractTests : IDisposable
             }
             else
             {
-                calls.Any(TakesTheGate).Should().BeTrue("{0} takes the input gate around its actions (ElementActionServiceTests)", implementation.Name);
+                TakesTheGateItself(implementation).Should().BeTrue("{0} takes the input gate around its actions (ElementActionServiceTests)", implementation.Name);
             }
         }
+    }
+
+    [Fact]
+    public void TheGateCheck_ReadsOnlyTheLastServicesOwnCode()
+    {
+        // Act & Assert - element_action's service enters the gate in its own code; a sample whose only gate is a helper's does not
+        TakesTheGateItself(typeof(ElementActionService)).Should().BeTrue("element_action's service takes the gate around its actions");
+        TakesTheGateItself(typeof(GateInAHelperSample)).Should().BeFalse(
+            "a gate a helper takes holds only around the helper's own code, not around the actions of the type that calls it");
     }
 
     [Fact]
@@ -443,12 +462,13 @@ public sealed class SelfGatedToolsContractTests : IDisposable
         actions.Should().Contain([
             "INativeWindowWrapper.SetForegroundWindow", "IUIAutomationWrapper.CloseWindow", "IUiaTree.SetFocus", "IUiaInvokePattern.Invoke",
             "IUiaValuePattern.SetValue", "INativeInputWrapper.SendInput", "INativeClipboardWrapper.WriteText", "IWindowService.SetWindowState",
-            "IForegroundService.EnsureForeground", "INativeWindowWrapper.SetWindowPos", "IInputSession.Send (not classified)"
+            "IForegroundService.EnsureForeground", "INativeWindowWrapper.SetWindowPos", "IInputSession.Send", "ITakeoverMonitor.Watch (not classified)"
         ]);
         concrete.Should().Equal(["NativeWindowWrapper.ShowWindow"], "a concrete wrapper acts as its seam does");
         actions.Should().NotContain([
             "IUiaTree.GetPattern", "IUiaValuePattern.get_Value", "IUiaTextPattern.GetText", "INativeInputWrapper.GetCursorPos",
-            "IWindowService.GetWindowInfo", "IElementActionService.ActAsync", "INativeWindowWrapper.BringWindowToTop"
+            "IWindowService.GetWindowInfo", "IElementActionService.ActAsync", "INativeWindowWrapper.BringWindowToTop",
+            "IInputSession.ReadModifiersDown"
         ], "reads are no actions, an action of the service after it is the route's, and a helper's method the sample never calls is not its code");
     }
 
@@ -536,6 +556,12 @@ public sealed class SelfGatedToolsContractTests : IDisposable
             ? reads.Contains(method.Name) ? null : name
             : $"{name} (not classified)";
     }
+
+    /// <summary>
+    /// True when the own code of <paramref name="implementation"/> (its lambdas and state machines included) takes the input
+    /// gate. Unlike the action check, the helpers it calls do not count: a gate a helper takes holds only around the helper's code.
+    /// </summary>
+    private static bool TakesTheGateItself(Type implementation) => IlCalls.CallsMadeBy(implementation).Any(TakesTheGate);
 
     /// <summary>A call that takes the input gate: the filter's EnterAsync or HoldAsync, or one of InputGate's ways in.</summary>
     private static bool TakesTheGate(System.Reflection.MethodBase method) =>
@@ -675,7 +701,7 @@ internal static class NativeActionSample
 {
     public static async Task Acts(INativeWindowWrapper windows, IUIAutomationWrapper automation, IUiaTree tree, IUiaNode node,
         INativeInputWrapper input, INativeClipboardWrapper clipboard, IWindowService service, IForegroundService foreground,
-        IElementActionService actions, IInputSession session)
+        IElementActionService actions, IInputSession session, ITakeoverMonitor takeover)
     {
         windows.SetForegroundWindow(0x10010);
         automation.CloseWindow(0x10010, CancellationToken.None);
@@ -697,9 +723,12 @@ internal static class NativeActionSample
         foreground.EnsureForeground(0x10010);
         await actions.ActAsync(new ElementActionRequest("w4120035e17", ElementActionKind.Invoke));
 
-        // A window change in a helper, and a call through a server interface no list classifies
+        // A window change in a helper, a batch of input next to a read of the keys down, and a call through a server interface
+        // no list classifies
         NativeActionSampleHelper.Moves(windows);
+        _ = session.ReadModifiersDown();
         session.Send([]);
+        takeover.Watch().Dispose();
     }
 }
 
@@ -710,4 +739,26 @@ internal static class NativeActionSampleHelper
 
     /// <summary>Not called by the sample: not the sample's code.</summary>
     public static void NeverCalled(INativeWindowWrapper windows) => windows.BringWindowToTop(0x10010);
+}
+
+/// <summary>
+/// A sample for <see cref="SelfGatedToolsContractTests.TheGateCheck_ReadsOnlyTheLastServicesOwnCode"/>: it acts with only a
+/// helper's gate, released before the action. Nothing calls it.
+/// </summary>
+internal static class GateInAHelperSample
+{
+    public static async Task Acts(IInputSession session, INativeWindowWrapper windows)
+    {
+        await GateInAHelperSampleHelper.EnterAndLeaveAsync(session);
+        windows.SetForegroundWindow(0x10010);
+    }
+}
+
+/// <summary>The helper whose gate <see cref="GateInAHelperSample"/> leans on; nothing calls it either.</summary>
+internal static class GateInAHelperSampleHelper
+{
+    public static async Task EnterAndLeaveAsync(IInputSession session)
+    {
+        using var gate = await InputGateToolFilter.EnterAsync(session, CancellationToken.None);
+    }
 }
