@@ -340,7 +340,7 @@ public static class InputGateToolFilter
         "did not start. Retry when your other calls have finished.";
 
     private static string PausedMessage(IInputSession session) =>
-        $"Nothing was done: input is paused, the user pressed the pause hotkey{(session.PauseChord is { } chord ? $" ({chord})" : string.Empty)}. " +
+        $"Nothing was done: input is paused, {InputControlSources.PauseCause(session.PauseState?.PausedBy, session.PauseChord)}. " +
         "While paused, tools that change windows or start or stop processes do nothing, like the input tools; tools that only read " +
         "still work. Stop and ask the user how to continue. Do not try to resume input yourself: only the user can, with the hotkey " +
         "or by confirming resume_input.";

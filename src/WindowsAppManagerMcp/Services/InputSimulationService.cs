@@ -641,8 +641,8 @@ public partial class InputSimulationService : IInputSimulationService
         // Takeover detection (roadmap M7.4) watches the typing itself: from the first batch on
         call.WatchForTakeover(_takeover);
         var result = await TypeCharactersWatchedAsync(characters, delayBetweenKeysMs, approved, call).ConfigureAwait(false);
-        return call.TakeoverWarns
-            ? result with { Warning = TakeoverMessages.Combine(result.Warning, TakeoverMessages.Warning("the text was typed")) }
+        return call.TakeoverWarning("the text was typed") is { } takeover
+            ? result with { Warning = TakeoverMessages.Combine(result.Warning, takeover) }
             : result;
     }
 
@@ -1549,7 +1549,7 @@ public partial class InputSimulationService : IInputSimulationService
         "reachable (a UAC prompt, the lock screen or a disconnected session). Try again; if it keeps failing, ask the user.";
 
     private string PausedMessage(string done) =>
-        $"{done} Input is paused: the user pressed the pause hotkey{(_session.PauseChord is { } chord ? $" ({chord})" : string.Empty)}. " +
+        $"{done} Input is paused: {InputControlSources.PauseCause(_session.PauseState?.PausedBy, _session.PauseChord)}. " +
         "Stop and ask the user how to continue. Do not try to resume input yourself: only the user can, with the hotkey or by " +
         "confirming resume_input.";
 
@@ -1756,8 +1756,13 @@ public partial class InputSimulationService : IInputSimulationService
         /// <summary>True when takeover detection stopped the call (mode stop), and the user did not pause input.</summary>
         public bool Interrupted => _takeover.Interrupted && !IsPaused;
 
-        /// <summary>True when the user used the keyboard or mouse during the watched part with mode warn.</summary>
-        public bool TakeoverWarns => _takeover.Warns;
+        /// <summary>
+        /// The warning the result carries about takeover detection (roadmap M7.4), or null: with mode warn, that the user used
+        /// the keyboard or mouse during the watched part; with warn or stop, that detection did not work for some of it, so the
+        /// user's input was not watched then (<see cref="TakeoverMessages.For"/>, from the watch itself).
+        /// <paramref name="what"/> names the operation, such as "the text was typed".
+        /// </summary>
+        public string? TakeoverWarning(string what) => TakeoverMessages.For(_takeover, what);
 
         /// <summary>
         /// Watches for the user's input from now on (roadmap M7.4): with mode stop, <see cref="Token"/> is cancelled too when

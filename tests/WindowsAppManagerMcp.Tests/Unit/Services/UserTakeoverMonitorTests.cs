@@ -279,6 +279,271 @@ public class UserTakeoverMonitorTests : IDisposable
     }
 
     [Fact]
+    public void HooksThatCannotBeInstalled_SayWhy_WithTheWindowsError()
+    {
+        // Arrange - the error is read right after SetWindowsHookEx, in the wrapper, and named in the status
+        _native.OnInstall = keyboard => !keyboard;
+        _native.InstallError = 1428; // ERROR_HOOK_NEEDS_HMOD
+        var monitor = Monitor(TakeoverMode.Stop);
+
+        // Act
+        using var watch = monitor.Watch();
+
+        // Assert
+        Until(() => monitor.Status.State == TakeoverState.Unavailable, "the monitor reports the failed hooks");
+        monitor.Status.Error.Should().Contain("keyboard: Windows error 1428").And.Contain("mouse: installed");
+    }
+
+    // ---- The monitor thread stopping on its own (review F1, F2) ----
+
+    /// <summary>Ends the monitor thread's loop the way <paramref name="how"/> names, as if Windows or a bug had.</summary>
+    private void EndTheLoop(string how)
+    {
+        switch (how)
+        {
+            case "exception":
+                _native.ThrowInLoop(new InvalidOperationException("the loop broke"));
+                break;
+            case "failed":
+                _native.FailLoop();
+                break;
+            default:
+                _native.QuitLoop();
+                break;
+        }
+    }
+
+    [Theory]
+    [InlineData("exception")]
+    [InlineData("failed")]
+    [InlineData("quit")]
+    public void AMonitorThreadThatStopped_SaysSo_AndTheNextWatchStartsItAgain(string how)
+    {
+        // Arrange - a running watch with its hooks installed
+        var monitor = Monitor(TakeoverMode.Stop);
+        var first = monitor.Watch();
+        Until(() => _native.ActiveHooks == 2, "the hooks are installed");
+
+        // Act - the thread ends on its own, without the monitor's stop message
+        EndTheLoop(how);
+        Until(() => _native.RunningLoopThreads == 0, "the thread ends");
+        _native.ActiveHooks.Should().Be(0, "the thread removes its hooks as it ends");
+        monitor.Status.State.Should().Be(TakeoverState.Unavailable, "the status says detection stopped");
+        first.Unwatched.Should().BeTrue("the rest of its operation was not watched");
+        first.UnwatchedBecause.Should().Contain("detection thread");
+        first.Dispose();
+        using var second = monitor.Watch();
+
+        // Assert - a new thread, which installs the hooks again and detects the user's input
+        Until(() => _native.ActiveHooks == 2, "the next watch starts the thread again");
+        _native.LoopThreads.Should().HaveCount(2).And.OnlyHaveUniqueItems();
+        Until(() => monitor.Status.State == TakeoverState.Watching, "the status says the operation is watched again");
+        monitor.Status.Error.Should().BeNull();
+        second.Unwatched.Should().BeFalse("its hooks were installed: only its first moments went unseen, as for every watch");
+        _native.Raise(LowLevelInputKind.KeyDown);
+        second.Token.WaitHandle.WaitOne(HangGuard).Should().BeTrue("detection works again");
+    }
+
+    [Fact]
+    public async Task AWatchThatStartsWhileTheThreadIsStopping_IsMarkedUnwatched_OrStartsANewThread()
+    {
+        // Arrange - a watch runs, and the thread is about to die: removing its hooks blocks until the test lets it go on
+        var monitor = Monitor(TakeoverMode.Stop);
+        using var first = monitor.Watch();
+        Until(() => _native.ActiveHooks == 2, "the hooks are installed");
+        using var unhooking = new ManualResetEventSlim();
+        using var goOn = new ManualResetEventSlim();
+        _native.OnUnhook = () =>
+        {
+            unhooking.Set();
+            goOn.Wait(HangGuard);
+        };
+
+        // Act - the thread fails; while it removes its hooks a second watch starts
+        _native.FailLoop();
+        unhooking.Wait(HangGuard).Should().BeTrue("the dying thread removes its hooks");
+        var watching = Task.Run(() => monitor.Watch());
+        await Task.Delay(100);
+        _native.OnUnhook = null;
+        goOn.Set();
+        using var second = await watching.WaitAsync(HangGuard);
+
+        // Assert - the second watch was not left with a thread that is gone: either it was among the dying thread's
+        // watches (marked) or it started a new thread, whose hooks then cover it
+        Until(() => second.Unwatched || _native.ActiveHooks == 2, "the second watch is either marked or covered");
+        first.Unwatched.Should().BeTrue();
+    }
+
+    [Fact]
+    public void AMonitorThreadThatKeepsStopping_IsStartedAgainOnlyMaxRestartsTimes()
+    {
+        // Arrange - the thread dies every time it runs
+        var monitor = Monitor(TakeoverMode.Stop);
+        for (var start = 1; start <= UserTakeoverMonitor.MaxRestarts + 1; start++)
+        {
+            using var watch = monitor.Watch();
+            Until(() => _native.ActiveHooks == 2, $"start {start} installs the hooks");
+            _native.ThrowInLoop(new InvalidOperationException("the loop broke"));
+            Until(() => _native.RunningLoopThreads == 0, $"start {start} stops");
+            monitor.Status.State.Should().Be(TakeoverState.Unavailable);
+        }
+
+        // Act
+        using var last = monitor.Watch();
+
+        // Assert - no new thread: the status says detection is off until the server restarts, and so does the watch
+        _native.LoopThreads.Should().HaveCount(UserTakeoverMonitor.MaxRestarts + 1);
+        monitor.Status.State.Should().Be(TakeoverState.Unavailable);
+        monitor.Status.Error.Should().Contain("not started again").And.Contain("restart");
+        last.Unwatched.Should().BeTrue("no thread watches it");
+        last.UnwatchedBecause.Should().Contain("not started again");
+        SpinWait.SpinUntil(() => _native.ActiveHooks > 0, TimeSpan.FromMilliseconds(200)).Should().BeFalse();
+    }
+
+    [Fact]
+    public void AThreadThatCannotRemoveItsHooksAsItEnds_StillEndsCleanly_AndIsStartedAgain()
+    {
+        // Arrange - an exception that left the thread would end the server
+        var monitor = Monitor(TakeoverMode.Stop);
+        var first = monitor.Watch();
+        Until(() => _native.ActiveHooks == 2, "the hooks are installed");
+        _native.UnhookFails = new InvalidOperationException("the unhook broke");
+
+        // Act
+        _native.FailLoop();
+        Until(() => _native.RunningLoopThreads == 0, "the thread ends");
+        first.Unwatched.Should().BeTrue();
+        first.Dispose();
+        _native.UnhookFails = null;
+        using var second = monitor.Watch();
+
+        // Assert
+        Until(() => _native.Installed.Count == 4, "the next watch starts a new thread, which installs its own hooks");
+        _native.LoopThreads.Should().HaveCount(2);
+        Until(() => monitor.Status.State == TakeoverState.Watching, "the new thread watches");
+        _native.Raise(LowLevelInputKind.KeyDown);
+        second.Token.WaitHandle.WaitOne(HangGuard).Should().BeTrue();
+    }
+
+    // ---- Which watches did not work (review F1): marked on the watch, never read from a status that may be stale ----
+
+    [Fact]
+    public void AWatchWhoseHooksWindowsDidNotInstall_IsMarkedUnwatched_WithTheWindowsError()
+    {
+        _native.OnInstall = keyboard => !keyboard;
+        _native.InstallError = 1428;
+        var monitor = Monitor(TakeoverMode.Warn);
+
+        using var watch = monitor.Watch();
+
+        Until(() => watch.Unwatched, "Windows did not install its hooks");
+        watch.UnwatchedBecause.Should().Contain("keyboard: Windows error 1428");
+    }
+
+    [Fact]
+    public void AWatchStartedWhileTheHooksFailedForAnEarlierOne_InstallsThemAgain_AndIsWatched()
+    {
+        // Arrange - the hooks failed for a run_steps run that still goes on
+        _native.OnInstall = _ => false;
+        var monitor = Monitor(TakeoverMode.Stop);
+        using var first = monitor.Watch();
+        Until(() => first.Unwatched, "the first watch's hooks failed");
+
+        // Act - one of its steps watches itself, and now Windows installs the hooks
+        _native.OnInstall = _ => true;
+        using var second = monitor.Watch();
+
+        // Assert
+        Until(() => _native.ActiveHooks == 2, "the second watch installs the hooks again");
+        Until(() => monitor.Status.State == TakeoverState.Watching, "the status says it works again");
+        second.Unwatched.Should().BeFalse();
+        first.Unwatched.Should().BeTrue("its first part was not watched");
+        _native.Raise(LowLevelInputKind.KeyDown);
+        second.Token.WaitHandle.WaitOne(HangGuard).Should().BeTrue();
+    }
+
+    [Fact]
+    public void AWatchStartedWhileTheHooksStillFail_IsMarkedUnwatched_Too()
+    {
+        _native.OnInstall = _ => false;
+        var monitor = Monitor(TakeoverMode.Stop);
+        using var first = monitor.Watch();
+        Until(() => first.Unwatched, "the first watch's hooks failed");
+
+        using var second = monitor.Watch();
+
+        Until(() => second.Unwatched, "Windows did not install them for it either");
+        second.UnwatchedBecause.Should().Contain("Windows error 5");
+    }
+
+    /// <summary>A clock the test breaks and mends, which makes the user-input filter throw on a mouse move while broken.</summary>
+    private sealed class SwitchableClock : TimeProvider
+    {
+        public volatile bool Broken;
+
+        public override long GetTimestamp() => Broken ? throw new InvalidOperationException("the clock broke") : base.GetTimestamp();
+    }
+
+    [Fact]
+    public void AWatchAfterAHookCallbackFailed_IsNotBlamedForIt_OnceTheHooksAreInstalledAgain()
+    {
+        // Arrange - a callback fails during an operation, which ends; the status still shows it
+        var clock = new SwitchableClock();
+        var monitor = new UserTakeoverMonitor(_native, TakeoverOptions.For(TakeoverMode.Stop), clock);
+        _monitors.Add(monitor);
+        using (var first = monitor.Watch())
+        {
+            Until(() => _native.ActiveHooks == 2, "the hooks are installed");
+            clock.Broken = true;
+            _native.Raise(LowLevelInputKind.Move);
+            Until(() => first.Unwatched, "the event the callback failed on may have been the user's");
+        }
+
+        Until(() => _native.ActiveHooks == 0, "the hooks are removed after the last watch");
+        monitor.Status.State.Should().Be(TakeoverState.Unavailable, "the status shows the failure until the hooks are installed again");
+        clock.Broken = false;
+
+        // Act
+        using var second = monitor.Watch();
+
+        // Assert
+        Until(() => monitor.Status.State == TakeoverState.Watching, "the hooks are installed again");
+        second.Unwatched.Should().BeFalse("the failure came before it");
+    }
+
+    /// <summary>A clock that cannot be read, which makes the user-input filter throw on a mouse move.</summary>
+    private sealed class BrokenClock : TimeProvider
+    {
+        public override long GetTimestamp() => throw new InvalidOperationException("the clock broke");
+    }
+
+    [Fact]
+    public void AHookCallbackThatFails_MarksDetectionUnavailable_LogsOnce_AndThrowsNothingIntoWindows()
+    {
+        // Arrange
+        var logger = new RecordingLogger<UserTakeoverMonitor>();
+        var monitor = new UserTakeoverMonitor(_native, TakeoverOptions.For(TakeoverMode.Stop), new BrokenClock(), logger);
+        _monitors.Add(monitor);
+        using var watch = monitor.Watch();
+        Until(() => _native.ActiveHooks == 2, "the hooks are installed");
+
+        // Act - three mouse moves whose handling fails
+        _native.Raise(LowLevelInputKind.Move);
+        _native.Raise(LowLevelInputKind.Move);
+        _native.Raise(LowLevelInputKind.Move);
+
+        // Assert - the hooks stay (key presses are still seen), but the status and the watch say input may be missed
+        Until(() => monitor.Status.State == TakeoverState.Unavailable, "the failure shows in the status");
+        monitor.Status.Error.Should().Contain("failed").And.Contain("input event");
+        watch.Unwatched.Should().BeTrue("the events the callback failed on may have been the user's");
+        _native.ActiveHooks.Should().Be(2, "the thread keeps running");
+        _native.Raise(LowLevelInputKind.KeyDown);
+        watch.Token.WaitHandle.WaitOne(HangGuard).Should().BeTrue("key presses are still detected");
+        _native.CallbackExceptions.Should().Be(0, "no exception reaches the hook's caller, Windows");
+        logger.Entries.Count(e => e.Message.Contains("callback")).Should().Be(1, "the failure is logged once, not on every event");
+    }
+
+    [Fact]
     public void Dispose_StopsTheThread_AndRemovesTheHooks_AndLaterWatchesNeverFire()
     {
         // Arrange

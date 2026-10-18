@@ -264,7 +264,7 @@ public sealed record InputReleaseRecord(
 
 /// <summary>Whether the user paused the server's input, and since when.</summary>
 /// <param name="Paused">True while input is paused.</param>
-/// <param name="PausedBy">How it was paused ("hotkey"); null while running.</param>
+/// <param name="PausedBy">How it was paused ("hotkey", or "shared_pause_unreadable" when the shared pause could not be read); null while running.</param>
 /// <param name="PausedAt">When this server paused; null while running.</param>
 /// <param name="ResumedBy">
 /// How it was last resumed ("hotkey", "resume_input" after the user confirmed, or "another_server"); null if never.
@@ -300,6 +300,24 @@ public static class InputControlSources
     /// user confirmed.
     /// </summary>
     public const string OtherServer = "another_server";
+
+    /// <summary>
+    /// The pause every server on the desktop shares could not be read, so this server cannot tell whether the user paused
+    /// input in another one: it pauses itself (fails closed) until the user resumes.
+    /// </summary>
+    public const string SharedPauseUnreadable = "shared_pause_unreadable";
+
+    /// <summary>
+    /// Why input is paused, as the PausedByUser messages tell the agent: the user pressed the pause hotkey
+    /// (<paramref name="chord"/>, when known), or, for <see cref="SharedPauseUnreadable"/>, the server paused itself. The
+    /// user did not make that pause, so the agent must not tell them they did; what it does is the same: stop and ask.
+    /// </summary>
+    /// <param name="pausedBy">How it was paused (<see cref="InputPauseState.PausedBy"/>).</param>
+    /// <param name="chord">The pause hotkey's chord; null when it is not known.</param>
+    public static string PauseCause(string? pausedBy, string? chord) => pausedBy == SharedPauseUnreadable
+        ? "this server could not read the pause it shares with the other Windows App Manager servers on this desktop, so it " +
+          "paused itself in case the user paused input in another one"
+        : $"the user pressed the pause hotkey{(chord is null ? string.Empty : $" ({chord})")}";
 }
 
 /// <summary>Whether the pause hotkey is registered.</summary>
@@ -343,7 +361,7 @@ public sealed record HeldInputStatus(
 
 /// <summary>Result of get_control_status.</summary>
 /// <param name="Paused">True while the user has paused the server's input: every input tool returns PausedByUser.</param>
-/// <param name="PausedBy">How it was paused ("hotkey"); null while running.</param>
+/// <param name="PausedBy">How it was paused ("hotkey", or "shared_pause_unreadable" when the shared pause could not be read); null while running.</param>
 /// <param name="PausedAt">When it was paused; null while running.</param>
 /// <param name="ResumedBy">How it was last resumed; null if never.</param>
 /// <param name="ResumedAt">When it was last resumed; null if never.</param>

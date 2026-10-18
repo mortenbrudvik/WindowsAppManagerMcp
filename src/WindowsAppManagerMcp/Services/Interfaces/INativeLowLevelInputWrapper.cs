@@ -24,13 +24,15 @@ public interface INativeLowLevelInputWrapper
 
     /// <summary>
     /// Installs a low-level keyboard hook (WH_KEYBOARD_LL) for the calling thread. <paramref name="callback"/> is called on
-    /// that thread while it waits for messages; the wrapper keeps it alive until <see cref="Unhook"/>. Zero when the hook
-    /// could not be installed.
+    /// that thread while it waits for messages; the wrapper keeps it alive until <see cref="Unhook"/>. A callback should not
+    /// throw: the wrapper swallows what it throws, because an exception that crossed back into Windows would end the
+    /// process, so a callback that must report its failures catches them itself. The result has the hook, or zero and the
+    /// Win32 error when the hook could not be installed.
     /// </summary>
-    nint SetKeyboardHook(LowLevelInputCallback callback);
+    LowLevelHookResult SetKeyboardHook(LowLevelInputCallback callback);
 
     /// <summary>Installs a low-level mouse hook (WH_MOUSE_LL), as <see cref="SetKeyboardHook"/> does.</summary>
-    nint SetMouseHook(LowLevelInputCallback callback);
+    LowLevelHookResult SetMouseHook(LowLevelInputCallback callback);
 
     /// <summary>Removes a hook the calling thread installed (UnhookWindowsHookEx).</summary>
     bool Unhook(nint hook);
@@ -43,6 +45,24 @@ public interface INativeLowLevelInputWrapper
 
     /// <summary>Posts the stop message to thread <paramref name="threadId"/> (PostThreadMessage).</summary>
     bool PostStopMessage(uint threadId);
+}
+
+/// <summary>
+/// What installing a low-level hook did: the hook (<see cref="Handle"/>), or zero and the Win32 error SetWindowsHookEx
+/// failed with. The wrapper reads the error right after the call, because any native call in between can overwrite it.
+/// </summary>
+/// <param name="Handle">The hook; zero when it was not installed.</param>
+/// <param name="Win32Error">Why it was not installed (GetLastError); 0 when it was.</param>
+public readonly record struct LowLevelHookResult(nint Handle, int Win32Error)
+{
+    /// <summary>True when the hook is installed.</summary>
+    public bool Succeeded => Handle != nint.Zero;
+
+    /// <summary>The hook <paramref name="handle"/> was installed.</summary>
+    public static LowLevelHookResult Installed(nint handle) => new(handle, 0);
+
+    /// <summary>No hook was installed: SetWindowsHookEx failed with <paramref name="win32Error"/>.</summary>
+    public static LowLevelHookResult Failure(int win32Error) => new(nint.Zero, win32Error);
 }
 
 /// <summary>One keyboard or mouse event as a low-level hook saw it; never which key or button.</summary>

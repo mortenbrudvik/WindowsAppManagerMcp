@@ -31,7 +31,12 @@ public enum TakeoverState
     /// <summary>On, and an operation is being watched now.</summary>
     Watching,
 
-    /// <summary>On, but Windows did not install the hooks: nothing is detected, and operations run as with off.</summary>
+    /// <summary>
+    /// On, but detection does not work: Windows did not install the hooks, a hook failed, or the detection thread stopped.
+    /// The user's input is not (or not reliably) detected, operations run as with off, and the results of type_text, drag
+    /// and run_steps that it did not watch have a warning that says so. It shows until the hooks are next installed, so it
+    /// can still show a failure no operation is running into.
+    /// </summary>
     Unavailable
 }
 
