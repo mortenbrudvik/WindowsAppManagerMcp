@@ -29,8 +29,12 @@ public sealed class UserConfirmationFailClosedContractTests : IDisposable
     /// <summary>The tools' answer timeout here: short, so a question nobody answers ends the call at once.</summary>
     private static readonly TimeSpan AnswerTimeout = TimeSpan.FromMilliseconds(200);
 
-    /// <summary>When the user's yes comes in a late answer: well after <see cref="AnswerTimeout"/>.</summary>
-    private static readonly TimeSpan LateAnswer = TimeSpan.FromMilliseconds(800);
+    /// <summary>
+    /// When the user's yes comes in a late answer: over a second after <see cref="AnswerTimeout"/>, so a test run whose thread pool
+    /// is slow to fire the deadline's timer still has the deadline pass first. Only the default revision waits for it; on the
+    /// others the deadline cancels the question.
+    /// </summary>
+    private static readonly TimeSpan LateAnswer = TimeSpan.FromMilliseconds(1500);
 
     private static readonly long[] FourWindows =
         [TypicalDesktop.NotepadHandle, TypicalDesktop.BrowserHandle, 0x300000 + 2 * 0x1F4, 0x300000 + 4 * 0x1F4];
