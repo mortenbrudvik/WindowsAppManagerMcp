@@ -339,9 +339,11 @@ public static class InputGateToolFilter
         $"Nothing was done: another input or window call held the input gate for {waited.TotalSeconds:0.#} s, so this call " +
         "did not start. Retry when your other calls have finished.";
 
-    private static string PausedMessage(IInputSession session) =>
-        $"Nothing was done: input is paused, {InputControlSources.PauseCause(session.PauseState?.PausedBy, session.PauseChord)}. " +
-        "While paused, tools that change windows or start or stop processes do nothing, like the input tools; tools that only read " +
-        "still work. Stop and ask the user how to continue. Do not try to resume input yourself: only the user can, with the hotkey " +
-        "or by confirming resume_input.";
+    private static string PausedMessage(IInputSession session)
+    {
+        var pausedBy = session.PauseState?.PausedBy;
+        return $"Nothing was done: input is paused, {InputControlSources.PauseCause(pausedBy, session.PauseChord)}. While paused, " +
+               "tools that change windows or start or stop processes do nothing, like the input tools; tools that only read still " +
+               $"work. Stop and ask the user how to continue. Do not try to resume input yourself: {InputControlSources.WhoResumes(pausedBy)}.";
+    }
 }

@@ -5,6 +5,7 @@ using ModelContextProtocol;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 using WindowsAppManagerMcp.Models;
+using WindowsAppManagerMcp.Services;
 using WindowsAppManagerMcp.Services.Interfaces;
 
 namespace WindowsAppManagerMcp.Tools;
@@ -55,14 +56,22 @@ public class InputControlTools
         var serverHeld = _session.ServerHeld.Select(h => h.Name).ToList();
         var modifiersDown = _session.ReadModifiersDown().Select(k => k.Name).ToList();
 
-        // The server's own pause, when the shared one could not be read, is not the user's: the agent must not say it is
-        var pausedHow = state.PausedBy == InputControlSources.SharedPauseUnreadable
+        // The server's own pause, when the shared one could not be read, is not the user's: the agent must not say it is,
+        // nor that one press of the hotkey resumes it
+        var selfPaused = state.PausedBy == InputControlSources.SharedPauseUnreadable;
+        var pausedHow = selfPaused
             ? $"by this server ({state.PausedBy}{Since(state.PausedAt)}): {InputControlSources.PauseCause(state.PausedBy, null)}"
             : $"by the user ({state.PausedBy}{Since(state.PausedAt)})";
+        var resumeHow = selfPaused
+            ? "Only the user can resume, by confirming resume_input when you call it at the user's request. " +
+              (hotkey.State == PauseHotkeyState.Registered
+                  ? $"{hotkey.Chord} does not resume it at once: {SelfPauseHotkeyPresses()}."
+                  : $"The pause hotkey does not resume it: {WhyTheHotkeyCannotResume(hotkey)}.")
+            : "Only the user can resume: " +
+              $"{(hotkey.Chord is { } chord ? $"{chord} again, or " : string.Empty)}by confirming resume_input when you call it at the user's request.";
         var message = state.Paused
             ? $"Input is paused {pausedHow}. Every input tool and every tool that changes windows " +
-              "or starts or stops processes returns PausedByUser. Stop and ask the user how to continue. Only the user can resume: " +
-              $"{(hotkey.Chord is { } chord ? $"{chord} again, or " : string.Empty)}by confirming resume_input when you call it at the user's request."
+              $"or starts or stops processes returns PausedByUser. Stop and ask the user how to continue. {resumeHow}"
             : hotkey.State switch
             {
                 PauseHotkeyState.Registered => $"Input is running. The user can pause it at any time with {hotkey.Chord}.",
@@ -130,22 +139,39 @@ public class InputControlTools
     private async Task<ResumeInputResult> AskToResumeAsync(McpServer server, InputPauseState state, CancellationToken cancellationToken)
     {
         var chord = _session.PauseChord;
-        var hotkeyHint = chord == null ? "the pause hotkey" : chord;
+        var selfPaused = state.PausedBy == InputControlSources.SharedPauseUnreadable;
         if (server.ClientCapabilities?.Elicitation?.Form == null)
         {
+            var pausedHow = selfPaused
+                ? $"Input is paused: {InputControlSources.PauseCause(state.PausedBy, chord)}. This"
+                : "Input was paused by the user, and this";
+            var resumeHow = ResumeWithoutQuestion(state, chord, "So, with this client, only restarting this server resumes input.");
             return new ResumeInputResult(false, WasPaused: true,
-                Error: $"Input was paused by the user, and this MCP client cannot ask the user to confirm a resume (it does not support " +
-                       $"elicitation). Only the user can resume, by pressing {hotkeyHint} again. Tell the user and wait.",
+                Error: $"{pausedHow} MCP client cannot ask the user to confirm a resume (it does not support elicitation). " +
+                       $"{resumeHow} Tell the user and wait.",
                 ErrorCode: InputErrorCode.ResumeNeedsUser);
         }
 
         var everyServer = _session.SharesDesktopPause
             ? " The pause is shared: resuming lets every Windows App Manager server on this desktop send input again."
             : string.Empty;
+        // The user did not make the server's own pause, and after a resume a pause made in another server does not
+        // reach this one while the shared pause cannot be read (InputSession.SyncLocked): the user hears both
+        var pausedBy = selfPaused
+            ? $"This Windows App Manager server paused it itself{Since(state.PausedAt)}, not you: it could not read the pause it " +
+              "shares with the other servers on this desktop, so it cannot tell whether you paused input in another one."
+            : $"You paused it{(chord == null ? string.Empty : $" with {chord}")}{Since(state.PausedAt)}.";
+        var afterResume = !selfPaused
+            ? string.Empty
+            : _hotkey.Status.State == PauseHotkeyState.Registered
+                ? $" After a resume, {chord ?? "the pause hotkey"} still pauses this server, but while it cannot read the shared pause, " +
+                  "a pause made in another server does not."
+                : $" After a resume, the pause hotkey{(chord == null ? string.Empty : $" ({chord})")} does not pause this server while " +
+                  "it cannot read the shared pause.";
         var question = new ElicitRequestParams
         {
-            Message = $"The AI agent asks to resume keyboard and mouse input. You paused it{(chord == null ? string.Empty : $" with {chord}")}" +
-                      $"{Since(state.PausedAt)}.{everyServer} Resume only if you want the agent to send input to your desktop again.",
+            Message = $"The AI agent asks to resume keyboard and mouse input. {pausedBy}{everyServer}{afterResume} Resume only if you " +
+                      "want the agent to send input to your desktop again.",
             RequestedSchema = new ElicitRequestParams.RequestSchema
             {
                 Properties = new Dictionary<string, ElicitRequestParams.PrimitiveSchemaDefinition>
@@ -175,8 +201,10 @@ public class InputControlTools
             }
             catch (Exception ex) when (ex is InvalidOperationException or McpException)
             {
+                var resumeHow = ResumeWithoutQuestion(state, chord,
+                    "So only a resume_input the user confirms, or restarting this server, resumes input.");
                 return new ResumeInputResult(false, WasPaused: true,
-                    Error: $"The user could not be asked ({ex.Message}). Only the user can resume, by pressing {hotkeyHint} again.",
+                    Error: $"The user could not be asked ({ex.Message}). {resumeHow}",
                     ErrorCode: InputErrorCode.ResumeNeedsUser);
             }
         }
@@ -250,7 +278,8 @@ public class InputControlTools
             else if (modifiers.PausedByUser)
             {
                 errorCode = errorCode == InputErrorCode.None ? InputErrorCode.PausedByUser : errorCode;
-                error = Join(error, "Input is paused by the user, so modifier keys the server did not press were left alone.");
+                error = Join(error, "Modifier keys the server did not press were left alone, because input is paused: " +
+                                    $"{InputControlSources.PauseCause(_session.PauseState?.PausedBy, _session.PauseChord)}.");
             }
             else
             {
@@ -275,6 +304,40 @@ public class InputControlTools
 
     private ResumeInputResult Declined(string error) =>
         new(false, WasPaused: true, Error: error, ErrorCode: InputErrorCode.ResumeDeclined);
+
+    /// <summary>
+    /// How the user resumes when resume_input cannot ask them (ResumeNeedsUser): a press of the hotkey, or, after the
+    /// server paused itself (<see cref="InputControlSources.SharedPauseUnreadable"/>), a second press in the server that
+    /// registered the chord, since the first one only makes the pause the user's own (InputSession.TogglePauseByHotkey). In
+    /// any other server the hotkey cannot resume it, because its presses reach this one only through the shared pause.
+    /// </summary>
+    /// <param name="state">The pause the user would resume.</param>
+    /// <param name="chord">The pause hotkey's chord; null when it is not known.</param>
+    /// <param name="withoutHotkey">What resumes input when the hotkey cannot, on this path.</param>
+    private string ResumeWithoutQuestion(InputPauseState state, string? chord, string withoutHotkey)
+    {
+        if (state.PausedBy != InputControlSources.SharedPauseUnreadable)
+        {
+            return $"Only the user can resume, by pressing {chord ?? "the pause hotkey"} again.";
+        }
+
+        var hotkey = _hotkey.Status;
+        return hotkey.State == PauseHotkeyState.Registered
+            ? $"Only the user can resume, with {chord ?? "the pause hotkey"}: since this server paused itself, {SelfPauseHotkeyPresses()}."
+            : $"The pause hotkey cannot resume it: {WhyTheHotkeyCannotResume(hotkey)}. {withoutHotkey}";
+    }
+
+    /// <summary>What the presses of the hotkey do to the server's own pause, in the server that registered the chord.</summary>
+    private static string SelfPauseHotkeyPresses() =>
+        "the first press keeps the pause, as the user's own (and pauses every Windows App Manager server on this desktop), and a " +
+        $"second press more than {InputSession.HotkeyResumeDelay.TotalSeconds.ToString("0.#", CultureInfo.InvariantCulture)} seconds " +
+        "later resumes";
+
+    /// <summary>Why the hotkey cannot resume the server's own pause in a server that has not registered the chord.</summary>
+    private static string WhyTheHotkeyCannotResume(PauseHotkeyStatus hotkey) => hotkey.State == PauseHotkeyState.OtherServer
+        ? $"another Windows App Manager server has registered {hotkey.Chord ?? "it"}, and its presses reach this server only " +
+          "through the shared pause, which this server cannot read (a press pauses or resumes only the other servers)"
+        : $"this server has not registered it ({hotkey.State})";
 
     /// <summary>The user accepted and ticked the resume field.</summary>
     private static bool Confirmed(ElicitResult answer) =>
