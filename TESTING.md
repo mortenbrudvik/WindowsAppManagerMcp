@@ -2061,7 +2061,10 @@ another test run, a virus scan) decide when the deadline passes (roadmap M3.F29)
 `DesktopStateServiceTests` run get_desktop_state's deadline on a `ManualTimerClock` (`Fixtures/`), whose timers fire only
 when the test moves it: the test moves it to the parts' budget or to the deadline once the parts are where it expects
 them, and checks that the call returns then and not before, instead of bounding the call's wall time. The real time a
-test then waits for the call (`HangGuard`, 30 s) only guards against a call that never returns. Each step of the
+test then waits for the call (`HangGuard`, 30 s) only guards against a call that never returns. A fake that waits
+for the code under test to cancel it waits at most `HangGuard` too and records whether it was cancelled
+(`ElementReadFallbackTests`' search), so that a deadline the code stops passing fails the test with a message instead
+of hanging the run until CI's `--blame-hang-timeout` kills it. Each step of the
 in-process MCP server (`InProcessMcpServer`, `RawMcpConnection`: starting the host, connecting, stopping) may take 30 s,
 as long as a call: at 10 s, contract tests failed now and then after 11 to 14 seconds on a busy machine
 (close_windows_batch in `UserConfirmationContractTests`, the click case of `ToolPayloadBudgetTests` and

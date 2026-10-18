@@ -13,6 +13,9 @@ public class ElementReadFallbackTests
     private static readonly nint Handle = 0x7600;
     private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(5);
 
+    /// <summary>How long a fake waits for a deadline of the code under test before it gives up, so that a missing deadline fails a test instead of hanging the run.</summary>
+    private static readonly TimeSpan HangGuard = TimeSpan.FromSeconds(30);
+
     private readonly FakeUiaTree _tree = new();
     private readonly InlineUiaWorker _worker = new();
     private readonly Mock<INativeWindowWrapper> _windows = new();
@@ -203,16 +206,19 @@ public class ElementReadFallbackTests
         var subject = new FakeUiaNode("Edit", "Subject") { AutomationId = "subject", ActionPatterns = ["Value"], Value = "Lunch on Friday" };
         var subjectRef = Add(subject);
         var search = new Mock<IElementSearchService>();
+        var searchEndedByItsDeadline = false;
         search.Setup(s => s.FindAsync(It.IsAny<ElementQuery>(), It.IsAny<CancellationToken>()))
             .Returns(async (ElementQuery _, CancellationToken token) =>
             {
                 try
                 {
-                    await Task.Delay(System.Threading.Timeout.Infinite, token);
+                    // Bounded, so that a search the service gives no deadline fails the test below instead of hanging the run
+                    await Task.Delay(HangGuard, token);
                 }
                 catch (OperationCanceledException)
                 {
                     // The search's deadline: it found its match just then
+                    searchEndedByItsDeadline = true;
                 }
 
                 return new FindElementsResult(true, Handle, "Ledger", 1, false,
@@ -225,7 +231,10 @@ public class ElementReadFallbackTests
         var result = await CreateSut(worker, search.Object).ReadTextAsync(
             new ElementTextRequest(null, new ElementQuery(Handle, AutomationId: "subject", MaxResults: 5, Timeout: timeout), 0, 1000, timeout));
 
-        // Assert - the read had its own deadline, not the search's spent one
+        // Assert - the search ran under the call's timeout, and the read had its own deadline, not the search's spent one
+        searchEndedByItsDeadline.Should().BeTrue(
+            "read_element_text gives its criteria search a token cancelled after the call's timeout; this search waited {0} and was never cancelled",
+            HangGuard);
         result.Success.Should().BeTrue(result.Error);
         result.Text.Should().Be("Lunch on Friday");
         worker.CancelledAtStart.Should().Equal(false);
