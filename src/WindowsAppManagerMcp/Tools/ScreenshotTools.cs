@@ -534,9 +534,8 @@ public class ScreenshotTools
                 $"padding must be 0-{MaxRefPadding} pixels; it was {pad}. Nothing was captured.");
         }
 
-        var normalized = ElementRefs.Normalize(elementRef) ?? throw new ToolErrorException(ToolErrorReporting.InvalidArgumentsErrorCode,
-            $"ref '{elementRef}' is not an element ref: refs look like '{ElementRefs.Example}' and come from capture_with_elements, " +
-            "find_ui_elements, get_ui_elements, get_focused_element or get_element_at_point. Nothing was captured.");
+        var normalized = ElementRefs.Require(elementRef, "ref", "Nothing was captured.",
+            "and come from capture_with_elements, find_ui_elements, get_ui_elements, get_focused_element or get_element_at_point");
         var registry = _elementRegistry ?? throw new ToolErrorException(nameof(UIElementErrorCode.AutomationUnavailable),
             "Element refs are not available in this server. Nothing was captured.");
         return new RefCrop(normalized, registry.Lookup(normalized), pad);

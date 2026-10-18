@@ -86,12 +86,10 @@ public class ElementWaitTools
         string? className, string? withinRef, ElementSearchScope? scope, ElementWaitCondition condition, string? expected, int timeoutMs,
         int stableMs)
     {
-        static ToolErrorException Invalid(string message) =>
-            new(ToolErrorReporting.InvalidArgumentsErrorCode, message + " Nothing was waited for.");
+        const string nothingWaited = "Nothing was waited for.";
 
-        static string NotARef(string argument, string value) =>
-            $"{argument} '{value}' is not an element ref: refs look like '{ElementRefs.Example}' and come from find_ui_elements, " +
-            "get_ui_elements, get_focused_element, get_element_at_point or capture_with_elements.";
+        static ToolErrorException Invalid(string message) =>
+            new(ToolErrorReporting.InvalidArgumentsErrorCode, message + " " + nothingWaited);
 
         if (timeoutMs is < 0 or > ElementWaitService.MaxTimeoutMs)
             throw Invalid($"timeoutMs must be 0-{ElementWaitService.MaxTimeoutMs}, but it is {timeoutMs}.");
@@ -128,7 +126,7 @@ public class ElementWaitTools
 
             return new ElementWaitRequest
             {
-                Ref = ElementRefs.Normalize(elementRef) ?? throw Invalid(NotARef("ref", elementRef)),
+                Ref = ElementRefs.Require(elementRef, "ref", nothingWaited),
                 Condition = condition,
                 Expected = expected,
                 TimeoutMs = timeoutMs,
@@ -150,7 +148,7 @@ public class ElementWaitTools
         string? within = null;
         if (withinRef != null)
         {
-            within = ElementRefs.Normalize(withinRef) ?? throw Invalid(NotARef("withinRef", withinRef));
+            within = ElementRefs.Require(withinRef, "withinRef", nothingWaited);
             if (window != null)
                 throw Invalid("Pass withinRef or window, not both: withinRef names its window.");
         }

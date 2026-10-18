@@ -297,10 +297,7 @@ public class UIElementTools
 
         if (withinRef != null)
         {
-            within = ElementRefs.Normalize(withinRef) ?? throw new ToolErrorException(ToolErrorReporting.InvalidArgumentsErrorCode,
-                $"withinRef '{withinRef}' is not an element ref: refs look like '{ElementRefs.Example}' and come from " +
-                "find_ui_elements, get_ui_elements, get_focused_element, get_element_at_point or capture_with_elements. " +
-                "Nothing was searched.");
+            within = ElementRefs.Require(withinRef, "withinRef", "Nothing was searched.");
             var registry = _registry ?? throw new InvalidOperationException("withinRef needs the element registry; the server always registers it.");
             var lookup = registry.Lookup(within);
             if (!lookup.Success)

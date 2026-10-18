@@ -131,42 +131,54 @@ public sealed partial class ElementActionService : IElementActionService
     public static string? ArgumentError(ElementActionRequest request)
     {
         ArgumentNullException.ThrowIfNull(request);
-        var action = ToolEnum<ElementActionKind>.Name(request.Action);
-        switch (request.Action)
+        return ArgumentError(request.Action, request.Value, request.Mode, request.Direction, request.Fallback, request.ScrollPercent);
+    }
+
+    /// <summary>
+    /// <see cref="ArgumentError(ElementActionRequest)"/> for the arguments of a request whose element is not named yet: the tool
+    /// checks them before it resolves its criteria to the element's ref.
+    /// </summary>
+    public static string? ArgumentError(
+        ElementActionKind kind, string? value = null, ElementValueMode mode = ElementValueMode.Value,
+        ElementScrollDirection? direction = null, ElementActionFallback fallback = ElementActionFallback.None,
+        double? scrollPercent = null)
+    {
+        var action = ToolEnum<ElementActionKind>.Name(kind);
+        switch (kind)
         {
-            case ElementActionKind.SetValue when request.Value == null:
+            case ElementActionKind.SetValue when value == null:
                 return "set_value needs value: the text to put in the element (\"\" empties it).";
-            case ElementActionKind.AppendText when string.IsNullOrEmpty(request.Value):
+            case ElementActionKind.AppendText when string.IsNullOrEmpty(value):
                 return "append_text needs value: the text to add at the end.";
-            case ElementActionKind.SetRangeValue when !TryParseNumber(request.Value, out _):
-                return $"set_range_value needs value: a number such as \"42\" or \"0.5\" (got {Describe(request.Value)}).";
-            case ElementActionKind.Toggle when request.Value != null && ParseToggleState(request.Value) == null:
-                return $"toggle's value is the state to reach: on, off or indeterminate (got {Describe(request.Value)}); leave it out to toggle once.";
-            case ElementActionKind.Scroll when request.Direction == null:
+            case ElementActionKind.SetRangeValue when !TryParseNumber(value, out _):
+                return $"set_range_value needs value: a number such as \"42\" or \"0.5\" (got {Describe(value)}).";
+            case ElementActionKind.Toggle when value != null && ParseToggleState(value) == null:
+                return $"toggle's value is the state to reach: on, off or indeterminate (got {Describe(value)}); leave it out to toggle once.";
+            case ElementActionKind.Scroll when direction == null:
                 return "scroll needs direction: up, down, left or right (amount: page or line).";
-            case ElementActionKind.MenuPath when MenuPaths.Parse(request.Value, out var pathError) == null:
+            case ElementActionKind.MenuPath when MenuPaths.Parse(value, out var pathError) == null:
                 return pathError;
         }
 
-        if (request.Value != null && request.Action is not (ElementActionKind.SetValue or ElementActionKind.AppendText
+        if (value != null && kind is not (ElementActionKind.SetValue or ElementActionKind.AppendText
                 or ElementActionKind.SetRangeValue or ElementActionKind.Toggle or ElementActionKind.MenuPath))
         {
             return $"value is for set_value, append_text, set_range_value, toggle and menu_path, not {action}.";
         }
 
-        if (request.Mode != ElementValueMode.Value && request.Action is not (ElementActionKind.SetValue or ElementActionKind.AppendText))
+        if (mode != ElementValueMode.Value && kind is not (ElementActionKind.SetValue or ElementActionKind.AppendText))
         {
             return $"mode is for set_value and append_text, not {action}.";
         }
 
-        if (request.Direction != null && request.Action != ElementActionKind.Scroll)
+        if (direction != null && kind != ElementActionKind.Scroll)
         {
             return $"direction is for scroll, not {action}.";
         }
 
-        if (request.ScrollPercent is { } percent)
+        if (scrollPercent is { } percent)
         {
-            if (request.Action != ElementActionKind.Scroll)
+            if (kind != ElementActionKind.Scroll)
             {
                 return $"scrollPercent is for scroll, not {action}.";
             }
@@ -177,7 +189,7 @@ public sealed partial class ElementActionService : IElementActionService
             }
         }
 
-        if (request.Fallback == ElementActionFallback.Mouse && request.Action is not (ElementActionKind.Invoke or ElementActionKind.Click
+        if (fallback == ElementActionFallback.Mouse && kind is not (ElementActionKind.Invoke or ElementActionKind.Click
                 or ElementActionKind.Select))
         {
             return $"fallback mouse is for invoke, click and select (a click does what they do), not {action}. " +
