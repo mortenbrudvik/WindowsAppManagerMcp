@@ -209,7 +209,8 @@ public record FindElementsResult(
 /// <param name="Count">How many matches were left out.</param>
 /// <param name="Warning">What the result's warning says about them: whose they are and why the policy refuses them.</param>
 /// <param name="OtherwiseComplete">Whether the search covered the rest of its scope (no timeout, search limit, window limit or
-/// other part skipped), so that these are the only matches it did not return.</param>
+/// other part skipped) and returned every other match (not truncationReason MaxResults), so that these are the only matches
+/// it did not return.</param>
 public sealed record PolicyLeftOutMatches(int Count, string Warning, bool OtherwiseComplete);
 
 /// <summary>

@@ -765,6 +765,118 @@ public class ForeignElementReadTests
         actions.Verify(a => a.ActAsync(It.IsAny<ElementActionRequest>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
+    [Fact]
+    public async Task ElementAction_ByCriteria_WhoseFirstMatchesAreOfADeniedProcess_IsAmbiguous_WithTheAllowedOne_NotRefused()
+    {
+        // Arrange - two of the password manager's buttons come before the window's own in tree order: they would fill
+        // element_action's two places among the matches, and the window's button would only be counted
+        _window.With(
+            new FakeUiaNode("Button", "Send") { ProcessId = DeniedPid, ActionPatterns = ["Invoke"] },
+            new FakeUiaNode("Button", "Send") { ProcessId = DeniedPid, ActionPatterns = ["Invoke"] },
+            new FakeUiaNode("Button", "Send") { ProcessId = AppPid, ActionPatterns = ["Invoke"] });
+        var actions = new Mock<IElementActionService>();
+
+        // Act
+        var result = await ActionTools(actions).ElementAction(ElementActionKind.Invoke, handle: (long)Handle, name: "Send")
+            .Payload<ElementActionResult>();
+
+        // Assert - not the policy's refusal: the window's own button matches too, and is named
+        result.ErrorCode.Should().Be(nameof(UIElementErrorCode.AmbiguousElement));
+        result.Error.Should().StartWith("3 elements match the criteria, 2 of them of an app the server's target policy refuses (the others: w")
+            .And.Contain("Button 'Send')");
+        actions.Verify(a => a.ActAsync(It.IsAny<ElementActionRequest>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ReadText_ByCriteria_WhoseFirstMatchesAreOfADeniedProcess_ListsTheAllowedOneAsTheCandidate()
+    {
+        // Arrange - five of the password manager's fields before the window's own: they would fill the five candidates
+        for (var i = 0; i < 5; i++)
+        {
+            _window.With(new FakeUiaNode("Edit", "Notes") { ProcessId = DeniedPid, ActionPatterns = ["Value"], Value = "4829-1337" });
+        }
+
+        _window.With(new FakeUiaNode("Edit", "Notes") { ProcessId = AppPid, ActionPatterns = ["Value"], Value = "Lunch" });
+
+        // Act
+        var result = await Reads().ReadTextAsync(new ElementTextRequest(null,
+            new ElementQuery(Handle, Name: "Notes", MaxResults: 5, Timeout: Timeout), 0, 1000, Timeout));
+
+        // Assert
+        result.ErrorCode.Should().Be(UIElementErrorCode.AmbiguousElement);
+        result.Error.Should().StartWith("6 elements match the criteria, 5 of them of an app the server's target policy refuses");
+        result.Candidates.Should().ContainSingle().Which.Ref.Should().NotBeNull();
+        _tree.Reads.Should().NotContain(r => ReadsAValueOrText(r));
+    }
+
+    [Fact]
+    public async Task Find_MatchesOfADeniedProcess_DoNotTakeThePlacesOfMaxResults()
+    {
+        // Arrange
+        _window.With(
+            new FakeUiaNode("Button", "Vault entry") { ProcessId = DeniedPid },
+            new FakeUiaNode("Button", "Vault entry 2") { ProcessId = DeniedPid },
+            new FakeUiaNode("Button", "Send") { ProcessId = AppPid });
+
+        // Act
+        var result = await Search(_policy).FindAsync(new ElementQuery(Handle, ControlTypes: ["Button"], MaxResults: 2, Timeout: Timeout));
+
+        // Assert - the window's own button is returned, as if the two left out were not there
+        result.Success.Should().BeTrue(result.Error);
+        result.Elements!.Select(e => e.Name).Should().Equal("Send");
+        result.MatchCount.Should().Be(1);
+        result.TruncationReason.Should().Be(ElementSearchTruncation.PartsSkipped);
+        result.Warning.Should().StartWith("2 elements of window");
+        result.PolicyLeftOut.Should().Be(new PolicyLeftOutMatches(2, result.Warning!, OtherwiseComplete: true));
+        _tree.Reads.Should().NotContain(r => r.Contains("Vault entry", StringComparison.Ordinal) && !r.StartsWith("Read:", StringComparison.Ordinal),
+            "nothing more of them is read than the search's own read");
+    }
+
+    [Fact]
+    public async Task Find_DetailStandard_AMatchLeftOutOnlyWhenDescribed_BeforeAMatchNotReturned_IsNotOtherwiseComplete()
+    {
+        // Arrange - the first match is read without its process (the fake's default), so it is checked only when it is
+        // described, by its identity (process 0: refused), after it took the one place among maxResults; the window's own
+        // button after it was counted but not returned
+        _window.With(
+            new FakeUiaNode("Button", "Vault entry"),
+            new FakeUiaNode("Button", "Send") { ProcessId = AppPid });
+
+        // Act
+        var result = await Search(_policy).FindAsync(new ElementQuery(Handle, ControlTypes: ["Button"], MaxResults: 1,
+            Detail: ElementDetail.Standard, Timeout: Timeout));
+
+        // Assert - a caller that needs one match is not told the policy refused the only ones
+        result.Elements.Should().BeEmpty();
+        result.MatchCount.Should().Be(1);
+        result.PolicyLeftOut!.Count.Should().Be(1);
+        result.PolicyLeftOut.OtherwiseComplete.Should().BeFalse("a match the result does not return is not known to be refused");
+    }
+
+    [Fact]
+    public async Task Find_SearchVirtualized_ItemsOfADeniedProcess_DoNotTakeThePlacesOfMaxResults()
+    {
+        // Arrange - an allowed list whose first two items named "Entry X" are served by the password manager, the third not
+        var list = new FakeVirtualList(1000, realized: 30, i => i is >= 500 and <= 502 ? "Entry X" : $"Entry {i:D4}", AppPid);
+        list.Items[500].ProcessId = DeniedPid;
+        list.Items[501].ProcessId = DeniedPid;
+        _window.With(list.List);
+
+        // Act
+        var result = await Search(_policy).FindAsync(new ElementQuery(Handle, Name: "Entry X", MaxResults: 2, Timeout: Timeout)
+        {
+            SearchVirtualized = true
+        });
+
+        // Assert
+        result.Success.Should().BeTrue(result.Error);
+        result.Elements!.Should().ContainSingle().Which.Virtualized.Should().BeTrue();
+        result.MatchCount.Should().Be(1);
+        result.Virtualized!.ItemsFound.Should().Be(1);
+        result.PolicyLeftOut.Should().Be(new PolicyLeftOutMatches(2, result.Warning!, OtherwiseComplete: true));
+        result.Warning.Should().StartWith("2 elements of window").And.Contain("KeePass");
+    }
+
     #endregion
 
     #region A page of a denied WebView2 that Chromium builds only once it is asked for
