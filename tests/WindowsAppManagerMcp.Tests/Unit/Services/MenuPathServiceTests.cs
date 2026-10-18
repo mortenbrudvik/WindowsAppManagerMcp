@@ -228,6 +228,23 @@ public class MenuPathServiceTests
         result.Steps.Should().BeNull();
     }
 
+    [Fact]
+    public async Task ALongItemNameQuotedInAMessage_IsNeverCutBetweenTheHalvesOfASurrogatePair()
+    {
+        // Arrange - an emoji (two UTF-16 units) across the quoted name's cut at 100 characters
+        var start = new string('f', 99);
+        _find = query => Found(query, Item("w1e1", start + "\U0001F600 one"), Item("w1e7", start + "\U0001F600 two"));
+
+        // Act
+        var result = await RunAsync("File", "Save As");
+
+        // Assert
+        result.ErrorCode.Should().Be(nameof(UIElementErrorCode.AmbiguousElement));
+        result.Error.Should().Contain($"w1e1 '{start}'");
+        System.Text.Encoding.UTF8.GetString(System.Text.Encoding.UTF8.GetBytes(result.Error!)).Should().Be(result.Error,
+            "no half of a surrogate pair is left in the message");
+    }
+
     [Theory]
     [InlineData(ElementSearchTruncation.PartsSkipped)]
     [InlineData(ElementSearchTruncation.Timeout)]

@@ -233,6 +233,51 @@ public class DialogServiceTests
     }
 
     [Fact]
+    public async Task Read_NeverCutsATextElementBetweenTheHalvesOfASurrogatePair()
+    {
+        // Arrange - an emoji (two UTF-16 units) across the 500-character cut of one element and across the 2,000 in all
+        const string emoji = "\U0001F600";
+        _texts =
+        [
+            Element("w1t0", new string('a', DialogService.MaxTextLength - 1) + emoji + "after", null, "Text"),
+            Element("w1t1", new string('b', 500), null, "Text"),
+            Element("w1t2", new string('c', 500), null, "Text"),
+            Element("w1t3", new string('d', 2), null, "Text"),
+            Element("w1t4", new string('e', 498) + emoji + "after", null, "Text")
+        ];
+
+        // Act
+        var content = (await CreateSut().ReadAsync(Dialog, TimeSpan.FromSeconds(1))).Content!;
+
+        // Assert - each cut ends before the pair rather than on its first half
+        content.Text.Should().Equal(new string('a', DialogService.MaxTextLength - 1), new string('b', 500), new string('c', 500),
+            new string('d', 2), new string('e', 498));
+        content.Text.Should().OnlyContain(t => !HasLoneSurrogate(t));
+        content.TextTruncated.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task Read_LeavesOutTheLastTextElement_WhenTheOneCharacterLeftIsHalfASurrogatePair()
+    {
+        _texts =
+        [
+            Element("w1t0", new string('a', 500), null, "Text"),
+            Element("w1t1", new string('b', 500), null, "Text"),
+            Element("w1t2", new string('c', 500), null, "Text"),
+            Element("w1t3", new string('d', 499), null, "Text"),
+            Element("w1t4", "\U0001F600 and more", null, "Text")
+        ];
+
+        var content = (await CreateSut().ReadAsync(Dialog, TimeSpan.FromSeconds(1))).Content!;
+
+        content.Text.Should().HaveCount(4).And.OnlyContain(t => !HasLoneSurrogate(t));
+        content.TextTruncated.Should().BeTrue();
+    }
+
+    /// <summary>Whether <paramref name="text"/> holds half of a surrogate pair without the other half (UTF-8 replaces it).</summary>
+    private static bool HasLoneSurrogate(string text) => System.Text.Encoding.UTF8.GetString(System.Text.Encoding.UTF8.GetBytes(text)) != text;
+
+    [Fact]
     public async Task Read_ThatFails_ReportsTheSearchCode()
     {
         _search.Setup(s => s.FindAsync(It.IsAny<ElementQuery>(), It.IsAny<CancellationToken>())).ReturnsAsync(

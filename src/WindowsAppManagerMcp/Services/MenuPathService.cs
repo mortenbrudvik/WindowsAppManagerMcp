@@ -302,7 +302,9 @@ public sealed class MenuPathService : IMenuPathService
             ". Check the names with find_ui_elements (controlType MenuItem) or get_active_popups."));
     }
 
-    private static string? Cut(string? name) => name is { Length: > MaxQuotedName } ? name[..MaxQuotedName] : name;
+    /// <summary>The start of a name quoted in a message, at most <see cref="MaxQuotedName"/> characters, never half of a surrogate pair.</summary>
+    private static string? Cut(string? name) =>
+        name is { Length: > MaxQuotedName } ? name[..TextPages.FittingLength(name, MaxQuotedName, int.MaxValue)] : name;
 
     /// <summary>A found item: its ref and the top-level window it is registered under, or the failure.</summary>
     private sealed record FoundItem(string? Ref, nint Window, ElementActionResult? Failure)

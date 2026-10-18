@@ -445,7 +445,8 @@ public sealed class FileDialogService : IFileDialogService
             "element_action."));
     }
 
-    private static string Cut(string text, int length) => text.Length <= length ? text : text[..length];
+    /// <summary>The start of a title quoted in a message, at most <paramref name="length"/> characters, never half of a surrogate pair.</summary>
+    private static string Cut(string text, int length) => text[..TextPages.FittingLength(text, length, int.MaxValue)];
 
     /// <summary>The ref of the default button (AutomationId 1, IDOK), which must be the only one.</summary>
     private async Task<Found> FindDefaultButtonAsync(FileDialogCall call, CancellationToken cancellationToken)

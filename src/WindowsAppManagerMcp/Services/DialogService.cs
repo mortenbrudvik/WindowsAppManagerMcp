@@ -261,13 +261,13 @@ public sealed class DialogService : IDialogService
 
             if (name.Length > MaxTextLength)
             {
-                name = name[..MaxTextLength];
+                name = Start(name, MaxTextLength);
                 cut = true;
             }
 
             if (total + name.Length > MaxTotalText)
             {
-                name = name[..(MaxTotalText - total)];
+                name = Start(name, MaxTotalText - total);
                 cut = true;
                 if (name.Length > 0)
                 {
@@ -282,6 +282,22 @@ public sealed class DialogService : IDialogService
         }
 
         return (kept, cut);
+    }
+
+    /// <summary>
+    /// The start of <paramref name="text"/> in at most <paramref name="maxLength"/> characters, never ending on the first half
+    /// of a surrogate pair (<see cref="TextPages.FittingLength"/>): rather none than half of one, which no result can carry.
+    /// </summary>
+    private static string Start(string text, int maxLength)
+    {
+        var length = TextPages.FittingLength(text, maxLength, int.MaxValue);
+        if (length < text.Length && length > 0 && char.IsHighSurrogate(text[length - 1]))
+        {
+            // FittingLength keeps a lone first character so that a page is never empty; a dialog's text can do without it
+            length--;
+        }
+
+        return text[..length];
     }
 
     /// <inheritdoc />
