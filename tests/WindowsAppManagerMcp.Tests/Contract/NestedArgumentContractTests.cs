@@ -265,6 +265,10 @@ public class NestedArgumentContractTests
         "windows[0].window.processId does not have the type the input schema gives it.")]
     [InlineData("launch_applications_batch", """{ "applications": [ { "executable": "notepad" }, { "executable": "code", "args": [] } ] }""",
         "applications[1] has a member 'args' that it does not take.")]
+    [InlineData("find_windows", """{ "titleContains": "Notepad", "limit": 3000000000 }""",
+        "limit is out of range: it takes a whole number from -2147483648 to 2147483647.")]
+    [InlineData("set_windows_bounds_batch", """{ "placements": [ { "handle": 1706796, "x": 3000000000, "y": 0, "width": 800, "height": 600 } ] }""",
+        "placements[0].x is out of range: it takes a whole number from -2147483648 to 2147483647.")]
     public async Task AnObjectsMemberThatCannotBeBound_IsNamedByItsPlace_AndNothingIsDone(string tool, string arguments, string expected)
     {
         var (result, services) = await CallAsync(tool, arguments);

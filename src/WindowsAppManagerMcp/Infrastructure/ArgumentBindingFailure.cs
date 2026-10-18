@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Reflection;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -16,8 +17,10 @@ namespace WindowsAppManagerMcp.Infrastructure;
 /// <remarks>
 /// The SDK binds each argument on its own, so System.Text.Json's path (<see cref="JsonException.Path"/>) starts at the argument
 /// (<c>$[1].arguments</c>) and does not name it. The argument is named only when it is certain: the only argument that has
-/// something at that path, or, for the argument as a whole (<c>$</c>), the only one whose value does not fit the types its
-/// input schema declares. Otherwise the description says "an argument", with the path.
+/// something at that path, or, for the argument as a whole (<c>$</c>), the only one that could have failed so: its schema
+/// declares the JSON type the binder was reading, and its value is not one of that type the binder reads (a whole number out
+/// of the parameter's range counts, since System.Text.Json reports it as it reports a wrong type). Otherwise the description
+/// says "an argument", with the path.
 /// </remarks>
 internal static partial class ArgumentBindingFailure
 {
@@ -65,8 +68,13 @@ internal static partial class ArgumentBindingFailure
         if (MissingMembers().Match(text) is { Success: true } lacking && path != null)
         {
             var members = lacking.Groups["names"].Value;
+
+            // Only an object lacks members: as a whole, it is the only object given to an object parameter
+            var whole = path.Count == 0
+                ? WholeArgument(given, declaredTypes, "object", (value, _) => value.ValueKind == JsonValueKind.Object)
+                : null;
             return path.Count == 0
-                ? $"{WholeArgument(given, declaredTypes) ?? "An argument"} lacks a required member: {members}."
+                ? $"{whole ?? "An argument"} lacks a required member: {members}."
                 : Locate(given, path) is { } holder
                     ? $"{Display(holder, path)} lacks a required member: {members}."
                     : $"The object at {Display("$", path)} of an argument lacks a required member: {members}.";
@@ -77,16 +85,49 @@ internal static partial class ArgumentBindingFailure
             if (path.Count == 0)
             {
                 // The argument as a whole: the type named is then the parameter's own
-                var kind = KindOf(converted.Groups["type"].Value);
-                var argument = WholeArgument(given, declaredTypes);
+                var type = converted.Groups["type"].Value;
+                var kind = KindOf(type);
+                var range = IntegerRangeOf(type);
+                var argument = WholeArgument(given, declaredTypes, SchemaTypeOf(kind),
+                    (value, types) => !Fits(value, types) || range is { } r && OutOf(r, value));
+                if (range is { } bounds)
+                {
+                    // System.Text.Json says the same for 3000000000 as for "x" when it reads an int
+                    var outOfRange = argument == null
+                        ? given.Any(a => OutOf(bounds, a.Value))
+                        : OutOf(bounds, given.First(a => a.Key == argument).Value);
+                    return (argument, outOfRange) switch
+                    {
+                        (null, true) => "An argument is not an integer, or is out of range.",
+                        (null, false) => "An argument is not an integer.",
+                        (_, true) => $"{argument} is out of range: it takes a whole number from " +
+                                     $"{bounds.Min.ToString(CultureInfo.InvariantCulture)} to {bounds.Max.ToString(CultureInfo.InvariantCulture)}.",
+                        _ => $"{argument} is not an integer."
+                    };
+                }
+
                 return kind != null
                     ? $"{argument ?? "An argument"} is not {kind}."
                     : $"{argument ?? "An argument"} does not have the type the input schema gives it.";
             }
 
-            return Locate(given, path) is { } holder
-                ? $"{Display(holder, path)} does not have the type the input schema gives it."
-                : $"The value at {Display("$", path)} of an argument does not have the type the input schema gives it.";
+            // Inside an argument, the place, and every value there (one when the argument is known)
+            var where = Locate(given, path) is { } holder
+                ? Display(holder, path)
+                : $"The value at {Display("$", path)} of an argument";
+            var values = given.Select(a => ValueAt(a.Value, path)).OfType<JsonElement>().ToList();
+            switch (MemberIntegerRange(converted.Groups["type"].Value, path))
+            {
+                case { Known: true, Range: { } bounds } when values.Count > 0 && values.All(value => OutOf(bounds, value)):
+                    return $"{where} is out of range: it takes a whole number from {bounds.Min.ToString(CultureInfo.InvariantCulture)} " +
+                           $"to {bounds.Max.ToString(CultureInfo.InvariantCulture)}.";
+                case { Known: false } when values.Any(IsWholeNumber):
+                    // The member's type could not be told, so a whole number there may be out of its range rather than of a
+                    // wrong type
+                    return $"{where} does not have the type the input schema gives it, or is out of range.";
+                default:
+                    return $"{where} does not have the type the input schema gives it.";
+            }
         }
 
         // Another message, such as a converter's own ("keys takes a string ..."): passed on with its place, unless it names a
@@ -108,29 +149,143 @@ internal static partial class ArgumentBindingFailure
     }
 
     /// <summary>
-    /// The argument that failed as a whole: the only one, or the only one whose value does not fit the JSON types its schema
-    /// declares; null when that cannot be told.
+    /// The argument that failed as a whole: the only one, or the only one that could have failed so, whose schema declares
+    /// <paramref name="schemaType"/> (the JSON type of what the binder was reading) and whose value <paramref name="failed"/>
+    /// says the binder cannot read as that; null when that cannot be told, also when the binder's type has no JSON type.
     /// </summary>
     private static string? WholeArgument(
-        List<KeyValuePair<string, JsonElement>> arguments, IReadOnlyDictionary<string, IReadOnlySet<string>>? declaredTypes)
+        List<KeyValuePair<string, JsonElement>> arguments, IReadOnlyDictionary<string, IReadOnlySet<string>>? declaredTypes,
+        string? schemaType, Func<JsonElement, IReadOnlySet<string>, bool> failed)
     {
         if (arguments.Count == 1)
         {
             return arguments[0].Key;
         }
 
-        if (declaredTypes == null)
+        if (declaredTypes == null || schemaType == null)
         {
             return null;
         }
 
-        var unfit = arguments
-            .Where(argument => declaredTypes.TryGetValue(argument.Key, out var types) && types.Count > 0 && !Fits(argument.Value, types))
+        var candidates = arguments
+            .Where(argument => declaredTypes.TryGetValue(argument.Key, out var types) && types.Contains(schemaType) &&
+                               failed(argument.Value, types))
             .Select(argument => argument.Key)
             .Take(2)
             .ToList();
-        return unfit.Count == 1 ? unfit[0] : null;
+        return candidates.Count == 1 ? candidates[0] : null;
     }
+
+    /// <summary>The JSON Schema type of what <see cref="KindOf"/> names; null for none.</summary>
+    private static string? SchemaTypeOf(string? kind) => kind switch
+    {
+        "an integer" => "integer",
+        "a number" => "number",
+        "true or false" => "boolean",
+        "a string" => "string",
+        "an array" => "array",
+        "an object" => "object",
+        _ => null
+    };
+
+    /// <summary>The values of the integer CLR type System.Text.Json names; null for a type that is no integer.</summary>
+    private static (decimal Min, decimal Max)? IntegerRangeOf(string clrType)
+    {
+        var type = clrType.Trim();
+        if (NullableOf().Match(type) is { Success: true } nullable)
+        {
+            type = nullable.Groups["type"].Value;
+        }
+
+        return type switch
+        {
+            "System.Byte" => (byte.MinValue, byte.MaxValue),
+            "System.SByte" => (sbyte.MinValue, sbyte.MaxValue),
+            "System.Int16" => (short.MinValue, short.MaxValue),
+            "System.UInt16" => (ushort.MinValue, ushort.MaxValue),
+            "System.Int32" => (int.MinValue, int.MaxValue),
+            "System.UInt32" => (uint.MinValue, uint.MaxValue),
+            "System.Int64" or "System.IntPtr" => (long.MinValue, long.MaxValue),
+            "System.UInt64" => (ulong.MinValue, ulong.MaxValue),
+            _ => null
+        };
+    }
+
+    /// <summary>
+    /// The range of the integer member at <paramref name="path"/> that System.Text.Json could not read, from the type its
+    /// message names: that type itself, or, as it names the object around the value for a constructor parameter (a record's
+    /// member), the type of the member the path ends with. Known is false when the type cannot be found; Range is null for a
+    /// member that is no integer.
+    /// </summary>
+    private static (bool Known, (decimal Min, decimal Max)? Range) MemberIntegerRange(string clrType, IReadOnlyList<Segment> path)
+    {
+        if (IntegerRangeOf(clrType) is { } own)
+        {
+            return (true, own);
+        }
+
+        var name = NullableOf().Match(clrType.Trim()) is { Success: true } nullable ? nullable.Groups["type"].Value : clrType.Trim();
+        if (FindType(name) is not { } type)
+        {
+            return (false, null);
+        }
+
+        var member = path[^1].Name is { } memberName
+            ? type.GetProperties(BindingFlags.Public | BindingFlags.Instance)
+                .FirstOrDefault(property => string.Equals(property.Name, memberName, StringComparison.OrdinalIgnoreCase))
+            : null;
+        return (true, member == null ? null : IntegerRangeOf(member.PropertyType));
+    }
+
+    /// <summary>A type System.Text.Json names, in the server or another loaded assembly; null when none has it.</summary>
+    private static Type? FindType(string name)
+    {
+        foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies().Prepend(typeof(ToolErrorReporting).Assembly))
+        {
+            try
+            {
+                if (assembly.GetType(name, throwOnError: false) is { } type)
+                {
+                    return type;
+                }
+            }
+            catch (Exception e) when (e is ArgumentException or IOException or BadImageFormatException)
+            {
+                // Not a name this assembly can look up: the next one may
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>The values of an integer type; null for a type that is no integer.</summary>
+    private static (decimal Min, decimal Max)? IntegerRangeOf(Type type) =>
+        (Nullable.GetUnderlyingType(type) ?? type) is var t && t.IsPrimitive && t != typeof(bool) && t != typeof(char) &&
+        t != typeof(float) && t != typeof(double)
+            ? IntegerRangeOf(t.FullName ?? string.Empty)
+            : null;
+
+    /// <summary>
+    /// Whether <paramref name="value"/> is a whole number outside <paramref name="range"/>: a JSON number written as one, or a
+    /// string of its digits (which an integer parameter binds, <see cref="BoundInteger"/>).
+    /// </summary>
+    private static bool OutOf((decimal Min, decimal Max) range, JsonElement value) =>
+        WholeNumber(value) is { } number ? number < range.Min || number > range.Max : IsWholeNumber(value);
+
+    /// <summary>Whether <paramref name="value"/> is a whole number: a JSON number written as one, or a string of its digits.</summary>
+    private static bool IsWholeNumber(JsonElement value) =>
+        WholeNumber(value) != null || value.ValueKind == JsonValueKind.Number && WholeNumberLiteral().IsMatch(value.GetRawText());
+
+    /// <summary>
+    /// The whole number <paramref name="value"/> is, as a JSON number written as one or a string of its digits; null for
+    /// anything else, and for a JSON number too large for a decimal (which <see cref="IsWholeNumber"/> still counts).
+    /// </summary>
+    private static decimal? WholeNumber(JsonElement value) => value.ValueKind switch
+    {
+        JsonValueKind.Number when WholeNumberLiteral().IsMatch(value.GetRawText()) && value.TryGetDecimal(out var number) => number,
+        JsonValueKind.String when BoundInteger.Read(value) is { } bound => bound,
+        _ => null
+    };
 
     /// <summary>Whether a value's JSON kind is one of <paramref name="types"/>, as JSON Schema types name them.</summary>
     private static bool Fits(JsonElement value, IReadOnlySet<string> types) => value.ValueKind switch
@@ -145,7 +300,10 @@ internal static partial class ArgumentBindingFailure
         _ => true
     };
 
-    private static bool Resolves(JsonElement value, IReadOnlyList<Segment> path)
+    private static bool Resolves(JsonElement value, IReadOnlyList<Segment> path) => ValueAt(value, path) != null;
+
+    /// <summary>The value at <paramref name="path"/> inside <paramref name="value"/>; null when there is none.</summary>
+    private static JsonElement? ValueAt(JsonElement value, IReadOnlyList<Segment> path)
     {
         var current = value;
         foreach (var segment in path)
@@ -154,14 +312,14 @@ internal static partial class ArgumentBindingFailure
             {
                 if (current.ValueKind != JsonValueKind.Array || index >= current.GetArrayLength())
                 {
-                    return false;
+                    return null;
                 }
 
                 current = current[index];
             }
             else if (current.ValueKind != JsonValueKind.Object || Member(current, segment.Name!) is not { } member)
             {
-                return false;
+                return null;
             }
             else
             {
@@ -169,7 +327,7 @@ internal static partial class ArgumentBindingFailure
             }
         }
 
-        return true;
+        return current;
     }
 
     private static JsonElement? Member(JsonElement value, string name)
@@ -353,4 +511,8 @@ internal static partial class ArgumentBindingFailure
 
     [GeneratedRegex(@"\b(?:System|Microsoft|WindowsAppManagerMcp|ModelContextProtocol)(?:\.[A-Za-z_][\w`+]*)+")]
     private static partial Regex TypeName();
+
+    /// <summary>A JSON number written as a whole number: digits, with a minus sign, and no fraction or exponent.</summary>
+    [GeneratedRegex(@"^-?\d+$")]
+    private static partial Regex WholeNumberLiteral();
 }

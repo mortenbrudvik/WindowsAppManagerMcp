@@ -138,8 +138,10 @@ object). save_layout's `placements` check their own members, so that get_layout'
 The place is written as in the arguments, with array indexes counted from 0 (`steps[1]` is the second step,
 `placements[0].x` the first placement's `x`). A value of the wrong type is reported the same way
 (`placements[0].x does not have the type the input schema gives it`, or `limit is not an integer` for an argument as a
-whole), and a missing required argument by its name (`The required argument 'executable' is missing`). Where the
-server cannot tell which argument it was, the error says "an argument" and gives the place within it.
+whole), a whole number outside what the parameter can hold as out of range (`limit is out of range: it takes a whole
+number from -2147483648 to 2147483647`), and a missing required argument by its name (`The required argument
+'executable' is missing`). Where the server cannot tell which argument it was, the error says "an argument" and gives
+the place within it.
 
 A number may also be sent as a JSON string of its digits (`"handle": "1706796"`), as the SDK binds numbers: the call acts
 on that window, and the [audit log](#audit-log) and [run_steps](#run_steps) read it as that number.
@@ -8378,7 +8380,7 @@ with the JSON body below. Its `errorCode` says what kind of failure it was:
 
 | errorCode | Meaning | What to do |
 |-----------|---------|------------|
-| `InvalidArguments` | A required argument is missing, a value has the wrong type, an object in the arguments has a member it does not take, a value is out of its range (for example a window `width` of 0), or the call passed an argument the tool does not declare; that error names the argument, lists the tool's parameters and, for a near miss, the one it most likely stands for. A missing argument, a wrong type and an unknown member are named by their place in the arguments, such as `steps[1]` or `placement.bounds` (see [Undeclared arguments](#undeclared-arguments)). The tool did not run ("Nothing was done."). | Fix the arguments to match the tool's input schema and call again |
+| `InvalidArguments` | A required argument is missing, a value has the wrong type, an object in the arguments has a member it does not take, a value is out of its range (for example a window `width` of 0), or the call passed an argument the tool does not declare; that error names the argument, lists the tool's parameters and, for a near miss, the one it most likely stands for. A missing argument, a wrong type, a whole number the parameter cannot hold ("out of range", with the range) and an unknown member are named by their place in the arguments, such as `steps[1]` or `placement.bounds` (see [Undeclared arguments](#undeclared-arguments)). The tool did not run ("Nothing was done."). | Fix the arguments to match the tool's input schema and call again |
 | A parameter's own code: `InvalidState`, `InvalidSnapPosition`, `InvalidPositioning`, `InvalidMatchBy`, `InvalidFormat`, `InvalidOutputMode`, `UnsupportedBrowser` | A fixed-value parameter has a value that is not allowed. The tool did not run; `error` lists the allowed values, which the input schema also lists (`enum`) | Use one of the listed values |
 | `ToolError`, or a tool-specific code such as `PresetNotFound` | The tool reported an error on purpose. `error` is its message, unchanged | Read the message; the tool's section lists its codes |
 | `ToolRemoved` | The tool was removed in 3.0.0. Nothing was done | Call the tool `error` names instead (see [Removed and moved tools](#removed-and-moved-tools)) |

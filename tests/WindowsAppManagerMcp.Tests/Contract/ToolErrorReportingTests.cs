@@ -29,6 +29,7 @@ public class ToolErrorReportingTests
     private const string BatchTool = "batch_tool";
     private const string NestedTool = "nested_tool";
     private const string PairTool = "pair_tool";
+    private const string LimitedTool = "limited_tool";
 
     [Fact]
     public async Task ToolThatThrows_ReturnsErrorResultWithExceptionTypeAndMessage()
@@ -228,6 +229,9 @@ public class ToolErrorReportingTests
     [InlineData("""[ { "x": "left" } ]""", "items[0].x does not have the type the input schema gives it.")]
     [InlineData("""[ { "x": 1, "inner": 5 } ]""", "items[0].inner does not have the type the input schema gives it.")]
     [InlineData("""{ "x": 1 }""", "items is not an array.")]
+    [InlineData("""[ { "x": 3000000000 } ]""", "items[0].x is out of range: it takes a whole number from -2147483648 to 2147483647.")]
+    [InlineData("""[ { "x": 1, "inner": { "y": "-2147483649" } } ]""",
+        "items[0].inner.y is out of range: it takes a whole number from -2147483648 to 2147483647.")]
     public async Task ABindingFailureInsideAnArgument_NamesWhereItIs_AndNoDotNetType(string items, string expected)
     {
         // Arrange
@@ -243,6 +247,42 @@ public class ToolErrorReportingTests
         var error = ParsePayload(result).GetProperty("error").GetString();
         error.Should().Be($"Invalid arguments for tool '{NestedTool}'. {expected} Check the argument names and types against the " +
                           "tool's input schema. Nothing was done.");
+    }
+
+    [Theory]
+    [InlineData("""{ "limit": 3000000000 }""")]
+    [InlineData("""{ "limit": "3000000000" }""")]
+    [InlineData("""{ "limit": -2147483649, "note": "n" }""")]
+    [InlineData("""{ "limit": 3000000000, "note": 5 }""")]
+    public async Task AWholeNumberOutOfTheParametersRange_IsOutOfRange_NotAWrongType(string arguments)
+    {
+        // Arrange - System.Text.Json says "could not be converted to System.Int32" for 3000000000 as for "x"; a note of the
+        // wrong type beside it must not be named for the integer the binder could not read
+        await using var server = await StartServerAsync();
+
+        // Act
+        var result = await server.CallToolAsync(LimitedTool,
+            JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(arguments)!.ToDictionary(a => a.Key, a => (object?)a.Value));
+
+        // Assert
+        ParsePayload(result).GetProperty("error").GetString().Should().Be(
+            $"Invalid arguments for tool '{LimitedTool}'. limit is out of range: it takes a whole number from -2147483648 to " +
+            "2147483647. Check the argument names and types against the tool's input schema. Nothing was done.");
+    }
+
+    [Fact]
+    public async Task AWholeNumberOutOfRange_ThatCouldBeEitherArgument_SaysAnArgument_MayBeOutOfRange()
+    {
+        // Arrange
+        await using var server = await StartServerAsync();
+
+        // Act
+        var result = await server.CallToolAsync(PairTool, new Dictionary<string, object?> { ["a"] = 3000000000L, ["b"] = "y" });
+
+        // Assert
+        ParsePayload(result).GetProperty("error").GetString().Should().Be(
+            $"Invalid arguments for tool '{PairTool}'. An argument is not an integer, or is out of range. Check the argument names " +
+            "and types against the tool's input schema. Nothing was done.");
     }
 
     [Fact]
@@ -434,6 +474,7 @@ public class ToolErrorReportingTests
                 McpServerTool.Create(Batch, new McpServerToolCreateOptions { Name = BatchTool }),
                 McpServerTool.Create(Nested, new McpServerToolCreateOptions { Name = NestedTool }),
                 McpServerTool.Create(Pair, new McpServerToolCreateOptions { Name = PairTool }),
+                McpServerTool.Create(Limited, new McpServerToolCreateOptions { Name = LimitedTool }),
             ],
             builder => builder.AddToolErrorReporting());
 
@@ -454,6 +495,8 @@ public class ToolErrorReportingTests
     private static int Nested(NestedItem[] items, string? note = null) => items.Length;
 
     private static int Pair(int a, int b) => a + b;
+
+    private static int Limited(int limit, string? note = null) => limit;
 
     private static string ThrowsDeliberately() => throw new McpException("The thing is not ready yet.");
 
