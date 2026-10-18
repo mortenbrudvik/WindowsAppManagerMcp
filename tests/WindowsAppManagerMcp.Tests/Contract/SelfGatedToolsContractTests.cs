@@ -354,31 +354,6 @@ public sealed class SelfGatedToolsContractTests : IDisposable
             .Select(m => $"{m.DeclaringType!.Name}.{m.Name}")
             .Distinct();
 
-    /// <summary>
-    /// A sample for <see cref="TheChainCheck_SeesANativeActionInAServicesCode"/>, which only scans its IL. Nothing calls it, and
-    /// its seams would be mocks if anything did.
-    /// </summary>
-    private static class NativeActionSample
-    {
-        public static void Acts(INativeWindowWrapper windows, IUIAutomationWrapper automation, IUiaTree tree, IUiaNode node,
-            INativeInputWrapper input, INativeClipboardWrapper clipboard)
-        {
-            windows.SetForegroundWindow(0x10010);
-            automation.CloseWindow(0x10010, CancellationToken.None);
-            tree.SetFocus(node);
-            Action press = () => tree.GetPattern<IUiaInvokePattern>(node)?.Invoke();
-            press();
-            if (tree.GetPattern<IUiaValuePattern>(node) is { Value: not null } value && tree.GetPattern<IUiaTextPattern>(node)?.GetText(10) != null)
-            {
-                value.SetValue("sample");
-            }
-
-            _ = input.GetCursorPos();
-            input.SendInput([]);
-            clipboard.WriteText("sample");
-        }
-    }
-
     /// <summary>A call that takes the input gate: the filter's EnterAsync or HoldAsync, or one of InputGate's ways in.</summary>
     private static bool TakesTheGate(System.Reflection.MethodBase method) =>
         (method.DeclaringType == typeof(InputGateToolFilter) && method.Name is nameof(InputGateToolFilter.EnterAsync) or nameof(InputGateToolFilter.HoldAsync)) ||
@@ -499,5 +474,31 @@ public sealed class SelfGatedToolsContractTests : IDisposable
         public Mock<IDebugPortLocator> Locator { get; } = new();
 
         public FakePortOwnerResolver Owners { get; }
+    }
+}
+
+/// <summary>
+/// A sample for <see cref="SelfGatedToolsContractTests.TheChainCheck_SeesANativeActionInAServicesCode"/>, which only scans its
+/// IL. Nothing calls it, and its seams would be mocks if anything did. A type of its own: SelfGatedToolsContractTests reads the
+/// production registrations, so TestCodeNativeWrapperTests holds its own calls to reads.
+/// </summary>
+internal static class NativeActionSample
+{
+    public static void Acts(INativeWindowWrapper windows, IUIAutomationWrapper automation, IUiaTree tree, IUiaNode node,
+        INativeInputWrapper input, INativeClipboardWrapper clipboard)
+    {
+        windows.SetForegroundWindow(0x10010);
+        automation.CloseWindow(0x10010, CancellationToken.None);
+        tree.SetFocus(node);
+        Action press = () => tree.GetPattern<IUiaInvokePattern>(node)?.Invoke();
+        press();
+        if (tree.GetPattern<IUiaValuePattern>(node) is { Value: not null } value && tree.GetPattern<IUiaTextPattern>(node)?.GetText(10) != null)
+        {
+            value.SetValue("sample");
+        }
+
+        _ = input.GetCursorPos();
+        input.SendInput([]);
+        clipboard.WriteText("sample");
     }
 }
