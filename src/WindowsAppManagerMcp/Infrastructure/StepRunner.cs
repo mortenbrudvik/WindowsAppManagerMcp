@@ -33,9 +33,13 @@ public sealed record StepRunOutcome(RunStepsResult Result, IReadOnlyList<ImageCo
 /// type_text's methods paste and auto (a step types: method unicode unless it says keys), element_action's mode paste and
 /// its window_close, capture_window's file output, scope desktop (a search of every window), and send_keys' or
 /// press_keys' keys with a chord that closes, quits or locks (the destructive chords, which a step's keyboard tool, always
-/// given a window, would not refuse itself). No argument a step may use writes the clipboard or a file, closes a window or finds
-/// one outside the run's window and its dialogs; the keys a step sends act inside the run's window as a direct call's
-/// would (ctrl+s saves, ctrl+c copies).</para>
+/// given a window, would not refuse itself), read here on the invariant layout. Their tool maps a chord's character on the
+/// keyboard layout of the window the keys go to (ctrl+ц is Ctrl+W on a Russian layout), so once the run holds the gate the
+/// keys are read on that layout too, and such a chord refuses the run the same way; they are read again before their step,
+/// which is not run when a layout changed meanwhile, and a layout that cannot be read refuses a chord with Ctrl, Alt or Win
+/// on a character with no key of its own (<see cref="LayoutRefusal"/>). No argument a step may use writes the clipboard or
+/// a file, closes a window or finds one outside the run's window and its dialogs; the keys a step sends act inside the
+/// run's window as a direct call's would (ctrl+s saves, ctrl+c copies).</para>
 /// <para><b>The run's window.</b> A step that names no window (no handle, windowHandle, window, ref, withinRef or listRef)
 /// is given the run's window, under the name its tool takes; wait_for_window never is (its window is what it waits for).
 /// A step may act only on the run's window, a window it owns (its dialogs) or another window of its process (not for the
@@ -127,15 +131,21 @@ public sealed partial class StepRunner
     private readonly InputGuardOptions _keyGuard;
     private readonly TimeProvider _time;
     private readonly ITakeoverMonitor? _takeover;
+    private readonly INativeKeyboardLayoutWrapper? _keyboardLayout;
 
     /// <param name="keyGuard">
     /// The server's destructive chords (WAM_DESTRUCTIVE_CHORDS): a step's keys may contain none of them, nor any of the
     /// default ones, whatever the variable says. Null: the defaults.
     /// </param>
     /// <param name="takeover">Takeover detection (roadmap M7.4); without it the run is not watched.</param>
+    /// <param name="keyboardLayout">
+    /// The keyboard layout queries, to read a send_keys or press_keys step's keys as its tool maps them: on the layout of
+    /// the window they go to. Null: only on the invariant layout, as the tools map them without these queries (tests).
+    /// </param>
     public StepRunner(IInputSession session, IWindowService windows, IElementRegistry elements, InputGuardOptions? keyGuard = null,
-        TimeProvider? time = null, ITakeoverMonitor? takeover = null)
+        TimeProvider? time = null, ITakeoverMonitor? takeover = null, INativeKeyboardLayoutWrapper? keyboardLayout = null)
     {
+        _keyboardLayout = keyboardLayout;
         _takeover = takeover;
         _session = session;
         _windows = windows;
@@ -241,7 +251,11 @@ public sealed partial class StepRunner
     /// Runs <paramref name="steps"/> on <paramref name="window"/>: waits for the input gate (at most
     /// <see cref="InputGateToolFilter.GateWaitTimeout"/>), holds it for the run, and returns what every step did.
     /// </summary>
-    /// <exception cref="ToolErrorException">Input is paused, or the gate is busy, before the first step; nothing was done.</exception>
+    /// <exception cref="ToolErrorException">
+    /// Input is paused, or the gate is busy, before the first step; the run's window closed or is the agent's host once the
+    /// gate is held; or a step's keys hold a closing chord on the keyboard layout of their window (InvalidArguments,
+    /// <see cref="LayoutRefusal"/>). Nothing was done.
+    /// </exception>
     /// <exception cref="OperationCanceledException">The client cancelled the call; the steps that ran are not undone.</exception>
     public async Task<StepRunOutcome> RunAsync(
         nint window,
@@ -267,6 +281,17 @@ public sealed partial class StepRunner
             // On this flow, so every step this method awaits from now on passes the gate the run holds
             lease.Bind();
             var target = Target(window, before);
+
+            // The keys as the steps' tools will map them, on the layouts of their windows, where Check read them on the
+            // invariant one; read again before each step (Prepare), in case a layout changed meanwhile
+            foreach (var step in steps)
+            {
+                if (step.Step.Args is { } args && LayoutRefusal(step.Tool, args, KeyWindows(args, target.Handle)) is { } closing)
+                {
+                    throw Invalid($"{Label(step)}: {closing}");
+                }
+            }
+
             var held = _time.GetTimestamp();
             using var budget = new CancellationTokenSource(maxDuration, _time);
             using var run = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, budget.Token);
@@ -454,34 +479,107 @@ public sealed partial class StepRunner
     }
 
     /// <summary>
-    /// The closing, quitting or locking chord in a send_keys or press_keys step's keys (the default destructive chords and
-    /// the server's own), or null. A step's keyboard tool always gets a window (the run's), so its own check, which
-    /// refuses these chords only without one, would let them through. Keys that do not parse are left to the tool, which
-    /// refuses them with the reason.
+    /// The closing, quitting or locking chord in a send_keys or press_keys step's keys read on the invariant layout (the
+    /// default destructive chords and the server's own), or null. A step's keyboard tool always gets a window (the run's),
+    /// so its own check, which refuses these chords only without one, would let them through. The keys are read again on
+    /// the layout of the window they go to once the run holds the gate (<see cref="LayoutRefusal"/>).
     /// </summary>
-    private string? ClosingChord(string tool, JsonObject arguments)
+    private string? ClosingChord(string tool, JsonObject arguments) =>
+        KeyEvents(tool, arguments, KeyboardLayout.Invariant) is { } events ? ClosingChord(events) : null;
+
+    private string? ClosingChord(IReadOnlyList<InputEvent> events) =>
+        (InputGuardOptions.Default.FindDestructiveChord(events) ?? _keyGuard.FindDestructiveChord(events))?.Spec;
+
+    /// <summary>
+    /// The events of a send_keys or press_keys step's keys on <paramref name="layout"/>, as its tool parses them; null for
+    /// another tool, and for keys that do not parse, which the tool refuses with the reason.
+    /// </summary>
+    private static IReadOnlyList<InputEvent>? KeyEvents(string tool, JsonObject arguments, KeyboardLayout layout)
     {
-        IReadOnlyList<InputEvent> events;
         try
         {
-            switch (tool)
+            return tool switch
             {
-                case "send_keys" when StringOf(arguments, "keys") is { } keys:
-                    events = SendKeysParser.Parse(keys);
-                    break;
-                case "press_keys" when arguments["keys"] is { } keys:
-                    events = PressKeysParser.Parse(keys.Deserialize<KeyList>()!, 1, KeyboardLayout.Invariant).Events;
-                    break;
-                default:
-                    return null;
-            }
+                "send_keys" when StringOf(arguments, "keys") is { } keys => KeySpecParser.Parse(keys, layout).Events,
+                "press_keys" when arguments["keys"] is { } keys => PressKeysParser.Parse(keys.Deserialize<KeyList>()!, 1, layout).Events,
+                _ => null
+            };
         }
         catch (Exception e) when (e is not OperationCanceledException)
         {
             return null;
         }
+    }
 
-        return (InputGuardOptions.Default.FindDestructiveChord(events) ?? _keyGuard.FindDestructiveChord(events))?.Spec;
+    /// <summary>
+    /// Why a send_keys or press_keys step's keys may not go to one of <paramref name="windows"/>, or null. Its tool maps a
+    /// chord's character on the keyboard layout of the window the keys go to, which can put it on a key that closes, quits
+    /// or locks: ctrl+ц is Ctrl+W on a Russian layout, ctrl+; Ctrl+Q on a Greek one, while <see cref="Check"/> reads them on
+    /// the invariant layout, where those characters have no key. So the keys are read on each window's layout, as the tool
+    /// reads them, and checked for the same chords. A layout that cannot be read fails closed: a chord with Ctrl, Alt or Win
+    /// on a character that has no key of its own there (a letter, a digit, a named key) may be any key, and is refused.
+    /// Without the layout queries the tools map on the invariant layout too, which <see cref="Check"/> read.
+    /// </summary>
+    private string? LayoutRefusal(string tool, JsonObject arguments, IEnumerable<nint> windows)
+    {
+        if (_keyboardLayout == null || tool is not ("send_keys" or "press_keys"))
+        {
+            return null;
+        }
+
+        foreach (var window in windows.Distinct())
+        {
+            // Caps Lock changes no key that a chord with Ctrl, Alt or Win presses, in either tool, so it is read as off
+            var layout = KeyboardLayout.Of(_keyboardLayout, window, capsLock: false);
+            if (KeyEvents(tool, arguments, layout) is not { } events)
+            {
+                continue;
+            }
+
+            if (ClosingChord(events) is { } chord)
+            {
+                return $"its keys contain {chord} on the keyboard layout of window {window}, where a character in a chord with " +
+                       "Ctrl, Alt or Win is the key that types it (ctrl+ц is Ctrl+W on a Russian layout): a chord that can close, " +
+                       "quit or lock the window, and a step closes nothing. Close a window with close_window, by its handle, " +
+                       "after the run.";
+            }
+
+            if (layout.ReadFailed && SendKeysParser.Chords(events).Where(ShortcutOnCharacter).Select(c => (KeyChord?)c).FirstOrDefault()
+                    is { } unknown)
+            {
+                return $"the keyboard layout of window {window} could not be read, so which key {SendKeysParser.Spec(unknown)} " +
+                       "presses is not known: its character may be on a key that closes, quits or locks the window (ctrl+ц is " +
+                       "Ctrl+W on a Russian layout), and a step closes nothing. Name the key instead (a letter, or press_keys' " +
+                       "oem_ names), or send these keys with a direct call.";
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>A chord with Ctrl, Alt or Win on a character sent as Unicode: one the layout gave no key.</summary>
+    private static bool ShortcutOnCharacter(KeyChord chord) =>
+        chord.Kind == InputEventKind.Unicode && (chord.Modifiers & (KeyModifiers.Control | KeyModifiers.Alt | KeyModifiers.Windows)) != 0;
+
+    /// <summary>
+    /// The windows a keyboard step's keys may go to, whose layouts its tool may map them on: the run's window, and the
+    /// windows its windowHandle and its window selector's handle name (a reference is left to the check before the step,
+    /// once it is resolved).
+    /// </summary>
+    private static IEnumerable<nint> KeyWindows(JsonObject arguments, nint runWindow)
+    {
+        yield return runWindow;
+        if (arguments["windowHandle"] is { } value && BoundInteger.Read(value) is { } handle)
+        {
+            yield return (nint)handle;
+        }
+
+        if (arguments["window"] is JsonObject selector &&
+            selector.FirstOrDefault(p => string.Equals(p.Key, "handle", StringComparison.OrdinalIgnoreCase)).Value is { } member &&
+            BoundInteger.Read(member) is { } selected)
+        {
+            yield return (nint)selected;
+        }
     }
 
     /// <summary>A fixed-value argument as its tool binds it (any case, '_' and '-' ignored), or null when it is missing or not one.</summary>
@@ -691,6 +789,13 @@ public sealed partial class StepRunner
             return (null, $"{label} was not run: {refused.Error}", refused.Code, false);
         }
 
+        // The keys on the layouts of the windows they go to now: an earlier step, or the user, may have switched the input
+        // language since the run started, and a reference has named its window only now
+        if (LayoutRefusal(step.Tool, arguments, KeyWindows(arguments, target.Handle)) is { } closing)
+        {
+            return (null, $"{label} was not run: {closing}", ToolErrorReporting.InvalidArgumentsErrorCode, false);
+        }
+
         return (arguments, null, null, waitCut);
     }
 
@@ -769,10 +874,11 @@ public sealed partial class StepRunner
 
     /// <summary>
     /// Why a window the step names is not one of the run's, with the code, or null. A handle is read as its tool binds it
-    /// (<see cref="BoundInteger"/>: a string of digits is that number, also one a reference brought, such as a captureId)
-    /// and passed on as the number; one that is no whole number is not run. A selector (not wait_for_window's, which names
-    /// what it waits for) is resolved here and replaced by the handle it names, so the tool acts on the window this check
-    /// passed rather than resolving the selector again; one that names no single window is not run.
+    /// (<see cref="BoundInteger"/>: a string of digits is that number) and passed on as the number; one that is no whole
+    /// number is not run, such as a ref or captureId that a reference brought (neither is ever digits). A selector (not
+    /// wait_for_window's, which names what it waits for) is resolved here and replaced by the handle it names, so the tool
+    /// acts on the window this check passed rather than resolving the selector again; one that names no single window is
+    /// not run.
     /// </summary>
     private (string Error, string Code)? CheckWindows(CheckedStep step, JsonObject arguments, RunTarget target)
     {
@@ -1002,9 +1108,14 @@ public sealed partial class StepRunner
                $"{SkippedAfter(failed.Step, total)}; the steps before it ran and are not undone.";
     }
 
-    private static string Paused(CheckedStep step, bool during) =>
-        $"The user paused input with the pause hotkey {(during ? "during" : "before")} {Label(step, capital: false)}; " +
-        "the run stopped and the steps after it were skipped. Stop and ask the user how to continue; never resume input yourself.";
+    /// <summary>
+    /// The error of a run that a pause stopped, naming how input was paused (<see cref="InputControlSources.PauseCause"/>):
+    /// the user's hotkey, or the server itself when it could not read the pause it shares, which the user did not do.
+    /// </summary>
+    private string Paused(CheckedStep step, bool during) =>
+        $"Input was paused {(during ? "during" : "before")} {Label(step, capital: false)}: " +
+        $"{InputControlSources.PauseCause(_session.PauseState?.PausedBy, _session.PauseChord)}. The run stopped and the steps " +
+        "after it were skipped. Stop and ask the user how to continue; never resume input yourself.";
 
     private static string UserInterrupted(CheckedStep step, bool during) =>
         $"The user used the keyboard or mouse {(during ? "during" : "before")} {Label(step, capital: false)}, so takeover " +

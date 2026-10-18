@@ -1,11 +1,12 @@
 namespace WindowsAppManagerMcp.Tests.Fixtures;
 
 /// <summary>
-/// A fake of the keyboard layout queries (roadmap M4.1) that models five layouts the way Windows reports them: US
+/// A fake of the keyboard layout queries (roadmap M4.1) that models seven layouts the way Windows reports them: US
 /// English, Norwegian (AltGr for @ { [ ] } $ €, dead keys for ¨ ^ ~ ` ´), German (QWERTZ, AltGr for @ on the Q key,
 /// { [ ] } \ ~ | €, dead keys for ^ ´ `), French AZERTY (digits with Shift, the digit row flipped by Caps Lock, A and
 /// Q, Z and W swapped) and, in part, Brazilian ABNT2 (/ and ? on VK_ABNT_C1, a key with no OEM name, left of the right
-/// Shift). Each key has its scan code, its virtual key and what it types
+/// Shift), Russian (Cyrillic letters on the letter keys, no Latin ones: й on Q, ц on W, д on L) and Greek (; on the Q key,
+/// ς on W). Each key has its scan code, its virtual key and what it types
 /// unshifted, with Shift and with AltGr; VkKeyScan, ScanCode and KeyText answer from that table, so the server's mapping is
 /// tested against the layout's own answers rather than against a copy of its logic.
 /// </summary>
@@ -16,6 +17,8 @@ public sealed class FakeKeyboardLayoutWrapper : INativeKeyboardLayoutWrapper
     public static readonly nint French = 0x040C040C;
     public static readonly nint German = 0x04070407;
     public static readonly nint Brazilian = 0x04160416;
+    public static readonly nint Russian = 0x04190419;
+    public static readonly nint Greek = 0x04080408;
 
     /// <summary>A layout handle the fake does not know: no key types anything on it.</summary>
     public static readonly nint Empty = 0x7777;
@@ -31,7 +34,9 @@ public sealed class FakeKeyboardLayoutWrapper : INativeKeyboardLayoutWrapper
         [Norwegian] = NorwegianKeys(),
         [German] = GermanKeys(),
         [French] = FrenchKeys(),
-        [Brazilian] = BrazilianKeys()
+        [Brazilian] = BrazilianKeys(),
+        [Russian] = RussianKeys(),
+        [Greek] = GreekKeys()
     };
 
     /// <summary>The scan codes (0xE0 prefix included) of the keys that type nothing, the same on every layout.</summary>
@@ -228,6 +233,37 @@ public sealed class FakeKeyboardLayoutWrapper : INativeKeyboardLayoutWrapper
         new(0x0C, 0xBD, '-', '_'), new(0x0D, 0xBB, '=', '+'), new(0x33, 0xBC, ',', '<'), new(0x34, 0xBE, '.', '>'),
         new(0x35, 0xBF, ';', ':'), new(0x73, 0xC1, '/', '?'), new(0x39, 0x20, ' ', ' ')
     ];
+
+    /// <summary>
+    /// The Russian (ЙЦУКЕН) keys a test needs: Cyrillic letters on the letter keys and on the US punctuation keys around
+    /// them (х ъ ж э б ю ё), the period on the US '/' key, and the digit row; no key types a Latin letter.
+    /// </summary>
+    private static Key[] RussianKeys()
+    {
+        const string latin = "qwertyuiopasdfghjklzxcvbnm", cyrillic = "йцукенгшщзфывапролдячсмить";
+        return
+        [
+            .. latin.Select((c, i) => new Key(UsScan(c), char.ToUpperInvariant(c), cyrillic[i], char.ToUpperInvariant(cyrillic[i]), CapsLock: true)),
+            new(0x1A, 0xDB, 'х', 'Х', CapsLock: true), new(0x1B, 0xDD, 'ъ', 'Ъ', CapsLock: true), new(0x27, 0xBA, 'ж', 'Ж', CapsLock: true),
+            new(0x28, 0xDE, 'э', 'Э', CapsLock: true), new(0x33, 0xBC, 'б', 'Б', CapsLock: true), new(0x34, 0xBE, 'ю', 'Ю', CapsLock: true),
+            new(0x29, 0xC0, 'ё', 'Ё', CapsLock: true), new(0x35, 0xBF, '.', ','),
+            .. "1234567890".Select((d, i) => new Key((uint)(0x02 + i), d, d, "!\"№;%:?*()"[i])),
+            new(0x39, 0x20, ' ', ' ')
+        ];
+    }
+
+    /// <summary>The Greek keys a test needs: ; and : on the Q key, ς on W, the other Greek letters on the letter keys, and the digit row.</summary>
+    private static Key[] GreekKeys()
+    {
+        const string latin = "ertyuiopasdfghjklzxcvbnm", greek = "ερτυθιοπασδφγηξκλζχψωβνμ";
+        return
+        [
+            new(0x10, 'Q', ';', ':'), new(0x11, 'W', 'ς', null),
+            .. latin.Select((c, i) => new Key(UsScan(c), char.ToUpperInvariant(c), greek[i], char.ToUpperInvariant(greek[i]), CapsLock: true)),
+            .. "1234567890".Select((d, i) => new Key((uint)(0x02 + i), d, d, "!@#$%^&*()"[i])),
+            new(0x33, 0xBC, ',', '<'), new(0x34, 0xBE, '.', '>'), new(0x39, 0x20, ' ', ' ')
+        ];
+    }
 
     /// <summary>The scan codes of the AZERTY letters: A and Q, Z and W swapped, M where US has ';'.</summary>
     private static uint FrenchScan(char c) => c switch

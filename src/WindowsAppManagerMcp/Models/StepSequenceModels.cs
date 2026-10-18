@@ -153,7 +153,9 @@ public record StepOutcome(
 /// <param name="ErrorCode">The code of what stopped the run (the failed step's own code).</param>
 /// <param name="Error">What stopped the run, and what that means for the steps after it.</param>
 /// <param name="Warning">
-/// With WAM_TAKEOVER_DETECTION=warn: the user used the keyboard or mouse during the run (roadmap M7.4). Null otherwise.
+/// Takeover detection (roadmap M7.4, TakeoverMessages.For): with WAM_TAKEOVER_DETECTION=warn, the user used the keyboard or
+/// mouse during the run; with warn or stop, detection did not work for all or part of the run, so the user's input was not
+/// watched then. Null otherwise.
 /// </param>
 public record RunStepsResult(
     bool Success,
