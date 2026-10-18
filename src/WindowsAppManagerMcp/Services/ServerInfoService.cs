@@ -200,7 +200,8 @@ public sealed class ServerInfoService(
                          "every window of a program that started before the server, except the desktop shell's, counts as the " +
                          "agent's host: input to it and run_steps on it are refused (TargetIsAgentHost), and so are closing it " +
                          "without force and placing it after a launch (ProtectedWindow); kill_process and close_debug_browser " +
-                         "refuse (ProcessTreeUnreadable). Tell the user.");
+                         "refuse (ProcessTreeUnreadable). The window lists mark such windows isAgentHost, and the popup lists " +
+                         "leave out their popups and a desktop search their windows, as for the host. Tell the user.");
         }
 
         var hostWindows = new List<AgentHostWindow>();

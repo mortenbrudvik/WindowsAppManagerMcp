@@ -18,8 +18,11 @@ namespace WindowsAppManagerMcp.Services;
 /// window cannot clear it: a window of a process that may be an ancestor, one not shown to have started after the server,
 /// counts as the host's (the desktop shell's excepted, as always), so what the host's windows are refused is refused for it
 /// too: input (TargetIsAgentHost), run_steps' run window and the reads of the window in front, closing it without force and
-/// placing a launch's window (ProtectedWindow). Window changes by handle are not refused for the host (owner decision D14),
-/// so not for these either. A process that started later, such as an app the agent launched, stays usable; a UWP app's frame
+/// placing a launch's window (ProtectedWindow). The reads that leave the host out leave these out too: the popup lists
+/// (get_active_popups, get_desktop_state's popups, the windowAndPopups scope) their popups, and a desktop search their
+/// windows unless named; the window lists mark them isAgentHost, and AmbiguousWindow's hint then says a marked candidate may
+/// be another app's. Window changes by handle are not refused for the host (owner decision D14), so not for these either. A
+/// process that started later, such as an app the agent launched, stays usable; a UWP app's frame
 /// belongs to ApplicationFrameHost, which normally started before the server, so it counts. Each such refusal says that the
 /// window counts only because the ancestors are unknown (<see cref="IsHostWindowOnlyWhileAncestorsUnknown"/>,
 /// <see cref="AncestorsUnknownNote"/>), rather than call it the agent's terminal. A transient failure at start costs

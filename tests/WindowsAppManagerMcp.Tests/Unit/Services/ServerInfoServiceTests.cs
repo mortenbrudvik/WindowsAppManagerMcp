@@ -192,7 +192,9 @@ public sealed class ServerInfoServiceTests : IDisposable
         var info = CreateSut().Read(Connection, 48);
 
         // Assert
-        info.Warnings.Should().ContainSingle().Which.Should().Contain("ancestor processes").And.Contain("started before the server").And.Contain("Tell the user");
+        info.Warnings.Should().ContainSingle().Which.Should().Contain("ancestor processes").And.Contain("started before the server").And.Contain("Tell the user")
+            // Review A4: the effects that are no refusal, so an agent that sees many windows marked or left out knows why
+            .And.Contain("isAgentHost").And.Contain("popups").And.Contain("desktop search");
         info.Host.Processes.Should().Equal(new AgentHostProcess(4242, "server", "WindowsAppManagerMcp"));
     }
 

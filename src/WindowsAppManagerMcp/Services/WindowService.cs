@@ -212,12 +212,25 @@ public class WindowService : IWindowService
             _ => WindowResolution.Failed(nameof(WindowErrorCode.AmbiguousWindow),
                 $"{matches.Count} windows match {selector.Describe()}, so the window cannot be told; nothing was done. candidates " +
                 $"lists {(matches.Count > WindowResolution.MaxCandidates ? $"the first {WindowResolution.MaxCandidates}, front to back" : "them, front to back")}" +
-                "; isAgentHost marks your own terminal or editor. Call again with the one you mean as window {handle, processId} " +
+                $"; {AgentHostHint(matches)} Call again with the one you mean as window {{handle, processId}} " +
                 "(a reused handle is then refused), or narrow the filters (titleEquals, processId, className). Do not turn a " +
                 "candidate's position into window.index: index counts the z-order at the time of the next call, which can change.",
                 matches)
         };
     }
+
+    /// <summary>
+    /// What AmbiguousWindow's candidates mark with isAgentHost: the agent's own terminal or editor, and, when one of the
+    /// candidates shown counts as the host's only because the ancestors are unknown
+    /// (<see cref="WindowInfo.IsAgentHostOnlyWhileAncestorsUnknown"/>, review A4), also every older program's window. Then
+    /// the agent must not be told that each marked candidate is its own window, as the host refusals do not tell it either.
+    /// </summary>
+    private static string AgentHostHint(IReadOnlyList<WindowInfo> matches) =>
+        matches.Take(WindowResolution.MaxCandidates).Any(m => m.IsAgentHostOnlyWhileAncestorsUnknown)
+            ? "isAgentHost marks your own terminal or editor, and, while the server cannot read its ancestor processes, every " +
+              "window of a program that started before the server too, so a marked candidate may be another app's " +
+              "(get_server_info warns about it)."
+            : "isAgentHost marks your own terminal or editor.";
 
     /// <summary>The errorCode of an argument a tool cannot use: InvalidArguments, as the tool-error filter reports it.</summary>
     private const string InvalidArgumentsCode = "InvalidArguments";
