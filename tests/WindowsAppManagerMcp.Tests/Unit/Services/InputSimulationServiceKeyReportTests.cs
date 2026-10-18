@@ -178,6 +178,103 @@ public class InputSimulationServiceKeyReportTests
     }
 
     [Fact]
+    public async Task AChordPressedOnALetterOrDigitKey_IsReportedAsPressed()
+    {
+        // On French AZERTY '-' is the unshifted 6 key, so 'ctrl+-' (zoom out) is the shortcut Ctrl+6: a different chord
+        _layouts.Layout = FakeKeyboardLayoutWrapper.French;
+
+        var result = await PressAsync("ctrl+- ctrl+=");
+
+        result.Success.Should().BeTrue(result.Error);
+        result.ResolvedChords.Should().Equal(new Dictionary<string, string> { ["ctrl+-"] = "ctrl+6" },
+            "'=' is a punctuation key of its own on AZERTY, pressed as asked");
+    }
+
+    [Fact]
+    public async Task AResolvedChord_NamesTheKeysThatWentDown_InNamesPressKeysTakes()
+    {
+        // AltGr is the left Ctrl and the right Alt; a chord that already holds one of them adds only the other, or none
+        var result = await PressAsync("ctrl+@ @ ctrl+ralt+@");
+
+        result.Success.Should().BeTrue(result.Error);
+        result.ResolvedChords.Should().Equal(new Dictionary<string, string>
+        {
+            ["ctrl+@"] = "ctrl+ralt+2", ["@"] = "lctrl+ralt+2", ["ctrl+ralt+@"] = "ctrl+ralt+2"
+        });
+    }
+
+    [Theory]
+    [InlineData("lctrl+=")]
+    [InlineData("shift+ctrl+=")]
+    public async Task ASystemHotkeyWarning_NamesTheChordAsked_HoweverItIsWritten(string keys)
+    {
+        _layouts.SystemHotkeys = new SystemKeyboardHotkeys([CtrlShift0], []);
+
+        var result = await PressAsync(keys);
+
+        result.Success.Should().BeTrue(result.Error);
+        result.Warnings.Should().ContainSingle().Which.Should().StartWith($"SystemHotkey: ctrl+shift+0 (pressed for '{keys}') is a Windows input-method hotkey");
+    }
+
+    [Fact]
+    public async Task WindowsHotkeys_AreNotReadForALetterOnTheGraveAccentsVirtualKey()
+    {
+        // VK_OEM_3 is 'ø' on Norwegian (scan 27); the grave accent toggle is the key left of 1 (scan 29)
+        await CreateSut().SendKeysAsync("hø", Duetty);
+
+        _layouts.SystemHotkeyReads.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task SendKeys_ListsAtMostTwentyCharactersWithoutAKey_AndTheWarningCountsThemAll()
+    {
+        // 66 Cyrillic letters on a US keyboard: none has a key
+        _layouts.Layout = FakeKeyboardLayoutWrapper.Us;
+        const string russian = "абвгдеёжзийклмнопрстуфхцчшщъыьэюяАБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯ";
+
+        var result = await CreateSut().SendKeysAsync(russian, Duetty);
+
+        result.Success.Should().BeTrue(result.Error);
+        result.SentAsCharacters.Should().Equal(russian.Take(20).Select(c => c.ToString()));
+        result.Warnings.Should().ContainSingle().Which.Should().StartWith("SentAsCharacter: 66 characters went out as characters alone")
+            .And.Contain("'а', 'б', 'в', 'г', 'д' and 61 more");
+    }
+
+    [Fact]
+    public async Task SentAsCharacter_GivesEachCharactersOwnReason()
+    {
+        // While a grave accent waits, the '+' key would type "`+", so '+' went as the character; no key types the emoji at all
+        _layouts.PendingDeadKey = '`';
+
+        var result = await CreateSut().SendKeysAsync("{+}😀", Duetty);
+
+        result.Success.Should().BeTrue(result.Error);
+        result.SentAsCharacters.Should().Equal("+", "😀");
+        result.Warnings.Should().ContainSingle().Which.Should().StartWith(
+            "SentAsCharacter: '+', '😀' went out as characters alone, with no key ('+': an accent typed on a dead key was waiting on " +
+            "the window's keyboard layout, and its key would have typed that accent too; '😀': no key of the window's keyboard layout " +
+            "types it, or only a dead key does).");
+    }
+
+    [Theory]
+    [InlineData("plus")]
+    [InlineData("shift+plus")]
+    public async Task WhileAnAccentWaits_AChordWithoutCtrlAltOrWin_StaysItsCharacter_WithTheReason(string keys)
+    {
+        // As send_keys' text: the key would type the waiting accent too ("`+"), so the character goes alone (issue #8 review)
+        _layouts.PendingDeadKey = '`';
+
+        var result = await PressAsync(keys);
+
+        result.Success.Should().BeTrue(result.Error);
+        result.SentAsCharacters.Should().Equal(keys);
+        result.Warnings.Should().ContainSingle().Which.Should().StartWith(
+            $"SentAsCharacter: '{keys}' ('+') went out with its character alone, with no key (an accent typed on a dead key was waiting " +
+            "on the window's keyboard layout, and its key would have typed that accent too).");
+        _input.Batches.Should().ContainSingle().Which.Should().Contain(InputEvent.Unicode('+', 0)).And.NotContain(e => e.Code == 0xBB);
+    }
+
+    [Fact]
     public async Task ARefusedCall_CarriesNoReport()
     {
         _guard.Setup(g => g.CheckKeyboard(It.IsAny<InputTarget>(), KeyboardInputKind.Keys, It.IsAny<IReadOnlyList<InputEvent>?>()))

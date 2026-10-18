@@ -327,15 +327,33 @@ public class InputSimulationServiceScrollTests
         VerifyNothingIsDown();
     }
 
-    [Fact]
-    public void Scroll_WithModifiers_WhilePaused_SendsNothing()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Scroll_WithModifiers_WhilePaused_SendsNothing_NotEvenAModifierKeyDown(bool pausedRightBeforeTheBatch)
     {
-        _session.Pause(InputControlSources.Hotkey);
+        // Paused before the call, or by the user after the guard's last look at the point: the batch with the key-downs is
+        // what the pause stops, so no modifier goes down
+        if (pausedRightBeforeTheBatch)
+        {
+            _guard.Setup(g => g.RecheckMouse(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<InputGuardResult>()))
+                .Returns((int _, int _, InputGuardResult approved) =>
+                {
+                    _session.Pause(InputControlSources.Hotkey);
+                    return approved;
+                });
+        }
+        else
+        {
+            _session.Pause(InputControlSources.Hotkey);
+        }
 
-        var result = CreateSut().Scroll(500, 300, 1, 0, [MouseModifier.Ctrl], NotepadTarget, false, default);
+        var result = CreateSut().Scroll(500, 300, 1, 0, [MouseModifier.Ctrl, MouseModifier.Shift], NotepadTarget, false, default);
 
         result.ErrorCode.Should().Be(InputErrorCode.PausedByUser);
+        result.Error.Should().Contain("Nothing was scrolled.");
         _input.Batches.Should().BeEmpty();
+        VerifyNothingIsDown();
     }
 
     [Fact]

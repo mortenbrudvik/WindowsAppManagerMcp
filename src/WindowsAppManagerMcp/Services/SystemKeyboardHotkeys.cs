@@ -53,8 +53,7 @@ public sealed record SystemKeyboardHotkeys(IReadOnlyList<InputMethodHotkey> Inpu
                 }
             }
 
-            var grave = chord.Modifiers == KeyModifiers.None && (events[index].Scan == GraveScanCode ||
-                                                                 (events[index].Scan == 0 && chord.Code == VkOem3));
+            var grave = chord.Modifiers == KeyModifiers.None && IsGraveAccentKey(events[index]);
             if (grave && Toggles.FirstOrDefault(t => t.Keys == LanguageToggleKeys.GraveAccent) is { } toggle)
             {
                 Add(chord, toggle.Describe(), toggle: true);
@@ -91,6 +90,15 @@ public sealed record SystemKeyboardHotkeys(IReadOnlyList<InputMethodHotkey> Inpu
             }
         }
     }
+
+    /// <summary>
+    /// True when <paramref name="e"/> is the key the grave accent toggle (4) switches with: the key left of 1 by its scan code,
+    /// whatever the layout calls it, or VK_OEM_3 sent without one (the invariant layout). Not VK_OEM_3 with another scan code:
+    /// that is another key, such as 'ø' on a Norwegian keyboard or 'ö' on a German one. The read of Windows' hotkeys uses the
+    /// same test, so it reads them only for keys Match can find.
+    /// </summary>
+    public static bool IsGraveAccentKey(InputEvent e) =>
+        e.Kind == InputEventKind.VirtualKey && (e.Scan == GraveScanCode || (e.Scan == 0 && e.Code == VkOem3));
 
     /// <summary>The scan code of the key left of 1 (the grave accent on a US keyboard), which toggle 4 switches with.</summary>
     private const ushort GraveScanCode = 0x29;

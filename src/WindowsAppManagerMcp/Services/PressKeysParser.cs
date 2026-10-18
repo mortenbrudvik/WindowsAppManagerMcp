@@ -14,15 +14,18 @@ namespace WindowsAppManagerMcp.Services;
 /// modifiers go down in the order given, then the key goes down and up, then the modifiers come up, last first.</item>
 /// <item>A letter or digit is its key (A-Z, 0-9), with no Shift of its own, so 'ctrl+t' and 'ctrl+T' are the same chord
 /// and 'ctrl+1' is the shortcut on any layout. Any other character is the key the layout types it with, plus the Shift or
-/// AltGr it needs; Unicode only when no key types it. '+', ',' and '*' are written plus, comma and star. A key is also named
-/// by its place, whatever it types on the layout: oem_plus, oem_minus, oem_comma, oem_period, oem_1 to oem_8 and oem_102
-/// (<see cref="KeyTable"/>), so 'alt+shift+oem_plus' is Alt+Shift and the key right of 0 on any layout (issue #8).</item>
+/// AltGr it needs; Unicode only when no key types it, and, in a chord without Ctrl, Alt or Win, when its key would also type
+/// an accent waiting on the layout (as send_keys' text). '+', ',' and '*' are written plus, comma and star. A punctuation key
+/// is also named by its virtual key: oem_plus, oem_minus, oem_comma, oem_period, oem_1 to oem_8 and oem_102
+/// (<see cref="KeyTable"/>), sent with the scan code the layout gives it. Which physical key that is depends on the layout
+/// (issue #8): oem_plus is the = key on a US keyboard, the + key right of 0 on a Norwegian one and the + key right of U-umlaut
+/// on a German one.</item>
 /// <item>'chord*n' presses the chord n times (1 to <see cref="MaxRepeat"/>). Chords separated by spaces or commas, or the
 /// items of an array that is not one chord (<see cref="KeyList.IsOneChord"/>), follow each other.</item>
 /// </list>
 /// Each press is one step; repeat repeats the whole sequence. At most <see cref="MaxPresses"/> presses in one call. The spec
-/// also says how the chords went out on the layout (issues #9, #10): the chords whose character needed a Shift or AltGr the
-/// chord does not name (<see cref="KeySpec.ResolvedChords"/>), and those sent as their character with no key
+/// also says how the chords went out on the layout (issues #9, #10): the chords whose character went out on a key of another
+/// name (<see cref="KeySpec.ResolvedChords"/>), and those sent as their character with no key
 /// (<see cref="KeySpec.SentAsCharacters"/>), so the result can tell the agent what the target got.
 /// </summary>
 public static class PressKeysParser
@@ -83,18 +86,19 @@ public static class PressKeysParser
             }
         }
 
-        var resolved = new Dictionary<string, string>(StringComparer.Ordinal);
+        var resolved = new List<ResolvedChord>();
         var asCharacters = new List<CharacterWithoutKey>();
         for (var c = 0; c < chords.Count; c++)
         {
-            if (pressed[c].Resolved is { } name)
+            var text = chords[c].Text;
+            if (pressed[c].Resolved is { } asPressed && !resolved.Exists(r => r.Asked == text))
             {
-                resolved.TryAdd(chords[c].Text, name);
+                resolved.Add(new ResolvedChord(text, asPressed.Name, asPressed.Chord));
             }
 
-            if (pressed[c].Character is { } character && !asCharacters.Exists(sent => sent.Keys == chords[c].Text))
+            if (pressed[c].Character is { } character && !asCharacters.Exists(sent => sent.Keys == text))
             {
-                asCharacters.Add(new CharacterWithoutKey(chords[c].Text, character.ToString()));
+                asCharacters.Add(new CharacterWithoutKey(text, character.ToString(), layout.WhyNoKey(character)));
             }
         }
 
@@ -107,8 +111,8 @@ public static class PressKeysParser
 
     /// <summary>
     /// The name press_keys takes for <paramref name="virtualKey"/>, for the result: a letter or digit as itself ('t', '0'),
-    /// a punctuation key by its place (oem_plus, oem_1, oem_102), another key by its first <see cref="KeyTable"/> name
-    /// (enter, pgup, f4); "vk_0xNN" for a key without one.
+    /// a punctuation key by its virtual key (oem_plus, oem_1, oem_102), a modifier as a chord names it (ctrl, lctrl, ralt),
+    /// another key by its first <see cref="KeyTable"/> name (enter, pgup, f4); "vk_0xNN" for a key without one.
     /// </summary>
     public static string KeyName(ushort virtualKey)
     {
@@ -164,11 +168,10 @@ public static class PressKeysParser
     private sealed record ChordSpec(IReadOnlyList<ushort> Modifiers, NamedKey? Key, int Count, string Text);
 
     /// <summary>
-    /// One press of a chord: its events; the chord as pressed (<see cref="KeyName"/>s) when its character needed a Shift or
-    /// AltGr the chord does not name ('ctrl+shift+0' for 'ctrl+=' where '=' is Shift+0), else null; and the character it
-    /// sent as Unicode, with no key, else null.
+    /// One press of a chord: its events; the chord as pressed when its character went out on a key of another name (see
+    /// <see cref="ResolvedChord"/>), else null; and the character it sent as Unicode, with no key, else null.
     /// </summary>
-    private sealed record Pressed(IReadOnlyList<InputEvent> Events, string? Resolved, char? Character);
+    private sealed record Pressed(IReadOnlyList<InputEvent> Events, (string Name, KeyChord Chord)? Resolved, char? Character);
 
     private static ChordSpec Chord(string token)
     {
@@ -243,14 +246,18 @@ public static class PressKeysParser
         return KeyTable.Find(name) is { } virtualKey ? new NamedKey(virtualKey, null) : null;
     }
 
-    /// <summary>One press of <paramref name="chord"/>: its events, and how its character went out.</summary>
+    /// <summary>
+    /// One press of <paramref name="chord"/>: its events, and how its character went out. The resolved chord names the keys
+    /// that actually went down, so each name is one press_keys takes (AltGr as lctrl+ralt, less what the chord already
+    /// holds); a chord pressed on a punctuation key with no modifier added is left out, since its name would say nothing new.
+    /// </summary>
     private static Pressed Press(ChordSpec chord, KeyboardLayout layout)
     {
         var events = new List<InputEvent>();
         var pressed = new List<ushort>();
         var altGrKeys = new List<ushort>();
         var added = new List<string>();
-        string? resolved = null;
+        (string, KeyChord)? resolved = null;
         char? asCharacter = null;
         foreach (var modifier in chord.Modifiers)
         {
@@ -271,37 +278,41 @@ public static class PressKeysParser
                 break;
 
             case { Character: { } c }:
-                // The character names the key, so an accent waiting on the layout does not turn it into Unicode (issue #8)
-                if (layout.Map(c, capsLock: false, asKey: true) is { } stroke)
+                // In a shortcut the character names the key, so an accent waiting on the layout does not turn it into Unicode
+                // (issue #8); without Ctrl, Alt or Win the chord types, and stays exact as send_keys' text does
+                var shortcut = chord.Modifiers.Any(modifier =>
+                    SendKeysParser.ModifierOf(modifier) is KeyModifiers.Control or KeyModifiers.Alt or KeyModifiers.Windows);
+                if (layout.Map(c, capsLock: false, asKey: shortcut) is { } stroke)
                 {
                     if (stroke.IsAltGr)
                     {
-                        added.Add("altgr");
-
                         // As a keyboard sends AltGr, and as send_keys does: tagged, so the chord checks read the pair as a
                         // character; 'lctrl+ralt' named in the chord is not tagged, and counts as Ctrl+Alt
                         if (!Holds(KeyModifiers.Control))
                         {
-                            Down(NativeEnums.VK_LCONTROL, altGr: true);
+                            Down(NativeEnums.VK_LCONTROL, altGr: true, add: true);
                         }
 
                         if (!pressed.Contains(NativeEnums.VK_RMENU))
                         {
-                            Down(NativeEnums.VK_RMENU, altGr: true);
+                            Down(NativeEnums.VK_RMENU, altGr: true, add: true);
                         }
                     }
 
                     if ((stroke.Modifiers & KeyModifiers.Shift) != 0 && !Holds(KeyModifiers.Shift))
                     {
-                        Down(NativeEnums.VK_SHIFT);
-                        added.Add("shift");
+                        Down(NativeEnums.VK_SHIFT, add: true);
                     }
 
+                    // The chord as Windows reads it at the key-down (AltGr as Ctrl+Alt), as SystemKeyboardHotkeys.Match does
+                    var held = pressed.Aggregate(KeyModifiers.None, (all, key) => all | SendKeysParser.ModifierOf(key));
                     Down(stroke.VirtualKey);
                     Up(stroke.VirtualKey);
-                    if (added.Count > 0)
+                    if (added.Count > 0 || !IsPunctuationKey(stroke.VirtualKey))
                     {
-                        resolved = string.Join("+", chord.Modifiers.Select(KeyName).Concat(added).Append(KeyName(stroke.VirtualKey)));
+                        // A key of another name: one with a Shift or AltGr added, or a letter or digit key ('-' on AZERTY's 6)
+                        resolved = (string.Join("+", chord.Modifiers.Select(KeyName).Concat(added).Append(KeyName(stroke.VirtualKey))),
+                            new KeyChord(held, InputEventKind.VirtualKey, stroke.VirtualKey));
                     }
                 }
                 else
@@ -323,9 +334,14 @@ public static class PressKeysParser
 
         bool Holds(KeyModifiers kind) => pressed.Any(key => SendKeysParser.ModifierOf(key) == kind);
 
-        void Down(ushort virtualKey, bool altGr = false)
+        void Down(ushort virtualKey, bool altGr = false, bool add = false)
         {
             events.Add(KeyEvent(virtualKey, NativeEnums.KEYEVENTF_KEYDOWN, altGr));
+            if (add)
+            {
+                added.Add(KeyName(virtualKey));
+            }
+
             if (KeyTable.IsModifier(virtualKey))
             {
                 pressed.Add(virtualKey);
@@ -338,6 +354,8 @@ public static class PressKeysParser
         }
 
         void Up(ushort virtualKey) => events.Add(KeyEvent(virtualKey, NativeEnums.KEYEVENTF_KEYUP, altGr: false));
+
+        static bool IsPunctuationKey(ushort virtualKey) => KeyTable.NameOf(virtualKey)?.StartsWith("OEM", StringComparison.Ordinal) == true;
 
         InputEvent KeyEvent(ushort virtualKey, uint flags, bool altGr)
         {

@@ -112,7 +112,9 @@ public static class KeyTable
         Add(NativeEnums.VK_DECIMAL, "DECIMAL");
         Add(NativeEnums.VK_DIVIDE, "DIVIDE");
 
-        // The punctuation keys by position: what they type depends on the layout (VK_OEM_1 is ';' on a US keyboard)
+        // The punctuation keys by virtual key: which physical key each is, and what it types, depends on the layout (VK_OEM_1
+        // is ';' on a US keyboard and 'ü' on a German one; VK_OEM_PLUS is the = key on a US keyboard, the + key right of 0 on a
+        // Norwegian one)
         Add(0xBA, "OEM1");
         Add(0xBB, "OEMPLUS");
         Add(0xBC, "OEMCOMMA");

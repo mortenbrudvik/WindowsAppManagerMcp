@@ -24,10 +24,10 @@ public sealed class KeySpec
     public IReadOnlyList<InputEvent> Events { get; }
 
     /// <summary>
-    /// press_keys (issue #10): each chord whose character needed a Shift or AltGr the chord does not name, as written, with the
-    /// chord as pressed on the layout ('ctrl+=' to 'ctrl+shift+0' where '=' is Shift+0); null when there is none.
+    /// press_keys (issue #10): each chord whose character went out on a key of another name than the chord's, each once, in
+    /// order (<see cref="ResolvedChord"/>); null when there is none.
     /// </summary>
-    public IReadOnlyDictionary<string, string>? ResolvedChords { get; init; }
+    public IReadOnlyList<ResolvedChord>? ResolvedChords { get; init; }
 
     /// <summary>
     /// press_keys (issue #9): the chords whose character went out as Unicode, with no key, each once, in order; null when none
@@ -37,10 +37,36 @@ public sealed class KeySpec
 }
 
 /// <summary>
-/// A chord (press_keys) or a character (send_keys) that went out as its character alone (KEYEVENTF_UNICODE), with no key and
-/// no scan code (issue #9): <paramref name="Keys"/> as the call wrote it, and the <paramref name="Character"/> sent.
+/// A press_keys chord whose character went out on a key of another name (issue #10), so the agent can tell what the target
+/// got: <paramref name="Asked"/> as written; <paramref name="Pressed"/>, the keys that went down in press_keys' names
+/// ('ctrl+shift+0' for 'ctrl+=' where '=' is Shift+0, 'ctrl+ralt+2' for 'ctrl+@' where '@' is AltGr+2, 'ctrl+6' for 'ctrl+-'
+/// on French AZERTY); and <paramref name="Chord"/>, the chord as Windows reads it (AltGr as Ctrl+Alt), which the SystemHotkey
+/// warning matches to name the chord asked whatever its spelling.
 /// </summary>
-public sealed record CharacterWithoutKey(string Keys, string Character);
+public sealed record ResolvedChord(string Asked, string Pressed, KeyChord Chord);
+
+/// <summary>
+/// A chord (press_keys) or a character (send_keys) that went out as its character alone (KEYEVENTF_UNICODE), with no key and
+/// no scan code (issue #9): <paramref name="Keys"/> as the call wrote it, the <paramref name="Character"/> sent, and
+/// <paramref name="Why"/>, which the SentAsCharacter warning gives for each.
+/// </summary>
+public sealed record CharacterWithoutKey(string Keys, string Character, NoKeyReason Why);
+
+/// <summary>Why a character went out with no key (<see cref="KeyboardLayout.WhyNoKey"/>).</summary>
+public enum NoKeyReason
+{
+    /// <summary>No key of the window's layout types it, or only a dead key does.</summary>
+    NotOnLayout,
+
+    /// <summary>
+    /// Its key would have typed an accent waiting on the layout too (<see cref="KeyboardLayout.DeadKeyPending"/>): text, and a
+    /// press_keys chord without Ctrl, Alt or Win, stay exact then.
+    /// </summary>
+    AccentWaiting,
+
+    /// <summary>The window's layout could not be read (<see cref="KeyboardLayout.ReadFailed"/>).</summary>
+    LayoutUnread
+}
 
 /// <summary>
 /// Parses send_keys' key grammar (roadmap M4.1) into input events, mapping every character through a keyboard layout:

@@ -18,6 +18,13 @@ public class PressKeysParserTests
 
     private static KeyboardLayout Layout(nint layout) => KeyboardLayout.Of(new FakeKeyboardLayoutWrapper { Layout = layout }, 0, capsLock: false);
 
+    /// <summary><paramref name="layout"/> while a grave accent typed on a dead key waits on it (issue #8).</summary>
+    private static KeyboardLayout AccentWaiting(nint layout) =>
+        KeyboardLayout.Of(new FakeKeyboardLayoutWrapper { Layout = layout, PendingDeadKey = '`' }, 0, capsLock: false);
+
+    /// <summary>The resolved chords as the result reports them: the chord asked, to the keys pressed.</summary>
+    private static Dictionary<string, string>? Resolved(KeySpec spec) => spec.ResolvedChords?.ToDictionary(r => r.Asked, r => r.Pressed);
+
     private static KeySpec Us(string keys, int repeat = 1) => PressKeysParser.Parse(KeyList.Of(keys), repeat, Layout(FakeKeyboardLayoutWrapper.Us));
 
     private static KeySpec Us(string[] keys, int repeat = 1) => PressKeysParser.Parse(KeyList.Of(keys), repeat, Layout(FakeKeyboardLayoutWrapper.Us));
@@ -121,38 +128,82 @@ public class PressKeysParserTests
         // Issue #8: Alt+Shift+\ on a Norwegian keyboard leaves a grave accent waiting (a dead key) in the layout every thread
         // shares; the '+' key then types "`+", and these chords went out as the character with no key (KeyboardEvent.code
         // empty). '+' is the OEM_PLUS key at the US Minus position (scan 0C), '?' that key with Shift
-        var layout = KeyboardLayout.Of(new FakeKeyboardLayoutWrapper { Layout = FakeKeyboardLayoutWrapper.Norwegian, PendingDeadKey = '`' }, 0,
-            capsLock: false);
-
-        var spec = PressKeysParser.Parse(KeyList.Of(keys), 1, layout);
+        var spec = PressKeysParser.Parse(KeyList.Of(keys), 1, AccentWaiting(FakeKeyboardLayoutWrapper.Norwegian));
 
         spec.Events.Should().Equal(Seq(One(AltDown), One(ShiftDown), Tap(0xBB, 0x0C), One(ShiftUp), One(AltUp)));
+        spec.SentAsCharacters.Should().BeNull();
+    }
+
+    [Theory]
+    [InlineData("plus", new ushort[0])]
+    [InlineData("shift+plus", new ushort[] { VkShift })]
+    public void WhileAnAccentWaits_AChordWithoutCtrlAltOrWin_StaysItsCharacter(string keys, ushort[] modifiers)
+    {
+        // Such a chord types, and its key would type the waiting accent too ("`+"), so it stays exact as send_keys' text does
+        var spec = PressKeysParser.Parse(KeyList.Of(keys), 1, AccentWaiting(FakeKeyboardLayoutWrapper.Norwegian));
+
+        spec.Events.Where(e => e.Kind == InputEventKind.VirtualKey).Select(e => e.Code).Distinct().Should().Equal(modifiers);
+        spec.Events.Should().Contain(InputEvent.Unicode('+', 0));
+        spec.SentAsCharacters.Should().Equal(new CharacterWithoutKey(keys, "+", NoKeyReason.AccentWaiting));
     }
 
     [Fact]
-    public void APunctuationKey_IsNamedByItsPlace_AndPressedWithItsScanCodeOnAnyLayout()
+    public void APunctuationKey_IsNamedByItsVirtualKey_AndPressedWithTheScanCodeTheLayoutGivesIt()
     {
-        // Issue #8: 'alt+shift+oem_plus' is Alt+Shift and the key right of 0 (US Equal, Norwegian '+' at US Minus), whatever it types
+        // Issue #8: oem_plus is VK_OEM_PLUS, which each layout puts on its own physical key: the = key on US (scan 0D), the +
+        // key right of 0 on Norwegian (scan 0C, KeyboardEvent.code Minus), the + key right of U-umlaut on German (scan 1B)
         var norwegian = PressKeysParser.Parse(KeyList.Of("alt+shift+oem_plus"), 1, Layout(FakeKeyboardLayoutWrapper.Norwegian));
 
         norwegian.Events.Should().Equal(Seq(One(AltDown), One(ShiftDown), Tap(0xBB, 0x0C), One(ShiftUp), One(AltUp)));
         Us("alt+shift+oem_plus").Events.Should().Equal(Seq(One(AltDown), One(ShiftDown), Tap(0xBB, 0x0D), One(ShiftUp), One(AltUp)));
+        PressKeysParser.Parse(KeyList.Of("oem_plus"), 1, Layout(FakeKeyboardLayoutWrapper.German)).Events.Should().Equal(Tap(0xBB, 0x1B));
         Us("ctrl+oem_2").Events.Should().Equal(Seq(One(CtrlDown), Tap(0xBF, 0x35), One(CtrlUp)));
         Us("OEM_1").Events.Should().Equal(Us("oem1").Events).And.Equal(Tap(0xBA, 0x27));
-        norwegian.ResolvedChords.Should().BeNull("a key named by its place is pressed as written");
+        norwegian.ResolvedChords.Should().BeNull("a key named by its virtual key is pressed as written");
         norwegian.SentAsCharacters.Should().BeNull();
     }
 
     [Fact]
     public void AChordWhoseCharacterNeedsAShiftOrAltGrItDoesNotName_IsReportedAsPressed()
     {
-        // Issue #10: on Norwegian '=' is Shift+0, so 'ctrl+=' is Ctrl+Shift+0; '@' is AltGr+2. On US '+' is Shift and the = key
-        var norwegian = PressKeysParser.Parse(KeyList.Of("ctrl+= ctrl+=*2 ctrl+@ ctrl+plus tab"), 1, Layout(FakeKeyboardLayoutWrapper.Norwegian));
+        // Issue #10: on Norwegian '=' is Shift+0, so 'ctrl+=' is Ctrl+Shift+0; '@' is AltGr+2, the left Ctrl and the right Alt,
+        // so 'ctrl+@' adds only the right Alt. On US '+' is Shift and the = key
+        var norwegian = PressKeysParser.Parse(KeyList.Of("ctrl+= ctrl+=*2 ctrl+@ @ ctrl+plus tab"), 1, Layout(FakeKeyboardLayoutWrapper.Norwegian));
 
-        norwegian.ResolvedChords.Should().Equal(new Dictionary<string, string> { ["ctrl+="] = "ctrl+shift+0", ["ctrl+@"] = "ctrl+altgr+2" });
+        Resolved(norwegian).Should().Equal(new Dictionary<string, string>
+        {
+            ["ctrl+="] = "ctrl+shift+0", ["ctrl+@"] = "ctrl+ralt+2", ["@"] = "lctrl+ralt+2"
+        });
+        norwegian.ResolvedChords!.Select(r => r.Chord).Should().Equal(
+            new KeyChord(KeyModifiers.Control | KeyModifiers.Shift, InputEventKind.VirtualKey, '0'),
+            new KeyChord(KeyModifiers.Control | KeyModifiers.Alt, InputEventKind.VirtualKey, '2'),
+            new KeyChord(KeyModifiers.Control | KeyModifiers.Alt, InputEventKind.VirtualKey, '2'));
         norwegian.SentAsCharacters.Should().BeNull();
-        Us("ctrl+plus").ResolvedChords.Should().Equal(new Dictionary<string, string> { ["ctrl+plus"] = "ctrl+shift+oem_plus" });
+        Resolved(Us("ctrl+plus")).Should().Equal(new Dictionary<string, string> { ["ctrl+plus"] = "ctrl+shift+oem_plus" });
         Us("shift+? ctrl+t ctrl+1 comma").ResolvedChords.Should().BeNull("Shift is named, and a letter, digit or comma needs none");
+    }
+
+    [Fact]
+    public void AResolvedChord_NamesOnlyTheKeysThatWentDown()
+    {
+        // 'ctrl+ralt+@' holds both keys of AltGr already: nothing is added, but '@' is the 2 key, so the chord is Ctrl+RAlt+2
+        var spec = PressKeysParser.Parse(KeyList.Of("ctrl+ralt+@"), 1, Layout(FakeKeyboardLayoutWrapper.Norwegian));
+
+        spec.Events.Should().Equal(Seq(One(CtrlDown), One(Down(VkRMenu, 0x38, extended: true)), Tap('2', 0x03),
+            One(Up(VkRMenu, 0x38, extended: true)), One(CtrlUp)));
+        Resolved(spec).Should().Equal(new Dictionary<string, string> { ["ctrl+ralt+@"] = "ctrl+ralt+2" });
+    }
+
+    [Fact]
+    public void AChordWhoseCharacterIsALetterOrDigitKey_IsReportedAsPressed()
+    {
+        // On French AZERTY '-' and 'é' are the unshifted 6 and 2 keys, so 'ctrl+-' (zoom out) is the shortcut Ctrl+6; '=' and
+        // '!' are punctuation keys of their own, pressed as asked
+        var spec = PressKeysParser.Parse(KeyList.Of("ctrl+- ctrl+é ctrl+= ctrl+!"), 1, Layout(FakeKeyboardLayoutWrapper.French));
+
+        spec.Steps[0].Should().Equal(Seq(One(CtrlDown), Tap('6', 0x07), One(CtrlUp)));
+        Resolved(spec).Should().Equal(new Dictionary<string, string> { ["ctrl+-"] = "ctrl+6", ["ctrl+é"] = "ctrl+2" });
+        spec.ResolvedChords![0].Chord.Should().Be(new KeyChord(KeyModifiers.Control, InputEventKind.VirtualKey, '6'));
     }
 
     [Fact]
@@ -161,7 +212,8 @@ public class PressKeysParserTests
         // '^' is only a dead key on Norwegian, and no key types 'é': both go as Unicode, with no key (issue #9)
         var spec = PressKeysParser.Parse(KeyList.Of("ctrl+^ ctrl+^ alt+é ctrl+plus"), 1, Layout(FakeKeyboardLayoutWrapper.Norwegian));
 
-        spec.SentAsCharacters.Should().Equal(new CharacterWithoutKey("ctrl+^", "^"), new CharacterWithoutKey("alt+é", "é"));
+        spec.SentAsCharacters.Should().Equal(new CharacterWithoutKey("ctrl+^", "^", NoKeyReason.NotOnLayout),
+            new CharacterWithoutKey("alt+é", "é", NoKeyReason.NotOnLayout));
         spec.Events.Should().Contain(InputEvent.Unicode('^', 0));
     }
 
@@ -175,7 +227,18 @@ public class PressKeysParserTests
 
         layout.ReadFailed.Should().BeTrue();
         KeyboardLayout.Invariant.ReadFailed.Should().BeFalse("the invariant layout is used on purpose where no window applies");
-        spec.SentAsCharacters.Should().Equal(new CharacterWithoutKey("alt+shift+plus", "+"));
+        spec.SentAsCharacters.Should().Equal(new CharacterWithoutKey("alt+shift+plus", "+", NoKeyReason.LayoutUnread));
+    }
+
+    [Fact]
+    public void WhyNoKey_BlamesTheWaitingAccentOnlyForACharacterItKeptFromItsKey()
+    {
+        var waiting = AccentWaiting(FakeKeyboardLayoutWrapper.Norwegian);
+
+        waiting.WhyNoKey('+').Should().Be(NoKeyReason.AccentWaiting, "the + key types \"`+\" now");
+        waiting.WhyNoKey('é').Should().Be(NoKeyReason.NotOnLayout, "no key types it, accent or not");
+        Layout(FakeKeyboardLayoutWrapper.Norwegian).WhyNoKey('^').Should().Be(NoKeyReason.NotOnLayout, "only a dead key types it");
+        KeyboardLayout.Of(new FakeKeyboardLayoutWrapper { Layout = 0 }, 1, capsLock: false).WhyNoKey('+').Should().Be(NoKeyReason.LayoutUnread);
     }
 
     [Theory]

@@ -87,11 +87,11 @@ public sealed class KeyboardLayout
     /// <param name="character">The character.</param>
     /// <param name="capsLock">Whether Caps Lock is on for this character.</param>
     /// <param name="asKey">
-    /// True when the character names a key to press (press_keys, a send_keys chord with Ctrl, Alt or Win) rather than text
-    /// to type: then a key that types the character after an accent left waiting on the layout (<see cref="DeadKeyPending"/>)
-    /// is still its key. Issue #8: once Alt+Shift+\ on a Norwegian keyboard had left a grave accent waiting, the '+' key
-    /// typed "`+", so 'alt+shift+plus' went out as the character, with no key. As text the character stays Unicode then,
-    /// since the key would type the accent too.
+    /// True when the character names a key of a shortcut (a press_keys or send_keys chord with Ctrl, Alt or Win) rather than
+    /// text to type: then a key that types the character after an accent left waiting on the layout
+    /// (<see cref="DeadKeyPending"/>) is still its key. Issue #8: once Alt+Shift+\ on a Norwegian keyboard had left a grave
+    /// accent waiting, the '+' key typed "`+", so 'alt+shift+plus' went out as the character, with no key. As text (and in a
+    /// chord without those modifiers, which types) the character stays Unicode then, since the key would type the accent too.
     /// </param>
     public KeyStroke? Map(char character, bool capsLock, bool asKey = false)
     {
@@ -111,6 +111,18 @@ public sealed class KeyboardLayout
         _strokes[(character, caps, asKey)] = stroke;
         return stroke;
     }
+
+    /// <summary>
+    /// Why <paramref name="character"/>, which <see cref="Map"/> gave no key, went out as Unicode, for the SentAsCharacter
+    /// warning (issue #9): the layout was not read; or a key types it only behind the accent waiting on the layout (a key
+    /// pressed as a key would have been used, so the character was text, or a press_keys chord without Ctrl, Alt or Win);
+    /// or no key types it, or only a dead key does. Given per character, so a warning blames the accent only for the
+    /// characters it kept from their keys.
+    /// </summary>
+    public NoKeyReason WhyNoKey(char character) =>
+        ReadFailed ? NoKeyReason.LayoutUnread
+        : DeadKeyPending && Map(character, capsLock: false, asKey: true) != null ? NoKeyReason.AccentWaiting
+        : NoKeyReason.NotOnLayout;
 
     /// <summary>
     /// The scan code to send with <paramref name="virtualKey"/> (without the 0xE0 prefix), and whether it is an extended

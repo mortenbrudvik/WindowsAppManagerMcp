@@ -1149,8 +1149,9 @@ public partial class InputSimulationService : IInputSimulationService
         {
             return new SendKeysResult(false, keys.Text,
                 $"{ex.Message}. Key names: ctrl, shift, alt, win, enter, tab, esc, space, backspace, delete, up, down, left, right, " +
-                "home, end, pgup, pgdn, f1-f24, plus, comma, star, a punctuation key by its place (oem_plus, oem_minus, oem_comma, " +
-                "oem_period, oem_1 to oem_8, oem_102), or a single character. Nothing was sent.", InputErrorCode.UnknownKey);
+                "home, end, pgup, pgdn, f1-f24, plus, comma, star, a punctuation key by its virtual key (oem_plus, oem_minus, oem_comma, " +
+                "oem_period, oem_1 to oem_8, oem_102; which key each is depends on the layout), or a single character. Nothing was sent.",
+                InputErrorCode.UnknownKey);
         }
 
         var duration = (long)spec.Steps.Count * (holdMs + delayBetweenMs);
