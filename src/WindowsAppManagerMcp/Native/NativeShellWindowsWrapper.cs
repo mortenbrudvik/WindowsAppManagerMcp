@@ -8,7 +8,8 @@ namespace WindowsAppManagerMcp.Native;
 /// (CLSID_ShellWindows), read late-bound (IDispatch) on a single-threaded apartment thread of its own, as the shell's objects
 /// expect. The shell (explorer.exe) answers, so a hung shell would otherwise hang the tool: the caller waits at most
 /// <see cref="Deadline"/>, and while an abandoned read is still blocked every further read returns nothing at once. It only
-/// reads each window's handle and folder; it never navigates or closes one.
+/// reads each window's handle and folder; it never navigates or closes one. A window that fails to read is skipped and
+/// counted (<see cref="ExplorerFolderListing.SkippedWindows"/>), as NativeAppsWrapper counts the apps it skips.
 /// </summary>
 public sealed class NativeShellWindowsWrapper : INativeShellWindowsWrapper
 {
@@ -19,14 +20,14 @@ public sealed class NativeShellWindowsWrapper : INativeShellWindowsWrapper
 
     private int _abandoned;
 
-    public IReadOnlyList<ExplorerFolder>? GetExplorerFolders()
+    public ExplorerFolderListing? GetExplorerFolders()
     {
         if (Volatile.Read(ref _abandoned) > 0)
         {
             return null;
         }
 
-        IReadOnlyList<ExplorerFolder>? folders = null;
+        ExplorerFolderListing? folders = null;
         const int Running = 0, Finished = 1, Abandoned = 2;
         var state = Running;
         var finished = new ManualResetEventSlim();
@@ -75,47 +76,72 @@ public sealed class NativeShellWindowsWrapper : INativeShellWindowsWrapper
         return Volatile.Read(ref folders);
     }
 
-    private static List<ExplorerFolder> Read()
+    private static ExplorerFolderListing Read()
     {
         var type = Type.GetTypeFromCLSID(ShellWindowsClsid, throwOnError: true)!;
-        dynamic shellWindows = Activator.CreateInstance(type)!;
-        var found = new List<ExplorerFolder>();
+        object shellWindows = Activator.CreateInstance(type)!;
         try
         {
-            int count = shellWindows.Count;
-            for (var i = 0; i < count; i++)
-            {
-                dynamic? window = null;
-                try
-                {
-                    window = shellWindows.Item(i);
-                    if (window == null)
-                    {
-                        continue;
-                    }
-
-                    var handle = new nint(Convert.ToInt64(window.HWND));
-                    found.Add(new ExplorerFolder(handle, FolderOf(window)));
-                }
-                catch (Exception)
-                {
-                    // A window that closed while it was read, or one that is not File Explorer (an old Internet Explorer frame)
-                }
-                finally
-                {
-                    if (window != null)
-                    {
-                        Marshal.FinalReleaseComObject(window);
-                    }
-                }
-            }
+            int count = ((dynamic)shellWindows).Count;
+            return Collect(count, i => ReadWindow(shellWindows, i));
         }
         finally
         {
             Marshal.FinalReleaseComObject(shellWindows);
         }
+    }
 
-        return found;
+    /// <summary>
+    /// The windows at 0 to <paramref name="count"/> - 1 of the shell's list, read one by one: a window whose read throws (one
+    /// that closed while it was read, or that the shell failed) is skipped and counted, never dropped silently, so the caller
+    /// knows a folder may be missing; an empty slot (the list shrank meanwhile) is neither. Pure, so it is tested directly.
+    /// </summary>
+    /// <param name="readWindow">Reads the window at an index; null for an empty slot.</param>
+    public static ExplorerFolderListing Collect(int count, Func<int, ExplorerFolder?> readWindow)
+    {
+        ArgumentNullException.ThrowIfNull(readWindow);
+        var found = new List<ExplorerFolder>();
+        var skipped = 0;
+        for (var i = 0; i < count; i++)
+        {
+            try
+            {
+                if (readWindow(i) is { } folder)
+                {
+                    found.Add(folder);
+                }
+            }
+            catch (Exception)
+            {
+                skipped++;
+            }
+        }
+
+        return new ExplorerFolderListing(found, skipped);
+    }
+
+    /// <summary>The shell window at <paramref name="index"/> and its folder; null for an empty slot. Throws when it cannot be read.</summary>
+    private static ExplorerFolder? ReadWindow(object shellWindows, int index)
+    {
+        dynamic? window = null;
+        try
+        {
+            window = ((dynamic)shellWindows).Item(index);
+            if (window == null)
+            {
+                return null;
+            }
+
+            var handle = new nint(Convert.ToInt64(window.HWND));
+            return new ExplorerFolder(handle, FolderOf(window));
+        }
+        finally
+        {
+            if (window != null)
+            {
+                Marshal.FinalReleaseComObject(window);
+            }
+        }
     }
 
     /// <summary>The window's folder when it is a folder on disk (a drive or UNC path); null for This PC, a search and the like.</summary>

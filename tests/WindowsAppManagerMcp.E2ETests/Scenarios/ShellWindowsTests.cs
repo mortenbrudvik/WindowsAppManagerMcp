@@ -35,16 +35,16 @@ public class ShellWindowsTests
             }
 
             ExplorerFolder? found = null;
-            Wait.Until(() => (found = (wrapper.GetExplorerFolders() ?? []).FirstOrDefault(f =>
+            Wait.Until(() => (found = (wrapper.GetExplorerFolders()?.Folders ?? []).FirstOrDefault(f =>
                 string.Equals(f.Path, folder, StringComparison.OrdinalIgnoreCase))) != null, TimeSpan.FromSeconds(15));
             opened = found?.Window ?? 0;
-            _output.WriteLine($"Explorer windows: {string.Join("; ", (wrapper.GetExplorerFolders() ?? []).Select(f => $"0x{f.Window:X} {(f.Path == null ? "(no folder)" : "a folder")}"))}");
+            _output.WriteLine($"Explorer windows: {string.Join("; ", (wrapper.GetExplorerFolders()?.Folders ?? []).Select(f => $"0x{f.Window:X} {(f.Path == null ? "(no folder)" : "a folder")}"))}");
 
             // Assert
             found.Should().NotBeNull("the shell lists the File Explorer window of the folder the test opened");
             E2ENative.IsWindow(found!.Window).Should().BeTrue();
             E2ENative.GetClassName(found.Window).Should().Be("CabinetWClass");
-            (wrapper.GetExplorerFolders() ?? []).Where(f => f.Path != null).Should().OnlyContain(f => f.Path!.Length > 2,
+            (wrapper.GetExplorerFolders()?.Folders ?? []).Where(f => f.Path != null).Should().OnlyContain(f => f.Path!.Length > 2,
                 "a folder is a drive or network path");
         }
         finally
