@@ -15,8 +15,8 @@ namespace WindowsAppManagerMcp.Tests.Contract;
 /// </summary>
 public class InputToolGuardContractTests
 {
-    private static readonly string[] InputTools =
-        ["mouse_click", "drag", "mouse_move", "scroll", "type_text", "send_keys", "press_keys"];
+    /// <summary>The input tools, as the gate filter lists them: a new input tool is checked here without being added by hand.</summary>
+    private static readonly string[] InputTools = InputGateToolFilter.InputTools.Order(StringComparer.Ordinal).ToArray();
 
     private static readonly nint Terminal = 0x100;
     private static readonly nint Notepad = 0x200;
