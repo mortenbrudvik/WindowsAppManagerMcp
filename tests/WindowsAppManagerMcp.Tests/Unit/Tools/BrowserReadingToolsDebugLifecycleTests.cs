@@ -117,6 +117,41 @@ public class BrowserReadingToolsDebugLifecycleTests
     }
 
     [Fact]
+    public async Task Launch_APlacementThatThrows_IsLoggedWithItsException_AndTheLaunchStillReportsIt()
+    {
+        // Arrange - the placement's result carries only the message, so a bug's stack trace goes to the log, as for
+        // launch_application (LaunchPlacing.PlaceAsync)
+        var bug = new NullReferenceException("Object reference not set to an instance of an object.");
+        _placer.Setup(p => p.PlaceAsync(It.IsAny<IReadOnlyList<(nint, LaunchPlacementPlan)>>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(bug);
+        var logger = new ExceptionRecordingLogger();
+        var sut = new BrowserReadingTools(_reads.Object, _processes.Object, debugBrowsers: _lifecycle.Object,
+            placementService: _placer.Object, monitorService: _monitors.Object, logger: logger);
+
+        // Act
+        var result = await sut.LaunchBrowserWithDebug(placement: new LaunchPlacement(Snap: "left_half"));
+
+        // Assert
+        result.Success.Should().BeTrue("the browser was launched; an exception in the placement must not hide that");
+        result.Placement!.ErrorCode.Should().Be(nameof(WindowErrorCode.MoveFailed));
+        logger.Entries.Should().ContainSingle(e => e.Level == Microsoft.Extensions.Logging.LogLevel.Warning)
+            .Which.Exception.Should().BeSameAs(bug);
+    }
+
+    /// <summary>A logger that keeps each entry's level and exception.</summary>
+    private sealed class ExceptionRecordingLogger : Microsoft.Extensions.Logging.ILogger<BrowserReadingTools>
+    {
+        public List<(Microsoft.Extensions.Logging.LogLevel Level, Exception? Exception)> Entries { get; } = [];
+
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+        public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel logLevel) => true;
+
+        public void Log<TState>(Microsoft.Extensions.Logging.LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state,
+            Exception? exception, Func<TState, Exception?, string> formatter) => Entries.Add((logLevel, exception));
+    }
+
+    [Fact]
     public async Task Launch_CancelledDuringThePlacement_EndsTheBrowserItStarted()
     {
         // Arrange - the cancelled call sends no result, so nobody learns the browser's PID or its unauthenticated port

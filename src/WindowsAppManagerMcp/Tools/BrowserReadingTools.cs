@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using Microsoft.Extensions.Logging;
 using ModelContextProtocol.Server;
 using WindowsAppManagerMcp.Infrastructure;
 using WindowsAppManagerMcp.Models;
@@ -21,6 +22,7 @@ public partial class BrowserReadingTools
     private readonly TimeSpan? _gateWaitTimeout;
     private readonly ITcpPortOwnerResolver? _portOwners;
     private readonly IBrowserDetectionService? _browserDetection;
+    private readonly ILogger<BrowserReadingTools>? _logger;
 
     /// <param name="browserReadingService">The browser reads.</param>
     /// <param name="processService">Starts the debug browser when there is no <paramref name="debugBrowsers"/>.</param>
@@ -37,6 +39,8 @@ public partial class BrowserReadingTools
     /// browser listens, as browser_navigate does (<see cref="BrowserNavigationUrls.BrowserPortRefusal"/>); the server
     /// always passes both.</param>
     /// <param name="browserDetection">Tells a browser from another program listening on that port.</param>
+    /// <param name="logger">Logs a placement that threw, with its stack trace, which the result carries only the message of
+    /// (as launch_application's); the server always passes it.</param>
     public BrowserReadingTools(
         IBrowserReadingService browserReadingService,
         IProcessService processService,
@@ -48,7 +52,8 @@ public partial class BrowserReadingTools
         TimeSpan? answerTimeout = null,
         TimeSpan? gateWaitTimeout = null,
         ITcpPortOwnerResolver? portOwners = null,
-        IBrowserDetectionService? browserDetection = null)
+        IBrowserDetectionService? browserDetection = null,
+        ILogger<BrowserReadingTools>? logger = null)
     {
         _browserReadingService = browserReadingService;
         _processService = processService;
@@ -61,6 +66,7 @@ public partial class BrowserReadingTools
         _gateWaitTimeout = gateWaitTimeout;
         _portOwners = portOwners;
         _browserDetection = browserDetection;
+        _logger = logger;
     }
 
     private const string BrowserWindowDescription =
@@ -261,7 +267,8 @@ public partial class BrowserReadingTools
             if (plan != null)
             {
                 placed = (await LaunchPlacing.PlaceAsync(_placementService,
-                    [new LaunchToPlace(result.Success, result.WindowHandle, result.LaunchStatus, plan)], cancellationToken).ConfigureAwait(false))[0];
+                    [new LaunchToPlace(result.Success, result.WindowHandle, result.LaunchStatus, plan)], cancellationToken, _logger)
+                    .ConfigureAwait(false))[0];
             }
         }
         catch (OperationCanceledException) when (_debugBrowsers != null && result.Success && result.LaunchStatus != LaunchStatus.AlreadyRunning)
