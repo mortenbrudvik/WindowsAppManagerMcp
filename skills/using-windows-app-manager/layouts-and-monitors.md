@@ -29,20 +29,21 @@ The `snap_window` tool supports 14 positions:
 ## Save and Restore a Workspace
 
 1. Arrange the windows, then `save_layout` with a descriptive name
-2. Later, `apply_layout` (keep the default `matchBy`: a saved layout has no title text for `title_only`). Each placement gets its own window; `status` is `applied`, `partial` or `failed`, and `placements` says per placement what happened (`applied`, `notFound`, `notApplicable` or `failed`, with `window` and `errorCode`). `success: false` lists every problem in `errors`; a placement with `focus` that did not come to the front is an `ArrangeFailed` error, and `focus` lists each focus placement's activation with the fields of a `focus_window` result
+2. Later, `apply_layout` (keep the default `matchBy`: a saved layout has no title text for `title_only`). Each placement gets its own window; `status` is `applied`, `partial` or `failed`, and `placements` says per placement what happened (`applied`, `notFound`, `notApplicable` or `failed`, with `window` and `errorCode`). `success: false` lists every problem in `errors`; a placement that could not be arranged or minimized, that its app kept moving back, or with `focus` that did not come to the front is an `ArrangeFailed` error, and `focus` lists each focus placement's activation with the fields of a `focus_window` result
 3. **Verify:** `get_foreground_window` before typing anything
 
 ## Multi-Monitor Setup
 
-1. **Find:** `get_monitors` for the displays and `primaryIndex`
+1. **Find:** `get_monitors` for the displays and `primaryIndex` (left out when no monitor is primary; no monitors means they could not be read: try again); a monitor's `dpi` and `scaleFactor` are left out when Windows cannot report its DPI
 2. **Act:** `move_window_to_monitor` or `snap_window` with `monitor` (`"left"`, `"right"`, `"primary"` or an `id`), or `set_window_bounds` with `unit: "percent"` and `monitor` for any share of a monitor (thirds tile exactly)
 3. **Verify:** check `monitorIndex` and `bounds`; monitors left of or above the primary one have negative coordinates
 
 ## Keep a Window in View
 
-1. **Act:** `set_window_zorder` with `mode: "topmost"` pins a reference window above the others without taking the focus; `mode: "above"` with `aboveHandle` raises it above one window (also a topmost overlay)
+1. **Act:** `set_window_zorder` with `mode: "topmost"` pins a reference window above the others without taking the focus; `mode: "above"` with `aboveHandle` raises it above one window (also a topmost overlay). A failed `above` that says the window was, or may be, left topmost: check `isTopmost` (`get_window_info`), and unpin it with `mode: "notopmost"`
 2. **Clean up:** unpin it with `mode: "notopmost"` when done; `get_server_info`'s `pinnedWindows` lists what this server left pinned
 
 ## Tips
 
 - Layout presets can launch missing applications with `launchMissing: true`, but only with a `launchCommand` added to the preset by hand: `save_layout` records none
+- `list_layouts` also lists the files that are not valid presets (`file`, `error`, `errorCode` `InvalidPresetFile`): they cannot be applied, and the layout tools never change them, so ask the user to fix or delete the file. Its name can be a valid preset's too: `delete_layout` of that name deletes the valid preset, not the file
