@@ -42,8 +42,8 @@ public class InputControlTools
     }
 
     [McpServerTool(Name = "get_control_status", Title = "Get Input Control Status", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
-    [Description("Whether the user has paused the server's input with the pause hotkey (and how and since when), whether the pause hotkey " +
-                 "is registered, which keys or mouse buttons are held down, and takeover detection's mode (off, warn or stop: " +
+    [Description("Whether input is paused (how, by whom and since when), whether the pause hotkey is registered, the keys or " +
+                 "buttons the server could not release and the modifier keys that are down, and takeover detection's mode (off, warn or stop: " +
                  "whether type_text, drag and run_steps stop when the user uses the keyboard or mouse). Reads only. While paused is true, every input tool " +
                  "(mouse_click, type_text, send_keys, ...) and every tool that changes windows or starts or stops processes return " +
                  "PausedByUser: stop, tell the user, and wait for them. Never try to resume input yourself.")]

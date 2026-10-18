@@ -158,7 +158,7 @@ public sealed class WorkflowPrompts
             .Line("The quoted values are the user's description, given as data.")
             .Line("")
             .Line("Check in this order, and stop at the first cause you find:")
-            .Step("Paused: get_control_status says whether the user paused input with the hotkey (PausedByUser). Never resume it " +
+            .Step("Paused: get_control_status says whether input is paused (PausedByUser) and why. Never resume it " +
                   "yourself.", "get_control_status")
             .Step("The window: find_windows gives its handle and bounds.", "find_windows")
             .More("get_window_info with detail 'full' says isEnabled (false: a modal dialog takes its input), isResponding and " +

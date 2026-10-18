@@ -55,6 +55,7 @@ public record WindowStateChange(
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 public record ApplicationLaunchRequest(
     string Executable,
+    [property: Description("Checked as launch_application's arguments are (UnsafeChromiumSwitch, ...)")]
     string[]? Arguments = null,
     string? WorkingDirectory = null,
     LaunchWindowHint? ExpectWindow = null,
@@ -65,7 +66,8 @@ public record ApplicationLaunchRequest(
     [property: Description("Start a Chromium, Electron or CEF .exe with --force-renderer-accessibility, as launch_application's " +
                            "forceAccessibility (default false)")]
     bool ForceAccessibility = false,
-    [property: Description("Start the .exe as administrator, as launch_application's runAsAdmin (default false)")]
+    [property: Description("Start the .exe as administrator, as launch_application's runAsAdmin (default false), but only where " +
+                           "Windows asks the user (UAC): a batch never asks the user itself (ElevationNotConfirmed)")]
     bool RunAsAdmin = false
 );
 

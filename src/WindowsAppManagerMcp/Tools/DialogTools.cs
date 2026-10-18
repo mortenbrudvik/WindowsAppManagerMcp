@@ -68,8 +68,8 @@ public class DialogTools
         [Description("Allow answering a dialog of the agent's own host window (its terminal, editor or chat app). Works only " +
                      "with handle (or window.handle); set it only when the user explicitly asked for it. Default: false")]
         bool allowHostTarget = false,
-        [Description("The bound of each read and how long the press may block, in milliseconds (default: 5000, min: 1000, " +
-                     "max: 30000).")]
+        [Description("The bound of each read and how long the press may block, in milliseconds (default: 5000, clamped " +
+                     "to 1000-30000).")]
         int timeoutMs = DefaultRespondTimeoutMs,
         [Description(ActionObservation.ObserveDescription)]
         ObserveMode observe = ObserveMode.None,
@@ -114,7 +114,8 @@ public class DialogTools
         string path,
         [Description("'open' (an Open dialog: the path must exist) or 'save' (a Save As dialog).")]
         FileDialogAction action,
-        [Description("save: replace an existing file (the application's replace prompt is answered Yes). Default: false.")]
+        [Description("save: replace an existing file (the application's replace prompt is answered Yes; for a file without an " +
+                     "extension only a prompt that shows its full path, else DialogNotCompleted). Default: false.")]
         bool overwrite = false,
         [Description("Window handle (as integer) of the file dialog (the openedPopup of the action that opened it), or of the " +
                      "window whose modal file dialog to complete. handle or window is required.")]
@@ -125,7 +126,7 @@ public class DialogTools
                      "only with handle (or window.handle); set it only when the user explicitly asked for it. Default: false")]
         bool allowHostTarget = false,
         [Description("How long the whole call may take, the wait for the dialog to close included, in milliseconds (default: " +
-                     "10000, min: 1000, max: 60000).")]
+                     "10000, clamped to 1000-60000).")]
         int timeoutMs = DefaultFileDialogTimeoutMs,
         CancellationToken cancellationToken = default)
     {

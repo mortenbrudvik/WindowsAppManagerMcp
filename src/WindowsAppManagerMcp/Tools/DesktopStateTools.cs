@@ -36,7 +36,7 @@ public class DesktopStateTools
 
     [McpServerTool(Name = "get_desktop_state", Title = "Get Desktop State", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
     [Description("One compact observation of the desktop; call it first to get oriented, and again after acting. Returns the window in " +
-                 "front, the cursor, the modifier keys that are down, Caps Lock and whether the user paused input; the user-facing " +
+                 "front, the cursor, the modifier keys that are down, Caps Lock and whether input is paused; the user-facing " +
                  "windows front first as rows (handle, title, process, state, monitor); the element with keyboard focus (with its " +
                  "ref); and for the window named (default: the window in front) its open menus, dropdowns and dialogs and its " +
                  "interactive elements as compact text lines with refs ('w4120035e17 Button 'Save' @812,44 80x24'), which " +
@@ -57,7 +57,7 @@ public class DesktopStateTools
                      "'focus', 'elements', 'popups' (default: these four) and 'screenshot' (off by default; needs capture_window to be " +
                      "served). The list replaces the default: for everything and a capture, pass all five.")]
         DesktopStateSection[]? include = null,
-        [Description("The most element lines, the popups' and the window's together (default: 80, min: 1, max: 500). The walk " +
+        [Description("The most element lines, the popups' and the window's together (default: 80, clamped to 1-500). The walk " +
                      "reads breadth first, so the levels nearest the window are kept; elements.truncated says when there are more " +
                      "(read them with get_ui_elements or find_ui_elements).")]
         int maxElements = DefaultMaxElements,
@@ -69,11 +69,11 @@ public class DesktopStateTools
                      "line). Default: windowAndPopups when the window's app is in front, else window, as " +
                      "find_ui_elements.")]
         DesktopStateScope? scope = null,
-        [Description("The most window rows (default: 20, min: 1, max: 100); windowCount says how many there are.")]
+        [Description("The most window rows (default: 20, clamped to 1-100); windowCount says how many there are.")]
         int maxWindows = DefaultMaxWindows,
-        [Description("The screenshot's long edge in pixels (default: 1280, min: 256, max: 1568).")]
+        [Description("The screenshot's long edge in pixels (default: 1280, clamped to 256-1568).")]
         int screenshotMaxLongEdge = DefaultScreenshotLongEdge,
-        [Description("The one deadline of the whole call in milliseconds (default: 5000, min: 1000, max: 30000).")]
+        [Description("The one deadline of the whole call in milliseconds (default: 5000, clamped to 1000-30000).")]
         int timeoutMs = DefaultTimeoutMs,
         [Description("Draw the window's element lines on the screenshot as Set-of-Marks boxes tagged with their refs, less screenshot.markPrefix (not the " +
                      "popups' lines); the capture then waits for the walk. Needs 'screenshot' and 'elements' in include. Default: false.")]

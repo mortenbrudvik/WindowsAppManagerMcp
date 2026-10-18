@@ -44,7 +44,7 @@ public class BrowserTabTools
 
     internal const string HandleDescription = "Browser window handle. Pass handle, window or cdpPort.";
 
-    internal const string WindowDescription = "Alternative to handle: a window selector as in find_windows.";
+    internal const string WindowDescription = "Alternative to handle: a window selector.";
 
     internal const string CdpPortDescription = "DevTools port; found from the window when omitted. Alone, it names the browser listening on it.";
 
@@ -56,7 +56,7 @@ public class BrowserTabTools
 
     [McpServerTool(Name = "list_tabs", Title = "List Browser Tabs", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
     [Description("List a debug browser's tabs (targetId, title, url, windowId). With a window, its tabs come first (inWindow) and " +
-                 "shownTargetId is the one it shows when its title tells." + CdpOnly)]
+                 "shownTargetId is the one it shows, by its title (of several with that title, the one shown)." + CdpOnly)]
     public async Task<BrowserTabsResult> ListTabs(
         [Description(HandleDescription)] long? handle = null,
         [Description(WindowDescription)] WindowSelector? window = null,

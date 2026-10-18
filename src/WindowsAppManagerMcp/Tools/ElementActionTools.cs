@@ -59,7 +59,8 @@ public partial class ElementActionTools
                  "opened returns status InvokedPendingModal with openedPopup: answer the dialog. realize makes an item of a virtualized " +
                  "list real and scrolls it into view; by criteria it also finds items the list has not realized (maxScrolls: by " +
                  "scrolling the list). A password field's value is never " +
-                 "read or returned. Refused, with nothing done, for apps the user's policy denies (TargetDeniedByPolicy), the " +
+                 "read or returned. Refused, with nothing done, for apps the user's policy denies, also their elements inside another " +
+                 "app's window (TargetDeniedByPolicy), the " +
                  "agent's own host window (TargetIsAgentHost), elevated apps (TargetElevated), a window a modal dialog blocks " +
                  "(BlockedByModal), and while the user has paused input (PausedByUser: stop and ask the user, never try to resume). " +
                  "observe 'state' adds get_desktop_state's observation of the window after the action (observed), 'screenshot' " +
@@ -116,7 +117,7 @@ public partial class ElementActionTools
         [Description(ListRefDescription)]
         string? listRef = null,
         [Description("How long the action may block, for example on a dialog it opened, and the bound of each read, in " +
-                     "milliseconds (default: 5000, min: 1000, max: 30000). realize with maxScrolls: the whole search.")]
+                     "milliseconds (default: 5000, clamped to 1000-30000). realize with maxScrolls: the whole search.")]
         int timeoutMs = DefaultTimeoutMs,
         [Description("What to return about the desktop after the action: 'none' (default), 'state' (get_desktop_state's default " +
                      "observation of the element's window, or of the window in front once that closed, as observed; needs " +

@@ -13,12 +13,13 @@ namespace WindowsAppManagerMcp.Tools;
 public class ScreenshotTools
 {
     internal const string ImageResultDescription =
-        "Returns the image as image content you can see, followed by JSON metadata (size, capturedRegion, imageToScreen, filePath, captureId). " +
-        "By default the image is JPEG (PNG when its long edge is at most 512 pixels) scaled to at most 1568 pixels on the long edge. ";
+        "Returns the image as image content you can see (scaled: see maxDimension), followed by JSON metadata (width, height, " +
+        "capturedRegion, imageToScreen, filePath, captureId). ";
 
     internal const string ImageToScreenDescription =
         "Image pixels are not screen pixels: to click a point (imageX, imageY) seen in the image, pass it to the mouse tools with " +
-        "this captureId (valid 10 minutes; refused with StaleCapture once a captured window moved), or convert it yourself: " +
+        "this captureId (valid 10 minutes, for the last 32 captures; StaleCapture once the captured window moved or the " +
+        "monitors changed), or convert it yourself: " +
         "screenX = imageToScreen.offsetX + imageX * imageToScreen.scaleX and screenY = imageToScreen.offsetY + imageY * imageToScreen.scaleY. " +
         "scaleFactor is the monitor's DPI scale, for information only; never multiply by it.";
 
@@ -26,7 +27,7 @@ public class ScreenshotTools
         "Image format: 'auto' (default: JPEG, or PNG when the image's long edge is at most 512 pixels), 'png' (lossless, larger) or 'jpeg' ('jpg' is accepted too). " +
         "With outputPath, 'auto' follows the file extension. Any other value is rejected with InvalidFormat.";
 
-    internal const string QualityDescription = "JPEG quality (1-100). Only used for JPEG. Default: 80";
+    internal const string QualityDescription = "JPEG quality, clamped to 1-100. Only used for JPEG. Default: 80";
 
     internal const string MaxDimensionDescription =
         "Longest edge of the image in pixels; larger captures are scaled down proportionally. " +
@@ -351,11 +352,10 @@ public class ScreenshotTools
 
     [McpServerTool(Name = "capture_with_elements", Title = "Capture Window with Element Boxes", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = false)]
     [Description("Capture a window with its UI elements drawn on it as numbered marks (Set-of-Marks): a box per element and a filled tag with " +
-                 "the element's ref, such as w4120035e17; when all marks' refs share their window part, the tags leave it out (e17) and markPrefix gives it (w4120035). Pick a target in the image, then act on it with element_action(ref) (no coordinates), " +
-                 "or click the legend's center with this captureId. " + ImageResultDescription +
+                 "the element's ref, such as w4120035e17; when all marks' refs share their window part, the tags leave it out (e17) and markPrefix gives it (w4120035). Act on a mark with element_action(ref) (no coordinates), " +
+                 "or pass its legend center to mouse_click with this captureId. " + ImageResultDescription +
                  "The metadata's legend has one line per mark: '[ref] Type 'Name' #automationId center=(x,y)', center in pixels of the returned image. " +
-                 "By default only elements with an action pattern (button, edit, check box, list item, menu item, ...) are marked, at most 80; " +
-                 "detail 'full' adds the elements list with imageBounds and screenBounds. " +
+                 "By default only elements with an action pattern (button, edit, check box, list item, menu item, ...) are marked, at most 80. " +
                  "The image is returned even when the UI Automation walk fails or times out: " +
                  "then elementsError and elementsErrorCode say why, and truncated is true whenever the element list is incomplete. " +
                  "A window is refused as in capture_window (WindowMinimized unless restoreIfMinimized, WindowHidden, Cloaked, TargetDeniedByPolicy). " +
@@ -372,7 +372,7 @@ public class ScreenshotTools
         CaptureFormat format = CaptureFormat.Auto,
         [Description(QualityDescription)]
         int quality = CaptureOptions.DefaultQuality,
-        [Description("How many levels below the window to read (1-10). 1 reads only the window's direct children. Default: 5")]
+        [Description("How many levels below the window to read (clamped to 1-10). 1 reads only the window's direct children. Default: 5")]
         int maxDepth = 5,
         [Description(UIElementTools.ControlTypesDescription)]
         string? controlTypes = null,
@@ -384,10 +384,10 @@ public class ScreenshotTools
         bool visibleOnly = true,
         [Description("Use brighter colors for enabled elements. Default: true")]
         bool highlightInteractable = true,
-        [Description("Timeout for UI element retrieval in ms (1000-30000). When it passes, the elements found so far are drawn (truncated: true); with none found, the image comes without elements and elementsErrorCode OperationTimedOut. Default: 5000")]
+        [Description("Timeout for UI element retrieval in ms (clamped to 1000-30000). When it passes, the elements found so far are drawn (truncated: true); with none found, the image comes without elements and elementsErrorCode OperationTimedOut. Default: 5000")]
         int timeoutMs = 5000,
-        [Description("Stop the walk once this many elements are found (default: 80, min: 1, max: 5000); then truncated=true and truncationReason MaxElements. " +
-                     "An element without bounds or outside the image gets no mark, so there can be fewer marks. The walk reads breadth first, so the levels nearest the window are kept; narrow it with controlTypes or a smaller maxDepth rather than raising this.")]
+        [Description("The most elements the walk finds, breadth first (default: 80, clamped to 1-5000; then truncationReason MaxElements). " +
+                     "An element without bounds or outside the image gets no mark. Narrow the walk with controlTypes or maxDepth rather than raising this.")]
         int maxElements = DefaultMaxMarks,
         [Description("Draw each mark's ref as a filled tag at its box. Default: true. false draws the boxes only.")]
         bool labels = true,

@@ -31,7 +31,7 @@ public partial class BrowserReadingTools
     /// <param name="debugBrowsers">The debug browsers' lifecycle (roadmap M5.4): launches with profiles and reuse, and
     /// close_debug_browser. The server always passes it; without it the launch goes straight to <paramref name="processService"/>.</param>
     /// <param name="placementService">Places the debug browser's window (placement, roadmap M5.4); the server always passes it.</param>
-    /// <param name="monitorService">Checks a placement's monitorIndex before anything is launched.</param>
+    /// <param name="monitorService">Resolves a placement's monitor (index or name) before anything is launched.</param>
     /// <param name="session">The input session, whose pause close_debug_browser respects (it takes the input gate itself).</param>
     /// <param name="answerTimeout">How long close_debug_browser waits for the user's answer; default <see cref="UserConfirmation.DefaultAnswerTimeout"/>.</param>
     /// <param name="gateWaitTimeout">How long close_debug_browser waits for the input gate; default <see cref="InputGateToolFilter.GateWaitTimeout"/>.</param>
@@ -70,7 +70,7 @@ public partial class BrowserReadingTools
     }
 
     private const string BrowserWindowDescription =
-        "Alternative to handle: the browser window as a window selector with find_windows' filters, resolved to exactly one " +
+        "Alternative to handle: the browser window as a window selector (its fields filter as find_windows' do), resolved to exactly one " +
         "window, e.g. {\"processName\": \"msedge\", \"titleContains\": \"Inbox\"}.";
 
     private const string CdpBehaviorDescription =
@@ -80,10 +80,6 @@ public partial class BrowserReadingTools
 
     private const string RequireCdpDescription =
         "If true, return the CDP error (for example CdpTimeout, CdpDialogOpen, CdpTargetNotFound) instead of falling back to UI Automation. Needs a debug port; implied by targetId. Default: false.";
-
-    // The browser in front (get_browser_url with a bare foreground selector) takes no targetId, so this does not mention one
-    private const string ActiveRequireCdpDescription =
-        "If true, return the CDP error (for example CdpTimeout, CdpDialogOpen, CdpTargetNotFound) instead of falling back to UI Automation. Needs a debug port. Default: false.";
 
     private const string CdpPortDescription =
         "DevTools port of the window's browser (launch_browser_with_debug returns it); found from its command line when omitted.";
@@ -95,7 +91,7 @@ public partial class BrowserReadingTools
         "CDP tab id from an earlier result's targetId or a CdpTargetAmbiguous error; reads that tab instead of the one the window shows. Must be a tab of the window's browser, never falls back to UI Automation.";
 
     private const string TimeoutDescription =
-        "Time limit in ms for the CDP requests, and again for the UI Automation read (default: 10000, range: 1000-30000). A page with an open JavaScript dialog (alert/confirm/prompt/beforeunload) never answers CDP, so the call returns CdpTimeout or CdpDialogOpen instead of hanging.";
+        "Time limit in ms for the CDP requests, and again for the UI Automation read (default: 10000, clamped to 1000-30000). A page with an open JavaScript dialog (alert/confirm/prompt/beforeunload) never answers CDP, so the call returns CdpTimeout or CdpDialogOpen instead of hanging.";
 
     [McpServerTool(Name = "get_browser_url", Title = "Get Browser URL", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
     [Description("Get the current URL from a browser window. Uses Windows UI Automation to read the address of the shown tab's page, else the address bar (urlSource says which), or CDP (Chrome DevTools Protocol) for a debug browser." + CdpBehaviorDescription + " Supports Chrome, Edge, Firefox, Brave, Opera, Vivaldi, and other Chromium/Firefox-based browsers." +
@@ -122,9 +118,8 @@ public partial class BrowserReadingTools
         var cdp = new CdpOptions(cdpPort, requireCdp, timeoutMs, targetId, useCdp);
         if (handle == null && WindowTargeting.IsBareForeground(window))
         {
-            // Roadmap M6.1: the selector that only says "the window in front" reads the active browser (get_active_browser_url's
-            // read before 3.0.0 removed it), with its
-            // NoBrowserInForeground when that window is not a browser (or there is none)
+            // Roadmap M6.1: a selector that says only "the window in front" reads the browser in front, as get_active_browser_url
+            // did before 3.0.0 removed it: NoBrowserInForeground when that window is not a browser (or there is none)
             return ToDto(await _browserReadingService.GetActiveBrowserUrlAsync(cdp, cancellationToken));
         }
 
@@ -142,7 +137,7 @@ public partial class BrowserReadingTools
         long? handle = null,
         [Description(BrowserWindowDescription)]
         WindowSelector? window = null,
-        [Description("Most characters to return (default 20000, max 50000; below 1 is InvalidArguments). A page holds at most 60,000 bytes of JSON.")]
+        [Description("Most characters to return (default 20000; more than 50000 is cut to 50000, below 1 is InvalidArguments). A page holds at most 60,000 bytes of JSON.")]
         int maxLength = BrowserContentOptions.DefaultMaxLength,
         [Description("true (default): the text. false: the HTML, which needs CDP.")]
         bool textOnly = true,

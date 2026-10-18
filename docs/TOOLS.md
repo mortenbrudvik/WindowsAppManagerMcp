@@ -339,23 +339,23 @@ Every tool the server serves sits in the agent's context on every turn, and a lo
 | `server` | always on | about 1,100 | The server's build, environment and toolsets, and the user's control over its input: whether input is paused, resuming it with the user's consent, releasing stuck keys. | [get_server_info](#get_server_info), [get_control_status](#get_control_status), [resume_input](#resume_input), [release_all_input](#release_all_input) |
 | `windows` | on | about 11,300 | Find, wait for, focus, move, resize, snap, minimize, maximize, raise, pin on top and close windows, and close several at once. | [find_windows](#find_windows), [get_foreground_window](#get_foreground_window), [focus_window](#focus_window), [set_window_bounds](#set_window_bounds), [set_window_state](#set_window_state), [snap_window](#snap_window), [move_window_to_monitor](#move_window_to_monitor), [set_window_zorder](#set_window_zorder), [close_window](#close_window), [close_windows_batch](#close_windows_batch), [get_owned_windows](#get_owned_windows), [get_window_info](#get_window_info), [wait_for_window](#wait_for_window), [get_window_events](#get_window_events) |
 | `monitors` | on | about 200 | The monitors: bounds, work areas, scale factors, and the virtual screen they make up. | [get_monitors](#get_monitors) |
-| `capture` | on | about 6,400 | Screenshots of monitors, regions and windows, as image content. | [take_screenshot](#take_screenshot), [capture_region](#capture_region), [capture_window](#capture_window), [capture_with_elements](#capture_with_elements) |
+| `capture` | on | about 6,300 | Screenshots of monitors, regions and windows, as image content. | [take_screenshot](#take_screenshot), [capture_region](#capture_region), [capture_window](#capture_window), [capture_with_elements](#capture_with_elements) |
 | `elements` | on | about 8,300 | UI Automation: one-call desktop observations, element trees, searches that return element refs (also in menus, dropdowns and dialogs), waits for elements, the focused element, the element at a point, an app's open popups, an element's text and a table's cells. | [get_desktop_state](#get_desktop_state), [get_ui_elements](#get_ui_elements), [find_ui_elements](#find_ui_elements), [get_focused_element](#get_focused_element), [get_element_at_point](#get_element_at_point), [get_active_popups](#get_active_popups), [read_element_text](#read_element_text), [read_table](#read_table), [wait_for_element](#wait_for_element) |
-| `input` | on | about 14,800 | Guarded mouse and keyboard input to a named window (clicks of any button with modifiers, drags, key chords), and actions on UI elements through UI Automation patterns: menu paths, answering dialogs, completing Open and Save As dialogs. | [mouse_click](#mouse_click), [drag](#drag), [mouse_move](#mouse_move), [scroll](#scroll), [type_text](#type_text), [send_keys](#send_keys), [press_keys](#press_keys), [element_action](#element_action), [respond_to_dialog](#respond_to_dialog), [file_dialog](#file_dialog) |
+| `input` | on | about 14,900 | Guarded mouse and keyboard input to a named window (clicks of any button with modifiers, drags, key chords), and actions on UI elements through UI Automation patterns: menu paths, answering dialogs, completing Open and Save As dialogs. | [mouse_click](#mouse_click), [drag](#drag), [mouse_move](#mouse_move), [scroll](#scroll), [type_text](#type_text), [send_keys](#send_keys), [press_keys](#press_keys), [element_action](#element_action), [respond_to_dialog](#respond_to_dialog), [file_dialog](#file_dialog) |
 | `clipboard` | on | about 700 | Read what the agent copied, put text on the clipboard to paste it; the user's own clipboard only with their consent. | [get_clipboard](#get_clipboard), [set_clipboard](#set_clipboard) |
 | `launch` | on | about 3,400 | Start applications, optionally waiting for their window, and list the installed apps. | [launch_application](#launch_application), [launch_applications_batch](#launch_applications_batch), [list_installed_apps](#list_installed_apps) |
 | `process` | on | about 2,300 | List processes and close or end one, or close an application's windows gracefully. | [list_processes](#list_processes), [kill_process](#kill_process), [close_application](#close_application) |
 | `layouts` | on | about 2,000 | Save, apply and manage window layout presets. | [list_layouts](#list_layouts), [get_layout](#get_layout), [save_layout](#save_layout), [apply_layout](#apply_layout), [delete_layout](#delete_layout) |
 | `workspaces` | off | about 600 | Save the open windows with what File Explorer and browser windows show, and restore them: open missing folders and pages, then arrange. | [save_workspace](#save_workspace), [restore_workspace](#restore_workspace) |
 | `steps` | on | about 1,100 | Run several steps (element actions, keys, clicks, waits) on one window in one call, under one input gate hold, stopping at the first failure. | [run_steps](#run_steps) |
-| `browser` | on | about 4,300 | Read the URL and text of browser pages, list a debug browser's tabs and wait for a page; start and close a browser with a DevTools port. | [get_browser_url](#get_browser_url), [get_browser_content](#get_browser_content), [launch_browser_with_debug](#launch_browser_with_debug), [close_debug_browser](#close_debug_browser), [list_tabs](#list_tabs), [wait_for_browser](#wait_for_browser) |
-| `browser-actions` | off | about 3,600 | Act on a debug browser's pages through CDP: show and navigate tabs (with a load wait), click and type in a page without the real mouse or keyboard, answer its JavaScript dialogs, place its elements on the screen, capture it. | [activate_tab](#activate_tab), [browser_navigate](#browser_navigate), [browser_element_rect](#browser_element_rect), [browser_click](#browser_click), [browser_type](#browser_type), [browser_handle_dialog](#browser_handle_dialog), [browser_screenshot](#browser_screenshot) |
+| `browser` | on | about 4,400 | Read the URL and text of browser pages, list a debug browser's tabs and wait for a page; start and close a browser with a DevTools port. | [get_browser_url](#get_browser_url), [get_browser_content](#get_browser_content), [launch_browser_with_debug](#launch_browser_with_debug), [close_debug_browser](#close_debug_browser), [list_tabs](#list_tabs), [wait_for_browser](#wait_for_browser) |
+| `browser-actions` | off | about 3,500 | Act on a debug browser's pages through CDP: show and navigate tabs (with a load wait), click and type in a page without the real mouse or keyboard, answer its JavaScript dialogs, place its elements on the screen, capture it. | [activate_tab](#activate_tab), [browser_navigate](#browser_navigate), [browser_element_rect](#browser_element_rect), [browser_click](#browser_click), [browser_type](#browser_type), [browser_handle_dialog](#browser_handle_dialog), [browser_screenshot](#browser_screenshot) |
 | `browser-script` | off | about 500 | Run JavaScript in a debug browser's page through CDP, with the page's rights. | [browser_evaluate](#browser_evaluate) |
 | `visual` | off | about 1,100 | Wait until a window, region or monitor changes on screen or stops changing, compared tile by tile, without image tokens. | [wait_for_visual](#wait_for_visual) |
 | `windows-batch` | off | about 2,100 | Place, snap, or minimize, maximize and restore several windows in one call, each with its own placement or state. | [set_windows_bounds_batch](#set_windows_bounds_batch), [snap_windows_batch](#snap_windows_batch), [set_windows_state_batch](#set_windows_state_batch) |
 | `ocr` | off | about 2,200 | Read and find text on the screen with Windows OCR where UI Automation exposes none (canvas apps, games, remote desktops, rendered PDFs), with click points for the mouse tools. | [read_screen_text](#read_screen_text), [find_text_on_screen](#find_text_on_screen) |
 
-The default surface (the toolsets that are on) is about 55,900 tokens, and every tool together about 65,900.
+The default surface (the toolsets that are on) is about 56,000 tokens, and every tool together about 66,100.
 <!-- tools:end toolsets -->
 
 **Tokens** is what the toolset's tools cost in tools/list, to the nearest 100: their names, titles, descriptions, input schemas and annotations as the server sends them, estimated at 4 bytes of JSON per token (roadmap M6.1). It is what turning the toolset on adds to the context a client loads up front, and what turning it off saves. The two totals under the table are measured the same way and generated with it. Contract tests hold each toolset, the default surface, the whole list and every single tool (at most 2,500 tokens) to a budget, so a change that makes them larger is a decision; see TESTING.md.
@@ -759,13 +759,13 @@ Wait on the server until a window condition holds (roadmap M3.7), instead of sle
 **Parameters:**
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| window | object | Yes | - | The window(s) to wait for: a window selector with find_windows' filters (processName is the whole name; className or includeUntitled for untitled dialogs; index picks one of the windows that count, front to back; handle plus filters waits for that window to match them, e.g. {"handle": 1706796, "titleContains": "report.txt"}) |
+| window | object | Yes | - | The window(s) to wait for: a window selector (its fields filter as find_windows' do; processName is the whole name; className or includeUntitled for untitled dialogs; index picks one of the windows that count, front to back; handle plus filters waits for that window to match them, e.g. {"handle": 1706796, "titleContains": "report.txt"}) |
 | condition | string (one of: `"exists"`, `"gone"`, `"foreground"`, `"visible"`, `"title_changed"`, `"input_idle"`) | No | "exists" | What to wait for (see the table below) |
 | newOnly | boolean | No | false | Only count windows that open, or are shown, after this call starts (default: false). A window your last action already opened is missed; prefer excludeHandles. Not with gone, title_changed or window.handle |
 | excludeHandles | integer[] | No | - | Handles of windows that never count: the matching windows you saw before you acted (at most 256; not window.handle itself). Not with title_changed |
 | previousTitle | string | No | - | title_changed only: the title you read before acting (default: the title when the wait starts, which misses a change that already happened) |
 | timeoutMs | integer | No | 10000 | How long to wait in milliseconds (0-60000); 0 checks once |
-| stableMs | integer | No | 300 | How long the condition must hold before it counts, in milliseconds (0-10000; at most `timeoutMs`) |
+| stableMs | integer | No | 300 | How long the condition must hold before it counts, in milliseconds (0-10000; cut to `timeoutMs`) |
 <!-- tools:end params:wait_for_window -->
 
 | `condition` | Satisfied when | `window` in the result |
@@ -1438,7 +1438,7 @@ Change a window's place in the z-order without moving, resizing or activating it
 |-----------|------|----------|---------|-------------|
 | mode | string (one of: `"top"`, `"bottom"`, `"topmost"`, `"notopmost"`, `"above"`) | Yes | - | Where to put the window |
 | handle | integer | No | - | Window handle (as integer) from find_windows. Pass handle or window, not both. |
-| window | object | No | - | Alternative to handle: a window selector with find_windows' filters (processName is the whole name; plus foreground, index), resolved to exactly one window or refused (AmbiguousWindow lists candidates). |
+| window | object | No | - | Alternative to handle: a window selector (its fields filter as find_windows' do; processName is the whole name), resolved to exactly one window or refused (AmbiguousWindow lists candidates). |
 | aboveHandle | integer | No | - | With mode 'above': the window to place it above (a handle from find_windows) |
 <!-- tools:end params:set_window_zorder -->
 
@@ -1752,13 +1752,13 @@ Each item of `applications` contains:
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
 | executable | string | Yes | - | Path, app name, or protocol URI |
-| arguments | string[] | No | - | Command line arguments |
+| arguments | string[] | No | - | Command line arguments, checked as [launch_application](#launch_application)'s are (`UnsafeChromiumSwitch` and the rest) |
 | workingDirectory | string | No | - | Working directory |
 | expectWindow | object | No | - | The window to expect, as in [launch_application](#launch_application) |
 | placement | object | No | - | Where to put the item's window, as in [launch_application](#launch-and-arrange) |
 | reuseExisting | boolean | No | false | Use an open window of the app instead of starting it, as in [launch_application](#reusing-an-open-window) |
 | forceAccessibility | boolean | No | false | Start a Chromium browser, an Electron or a CEF app with `--force-renderer-accessibility`, as in [launch_application](#web-content-accessibility) |
-| runAsAdmin | boolean | No | false | Start the .exe as administrator, as launch_application's runAsAdmin (default false) |
+| runAsAdmin | boolean | No | false | Start the `.exe` as administrator, as in [launch_application](#running-as-administrator), but only where Windows asks the user (UAC): a batch never asks the user itself, so elsewhere the item fails with `ElevationNotConfirmed` |
 <!-- tools:end params:launch_applications_batch -->
 
 **Example:**
@@ -1931,7 +1931,7 @@ Capture a screenshot of a specific monitor ([Monitor selectors](#monitor-selecto
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | format | string (one of: `"auto"`, `"png"`, `"jpeg"`, `"jpg"`) | No | "auto" | "auto" (JPEG, or PNG up to a 512-pixel long edge), "png" or "jpeg" |
-| quality | integer | No | 80 | JPEG quality (1-100) |
+| quality | integer | No | 80 | JPEG quality (clamped to 1-100) |
 | maxDimension | integer | No | 1568 px | Longest image edge in pixels; 0 keeps full resolution. Not applied when only `maxWidth` is given |
 | output | string (one of: `"image"`, `"file"`, `"both"`, `"metadata"`) | No | "image" | "image", "file", "both" or "metadata" |
 | outputPath | string | No | temp file | Absolute file path on a drive letter (no network paths) for output "file" or "both"; the folder must exist |
@@ -2029,7 +2029,7 @@ Capture a screenshot of an arbitrary screen region.
 | width | integer | Yes | - | Width of the region in pixels |
 | height | integer | Yes | - | Height of the region in pixels |
 | format | string (one of: `"auto"`, `"png"`, `"jpeg"`, `"jpg"`) | No | "auto" | "auto" (JPEG, or PNG up to a 512-pixel long edge), "png" or "jpeg" |
-| quality | integer | No | 80 | JPEG quality (1-100) |
+| quality | integer | No | 80 | JPEG quality (clamped to 1-100) |
 | maxDimension | integer | No | 1568 px | Longest image edge in pixels; 0 keeps full resolution. Not applied when only `maxWidth` is given |
 | output | string (one of: `"image"`, `"file"`, `"both"`, `"metadata"`) | No | "image" | "image", "file", "both" or "metadata" |
 | outputPath | string | No | temp file | Absolute file path on a drive letter (no network paths) for output "file" or "both"; the folder must exist |
@@ -2093,7 +2093,7 @@ Capture a screenshot of a specific window. Works even if the window is partially
 | padding | integer | No | 8 (with ref) | Pixels kept around the ref's element on every side (0-500); only with `ref` (`InvalidArguments` otherwise) |
 | includeFrame | boolean | No | true | Include window frame/decoration (title bar, borders) |
 | format | string (one of: `"auto"`, `"png"`, `"jpeg"`, `"jpg"`) | No | "auto" | "auto" (JPEG, or PNG up to a 512-pixel long edge), "png" or "jpeg" |
-| quality | integer | No | 80 | JPEG quality (1-100) |
+| quality | integer | No | 80 | JPEG quality (clamped to 1-100) |
 | maxDimension | integer | No | 1568 px | Longest image edge in pixels; 0 keeps full resolution. Not applied when only `maxWidth` is given |
 | output | string (one of: `"image"`, `"file"`, `"both"`, `"metadata"`) | No | "image" | "image", "file", "both" or "metadata" |
 | outputPath | string | No | temp file | Absolute file path on a drive letter (no network paths) for output "file" or "both"; the folder must exist |
@@ -2189,15 +2189,15 @@ Capture a window with its UI elements drawn on it as numbered marks (Set-of-Mark
 | window | object | No | - | Alternative to handle: the window as a selector, resolved to exactly one window or refused (WindowNotFound; AmbiguousWindow with candidates). Filters as in find_windows (processName is the whole name); index picks a match in z-order; foreground is the window in front; handle plus filters must still match (HandleMismatch). |
 | includeFrame | boolean | No | true | Include window frame/decoration |
 | format | string (one of: `"auto"`, `"png"`, `"jpeg"`, `"jpg"`) | No | "auto" | "auto" (JPEG, or PNG up to a 512-pixel long edge), "png" or "jpeg" |
-| quality | integer | No | 80 | JPEG quality (1-100) |
-| maxDepth | integer | No | 5 | How many levels below the window to read (1-10). 1 reads only the window's direct children |
+| quality | integer | No | 80 | JPEG quality (clamped to 1-100) |
+| maxDepth | integer | No | 5 | How many levels below the window to read (clamped to 1-10). 1 reads only the window's direct children |
 | controlTypes | string | No | - | Comma-separated control types to include (e.g., "Button,Edit"); matches inside other containers are kept. Unknown names fail |
 | interactableOnly | boolean | No | false | Only include interactable elements: enabled, and keyboard-focusable or with an action pattern |
 | actionableOnly | boolean | No | true without controlTypes | Mark only elements with an action pattern (Invoke, Toggle, Value, SelectionItem, ExpandCollapse, RangeValue), enabled or not; containers are left out, the elements inside them kept. false with `controlTypes` |
 | visibleOnly | boolean | No | true | Only include visible (on-screen) elements; leaves out everything inside an offscreen element |
 | highlightInteractable | boolean | No | true | Use brighter colors for enabled elements (dimmer boxes for disabled ones) |
-| timeoutMs | integer | No | 5000 | Timeout for UI element retrieval in ms (1000-30000). When it passes, the elements found so far are drawn (`truncated: true`); with none found, the image comes without overlays (`elementsErrorCode: "OperationTimedOut"`) |
-| maxElements | integer | No | 80 | The most elements the walk finds (1-5000); it stops there (`truncated: true`, `truncationReason: "MaxElements"`), keeping the levels nearest the window. An element without bounds or outside the image gets no mark, so there can be fewer marks |
+| timeoutMs | integer | No | 5000 | Timeout for UI element retrieval in ms (clamped to 1000-30000). When it passes, the elements found so far are drawn (`truncated: true`); with none found, the image comes without overlays (`elementsErrorCode: "OperationTimedOut"`) |
+| maxElements | integer | No | 80 | The most elements the walk finds (clamped to 1-5000); it stops there (`truncated: true`, `truncationReason: "MaxElements"`), keeping the levels nearest the window. An element without bounds or outside the image gets no mark, so there can be fewer marks |
 | labels | boolean | No | true | Draw each mark's ref in a filled tag at its box (without `markPrefix`, the window part the refs share); false draws the boxes only |
 | drawOverlays | boolean | No | true | false returns the clean image, with the marks only in `legend` (and `elements`) |
 | detail | string (one of: `"legend"`, `"full"`) | No | "legend" | `legend`: one line per mark in `legend`. `full`: also the `elements` list with `imageBounds`, `screenBounds` and `overlayColor` |
@@ -2330,7 +2330,7 @@ Read the text of a window, a screen region or a monitor with Windows OCR (`Windo
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | handle | integer | No | - | Window handle (as integer) from find_windows. Pass handle or window, or another target. |
-| window | object | No | - | Alternative to handle: a window selector with find_windows' filters (processName is the whole name; plus foreground, index), resolved to exactly one window or refused (AmbiguousWindow lists candidates). |
+| window | object | No | - | Alternative to handle: a window selector (its fields filter as find_windows' do; processName is the whole name), resolved to exactly one window or refused (AmbiguousWindow lists candidates). |
 | x | integer | No | - | With x, y, width and height: the region's left edge |
 | y | integer | No | - | With x, y, width and height: the region's top edge |
 | width | integer | No | - | With x, y, width and height: the region's width in pixels |
@@ -2403,7 +2403,7 @@ Find text in a window, region or monitor with Windows OCR and get click points f
 | match | string (one of: `"contains"`, `"exact"`, `"regex"`) | No | "contains" | 'contains' (default: anywhere in a line), 'exact' (whole words) or 'regex' (.NET, on each line). contains and exact treat runs of whitespace as one space. |
 | caseSensitive | boolean | No | false | Compare case. Default: false |
 | handle | integer | No | - | Window handle (as integer) from find_windows. Pass handle or window, or another target. |
-| window | object | No | - | Alternative to handle: a window selector with find_windows' filters (processName is the whole name; plus foreground, index), resolved to exactly one window or refused (AmbiguousWindow lists candidates). |
+| window | object | No | - | Alternative to handle: a window selector (its fields filter as find_windows' do; processName is the whole name), resolved to exactly one window or refused (AmbiguousWindow lists candidates). |
 | x | integer | No | - | With x, y, width and height: the region's left edge |
 | y | integer | No | - | With x, y, width and height: the region's top edge |
 | width | integer | No | - | With x, y, width and height: the region's width in pixels |
@@ -2477,7 +2477,7 @@ Wait on the server until a window, a screen region or a monitor changes on scree
 |-----------|------|----------|---------|-------------|
 | condition | string (one of: `"changed"`, `"stable"`) | No | "changed" | changed (default) or stable |
 | handle | integer | No | - | Window handle (as integer) from find_windows. Pass handle or window, not both |
-| window | object | No | - | Alternative to handle: a window selector with find_windows' filters (processName is the whole name; plus foreground, index), resolved to exactly one window or refused (AmbiguousWindow lists candidates). |
+| window | object | No | - | Alternative to handle: a window selector (its fields filter as find_windows' do; processName is the whole name), resolved to exactly one window or refused (AmbiguousWindow lists candidates). |
 | includeFrame | boolean | No | - | With a window: whether the frame (title bar, borders) is watched too. Default: true |
 | x | integer | No | - | Region: X of its left edge in screen pixels; with y, width and height |
 | y | integer | No | - | Region: Y of its top edge |
@@ -2630,14 +2630,14 @@ One compact observation of the desktop, and the recommended first call: what the
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | handle | integer | No | - | Window handle (as integer) to read the elements, popups and capture of. Pass handle or window, or neither for the window in front. |
-| window | object | No | - | Alternative to handle: a window selector with find_windows' filters (processName is the whole name; plus foreground, index), resolved to exactly one window or refused (AmbiguousWindow lists candidates). |
+| window | object | No | - | Alternative to handle: a window selector (its fields filter as find_windows' do; processName is the whole name), resolved to exactly one window or refused (AmbiguousWindow lists candidates). |
 | include | string (one of: `"windows"`, `"focus"`, `"elements"`, `"popups"`, `"screenshot"`)[] | No | - | Every section to read besides the window in front, the cursor, the keys and the pause (always read): 'windows', 'focus', 'elements', 'popups' (default: all four) and 'screenshot' (off by default; needs capture_window to be served). The list replaces the default: for everything and a capture, pass all five. |
-| maxElements | integer | No | 80 | The most element lines, the popups' and the window's together (default: 80, min: 1, max: 500). The walk reads breadth first, so the levels nearest the window are kept; elements.truncated says when there are more (read them with get_ui_elements or find_ui_elements). |
+| maxElements | integer | No | 80 | The most element lines, the popups' and the window's together (default: 80, clamped to 1-500). The walk reads breadth first, so the levels nearest the window are kept; elements.truncated says when there are more (read them with get_ui_elements or find_ui_elements). |
 | interactableOnly | boolean | No | true | Only elements that are enabled and keyboard-focusable or have an action pattern (default: true). Pass false to also list labels, texts and containers. |
 | scope | string (one of: `"window"`, `"windowAndPopups"`) | No | - | Whose elements: 'window' (the window alone) or 'windowAndPopups' (its open menus, dropdowns, flyouts and dialogs first, within half of maxElements, each under a '# popup' line, then the window under a '# window' line). Default: windowAndPopups when the window, a window it owns or another window of its process is in front, else window, as find_ui_elements. |
-| maxWindows | integer | No | 20 | The most window rows (default: 20, min: 1, max: 100); windowCount says how many there are. |
-| screenshotMaxLongEdge | integer | No | 1280 | The screenshot's long edge in pixels (default: 1280, min: 256, max: 1568). |
-| timeoutMs | integer | No | 5000 | The one deadline of the whole call in milliseconds (default: 5000, min: 1000, max: 30000). |
+| maxWindows | integer | No | 20 | The most window rows (default: 20, clamped to 1-100); windowCount says how many there are. |
+| screenshotMaxLongEdge | integer | No | 1280 | The screenshot's long edge in pixels (default: 1280, clamped to 256-1568). |
+| timeoutMs | integer | No | 5000 | The one deadline of the whole call in milliseconds (default: 5000, clamped to 1000-30000). |
 | screenshotMarks | boolean | No | false | Mark the window's element lines on the screenshot (Set-of-Marks): a box per element, tagged with the ref that starts its line less the window part the refs share, `screenshot.markPrefix` (not the popups' lines). The capture then waits for the walk. Needs 'screenshot' and 'elements' in include. Default: false. |
 <!-- tools:end params:get_desktop_state -->
 
@@ -2717,14 +2717,14 @@ Get the UI element tree with bounding boxes for a window. Provides a lightweight
 |-----------|------|----------|---------|-------------|
 | handle | integer | No | - | Window handle from find_windows |
 | window | object | No | - | Alternative to handle: the window as a selector, resolved to exactly one window or refused (WindowNotFound; AmbiguousWindow with candidates). Filters as in find_windows (processName is the whole name); index picks a match in z-order; foreground is the window in front; handle plus filters must still match (HandleMismatch). |
-| maxDepth | integer | No | 5 | How many levels below the window to read (1-10). 1 returns only the window's direct children |
+| maxDepth | integer | No | 5 | How many levels below the window to read (clamped to 1-10). 1 returns only the window's direct children |
 | controlTypes | string | No | - | Comma-separated control types to include (e.g., "Button,Edit,ComboBox"). Unknown names fail with `InvalidControlType` |
 | interactableOnly | boolean | No | false | Only include interactable elements: enabled, and keyboard-focusable or with an action pattern |
 | visibleOnly | boolean | No | true | Only include visible (on-screen) elements; leaves out everything inside an offscreen element |
 | minWidth | integer | No | - | Minimum element width to include |
 | minHeight | integer | No | - | Minimum element height to include |
-| timeoutMs | integer | No | 10000 | Timeout for UI traversal in ms (1000-30000). When it passes, the elements read so far are returned |
-| maxElements | integer | No | 300 | Stop once this many elements are returned (1-5000), with `truncationReason: MaxElements`. The walk is breadth first, so the levels nearest the window are kept |
+| timeoutMs | integer | No | 10000 | Timeout for UI traversal in ms (clamped to 1000-30000). When it passes, the elements read so far are returned |
+| maxElements | integer | No | 300 | Stop once this many elements are returned (clamped to 1-5000), with `truncationReason: MaxElements`. The walk is breadth first, so the levels nearest the window are kept |
 | format | string (one of: `"tree"`, `"flat"`, `"text"`) | No | "text" | `tree` nests each element's `children`; `flat` lists every element once with `depth` and `parent`; `text` returns `text`, one compact line per element (see [Formats](#formats)) |
 <!-- tools:end params:get_ui_elements -->
 
@@ -2892,9 +2892,9 @@ Find elements in a window by name, automation id, control type and class, in one
 | searchVirtualized | boolean | No | false | Also find list items that are not realized yet, through the lists' ItemContainer pattern; only reads. Needs `automationId`, or `name` with `nameMatch: "exact"`. See [Virtualized lists](#find_ui_elements) |
 | visibleOnly | boolean | No | true | Leave out elements reported as offscreen (each on its own: unlike get_ui_elements, not their subtrees) |
 | enabledOnly | boolean | No | false | Leave out disabled elements |
-| maxResults | integer | No | 20 | How many matches to return (1-100); `matchCount` still counts every match (`truncationReason: MaxResults`) |
+| maxResults | integer | No | 20 | How many matches to return (clamped to 1-100); `matchCount` still counts every match (`truncationReason: MaxResults`) |
 | detail | string (one of: `"minimal"`, `"standard"`, `"full"`) | No | "minimal" | `minimal`: ref, name, type, ids, bounds, click point, state flags, patterns; `standard` adds value, toggle, expand and selection state and focus; `full` adds framework, process, window handle, help text and keys |
-| timeoutMs | integer | No | 5000 | Timeout in ms (1000-30000). When it passes, the matches found so far are returned (`truncationReason: Timeout`; `OperationTimedOut` when there are none), up to about 2 s later when a provider call is stuck |
+| timeoutMs | integer | No | 5000 | Timeout in ms (clamped to 1000-30000). When it passes, the matches found so far are returned (`truncationReason: Timeout`; `OperationTimedOut` when there are none), up to about 2 s later when a provider call is stuck |
 <!-- tools:end params:find_ui_elements -->
 
 **How the criteria work:**
@@ -3007,7 +3007,7 @@ Act on one UI element through its UI Automation patterns: invoke a button, toggl
 | action | string (one of: `"invoke"`, `"click"`, `"double_click"`, `"right_click"`, `"focus"`, `"set_value"`, `"append_text"`, `"toggle"`, `"select"`, `"add_to_selection"`, `"remove_from_selection"`, `"expand"`, `"collapse"`, `"scroll_into_view"`, `"scroll"`, `"set_range_value"`, `"realize"`, `"window_close"`, `"window_minimize"`, `"window_maximize"`, `"menu_path"`) | Yes | - | What to do: invoke, click, double_click, right_click, focus, set_value, append_text, toggle, select, add_to_selection, remove_from_selection, expand, collapse, scroll_into_view, scroll, set_range_value, realize, window_close, window_minimize, window_maximize, menu_path. |
 | ref | string | No | - | The element: a ref from an earlier read, such as 'w4120035e17'. A ref moved to a re-created element (`refMoved`) is refused with `ElementStale` until find_ui_elements returns that element again. Or leave it out and pass handle or window with element criteria (`menu_path`: or with none, to start from the window). |
 | handle | integer | No | - | Window handle (as integer) whose element the criteria name. Pass handle or window, with criteria, instead of ref. |
-| window | object | No | - | Alternative to handle: a window selector with find_windows' filters (processName is the whole name; plus foreground, index), resolved to exactly one window or refused (AmbiguousWindow lists candidates). |
+| window | object | No | - | Alternative to handle: a window selector (its fields filter as find_windows' do; processName is the whole name), resolved to exactly one window or refused (AmbiguousWindow lists candidates). |
 | name | string | No | - | Element criteria, as find_ui_elements: the element's name, compared as nameMatch says. Logged as its length only. |
 | nameMatch | string (one of: `"exact"`, `"contains"`, `"regex"`) | No | "exact" | How name is compared: 'exact' (default), 'contains' or 'regex', as find_ui_elements. |
 | automationId | string | No | - | Element criteria: the element's AutomationId. |
@@ -3022,7 +3022,7 @@ Act on one UI element through its UI Automation patterns: invoke a button, toggl
 | allowHostTarget | boolean | No | false | Allow acting on the agent's own host window (its terminal, editor or chat app). Works only with ref or handle (or window.handle); set it only when the user explicitly asked for it. Default: false |
 | maxScrolls | integer | No | 0 | `realize` with element criteria only: when neither the tree nor the list's ItemContainer pattern has the item, scroll the window's one visible list (of several, the one with a Scroll pattern of its own; or `listRef`) a page at a time, at most this many pages (max 100), searching it after each page; when the item is not found, the list is put back where it was. `timeoutMs` bounds the whole search. See [Virtualized lists](#find_ui_elements) |
 | listRef | string | No | - | `realize` with `maxScrolls`: the list to scroll when the window has several that scroll (a ref from find_ui_elements' `virtualized.containers`; an element of another window is `InvalidArguments`). |
-| timeoutMs | integer | No | 5000 | How long the action may block, for example on a dialog it opened, and the bound of each search and read, in milliseconds (default: 5000, min: 1000, max: 30000). It bounds each step, not the whole call: see **Time** below. realize with maxScrolls: the whole search; menu_path: `timeoutMs` per item |
+| timeoutMs | integer | No | 5000 | How long the action may block, for example on a dialog it opened, and the bound of each search and read, in milliseconds (default: 5000, clamped to 1000-30000). It bounds each step, not the whole call: see **Time** below. realize with maxScrolls: the whole search; menu_path: `timeoutMs` per item |
 | observe | string (one of: `"none"`, `"state"`, `"screenshot"`) | No | "none" | What to return about the desktop after the action: 'none' (default), 'state' (get_desktop_state's default observation of the element's window, or of the window in front once that closed, as observed; needs get_desktop_state to be served) or 'screenshot' (as state, plus a capture of that window as image content with a captureId; needs capture_window to be served too). |
 <!-- tools:end params:element_action -->
 
@@ -3129,9 +3129,9 @@ Read a dialog and press one of its buttons: a message box, a prompt such as "Sav
 |-----------|------|----------|---------|-------------|
 | button | string | No | - | The button to press: ok, cancel, yes, no, abort, retry, ignore, close, help, tryagain, continue (by id, in every language), a control id such as '6', an AutomationId, or the button's visible text. Leave it out to only read the dialog (nothing is pressed). Any button but cancel needs the dialog named by handle or window. |
 | handle | integer | No | - | Window handle (as integer) of the dialog (the dialogHandle a read returned, or close_window's prompt.handle), or of the window whose modal dialog (for a read, else its open dialog) to answer. Leave out handle and window only to read the dialog in front, or to press cancel in it. |
-| window | object | No | - | Alternative to handle: a window selector with find_windows' filters (processName is the whole name; plus foreground, index), resolved to exactly one window or refused (AmbiguousWindow lists candidates). |
+| window | object | No | - | Alternative to handle: a window selector (its fields filter as find_windows' do; processName is the whole name), resolved to exactly one window or refused (AmbiguousWindow lists candidates). |
 | allowHostTarget | boolean | No | false | Allow answering a dialog of the agent's own host window (its terminal, editor or chat app). Works only with handle (or window.handle); set it only when the user explicitly asked for it. Default: false |
-| timeoutMs | integer | No | 5000 | The bound of each read and how long the press may block, in milliseconds (default: 5000, min: 1000, max: 30000). |
+| timeoutMs | integer | No | 5000 | The bound of each read and how long the press may block, in milliseconds (default: 5000, clamped to 1000-30000). |
 | observe | string (one of: `"none"`, `"state"`, `"screenshot"`) | No | "none" | What to return after the action: 'none' (default), 'state' (get_desktop_state's default observation of the window acted on, or of the window in front once that closed, as observed; needs get_desktop_state to be served) or 'screenshot' (as state, plus a capture of that window as image content; needs capture_window too). |
 <!-- tools:end params:respond_to_dialog -->
 
@@ -3215,11 +3215,11 @@ Complete an Open or Save As dialog with a full path, in one call and in any lang
 |-----------|------|----------|---------|-------------|
 | path | string | Yes | - | The full path of the file to open or save, such as C:\Users\me\Documents\report.txt. Logged as its length only. |
 | action | string (one of: `"open"`, `"save"`) | Yes | - | 'open' (an Open dialog: the path must exist) or 'save' (a Save As dialog). |
-| overwrite | boolean | No | false | save: replace an existing file (the application's replace prompt is answered Yes). Default: false. |
+| overwrite | boolean | No | false | save: replace an existing file (the application's replace prompt is answered Yes; for a file without an extension only a prompt that shows its full path, else `DialogNotCompleted`). Default: false. |
 | handle | integer | No | - | Window handle (as integer) of the file dialog (the openedPopup of the action that opened it), or of the window whose modal file dialog to complete. handle or window is required. |
-| window | object | No | - | Alternative to handle: a window selector with find_windows' filters (processName is the whole name; plus foreground, index), resolved to exactly one window or refused (AmbiguousWindow lists candidates). |
+| window | object | No | - | Alternative to handle: a window selector (its fields filter as find_windows' do; processName is the whole name), resolved to exactly one window or refused (AmbiguousWindow lists candidates). |
 | allowHostTarget | boolean | No | false | Allow completing a file dialog of the agent's own host window (its terminal, editor or chat app). Works only with handle (or window.handle); set it only when the user explicitly asked for it. Default: false |
-| timeoutMs | integer | No | 10000 | How long the whole call may take, the wait for the dialog to close included, in milliseconds (default: 10000, min: 1000, max: 60000). Each search and action gets what is left of it (at least 1 s, at most 5 s), so a call can end a few seconds later |
+| timeoutMs | integer | No | 10000 | How long the whole call may take, the wait for the dialog to close included, in milliseconds (default: 10000, clamped to 1000-60000). Each search and action gets what is left of it (at least 1 s, at most 5 s), so a call can end a few seconds later |
 <!-- tools:end params:file_dialog -->
 
 **The path** must be absolute, on a drive letter, as a capture's `outputPath`: network paths (`\\server\share\...`) and device paths (`\\?\...`) are refused before anything is touched, because checking or opening them makes Windows connect to another computer. Wildcards, quotes and the other characters a file name cannot hold are refused (a dialog takes `*.txt` as a filter), and so are an alternate data stream and an environment variable such as `%USERPROFILE%` (the dialog would expand it, so the checks here would be of another path: pass the expanded path). `open` needs the file (or folder) to exist; it only types the path into the user's own dialog, which the application then opens with the user's rights, as typing it would. `save` needs the folder to exist and a file name; an existing file is refused with `FileExists` before anything is typed unless `overwrite` is true. All refusals of the path are `InvalidArguments` (except `FileExists`), with nothing done.
@@ -3279,7 +3279,7 @@ Get the UI element that has keyboard focus, with the top-level window and proces
 **Parameters:**
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| timeoutMs | integer | No | 5000 | How long to wait for UI Automation, in ms (1000-30000) |
+| timeoutMs | integer | No | 5000 | How long to wait for UI Automation, in ms (clamped to 1000-30000) |
 <!-- tools:end params:get_focused_element -->
 
 **Example:**
@@ -3352,8 +3352,8 @@ Get the UI element at a screen point, the elements above it, and the top-level w
 |-----------|------|----------|---------|-------------|
 | x | integer | Yes | - | X in physical virtual-screen pixels, as for `mouse_click` (can be negative) |
 | y | integer | Yes | - | Y in physical virtual-screen pixels, as for `mouse_click` (can be negative) |
-| ancestors | integer | No | 3 | How many elements above it to return, nearest first (0-10) |
-| timeoutMs | integer | No | 5000 | How long to wait for UI Automation, in ms (1000-30000) |
+| ancestors | integer | No | 3 | How many elements above it to return, nearest first (clamped to 0-10) |
+| timeoutMs | integer | No | 5000 | How long to wait for UI Automation, in ms (clamped to 1000-30000) |
 <!-- tools:end params:get_element_at_point -->
 
 The coordinates are screen pixels, not image pixels; see [Coordinate space](#coordinate-space).
@@ -3437,7 +3437,7 @@ List the open menus, dropdowns, flyouts and dialogs of an app (roadmap M3.5). A 
 |-----------|------|----------|---------|-------------|
 | handle | integer | No | the app in front | Window handle of the app window, from find_windows. Pass `handle` or `window`, or neither for the app in front |
 | window | object | No | - | Alternative to handle: the window as a selector, resolved to exactly one window or refused (WindowNotFound; AmbiguousWindow with candidates). Filters as in find_windows |
-| timeoutMs | integer | No | 5000 | Timeout in ms (1000-30000) for reading the popups' elements; a popup not read in time is listed without `ref` |
+| timeoutMs | integer | No | 5000 | Timeout in ms (clamped to 1000-30000) for reading the popups' elements; a popup not read in time is listed without `ref` |
 <!-- tools:end params:get_active_popups -->
 
 Without `handle` or `window` (or with `{"foreground": true}` alone, which names no window) it lists the popups of the app in front: the window that owns the window in front, so a dialog in front is listed as a popup of its app. It does not read the app in front, as [get_desktop_state](#get_desktop_state) does not, when the window in front or the app window that owns it is your own host (`TargetIsAgentHost`: name the window you mean) or an app the user's [target policy](#target-policy) denies (`TargetDeniedByPolicy`, also when its process cannot be named while the policy denies anything); nothing of it, not even its title, is returned. Which windows count, front first (z-order), at most 16:
@@ -3519,8 +3519,8 @@ Read the text of one element: a document (Notepad, Word, a browser page, a readi
 | className | string | No | - | With `window`: the element's class name, ignoring case |
 | scope | string (one of: `"window"`, `"windowAndPopups"`, `"desktop"`) | No | - | With the criteria: which windows they search, as find_ui_elements' scope: 'window' (the window alone), 'windowAndPopups' (also its open menus, dropdowns, flyouts and dialogs, which are windows of their own) or 'desktop' (every visible window too, the named one first, at most 40). Windows and popups of apps the target policy denies, and of the agent's own host, are left out. Default: windowAndPopups when the window, a window it owns or another window of its process is in front, else window. Not with ref. |
 | offset | integer | No | 0 | Where the page starts, in characters: the `nextOffset` of the previous page |
-| maxLength | integer | No | 20000 | The most characters to return (1-50000). A page also takes at most 60,000 bytes of JSON, so it holds fewer characters of non-ASCII text (see Paging) |
-| timeoutMs | integer | No | 5000 | Timeout in ms for the search and the read together (1000-30000); a search by criteria can end up to 2 s later (see Timing) |
+| maxLength | integer | No | 20000 | The most characters to return (clamped to 1-50000). A page also takes at most 60,000 bytes of JSON, so it holds fewer characters of non-ASCII text (see Paging) |
+| timeoutMs | integer | No | 5000 | Timeout in ms for the search and the read together (clamped to 1000-30000); a search by criteria can end up to 2 s later (see Timing) |
 <!-- tools:end params:read_element_text -->
 
 **How the element is named:** `ref`, a ref from an earlier read ([find_ui_elements](#find_ui_elements), [get_ui_elements](#get_ui_elements), ...; see [Element refs](#ui-automation)), or `window` with find_ui_elements' criteria (`name` with `nameMatch`, `automationId`, `controlType`, `className`), searched exactly as find_ui_elements searches with `visibleOnly: true` and the same `scope` (left out: the window's open menus, dropdowns and dialogs too while it or one of them is in front; `window`: the window alone; `desktop`: every visible window too, the named one first; not with `ref`). An element found in a popup is read, and named by its ref, under the popup's own window. The criteria must find exactly one element: none is `ElementNotFound`, several is `AmbiguousElement` with `candidates` (up to 5, each with its ref, as find_ui_elements returns them), and nothing is read; a read never picks one of several for you. A search that did not cover the whole window (it timed out, hit the search limit, or skipped parts) or every window of its scope (`WindowLimit`) reads nothing either, since another match may exist: it is `OperationTimedOut` when it found one element or none so far (not `ElementNotFound`: the element may be in the part it did not search), and `AmbiguousElement` when it already found several, as for element_action. The result's `ref` is the element's ref, for the next page.
@@ -3608,9 +3608,9 @@ Read a table, grid or list a page of rows at a time: a data grid, Explorer's det
 |-----------|------|----------|---------|-------------|
 | ref | string | Yes | - | The table's [ref](#ui-automation), such as `w4120035e17` |
 | startRow | integer | No | 0 | The first row to return, zero-based, headers not counted: the `nextStartRow` of the previous page |
-| maxRows | integer | No | 50 | The most rows to return (1-200) |
-| maxColumns | integer | No | 20 | The most columns to return, from the first (1-50) |
-| timeoutMs | integer | No | 10000 | Timeout in ms (1000-30000). When it passes, the rows read so far are returned (`truncationReason: Timeout`) |
+| maxRows | integer | No | 50 | The most rows to return (clamped to 1-200) |
+| maxColumns | integer | No | 20 | The most columns to return, from the first (clamped to 1-50) |
+| timeoutMs | integer | No | 10000 | Timeout in ms (clamped to 1000-30000). When it passes, the rows read so far are returned (`truncationReason: Timeout`) |
 <!-- tools:end params:read_table -->
 
 **How the table is read** (`source`):
@@ -3695,7 +3695,7 @@ Wait on the server until a UI element condition holds (roadmap M3.8), instead of
 **Parameters:**
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| window | object | No | - | The window to search, a selector with find_windows' filters (as wait_for_window), waited for first. Not with ref or withinRef, which name their window |
+| window | object | No | - | The window to search, a window selector (as wait_for_window's), waited for first. Not with ref or withinRef, which name their window |
 | ref | string | No | - | The element to wait on: a ref from an earlier read, such as 'w4120035e17'. Not with window or the criteria |
 | name | string | No | - | The element's name, ignoring case; compared as nameMatch says (as find_ui_elements) |
 | nameMatch | string (one of: `"exact"`, `"contains"`, `"regex"`) | No | "exact" | How name is compared, as in [find_ui_elements](#find_ui_elements) |
@@ -3707,7 +3707,7 @@ Wait on the server until a UI element condition holds (roadmap M3.8), instead of
 | condition | string (one of: `"exists"`, `"gone"`, `"enabled"`, `"visible"`, `"focused"`, `"name_equals"`, `"value_equals"`, `"toggle_state"`) | No | "exists" | What to wait for (see the table below) |
 | expected | string | No | - | name_equals and value_equals: the exact text (case-sensitive). toggle_state: 'on', 'off' or 'indeterminate'. Not for the other conditions |
 | timeoutMs | integer | No | 10000 | How long to wait in milliseconds, the wait for the window included (0-60000); 0 checks once |
-| stableMs | integer | No | 0 | How long the condition must hold, at every check, before it counts, in milliseconds (0-10000; at most `timeoutMs`); 0 is one check that sees it (see Timing below) |
+| stableMs | integer | No | 0 | How long the condition must hold, at every check, before it counts, in milliseconds (0-10000; cut to `timeoutMs`); 0 is one check that sees it (see Timing below) |
 <!-- tools:end params:wait_for_element -->
 
 **Which element.** Name it one of two ways:
@@ -3841,7 +3841,7 @@ With UI Automation the result says where the URL came from (`urlSource`: `docume
 | cdpPort | integer | No | - | DevTools port of the browser that owns the window, as launch_browser_with_debug returns it. Found from the browser's command line when omitted |
 | targetId | string | No | - | The CDP tab to read instead of the one the window shows: a `targetId` from an earlier result or from a `CdpTargetAmbiguous` error. An id that is not 1-128 letters, digits, `.`, `_` or `-` is `InvalidArguments`; the tab must belong to the window's browser (`CdpPortOwnerMismatch`, also when the port's owner cannot be read); implies `requireCdp`. A tab that has closed gives `CdpTargetNotFound` |
 | requireCdp | boolean | No | false | Return the CDP error instead of falling back to UI Automation (needs a debug port, given or found; implied by targetId) |
-| timeoutMs | integer | No | 10000 | Time limit in ms (1000-30000) for the CDP requests, and again for the UI Automation read |
+| timeoutMs | integer | No | 10000 | Time limit in ms (clamped to 1000-30000) for the CDP requests, and again for the UI Automation read |
 | useCdp | boolean | No | true | False reads through UI Automation only: no debug port is looked for or used (`InvalidArguments` with cdpPort, targetId or requireCdp) |
 <!-- tools:end params:get_browser_url -->
 
@@ -3938,7 +3938,7 @@ Extract the content of the page shown in a browser window. UI Automation returns
 | cdpPort | integer | No | - | DevTools port of the browser that owns the window, as launch_browser_with_debug returns it. Found from the browser's command line when omitted |
 | targetId | string | No | - | The CDP tab to read instead of the one the window shows: a `targetId` from an earlier result or from a `CdpTargetAmbiguous` error. An id that is not 1-128 letters, digits, `.`, `_` or `-` is `InvalidArguments`; the tab must belong to the window's browser (`CdpPortOwnerMismatch`, also when the port's owner cannot be read); implies `requireCdp`. A tab that has closed gives `CdpTargetNotFound` |
 | requireCdp | boolean | No | false | Return the CDP error instead of falling back to UI Automation (needs a debug port, given or found; implied by targetId) |
-| timeoutMs | integer | No | 10000 | Time limit in ms (1000-30000) for the CDP requests, and again for the UI Automation read |
+| timeoutMs | integer | No | 10000 | Time limit in ms (clamped to 1000-30000) for the CDP requests, and again for the UI Automation read |
 | useCdp | boolean | No | true | False reads through UI Automation only: no debug port is looked for or used (`InvalidArguments` with cdpPort, targetId or requireCdp) |
 <!-- tools:end params:get_browser_content -->
 
@@ -5073,7 +5073,7 @@ Type text by simulating keyboard input, using Unicode characters, so any languag
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | text | string | Yes | - | The text to type |
-| delayMs | integer | No | 0 | Delay between keystrokes in milliseconds (0-100). Use for visible typing effect. |
+| delayMs | integer | No | 0 | Delay between keystrokes in milliseconds (clamped to 0-100). Use for visible typing effect. |
 | controlChars | string (one of: `"unicode"`, `"keys"`, `"shiftEnter"`) | No | none | What line breaks and tabs do when typed; required when typed text has any (`InvalidArguments` otherwise, nothing typed). A paste pastes them as they are. See [Line breaks and tabs](#line-breaks-and-tabs) |
 | method | string (one of: `"auto"`, `"unicode"`, `"keys"`, `"paste"`) | No | "auto" | `unicode`: type Unicode characters. `keys`: type with the keys of the window's keyboard layout, for remote desktops and virtual machines that drop Unicode keystrokes. `paste`: lend the clipboard, press Ctrl+V and put the clipboard's text back. `auto`: paste text over 200 characters when it can, else type it as `unicode`. See [Typing or pasting](#typing-or-pasting) |
 | windowHandle | integer | No | none | The window the keys are for. The server brings it to the front first and sends only while it, or a dialog it owns, is in front (see [Input guard](#input-guard)) |
@@ -5732,7 +5732,7 @@ A client that cancels the call stops the step that is running; the request gets 
 **Parameters:**
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| window | object | Yes | - | The run's window: a selector with find_windows' filters, or {"handle": n}, resolved to exactly one window before the run; not {"foreground": true} alone |
+| window | object | Yes | - | The run's window: a window selector, or {"handle": n}, resolved to exactly one window before the run; not {"foreground": true} alone |
 | steps | object[] | Yes | - | The steps, 1-50, run in order |
 | maxDurationMs | integer | No | 30000 | How long the run may hold the input gate, in milliseconds (default: 30000, min: 1000, max: 60000); a wait step's timeoutMs is cut to what is left |
 | delayBetweenStepsMs | integer | No | 50 | The pause between two steps, in milliseconds (default: 50, min: 0, max: 2000) |
@@ -5841,7 +5841,7 @@ Launch an application by path, name, installed app (its `appId` or exact name fr
 | placement | object | No | - | Where to put the window once it is found: `snap` or `bounds`, `monitor`, `state`, `focus` (see [Launch and arrange](#launch-and-arrange)); implies waiting for the window |
 | reuseExisting | boolean | No | false | Use an open window of the app instead of starting another copy (`launchStatus` `alreadyOpen`; see [Reusing an open window](#reusing-an-open-window)) |
 | forceAccessibility | boolean | No | false | Start a Chromium browser, an Electron or a CEF app with `--force-renderer-accessibility`, so its pages are readable from the first UI Automation read (see [Web content accessibility](#web-content-accessibility)) |
-| runAsAdmin | boolean | No | false | Start the `.exe` as administrator: Windows asks the user (UAC), or the user is asked through the client where Windows would not (see [Running as administrator](#running-as-administrator)) |
+| runAsAdmin | boolean | No | false | Start the `.exe` as administrator: Windows asks the user (UAC), or the user is asked through the client where Windows would not, and a client that cannot ask gets `ElevationNotConfirmed` (see [Running as administrator](#running-as-administrator)) |
 <!-- tools:end params:launch_application -->
 
 **Example 1:** Launch by name

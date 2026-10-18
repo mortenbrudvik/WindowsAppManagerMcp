@@ -42,8 +42,10 @@ public class StepSequenceTools
                  "wait_for_window only read, anywhere). The run holds the input gate (no other call's input lands " +
                  "between steps) for at most maxDurationMs, and stops at the first failed step unless it is optional; " +
                  "the rest are skipped, and nothing is undone. It also stops on a pause (PausedByUser), when " +
-                 "maxDurationMs runs out (OperationTimedOut), and when another window takes the front after window or " +
-                 "its dialog had it (TargetNotForeground: it never takes it back). Check a state with wait_for_window " +
+                 "maxDurationMs runs out (OperationTimedOut), when another window takes the front after window or " +
+                 "its dialog had it (TargetNotForeground: it never takes it back), and on the user's own input when " +
+                 "takeover detection is set to stop (UserInterrupted; warn only warns, and a warning says when detection did " +
+                 "not work). Check a state with wait_for_window " +
                  "(condition foreground) or wait_for_element, timeoutMs 0. Refused in a step: paste (type_text types, " +
                  "unicode or keys), file output, window_close, scope desktop, allowHostTarget, and keys that close, " +
                  "quit or lock (ctrl+w, ctrl+q); other keys act in window as in a direct call (ctrl+s saves). A whole " +
@@ -53,7 +55,7 @@ public class StepSequenceTools
                  "most 2 images. Each step is audited as its own call.")]
     [ToolResultPayload(typeof(RunStepsResult))]
     public async Task<CallToolResult> RunSteps(
-        [Description("The run's window: a selector with find_windows' filters, or {\"handle\": n}, resolved to exactly one window before the run; not {\"foreground\": true} alone")]
+        [Description("The run's window: a window selector, or {\"handle\": n}, resolved to exactly one window before the run; not {\"foreground\": true} alone")]
         WindowSelector window,
         [Description("The steps, 1-50, run in order")]
         RunStep[] steps,

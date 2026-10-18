@@ -65,7 +65,8 @@ public partial class BrowserReadingTools
                  "Only a browser this server started, or whose command line shows a DevTools port and a profile in the server's own folders, " +
                  "is closed; any other is NotADebugBrowser, so the user's own browser is never closed. The user confirms when the client can " +
                  "ask (ConfirmationDeclined); otherwise confirm=true is required (ConfirmationRequired). Sends Browser.close, waits up to " +
-                 "timeoutMs, then ends what is left. A named profile is kept unless deleteProfile=true; a userDataDir is never deleted.")]
+                 "timeoutMs, then ends what is left. A named profile is kept unless deleteProfile=true; a userDataDir is never deleted. " +
+                 "An unreadable process list closes nothing (ProcessTreeUnreadable: try again).")]
     public async Task<CloseDebugBrowserResultDto> CloseDebugBrowser(
         [Description("The processId launch_browser_with_debug returned.")]
         int? processId = null,

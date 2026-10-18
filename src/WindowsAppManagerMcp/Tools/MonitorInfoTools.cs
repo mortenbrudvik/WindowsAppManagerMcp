@@ -23,8 +23,8 @@ public class MonitorInfoTools
     [McpServerTool(Name = "get_monitors", Title = "List Monitors", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
     [Description("Get information about all connected displays/monitors including bounds, work area (excluding taskbar), scale factor " +
                  "and dpi, id (stays with the monitor on its port), friendlyName, isInternal (a built-in panel) and relation (left, " +
-                 "right, above or below the primary); a monitor parameter takes its index, id or name. virtualScreen: the bounds of " +
-                 "all monitors together, which take_screenshot captures with monitor 'all'.")]
+                 "right, above or below the primary); a monitor parameter takes its index, id or name (\\\\.\\DISPLAYn, not " +
+                 "friendlyName). virtualScreen: the bounds of all monitors together, which take_screenshot captures with monitor 'all'.")]
     public MonitorsResult GetMonitors() => ReadMonitors(_monitorService, _screen);
 
     /// <summary>
