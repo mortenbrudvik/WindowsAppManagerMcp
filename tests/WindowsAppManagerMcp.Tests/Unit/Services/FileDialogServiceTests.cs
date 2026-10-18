@@ -433,6 +433,97 @@ public sealed class FileDialogServiceTests : IDisposable
     }
 
     [Theory]
+    [InlineData("save")]
+    [InlineData("documents")]
+    [InlineData("a")]
+    [InlineData("instead")]
+    [InlineData("folder")]
+    public async Task APermissionPrompt_HoldingAnExtensionlessFilesName_IsNoReplacePrompt_EvenWithOverwrite(string name)
+    {
+        // Saving C:\Program Files\X\save, a file without an extension, over an existing one: its name with its extension is
+        // the bare word "save", which the permission prompt holds as a whole word. Yes would answer that question blind.
+        var file = ExistingFile(name);
+        PressOpensThePrompt();
+        _promptContent = YesNoPrompt("You don't have permission to save in this location. Contact the administrator to obtain permission.",
+            "Would you like to save in the Documents folder instead? It is a folder you can write to.");
+
+        var result = await CompleteAsync(file, overwrite: true);
+
+        result.ErrorCode.Should().Be(nameof(UIElementErrorCode.DialogNotCompleted));
+        result.Prompt.Should().Be(_promptContent);
+        result.PromptHandled.Should().BeFalse();
+        _answers.Should().BeEmpty();
+    }
+
+    [Theory]
+    [InlineData("save already exists.", "Do you want to replace it?")]
+    [InlineData("'save' already exists.", "Do you want to replace it?")]
+    [InlineData("save ist bereits vorhanden.", "Möchten Sie sie ersetzen?")]
+    public async Task AReplacePrompt_NamingAnExtensionlessFileWithoutItsFolder_IsHandedBackUnanswered(string first, string second)
+    {
+        // Without an extension the file's name is a bare word, which no length or quoting tells from a word of another question
+        var file = ExistingFile("save");
+        PressOpensThePrompt();
+        _promptContent = YesNoPrompt(first, second);
+
+        var result = await CompleteAsync(file, overwrite: true);
+
+        result.ErrorCode.Should().Be(nameof(UIElementErrorCode.DialogNotCompleted));
+        result.PromptHandled.Should().BeFalse();
+        _answers.Should().BeEmpty();
+    }
+
+    [Theory]
+    [InlineData("{folder}\\save already exists.\nDo you want to replace it?")]
+    [InlineData("{folder}\\SAVE ist bereits vorhanden.")]
+    public async Task Save_WithOverwrite_AnswersAPromptThatNamesAnExtensionlessFile_ByItsFullPath(string text)
+    {
+        var file = ExistingFile("save");
+        PressOpensThePrompt();
+        _promptContent = YesNoPrompt(text.Replace("{folder}", _folder, StringComparison.Ordinal));
+
+        var result = await CompleteAsync(file, overwrite: true);
+
+        result.PromptHandled.Should().BeTrue(result.Error);
+        _answers.Should().ContainSingle().Which.Button.Should().Be("yes");
+    }
+
+    [Theory]
+    [InlineData("新報告書.txt は既に存在します。")] // a longer name that ends with the file's: 新 continues it
+    [InlineData("新.報告書.txt は既に存在します。")]
+    [InlineData("\U00020BB7報告書.txt は既に存在します。")] // an ideograph outside the Basic Multilingual Plane continues it too
+    [InlineData("ファイル報告書.txt は既に存在します。")]
+    public async Task AYesNoPrompt_NamingALongerNameThatEndsWithTheFiles_IsNoReplacePrompt_InAnyScript(string text)
+    {
+        // Before the name any letter or digit continues it: only after it does a CJK, kana or Hangul letter end it
+        var file = ExistingFile("報告書.txt");
+        PressOpensThePrompt();
+        _promptContent = YesNoPrompt(text, "上書きしますか?");
+
+        var result = await CompleteAsync(file, overwrite: true);
+
+        result.ErrorCode.Should().Be(nameof(UIElementErrorCode.DialogNotCompleted));
+        result.PromptHandled.Should().BeFalse();
+        _answers.Should().BeEmpty();
+    }
+
+    [Theory]
+    [InlineData("報告書.txtは既に存在します。")]
+    [InlineData("「報告書.txt」は既に存在します。")]
+    [InlineData("報告書.txt이(가) 이미 있습니다.")]
+    public async Task Save_WithOverwrite_AnswersAPromptThatWritesTheNextWordOntoTheName(string text)
+    {
+        var file = ExistingFile("報告書.txt");
+        PressOpensThePrompt();
+        _promptContent = YesNoPrompt(text);
+
+        var result = await CompleteAsync(file, overwrite: true);
+
+        result.PromptHandled.Should().BeTrue(result.Error);
+        _answers.Should().ContainSingle().Which.Button.Should().Be("yes");
+    }
+
+    [Theory]
     [InlineData("report.txt ist bereits vorhanden.")]
     [InlineData("REPORT.TXT already exists.")]
     [InlineData("report.txtは既に存在します。")]

@@ -1,4 +1,6 @@
+using System.Buffers;
 using System.Diagnostics;
+using System.Text;
 using WindowsAppManagerMcp.Infrastructure;
 using WindowsAppManagerMcp.Models;
 using WindowsAppManagerMcp.Services.Interfaces;
@@ -347,10 +349,16 @@ public sealed class FileDialogService : IFileDialogService
     /// words, which are never read. The name without its extension alone ("report"), quoted or not, does not count: it can be
     /// a word of another question ("save", "Documents", "a", "instead": the words of "save in the Documents folder instead?"
     /// that a file can be named), and no length or quoting tells such a word from a file's name. A replace prompt that shows
-    /// only that is handed back unanswered, as any other prompt.
+    /// only that is handed back unanswered, as any other prompt. For the same reason a file without an extension counts only
+    /// by its full path: its name is such a bare word ("save" in C:\Program Files\X\save).
     /// </summary>
     private static bool NamesFile(IReadOnlyList<string> text, string path)
     {
+        if (Path.GetExtension(path).Length == 0)
+        {
+            return text.Any(line => HasWholeName(line, path));
+        }
+
         var name = Path.GetFileName(path);
         var stem = Path.GetFileNameWithoutExtension(path);
         var pathWithoutExtension = stem.Length > 0 ? Path.Join(Path.GetDirectoryName(path), stem) : null;
@@ -376,9 +384,23 @@ public sealed class FileDialogService : IFileDialogService
         return false;
     }
 
-    /// <summary>Whether the name that starts at <paramref name="at"/> is the end of a longer one: "my" in "myreport.txt", "my." in "my.report.txt".</summary>
+    /// <summary>
+    /// Whether the name that starts at <paramref name="at"/> is the end of a longer one: "my" in "myreport.txt", "my." in
+    /// "my.report.txt", "新" in "新報告書.txt". Any letter or digit continues it, in every script: no prompt writes its words
+    /// onto the front of a name, so the exception <see cref="IsNameCharacter"/> makes for scripts written without spaces holds
+    /// only after it, and before it would take a longer name that ends with the file's for the file.
+    /// </summary>
     private static bool ContinuesBefore(string text, int at) =>
-        at > 0 && (IsNameCharacter(text[at - 1]) || (text[at - 1] == '.' && at > 1 && IsNameCharacter(text[at - 2])));
+        at > 0 && (ContinuesNameBefore(text, at) || (text[at - 1] == '.' && at > 1 && ContinuesNameBefore(text, at - 1)));
+
+    /// <summary>
+    /// Whether the character in front of <paramref name="at"/> is a letter, a digit, '_' or '-', read as a whole code point,
+    /// so an ideograph outside the Basic Multilingual Plane (a surrogate pair, no letter as two halves) counts as the letter it is.
+    /// </summary>
+    private static bool ContinuesNameBefore(string text, int at) =>
+        Rune.DecodeLastFromUtf16(text.AsSpan(0, at), out var rune, out _) == OperationStatus.Done
+            ? Rune.IsLetterOrDigit(rune) || rune.Value is '_' or '-'
+            : char.IsSurrogate(text[at - 1]);
 
     /// <summary>
     /// Whether the name that ends at <paramref name="end"/> is the start of a longer one: "x" in "report.txtx", ".bak" in
