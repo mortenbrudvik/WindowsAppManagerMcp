@@ -90,6 +90,38 @@ public class SharedPauseUnreadableMessageTests : IDisposable
         status.PausedBy.Should().Be(InputControlSources.SharedPauseUnreadable);
         status.Message.Should().Contain("by this server").And.Contain("could not read the pause it shares").And.NotContain("by the user")
             .And.Contain("Stop and ask the user");
+
+        // The hotkey's first press only makes this pause the user's own (InputSession.TogglePauseByHotkey): "again" is wrong
+        status.Message.Should().Contain("the first press keeps the pause").And.Contain("a second press more than 2 seconds later resumes")
+            .And.NotContain("Ctrl+Alt+Shift+Pause again");
+    }
+
+    [Fact]
+    public void GetControlStatus_AfterTheUsersPause_SaysTheHotkeyAgain_NotTwice()
+    {
+        using var session = new InputSession(_input, PauseHotkeyOptions.Default);
+        session.Pause(InputControlSources.Hotkey);
+        var hotkey = new Mock<IPauseHotkey>();
+        hotkey.Setup(h => h.Status).Returns(new PauseHotkeyStatus("Ctrl+Alt+Shift+Pause", PauseHotkeyState.Registered, "default"));
+
+        var status = new InputControlTools(session, hotkey.Object).GetControlStatus();
+
+        status.Message.Should().Contain("Only the user can resume: Ctrl+Alt+Shift+Pause again, or by confirming resume_input")
+            .And.NotContain("twice");
+    }
+
+    [Fact]
+    public void ReleaseAllInput_WithReleaseHeldModifiers_LeavesAStuckKeyDown_AndSaysTheServerPausedItself()
+    {
+        // A stuck Windows key: not one of the pause hotkey's modifiers, so only the pause leaves it down
+        _input.Press(0x5B);
+
+        var result = new InputControlTools(_session, new Mock<IPauseHotkey>().Object).ReleaseAllInput(releaseHeldModifiers: true);
+
+        result.ErrorCode.Should().Be(InputErrorCode.PausedByUser);
+        result.Error.Should().Contain("Input is paused").And.Contain("could not read the pause it shares")
+            .And.NotContain("by the user").And.NotContain("pressed the pause hotkey").And.Contain("left alone");
+        _input.IsKeyDown(0x5B).Should().BeTrue();
     }
 
     [Fact]

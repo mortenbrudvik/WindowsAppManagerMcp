@@ -156,9 +156,7 @@ public class InputControlTools
         var selfPaused = state.PausedBy == InputControlSources.SharedPauseUnreadable;
         if (server.ClientCapabilities?.Elicitation?.Form == null)
         {
-            var pausedHow = selfPaused
-                ? $"Input is paused: {InputControlSources.PauseCause(state.PausedBy, chord)}. This"
-                : "Input was paused by the user, and this";
+            var pausedHow = $"Input is paused: {InputControlSources.PauseCause(state.PausedBy, chord)}. This";
             var resumeHow = ResumeWithoutQuestion(state, chord, "So, with this client, only restarting this server resumes input.");
             return new ResumeInputResult(false, WasPaused: true,
                 Error: $"{pausedHow} MCP client cannot ask the user to confirm a resume (it does not support elicitation). " +
@@ -223,7 +221,8 @@ public class InputControlTools
                 var resumeHow = ResumeWithoutQuestion(state, chord,
                     "So only a resume_input the user confirms, or restarting this server, resumes input.");
                 return new ResumeInputResult(false, WasPaused: true,
-                    Error: $"The user could not be asked ({ex.Message}). {resumeHow}",
+                    Error: $"Input is paused: {InputControlSources.PauseCause(state.PausedBy, chord)}. The user could not be asked " +
+                           $"to confirm a resume ({ex.Message}), so input was not resumed. {resumeHow}",
                     ErrorCode: InputErrorCode.ResumeNeedsUser);
             }
         }
@@ -235,10 +234,11 @@ public class InputControlTools
             return new ResumeInputResult(true, WasPaused: true, ResumedBy: now.ResumedBy);
         }
 
+        // A new pause: the user's hotkey, or this server's own after another server resumed (SyncLocked); the cause says which
         if (now.PauseNumber != state.PauseNumber)
         {
-            return Declined("The user paused input again while the question was open, so the answer does not apply to this pause. Input " +
-                            "stays paused; ask the user what to do.");
+            return Declined($"Input was paused again while the question was open: {InputControlSources.PauseCause(now.PausedBy, chord)}. " +
+                            "The answer was for the earlier pause, so input stays paused; ask the user what to do.");
         }
 
         if (!Confirmed(answer))
@@ -253,7 +253,8 @@ public class InputControlTools
         {
             var after = _session.PauseState;
             return after.Paused
-                ? Declined("The user paused input again while the question was answered. Input stays paused; ask the user what to do.")
+                ? Declined($"Input was paused again while the question was answered: {InputControlSources.PauseCause(after.PausedBy, chord)}. " +
+                           "Input stays paused; ask the user what to do.")
                 : new ResumeInputResult(true, WasPaused: true, ResumedBy: after.ResumedBy);
         }
 
@@ -297,8 +298,8 @@ public class InputControlTools
             else if (modifiers.PausedByUser)
             {
                 errorCode = errorCode == InputErrorCode.None ? InputErrorCode.PausedByUser : errorCode;
-                error = Join(error, "Modifier keys the server did not press were left alone, because input is paused: " +
-                                    $"{InputControlSources.PauseCause(_session.PauseState?.PausedBy, _session.PauseChord)}.");
+                error = Join(error, $"Input is paused: {InputControlSources.PauseCause(_session.PauseState?.PausedBy, _session.PauseChord)}. " +
+                                    "Modifier keys the server did not press were left alone.");
             }
             else
             {

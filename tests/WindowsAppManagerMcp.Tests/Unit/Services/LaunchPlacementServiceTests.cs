@@ -468,6 +468,41 @@ public class LaunchPlacementServiceTests
         _calls.Should().Equal("snap LeftHalf ", "delay");
     }
 
+    [Theory]
+    [InlineData(InputControlSources.Hotkey, "the user pressed the pause hotkey", "could not read the pause it shares")]
+    [InlineData(InputControlSources.SharedPauseUnreadable, "could not read the pause it shares", "pressed the pause hotkey")]
+    public async Task WhileInputIsPaused_TheErrorSaysWhy(string pausedBy, string says, string doesNotSay)
+    {
+        // The server pauses itself when it cannot read the shared pause: the agent must not tell the user they paused it
+        _session.SetupGet(s => s.IsPaused).Returns(true);
+        _session.SetupGet(s => s.PauseState).Returns(new InputPauseState(true, pausedBy));
+
+        var outcome = await PlaceOneAsync(Code, new LaunchPlacement(Snap: "left_half"));
+
+        outcome.ErrorCode.Should().Be(WindowErrorCode.PausedByUser);
+        outcome.Error.Should().Contain("Input is paused").And.Contain(says).And.NotContain(doesNotSay)
+            .And.NotContain("because the user paused input").And.Contain("never resume input yourself");
+    }
+
+    [Theory]
+    [InlineData(InputControlSources.Hotkey, "the user pressed the pause hotkey", "could not read the pause it shares")]
+    [InlineData(InputControlSources.SharedPauseUnreadable, "could not read the pause it shares", "pressed the pause hotkey")]
+    public async Task APauseDuringTheWatch_TheErrorSaysWhy(string pausedBy, string says, string doesNotSay)
+    {
+        At(100, () =>
+        {
+            Place(Code, SavedBounds);
+            _session.SetupGet(s => s.IsPaused).Returns(true);
+            _session.SetupGet(s => s.PauseState).Returns(new InputPauseState(true, pausedBy));
+        });
+
+        var outcome = await PlaceOneAsync(Code, new LaunchPlacement(Snap: "left_half"));
+
+        outcome.FailedStep.Should().Be(LaunchPlacementStep.Settle);
+        outcome.Error.Should().Contain("moved it again").And.Contain("Input is paused").And.Contain(says).And.NotContain(doesNotSay)
+            .And.NotContain("because the user paused input");
+    }
+
     [Fact]
     public async Task AWindowThatClosed_IsInvalidHandle()
     {

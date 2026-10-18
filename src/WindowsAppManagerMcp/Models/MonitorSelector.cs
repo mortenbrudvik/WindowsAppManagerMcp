@@ -62,7 +62,7 @@ public static class MonitorSelectorDescriptions
 public sealed class MonitorSelectorConverter : JsonConverter<MonitorSelector>
 {
     private const string Expected =
-        "monitor takes an index (0-based) or a name: 'primary', 'left', 'right', 'current', or an id or name from get_monitors.";
+        "monitor takes an index (0-based) or a name: 'primary', 'left', 'right', 'current', or an id or device name from get_monitors.";
 
     public override MonitorSelector Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
     {

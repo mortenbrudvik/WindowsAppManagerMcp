@@ -114,8 +114,9 @@ public class DialogTools
         string path,
         [Description("'open' (an Open dialog: the path must exist) or 'save' (a Save As dialog).")]
         FileDialogAction action,
-        [Description("save: replace an existing file (the application's replace prompt is answered Yes; for a file without an " +
-                     "extension only a prompt that shows its full path, else DialogNotCompleted). Default: false.")]
+        [Description("save: replace an existing file (the application's replace prompt is answered Yes when it shows the file's " +
+                     "name with its extension or its full path, only its full path for a file without an extension; else " +
+                     "DialogNotCompleted). Default: false.")]
         bool overwrite = false,
         [Description("Window handle (as integer) of the file dialog (the openedPopup of the action that opened it), or of the " +
                      "window whose modal file dialog to complete. handle or window is required.")]

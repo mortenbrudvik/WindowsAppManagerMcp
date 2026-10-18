@@ -2818,7 +2818,11 @@ yet run on a real desktop; before the release that carries it, the owner checks:
    launch_application and `waitForWindow`, and note its handle and processId. On that handle, run_steps with
    `type_text`, `press_keys` `ctrl+s` and `wait_for_window` for the Save As dialog it owns; then answer the dialog with
    file_dialog, a direct call, to a file under `%TEMP%\wam-m62`. Check that the file holds the text, close Notepad with
-   close_window by the noted handle only, and delete the file. Never close or act on a window by its title.
+   close_window by the noted handle only, and delete the file. Never close or act on a window by its title. Windows 11's
+   Notepad restores the user's own tabs (see
+   [Desktop check: 3.0.0 review fixes and issues #8 to #11](#desktop-check-300-review-fixes-and-issues-8-to-11)): run
+   items 2 to 4 only when the Notepad they launch shows none of the owner's tabs, and otherwise move them to a window the
+   check opens itself, as the 3.0.0 checks do.
 3. **The pause hotkey, by hand:** with the server started with `WAM_PAUSE_HOTKEY` `Pause`, during a run of many
    type_text steps into that Notepad, press Pause. The run reports `PausedByUser`, nothing more is typed, and the user
    resumes; the agent never does. With the default Ctrl+Alt+Shift+Pause, the user's first modifier goes down before
@@ -2959,9 +2963,8 @@ does.
    extensions for known file types" on (Windows' default; if the owner has it off, turn it on for the run and back
    afterwards). If `FileDialog_SaveWithOverwrite_AnswersTheReplacePromptYes_AndTheFileIsRewritten` fails with
    `DialogNotCompleted`, the prompt showed neither the file's name with its extension nor its full path (file_dialog no
-   longer takes the name without its extension). The test's output gives only the prompt's title, so read its text by
-   hand: in the Save As dialog of a program the owner starts, save over an existing `.txt` file in a scratch folder, and
-   record the Confirm Save As prompt's text for BACKLOG.md (RF.F4). (b) A non-modal dialog: in a window
+   longer takes the name without its extension). The test's output gives the prompt's title and text (`prompt`,
+   `promptText`): record the Confirm Save As prompt's text for BACKLOG.md (RF.F4). (b) A non-modal dialog: in a window
    the check opens itself that shows an owned non-modal dialog (for example a throwaway PowerShell WinForms form that
    opens a second form with `Show(owner)`), respond_to_dialog with the main window's handle and a `button` returns
    `DialogNotFound` naming the open dialog's handle, and nothing is pressed; by the dialog's own handle the press goes
@@ -3060,6 +3063,7 @@ The tool tables of the docs are generated into marked regions, between `<!-- too
 |------|--------|----------|
 | README.md | `tool-table` | "Available Tools (N)" and the category table |
 | docs/TOOLS.md | `summary` | The introduction with the tool count, and the quick reference |
+| docs/TOOLS.md | `annotations` | The tools each annotation hint marks (`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`), from the tools' `[McpServerTool]` flags as tools/list carries them |
 | docs/TOOLS.md | `toolsets` | The toolsets of `Toolsets.Server`: default, description and tools (generated from the catalog, not from tools/list) |
 | docs/TOOLS.md | `read-only` | The tools served in read-only mode (generated from the readOnlyHint annotations) |
 | docs/TOOLS.md | `params:TOOL` | The parameter table of each tool, and a field table for each array-of-objects parameter |
@@ -3067,9 +3071,11 @@ The tool tables of the docs are generated into marked regions, between `<!-- too
 | skills/using-windows-app-manager/SKILL.md | `count` | The sentence with the tool count |
 | skills/using-windows-app-manager/tools.md | `tool-tables` | The whole "Available Tools" section: a table per category with summaries and key parameters, in the reference file rather than the core the skill loads (issue #11) |
 
-Tool names, counts, categories and the parameter tables' names, order, types, required flags and defaults
-are generated. ToolDocCatalog holds what tools/list does not have: each tool's category, its one-line summary
-and the key parameters the skill's tool tables name (the test checks they are real parameters). The Description cells of the
+Tool names, counts, categories, the parameter tables' names, order, types, required flags and defaults, and
+the tools each annotation hint marks are generated
+(`AnnotationsRegion_ListsTheToolsEachHintMarks_FromTheirAnnotations` checks that each row lists exactly the tools
+whose annotations set its hint). ToolDocCatalog holds what tools/list does not have: each tool's category, its
+one-line summary and the key parameters the skill's tool tables name (the test checks they are real parameters). The Description cells of the
 parameter tables, and a Default cell that explains a null default in words ("primary", "temp file"), are
 written by hand in docs/TOOLS.md and kept when a table is regenerated; a new parameter starts with the
 description from its schema. Everything outside the regions (the prose, examples and responses) is written by
@@ -3203,8 +3209,8 @@ typical result over 300 tokens, and tools/list itself, measured in October 2026:
 | `read_table` | Task Manager's first 50 processes, 5 columns with headers | 643 | 1,000 |
 | `get_server_info` | The default deny list, five host processes, two monitors, the resources and prompts (634 before roadmap M6.9) | 707 | 850 |
 | `get_layout` | A preset of 6 placements, each with the captured window identity, its monitor's id and name and its program (529 before M6.8) | 805 | 841 |
-| tools/list | Every tool's name, title, description, schemas and annotations: 78 tools, 263,635 bytes, measured on the 3.0.0 review-fix branch (`ToolList_StaysWithinItsBudget`, whose comment in ToolPayloadBudgetTests lists the steps; from M5.8 on: M5.8's six DOM bridge tools added 2,970, 936 of them their window selectors; M5.8's dialog option and the UI Automation browser_handle_dialog 199 more; M6.1a's additive consolidations 405 more: mouse_click's own click checks 249, set_window_bounds' optional pairs 87, get_browser_url's foreground sentence 41, get_monitors' virtualScreen 28; M6.1b's one-line descriptions of the nine deprecated tools and the descriptions that no longer send the agent to them 2,121 fewer; M6.6's list_processes parameters and fields 361 more and get_window_info's integrity fields 31 more; M6.2's run_steps 1,054 more; M6.4's wait_for_visual 1,072 more; M6.3's read_screen_text and find_text_on_screen in the opt-in `ocr` toolset 2,088 more; M6.7's set_window_zorder (522), the `monitor` parameters beside the deprecated monitorIndex, set_window_bounds' percent placement (233), get_monitors' identity fields and get_server_info's pinnedWindows 1,514 more; M6.5's list_installed_apps and runAsAdmin 357 more; M6.8's save_layout placements and includeMinimized and apply_layout dryRun and placements 775 more; then M7's tools and fields, 3.0.0's removal of the nine replaced tools and the monitorIndex parameters, and the 3.0.0 review's fixes and issues #8 to #10) | 65,909 | 65,923 |
-| Default tools/list | The 62 tools a server serves without WAM_TOOLSETS, WAM_EXCLUDE_TOOLS and WAM_READ_ONLY, 223,459 bytes, measured on the 3.0.0 review-fix branch (`DefaultToolList_StaysWithinItsBudget`, roadmap M6.1, whose comment lists the steps; 59,627 before M6.1a, 60,032 after it with 70 tools, 9,027 fewer once M6.1b moved the nine deprecated tools and the three geometry batches to opt-in toolsets, 392 more with M6.6's list_processes and get_window_info fields, 1,055 more with M6.2's run_steps in the `steps` toolset, on by default, 1,187 more with M6.7's set_window_zorder in `windows`, the `monitor` parameters, set_window_bounds' percent placement and the get_monitors and get_server_info fields; 357 more with M6.5's list_installed_apps in the `launch` toolset and runAsAdmin; 775 more with M6.8's layout schema version 2 in the `layouts` toolset, 54,806 then; then M7's tools and fields, 3.0.0's removals and the 3.0.0 review's fixes and issues #8 to #10) | 55,865 | 55,878 |
+| tools/list | Every tool's name, title, description, schemas and annotations: 78 tools, 264,560 bytes, measured on the 3.0.0 review-fix branch after its docs pass and the follow-up to it (`ToolList_StaysWithinItsBudget`, whose comment in ToolPayloadBudgetTests lists the steps; from M5.8 on: M5.8's six DOM bridge tools added 2,970, 936 of them their window selectors; M5.8's dialog option and the UI Automation browser_handle_dialog 199 more; M6.1a's additive consolidations 405 more: mouse_click's own click checks 249, set_window_bounds' optional pairs 87, get_browser_url's foreground sentence 41, get_monitors' virtualScreen 28; M6.1b's one-line descriptions of the nine deprecated tools and the descriptions that no longer send the agent to them 2,121 fewer; M6.6's list_processes parameters and fields 361 more and get_window_info's integrity fields 31 more; M6.2's run_steps 1,054 more; M6.4's wait_for_visual 1,072 more; M6.3's read_screen_text and find_text_on_screen in the opt-in `ocr` toolset 2,088 more; M6.7's set_window_zorder (522), the `monitor` parameters beside the deprecated monitorIndex, set_window_bounds' percent placement (233), get_monitors' identity fields and get_server_info's pinnedWindows 1,514 more; M6.5's list_installed_apps and runAsAdmin 357 more; M6.8's save_layout placements and includeMinimized and apply_layout dryRun and placements 775 more; then M7's tools and fields, 3.0.0's removal of the nine replaced tools and the monitorIndex parameters, and the 3.0.0 review's fixes, issues #8 to #10, the docs pass and its follow-up) | 66,140 | 66,154 |
+| Default tools/list | The 62 tools a server serves without WAM_TOOLSETS, WAM_EXCLUDE_TOOLS and WAM_READ_ONLY, 224,153 bytes, measured on the 3.0.0 review-fix branch after its docs pass and the follow-up to it (`DefaultToolList_StaysWithinItsBudget`, roadmap M6.1, whose comment lists the steps; 59,627 before M6.1a, 60,032 after it with 70 tools, 9,027 fewer once M6.1b moved the nine deprecated tools and the three geometry batches to opt-in toolsets, 392 more with M6.6's list_processes and get_window_info fields, 1,055 more with M6.2's run_steps in the `steps` toolset, on by default, 1,187 more with M6.7's set_window_zorder in `windows`, the `monitor` parameters, set_window_bounds' percent placement and the get_monitors and get_server_info fields; 357 more with M6.5's list_installed_apps in the `launch` toolset and runAsAdmin; 775 more with M6.8's layout schema version 2 in the `layouts` toolset, 54,806 then; then M7's tools and fields, 3.0.0's removals and the 3.0.0 review's fixes, issues #8 to #10, the docs pass and its follow-up) | 56,039 | 56,052 |
 
 Every other typical result is at most 300 tokens. When a change makes a result larger on purpose, raise its
 budget in the same change (the failure message gives the new size); when a change shrinks one a lot, lower it.
@@ -3220,37 +3226,40 @@ the generated Tokens column of its toolsets table, with the default surface's an
 measured as the two list budgets measure them (`GeneratedToolDocsTests`); `EveryToolset_HasATokenBudget` makes a
 new toolset come with a budget. `EveryTool_SchemaWithinCap` caps every single tool object at 2,500 tokens: a cap, not a
 ratchet, so a tool that needs more is split or trimmed rather than the cap raised. It sits about 100 tokens above the
-largest tool (the roadmap's 2,400 came from compact estimates). Measured in October 2026 after M6.1a (the largest tools
-were capture_with_elements at 2,396 and element_action at 2,386, so they have about 100 tokens of room left):
+largest tool (the roadmap's 2,400 came from compact estimates). Measured in October 2026 (the largest tools are
+capture_with_elements at 2,416 and element_action at 2,399, so they have about 100 tokens of room left; 2,396 and 2,386
+after M6.1a):
 
 | Toolset | Default | Tools | Tokens | Budget |
 |---------|---------|------:|-------:|-------:|
-| `server` | always on | 4 | 1,090 | 1,092 |
-| `windows` | on | 14 | 11,292 | 11,321 |
-| `monitors` | on | 1 | 167 | 203 |
-| `capture` | on | 4 | 6,388 | 6,426 |
-| `elements` | on | 9 | 8,282 | 8,318 |
-| `input` | on | 10 | 14,838 | 14,874 |
-| `clipboard` | on | 2 | 734 | 750 |
-| `launch` | on | 3 | 3,371 | 3,371 |
-| `process` | on | 3 | 2,314 | 2,318 |
-| `layouts` | on | 5 | 1,997 | 2,028 |
+| `server` | always on | 4 | 1,084 | 1,120 |
+| `windows` | on | 14 | 11,309 | 11,345 |
+| `monitors` | on | 1 | 176 | 212 |
+| `capture` | on | 4 | 6,293 | 6,329 |
+| `elements` | on | 9 | 8,323 | 8,359 |
+| `input` | on | 10 | 14,915 | 14,951 |
+| `clipboard` | on | 2 | 732 | 750 |
+| `launch` | on | 3 | 3,435 | 3,471 |
+| `process` | on | 3 | 2,307 | 2,343 |
+| `layouts` | on | 5 | 1,999 | 2,035 |
 | `workspaces` | off | 2 | 609 | 620 |
-| `steps` | on | 1 | 1,062 | 1,091 |
-| `browser` | on | 6 | 4,318 | 4,370 |
-| `browser-actions` | off | 7 | 3,577 | 3,600 |
-| `browser-script` | off | 1 | 468 | 500 |
-| `visual` | off | 1 | 1,116 | 1,152 |
-| `windows-batch` | off | 3 | 2,078 | 2,114 |
-| `ocr` | off | 2 | 2,195 | 2,231 |
+| `steps` | on | 1 | 1,094 | 1,130 |
+| `browser` | on | 6 | 4,360 | 4,396 |
+| `browser-actions` | off | 7 | 3,544 | 3,580 |
+| `browser-script` | off | 1 | 463 | 499 |
+| `visual` | off | 1 | 1,135 | 1,171 |
+| `windows-batch` | off | 3 | 2,117 | 2,153 |
+| `ocr` | off | 2 | 2,233 | 2,269 |
 
-The Tokens column is measured on the 3.0.0 review-fix branch (October 2026); ToolPayloadBudgetTests' comments have the
-sizes after any later change. The notes below say how the rows moved. M6.1b (October 2026) moved six tools out of `windows`, two out of `monitors`, three
+The Tokens column is measured on the 3.0.0 review-fix branch after its docs pass and the follow-up to it (October 2026), and the Budget column is
+ToolPayloadBudgetTests'; its comments have the sizes after any later change. The notes below say how the rows moved. M6.1b (October 2026) moved six tools out of `windows`, two out of `monitors`, three
 out of `input` and one out of `browser` into the opt-in `windows-batch` and `deprecated` toolsets; 3.0.0 removed the
 `deprecated` toolset (9 tools, 4,925 tokens) and the monitorIndex parameters, which lowered `windows`, `capture`,
 `launch`, `browser`, `visual`, `windows-batch` and `ocr`. M7.1 raised `capture` (captureMethod, includeCursor,
-gridSpacing and zoom), M7.2 added get_window_events to `windows` and M7.5 the `workspaces` row; M7's other fields and the
-3.0.0 review's fixes moved every other row by less than 100 tokens. M6.6 (October 2026) raised
+gridSpacing and zoom), M7.2 added get_window_events to `windows` and M7.5 the `workspaces` row; M7's other fields, the
+3.0.0 review's fixes and its docs pass moved every other row by less than 100 tokens, except `input`, which the review's fixes and
+docs pass raised by 155 (14,760 at 3.0.0: scroll's modifiers and press_keys' key names for issue #8, UserInterrupted on type_text
+and drag, file_dialog's replace prompt and the clamped ranges, less a shorter pause sentence). M6.6 (October 2026) raised
 `process` by 361 (list_processes' five parameters and its result fields in the description; 1,921 before) and
 `windows` by 31 (get_window_info's integrity fields in 'full'; 9,921 before), each budget to the measured size plus 36. The `steps` row is measured
 after M6.2 added run_steps (October 2026). M6.4 added the `visual` row
@@ -3354,8 +3363,9 @@ fail-closed), `moved` says where a tool that is out of reach went, and the warni
 serve and the replaced tools that are served. `Contract/RemovedToolsContractTests` checks what 3.0.0 removed (owner
 decision D1): no selection lists the nine replaced tools, a call to one is `ToolRemoved` naming its replacement (never
 forwarded, never audited), `WAM_EXCLUDE_TOOLS` and `WAM_TOOLSETS` values that name them or `deprecated` read without
-failing closed, a `monitorIndex` argument or placement member is refused naming `monitor`, the three geometry batches
-of `windows-batch` are served only with `windows`, and get_server_info's `moved`. `Contract/ServerInfoToolContractTests` calls
+failing closed (`+click` warns that click is a tool 3.0.0 removed, not a toolset:
+`ARemovedToolsName_InWamToolsets_IsIgnoredWithAWarningThatSaysItIsATool`), a `monitorIndex` argument or placement
+member is refused naming `monitor`, the three geometry batches of `windows-batch` are served only with `windows`, and get_server_info's `moved`. `Contract/ServerInfoToolContractTests` calls
 `get_server_info` over MCP (a real `ServerInfoService` over the contract services' mocked sources),
 `Unit/Services/ServerInfoServiceTests` checks the report and its warnings, and `Contract/ServerInstructionsTests`
 keeps the server instructions at 15 to 20 lines and under 3,000 characters, naming only tools the default serves; its

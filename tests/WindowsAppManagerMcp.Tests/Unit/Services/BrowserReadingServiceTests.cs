@@ -971,7 +971,8 @@ public class BrowserReadingServiceTests
     [Fact]
     public async Task GetActiveBrowserUrl_Ambiguous_DoesNotTellTheCallerToPassTargetIdToItself()
     {
-        // get_active_browser_url takes no targetId (an undeclared argument is refused), so the hint names the tools that do
+        // The browser in front (get_browser_url with window {"foreground": true}; get_active_browser_url, which took no
+        // targetId, before 3.0.0): the hint names the tools that take targetId
         var handle = new nint(12345);
         _mockNativeWrapper.Setup(n => n.GetForegroundWindow()).Returns(handle);
         SetupValidBrowserWindow(handle, "chrome", "chrome");
