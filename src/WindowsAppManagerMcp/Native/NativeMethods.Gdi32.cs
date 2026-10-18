@@ -33,9 +33,6 @@ internal static partial class NativeMethods
         [return: MarshalAs(UnmanagedType.Bool)]
         public static partial bool DeleteObject(nint hObject);
 
-        [LibraryImport("gdi32.dll")]
-        public static partial int GetObjectW(nint hObject, int nCount, nint lpObject);
-
         /// <summary>
         /// Executes the calling thread's batched GDI drawing, so the bits of a DIB section can be read directly
         /// after BitBlt or PrintWindow drew into it.

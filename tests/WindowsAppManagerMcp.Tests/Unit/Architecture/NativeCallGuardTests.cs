@@ -190,7 +190,7 @@ public class NativeCallGuardTests
         ["User32.GetWindowThreadProcessId"] = "reads which process and thread own a window",
         ["User32.GetForegroundWindow"] = "reads which window is in the foreground",
         ["User32.GetShellWindow"] = "reads the handle of the desktop shell's window",
-        ["User32.GetWindowLongW"] = "reads a style value of a window (SetWindowLongW, which changes it, is not listed)",
+        ["User32.GetWindowLongW"] = "reads a style value of a window (SetWindowLongW, which changes it, is not declared)",
         ["User32.GetWindowLongPtrW"] = "reads a style value of a window",
         ["User32.GetWindowRgnBox"] = "reads the bounding box of a window's region into a struct of the server (SetWindowRgn, " +
                                      "which changes it, is not declared)",
@@ -384,6 +384,23 @@ public class NativeCallGuardTests
         imports.Where(m => OutermostType(m.DeclaringType!) != NativeMethodsType)
             .Select(m => $"{m.DeclaringType?.FullName}.{m.Name}")
             .Should().BeEmpty("P/Invoke declarations belong in NativeMethods, where the allow-list sees their callers");
+    }
+
+    [Fact]
+    public void NativeApisNothingCalls_StayUndeclared()
+    {
+        // Arrange - the allow-lists above only see calls, so an API declared for nothing is one edit away from a call no list
+        // was asked about. SetWindowLongW (it changes a window's style) and GetObjectW were declared and never called
+        var declared = NativeMethodsType.GetNestedTypes(BindingFlags.Public | BindingFlags.NonPublic)
+            .Where(t => !typeof(Delegate).IsAssignableFrom(t))
+            .SelectMany(t => t.GetMethods(DeclaredMembers))
+            .Where(m => !m.Name.Contains('<', StringComparison.Ordinal))
+            .Select(m => $"{m.DeclaringType!.Name}.{m.Name}")
+            .ToHashSet(StringComparer.Ordinal);
+
+        // Assert
+        declared.Should().Contain("User32.GetWindowTextW", "the scan must see the declared APIs");
+        declared.Should().NotContain(["User32.SetWindowLongW", "Gdi32.GetObjectW"]);
     }
 
     /// <summary>
