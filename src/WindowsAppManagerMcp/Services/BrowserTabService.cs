@@ -269,13 +269,23 @@ public sealed class BrowserTabService : IBrowserTabService
             // Over CdpService.MaxBoundTabs no tab's browser window is looked up for the list (CdpTabService.ListTabsAsync)
             (false, _) when listing.Tabs.Count > CdpService.MaxBoundTabs =>
                 $"The browser has more than {CdpService.MaxBoundTabs} tabs, too many to look up the browser window of each, so " +
-                "the tabs are listed without windowId and the window's tabs are not marked (inWindow)." +
-                (listing.Shown == null ? " No tab could be told as the one it shows." : string.Empty),
+                "the tabs are listed without windowId and the window's tabs are not marked (inWindow)." + NotShownNote(listing),
             (false, _) => "The window could not be matched to its browser window, so its tabs are not marked (inWindow); every tab of " +
-                          "the browser is listed." + (listing.Shown == null ? " No tab could be told as the one it shows." : string.Empty),
+                          "the browser is listed." + NotShownNote(listing),
             (true, { } why) => $"No tab could be told as the one the window shows ({why}).",
             _ => null
         };
+
+    /// <summary>
+    /// For a window that is not bound, the sentence that no tab could be told as the one it shows, with why when known (it
+    /// may be one the agent can act on, such as focus_window for a covered window), or empty when one was told.
+    /// </summary>
+    private static string NotShownNote(CdpTabListing listing) =>
+        listing.Shown != null
+            ? string.Empty
+            : listing.ShownError is { } why
+                ? $" No tab could be told as the one it shows ({why})."
+                : " No tab could be told as the one it shows.";
 
     internal static string WaitUntilName(BrowserWaitUntil waitUntil) => waitUntil switch
     {
