@@ -19,6 +19,8 @@ public partial class BrowserReadingTools
     private readonly IInputSession? _session;
     private readonly TimeSpan _answerTimeout;
     private readonly TimeSpan? _gateWaitTimeout;
+    private readonly ITcpPortOwnerResolver? _portOwners;
+    private readonly IBrowserDetectionService? _browserDetection;
 
     /// <param name="browserReadingService">The browser reads.</param>
     /// <param name="processService">Starts the debug browser when there is no <paramref name="debugBrowsers"/>.</param>
@@ -31,6 +33,10 @@ public partial class BrowserReadingTools
     /// <param name="session">The input session, whose pause close_debug_browser respects (it takes the input gate itself).</param>
     /// <param name="answerTimeout">How long close_debug_browser waits for the user's answer; default <see cref="UserConfirmation.DefaultAnswerTimeout"/>.</param>
     /// <param name="gateWaitTimeout">How long close_debug_browser waits for the input gate; default <see cref="InputGateToolFilter.GateWaitTimeout"/>.</param>
+    /// <param name="portOwners">With <paramref name="browserDetection"/>, refuses a launch url on a loopback port where a
+    /// browser listens, as browser_navigate does (<see cref="BrowserNavigationUrls.BrowserPortRefusal"/>); the server
+    /// always passes both.</param>
+    /// <param name="browserDetection">Tells a browser from another program listening on that port.</param>
     public BrowserReadingTools(
         IBrowserReadingService browserReadingService,
         IProcessService processService,
@@ -40,7 +46,9 @@ public partial class BrowserReadingTools
         IMonitorService? monitorService = null,
         IInputSession? session = null,
         TimeSpan? answerTimeout = null,
-        TimeSpan? gateWaitTimeout = null)
+        TimeSpan? gateWaitTimeout = null,
+        ITcpPortOwnerResolver? portOwners = null,
+        IBrowserDetectionService? browserDetection = null)
     {
         _browserReadingService = browserReadingService;
         _processService = processService;
@@ -51,6 +59,8 @@ public partial class BrowserReadingTools
         _session = session;
         _answerTimeout = answerTimeout ?? UserConfirmation.DefaultAnswerTimeout;
         _gateWaitTimeout = gateWaitTimeout;
+        _portOwners = portOwners;
+        _browserDetection = browserDetection;
     }
 
     private const string BrowserWindowDescription =
@@ -180,11 +190,11 @@ public partial class BrowserReadingTools
                  " The debug port has no authentication: any program on this computer can control that browser until it exits. Launch it only when CDP is needed, and close it with close_debug_browser when done." +
                  " It returns once the DevTools endpoint answers (cdpReady, cdpEndpoint, browserVersion); if it does not within 10 seconds, DebugLaunchFailed, and the browser keeps running (processId)." +
                  " DebugLaunchFailed when a browser already runs with that profile (nothing is launched), unless reuseIfRunning returns it (launchStatus alreadyRunning)." +
-                 " InvalidArguments: a url that starts with '-' or '/' (the browser would read it as a command-line switch), a userDataDir that is not a full path or is inside a browser's own 'User Data' folder (the user's real profile), or an executablePath that is not the browser's own .exe.")]
+                 " InvalidArguments: a url browser_navigate refuses (it takes http(s) and about:blank), a userDataDir that is not a full path or is inside a browser's own 'User Data' folder (the user's real profile), or an executablePath that is not the browser's own .exe.")]
     public async Task<DebugBrowserLaunchResultDto> LaunchBrowserWithDebug(
         [Description("Browser to launch: chrome (default), edge or brave. Any other value fails with UnsupportedBrowser.")]
         DebugBrowser browser = DebugBrowser.Chrome,
-        [Description("URL to open (optional). It must not start with '-' or '/', which the browser reads as a command-line switch.")]
+        [Description("URL to open (optional): an http(s) address with its scheme, or about:blank.")]
         string? url = null,
         [Description("CDP debug port: 0 (default) lets the browser pick a free port, or 1024-65535. The result's cdpPort is the port it listens on.")]
         int port = DebugBrowserLaunchRequest.EphemeralPort,
@@ -211,6 +221,15 @@ public partial class BrowserReadingTools
         if (DebugUrlRefusal(url) is { } badUrl)
         {
             throw new ToolErrorException(ToolErrorReporting.InvalidArgumentsErrorCode, badUrl);
+        }
+
+        // The browser gets the url that was checked
+        url = string.IsNullOrWhiteSpace(url) ? null : url.Trim();
+        if (url != null && _portOwners != null && _browserDetection != null &&
+            BrowserNavigationUrls.BrowserPortRefusal(url, _portOwners, _processService.GetProcessName, _browserDetection.IsBrowser,
+                NothingLaunched) is { } browserPort)
+        {
+            throw new ToolErrorException(ToolErrorReporting.InvalidArgumentsErrorCode, browserPort);
         }
 
         if (DebugProfileRefusal(userDataDir) is { } badProfile)
@@ -324,11 +343,17 @@ public partial class BrowserReadingTools
         }
     }
 
+    private const string NothingLaunched = "Nothing was launched.";
+
     /// <summary>
-    /// Why launch_browser_with_debug refuses <paramref name="url"/>, or null. The url is a separate argument on the
-    /// browser's command line, and Chromium reads an argument that starts with '-' or (on Windows) '/', after trimming
-    /// white space, as a switch: an agent's url such as '--remote-allow-origins=*' or a switch that runs a command would
-    /// be a switch of the agent's choosing.
+    /// Why launch_browser_with_debug refuses <paramref name="url"/>, or null (no url, or one it opens). The url is a
+    /// separate argument on the browser's command line, and Chromium reads an argument that starts with '-' or (on
+    /// Windows) '/', after trimming white space, as a switch: an agent's url such as '--remote-allow-origins=*' or a
+    /// switch that runs a command would be a switch of the agent's choosing. What is left is held to browser_navigate's
+    /// URLs (<see cref="BrowserNavigationUrls.Refusal(string?, string, string)"/>): Chromium opens a file: or data: URL,
+    /// its own pages and a path from its command line (an address without a scheme is looked up as a file relative to its
+    /// working folder first), and get_browser_content would then read the disk, a read this server does not otherwise give.
+    /// The white space around the url is not part of it.
     /// </summary>
     public static string? DebugUrlRefusal(string? url)
     {
@@ -344,7 +369,7 @@ public partial class BrowserReadingTools
                    "would read as a command-line switch. Nothing was launched. Pass a URL such as https://example.com/.";
         }
 
-        return null;
+        return BrowserNavigationUrls.Refusal(trimmed, "launch_browser_with_debug", NothingLaunched);
     }
 
     /// <summary>

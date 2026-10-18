@@ -711,6 +711,68 @@ public class BrowserReadingToolsTests
     }
 
     [Fact]
+    public async Task LaunchBrowserWithDebug_PassesTheUrlWithoutTheWhiteSpaceAroundIt()
+    {
+        // Arrange
+        var requests = LaunchReturns(Launched);
+
+        // Act
+        await CreateSut().LaunchBrowserWithDebug(url: "  https://example.com/a  ");
+
+        // Assert - the url that was checked is the one the browser gets
+        requests.Should().ContainSingle().Which.Url.Should().Be("https://example.com/a");
+    }
+
+    [Theory]
+    [InlineData("http://127.0.0.1:9333/", "chrome", true)]
+    [InlineData("http://localhost:9333/anything", "msedge", true)]
+    [InlineData("http://127.0.0.1:9333/", null, true)]
+    [InlineData("http://127.0.0.1:9333/", "dotnet", false)]
+    [InlineData("https://example.com:9333/", "chrome", false)]
+    public async Task LaunchBrowserWithDebug_ALoopbackUrlWhereABrowserListens_IsRefused_AsBrowserNavigateRefusesIt(
+        string url, string? listener, bool refused)
+    {
+        // Arrange - another browser's DevTools port: its pages list and show its tabs, past the target policy
+        var requests = LaunchReturns(Launched);
+        _mockProcessService.Setup(p => p.GetProcessName(4242)).Returns(listener);
+        var sut = new BrowserReadingTools(_mockBrowserReadingService.Object, _mockProcessService.Object,
+            portOwners: new FakePortOwnerResolver(owner: 4242), browserDetection: new BrowserDetectionService());
+
+        // Act
+        var act = () => sut.LaunchBrowserWithDebug(url: url);
+
+        // Assert
+        if (refused)
+        {
+            (await act.Should().ThrowAsync<ToolErrorException>())
+                .Which.Should().Match<ToolErrorException>(e => e.ErrorCode == ToolErrorReporting.InvalidArgumentsErrorCode &&
+                                                              e.Message.Contains("DevTools") && e.Message.EndsWith("Nothing was launched."));
+            requests.Should().BeEmpty();
+        }
+        else
+        {
+            await act.Should().NotThrowAsync();
+            requests.Should().ContainSingle();
+        }
+    }
+
+    [Fact]
+    public async Task LaunchBrowserWithDebug_ALoopbackUrl_WhoseListenerCannotBeRead_IsRefused()
+    {
+        // Arrange - fails closed, as browser_navigate does
+        var requests = LaunchReturns(Launched);
+        var sut = new BrowserReadingTools(_mockBrowserReadingService.Object, _mockProcessService.Object,
+            portOwners: new FakePortOwnerResolver(owner: null, tableReadable: false), browserDetection: new BrowserDetectionService());
+
+        // Act
+        var act = () => sut.LaunchBrowserWithDebug(url: "http://127.0.0.1:8080/");
+
+        // Assert
+        (await act.Should().ThrowAsync<ToolErrorException>()).Which.Message.Should().Contain("could not be read").And.EndWith("Nothing was launched.");
+        requests.Should().BeEmpty();
+    }
+
+    [Fact]
     public async Task LaunchBrowserWithDebug_ReturnsMappedDto_OnSuccess()
     {
         // Arrange
