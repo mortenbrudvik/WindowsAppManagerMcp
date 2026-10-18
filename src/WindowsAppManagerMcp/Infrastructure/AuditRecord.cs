@@ -169,7 +169,8 @@ public static partial class AuditRecord
     /// <item>An argument the tool does not declare (or, with no schema, whose name is no identifier) is only counted,
     /// under <see cref="UnknownArgumentsCount"/>: its name can be anything the client sent.</item>
     /// <item>A number or boolean is kept where the tool declares the parameter as one; where it does not (a PIN sent as
-    /// a number for a text), or with no schema, it is recorded as the length of its JSON text.</item>
+    /// a number for a text), or with no schema, it is recorded as the length of its JSON text. A string that the tool binds
+    /// as an integer (<see cref="BoundInteger"/>) is kept as that number where the parameter takes only numbers.</item>
     /// <item>A string in <see cref="NamedStringArguments"/> is kept (<c>executable</c>, and browser_navigate's <c>url</c>,
     /// redacted, with <c>executableLength</c> when something was cut, and always with <c>urlLength</c>), unless it is content for <paramref name="tool"/>
     /// (<see cref="ContentArguments"/>); any other string is recorded as <c>&lt;name&gt;Length</c>.</item>
@@ -204,6 +205,12 @@ public static partial class AuditRecord
                 case JsonValueKind.Number when types != null && (types.Contains("integer") || types.Contains("number")):
                 case JsonValueKind.True or JsonValueKind.False when types != null && types.Contains("boolean"):
                     summary[name] = JsonValue.Create(value.Clone());
+                    break;
+                case JsonValueKind.String when types != null && (types.Contains("integer") || types.Contains("number")) &&
+                                              !types.Contains("string") && BoundInteger.Read(value) is { } number:
+                    // A number sent as a string, which the tool binds as that number (close_window {"handle": "123"} closes
+                    // window 123): kept as the number. Where the parameter also takes a string, a string is kept as its length
+                    summary[name] = number;
                     break;
                 case JsonValueKind.Number or JsonValueKind.True or JsonValueKind.False:
                     summary[name + "Length"] = value.GetRawText().Length;
@@ -286,7 +293,9 @@ public static partial class AuditRecord
     /// The windows the arguments name, to read before the call: <c>windowHandle</c>, <c>handle</c>, the <c>handle</c> of a
     /// <c>window</c> selector (roadmap M2.4), and the <c>handle</c> or <c>window.handle</c> of each item of <c>windows</c>
     /// (a close batch), at most <see cref="MaxWindowsRead"/>. A selector without a handle names no window until the tool
-    /// resolves it; the result's <c>handle</c> then says which (<see cref="Build"/>).
+    /// resolves it; the result's <c>handle</c> then says which (<see cref="Build"/>). Each is read as the tool binds it: a
+    /// handle given as a string of digits is that window (<see cref="BoundInteger"/>), and the members of a selector or an
+    /// item in any letter case (<see cref="Member"/>); the arguments themselves are bound by their exact names.
     /// </summary>
     public static IReadOnlyList<long> WindowHandles(IReadOnlyDictionary<string, JsonElement> arguments)
     {
@@ -295,7 +304,7 @@ public static partial class AuditRecord
         var handles = new List<long>();
         foreach (var name in new[] { "windowHandle", "handle" })
         {
-            if (arguments.TryGetValue(name, out var value) && HandleIn(value) is { } handle)
+            if (arguments.TryGetValue(name, out var value) && BoundInteger.Read(value) is { } handle)
             {
                 handles.Add(handle);
             }
@@ -315,11 +324,11 @@ public static partial class AuditRecord
                     continue;
                 }
 
-                if (item.TryGetProperty("handle", out var value) && HandleIn(value) is { } handle)
+                if (Member(item, "handle") is { } value && BoundInteger.Read(value) is { } handle)
                 {
                     handles.Add(handle);
                 }
-                else if (item.TryGetProperty("window", out var itemWindow) && SelectorHandle(itemWindow) is { } itemSelected)
+                else if (Member(item, "window") is { } itemWindow && SelectorHandle(itemWindow) is { } itemSelected)
                 {
                     handles.Add(itemSelected);
                 }
@@ -328,21 +337,45 @@ public static partial class AuditRecord
 
         return handles.Distinct().Take(MaxWindowsRead).ToList();
 
-        static long? HandleIn(JsonElement value) =>
-            value.ValueKind == JsonValueKind.Number && value.TryGetInt64(out var handle) ? handle : null;
-
-        static long? SelectorHandle(JsonElement selector) =>
-            selector.ValueKind == JsonValueKind.Object && selector.TryGetProperty("handle", out var value) ? HandleIn(value) : null;
+        static long? SelectorHandle(JsonElement selector) => Member(selector, "handle") is { } value ? BoundInteger.Read(value) : null;
     }
 
-    /// <summary>The processes the arguments name, to read before the call: <c>processId</c>.</summary>
+    /// <summary>
+    /// The processes the arguments name, to read before the call: <c>processId</c>, read as the tool binds it (a string of
+    /// digits is that process, <see cref="BoundInteger"/>).
+    /// </summary>
     public static IReadOnlyList<int> ProcessIds(IReadOnlyDictionary<string, JsonElement> arguments)
     {
         ArgumentNullException.ThrowIfNull(arguments);
 
-        return arguments.TryGetValue("processId", out var value) && value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out var id)
-            ? [id]
+        return arguments.TryGetValue("processId", out var value) &&
+               BoundInteger.Read(value) is { } id and >= int.MinValue and <= int.MaxValue
+            ? [(int)id]
             : [];
+    }
+
+    /// <summary>
+    /// The member <paramref name="name"/> of an object inside the arguments (a selector, a batch item, a placement) as the
+    /// server binds it: in any letter case (<see cref="ToolJson.SerializerOptions"/> binds case-insensitively), the last one
+    /// when several differ only in case. Null when <paramref name="value"/> is no object or has no such member.
+    /// </summary>
+    private static JsonElement? Member(JsonElement value, string name)
+    {
+        if (value.ValueKind != JsonValueKind.Object)
+        {
+            return null;
+        }
+
+        JsonElement? found = null;
+        foreach (var property in value.EnumerateObject())
+        {
+            if (string.Equals(property.Name, name, StringComparison.OrdinalIgnoreCase))
+            {
+                found = property.Value;
+            }
+        }
+
+        return found;
     }
 
     /// <summary>
@@ -517,11 +550,12 @@ public static partial class AuditRecord
         bool? focus = null;
         if (request is { } r)
         {
-            snap = r.TryGetProperty("snap", out var s) && s.ValueKind == JsonValueKind.String &&
+            // Its members as the placement binds them: in any letter case
+            snap = Member(r, "snap") is { ValueKind: JsonValueKind.String } s &&
                    ToolEnum<SnapPosition>.TryParse(s.GetString(), out var position, out _) ? ToolEnum<SnapPosition>.Name(position) : null;
-            state = r.TryGetProperty("state", out var st) && st.ValueKind == JsonValueKind.String &&
+            state = Member(r, "state") is { ValueKind: JsonValueKind.String } st &&
                     ToolEnum<LaunchWindowState>.TryParse(st.GetString(), out var parsed, out _) ? ToolEnum<LaunchWindowState>.Name(parsed) : null;
-            if (r.TryGetProperty("monitor", out var selector))
+            if (Member(r, "monitor") is { } selector)
             {
                 if (selector.ValueKind == JsonValueKind.Number && selector.TryGetInt32(out var selectorIndex))
                     monitorIndex ??= selectorIndex;
@@ -533,8 +567,8 @@ public static partial class AuditRecord
                     monitor = known;
             }
 
-            bounds = r.TryGetProperty("bounds", out var b) ? BoundsIn(b) : null;
-            focus = r.TryGetProperty("focus", out var f) && f.ValueKind is JsonValueKind.True or JsonValueKind.False ? f.GetBoolean() : null;
+            bounds = Member(r, "bounds") is { } b ? BoundsIn(b) : null;
+            focus = Member(r, "focus") is { ValueKind: JsonValueKind.True or JsonValueKind.False } f ? f.GetBoolean() : null;
         }
 
         var finalBounds = done != null && done.TryGetPropertyValue("finalBounds", out var fb) && fb is JsonObject box &&
@@ -552,9 +586,10 @@ public static partial class AuditRecord
                 ? new BoundsDto(x, y, w, h)
                 : null;
 
+        // As the bounds bind it: a member in any letter case, a string of digits as its number
         static int? Number(JsonElement value, string name) =>
-            value.TryGetProperty(name, out var number) && number.ValueKind == JsonValueKind.Number && number.TryGetInt32(out var result)
-                ? result
+            Member(value, name) is { } number && BoundInteger.Read(number) is { } result and >= int.MinValue and <= int.MaxValue
+                ? (int)result
                 : null;
     }
 
@@ -591,10 +626,7 @@ public static partial class AuditRecord
             .Select(t =>
             {
                 var item = t.Item!;
-                JsonElement? asked = t.Index < requested.Count && requested[t.Index] is { ValueKind: JsonValueKind.Object } request &&
-                                     request.TryGetProperty(PlacementProperty, out var argument)
-                    ? argument
-                    : null;
+                JsonElement? asked = t.Index < requested.Count ? Member(requested[t.Index], PlacementProperty) : null;
                 var placement = Placement(asked, item);
                 // A launch batch item and an apply_layout placement name their window in a window object
                 var window = item.TryGetPropertyValue("window", out var node) ? node as JsonObject : null;

@@ -25,24 +25,27 @@ public sealed record StepRunOutcome(RunStepsResult Result, IReadOnlyList<ImageCo
 /// </summary>
 /// <remarks>
 /// <para><b>Before the run</b> (<see cref="Check"/>), every step is checked and the whole run refused with InvalidArguments
-/// when one is wrong, so nothing was done: 1 to <see cref="MaxSteps"/> steps; unique ids; a tool the server serves (the
-/// toolsets, WAM_EXCLUDE_TOOLS and read-only mode apply to steps as to direct calls); arguments the tool declares; at most
-/// <see cref="MaxTextLength"/> characters in all the steps' strings together; references that name an earlier step and an
-/// identifier (<see cref="ReferencePrefix"/>); and none of the arguments a step may not use: allowHostTarget, type_text's
-/// methods paste and auto (a step types: method unicode unless it says keys), element_action's mode paste and its
-/// window_close, capture_window's file output, scope desktop (a search of every window), and send_keys' or press_keys'
-/// keys with a chord that closes, quits or locks (the destructive chords, which a step's keyboard tool, always given a
-/// window, would not refuse itself). No argument a step may use writes the clipboard or a file, closes a window or finds
+/// when one is wrong, so nothing was done: 1 to <see cref="MaxSteps"/> steps; unique ids; a tool named, and one the server
+/// serves (the toolsets, WAM_EXCLUDE_TOOLS and read-only mode apply to steps as to direct calls); arguments the tool
+/// declares, by their exact names as the SDK binds them; handles that are whole numbers (<see cref="HandleArguments"/>);
+/// at most <see cref="MaxTextLength"/> characters in all the steps' strings together; references that name an earlier
+/// step and an identifier (<see cref="ReferencePrefix"/>); and none of the arguments a step may not use: allowHostTarget,
+/// type_text's methods paste and auto (a step types: method unicode unless it says keys), element_action's mode paste and
+/// its window_close, capture_window's file output, scope desktop (a search of every window), and send_keys' or
+/// press_keys' keys with a chord that closes, quits or locks (the destructive chords, which a step's keyboard tool, always
+/// given a window, would not refuse itself). No argument a step may use writes the clipboard or a file, closes a window or finds
 /// one outside the run's window and its dialogs; the keys a step sends act inside the run's window as a direct call's
 /// would (ctrl+s saves, ctrl+c copies).</para>
 /// <para><b>The run's window.</b> A step that names no window (no handle, windowHandle, window, ref, withinRef or listRef)
 /// is given the run's window, under the name its tool takes; wait_for_window never is (its window is what it waits for).
 /// A step may act only on the run's window, a window it owns (its dialogs) or another window of its process (not for the
 /// shell and the packaged apps' frame host, whose windows are unrelated): a step that names any other window, by handle,
-/// selector or element ref, is not run and fails the run. A null argument counts as not given, an empty selector or
-/// {"foreground": true} alone names no window, and a selector is resolved once and passed on as the handle it names, so
-/// the tool acts on the window this check passed. get_focused_element and wait_for_window only read, and may read
-/// outside the run's window. The run's window is read again once the gate is held: closed, reused by another process or
+/// selector or element ref, is not run and fails the run. A window is read as the step's tool binds it: a handle given as a
+/// JSON string of digits is that window (the SDK's options read numbers from strings, <see cref="BoundInteger"/>) and is
+/// passed on as the number, and a selector's members match in any letter case. A null argument counts as not given, an
+/// empty selector or {"foreground": true} alone names no window, and a selector is resolved once and passed on as the
+/// handle it names, so the tool acts on the window this check passed. get_focused_element and wait_for_window only read,
+/// and may read outside the run's window. The run's window is read again once the gate is held: closed, reused by another process or
 /// the agent's host, it refuses the run.</para>
 /// <para><b>During the run</b>, before each step after the first: a pause stops it (PausedByUser), maxDurationMs running out
 /// stops it (OperationTimedOut; a wait step's timeoutMs is cut to what is left, and a step still running then is
@@ -94,7 +97,10 @@ public sealed partial class StepRunner
     /// <summary>The arguments that name the window a step acts on; a step with none of them gets the run's window.</summary>
     private static readonly string[] WindowArguments = ["windowHandle", "handle", "window", "ref", "withinRef", "listRef"];
 
-    /// <summary>The arguments that name a window by handle.</summary>
+    /// <summary>
+    /// The arguments that name a window by handle. They are read as their tools bind them (<see cref="BoundInteger"/>);
+    /// another letter case is no such argument, and is refused as one the tool does not declare, which the SDK would not bind.
+    /// </summary>
     private static readonly string[] HandleArguments = ["windowHandle", "handle", "toWindowHandle"];
 
     /// <summary>The arguments that name an element, and with it its window.</summary>
@@ -160,7 +166,12 @@ public sealed partial class StepRunner
         for (var i = 0; i < steps.Count; i++)
         {
             var step = steps[i] ?? throw Invalid($"Step {i + 1} is null.");
-            var tool = ToolName(step.Tool);
+
+            // A missing tool would otherwise run as the first step tool there is, focus_window
+            var tool = step.Tool is { } stepTool
+                ? ToolName(stepTool)
+                : throw Invalid($"Step {i + 1} names no tool: each step needs \"tool\", one of the tools run_steps' input schema " +
+                                "lists for it.");
             var label = Label(i + 1, tool, step.Id);
 
             if (step.Id != null && !IdPattern().IsMatch(step.Id))
@@ -186,6 +197,11 @@ public sealed partial class StepRunner
             if (Forbidden(tool, arguments) is { } forbidden)
             {
                 throw Invalid($"{label}: {forbidden}");
+            }
+
+            if (HandleRefusal(arguments) is { } notAHandle)
+            {
+                throw Invalid($"{label}: {notAHandle}");
             }
 
             if (ClosingChord(tool, arguments) is { } chord)
@@ -473,6 +489,31 @@ public sealed partial class StepRunner
     private static string? StringOf(JsonObject arguments, string name) =>
         arguments[name] is JsonValue value && value.TryGetValue<string>(out var text) ? text : null;
 
+    /// <summary>
+    /// Why a handle argument (<see cref="HandleArguments"/>) is no window handle, or null: one that is given must be what its
+    /// tool binds as a number (<see cref="BoundInteger"/>), a JSON number or a string of digits. A null is left out, as the
+    /// tool would leave it; a reference is resolved during the run, and checked then (<see cref="CheckWindows"/>).
+    /// </summary>
+    private static string? HandleRefusal(JsonObject arguments)
+    {
+        foreach (var name in HandleArguments)
+        {
+            if (arguments[name] is { } value && !IsReference(value) && BoundInteger.Read(value) is null)
+            {
+                return NoHandle(name);
+            }
+        }
+
+        return null;
+    }
+
+    private static bool IsReference(JsonNode value) =>
+        value is JsonValue text && text.TryGetValue<string>(out var s) && s.StartsWith(ReferencePrefix, StringComparison.Ordinal);
+
+    private static string NoHandle(string name) =>
+        $"{name} is not a window handle. A handle is a whole number, as find_windows lists it (a JSON number, or a string of " +
+        "its digits); its tool could not tell which window it names.";
+
     private static bool IsTrue(JsonObject arguments, string name) =>
         arguments[name] is JsonValue value && value.TryGetValue<bool>(out var flag) && flag;
 
@@ -725,19 +766,29 @@ public sealed partial class StepRunner
     }
 
     /// <summary>
-    /// Why a window the step names is not one of the run's, with the code, or null. A selector (not wait_for_window's,
-    /// which names what it waits for) is resolved here and replaced by the handle it names, so the tool acts on the window
-    /// this check passed rather than resolving the selector again; one that names no single window is not run.
+    /// Why a window the step names is not one of the run's, with the code, or null. A handle is read as its tool binds it
+    /// (<see cref="BoundInteger"/>: a string of digits is that number, also one a reference brought, such as a captureId)
+    /// and passed on as the number; one that is no whole number is not run. A selector (not wait_for_window's, which names
+    /// what it waits for) is resolved here and replaced by the handle it names, so the tool acts on the window this check
+    /// passed rather than resolving the selector again; one that names no single window is not run.
     /// </summary>
     private (string Error, string Code)? CheckWindows(CheckedStep step, JsonObject arguments, RunTarget target)
     {
         var named = new List<nint>();
         foreach (var name in HandleArguments)
         {
-            if (arguments[name] is JsonValue value && value.TryGetValue<long>(out var handle))
+            if (arguments[name] is not { } value)
             {
-                named.Add((nint)handle);
+                continue;
             }
+
+            if (BoundInteger.Read(value) is not { } handle)
+            {
+                return (NoHandle(name), ToolErrorReporting.InvalidArgumentsErrorCode);
+            }
+
+            arguments[name] = handle;
+            named.Add((nint)handle);
         }
 
         if (step.Tool != WaitForWindowTool && arguments["window"] is JsonObject selector)
@@ -778,7 +829,10 @@ public sealed partial class StepRunner
         return null;
     }
 
-    /// <summary>The one window a step's selector names now; or why there is none, and the code.</summary>
+    /// <summary>
+    /// The one window a step's selector names now; or why there is none, and the code. The selector is bound with the tools'
+    /// own options, so it is read as its tool would read it: members in any letter case, a handle as a string of digits.
+    /// </summary>
     private (nint? Handle, string? Error, string Code) SelectorWindow(JsonObject selector)
     {
         WindowSelector? parsed;

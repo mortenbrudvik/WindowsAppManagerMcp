@@ -79,6 +79,11 @@ public sealed record LaunchRequest(
 /// </summary>
 /// <param name="ProcessName">Part of the name of the process that owns the window, case-insensitive (for example 'CalculatorApp' or 'SystemSettings').</param>
 /// <param name="TitleContains">Part of the window title, case-insensitive.</param>
+/// <remarks>
+/// An unknown member (a titleEquals or className it does not take) is refused (InvalidArguments) rather than ignored, which
+/// would leave a hint that matches more windows than the one meant.
+/// </remarks>
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 public sealed record LaunchWindowHint(
     [property: Description("Part of the name of the process that will own the window, case-insensitive (e.g. 'CalculatorApp', 'SystemSettings', 'WINWORD')")]
     string? ProcessName = null,

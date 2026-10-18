@@ -2124,7 +2124,8 @@
                   "additionalProperties": false,
                   "default": null
                 }
-              }
+              },
+              "additionalProperties": false
             }
           },
           "delayBetweenMs": {
@@ -4645,6 +4646,7 @@
                 "default": null
               }
             },
+            "additionalProperties": false,
             "default": null
           },
           "placement": {
@@ -4705,6 +4707,7 @@
                   "width",
                   "height"
                 ],
+                "additionalProperties": false,
                 "default": null
               },
               "state": {
@@ -4825,6 +4828,7 @@
                       "default": null
                     }
                   },
+                  "additionalProperties": false,
                   "default": null
                 },
                 "placement": {
@@ -4885,6 +4889,7 @@
                         "width",
                         "height"
                       ],
+                      "additionalProperties": false,
                       "default": null
                     },
                     "state": {
@@ -4939,7 +4944,8 @@
               },
               "required": [
                 "executable"
-              ]
+              ],
+              "additionalProperties": false
             }
           },
           "waitForWindows": {
@@ -5082,6 +5088,7 @@
                   "width",
                   "height"
                 ],
+                "additionalProperties": false,
                 "default": null
               },
               "state": {
@@ -6595,7 +6602,10 @@
               "properties": {
                 "tool": {
                   "description": "The tool to call",
-                  "type": "string",
+                  "type": [
+                    "string",
+                    "null"
+                  ],
                   "enum": [
                     "focus_window",
                     "find_ui_elements",
@@ -6610,7 +6620,8 @@
                     "wait_for_window",
                     "wait_for_element",
                     "get_focused_element",
-                    "capture_window"
+                    "capture_window",
+                    null
                   ]
                 },
                 "args": {
@@ -6642,7 +6653,8 @@
               },
               "required": [
                 "tool"
-              ]
+              ],
+              "additionalProperties": false
             }
           },
           "maxDurationMs": {
@@ -7700,7 +7712,7 @@
     {
       "name": "set_windows_bounds_batch",
       "title": "Set Window Bounds (Batch)",
-      "description": "Move and resize multiple windows in a single batch operation, as set_window_bounds does: x, y, width and height are each window's visible frame. More efficient than multiple individual calls. Coordinates are physical virtual-screen pixels (negative left of or above the primary monitor) of the visible frame (find_windows' visibleBounds, not its bounds). A minimized or maximized window is restored to normal first, without activating it; one its app hid (in the notification area) is not shown, and the change fails. Each window is handled on its own and has its own success, error and errorCode: InvalidArguments for an item that is null or misses a field, WindowNotFound, AmbiguousWindow (with candidates) or HandleMismatch for an item whose window selector names no single window, InvalidHandle, TargetDeniedByPolicy (the user's policy denies the app; it is not changed), AccessDenied, NotResponding (the window's app does not answer within 5 s). Each item reports its window afterwards, failed or not: bounds (visible frame), outerBounds, state and monitorIndex. MoveFailed: Windows did not place the window, or it did not return to normal from minimized or maximized.",
+      "description": "Move and resize multiple windows in a single batch operation: each item's x, y, width and height, all four in pixels, are its window's visible frame (no unit, relativeTo or monitor: use set_window_bounds for percent). More efficient than multiple individual calls. Coordinates are physical virtual-screen pixels (negative left of or above the primary monitor) of the visible frame (find_windows' visibleBounds, not its bounds). A minimized or maximized window is restored to normal first, without activating it; one its app hid (in the notification area) is not shown, and the change fails. Each window is handled on its own and has its own success, error and errorCode: InvalidArguments for an item that is null or misses a field, WindowNotFound, AmbiguousWindow (with candidates) or HandleMismatch for an item whose window selector names no single window, InvalidHandle, TargetDeniedByPolicy (the user's policy denies the app; it is not changed), AccessDenied, NotResponding (the window's app does not answer within 5 s). Each item reports its window afterwards, failed or not: bounds (visible frame), outerBounds, state and monitorIndex. MoveFailed: Windows did not place the window, or it did not return to normal from minimized or maximized.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -7711,16 +7723,28 @@
               "type": "object",
               "properties": {
                 "x": {
-                  "type": "integer"
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
                 },
                 "y": {
-                  "type": "integer"
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
                 },
                 "width": {
-                  "type": "integer"
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
                 },
                 "height": {
-                  "type": "integer"
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
                 },
                 "handle": {
                   "type": [
@@ -7809,7 +7833,8 @@
                 "y",
                 "width",
                 "height"
-              ]
+              ],
+              "additionalProperties": false
             }
           },
           "delayBetweenMs": {
@@ -7934,7 +7959,8 @@
               },
               "required": [
                 "state"
-              ]
+              ],
+              "additionalProperties": false
             }
           },
           "delayBetweenMs": {

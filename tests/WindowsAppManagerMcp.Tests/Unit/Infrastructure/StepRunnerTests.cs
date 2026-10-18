@@ -119,6 +119,15 @@ public class StepRunnerTests
     }
 
     [Fact]
+    public void Check_RefusesAStepThatNamesNoTool_InsteadOfRunningFocusWindow()
+    {
+        // StepTool's first value is focus_window: a step without a tool would otherwise run it, on the run's window
+        Refusal(() => Check(Step(StepTool.GetFocusedElement), new RunStep(null, JsonNode.Parse("""{ "handle": 1706796 }""")!.AsObject())))
+            .Should().Contain("Step 2 names no tool");
+        _dispatcher.Calls.Should().BeEmpty();
+    }
+
+    [Fact]
     public void Check_RefusesTwoStepsWithOneId()
     {
         Refusal(() => Check(Step(StepTool.GetFocusedElement, id: "a"), Step(StepTool.GetFocusedElement, id: "a")))
@@ -408,6 +417,86 @@ public class StepRunnerTests
         run.Result.Steps[1].Result!["error"]!.GetValue<string>().Should().Contain("not the run's window");
         run.Result.Steps[2].Status.Should().Be(StepStatus.Skipped);
         _dispatcher.Calls.Should().ContainSingle();
+    }
+
+    [Theory]
+    [InlineData(StepTool.TypeText, """{ "text": "a", "windowHandle": "2818048" }""")]
+    [InlineData(StepTool.FocusWindow, """{ "handle": "2818048" }""")]
+    [InlineData(StepTool.FocusWindow, """{ "handle": "0002818048" }""")]
+    [InlineData(StepTool.CaptureWindow, """{ "handle": "2818048" }""")]
+    [InlineData(StepTool.FindUiElements, """{ "name": "Send", "handle": "2818048" }""")]
+    [InlineData(StepTool.MouseClick, """{ "x": 1, "y": 1, "windowHandle": "2818048" }""")]
+    [InlineData(StepTool.Drag, """{ "fromX": 1, "fromY": 1, "toX": 2, "toY": 2, "toWindowHandle": "2818048" }""")]
+    [InlineData(StepTool.FocusWindow, """{ "window": { "handle": "2818048" } }""")]
+    [InlineData(StepTool.FocusWindow, """{ "window": { "Handle": 2818048 } }""")]
+    [InlineData(StepTool.FocusWindow, """{ "window": { "HANDLE": "2818048" } }""")]
+    public async Task AStepThatNamesAnotherWindow_AsAStringOrInAnotherLetterCaseThatItsToolBinds_IsNotRun(StepTool tool, string args)
+    {
+        // The tools bind a number from a JSON string, and a selector's members in any letter case: the check must see the
+        // window the tool would act on
+        var run = await RunAsync(Step(StepTool.GetFocusedElement), Step(tool, args));
+
+        run.Result.Success.Should().BeFalse();
+        run.Result.Steps[1].ErrorCode.Should().Be("InvalidArguments");
+        run.Result.Steps[1].Result!["error"]!.GetValue<string>().Should().Contain("not the run's window");
+        _dispatcher.Calls.Should().ContainSingle("only the first step ran");
+    }
+
+    [Theory]
+    [InlineData(StepTool.TypeText, """{ "text": "a", "windowHandle": "1706796" }""", "windowHandle")]
+    [InlineData(StepTool.FocusWindow, """{ "handle": "1706796" }""", "handle")]
+    public async Task AHandleGivenAsAString_IsPassedOnAsTheNumberTheToolWouldBind(StepTool tool, string args, string name)
+    {
+        var run = await RunAsync(Step(tool, args));
+
+        run.Result.Success.Should().BeTrue();
+        var handle = _dispatcher.Calls.Single().Args[name]!;
+        handle.GetValueKind().Should().Be(JsonValueKind.Number);
+        handle.GetValue<long>().Should().Be(Window);
+    }
+
+    [Theory]
+    [InlineData(StepTool.TypeText, """{ "text": "a", "windowHandle": "the editor" }""", "windowHandle")]
+    [InlineData(StepTool.TypeText, """{ "text": "a", "windowHandle": "17068.5" }""", "windowHandle")]
+    [InlineData(StepTool.TypeText, """{ "text": "a", "windowHandle": " 1706796" }""", "windowHandle")]
+    [InlineData(StepTool.FocusWindow, """{ "handle": 1706796.5 }""", "handle")]
+    [InlineData(StepTool.FocusWindow, """{ "handle": true }""", "handle")]
+    [InlineData(StepTool.FocusWindow, """{ "handle": { "handle": 1706796 } }""", "handle")]
+    [InlineData(StepTool.FocusWindow, """{ "handle": [1706796] }""", "handle")]
+    [InlineData(StepTool.Drag, """{ "fromX": 1, "fromY": 1, "toX": 2, "toY": 2, "toWindowHandle": "" }""", "toWindowHandle")]
+    public void Check_RefusesAHandleThatIsNoWholeNumber_NamingTheStep(StepTool tool, string args, string name)
+    {
+        Refusal(() => Check(Step(StepTool.FocusWindow), Step(tool, args)))
+            .Should().Contain("Step 2").And.Contain(name).And.Contain("whole number");
+    }
+
+    [Fact]
+    public void Check_RefusesAHandleArgumentInAnotherLetterCase_WhichItsToolWouldNotBind()
+    {
+        // The SDK binds a tool's own parameters by their exact names: WindowHandle would be left out, and the keys sent to
+        // the window in front
+        Refusal(() => Check(Step(StepTool.TypeText, """{ "text": "a", "WindowHandle": 2818048 }""")))
+            .Should().Contain("Step 1 (type_text)").And.Contain("'WindowHandle' (did you mean 'windowHandle'?)");
+    }
+
+    [Fact]
+    public async Task AReferenceThatTakesAStringIntoAHandle_IsChecked_AsTheNumberItHolds_OrRefused()
+    {
+        // A captureId or ref is a string: one of digits binds as that window's handle, any other is no handle
+        _dispatcher.Results["find_ui_elements"] = """{ "success": true, "captureId": "2818048", "elements": [ { "ref": "w4e17" } ] }""";
+
+        var digits = await RunAsync(
+            Step(StepTool.FindUiElements, """{ "name": "Save" }""", id: "find"),
+            Step(StepTool.TypeText, """{ "text": "a", "windowHandle": "$steps.find.captureId" }"""));
+        var letters = await RunAsync(
+            Step(StepTool.FindUiElements, """{ "name": "Save" }""", id: "find"),
+            Step(StepTool.TypeText, """{ "text": "a", "windowHandle": "$steps.find.elements[0].ref" }"""));
+
+        digits.Result.Steps[1].ErrorCode.Should().Be("InvalidArguments");
+        digits.Result.Steps[1].Result!["error"]!.GetValue<string>().Should().Contain("not the run's window");
+        letters.Result.Steps[1].ErrorCode.Should().Be("InvalidArguments");
+        letters.Result.Steps[1].Result!["error"]!.GetValue<string>().Should().Contain("whole number");
+        _dispatcher.Calls.Select(c => c.Tool).Should().Equal("find_ui_elements", "find_ui_elements");
     }
 
     [Fact]
