@@ -115,11 +115,16 @@ public class ForegroundThreadTests
     [Fact]
     public async Task Run_TheWaitForAnEarlierCall_DoesNotCountAgainstTheWorksOwnTime()
     {
-        // Arrange - an earlier call holds the thread for 800 ms after this call starts waiting; this call allows
-        // 2400 ms and its work takes 1800 ms. The calls run on threads of their own and the release is timed on the
+        // Arrange - an earlier call holds the thread for 2000 ms after this call starts waiting; this call allows
+        // 3000 ms and its work takes 2000 ms. The calls run on threads of their own and the release is timed on the
         // test's thread before its first await, not on the thread pool, which other tests can keep busy for longer
-        // than any margin here; what is left is the time a ready thread waits for a processor, far below the
-        // margins (1600 ms for the wait, 600 ms for the work).
+        // than any margin here; what is left is the time a ready thread waits for a processor. The times are chosen so
+        // that every margin is a whole second: the wait (1000 ms under its limit), the work (1000 ms under its limit),
+        // and a shared budget, which would leave only 1000 ms for 2000 ms of work (it would fail by a second).
+        // ForegroundThread has no clock seam, so the margins, not a fake clock, keep a loaded test run from failing this.
+        const int earlierHoldsMs = 2000;
+        const int workMs = 2000;
+        const int allowedMs = 3000;
         using var sut = new ForegroundThread();
         using var started = new ManualResetEventSlim();
         using var release = new ManualResetEventSlim();
@@ -132,18 +137,18 @@ public class ForegroundThreadTests
         }, Long));
         started.Wait(Long).Should().BeTrue();
 
-        // Act - with one shared budget, only 1600 ms would be left for 1800 ms of work
+        // Act - with one shared budget, only 1000 ms would be left for 2000 ms of work
         var queued = OnOwnThread(() =>
         {
             queuing.Set();
             return sut.Run(_ =>
             {
-                Thread.Sleep(1800);
+                Thread.Sleep(workMs);
                 return 2;
-            }, TimeSpan.FromMilliseconds(2400));
+            }, TimeSpan.FromMilliseconds(allowedMs));
         });
         queuing.Wait(Long).Should().BeTrue();
-        Thread.Sleep(800);
+        Thread.Sleep(earlierHoldsMs);
         release.Set();
 
         // Assert - neither was abandoned, so no thread was counted as blocked

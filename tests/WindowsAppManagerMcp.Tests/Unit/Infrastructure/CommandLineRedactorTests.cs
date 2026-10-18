@@ -236,7 +236,28 @@ public class CommandLineRedactorTests
             CommandLineRedactor.Redact("app.exe " + argument);
         }
 
-        stopwatch.Elapsed.Should().BeLessThan(TimeSpan.FromMilliseconds(500));
+        // Linear regexes take a few milliseconds for all five; the backtracking ones took about 2.5 s together. The bound
+        // is wide enough that a test run under heavy parallel load does not fail it, and still catches that regression and
+        // a hang; that every regex is non-backtracking is checked directly below
+        stopwatch.Elapsed.Should().BeLessThan(TimeSpan.FromMilliseconds(2000));
+    }
+
+    [Fact]
+    public void EveryRegex_IsNonBacktracking_WithAMatchTimeout()
+    {
+        // What makes a crafted argument cost linear time, without a clock: no regex of the redactor backtracks, and each
+        // gives up at a timeout rather than running on
+        var regexes = typeof(CommandLineRedactor)
+            .GetFields(System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public)
+            .Where(f => f.FieldType == typeof(System.Text.RegularExpressions.Regex))
+            .Select(f => (f.Name, Regex: (System.Text.RegularExpressions.Regex)f.GetValue(null)!))
+            .ToList();
+
+        regexes.Should().NotBeEmpty("the scan must see the redactor's regexes");
+        regexes.Where(r => !r.Regex.Options.HasFlag(System.Text.RegularExpressions.RegexOptions.NonBacktracking))
+            .Select(r => r.Name).Should().BeEmpty("a backtracking regex can take quadratic time on an argument the process chose");
+        regexes.Where(r => r.Regex.MatchTimeout == System.Text.RegularExpressions.Regex.InfiniteMatchTimeout)
+            .Select(r => r.Name).Should().BeEmpty();
     }
 
     [Fact]

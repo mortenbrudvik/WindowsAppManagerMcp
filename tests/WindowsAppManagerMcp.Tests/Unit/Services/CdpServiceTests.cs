@@ -553,7 +553,10 @@ public class CdpServiceTests
             .Tab("A", "Inbox", 1)
             .Tab("B", "News", 1);
         var sut = CreateSut(browser);
-        var budget = TimeSpan.FromMilliseconds(1500);
+        // A budget whose share for the binding is capped (BindingBudget: at most 2 s of 6 s), so the call that keeps to its
+        // share (about 2 s) and one that lets the stalled binding take the whole budget (6 s) are seconds apart: a test run
+        // under heavy parallel load does not push the first past the bound, and the second still fails it
+        var budget = TimeSpan.FromSeconds(6);
         var stopwatch = Stopwatch.StartNew();
 
         var result = await sut.FindTargetForWindowAsync(Port, At("Inbox - Google Chrome", 0, 0, 1000, 700), budget);
@@ -561,7 +564,8 @@ public class CdpServiceTests
         stopwatch.Stop();
         result.Value!.Id.Should().Be("A");
         browser.WindowQueries.Should().Be(2);
-        stopwatch.Elapsed.Should().BeLessThan(budget * 0.8, "the binding may use only a share of the budget");
+        CdpService.BindingBudget(budget).Should().Be(TimeSpan.FromSeconds(2));
+        stopwatch.Elapsed.Should().BeLessThan(budget * 0.75, "the binding may use only a share of the budget");
     }
 
     [Theory]

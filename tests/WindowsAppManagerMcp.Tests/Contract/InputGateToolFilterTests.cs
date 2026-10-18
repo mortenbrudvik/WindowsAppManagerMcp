@@ -89,7 +89,9 @@ public class InputGateToolFilterTests
             ran.TrySetResult();
             return ValueTask.FromResult(new CallToolResult());
         });
-        var gate = InputGate.Enter();
+        // using: the process-wide gate is released even when the test fails before the Dispose below (a second Dispose
+        // releases nothing), so a failure here cannot leave every other class's input and window calls waiting for it
+        using var gate = InputGate.Enter();
 
         // Act
         var call = handler(CreateRequest(tool), CancellationToken.None).AsTask();
@@ -241,7 +243,7 @@ public class InputGateToolFilterTests
             ran = true;
             return ValueTask.FromResult(new CallToolResult());
         });
-        var gate = InputGate.Enter();
+        using var gate = InputGate.Enter(); // released even when the test fails first; a second Dispose releases nothing
         var call = handler(CreateRequest("launch_applications_batch", session), CancellationToken.None).AsTask();
 
         // Act - the user pauses meanwhile, then the input call ends

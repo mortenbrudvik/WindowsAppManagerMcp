@@ -790,8 +790,11 @@ public class PopupServiceTests
             var result = await sut.GetActivePopupsAsync(main, TimeSpan.FromMilliseconds(100), CancellationToken.None,
                 stopGrace: TimeSpan.FromMilliseconds(50));
 
-            // Assert - without the grace it would wait a whole second after the timeout
-            stopwatch.Elapsed.Should().BeLessThan(TimeSpan.FromMilliseconds(900));
+            // Assert - without the grace it would wait PopupService's default grace, a whole second, after the 100 ms
+            // timeout: at least 1100 ms. The bound sits just below that, not near the ~150 ms the call takes, so a test
+            // run that starves the worker's thread for most of a second still passes, while a call that ignored the
+            // grace (or hung on the stuck read, which blocks for 3 s) still fails
+            stopwatch.Elapsed.Should().BeLessThan(TimeSpan.FromMilliseconds(100 + 1000 - 50));
             result.Success.Should().BeTrue();
             result.Popups.Should().ContainSingle().Which.Ref.Should().BeNull();
         }

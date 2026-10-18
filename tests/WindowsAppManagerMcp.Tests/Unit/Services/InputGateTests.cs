@@ -113,8 +113,9 @@ public class InputGateTests
     [Fact]
     public async Task AnotherFlow_WaitsForTheLease_AndGetsTheGateOnceItEnds()
     {
-        // Arrange
-        var lease = await InputGate.TryHoldAsync(Long, CancellationToken.None);
+        // Arrange - using: an assertion that fails before the Dispose below must not leave the process-wide gate held for
+        // the rest of the run (every other class's input and window calls would get InputBusy); a second Dispose releases nothing
+        using var lease = await InputGate.TryHoldAsync(Long, CancellationToken.None);
         lease!.Bind();
 
         // Act and assert - a parallel call is a flow that never bound the lease
@@ -137,8 +138,9 @@ public class InputGateTests
     [Fact]
     public async Task WorkTheRunStartedThatOutlivesIt_CannotPassTheGateAfterTheRun()
     {
-        // Arrange - fire-and-forget work a step started inherits the run's flow, and with it the lease
-        var lease = await InputGate.TryHoldAsync(Long, CancellationToken.None);
+        // Arrange - fire-and-forget work a step started inherits the run's flow, and with it the lease. using: a wait that
+        // times out before the Dispose below must not leave the process-wide gate held for the rest of the run
+        using var lease = await InputGate.TryHoldAsync(Long, CancellationToken.None);
         lease!.Bind();
         var runEnded = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var sawLease = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -150,23 +152,31 @@ public class InputGateTests
             return gate != null;
         });
 
-        // Act - the run ends, and another call takes the gate before the work tries it
-        var during = await sawLease.Task.WaitAsync(Long);
-        lease.Dispose();
-        using var someoneElse = await OtherFlowTakesTheGateAsync();
-        runEnded.SetResult();
-        var passedAfter = await leaked.WaitAsync(Long);
+        try
+        {
+            // Act - the run ends, and another call takes the gate before the work tries it
+            var during = await sawLease.Task.WaitAsync(Long);
+            lease.Dispose();
+            using var someoneElse = await OtherFlowTakesTheGateAsync();
+            runEnded.SetResult();
+            var passedAfter = await leaked.WaitAsync(Long);
 
-        // Assert
-        during.Should().BeTrue("the work ran inside the run");
-        passedAfter.Should().BeFalse("the run ended: its lease passes nobody, and another call holds the gate");
+            // Assert
+            during.Should().BeTrue("the work ran inside the run");
+            passedAfter.Should().BeFalse("the run ended: its lease passes nobody, and another call holds the gate");
+        }
+        finally
+        {
+            // The leaked work ends either way (it holds no gate while it waits)
+            runEnded.TrySetResult();
+        }
     }
 
     [Fact]
     public async Task TheRunsOwnFlow_AfterTheLeaseEnded_WaitsLikeAnyOtherCall()
     {
         // The run's flow itself after the run ended (code after the run's finally): the gate is someone else's now
-        var lease = await InputGate.TryHoldAsync(Long, CancellationToken.None);
+        using var lease = await InputGate.TryHoldAsync(Long, CancellationToken.None);
         lease!.Bind();
         lease.Dispose();
         using var someoneElse = await OtherFlowTakesTheGateAsync();
@@ -204,7 +214,7 @@ public class InputGateTests
     [Fact]
     public async Task DisposingALeaseTwice_ReleasesTheGateOnce()
     {
-        var lease = await InputGate.TryHoldAsync(Long, CancellationToken.None);
+        using var lease = await InputGate.TryHoldAsync(Long, CancellationToken.None);
         lease!.Dispose();
         using var someoneElse = await OtherFlowTakesTheGateAsync();
 
@@ -235,7 +245,10 @@ public class InputGateTests
         return got;
     }
 
-    /// <summary>Takes the gate on a flow that did not inherit this one, and holds it until the result is disposed.</summary>
+    /// <summary>
+    /// Takes the gate on a flow that did not inherit this one, and holds it until the result is disposed. Throws when that flow
+    /// did not get the gate: a test that went on as if it held it would assert on a gate nobody of its own holds.
+    /// </summary>
     private static async Task<IDisposable> OtherFlowTakesTheGateAsync()
     {
         var taken = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -246,19 +259,38 @@ public class InputGateTests
             other = new Thread(() =>
             {
                 using var gate = InputGate.TryEnter(Long, CancellationToken.None);
+                if (gate == null)
+                {
+                    taken.SetException(new InvalidOperationException(
+                        $"The other flow did not get the input gate within {Long.TotalSeconds:0} s: another call still holds it."));
+                    return;
+                }
+
                 taken.SetResult();
                 release.Wait(Long);
             });
             other.Start();
         }
 
-        await taken.Task.WaitAsync(Long);
-        return new Releaser(() =>
+        void Release()
         {
             release.Set();
             other.Join(Long);
             release.Dispose();
-        });
+        }
+
+        try
+        {
+            await taken.Task.WaitAsync(Long);
+        }
+        catch
+        {
+            // Never leave the other flow holding the gate (it may get it after this wait gave up)
+            Release();
+            throw;
+        }
+
+        return new Releaser(Release);
     }
 
     private sealed class Releaser(Action release) : IDisposable
