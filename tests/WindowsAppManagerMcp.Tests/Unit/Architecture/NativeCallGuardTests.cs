@@ -386,21 +386,93 @@ public class NativeCallGuardTests
             .Should().BeEmpty("P/Invoke declarations belong in NativeMethods, where the allow-list sees their callers");
     }
 
+    /// <summary>
+    /// The declared P/Invokes ("Class.Method") that may stay without a caller in the server, and why. Empty: an API is declared
+    /// when a wrapper calls it, and removed with its last call.
+    /// </summary>
+    private static readonly Dictionary<string, string> SanctionedUncalledNativeApis = new(StringComparer.Ordinal);
+
     [Fact]
-    public void NativeApisNothingCalls_StayUndeclared()
+    public void EveryDeclaredNativeApi_HasACallerInTheServer()
     {
         // Arrange - the allow-lists above only see calls, so an API declared for nothing is one edit away from a call no list
-        // was asked about. SetWindowLongW (it changes a window's style) and GetObjectW were declared and never called
-        var declared = NativeMethodsType.GetNestedTypes(BindingFlags.Public | BindingFlags.NonPublic)
+        // was asked about: SetWindowLongW (it changes a window's style), GetObjectW, AllowSetForegroundWindow (it hands the
+        // foreground to another process), MoveWindow, GetParent, MonitorFromRect and a second GetWindowThreadProcessId were
+        // declared and never called
+
+        // Act
+        var uncalled = UncalledNativeApis(NativeMethodsType, ServerTypes());
+
+        // Assert
+        DeclaredNativeApis(NativeMethodsType).Select(Api).Should().Contain(["User32.GetWindowTextW", "Apps.SHGetKnownFolderItem"],
+            "the scan must see the declared APIs, LibraryImport's and DllImport's");
+        UncalledNativeApis(typeof(NativeMethodsSample), typeof(NativeMethodsSample).Assembly.GetTypes()
+                .Where(t => OutermostType(t) == typeof(NativeMethodsSample) || t == typeof(NativeMethodsSampleCaller)))
+            .Select(Api)
+            .Should().BeEquivalentTo(["Sample.Uncalled", "Sample.CalledOnlyByAnUncalledHelper"],
+                "the scan must see a declared API nothing calls, and one only an uncalled helper calls");
+        uncalled.Where(api => !SanctionedUncalledNativeApis.ContainsKey(Api(api)))
+            .Select(api => $"{Api(api)}({string.Join(", ", api.GetParameters().Select(p => p.ParameterType.Name))})")
+            .Should().BeEmpty(
+                "declare a P/Invoke only for a wrapper that calls it, and remove it with its last call; an API that must stay declared " +
+                "without a caller goes on SanctionedUncalledNativeApis with the reason");
+        SanctionedUncalledNativeApis.Keys.Should().BeSubsetOf(uncalled.Select(Api), "an entry names a declared API nothing calls");
+    }
+
+    private static string Api(MethodInfo method) => $"{method.DeclaringType!.Name}.{method.Name}";
+
+    /// <summary>
+    /// The P/Invokes declared on the classes nested in <paramref name="nativeMethods"/>: [LibraryImport] (whose generated body
+    /// calls a compiler-named local function) and [DllImport] extern methods.
+    /// </summary>
+    private static IEnumerable<MethodInfo> DeclaredNativeApis(Type nativeMethods) =>
+        nativeMethods.GetNestedTypes(BindingFlags.Public | BindingFlags.NonPublic)
             .Where(t => !typeof(Delegate).IsAssignableFrom(t))
             .SelectMany(t => t.GetMethods(DeclaredMembers))
             .Where(m => !m.Name.Contains('<', StringComparison.Ordinal))
-            .Select(m => $"{m.DeclaringType!.Name}.{m.Name}")
-            .ToHashSet(StringComparer.Ordinal);
+            .Where(m => m.IsDefined(typeof(System.Runtime.InteropServices.LibraryImportAttribute), inherit: false) ||
+                        m.Attributes.HasFlag(MethodAttributes.PinvokeImpl));
 
-        // Assert
-        declared.Should().Contain("User32.GetWindowTextW", "the scan must see the declared APIs");
-        declared.Should().NotContain(["User32.SetWindowLongW", "Gdi32.GetObjectW"]);
+    /// <summary>
+    /// The P/Invokes of <paramref name="nativeMethods"/> that no code of <paramref name="code"/> reaches: a call counts when it
+    /// comes from outside <paramref name="nativeMethods"/>, or from a helper inside it that is itself reached.
+    /// </summary>
+    private static List<MethodInfo> UncalledNativeApis(Type nativeMethods, IEnumerable<Type> code)
+    {
+        var declared = DeclaredNativeApis(nativeMethods).ToHashSet();
+        var callers = code
+            .SelectMany(type => type.GetMethods(DeclaredMembers).Cast<MethodBase>().Concat(type.GetConstructors(DeclaredMembers)))
+            .ToDictionary(method => method, method => GetCalledMethods(method));
+
+        // The roots: every method outside nativeMethods; then what the reached helpers inside it call, until nothing is added
+        var reached = new HashSet<MethodBase>(callers.Keys.Where(m => OutermostType(m.DeclaringType!) != nativeMethods));
+        var pending = new Queue<MethodBase>(reached);
+        while (pending.Count > 0)
+        {
+            var method = pending.Dequeue();
+            if (!callers.TryGetValue(method, out var callees))
+            {
+                continue;
+            }
+
+            foreach (var callee in callees.Where(c => c.DeclaringType != null && OutermostType(c.DeclaringType) == nativeMethods && !reached.Contains(c)))
+            {
+                // A helper's lambdas and local functions are its own code: reaching the helper reaches them
+                foreach (var part in callers.Keys.Where(m => m.Equals(callee) || IsGeneratedPartOf(m, callee)))
+                {
+                    if (reached.Add(part))
+                    {
+                        pending.Enqueue(part);
+                    }
+                }
+            }
+        }
+
+        return declared.Where(api => !reached.Contains(api)).ToList();
+
+        static bool IsGeneratedPartOf(MethodBase part, MethodBase owner) =>
+            OutermostType(part.DeclaringType!) == OutermostType(owner.DeclaringType!) &&
+            part.Name.StartsWith($"<{owner.Name}>", StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -1141,4 +1213,38 @@ public class NativeCallGuardTests
 
         return tokens;
     }
+}
+
+/// <summary>
+/// A NativeMethods class of its own for the canary of <see cref="NativeCallGuardTests.EveryDeclaredNativeApi_HasACallerInTheServer"/>,
+/// which only scans its IL. The library does not exist, so nothing here can reach native code even if it were called.
+/// </summary>
+internal static class NativeMethodsSample
+{
+    internal static class Sample
+    {
+        private const string NoLibrary = "WamNativeCallGuardSample-NoSuchLibrary.dll";
+
+        [System.Runtime.InteropServices.DllImport(NoLibrary)]
+        public static extern int Uncalled();
+
+        [System.Runtime.InteropServices.DllImport(NoLibrary)]
+        public static extern int Called();
+
+        [System.Runtime.InteropServices.DllImport(NoLibrary)]
+        public static extern int CalledOnlyByAnUncalledHelper();
+
+        [System.Runtime.InteropServices.DllImport(NoLibrary)]
+        public static extern int CalledThroughAHelpersLambda();
+
+        public static int UncalledHelper() => CalledOnlyByAnUncalledHelper();
+
+        public static Func<int> CalledHelper() => () => CalledThroughAHelpersLambda();
+    }
+}
+
+/// <summary>The sample's wrapper: its calls are the sample's callers. Nothing calls it.</summary>
+internal static class NativeMethodsSampleCaller
+{
+    public static int Calls() => NativeMethodsSample.Sample.Called() + NativeMethodsSample.Sample.CalledHelper()();
 }

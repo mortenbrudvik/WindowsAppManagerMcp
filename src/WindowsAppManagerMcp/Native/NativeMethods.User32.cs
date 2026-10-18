@@ -64,16 +64,6 @@ internal static partial class NativeMethods
             int cy,
             uint uFlags);
 
-        [LibraryImport("user32.dll", SetLastError = true)]
-        [return: MarshalAs(UnmanagedType.Bool)]
-        public static partial bool MoveWindow(
-            nint hWnd,
-            int X,
-            int Y,
-            int nWidth,
-            int nHeight,
-            [MarshalAs(UnmanagedType.Bool)] bool bRepaint);
-
         [LibraryImport("user32.dll")]
         [return: MarshalAs(UnmanagedType.Bool)]
         public static partial bool ShowWindow(nint hWnd, int nCmdShow);
@@ -91,9 +81,6 @@ internal static partial class NativeMethods
 
         [LibraryImport("user32.dll")]
         public static partial nint GetWindow(nint hWnd, uint uCmd);
-
-        [LibraryImport("user32.dll")]
-        public static partial nint GetParent(nint hWnd);
 
         [LibraryImport("user32.dll")]
         public static partial nint GetAncestor(nint hWnd, uint gaFlags);
@@ -140,17 +127,7 @@ internal static partial class NativeMethods
         public static partial nint MonitorFromPoint(POINT pt, uint dwFlags);
 
         [LibraryImport("user32.dll")]
-        public static partial nint MonitorFromRect(ref RECT lprc, uint dwFlags);
-
-        [LibraryImport("user32.dll")]
         public static partial uint GetDpiForWindow(nint hwnd);
-
-        [LibraryImport("user32.dll")]
-        [return: MarshalAs(UnmanagedType.Bool)]
-        public static partial bool AllowSetForegroundWindow(uint dwProcessId);
-
-        [LibraryImport("user32.dll")]
-        public static partial uint GetWindowThreadProcessId(nint hWnd, nint lpdwProcessId);
 
         [LibraryImport("user32.dll", SetLastError = true)]
         [return: MarshalAs(UnmanagedType.Bool)]
