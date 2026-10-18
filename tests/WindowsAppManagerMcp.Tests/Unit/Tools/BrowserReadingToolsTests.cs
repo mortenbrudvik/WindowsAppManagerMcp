@@ -893,14 +893,12 @@ public class BrowserReadingToolsTests
     [InlineData(@"C:\Users\me\AppData\Local\Google\Chrome\User Data::$INDEX_ALLOCATION\Default", "inside a 'User Data' folder")]
     [InlineData(@"C:\Users\me\AppData\Local\Google\Chrome\User Data:stream", "inside a 'User Data' folder")]
     [InlineData(@"C:\Users\me\AppData\Local\Google\Chrome\User Data. .\Default", "inside a 'User Data' folder")]
-    [InlineData(@"\\localhost\C$\Users\me\AppData\Local\Google\Chrome\US1A2B~1", "short name")]
-    [InlineData(@"\\10.255.255.1\s\PROFIL~1", "short name")]
-    [InlineData(@"\\?\UNC\10.255.255.1\s\c~1", "short name")]
     public async Task LaunchBrowserWithDebug_RefusesAUserDataDirTheLaunchToolsRefuse_AndLaunchesNothing(string userDataDir, string message)
     {
         // Arrange - the launch tools' --user-data-dir check (ChromiumSwitchGuard), one implementation: an alternate data
-        // stream and trailing dots and spaces are left out as Windows reads a name, and a short name on a network or device
-        // path is refused, since expanding it would connect to another computer (\\localhost\C$ reaches the real profile)
+        // stream and trailing dots and spaces are left out as Windows reads a name. Short names on a network or device path
+        // are tested with a recording guard below: this tool's own guard makes paths full with Path.GetFullPath, which, if
+        // the refusal ever came too late, would expand them over SMB
         var sut = CreateSut();
 
         // Act
@@ -927,11 +925,15 @@ public class BrowserReadingToolsTests
         BrowserReadingTools.DebugProfileRefusal(@"\\server\share\profiles\debug", guard).Should().BeNull("a network path without a short name is read by its text");
     }
 
-    [Fact]
-    public void DebugProfileRefusal_RefusesAShortNameOnANetworkPath_BeforeAnyPathIsMadeFull()
+    [Theory]
+    [InlineData(@"\\localhost\C$\Users\me\AppData\Local\Google\Chrome\US1A2B~1")]
+    [InlineData(@"\\10.255.255.1\s\PROFIL~1")]
+    [InlineData(@"\\?\UNC\10.255.255.1\s\c~1")]
+    public void DebugProfileRefusal_RefusesAShortNameOnANetworkPath_BeforeAnyPathIsMadeFull(string userDataDir)
     {
         // Arrange - Path.GetFullPath expands 8.3 short names from the file system, which on a UNC path connects to that
-        // computer; the guard's recorder makes paths full by their text only
+        // computer (\\localhost\C$ reaches the real profile); the guard's recorder makes paths full by their text only, so a
+        // test that fails touches no network either
         var made = new List<string>();
         var guard = new ChromiumSwitchGuard(_ => null, (path, basePath) =>
         {
@@ -940,7 +942,7 @@ public class BrowserReadingToolsTests
         });
 
         // Act
-        var refusal = BrowserReadingTools.DebugProfileRefusal(@"\\10.255.255.1\s\PROFIL~1", guard);
+        var refusal = BrowserReadingTools.DebugProfileRefusal(userDataDir, guard);
 
         // Assert
         refusal.Should().Contain("short name").And.Contain("Nothing was launched");

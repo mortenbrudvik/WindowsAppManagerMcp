@@ -170,12 +170,18 @@ public class ChromiumSwitchGuardTests
     public void AShortNameOnANetworkOrDevicePath_IsRefused_WithoutReadingTheFileSystem(string argument, string? workingDirectory)
     {
         // Arrange - expanding it would make the server connect to a computer the agent named, maybe for minutes and with
-        // the user's credentials; and \\localhost\C$ reaches the real profile's folder
+        // the user's credentials; and \\localhost\C$ reaches the real profile's folder. Paths are made full by their text
+        // only (Path.GetFullPath would expand a '~' itself), so a test that fails touches no network either
         var asked = new List<string>();
+        var made = new List<string>();
         var sut = new ChromiumSwitchGuard(path =>
         {
             asked.Add(path);
             return null;
+        }, (path, basePath) =>
+        {
+            made.Add(basePath == null ? path : $"{path} in {basePath}");
+            return basePath == null ? path : Path.Join(basePath, path);
         });
 
         // Act
@@ -186,6 +192,7 @@ public class ChromiumSwitchGuardTests
         refusal!.ErrorCode.Should().Be(nameof(LaunchErrorCode.UnsafeChromiumSwitch));
         refusal.Message.Should().Contain("short name").And.Contain("Nothing was launched");
         asked.Should().BeEmpty();
+        made.Should().BeEmpty();
     }
 
     [Theory]
@@ -289,12 +296,16 @@ public class ChromiumSwitchGuardTests
     [Fact]
     public void ANetworkPathWithoutAShortName_IsCheckedByItsText_WithoutReadingTheFileSystem()
     {
+        // A path with a '~' is made full by its text only (Path.GetFullPath would expand it over SMB), so a test that fails
+        // touches no network either
         var asked = new List<string>();
         var sut = new ChromiumSwitchGuard(path =>
         {
             asked.Add(path);
             return null;
-        });
+        }, (path, basePath) => path.Contains('~') || (basePath?.Contains('~') ?? false)
+            ? basePath == null ? path : Path.Join(basePath, path)
+            : basePath == null ? Path.GetFullPath(path) : Path.GetFullPath(path, basePath));
 
         sut.Check(Edge, [@"--user-data-dir=\\server\s\profiles\debug"], null).Should().BeNull();
         sut.Check(Edge, [@"--user-data-dir=\\localhost\C$\Users\me\AppData\Local\Google\Chrome\User Data"], null).Should().NotBeNull();
