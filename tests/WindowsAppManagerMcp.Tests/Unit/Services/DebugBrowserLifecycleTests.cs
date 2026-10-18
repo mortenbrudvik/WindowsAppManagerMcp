@@ -433,9 +433,37 @@ public sealed class DebugBrowserLifecycleTests : IDisposable
         // Act
         await sut.AbandonAsync(launched);
 
-        // Assert
-        browser.Verify(h => h.Kill(true), Times.Once);
+        // Assert - the browser process alone, never its process tree: close_debug_browser's rule, since a tree holds what
+        // the browser opened (a download's program, the user's own browser that a link started)
+        browser.Verify(h => h.Kill(false), Times.Once);
+        browser.Verify(h => h.Kill(true), Times.Never);
         Directory.Exists(profile).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task Abandon_EndsWhatIsLeftOfTheBrowsersOwnProcesses_NeverAProgramItOpened()
+    {
+        // Arrange - a renderer that outlives the browser, a program a download opened, and the user's own browser that a
+        // link started (the same chrome.exe, a descendant, but on the user's profile)
+        var profile = TemporaryProfile();
+        var sut = CreateSut();
+        LaunchReturns(Started(DebugPid, profile));
+        var launched = await sut.LaunchAsync(new DebugBrowserLaunchRequest(UserDataDir: profile));
+        var browser = Running(DebugPid, CommandLine(profile));
+        var helper = Running(DebugPid + 1, CommandLine(profile, type: "renderer"), start: DebugStart.AddSeconds(1));
+        var opened = Running(9000, "\"C:\\Windows\\notepad.exe\" C:\\Users\\me\\Downloads\\a.txt", image: "notepad.exe");
+        var users = Running(UsersPid, CommandLine(null, debugPort: false), start: DebugStart.AddMinutes(1));
+        _descendants.AddRange([(DebugPid + 1, "chrome.exe"), (9000, "notepad.exe"), (UsersPid, "chrome.exe")]);
+
+        // Act
+        await sut.AbandonAsync(launched);
+
+        // Assert - what close_debug_browser would end, and only that
+        browser.Verify(h => h.Kill(false), Times.Once);
+        helper.Verify(h => h.Kill(false), Times.Once);
+        helper.Verify(h => h.Kill(true), Times.Never);
+        opened.Verify(h => h.Kill(It.IsAny<bool>()), Times.Never);
+        users.Verify(h => h.Kill(It.IsAny<bool>()), Times.Never);
     }
 
     [Fact]
