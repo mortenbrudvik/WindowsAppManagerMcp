@@ -27,6 +27,8 @@ public class ToolErrorReportingTests
     private const string OutcomeTool = "outcome_tool";
     private const string ListTool = "list_tool";
     private const string BatchTool = "batch_tool";
+    private const string NestedTool = "nested_tool";
+    private const string PairTool = "pair_tool";
 
     [Fact]
     public async Task ToolThatThrows_ReturnsErrorResultWithExceptionTypeAndMessage()
@@ -194,10 +196,9 @@ public class ToolErrorReportingTests
         var payload = ParsePayload(result);
         payload.GetProperty("errorCode").GetString().Should().Be(ToolErrorReporting.InvalidArgumentsErrorCode);
         payload.GetProperty("exceptionType").GetString().Should().Be("System.ArgumentException");
-        payload.GetProperty("error").GetString().Should()
-            .StartWith($"Invalid arguments for tool '{EchoTool}'.")
-            .And.Contain("'text'")
-            .And.NotContain("(Parameter 'arguments')");
+        payload.GetProperty("error").GetString().Should().Be(
+            $"Invalid arguments for tool '{EchoTool}'. The required argument 'text' is missing. Check the argument names and types " +
+            "against the tool's input schema. Nothing was done.");
     }
 
     [Fact]
@@ -215,7 +216,48 @@ public class ToolErrorReportingTests
         var payload = ParsePayload(result);
         payload.GetProperty("errorCode").GetString().Should().Be(ToolErrorReporting.InvalidArgumentsErrorCode);
         payload.GetProperty("exceptionType").GetString().Should().Be("System.Text.Json.JsonException");
-        payload.GetProperty("error").GetString().Should().Contain("System.Int32");
+        payload.GetProperty("error").GetString().Should().Be(
+            $"Invalid arguments for tool '{CountTool}'. count is not an integer. Check the argument names and types against the " +
+            "tool's input schema. Nothing was done.");
+    }
+
+    [Theory]
+    [InlineData("""[ { "x": 1 }, { "x": 2, "unit": "percent" } ]""", "items[1] has a member 'unit' that it does not take.")]
+    [InlineData("""[ { "x": 1, "inner": { "y": 2, "z": 3 } } ]""", "items[0].inner has a member 'z' that it does not take.")]
+    [InlineData("""[ { "x": 1, "weird name": 2 } ]""", "items[0] has a member 'weird name' that it does not take.")]
+    [InlineData("""[ { "x": "left" } ]""", "items[0].x does not have the type the input schema gives it.")]
+    [InlineData("""[ { "x": 1, "inner": 5 } ]""", "items[0].inner does not have the type the input schema gives it.")]
+    [InlineData("""{ "x": 1 }""", "items is not an array.")]
+    public async Task ABindingFailureInsideAnArgument_NamesWhereItIs_AndNoDotNetType(string items, string expected)
+    {
+        // Arrange
+        await using var server = await StartServerAsync();
+
+        // Act
+        var result = await server.CallToolAsync(NestedTool, new Dictionary<string, object?>
+        {
+            ["items"] = JsonSerializer.Deserialize<JsonElement>(items), ["note"] = "n"
+        });
+
+        // Assert - System.Text.Json's own text names CLR types (WindowsAppManagerMcp...Item), which mean nothing to the agent
+        var error = ParsePayload(result).GetProperty("error").GetString();
+        error.Should().Be($"Invalid arguments for tool '{NestedTool}'. {expected} Check the argument names and types against the " +
+                          "tool's input schema. Nothing was done.");
+    }
+
+    [Fact]
+    public async Task AWrongTypeThatCouldBeEitherArgument_SaysAnArgument_WithItsType()
+    {
+        // Arrange - both arguments are strings, and only the binder knows which one it was reading
+        await using var server = await StartServerAsync();
+
+        // Act
+        var result = await server.CallToolAsync(PairTool, new Dictionary<string, object?> { ["a"] = "x", ["b"] = "y" });
+
+        // Assert
+        ParsePayload(result).GetProperty("error").GetString().Should().Be(
+            $"Invalid arguments for tool '{PairTool}'. An argument is not an integer. Check the argument names and types against the " +
+            "tool's input schema. Nothing was done.");
     }
 
     [Fact]
@@ -390,6 +432,8 @@ public class ToolErrorReportingTests
                 McpServerTool.Create(Outcome, new McpServerToolCreateOptions { Name = OutcomeTool }),
                 McpServerTool.Create(List, new McpServerToolCreateOptions { Name = ListTool }),
                 McpServerTool.Create(Batch, new McpServerToolCreateOptions { Name = BatchTool }),
+                McpServerTool.Create(Nested, new McpServerToolCreateOptions { Name = NestedTool }),
+                McpServerTool.Create(Pair, new McpServerToolCreateOptions { Name = PairTool }),
             ],
             builder => builder.AddToolErrorReporting());
 
@@ -406,6 +450,10 @@ public class ToolErrorReportingTests
     private static string Echo(string text) => text;
 
     private static int Count(int count) => count;
+
+    private static int Nested(NestedItem[] items, string? note = null) => items.Length;
+
+    private static int Pair(int a, int b) => a + b;
 
     private static string ThrowsDeliberately() => throw new McpException("The thing is not ready yet.");
 
@@ -430,6 +478,12 @@ public class ToolErrorReportingTests
         new(1, 0, 1, [new WindowResultItem(42, false, Error: "Invalid window handle", ErrorCode: "InvalidHandle")]);
 
     public record HandleResult(nint? Handle);
+
+    [System.Text.Json.Serialization.JsonUnmappedMemberHandling(System.Text.Json.Serialization.JsonUnmappedMemberHandling.Disallow)]
+    public record NestedItem(int X, NestedInner? Inner = null);
+
+    [System.Text.Json.Serialization.JsonUnmappedMemberHandling(System.Text.Json.Serialization.JsonUnmappedMemberHandling.Disallow)]
+    public record NestedInner(int Y);
 
     public record WindowOperationResultLike(bool Success, BoundsDto? NewBounds, string? Error = null, string? ErrorCode = null);
 }

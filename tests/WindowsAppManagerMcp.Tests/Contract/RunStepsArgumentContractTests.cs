@@ -131,13 +131,17 @@ public class RunStepsArgumentContractTests
     public async Task AStepMemberRunStepsDoesNotTake_RefusesTheRun_InsteadOfBeingIgnored(string step, string member)
     {
         // Ignored, "arguments" would leave the step without its args, and the run would give it the run's window instead
-        var (result, services) = await RunAsync($"[ {step.Replace("BROWSER", Browser.ToString(CultureInfo.InvariantCulture))} ]");
+        var (result, services) = await RunAsync(
+            $"[ {{ \"tool\": \"get_focused_element\" }}, {step.Replace("BROWSER", Browser.ToString(CultureInfo.InvariantCulture))} ]");
 
         using (services)
         {
             result.IsError.Should().BeTrue();
             Body(result)["errorCode"]!.GetValue<string>().Should().Be("InvalidArguments");
-            Text(result).Should().Contain(member);
+
+            // The binder refuses it: the error names the step by its place in the array and the member, never a .NET type
+            Body(result)["error"]!.GetValue<string>().Should().Contain($"steps[1] has a member '{member}' that it does not take")
+                .And.NotContain("WindowsAppManagerMcp").And.NotContain(".NET").And.EndWith("Nothing was done.");
             services.Foreground.Verify(f => f.EnsureForeground(It.IsAny<nint>(), It.IsAny<int>()), Times.Never);
             VerifyNothingTyped(services);
         }

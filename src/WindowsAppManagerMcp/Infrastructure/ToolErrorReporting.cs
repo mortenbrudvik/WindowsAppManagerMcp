@@ -21,7 +21,8 @@ namespace WindowsAppManagerMcp.Infrastructure;
 /// <item><see cref="ToolErrorCode"/> (or the code of a <see cref="ToolErrorException"/>): the tool
 /// threw an <see cref="McpException"/> on purpose. Its message is passed on unchanged, as the SDK does.</item>
 /// <item><see cref="InvalidArgumentsErrorCode"/>: the arguments could not be bound to the tool's
-/// parameters (a required argument is missing, or a value has the wrong type).</item>
+/// parameters (a required argument is missing, a value has the wrong type, or an object has a member it does not take). The
+/// error says where, in the agent's terms (<see cref="ArgumentBindingFailure"/>), and that nothing was done.</item>
 /// <item><see cref="ErrorCode"/>: anything else, including a result that cannot be serialized.</item>
 /// </list>
 /// Without this, the MCP SDK replaces every exception that is not an <see cref="McpException"/>
@@ -144,7 +145,8 @@ public static class ToolErrorReporting
                         exception.GetType().FullName,
                         exception.Message);
                     call.Finished($"isError {InvalidArgumentsErrorCode}");
-                    return CreateInvalidArgumentsResult(toolName, exception);
+                    return CreateInvalidArgumentsResult(toolName, exception, request.Params?.Arguments,
+                        AuditRecord.DeclaredTypes(AuditLogToolFilter.InputSchemaOf(request, toolName)));
                 }
 
                 logger.LogError(
@@ -230,24 +232,17 @@ public static class ToolErrorReporting
             Candidates: candidates is { Count: > 0 } ? candidates : null));
     }
 
-    private static CallToolResult CreateInvalidArgumentsResult(string toolName, Exception exception)
+    /// <summary>
+    /// The error result of arguments the SDK could not bind: what is wrong and where (<see cref="ArgumentBindingFailure"/>,
+    /// never System.Text.Json's CLR type names), what to do, and that the tool did not run.
+    /// </summary>
+    private static CallToolResult CreateInvalidArgumentsResult(string toolName, Exception exception,
+        IEnumerable<KeyValuePair<string, JsonElement>>? arguments, IReadOnlyDictionary<string, IReadOnlySet<string>>? declaredTypes)
     {
-        var message = exception.Message;
-
-        // "... (Parameter 'arguments')" names the binder's own parameter, not the tool's
-        if (exception is ArgumentException { ParamName: { } paramName })
-        {
-            var suffix = $" (Parameter '{paramName}')";
-            if (message.EndsWith(suffix, StringComparison.Ordinal))
-            {
-                message = message[..^suffix.Length];
-            }
-        }
-
         return CreateResult(new ToolErrorResultDto(
             Success: false,
-            Error: $"Invalid arguments for tool '{toolName}'. {message} " +
-                   "Check the argument names and types against the tool's input schema.",
+            Error: $"Invalid arguments for tool '{toolName}'. {ArgumentBindingFailure.Describe(exception, arguments, declaredTypes)} " +
+                   "Check the argument names and types against the tool's input schema. Nothing was done.",
             ErrorCode: InvalidArgumentsErrorCode,
             ExceptionType: exception.GetType().FullName ?? exception.GetType().Name,
             Tool: toolName));
@@ -264,8 +259,11 @@ public static class ToolErrorReporting
     /// parameters, before the tool ran: a missing required argument (ArgumentException) or a value
     /// that cannot be converted to the parameter type (JsonException). The same exception types
     /// thrown by the tool's own code are not argument errors, so the decision is made by where the
-    /// exception was thrown: the first frame outside the runtime, System.Text.Json and the shared
-    /// throw helpers must belong to <see cref="AIFunctionFactory"/>, which binds the arguments.
+    /// exception was thrown: the first frame outside the runtime, System.Text.Json, the shared
+    /// throw helpers and the server's own JSON converters (a <c>monitor</c> or <c>keys</c> value that is
+    /// neither a number nor a string, also inside an object) must belong to <see cref="AIFunctionFactory"/>,
+    /// which binds the arguments. A converter that throws while the tool's own code deserializes
+    /// something leaves the tool's frame first, so that stays a server failure.
     /// </summary>
     internal static bool IsArgumentBindingFailure(Exception exception)
     {
@@ -284,7 +282,8 @@ public static class ToolErrorReporting
 
             var ns = type.Namespace ?? string.Empty;
             if (ns.StartsWith("System", StringComparison.Ordinal) ||
-                ns.StartsWith("Microsoft.Shared", StringComparison.Ordinal))
+                ns.StartsWith("Microsoft.Shared", StringComparison.Ordinal) ||
+                typeof(JsonConverter).IsAssignableFrom(type))
             {
                 continue;
             }

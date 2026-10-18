@@ -236,6 +236,31 @@ public class NestedArgumentContractTests
         }
     }
 
+    [Theory]
+    [InlineData("launch_application", """{ "executable": "notepad", "placement": { "monitor": true } }""",
+        "monitor takes an index (0-based) or a name: 'primary', 'left', 'right', 'current', or an id or name from get_monitors. (at placement.monitor)")]
+    [InlineData("take_screenshot", """{ "monitor": true }""",
+        "monitor takes an index (0-based) or a name: 'primary', 'left', 'right', 'current', or an id or name from get_monitors.")]
+    [InlineData("press_keys", """{ "keys": 5, "windowHandle": 1706796 }""",
+        "keys takes a string, such as 'ctrl+shift+t', or an array of strings, such as ['ctrl','shift','t'].")]
+    [InlineData("close_windows_batch", """{ "windows": [ { "window": { "processId": "notepad" } } ] }""",
+        "windows[0].window.processId does not have the type the input schema gives it.")]
+    [InlineData("launch_applications_batch", """{ "applications": [ { "executable": "notepad" }, { "executable": "code", "args": [] } ] }""",
+        "applications[1] has a member 'args' that it does not take.")]
+    public async Task AnObjectsMemberThatCannotBeBound_IsNamedByItsPlace_AndNothingIsDone(string tool, string arguments, string expected)
+    {
+        var (result, services) = await CallAsync(tool, arguments);
+
+        using (services)
+        {
+            var error = Payload(result).GetProperty("error").GetString();
+            error.Should().Be($"Invalid arguments for tool '{tool}'. {expected} Check the argument names and types against the tool's " +
+                              "input schema. Nothing was done.");
+            services.Processes.Invocations.Should().NotContain(i => i.Method.Name.StartsWith("Launch", StringComparison.Ordinal));
+            services.Windows.Invocations.Should().NotContain(i => i.Method.Name.StartsWith("Close", StringComparison.Ordinal));
+        }
+    }
+
     [Fact]
     public async Task LaunchApplication_PlacementBounds_AreRequiredIntegers_InTheInputSchema()
     {
