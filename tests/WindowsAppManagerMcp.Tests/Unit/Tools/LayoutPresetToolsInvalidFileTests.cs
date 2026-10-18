@@ -53,6 +53,33 @@ public class LayoutPresetToolsInvalidFileTests
     }
 
     [Fact]
+    public void ListLayouts_AnInvalidFilesError_SaysTheLayoutToolsDoNotChangeIt()
+    {
+        // The file is the user's to fix or delete: delete_layout and save_layout never touch it
+        var result = CreateSut().ListLayouts();
+
+        result[1].Error.Should().Contain("delete_layout and save_layout do not change it");
+        result[1].Error.Should().NotContain("deletes that preset", "no valid preset is named 'broken'");
+    }
+
+    [Fact]
+    public void ListLayouts_AnInvalidFileThatGivesAValidPresetsName_SaysDeleteLayoutWouldDeleteThatPreset()
+    {
+        // Arrange - coding.json is broken; save_layout "coding" then found no preset of that name and wrote coding-2.json, so
+        // list_layouts shows "coding" twice, and delete_layout "coding" would delete the valid one, not the broken file
+        _layouts.Setup(l => l.GetAllPresets()).Returns([TestDataFactory.CreateLayoutPreset("Coding")]);
+        _layouts.Setup(l => l.GetInvalidFiles()).Returns([new InvalidLayoutFile("coding.json", "it has no placements.", Written, "coding")]);
+
+        // Act
+        var result = CreateSut().ListLayouts();
+
+        // Assert
+        result.Select(r => r.Name).Should().Equal("Coding", "coding");
+        result[1].Error.Should().Contain("The preset 'Coding' listed above is another file: delete_layout 'Coding' deletes that preset, not this file");
+        result[0].Error.Should().BeNull();
+    }
+
+    [Fact]
     public void ListLayouts_WithoutInvalidFiles_IsThePresetsAlone()
     {
         _layouts.Setup(l => l.GetInvalidFiles()).Returns([]);

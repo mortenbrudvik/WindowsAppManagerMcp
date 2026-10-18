@@ -58,10 +58,23 @@ public class LayoutPresetTools
         )
         {
             File = file.FileName,
-            Error = $"'{file.FileName}' is not a valid layout preset, so it cannot be applied: {file.Error} Fix or delete the file in " +
-                    "the layouts folder.",
+            Error = InvalidFileError(file, presets),
             ErrorCode = nameof(LayoutErrorCode.InvalidPresetFile)
         })).ToList();
+    }
+
+    /// <summary>
+    /// Why an invalid file is listed, and what to do: the user fixes or deletes it in the layouts folder, since delete_layout
+    /// and save_layout never change it. Its name can be a valid preset's too (save_layout of that name wrote another file,
+    /// as no valid preset had it), and then delete_layout of that name deletes the valid preset, so the error says so.
+    /// </summary>
+    private static string InvalidFileError(InvalidLayoutFile file, IReadOnlyList<LayoutPreset> presets)
+    {
+        var error = $"'{file.FileName}' is not a valid layout preset, so it cannot be applied: {file.Error} Fix or delete the file in " +
+                    "the layouts folder; delete_layout and save_layout do not change it.";
+        return presets.FirstOrDefault(p => string.Equals(p.Name, file.Name, StringComparison.OrdinalIgnoreCase)) is { } namesake
+            ? error + $" The preset '{namesake.Name}' listed above is another file: delete_layout '{namesake.Name}' deletes that preset, not this file."
+            : error;
     }
 
     [McpServerTool(Name = "get_layout", Title = "Get Layout", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]

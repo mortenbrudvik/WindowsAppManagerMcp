@@ -49,7 +49,10 @@ public sealed record LaunchPlacement(
 /// A placement that was checked: the parsed values, consistent with each other. It is made only by its two factories, each
 /// with its own rules: <see cref="TryCreate(LaunchPlacement, int?, out LaunchPlacementPlan?, out string?, out string?)"/> for a
 /// launch tool's placement, and <see cref="ForLayout"/> for a window apply_layout launched. Snap, State and Focus cannot be
-/// changed afterwards, not even with a with expression, so no plan holds a combination its factory refuses.
+/// changed afterwards, not even with a with expression. <see cref="MonitorIndex"/>, <see cref="Bounds"/> and
+/// <see cref="MonitorKey"/> can, because the placement service and LaunchPlacing set them again when they find the monitor
+/// again or place the rectangle on it as it is then; the type does not check such a change, so it must keep the factory's
+/// rules: no bounds on a snapped or maximized plan of TryCreate, and a monitor key on every plan of ForLayout.
 /// </summary>
 public sealed record LaunchPlacementPlan
 {
