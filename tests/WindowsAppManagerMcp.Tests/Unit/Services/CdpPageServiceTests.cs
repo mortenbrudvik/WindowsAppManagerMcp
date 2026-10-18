@@ -294,6 +294,57 @@ public class CdpPageServiceTests
     }
 
     [Fact]
+    public async Task LocateAsync_ReadsThePagesVisibilityAndViewport_InAnIsolatedWorld_WhereThePageCannotLie()
+    {
+        // A background page that redefines document.visibilityState and its viewport in its main world would pass
+        // browser_element_rect's gate and move the rect; the isolated world reads the real ones
+        var page = new FakePage { Visibility = "hidden", MainWorldView = ("visible", 640, 360, 3) };
+
+        var result = await CreateSut(page).LocateAsync(Tab, BySelector("#save"), LongTimeout);
+
+        result.Success.Should().BeTrue(result.Error);
+        result.Value!.Visibility.Should().Be("hidden");
+        (result.Value.ViewportWidth, result.Value.ViewportHeight, result.Value.DevicePixelRatio).Should().Be((1280, 720, 1.5));
+        page.Command("Page.createIsolatedWorld").GetProperty("params").GetProperty("frameId").GetString().Should().Be(FakePage.MainFrameId);
+        page.Command("Runtime.evaluate", c => Param(c, "expression")!.Contains("visibilityState"))
+            .GetProperty("params").GetProperty("contextId").GetInt32().Should().Be(FakePage.IsolatedContextId);
+    }
+
+    [Fact]
+    public async Task LocateAsync_AnIsolatedWorldThePageRefuses_IsAFailure_NotAMainWorldRead()
+    {
+        // Fails closed: without the isolated world the page's own word is not taken instead
+        var sut = new CdpPageService(new CdpTransport(FakeCdpHttpHandler.Targets(), new FakeCdpWebSocketFactory(new FakeCdpWebSocket((socket, command) =>
+        {
+            switch (command.GetProperty("method").GetString())
+            {
+                case "Page.getFrameTree":
+                    socket.Enqueue(JsonSerializer.Serialize(new
+                    {
+                        id = command.GetProperty("id").GetInt32(),
+                        result = new { frameTree = new { frame = new { id = FakePage.MainFrameId, loaderId = "L1", url = Tab.Url } } }
+                    }));
+                    break;
+                case "Page.createIsolatedWorld":
+                    socket.ReplyError(command, -32000, "Could not create isolated world");
+                    break;
+                case "Runtime.evaluate":
+                    socket.ReplyWithValue(command, new { visibility = "visible", vw = 1280, vh = 720, dpr = 1.5, scale = 1, url = Tab.Url, title = Tab.Title });
+                    break;
+                default:
+                    socket.ReplyEmpty(command);
+                    break;
+            }
+        }))));
+
+        var result = await sut.LocateAsync(Tab, BySelector("#save"), LongTimeout);
+
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(nameof(BrowserErrorCode.CdpProtocolError));
+        result.Error.Should().Contain("Page.createIsolatedWorld");
+    }
+
+    [Fact]
     public async Task LocateAsync_AnElementInsideAFrame_HasTheMainFramesViewport_NotItsFrames()
     {
         // The element's own functions run in its frame (a 300 x 150 iframe here), but its quads are in the main frame's
@@ -834,6 +885,12 @@ public class CdpPageServiceTests
 
         public const string DocumentObject = "DOC";
 
+        /// <summary>The page's main frame id (Page.getFrameTree).</summary>
+        public const string MainFrameId = "MAINFRAME";
+
+        /// <summary>The execution context id Page.createIsolatedWorld answers with for the main frame.</summary>
+        public const int IsolatedContextId = 41;
+
         public static readonly byte[] Png = [0x89, 0x50, 0x4E, 0x47, 1, 2, 3];
 
         private readonly object _lock = new();
@@ -866,6 +923,13 @@ public class CdpPageServiceTests
         public Queue<int> FieldLengths { get; init; } = new([0, 1]);
 
         public string Visibility { get; init; } = "visible";
+
+        /// <summary>
+        /// What a page that redefines document.visibilityState, innerWidth, innerHeight and devicePixelRatio
+        /// (Object.defineProperty) reports in its main world; null reports the real ones (<see cref="Visibility"/>, 1280 x 720
+        /// at 1.5) there too. The isolated world always reads the real ones.
+        /// </summary>
+        public (string Visibility, double Width, double Height, double Dpr)? MainWorldView { get; init; }
 
         public Func<JsonElement, object?>? Evaluate { get; init; }
 
@@ -1069,6 +1133,18 @@ public class CdpPageServiceTests
                         Reply(socket, command, new { data = Convert.ToBase64String(Png) });
                         break;
 
+                    case "Page.getFrameTree":
+                        Reply(socket, command, new { frameTree = new { frame = new { id = MainFrameId, loaderId = "L1", url = PageUrl } } });
+                        break;
+
+                    case "Page.createIsolatedWorld" when p.TryGetProperty("frameId", out var frame) && frame.GetString() == MainFrameId:
+                        Reply(socket, command, new { executionContextId = IsolatedContextId });
+                        break;
+
+                    case "Page.createIsolatedWorld":
+                        socket.ReplyError(command, -32602, "No frame for given id found");
+                        break;
+
                     default:
                         socket.ReplyEmpty(command);
                         break;
@@ -1094,7 +1170,9 @@ public class CdpPageServiceTests
             }
             else if (expression.Contains("visibilityState", StringComparison.Ordinal))
             {
-                socket.ReplyWithValue(command, new { visibility = Visibility, vw = 1280, vh = 720, dpr = 1.5, scale = 1, url = PageUrl, title = Tab.Title });
+                var isolated = p.TryGetProperty("contextId", out var context) && context.GetInt32() == IsolatedContextId;
+                var (visibility, vw, vh, dpr) = isolated || MainWorldView is not { } spoofed ? (Visibility, 1280.0, 720.0, 1.5) : spoofed;
+                socket.ReplyWithValue(command, new { visibility, vw, vh, dpr, scale = 1, url = PageUrl, title = Tab.Title });
             }
             else if (expression == "1")
             {
