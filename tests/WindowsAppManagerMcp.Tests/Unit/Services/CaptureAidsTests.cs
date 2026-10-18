@@ -18,7 +18,7 @@ public class CaptureAidsTests
 
     private static CaptureOptions Png(Func<CaptureOptions, CaptureOptions>? with = null)
     {
-        var options = new CaptureOptions { Format = "png" };
+        var options = new CaptureOptions { Format = CaptureFormat.Png };
         return with == null ? options : with(options);
     }
 

@@ -12,10 +12,10 @@ public class ScreenshotOptionTests
 
     private static readonly CaptureOptions Expected = new()
     {
-        Format = "png",
+        Format = CaptureFormat.Png,
         Quality = 60,
         MaxDimension = 1200,
-        Output = "both",
+        Output = CaptureOutputMode.Both,
         OutputPath = OutputPath,
         Overwrite = true,
         SaveToFile = true,

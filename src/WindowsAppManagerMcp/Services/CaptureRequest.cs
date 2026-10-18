@@ -91,9 +91,9 @@ public sealed record CaptureRequest(
     {
         ArgumentNullException.ThrowIfNull(options);
 
-        var format = ParseFormat(options.Format);
+        var format = EncodingOf(options.Format);
         var (maxDimension, maxWidth) = ResolveSizeLimits(options.MaxDimension, options.MaxWidth);
-        var output = ParseOutput(options.Output, options.SaveToFile);
+        var output = ResolveOutput(options.Output, options.SaveToFile);
 
         string? outputPath = null;
         if (!string.IsNullOrEmpty(options.OutputPath))
@@ -194,12 +194,17 @@ public sealed record CaptureRequest(
     /// <summary>The file extension written for an encoding, with the dot.</summary>
     public static string Extension(ImageEncoding encoding) => encoding == ImageEncoding.Png ? ".png" : ".jpg";
 
-    private static ImageEncoding? ParseFormat(string? format) =>
-        format?.Trim().ToLowerInvariant() switch
+    /// <summary>
+    /// The encoding <paramref name="format"/> asks for, or null for Auto. The tools bind the argument to
+    /// <see cref="CaptureFormat"/> and refuse an unknown name there (InvalidFormat); a value outside the enum is refused
+    /// the same way here.
+    /// </summary>
+    private static ImageEncoding? EncodingOf(CaptureFormat format) =>
+        format switch
         {
-            null or "" or "auto" => null,
-            "png" => ImageEncoding.Png,
-            "jpeg" or "jpg" => ImageEncoding.Jpeg,
+            CaptureFormat.Auto => null,
+            CaptureFormat.Png => ImageEncoding.Png,
+            CaptureFormat.Jpeg => ImageEncoding.Jpeg,
             _ => throw new CaptureException(ScreenshotErrorCode.InvalidFormat,
                 $"Unknown format '{format}'. Use 'auto', 'png' or 'jpeg'.")
         };
@@ -227,20 +232,21 @@ public sealed record CaptureRequest(
         return (longEdge, maxWidth);
     }
 
-    private static CaptureOutputMode ParseOutput(string? output, bool saveToFile)
+    /// <summary>
+    /// <paramref name="output"/> with the legacy saveToFile alias applied. The tools bind the argument to
+    /// <see cref="CaptureOutputMode"/> and refuse an unknown name there (InvalidOutputMode); a value outside the enum is
+    /// refused the same way here.
+    /// </summary>
+    private static CaptureOutputMode ResolveOutput(CaptureOutputMode output, bool saveToFile)
     {
-        var mode = output?.Trim().ToLowerInvariant() switch
+        if (!Enum.IsDefined(output))
         {
-            null or "" or "image" => CaptureOutputMode.Image,
-            "file" => CaptureOutputMode.File,
-            "both" => CaptureOutputMode.Both,
-            "metadata" => CaptureOutputMode.Metadata,
-            _ => throw new CaptureException(ScreenshotErrorCode.InvalidOutputMode,
-                $"Unknown output '{output}'. Use 'image', 'file', 'both' or 'metadata'.")
-        };
+            throw new CaptureException(ScreenshotErrorCode.InvalidOutputMode,
+                $"Unknown output '{output}'. Use 'image', 'file', 'both' or 'metadata'.");
+        }
 
         // The legacy saveToFile flag meant "write a file instead of returning the image".
-        return saveToFile && mode != CaptureOutputMode.Both ? CaptureOutputMode.File : mode;
+        return saveToFile && output != CaptureOutputMode.Both ? CaptureOutputMode.File : output;
     }
 
     private static (string Path, ImageEncoding? Format) ResolveOutputPath(string outputPath, ImageEncoding? format, bool overwrite)

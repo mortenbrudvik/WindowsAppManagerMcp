@@ -910,7 +910,7 @@ public class DesktopStateServiceTests
         image!.MimeType.Should().Be("image/jpeg");
         state.Screenshot!.CaptureId.Should().Be("c1-ab12");
         options!.MaxDimension.Should().Be(1280);
-        options.Output.Should().Be("image", "nothing is written to a file");
+        options.Output.Should().Be(CaptureOutputMode.Image, "nothing is written to a file");
     }
 
     [Fact]
@@ -1026,7 +1026,7 @@ public class DesktopStateServiceTests
         _marked.WalkedWindow.Should().Be(WalkedNotepad);
         _marked.Overlays.Should().Be(new ElementOverlayOptions { MarkMovedWindow = false });
         _marked.Options.MaxDimension.Should().Be(1280);
-        _marked.Options.Output.Should().Be("image");
+        _marked.Options.Output.Should().Be(CaptureOutputMode.Image);
         image!.MimeType.Should().Be("image/png");
         state.Screenshot!.CaptureId.Should().Be("c2-ab12");
         state.Screenshot.Width.Should().Be(1280);

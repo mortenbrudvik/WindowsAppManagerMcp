@@ -70,7 +70,7 @@ public class FixtureOtherScaleMonitorTests
 
         // Act - full resolution and lossless, so image pixels map 1:1 to the other monitor's physical pixels
         var capture = e2e.Server.Screenshots.CaptureWindow(
-            e2e.Fixture.MainWindowHandle, includeFrame: false, new CaptureOptions { Format = "png", MaxDimension = 0 });
+            e2e.Fixture.MainWindowHandle, includeFrame: false, new CaptureOptions { Format = CaptureFormat.Png, MaxDimension = 0 });
 
         // Assert - the region captured is where the fixture says its client area is, and the swatches are where it draws them
         var result = capture.Metadata;

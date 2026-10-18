@@ -7,7 +7,7 @@ namespace WindowsAppManagerMcp.Tests.Unit.Services;
 /// </summary>
 public class ScreenshotGraphicsCaptureTests
 {
-    private static readonly CaptureOptions FullResolution = new() { MaxDimension = 0, Format = "png" };
+    private static readonly CaptureOptions FullResolution = new() { MaxDimension = 0, Format = CaptureFormat.Png };
     private static readonly nint Window = new(0x5000);
 
     private readonly Mock<IScreenCaptureWrapper> _capture = TestDataFactory.CreateMockScreenCaptureWrapper(captureWidth: 100, captureHeight: 80);

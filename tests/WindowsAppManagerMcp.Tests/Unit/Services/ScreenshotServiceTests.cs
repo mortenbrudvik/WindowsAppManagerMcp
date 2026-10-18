@@ -593,7 +593,7 @@ public class ScreenshotServiceTests
 
         // Act
         var capture = sut.CaptureWindowWithElements(handle, null, [ElementAt(400, 100, 800, 200)], includeFrame: true,
-            ElementOverlayOptions.Default, new CaptureOptions { Format = "png" });
+            ElementOverlayOptions.Default, new CaptureOptions { Format = CaptureFormat.Png });
 
         // Assert - a 2-pixel line drawn at full resolution would end up one faint pixel wide
         capture.Metadata.Width.Should().Be(1568);
@@ -644,7 +644,7 @@ public class ScreenshotServiceTests
     private static readonly nint PixelWindow = new(0x5000);
 
     /// <summary>The capture tools at full resolution, so their metadata is comparable with the raw pixels.</summary>
-    private static readonly CaptureOptions FullResolution = new() { MaxDimension = 0, Format = "png" };
+    private static readonly CaptureOptions FullResolution = new() { MaxDimension = 0, Format = CaptureFormat.Png };
 
     private readonly Mock<IWindowCallRunner> _calls = new();
     private readonly Mock<ICaptureTargetPolicy> _policy = new();
@@ -953,7 +953,7 @@ public class ScreenshotServiceTests
             captureRegistry: registry.Object, capturePolicy: _policy.Object);
 
         // Act
-        var tool = sut.CaptureWindow(PixelWindow, includeFrame: false, new CaptureOptions { MaxDimension = 0, Format = "jpeg" }).Metadata;
+        var tool = sut.CaptureWindow(PixelWindow, includeFrame: false, new CaptureOptions { MaxDimension = 0, Format = CaptureFormat.Jpeg }).Metadata;
         var raw = sut.CapturePixels(new CaptureTarget.Window(PixelWindow, IncludeFrame: false));
 
         // Assert - and the raw capture is not registered either until RegisterRaw

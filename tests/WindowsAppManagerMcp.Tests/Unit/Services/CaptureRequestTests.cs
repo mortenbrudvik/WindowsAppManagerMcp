@@ -43,16 +43,15 @@ public class CaptureRequestTests
     }
 
     [Theory]
-    [InlineData("image", false, CaptureOutputMode.Image)]
-    [InlineData(null, false, CaptureOutputMode.Image)]
-    [InlineData("FILE", false, CaptureOutputMode.File)]
-    [InlineData("both", false, CaptureOutputMode.Both)]
-    [InlineData("metadata", false, CaptureOutputMode.Metadata)]
-    [InlineData("image", true, CaptureOutputMode.File)]
-    [InlineData("metadata", true, CaptureOutputMode.File)]
-    [InlineData("file", true, CaptureOutputMode.File)]
-    [InlineData("both", true, CaptureOutputMode.Both)]
-    public void Resolve_OutputAndTheSaveToFileAlias(string? output, bool saveToFile, CaptureOutputMode expected)
+    [InlineData(CaptureOutputMode.Image, false, CaptureOutputMode.Image)]
+    [InlineData(CaptureOutputMode.File, false, CaptureOutputMode.File)]
+    [InlineData(CaptureOutputMode.Both, false, CaptureOutputMode.Both)]
+    [InlineData(CaptureOutputMode.Metadata, false, CaptureOutputMode.Metadata)]
+    [InlineData(CaptureOutputMode.Image, true, CaptureOutputMode.File)]
+    [InlineData(CaptureOutputMode.Metadata, true, CaptureOutputMode.File)]
+    [InlineData(CaptureOutputMode.File, true, CaptureOutputMode.File)]
+    [InlineData(CaptureOutputMode.Both, true, CaptureOutputMode.Both)]
+    public void Resolve_OutputAndTheSaveToFileAlias(CaptureOutputMode output, bool saveToFile, CaptureOutputMode expected)
     {
         // Act
         var request = CaptureRequest.Resolve(new CaptureOptions { Output = output, SaveToFile = saveToFile });
@@ -94,7 +93,7 @@ public class CaptureRequestTests
     public void Resolve_NetworkOrDeviceOutputPath_IsRejectedBeforeTheFileSystemIsTouched(string outputPath)
     {
         // A capture written to \\attacker\share would leak the screen and the user's NTLM hash
-        var failure = CaptureRequest.Validate(new CaptureOptions { Output = "file", OutputPath = outputPath });
+        var failure = CaptureRequest.Validate(new CaptureOptions { Output = CaptureOutputMode.File, OutputPath = outputPath });
 
         failure.Should().NotBeNull();
         failure!.Code.Should().Be(ScreenshotErrorCode.InvalidOutputPath);
@@ -107,7 +106,7 @@ public class CaptureRequestTests
     public void Resolve_DriveLetterOutputPath_PassesTheNetworkCheck(string outputPath)
     {
         // The folder does not exist, so it fails later, on the folder check, not as a network path
-        var failure = CaptureRequest.Validate(new CaptureOptions { Output = "file", OutputPath = outputPath.Replace("captures", $"no-such-folder-{Guid.NewGuid():N}") });
+        var failure = CaptureRequest.Validate(new CaptureOptions { Output = CaptureOutputMode.File, OutputPath = outputPath.Replace("captures", $"no-such-folder-{Guid.NewGuid():N}") });
 
         failure!.Code.Should().Be(ScreenshotErrorCode.InvalidOutputPath);
         failure.Message.Should().NotContain("drive letter").And.Contain("does not exist");
@@ -126,22 +125,37 @@ public class CaptureRequestTests
     [Fact]
     public void EncodingFor_ExplicitFormat_IgnoresTheSize()
     {
-        CaptureRequest.Resolve(new CaptureOptions { Format = "png" }).EncodingFor(4000, 3000).Should().Be(ImageEncoding.Png);
-        CaptureRequest.Resolve(new CaptureOptions { Format = "jpeg" }).EncodingFor(10, 10).Should().Be(ImageEncoding.Jpeg);
+        CaptureRequest.Resolve(new CaptureOptions { Format = CaptureFormat.Png }).EncodingFor(4000, 3000).Should().Be(ImageEncoding.Png);
+        CaptureRequest.Resolve(new CaptureOptions { Format = CaptureFormat.Jpeg }).EncodingFor(10, 10).Should().Be(ImageEncoding.Jpeg);
     }
 
     [Theory]
-    [InlineData("webp", ScreenshotErrorCode.InvalidFormat)]
-    [InlineData("tiff", ScreenshotErrorCode.InvalidFormat)]
-    public void Validate_RejectsUnknownFormats(string format, ScreenshotErrorCode expected)
+    [InlineData(CaptureFormat.Auto, null)]
+    [InlineData(CaptureFormat.Png, ImageEncoding.Png)]
+    [InlineData(CaptureFormat.Jpeg, ImageEncoding.Jpeg)]
+    public void Resolve_TakesTheToolsFormat(CaptureFormat format, ImageEncoding? expected)
     {
-        CaptureRequest.Validate(new CaptureOptions { Format = format })!.Code.Should().Be(expected);
+        // The tools bind format to CaptureFormat ('jpg' and any case included), so the service takes the enum as it is
+        CaptureRequest.Resolve(new CaptureOptions { Format = format }).Format.Should().Be(expected);
+    }
+
+    [Fact]
+    public void Validate_RejectsAFormatOrOutputNoToolCanBind()
+    {
+        // Fail closed: a value outside the enums is refused, with the codes the tools use for an unknown name
+        var format = CaptureRequest.Validate(new CaptureOptions { Format = (CaptureFormat)42 })!;
+        format.Code.Should().Be(ScreenshotErrorCode.InvalidFormat);
+        format.Message.Should().Contain("'auto', 'png' or 'jpeg'");
+
+        var output = CaptureRequest.Validate(new CaptureOptions { Output = (CaptureOutputMode)42 })!;
+        output.Code.Should().Be(ScreenshotErrorCode.InvalidOutputMode);
+        output.Message.Should().Contain("'image', 'file', 'both' or 'metadata'");
     }
 
     [Fact]
     public void Validate_ReturnsNullForValidOptions()
     {
-        CaptureRequest.Validate(new CaptureOptions { Format = "jpg", Output = "both", MaxDimension = 0 }).Should().BeNull();
+        CaptureRequest.Validate(new CaptureOptions { Format = CaptureFormat.Jpeg, Output = CaptureOutputMode.Both, MaxDimension = 0 }).Should().BeNull();
     }
 
     [Theory]

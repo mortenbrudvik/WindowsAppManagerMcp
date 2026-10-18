@@ -69,7 +69,7 @@ public class FixtureCaptureTests
             {
                 // Full resolution, lossless: image pixels map 1:1 to screen pixels from the capture origin
                 var capture = e2e.Server.Screenshots.CaptureWindow(
-                    e2e.Fixture.MainWindowHandle, includeFrame, new CaptureOptions { Format = "png", MaxDimension = 0 });
+                    e2e.Fixture.MainWindowHandle, includeFrame, new CaptureOptions { Format = CaptureFormat.Png, MaxDimension = 0 });
                 result = capture.Metadata;
                 if (!result.Success)
                 {

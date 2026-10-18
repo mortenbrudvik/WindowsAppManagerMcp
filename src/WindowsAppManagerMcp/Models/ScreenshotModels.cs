@@ -247,8 +247,8 @@ public sealed record CaptureOptions
     /// <summary>With format "auto", images whose long edge is at most this many pixels are PNG, larger ones JPEG.</summary>
     public const int AutoPngMaxEdge = 512;
 
-    /// <summary>"auto" (default), "png", "jpeg" or "jpg".</summary>
-    public string? Format { get; init; } = "auto";
+    /// <summary>The image format; Auto (default) decides by the output size, or by <see cref="OutputPath"/>'s extension.</summary>
+    public CaptureFormat Format { get; init; } = CaptureFormat.Auto;
 
     /// <summary>JPEG quality, clamped to 1-100.</summary>
     public int Quality { get; init; } = DefaultQuality;
@@ -262,8 +262,8 @@ public sealed record CaptureOptions
     /// <summary>Legacy width limit in pixels. Applies together with <see cref="MaxDimension"/>.</summary>
     public int? MaxWidth { get; init; }
 
-    /// <summary>"image" (default), "file", "both" or "metadata".</summary>
-    public string? Output { get; init; } = "image";
+    /// <summary>What the capture returns: the image (default), a file, both, or only the metadata.</summary>
+    public Services.CaptureOutputMode Output { get; init; } = Services.CaptureOutputMode.Image;
 
     /// <summary>Absolute path of the image file for output "file" or "both". Null writes a new temp file.</summary>
     public string? OutputPath { get; init; }
@@ -271,7 +271,7 @@ public sealed record CaptureOptions
     /// <summary>Allow <see cref="OutputPath"/> to replace an existing file.</summary>
     public bool Overwrite { get; init; }
 
-    /// <summary>Legacy alias: true turns output "image" or "metadata" into "file".</summary>
+    /// <summary>Legacy alias: true turns output Image or Metadata into File.</summary>
     public bool SaveToFile { get; init; }
 
     /// <summary>How a window capture reads the window's pixels (roadmap M7.1); the other captures ignore it.</summary>

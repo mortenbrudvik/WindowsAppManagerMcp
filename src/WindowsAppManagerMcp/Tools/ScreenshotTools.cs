@@ -759,12 +759,11 @@ public class ScreenshotTools
         int? maxWidth) =>
         new()
         {
-            // The service takes the names; the enums were checked when the arguments were bound
-            Format = ToolEnum<CaptureFormat>.Name(format),
+            Format = format,
             Quality = quality,
             MaxDimension = maxDimension,
             MaxWidth = maxWidth,
-            Output = ToolEnum<CaptureOutputMode>.Name(output),
+            Output = output,
             OutputPath = outputPath,
             Overwrite = overwrite,
             SaveToFile = saveToFile
