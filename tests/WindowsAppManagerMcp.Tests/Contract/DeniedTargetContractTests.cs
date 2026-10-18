@@ -12,7 +12,7 @@ namespace WindowsAppManagerMcp.Tests.Contract;
 /// served tool whose input schema takes a window (handle, windowHandle, toWindowHandle, aboveHandle, a window selector, a batch's
 /// windows, placements or changes, a launch's expectWindow or placement), an element's ref (ref, withinRef, listRef) or a
 /// processId, and every tool the docs list under the policy whose target is the window in front or at a point
-/// (<see cref="TargetedByPointOrFront"/>), is called with a window, element or process the policy denies, through the production pipeline and the real
+/// (<see cref="TargetedByPointOrFront"/>) or a window a saved preset chooses (<see cref="TargetedByASavedPreset"/>), is called with a window, element or process the policy denies, through the production pipeline and the real
 /// services over faked native seams (<see cref="NativeFakedServer"/>): it must answer TargetDeniedByPolicy, and nothing may act
 /// (no window change, input, process start or stop, clipboard write, UI Automation action or CDP command), read the window
 /// through UI Automation (by its handle, or by an element of it: its properties, a search under it, its children) or capture
@@ -125,6 +125,11 @@ public sealed class DeniedTargetContractTests
         // A saved layout that places the denied app's window: its placement is refused, and the others would still be arranged
         ["apply_layout"] = new("""{ "name": "bank" }""", RefusalAt.AnItem,
             Before: ("save_layout", """{ "name": "bank", "placements": [ { "processName": "chrome", "snap": "left_half" } ] }""")),
+        // A workspace the user saved with the denied app's window (TargetedByASavedPreset): restore opens what is missing and
+        // arranges the rest as apply_layout does, so the denied window's placement is refused (an agent's preset, as save_layout
+        // with placements writes, is refused before that: LaunchNotConfirmed)
+        ["restore_workspace"] = new("""{ "name": "morning" }""", RefusalAt.AnItem,
+            Before: ("save_workspace", """{ "name": "morning", "includeProcesses": [ "chrome" ] }""")),
         // A run of steps on the denied window: its first step is refused, and the run with it
         ["run_steps"] = new($$"""{ "window": { "handle": {{Denied}} }, "steps": [ { "tool": "focus_window" }, { "tool": "type_text", "args": { "text": "1000" } } ] }""",
             RefusalAt.AnItem),
@@ -221,6 +226,15 @@ public sealed class DeniedTargetContractTests
     /// </summary>
     private static readonly HashSet<string> TargetedByPointOrFront = new(StringComparer.Ordinal) { "get_focused_element", "get_element_at_point" };
 
+    /// <summary>
+    /// The tools on <see cref="Checked"/> whose windows a saved preset chooses: their schemas name only the preset, so the schema
+    /// scan cannot find them either, and the docs' list of the tools the policy applies to holds them on a list too.
+    /// </summary>
+    private static readonly HashSet<string> TargetedByASavedPreset = new(StringComparer.Ordinal) { "restore_workspace" };
+
+    /// <summary>The tools on <see cref="Checked"/> whose target no schema property names.</summary>
+    private static IEnumerable<string> TargetedWithoutASchemaProperty => TargetedByPointOrFront.Concat(TargetedByASavedPreset);
+
     /// <summary>Every call to make: each tool of <see cref="Checked"/> by its name, and each of <see cref="Variants"/> by its key.</summary>
     public static TheoryData<string> CheckedTools()
     {
@@ -251,9 +265,10 @@ public sealed class DeniedTargetContractTests
             "a tool that takes a window or a process must refuse one the user's target policy denies: add it to Checked with a call " +
             "that names the denied window (a launch tool to Launches), or to Exempt with the reason it legitimately does not apply " +
             "the policy");
-        Checked.Keys.Concat(Exempt.Keys).Concat(launches).Concat(CheckedElsewhere.Keys).Except(TargetedByPointOrFront).Except(targeting)
+        Checked.Keys.Concat(Exempt.Keys).Concat(launches).Concat(CheckedElsewhere.Keys).Except(TargetedWithoutASchemaProperty).Except(targeting)
             .Should().BeEmpty("an entry names a served tool that takes a window or a process");
-        TargetedByPointOrFront.Should().BeSubsetOf(Checked.Keys, "a tool that targets the window in front or at a point is checked")
+        TargetedWithoutASchemaProperty.Should().BeSubsetOf(Checked.Keys,
+                "a tool that targets the window in front, the window at a point or the windows of a saved preset is checked")
             .And.NotIntersectWith(targeting, "a tool whose schema names its target is found by the scan");
         Variants.Values.Select(v => v.Tool).Except(Checked.Keys).Should().BeEmpty("a variant calls a tool that is checked");
         targeting.Should().Contain("read_table", "the scan must see a tool that names its target only by a ref");
@@ -275,7 +290,7 @@ public sealed class DeniedTargetContractTests
             .Except(Checked.Keys).Except(Exempt.Keys).Except(Launches.Values.Select(l => l.Tool)).Except(CheckedElsewhere.Keys)
             .Should().BeEmpty(
                 "docs/TOOLS.md says the policy applies to these tools: add each to Checked with a call that names the denied window " +
-                "(one whose schema names no window to TargetedByPointOrFront too), or correct the docs");
+                "(one whose schema names no window to TargetedByPointOrFront or TargetedByASavedPreset too), or correct the docs");
     }
 
     [Theory]

@@ -456,12 +456,12 @@ public sealed class SelfGatedToolsContractTests : IDisposable
         var concrete = ChainActions([typeof(NativeWindowWrapper).GetMethod(nameof(NativeWindowWrapper.ShowWindow))!,
             typeof(NativeWindowWrapper).GetMethod(nameof(NativeWindowWrapper.GetWindowText))!], after).ToList();
 
-        // Assert - a window change, a UI Automation action and a pattern action in a lambda, input and a clipboard write; a
-        // service's window change and focus, and a window change in a helper the sample calls; and a server interface that is
-        // not classified
+        // Assert - a window change, a UI Automation action and a pattern action in a lambda, a grid's cell lookup (it scrolls),
+        // input and a clipboard write; a service's window change and focus, and a window change in a helper the sample calls;
+        // and a server interface that is not classified
         actions.Should().Contain([
             "INativeWindowWrapper.SetForegroundWindow", "IUIAutomationWrapper.CloseWindow", "IUiaTree.SetFocus", "IUiaInvokePattern.Invoke",
-            "IUiaValuePattern.SetValue", "INativeInputWrapper.SendInput", "INativeClipboardWrapper.WriteText", "IWindowService.SetWindowState",
+            "IUiaValuePattern.SetValue", "IUiaGridPattern.GetItem", "INativeInputWrapper.SendInput", "INativeClipboardWrapper.WriteText", "IWindowService.SetWindowState",
             "IForegroundService.EnsureForeground", "INativeWindowWrapper.SetWindowPos", "IInputSession.Send", "ITakeoverMonitor.Watch (not classified)"
         ]);
         concrete.Should().Equal(["NativeWindowWrapper.ShowWindow"], "a concrete wrapper acts as its seam does");
@@ -712,6 +712,9 @@ internal static class NativeActionSample
         {
             value.SetValue("sample");
         }
+
+        // A grid's cell lookup, which scrolls a WPF grid to the cell
+        _ = tree.GetPattern<IUiaGridPattern>(node)?.GetItem(0, 0);
 
         _ = input.GetCursorPos();
         input.SendInput([]);

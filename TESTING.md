@@ -1984,7 +1984,14 @@ Rules for new tests:
   name of its own (`Local\WamTests.SharedPause.<guid>`), never the servers' `Local\WindowsAppManagerMcp.InputPaused`,
   builds the servers' parameterless wrapper only to read the name it would open, and registers no hotkey;
   `TestCodeNativeWrapperTests` traces the name passed to that constructor through the IL and fails one it
-  cannot trace to a `Local\WamTests.` literal of the test's own, unless `SanctionedHotkeyNames` gives a reason.
+  cannot trace to a `Local\WamTests.` literal of the test's own, unless `SanctionedHotkeyNames` gives a reason (a
+  naming helper counts only when it takes no parameter, loads no field and calls no test or server code). It also
+  fails an `OpenDesktopPause` on a wrapper it cannot trace, in the same method, to such a constructor on such a name,
+  a `Set` or `Reset` of a pause it cannot trace to such an `OpenDesktopPause`, and a parameterless wrapper that does
+  not go straight into `FieldInfo.GetValue`: a wrapper or pause kept in a field or handed back by a helper fails.
+  The trace reads the IL as one list, so it fails closed on a value merged from two paths: a name, wrapper or pause
+  that a `??` or a `?:` picks (`new NativeHotkeyWrapper(name ?? UniqueName())`) is not traced, since the instruction
+  that takes it is a branch target (`IlInstruction.IsBranchTarget`).
 - Never install a real low-level keyboard or mouse hook. Takeover detection (roadmap M7.4) installs them only through
   `INativeLowLevelInputWrapper` (`LowLevelInputHooks_AreOnlyInstalledByNativeLowLevelInputWrapper`). Tests use
   `FakeLowLevelInputWrapper`, whose message loop can fail (`FailLoop`), end as WM_QUIT does (`QuitLoop`) or throw
@@ -2033,12 +2040,15 @@ Rules for new tests:
   reads, the shared pause of a name of the test's own), and may call a real window, process or hotkey wrapper only
   through the members on `ReadOnlyMembers`, also through their interfaces in a type that constructs one. No test closes
   or kills a process through a process handle, and a method that constructs the servers' own (parameterless) hotkey
-  wrapper calls nothing on a hotkey wrapper. Server code a test hands a real wrapper to may only read it. A method that
+  wrapper calls nothing on a hotkey wrapper and hands the wrapper straight to a reflection read of a field; the shared
+  pause is opened, set and reset only on a wrapper built in the same method on a name of the test's own (above).
+  Server code a test hands a real wrapper to may only read it. A method that
   builds the production container (`AddWindowsAppManagerServices`) needs an entry in `SanctionedProductionContainers`,
   keyed by test type and method (its lambdas count as that method), and each call such a type makes that may act on
   the services needs one in `SanctionedProductionContainerCalls`: starting a hosted service or a host, invoking a tool
   through the MCP SDK, and `InProcessMcpServer`'s start and tool call count. It does not see a real wrapper registered
-  by type through DI, or a hotkey wrapper kept in a field and used in another method; neither is in the test code.
+  by type through DI, which no test code does, nor a window or process wrapper kept in a field and used in another
+  method; a hotkey wrapper kept so cannot open the shared pause (above).
 - Release the input gate in a `finally` or with `using`: `InputGate` is shared by every test in the process, so a
   lease a failed test keeps fails the tests of other classes after it (`InputGateTests` holds every lease with `using`).
 - Keep timing tests far from the times they tell apart, because the default run is parallel and CI
@@ -2061,7 +2071,10 @@ another test run, a virus scan) decide when the deadline passes (roadmap M3.F29)
 `DesktopStateServiceTests` run get_desktop_state's deadline on a `ManualTimerClock` (`Fixtures/`), whose timers fire only
 when the test moves it: the test moves it to the parts' budget or to the deadline once the parts are where it expects
 them, and checks that the call returns then and not before, instead of bounding the call's wall time. The real time a
-test then waits for the call (`HangGuard`, 30 s) only guards against a call that never returns. Each step of the
+test then waits for the call (`HangGuard`, 30 s) only guards against a call that never returns. A fake that waits
+for the code under test to cancel it waits at most `HangGuard` too and records whether it was cancelled
+(`ElementReadFallbackTests`' search), so that a deadline the code stops passing fails the test with a message instead
+of hanging the run until CI's `--blame-hang-timeout` kills it. Each step of the
 in-process MCP server (`InProcessMcpServer`, `RawMcpConnection`: starting the host, connecting, stopping) may take 30 s,
 as long as a call: at 10 s, contract tests failed now and then after 11 to 14 seconds on a busy machine
 (close_windows_batch in `UserConfirmationContractTests`, the click case of `ToolPayloadBudgetTests` and
@@ -3143,7 +3156,10 @@ Two contracts hold the safety rules for every tool at once, so a new tool cannot
   but must not reuse, place or focus its window), and launch_browser_with_debug is on `CheckedElsewhere`, with the
   unit tests that check it. A tool on none of the lists fails the inventory, also when its schema names no target but
   docs/TOOLS.md links it under "The policy applies to:" (the test reads that list, and a reworded intro line fails it
-  with a message that names the line). The denied fake tree's elements need a name without a colon (the read log
+  with a message that names the line). Such a tool is on `TargetedByPointOrFront` (get_focused_element,
+  get_element_at_point) or on `TargetedByASavedPreset` (restore_workspace, whose windows a workspace saved by
+  save_workspace names: its `Checked` call saves one with the denied app's windows first, and the restore must refuse
+  their placements and do nothing). The denied fake tree's elements need a name without a colon (the read log
   matches by name).
 - `Contract/SelfGatedToolsContractTests` checks the tools on `InputGateToolFilter.SelfGatedTools`, which the filter
   lets run without the input gate because they take it themselves. Every tool on the list needs an entry. A `Work`
@@ -3160,7 +3176,11 @@ Two contracts hold the safety rules for every tool at once, so a new tool cannot
 Program.cs registers them, with every native seam faked (every `INative*` and `*Wrapper` interface, the interfaces the
 Native types implement, the CDP transport and the executable resolver) over a small desktop of its own
 (`DeniedDesktop`). No hosted service runs, and before any call it walks the container and refuses to start if a
-service holds a real native wrapper.
+service holds a real native wrapper. Its `IsAction`, which says what counts as an action among the fakes' calls and in
+the IL of a self-gated route, is held to the E2E `WrapperCatalog`, which the unit test project compiles in as a linked
+file (`NativeFakedServerTests`): every seam member the catalog does not call a read is an action (a grid's `GetItem`,
+which scrolls a WPF grid, and the pause hotkey's and the shared pause's members too), except the clipboard's read, which
+the catalog refuses for privacy and which changes nothing.
 
 `Contract/ToolPayloadBudgetTests` measures the typical result of every tool on `TypicalDesktop` (two
 monitors, 15 windows, 40 processes, a 120-element UI Automation tree, a 15,000-character article, five layout
