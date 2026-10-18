@@ -400,10 +400,11 @@ public class InputSimulationTools
     }
 
     [McpServerTool(Name = "send_keys", Title = "Send Keys", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = false)]
-    [Description("Send keys and key combinations (syntax under keys). Examples: '^c' (Ctrl+C), '{TAB}', '+{HOME}' (Shift+Home), '{DOWN 3}{ENTER}'." + KeyboardTargetNote +
+    [Description("Send keys and key combinations (syntax under keys). Examples: '^c' (Ctrl+C), '{TAB}', '{DOWN 3}{ENTER}'." + KeyboardTargetNote +
+                 " At most 5000 keys (TextTooLong); the window is checked again every 64." +
                  " Chords that close, quit or lock (closing a window or tab, quitting an app, Task Manager) are refused without windowHandle (DestructiveChordNeedsTarget)." +
                  " A chord that hands the keyboard to another window (Alt+Tab, Alt+Esc, Ctrl+Esc, the Windows key, Alt+Space, or a closing chord) must be the last key: keys after it are refused (KeysAfterFocusChange), so send them in a new call." +
-                 " Never send keys that close, quit, submit or delete to a window you have not targeted. To close a window, use close_window with its handle instead of a key combination." +
+                 " Never send keys that close, quit, submit or delete to a window you have not targeted. To close a window, use close_window, not keys." +
                  " The user's pause hotkey chord is refused (PauseChordNotAllowed)." +
                  " A paste (^v, +{INSERT}) is sent only when the clipboard holds what set_clipboard put there, your own copy, or content the user let get_clipboard read; otherwise, and for content marked private, it is refused (PasteNotAllowed)." +
                  " Keys that copy and then paste (^c^v) are refused too (PasteNotAllowed): send the copy and the paste in separate calls.")]
@@ -425,8 +426,8 @@ public class InputSimulationTools
         bool releaseHeldModifiers = false,
         [Description(ActionObservation.ObserveDescription)]
         ObserveMode observe = ObserveMode.None,
-        [Description("Milliseconds between keys, each press of {NAME n} counting (0-500, default 0: one batch). For apps " +
-                     "that drop fast keys.")]
+        [Description("Milliseconds between keys, each press of {NAME n} counting (0-500, default 0; at most 10000 ms in all). " +
+                     "For apps that drop fast keys.")]
         int delayMs = 0,
         CancellationToken cancellationToken = default)
     {

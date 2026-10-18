@@ -810,21 +810,43 @@ public partial class InputSimulationService : IInputSimulationService
                 ErrorCode: InputErrorCode.InvalidKeySpecification);
         }
 
-        return await SendStepsAsync(keys, spec, target, releaseHeldModifiers, Math.Clamp(delayMs, 0, MaxSendKeysDelayMs), holdMs: 0,
+        // Bounded as type_text is (roadmap M4.4), before anything is checked or sent: characters type themselves, so a
+        // runaway call could otherwise type for minutes, and with delayMs hold the input gate as long
+        var presses = SendKeysParser.KeyPresses(inputs).Count;
+        if (presses > MaxSendKeysPresses)
+        {
+            return new SendKeysResult(false, keys,
+                $"The keys press {Count(presses)} keys, more than the {Count(MaxSendKeysPresses)} send_keys sends in one call, so that a " +
+                "runaway call cannot type for minutes. Nothing was sent. Send them in parts, or put long text in with type_text " +
+                "(method 'paste').", InputErrorCode.TextTooLong);
+        }
+
+        delayMs = Math.Clamp(delayMs, 0, MaxSendKeysDelayMs);
+        var waits = (spec.Steps.Count - 1) * delayMs;
+        if (waits > MaxSendKeysDurationMs)
+        {
+            return new SendKeysResult(false, keys,
+                $"With delayMs {delayMs} between its {Count(spec.Steps.Count)} keys the call would wait {Count(waits)} ms in all; one " +
+                $"call waits at most {Count(MaxSendKeysDurationMs)} ms, because every other input and window call waits for it. " +
+                "Nothing was sent. Lower delayMs, or send the keys in several calls.", InputErrorCode.InvalidArguments);
+        }
+
+        return await SendStepsAsync(keys, spec, target, releaseHeldModifiers, delayMs, holdMs: 0, SendKeysBatchSize,
             cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
     /// Sends the steps of send_keys or press_keys (roadmap M4.1, M4.3), after the pause chord, the held input and the guard
     /// (destructive chords, keys after a focus change) have checked all of them. Without <paramref name="delayMs"/> and
-    /// <paramref name="holdMs"/> every step goes in one SendInput call, so no other input can come between them; otherwise
-    /// each step is a batch of its own, checked again right before it, with <paramref name="delayMs"/> before every step but
-    /// the first. With <paramref name="holdMs"/> a step's leading key-downs go first, and its key-ups follow that much later
-    /// without a check of their own (they only release what went down; the session releases them anyway if the call stops
-    /// meanwhile).
+    /// <paramref name="holdMs"/> the steps go in batches of whole steps of at most <paramref name="batchSize"/> key presses
+    /// (a step with more goes alone), so no other input can come between the keys of a batch; otherwise each step is a batch
+    /// of its own, with <paramref name="delayMs"/> before every step but the first. Every batch is checked again right before
+    /// it (the window, the modifiers, the paste rule, then the user's pause), as type_text's are. With
+    /// <paramref name="holdMs"/> a step's leading key-downs go first, and its key-ups follow that much later without a check
+    /// of their own (they only release what went down; the session releases them anyway if the call stops meanwhile).
     /// </summary>
     private async Task<SendKeysResult> SendStepsAsync(string keys, KeySpec spec, InputTarget target, bool releaseHeldModifiers,
-        int delayMs, int holdMs, CancellationToken cancellationToken)
+        int delayMs, int holdMs, int batchSize, CancellationToken cancellationToken)
     {
         var inputs = spec.Events;
 
@@ -836,10 +858,12 @@ public partial class InputSimulationService : IInputSimulationService
                 "may press it. Nothing was sent.", InputErrorCode.PauseChordNotAllowed);
         }
 
-        var batches = KeyBatches(spec, delayMs, holdMs);
-        var oneBatch = delayMs == 0 && holdMs == 0;
+        var batches = KeyBatches(spec, delayMs, holdMs, batchSize);
         var total = spec.Steps.Count;
         var keysSent = 0;
+
+        // The events of the batches sent whole, so that a short SendInput count is told in steps of the whole call
+        var eventsSent = 0;
 
         using var call = new InputCall(_session, cancellationToken);
         if (call.IsPaused)
@@ -884,7 +908,7 @@ public partial class InputSimulationService : IInputSimulationService
 
                 for (var b = 0; b < batches.Count; b++)
                 {
-                    var (batch, wait, release, endsStep) = batches[b];
+                    var (batch, wait, release, steps) = batches[b];
                     if (wait > 0)
                     {
                         await Task.Delay(wait, call.Token).ConfigureAwait(false);
@@ -940,21 +964,15 @@ public partial class InputSimulationService : IInputSimulationService
 
                     if (!sent.Complete)
                     {
-                        if (oneBatch)
-                        {
-                            keysSent = StepsWithin(spec, sent.Inserted);
-                        }
-
+                        keysSent = StepsWithin(spec, eventsSent + sent.Inserted);
                         return held.Apply(Finish(new SendKeysResult(false, keys,
                             $"SendInput inserted only {sent.Inserted} of {sent.Requested} events, so {keysSent} of {total} keys were sent " +
                             "completely; the keys it had pressed were released again. Check the window before sending the rest.",
                             InputErrorCode.SendInputFailed) { KeysSent = keysSent }, approved));
                     }
 
-                    if (endsStep)
-                    {
-                        keysSent = oneBatch ? total : keysSent + 1;
-                    }
+                    eventsSent += batch.Count;
+                    keysSent += steps;
                 }
 
                 return held.Apply(Finish(new SendKeysResult(Success: true, Keys: keys) { KeysSent = keysSent }, approved));
@@ -973,6 +991,27 @@ public partial class InputSimulationService : IInputSimulationService
 
     /// <summary>send_keys waits at most this long between keys (delayMs).</summary>
     public const int MaxSendKeysDelayMs = 500;
+
+    /// <summary>
+    /// send_keys presses at most this many keys in one call (TextTooLong), as type_text types at most
+    /// <see cref="MaxTypedLength"/> characters, so that a runaway call cannot type for minutes: every character, named key,
+    /// press of <c>{KEY n}</c> and modifier pressed on its own (<c>{ALT}</c>) counts, the modifiers held for a key do not
+    /// (<see cref="SendKeysParser.KeyPresses"/>).
+    /// </summary>
+    public const int MaxSendKeysPresses = MaxTypedLength;
+
+    /// <summary>
+    /// send_keys without delayMs sends its keys in batches of whole keys of at most this many key presses (a group with more
+    /// goes alone), checked again before each as type_text's batches of <see cref="TypeTextBatchSize"/> characters are, so a
+    /// focus change or the user's pause stops a long call within a batch: once inserted, a batch cannot be stopped.
+    /// </summary>
+    public const int SendKeysBatchSize = TypeTextBatchSize;
+
+    /// <summary>
+    /// The longest send_keys may wait between its keys in all: (keys - 1) x delayMs. The input gate is held throughout, so
+    /// every other input and window call waits for it, as for press_keys (<see cref="MaxPressKeysDurationMs"/>).
+    /// </summary>
+    public const int MaxSendKeysDurationMs = MaxPressKeysDurationMs;
 
     /// <summary>press_keys holds a chord's keys down at most this long (holdMs).</summary>
     public const int MaxPressKeysHoldMs = 5000;
@@ -1021,22 +1060,48 @@ public partial class InputSimulationService : IInputSimulationService
                 $"most {MaxPressKeysDurationMs} ms, because every other input call waits for it.", nameof(holdMs));
         }
 
-        return await SendStepsAsync(keys.Text, spec, target, releaseHeldModifiers, delayBetweenMs, holdMs, cancellationToken)
-            .ConfigureAwait(false);
+        // At most MaxPresses presses: without waits they all go in one batch
+        return await SendStepsAsync(keys.Text, spec, target, releaseHeldModifiers, delayBetweenMs, holdMs, batchSize: int.MaxValue,
+            cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
-    /// The SendInput batches of <paramref name="spec"/>: all its steps in one without waits; otherwise each step, after
-    /// <paramref name="delayMs"/> (not before the first), split with <paramref name="holdMs"/> into its leading key-downs and,
-    /// that much later, the rest (a release batch, which <see cref="SendStepsAsync"/> does not check again).
+    /// The SendInput batches of <paramref name="spec"/>: without waits, its steps in order, as many whole steps in a batch as
+    /// hold at most <paramref name="batchSize"/> key presses (<see cref="SendKeysParser.KeyPresses"/>; a step with more is a
+    /// batch of its own); otherwise each step, after <paramref name="delayMs"/> (not before the first), split with
+    /// <paramref name="holdMs"/> into its leading key-downs and, that much later, the rest (a release batch, which
+    /// <see cref="SendStepsAsync"/> does not check again). Each batch says how many steps it completes.
     /// </summary>
-    private static List<(IReadOnlyList<InputEvent> Events, int Wait, bool Release, bool EndsStep)> KeyBatches(KeySpec spec, int delayMs,
-        int holdMs)
+    private static List<(IReadOnlyList<InputEvent> Events, int Wait, bool Release, int Steps)> KeyBatches(KeySpec spec, int delayMs,
+        int holdMs, int batchSize)
     {
-        var batches = new List<(IReadOnlyList<InputEvent> Events, int Wait, bool Release, bool EndsStep)>();
+        var batches = new List<(IReadOnlyList<InputEvent> Events, int Wait, bool Release, int Steps)>();
         if (delayMs == 0 && holdMs == 0)
         {
-            batches.Add((spec.Events, 0, false, true));
+            var events = new List<InputEvent>();
+            var steps = 0;
+            var presses = 0;
+            foreach (var step in spec.Steps)
+            {
+                var stepPresses = SendKeysParser.KeyPresses(step).Count;
+                if (steps > 0 && presses + stepPresses > batchSize)
+                {
+                    batches.Add((events, 0, false, steps));
+                    events = new List<InputEvent>();
+                    steps = 0;
+                    presses = 0;
+                }
+
+                events.AddRange(step);
+                steps++;
+                presses += stepPresses;
+            }
+
+            if (steps > 0)
+            {
+                batches.Add((events, 0, false, steps));
+            }
+
             return batches;
         }
 
@@ -1047,12 +1112,12 @@ public partial class InputSimulationService : IInputSimulationService
             var downs = holdMs == 0 ? step.Count : step.TakeWhile(e => (e.Flags & NativeEnums.KEYEVENTF_KEYUP) == 0).Count();
             if (downs == step.Count || downs == 0)
             {
-                batches.Add((step, wait, false, true));
+                batches.Add((step, wait, false, 1));
                 continue;
             }
 
-            batches.Add((step.Take(downs).ToList(), wait, false, false));
-            batches.Add((step.Skip(downs).ToList(), holdMs, true, true));
+            batches.Add((step.Take(downs).ToList(), wait, false, 0));
+            batches.Add((step.Skip(downs).ToList(), holdMs, true, 1));
         }
 
         return batches;

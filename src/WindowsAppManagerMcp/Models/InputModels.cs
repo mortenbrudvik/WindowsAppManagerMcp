@@ -334,6 +334,15 @@ public readonly record struct InputEvent(InputEventKind Kind, ushort Code, uint 
     /// </summary>
     public ushort Scan { get; init; }
 
+    /// <summary>
+    /// VirtualKey events: true for a key-down or key-up of the left Ctrl or the right Alt that a key parser
+    /// (<see cref="Services.KeySpecParser"/>, <see cref="Services.PressKeysParser"/>) sent as AltGr, to type a character
+    /// the layout types with AltGr ('@' on a German keyboard). The chord checks read that pair as a character, not as
+    /// Ctrl+Alt (<see cref="Services.SendKeysParser.Chords"/>); the same keys pressed as keys (<c>{LCTRL down}{RALT down}</c>,
+    /// <c>lctrl+ralt</c>) are not tagged and count as Ctrl and Alt, as Windows reads them. Not passed to SendInput.
+    /// </summary>
+    public bool AltGr { get; init; }
+
     public static InputEvent Unicode(char character, uint flags) => new(InputEventKind.Unicode, character, flags);
 }
 
@@ -486,7 +495,9 @@ public enum InputErrorCode
 
     /// <summary>
     /// The window selector could not be checked again once the call held the input gate because of the selector itself
-    /// (a titleRegex that took longer than 100 ms on the window's title), as the window tools report it. Nothing was sent.
+    /// (a titleRegex that took longer than 100 ms on the window's title), as the window tools report it; or type_text's
+    /// arguments cannot be used together; or send_keys' delayMs waits would add up to more than
+    /// <see cref="Services.InputSimulationService.MaxSendKeysDurationMs"/>. Nothing was sent.
     /// </summary>
     InvalidArguments = 45,
 
@@ -522,7 +533,8 @@ public enum InputErrorCode
     /// <summary>
     /// type_text: the text is longer than its method takes: more than <see cref="Services.InputSimulationService.MaxTypedLength"/>
     /// characters to type (unicode, keys, or auto when it types), or more than
-    /// <see cref="Services.InputSimulationService.MaxPasteLength"/> to paste. Nothing was typed.
+    /// <see cref="Services.InputSimulationService.MaxPasteLength"/> to paste. Nothing was typed. send_keys: the keys press more
+    /// than <see cref="Services.InputSimulationService.MaxSendKeysPresses"/> keys. Nothing was sent.
     /// </summary>
     TextTooLong = 49,
 

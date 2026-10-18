@@ -319,10 +319,10 @@ public class InputSimulationServiceSessionTests
         // Act
         var result = await Call(CreateSut(session: session), path, releaseHeldModifiers: true);
 
-        // Assert - the first batch releases it, then the input is sent
+        // Assert - the first batch releases it (with the left Ctrl's scan code), then the input is sent
         result.Success.Should().BeTrue(result.Error);
         result.Released.Should().Equal("LeftCtrl");
-        _input.Batches[0].Should().Equal(InputEvent.Key(VkLControl, KeyUp));
+        _input.Batches[0].Should().Equal(InputEvent.Key(VkLControl, KeyUp, 0x1D));
         _input.Batches.Should().HaveCountGreaterThan(path == "mouse_move" ? 0 : 1);
         _input.IsKeyDown(VkLControl).Should().BeFalse();
     }

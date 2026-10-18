@@ -164,6 +164,7 @@ public static class PressKeysParser
     {
         var events = new List<InputEvent>();
         var pressed = new List<ushort>();
+        var altGrKeys = new List<ushort>();
         foreach (var modifier in chord.Modifiers)
         {
             Down(modifier);
@@ -187,15 +188,16 @@ public static class PressKeysParser
                 {
                     if (stroke.IsAltGr)
                     {
-                        // As a keyboard sends AltGr, and as send_keys does: the chord checks read the pair as a character
+                        // As a keyboard sends AltGr, and as send_keys does: tagged, so the chord checks read the pair as a
+                        // character; 'lctrl+ralt' named in the chord is not tagged, and counts as Ctrl+Alt
                         if (!Holds(KeyModifiers.Control))
                         {
-                            Down(NativeEnums.VK_LCONTROL);
+                            Down(NativeEnums.VK_LCONTROL, altGr: true);
                         }
 
                         if (!pressed.Contains(NativeEnums.VK_RMENU))
                         {
-                            Down(NativeEnums.VK_RMENU);
+                            Down(NativeEnums.VK_RMENU, altGr: true);
                         }
                     }
 
@@ -218,28 +220,33 @@ public static class PressKeysParser
 
         for (var k = pressed.Count - 1; k >= 0; k--)
         {
-            events.Add(KeyEvent(pressed[k], NativeEnums.KEYEVENTF_KEYUP));
+            events.Add(KeyEvent(pressed[k], NativeEnums.KEYEVENTF_KEYUP, altGrKeys.Contains(pressed[k])));
         }
 
         return events;
 
         bool Holds(KeyModifiers kind) => pressed.Any(key => SendKeysParser.ModifierOf(key) == kind);
 
-        void Down(ushort virtualKey)
+        void Down(ushort virtualKey, bool altGr = false)
         {
-            events.Add(KeyEvent(virtualKey, NativeEnums.KEYEVENTF_KEYDOWN));
+            events.Add(KeyEvent(virtualKey, NativeEnums.KEYEVENTF_KEYDOWN, altGr));
             if (KeyTable.IsModifier(virtualKey))
             {
                 pressed.Add(virtualKey);
             }
+
+            if (altGr)
+            {
+                altGrKeys.Add(virtualKey);
+            }
         }
 
-        void Up(ushort virtualKey) => events.Add(KeyEvent(virtualKey, NativeEnums.KEYEVENTF_KEYUP));
+        void Up(ushort virtualKey) => events.Add(KeyEvent(virtualKey, NativeEnums.KEYEVENTF_KEYUP, altGr: false));
 
-        InputEvent KeyEvent(ushort virtualKey, uint flags)
+        InputEvent KeyEvent(ushort virtualKey, uint flags, bool altGr)
         {
             var (scan, extended) = layout.ScanOf(virtualKey);
-            return InputEvent.Key(virtualKey, flags | (extended ? NativeEnums.KEYEVENTF_EXTENDEDKEY : 0), scan);
+            return InputEvent.Key(virtualKey, flags | (extended ? NativeEnums.KEYEVENTF_EXTENDEDKEY : 0), scan) with { AltGr = altGr };
         }
     }
 }

@@ -552,7 +552,7 @@ public class InputSessionTests
         _input.Batches.Single().Should().Equal(
             InputEvent.Key(HeldInputTracker.MaskKey, KeyDown),
             InputEvent.Key(HeldInputTracker.MaskKey, KeyUp),
-            InputEvent.Key(VkLMenu, KeyUp));
+            InputEvent.Key(VkLMenu, KeyUp, 0x38));
         sut.ServerHeld.Should().BeEmpty();
     }
 
