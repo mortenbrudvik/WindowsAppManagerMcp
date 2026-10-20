@@ -8707,6 +8707,105 @@ that ignores fields it does not know keeps working.
   than refused (type_text's and send_keys' `delayMs`, the UI Automation tools' `timeoutMs`, read_element_text's
   `maxLength`, see [Cancellation and progress](#cancellation-and-progress)) are documented as clamped.
 
+Next release (since 3.1.0: GitHub issues #8 to #18):
+
+The markers mean what they mean for 3.1.0 above: **Changed:** where a call that worked with 3.1.0 can now be refused or
+return something else, and **Breaking:** where a result field that 3.1.0 always sent can now be left out. The default
+tools/list grows by about 400 tokens (56,039 to 56,443), and every tool together from 66,141 to 66,545.
+
+- **Window rows name their monitor and how they fill it (issue #12).** find_windows, get_window_info (standard and
+  full), get_foreground_window, wam://windows, and the windows that the launch tools and wait_for_window return add
+  `monitorId` (the id [get_monitors](#get_monitors) gives the monitor), `zone` (the [snap_window](#snap_window) position
+  `visibleBounds` fills on that monitor's work area, within about 2 px times its scale; `fullscreen` also for a
+  maximized window, `monitor` for the whole monitor with its taskbar) and `spansMonitors: true` for a window over more
+  than one monitor. get_window_info `full` adds `restore` (`state`, `bounds`, `monitorIndex`, `monitorId`) for a
+  minimized window: where it comes back to. For a window Windows snapped before it was minimized, `bounds` is the
+  rectangle from before the snap. The docs now say that a minimized window's `monitorIndex` is the monitor it restores
+  to, as it always was. **Breaking:** `monitorIndex` on window rows and the geometry results, and `monitor` on
+  get_desktop_state's rows, are left out when the monitor cannot be read; they used to read 0. **Changed:** snap_window
+  without `monitor` fails with `MoveFailed` when the window's own monitor cannot be read, and snaps nothing (it used to
+  snap on monitor 0); move_window_to_monitor fails with `MoveFailed` when the monitor cannot be read afterwards, instead
+  of possibly reporting success, and with `positioning: "maximize"` no longer maximizes such a window where it is;
+  apply_layout no longer leaves a maximized window with an unreadable monitor alone as if it were on monitor 0. A
+  placement whose window's monitor cannot be read is placed again, and move_window_to_monitor moves it in two steps, as
+  across a scale change.
+- **find_windows takes `includeMinimized` (issue #16).** Default true, the listing as before; `false` leaves minimized
+  windows out, a much shorter listing when most windows are minimized. Like `sort` and `limit`, it is not a window
+  selector field.
+- **wait_for_window waits on a set of windows (issue #14).** New conditions `minimized` and `maximized`, for one window
+  or any window of the set, as `visible` is. `all: true` (with `visible`, `minimized` or `maximized`) needs every window
+  that counts to hold the condition, and at least one to count; "all restored" is `all` with `visible`, since a window
+  that was maximized comes back maximized. `count` `{atLeast, exactly, atMost}` (with `exists`) waits for how many
+  windows count; `exactly` or `atMost` 0 waits as `gone`, with its warning. With `all` or `count`, `stableMs` needs the
+  same windows (the same handles), and a window that comes or goes starts it again. With `all` or `count`, `window` is
+  left out and `matchCount` (also 0 or 1) and `candidates` list the set; wait_for_window's candidates now carry `state`,
+  `visibleBounds` (not for a minimized window), `monitorIndex`, `monitorId` and `zone`. A maximize is seen by polling,
+  not by a window event. **Changed:** wait_for_window's `candidates` lists up to 20 windows (5 before) when several
+  satisfy the condition or are in the way; AmbiguousWindow and the other early ends still list up to 5, and
+  wait_for_element is unchanged. **Changed:** an `exists` timeout now returns the windows that appeared but did not stay
+  (`window`, or `matchCount` and `candidates`); it returned none before. **Changed:** a `gone` wait whose `index` named
+  none of the windows that matched now warns how many matched, instead of "No window matched".
+- **get_desktop_state and get_foreground_window say whether the session is locked (issue #18).** Both results add
+  `sessionLock`: `locked`, `unlocked`, or `unknown` when Windows does not say or the state cannot be read. It is always
+  written: get_desktop_state right after `foreground`, whose row adds `isCloaked: true` when DWM cloaks the window, and
+  get_foreground_window after the window's fields. find_windows and the other window tools do not report it. Judge a
+  lock by `sessionLock`, not by the window in front: while the session is locked there may be no window in front, or the
+  lock screen app (LockApp) may be. **Changed:** the `error` of NoForegroundWindow (get_foreground_window, and
+  get_desktop_state's `target` error) says whether the session is locked, and no longer names the lock screen as a
+  cause; the `errorCode` stays. While the session is locked, [get_control_status](#get_control_status)' `message` adds
+  that input tools return `SessionLocked` until the user unlocks it.
+- **get_server_info's lock warning.** **Changed:** while the session is locked, the warning says that input tools return
+  `SessionLocked`, and that captures are not refused and may show the lock screen; it used to say that input and
+  captures fail.
+- **Server instructions.** **Changed:** the SessionLocked line says to judge a lock by `sessionLock`, not by the window
+  in front, and some other lines are worded more tightly with the same rules (19 lines, 2,998 characters).
+- **Captures say which windows keep themselves out of them (issue #17).** Results whose pixels can show other windows
+  add `excludedFromCapture`: take_screenshot and capture_region; read_screen_text, find_text_on_screen and
+  wait_for_visual on a region, a monitor, or a window copied from the screen or its device context; capture_window and
+  capture_with_elements whose `captureMethod` is `ScreenBitBlt` or `BitBltFallback`; and get_desktop_state's
+  `screenshot`. It lists the windows there that declare a display affinity: they are not in this image. Each entry has
+  `handle`, `affinity` (`excludeFromCapture` or `monitor`), `processName`, `title`, and `x`, `y`, `width`, `height` of
+  its visible frame inside the captured area; a window the user's target policy denies, or that cannot be checked, has
+  only `handle`, `affinity` and the rectangle, as in `maskedWindows`. The windows are read before and after the pixels,
+  and the field is left out when there are none. A capture of a window that itself declares one warns `DisplayAffinity`
+  (capture_window and capture_with_elements with every `captureMethod`, get_desktop_state's screenshot, and OCR or
+  wait_for_visual on a window target): the image may be black, empty, or show what is behind it. get_window_info's
+  detail `full` adds `displayAffinity` (`excludeFromCapture` or `monitor`; left out when there is none). **Changed:**
+  the OCR mask and wait_for_visual's left-out areas count a window excluded from capture as see-through, so a denied
+  window under such an overlay is now blacked out, or left out of the comparison, where it used to count as covered, and
+  `maskedWindows` can list more windows.
+- **Captures while the session is locked warn.** `SessionLocked`, or `DesktopUnavailable` when the input desktop cannot
+  be reached, comes first in the `warnings` of captures, OCR reads and wait_for_visual results: the image may show the
+  lock screen. Captures are not refused, and an unknown lock state does not warn.
+- **run_steps keeps the warnings of steps whose result is left out (issues #9 and #10).** A step that ran and whose
+  `result` is not returned (an `ok` step that is neither the last nor `return: true`) now has `warnings`: its result's
+  `warnings` and `warning`, whatever its tool, so an `ok` press_keys step whose chord Windows may take, or whose
+  character went out with no key, says so. They count in the run's 24,000 characters after the failed, last and `return:
+  true` results, in step order; a key step's `resolvedChords` and `sentAsCharacters` still come only with `return:
+  true`. **Changed:** a step whose warnings do not fit has `resultOmitted: true`, also when its result was never going
+  to be returned.
+- **send_keys and press_keys report the keys of a call that stopped part way (issue #9).** `resolvedChords`,
+  `sentAsCharacters` and `warnings` are no longer only on success: a call that failed after some keys went out (the
+  guard's recheck codes such as `TargetLostFocus`, and `ModifiersHeld`, `PasteNotAllowed`, `PausedByUser`,
+  `SendInputFailed`) carries them for those keys only. A call that sent nothing still has none.
+- **New warning `DeadKeyPressed` (issue #8).** send_keys and press_keys warn when a chord presses a key that is a dead
+  key of the window's layout with the modifiers it holds, such as `alt+shift+\` (the dead grave accent) or `oem_1` (`¨`)
+  on a Norwegian keyboard: the accent may be left waiting in the target and change the next key typed there. The layout
+  is read without changing it; there is no warning when it cannot be read, or while an accent already waits. The
+  input-method `SystemHotkey` warning now says Windows "may" take the chord and the application "may not" get it, as
+  that is not yet confirmed on a desktop.
+- **save_workspace keeps every tab of a debug browser's window.** **Changed:** save_workspace now looks for a browser
+  window's DevTools debug port as [get_browser_url](#get_browser_url) does by default (found from the browser's command
+  line, not required), so the window of a browser started with one keeps every tab, as documented, instead of only the
+  page it shows; `partialBrowsers` and its warning count only the windows of browsers without one.
+  [restore_workspace](#restore_workspace) reads the page a window shows the same way when it checks whether a
+  workspace's pages are already open, so a debug browser's window is matched by its tab's exact address.
+- **Documented.** How to tell browser windows with the same title apart: get_browser_url with each handle from
+  find_windows, sent in parallel (issue #13). [Check the Taskbar](#check-the-taskbar): checking or listing the taskbars'
+  app buttons with wait_for_element, find_ui_elements and get_desktop_state (issue #15). The skill's errors.md points to
+  every error code's entry, `MonitorNotFound` and `InvalidPresetFile` included (issue #11). The take_screenshot example
+  passes `monitor`, not the removed `monitorIndex`.
+
 ## Error Codes
 
 ### Tool errors
