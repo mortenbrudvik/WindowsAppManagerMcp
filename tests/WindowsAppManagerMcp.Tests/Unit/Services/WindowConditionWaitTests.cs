@@ -459,6 +459,23 @@ public class WindowConditionWaitTests
             .And.Contain("index 2").And.NotContain("No window matched");
     }
 
+    [Fact]
+    public async Task Gone_WithAnIndexPastTheWindowsLeftAfterExcludeHandles_SaysWhatLeftTheRestOut()
+    {
+        // Arrange - two Notepad windows, one excluded: index 1 names none of the one left
+        var first = _desktop.Add("a.txt - Notepad", "Notepad", processName: "notepad");
+        _desktop.Add("b.txt - Notepad", "Notepad", processName: "notepad");
+
+        // Act
+        var result = await WaitAsync(new WindowSelector { ProcessName = "notepad", Index = 1 }, WindowWaitCondition.Gone,
+            excludeHandles: [first]);
+
+        // Assert - two windows matched; excludeHandles left one out, which is why the index named none
+        result.Satisfied.Should().BeTrue();
+        result.Warning.Should().Contain("Only 1 window of the 2 that matched processName 'notepad'")
+            .And.Contain("excludeHandles or newOnly left out 1").And.Contain("index 1");
+    }
+
     #endregion
 
     #region foreground and visible

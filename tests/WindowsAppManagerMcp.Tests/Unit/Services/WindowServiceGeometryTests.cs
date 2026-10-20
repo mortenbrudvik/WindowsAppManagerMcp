@@ -427,18 +427,37 @@ public class WindowServiceGeometryTests
     }
 
     [Fact]
-    public void SnapWindow_OnANamedMonitor_DoesNotNeedTheWindowsOwn_AndPlacesOnce()
+    public void SnapWindow_OnANamedMonitor_DoesNotNeedTheWindowsOwn_AndPlacesAgain_SinceItsScaleIsUnknown()
     {
-        // Arrange - an unknown scale before and after is no scale change, so the target is not placed again
+        // Arrange - the window's monitor cannot be read before or after the move, so a scale change cannot be ruled out
         MonitorUnreadable(() => true);
 
         // Act
         var result = CreateSut().SnapWindow(Window, SnapPosition.LeftHalf, monitorIndex: 0, bringToFront: false);
 
+        // Assert - the same target twice, measured anew, as after a scale change
+        result.Success.Should().BeTrue(result.Error);
+        _window.Calls.Should().HaveCount(2);
+        _window.Visible.Should().Be(new WindowRect(0, 0, 960, 1040));
+    }
+
+    [Fact]
+    public void APlacement_OfAWindowWhoseMonitorIsReadOnlyBefore_IsPlacedAgain()
+    {
+        // Arrange - known before the move, unknown after it (the displays are changing): a scale change cannot be ruled out
+        var placed = false;
+        MonitorUnreadable(() => placed);
+        _native.Setup(n => n.SetWindowPos(Window, It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<uint>()))
+            .Callback(() => placed = true)
+            .Returns(Win32CallResult.Ok);
+
+        // Act
+        var result = CreateSut().SetWindowFrame(Window, 10, 20, 640, 480, bringToFront: false);
+
         // Assert
         result.Success.Should().BeTrue(result.Error);
-        _window.Calls.Should().ContainSingle();
-        _window.Visible.Should().Be(new WindowRect(0, 0, 960, 1040));
+        _native.Verify(n => n.SetWindowPos(Window, It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<uint>()),
+            Times.Exactly(2));
     }
 
     [Fact]

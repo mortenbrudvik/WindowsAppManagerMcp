@@ -217,6 +217,8 @@ public sealed partial class WindowWaitService
         private int? _matchesAtStart;
         private int? _unindexedAtStart;
         private int _unindexed;
+        private int? _leftOutAtStart;
+        private int _leftOut;
         private bool _handleIsNoWindow;
         private IReadOnlyList<WindowInfo> _matches = [];
         private WindowInfo? _lastSeen;
@@ -389,6 +391,7 @@ public sealed partial class WindowWaitService
 
             _matchesAtStart ??= _matches.Count;
             _unindexedAtStart ??= _unindexed;
+            _leftOutAtStart ??= _leftOut;
             if (_matches.Count > 0)
             {
                 _goneSince = null;
@@ -415,6 +418,10 @@ public sealed partial class WindowWaitService
             { } handle => $"Window {handle} did not match {_selector.Describe()} when the wait started (it changed, or its handle " +
                           "now names another window), so nothing had to close. If you expected it to match, check it with get_window_info.",
             // Windows matched, but fewer than the index needs: it named none
+            _ when _selector.Index is { } index && _unindexedAtStart > 0 && _leftOutAtStart > 0 =>
+                $"Only {_unindexedAtStart} window{(_unindexedAtStart == 1 ? "" : "s")} of the {_unindexedAtStart + _leftOutAtStart} that " +
+                $"matched {(_selector with { Index = null }).Describe()} counted when the wait started (excludeHandles or newOnly " +
+                $"left out {_leftOutAtStart}), so index {index} (counted from 0, front to back) named none and nothing had to close.",
             _ when _selector.Index is { } index && _unindexedAtStart > 0 =>
                 $"Only {_unindexedAtStart} window{(_unindexedAtStart == 1 ? "" : "s")} matched {(_selector with { Index = null }).Describe()} " +
                 $"when the wait started, so index {index} (counted from 0, front to back) named none and nothing had to close.",
@@ -485,7 +492,7 @@ public sealed partial class WindowWaitService
                 return Ended(InvalidArgumentsCode, WindowService.RegexTimeoutMessage(_selector.TitleRegex), 0);
             }
 
-            matches.RemoveAll(w => _excluded.Contains(w.Handle) || _openAtStart?.Contains(w.Handle) == true);
+            _leftOut = matches.RemoveAll(w => _excluded.Contains(w.Handle) || _openAtStart?.Contains(w.Handle) == true);
             _unindexed = matches.Count;
             if (_selector.Index is { } index && !_selector.Handle.HasValue && !_selector.Foreground)
                 matches = index < matches.Count ? [matches[index]] : [];

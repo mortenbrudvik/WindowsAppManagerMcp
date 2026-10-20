@@ -365,7 +365,7 @@ public static class PressKeysParser
         void Key(ushort virtualKey)
         {
             keyDown = events.Count;
-            deadKey = layout.DeadKeyOf(virtualKey, Held());
+            deadKey = layout.DeadKeyOf(virtualKey, Held(), rightAlt: pressed.Contains(NativeEnums.VK_RMENU));
             Down(virtualKey);
             Up(virtualKey);
         }

@@ -195,18 +195,42 @@ public partial class InputSimulationService
     /// </summary>
     private static List<DeadKeyPress> DeadKeysPressed(IReadOnlyList<InputEvent> events, KeyboardLayout layout)
     {
+        var rightAlt = RightAltDown(events);
         var deadKeys = new List<DeadKeyPress>();
         foreach (var (chord, index) in SendKeysParser.IndexedChords(events, altGrIsCtrlAlt: true))
         {
             var name = SendKeysParser.Spec(chord);
             if (events[index].Kind == InputEventKind.VirtualKey && !deadKeys.Exists(d => d.Keys == name) &&
-                layout.DeadKeyOf(chord.Code, chord.Modifiers) is { } accent)
+                layout.DeadKeyOf(chord.Code, chord.Modifiers, rightAlt[index]) is { } accent)
             {
                 deadKeys.Add(new DeadKeyPress(name, accent, index));
             }
         }
 
         return deadKeys;
+    }
+
+    /// <summary>
+    /// For each event, whether a right Alt pressed as a key ({RALT down}) is down there: AltGr on a layout that has one
+    /// (<see cref="KeyboardLayout.DeadKeyOf"/>). The right Alt of a parser's AltGr pair (tagged <see cref="InputEvent.AltGr"/>)
+    /// is not one: its left Ctrl is down with it, which the chord's modifiers already say.
+    /// </summary>
+    private static bool[] RightAltDown(IReadOnlyList<InputEvent> events)
+    {
+        var down = new bool[events.Count];
+        var held = false;
+        for (var i = 0; i < events.Count; i++)
+        {
+            down[i] = held;
+            var e = events[i];
+            if (e.Kind == InputEventKind.VirtualKey && !e.AltGr && e.Code is NativeEnums.VK_RMENU or NativeEnums.VK_MENU)
+            {
+                var isUp = (e.Flags & NativeEnums.KEYEVENTF_KEYUP) != 0;
+                held = isUp ? false : held || e.Code == NativeEnums.VK_RMENU;
+            }
+        }
+
+        return down;
     }
 
     /// <summary>

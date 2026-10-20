@@ -136,6 +136,19 @@ public class WindowServiceMonitorFieldsTests
     }
 
     [Fact]
+    public void AWindowWithoutAVisibleFrame_DoesNotSpanMonitors_ByItsInvisibleBorders()
+    {
+        // DWM cannot report the frame; the window rect's borders overhang the next monitor by 9 px all the way down
+        _native.Setup(n => n.GetExtendedFrameBounds(Window)).Returns(((int, int, int, int)?)null);
+        _native.Setup(n => n.GetWindowRect(Window)).Returns((1271, 0, 2569, 1449));
+
+        var info = CreateSut().GetWindowInfo(Window)!;
+
+        info.SpansMonitors.Should().BeFalse("only the visible frame tells a window across monitors");
+        _monitors.Verify(m => m.GetAllMonitors(), Times.Never);
+    }
+
+    [Fact]
     public void AWindowAcrossTwoMonitors_SpansMonitors_AndFillsNoZone()
     {
         _frame = new WindowRect(2000, 100, 1200, 800);

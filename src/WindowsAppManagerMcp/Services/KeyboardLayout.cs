@@ -134,9 +134,12 @@ public sealed class KeyboardLayout
     /// layout without changing its state; null when it is no dead key then, or the layout was not read. What the key types
     /// is chosen by Shift, Ctrl, and Ctrl with Alt (AltGr), with Caps Lock as it was at the start of the call; Alt without Ctrl
     /// is left out, since Windows types a key's own character with Alt down, and Win is no modifier of a layout. While an
-    /// accent already waits, a dead key types it and its own, and leaves nothing waiting.
+    /// accent already waits, a dead key types it and its own, and leaves nothing waiting. A right Alt held without Ctrl
+    /// (<paramref name="rightAlt"/>, an explicit ralt) is AltGr on a layout that has one, which Windows makes it by adding
+    /// the left Ctrl: the key is read on its AltGr layer when it types something or is a dead key there, and as with Alt
+    /// alone otherwise, as on a layout without AltGr.
     /// </summary>
-    public string? DeadKeyOf(ushort virtualKey, KeyModifiers held)
+    public string? DeadKeyOf(ushort virtualKey, KeyModifiers held, bool rightAlt = false)
     {
         if (_native == null)
         {
@@ -148,14 +151,32 @@ public sealed class KeyboardLayout
         {
             state |= AltState;
         }
-
-        if (!_deadKeys.TryGetValue((virtualKey, state), out var accent))
+        else if (rightAlt && (held & KeyModifiers.Control) == 0)
         {
-            accent = _native.DeadKeyText(virtualKey, RawScanCode(virtualKey), state, CapsLock, _layout);
-            _deadKeys[(virtualKey, state)] = accent;
+            var altGr = (byte)(state | CtrlState | AltState);
+            if (Dead(altGr) is { } altGrAccent)
+            {
+                return altGrAccent;
+            }
+
+            if (_native.KeyText(virtualKey, RawScanCode(virtualKey), altGr, CapsLock, _layout) != null)
+            {
+                return null;
+            }
         }
 
-        return accent;
+        return Dead(state);
+
+        string? Dead(byte shiftState)
+        {
+            if (!_deadKeys.TryGetValue((virtualKey, shiftState), out var accent))
+            {
+                accent = _native.DeadKeyText(virtualKey, RawScanCode(virtualKey), shiftState, CapsLock, _layout);
+                _deadKeys[(virtualKey, shiftState)] = accent;
+            }
+
+            return accent;
+        }
     }
 
     /// <summary>

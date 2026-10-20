@@ -316,6 +316,16 @@ public class InputSimulationServiceKeyReportTests
     }
 
     [Fact]
+    public async Task SendKeys_ReadsAKeyUnderAnExplicitRightAlt_OnItsAltGrLayer()
+    {
+        // On Norwegian the right Alt is AltGr: with it down the ¨ key is the dead tilde; after it comes up, the dead diaeresis
+        var result = await CreateSut().SendKeysAsync("{RALT down}{OEM_1}{RALT up}{OEM_1}", Duetty);
+
+        result.Success.Should().BeTrue(result.Error);
+        result.Warnings.Should().ContainSingle().Which.Should().Contain("('~')").And.Contain("('¨')");
+    }
+
+    [Fact]
     public async Task ADeadKey_IsNotReported_WhileAnAccentWaits()
     {
         // The dead key then types the waiting accent and its own, and leaves nothing waiting

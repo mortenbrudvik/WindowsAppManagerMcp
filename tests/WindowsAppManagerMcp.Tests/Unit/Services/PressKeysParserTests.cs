@@ -249,6 +249,26 @@ public class PressKeysParserTests
     }
 
     [Fact]
+    public void ARightAltChord_IsReadOnTheAltGrLayer_OfALayoutThatHasOne()
+    {
+        // On Norwegian the right Alt is AltGr: ralt+\ is the dead acute (the key's AltGr layer), ralt+oem_1 the dead tilde,
+        // not the dead diaeresis the key types alone; the left Alt is Alt, which does not change what the key types
+        var spec = PressKeysParser.Parse(KeyList.Of(@"ralt+\ ralt+oem_1 lalt+oem_1 ralt+2"), 1, Layout(FakeKeyboardLayoutWrapper.Norwegian));
+
+        spec.DeadKeys!.Select(d => (d.Keys, d.Accent)).Should().Equal((@"ralt+\", "´"), ("ralt+oem_1", "~"), ("lalt+oem_1", "¨"));
+    }
+
+    [Fact]
+    public void ARightAltChord_IsReadAsAlt_WhereTheKeyTypesNothingWithAltGr()
+    {
+        // Brazilian ABNT2's 6 key types nothing with AltGr, so the right Alt is read as Alt there: ralt+shift+6 is Shift+6,
+        // the dead diaeresis
+        var spec = PressKeysParser.Parse(KeyList.Of("ralt+shift+6"), 1, Layout(FakeKeyboardLayoutWrapper.Brazilian));
+
+        spec.DeadKeys!.Select(d => (d.Keys, d.Accent)).Should().Equal(("ralt+shift+6", "¨"));
+    }
+
+    [Fact]
     public void ADigitKeyThatIsADeadKeyWithShift_IsReported_AndNotWithCtrl()
     {
         // Brazilian ABNT2: Shift+6 is the dead diaeresis

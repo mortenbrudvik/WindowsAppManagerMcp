@@ -538,9 +538,10 @@ public class WindowService : IWindowService
         if (RestoreForPlacement(handle, failure) is { } notRestored)
             return notRestored;
 
+        // An unknown scale, before or after, is a change that cannot be ruled out (MonitorScale): placed again
         var scaleBefore = MonitorScale(handle);
         var placed = PlaceOnce(handle, target, frame, flags, failure);
-        if (!placed.Success || MonitorScale(handle) == scaleBefore)
+        if (!placed.Success || scaleBefore is { } before && MonitorScale(handle) == before)
             return placed;
 
         WaitForSettledFrame(handle, DpiSettleTimeout);
@@ -1899,7 +1900,8 @@ public class WindowService : IWindowService
         {
             MonitorId = monitor?.Id,
             Zone = monitor == null ? null : WindowZones.Match(visible, state, monitor),
-            SpansMonitors = monitor != null && WindowZones.Spans(visible, state, monitor, _monitorService.GetAllMonitors),
+            // Only the visible frame: the window rect's invisible borders (about 7 px) overhang the next monitor
+            SpansMonitors = monitor != null && frame != null && WindowZones.Spans(frame, state, monitor, _monitorService.GetAllMonitors),
             VisibleBounds = frame,
             ClassName = className,
             IsCloaked = isCloaked,

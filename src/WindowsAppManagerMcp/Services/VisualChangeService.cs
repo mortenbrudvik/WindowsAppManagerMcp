@@ -421,26 +421,16 @@ public sealed class VisualChangeService : IVisualChangeService
     /// The warning when the session is locked, or the input desktop cannot be reached, now (issue #17): the frames may show
     /// the lock screen. Null otherwise, and without the probe.
     /// </summary>
-    private string? SessionWarning()
+    private string? SessionWarning() => CaptureSession.WarningCode(_security) switch
     {
-        if (_security == null)
-        {
-            return null;
-        }
-
-        if (_security.GetSessionLock() == SessionLockState.Locked)
-        {
-            return CaptureWarnings.Format(CaptureWarnings.SessionLocked,
-                "the session was locked during the wait, so the frames may show the lock screen instead of the target: a lock or " +
-                "an unlock can count as a change. Waits are not refused while it is locked.");
-        }
-
-        return _security.IsInputDesktopAvailable()
-            ? null
-            : CaptureWarnings.Format(CaptureWarnings.DesktopUnavailable,
-                "the input desktop could not be reached during the wait (a UAC prompt, Ctrl+Alt+Del or a disconnected session), " +
-                "so the frames may be black or show the lock screen instead of the target.");
-    }
+        CaptureWarnings.SessionLocked => CaptureWarnings.Format(CaptureWarnings.SessionLocked,
+            "the session was locked during the wait, so the frames may show the lock screen instead of the target: a lock or " +
+            "an unlock can count as a change. Waits are not refused while it is locked."),
+        CaptureWarnings.DesktopUnavailable => CaptureWarnings.Format(CaptureWarnings.DesktopUnavailable,
+            "the input desktop could not be reached during the wait (a UAC prompt, Ctrl+Alt+Del or a disconnected session), " +
+            "so the frames may be black or show the lock screen instead of the target."),
+        _ => null
+    };
 
     /// <summary>The text caret of <paramref name="thread"/> on the screen, widened by a margin; null without one.</summary>
     private Rectangle? Caret(uint thread)

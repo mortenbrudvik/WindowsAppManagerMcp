@@ -963,22 +963,18 @@ public class ScreenshotService : IScreenshotService
     /// </summary>
     private void AddSessionWarning(List<string> warnings)
     {
-        if (_security == null)
+        switch (CaptureSession.WarningCode(_security))
         {
-            return;
-        }
-
-        if (_security.GetSessionLock() == SessionLockState.Locked)
-        {
-            warnings.Insert(0, CaptureWarnings.Format(CaptureWarnings.SessionLocked,
-                "the session is locked, so the image may show the lock screen instead of the windows. Captures are not refused " +
-                "while it is locked; capture again once the user has unlocked it."));
-        }
-        else if (!_security.IsInputDesktopAvailable())
-        {
-            warnings.Insert(0, CaptureWarnings.Format(CaptureWarnings.DesktopUnavailable,
-                "the input desktop cannot be reached (a UAC prompt, Ctrl+Alt+Del or a disconnected session), so the image may " +
-                "be black or show the lock screen instead of the windows. Capture again once the user is back."));
+            case CaptureWarnings.SessionLocked:
+                warnings.Insert(0, CaptureWarnings.Format(CaptureWarnings.SessionLocked,
+                    "the session is locked, so the image may show the lock screen instead of the windows. Captures are not refused " +
+                    "while it is locked; capture again once the user has unlocked it."));
+                break;
+            case CaptureWarnings.DesktopUnavailable:
+                warnings.Insert(0, CaptureWarnings.Format(CaptureWarnings.DesktopUnavailable,
+                    "the input desktop cannot be reached (a UAC prompt, Ctrl+Alt+Del or a disconnected session), so the image may " +
+                    "be black or show the lock screen instead of the windows. Capture again once the user is back."));
+                break;
         }
     }
 
