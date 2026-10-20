@@ -8707,7 +8707,7 @@ that ignores fields it does not know keeps working.
   than refused (type_text's and send_keys' `delayMs`, the UI Automation tools' `timeoutMs`, read_element_text's
   `maxLength`, see [Cancellation and progress](#cancellation-and-progress)) are documented as clamped.
 
-Next release (since 3.1.0: GitHub issues #8 to #18):
+Release 3.2.0 (GitHub issues #8 to #18):
 
 The markers mean what they mean for 3.1.0 above: **Changed:** where a call that worked with 3.1.0 can now be refused or
 return something else, and **Breaking:** where a result field that 3.1.0 always sent can now be left out. The default
