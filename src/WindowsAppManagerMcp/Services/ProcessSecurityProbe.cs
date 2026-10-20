@@ -24,6 +24,9 @@ public sealed class ProcessSecurityProbe : IProcessSecurityProbe
     /// <summary>WTS_SESSIONSTATE_LOCK in WTSINFOEX_LEVEL1.SessionFlags.</summary>
     private const int SessionStateLock = 0;
 
+    /// <summary>WTS_SESSIONSTATE_UNLOCK in WTSINFOEX_LEVEL1.SessionFlags.</summary>
+    private const int SessionStateUnlock = 1;
+
     /// <summary>WTS_CONNECTSTATE_CLASS.WTSDisconnected.</summary>
     private const int ConnectStateDisconnected = 4;
 
@@ -87,7 +90,7 @@ public sealed class ProcessSecurityProbe : IProcessSecurityProbe
 
     public bool IsInputDesktopAvailable()
     {
-        // The secure desktop (UAC prompt, lock screen, Ctrl+Alt+Del) cannot be opened by the server.
+        // The secure desktop (UAC prompt, Ctrl+Alt+Del) cannot be opened by the server.
         var input = _native.QueryInputDesktop();
         if (!input.Opened)
         {
@@ -107,7 +110,15 @@ public sealed class ProcessSecurityProbe : IProcessSecurityProbe
         return _native.QuerySessionState()?.ConnectState != ConnectStateDisconnected;
     }
 
+    // Fails open: an unknown or unreadable state is not a lock, so the input guard goes on to its other checks
     public bool IsSessionLocked() => _native.QuerySessionState()?.SessionFlags == SessionStateLock;
+
+    public SessionLockState GetSessionLock() => _native.QuerySessionState()?.SessionFlags switch
+    {
+        SessionStateLock => SessionLockState.Locked,
+        SessionStateUnlock => SessionLockState.Unlocked,
+        _ => SessionLockState.Unknown
+    };
 
     /// <summary>
     /// Turns a token query into an integrity result. <paramref name="server"/> is the server's own

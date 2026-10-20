@@ -27,6 +27,7 @@ public class InputControlTools
     private readonly IPauseHotkey _hotkey;
     private readonly TimeSpan _answerTimeout;
     private readonly ITakeoverMonitor? _takeover;
+    private readonly IProcessSecurityProbe? _securityProbe;
 
     /// <param name="session">The input session.</param>
     /// <param name="hotkey">The pause hotkey.</param>
@@ -34,9 +35,18 @@ public class InputControlTools
     /// <param name="takeover">
     /// Takeover detection (roadmap M7.4), whose mode and state get_control_status reports; the server always registers it.
     /// </param>
-    public InputControlTools(IInputSession session, IPauseHotkey hotkey, TimeSpan? answerTimeout = null, ITakeoverMonitor? takeover = null)
+    /// <param name="securityProbe">
+    /// Whether the session is locked, which get_control_status' message adds (issue #18); the server always registers it.
+    /// </param>
+    public InputControlTools(
+        IInputSession session,
+        IPauseHotkey hotkey,
+        TimeSpan? answerTimeout = null,
+        ITakeoverMonitor? takeover = null,
+        IProcessSecurityProbe? securityProbe = null)
     {
         _takeover = takeover;
+        _securityProbe = securityProbe;
         _session = session ?? throw new ArgumentNullException(nameof(session));
         _hotkey = hotkey ?? throw new ArgumentNullException(nameof(hotkey));
         _answerTimeout = answerTimeout ?? DefaultAnswerTimeout;
@@ -106,6 +116,12 @@ public class InputControlTools
         {
             message += $" {string.Join(", ", modifiersDown)} {(modifiersDown.Count == 1 ? "is" : "are")} down: input tools return " +
                        "ModifiersHeld until it is released.";
+        }
+
+        // 'Input is running' says nothing of a lock, and an agent took it for an unlocked desktop (issue #18)
+        if (_securityProbe?.GetSessionLock() == SessionLockState.Locked)
+        {
+            message += " The session is locked: input tools return SessionLocked until the user unlocks it.";
         }
 
         return new ControlStatusResult(

@@ -69,7 +69,7 @@ public static class MonitorSelection
             return current() is { } monitor
                 ? MonitorResolution.Found(monitor.Index, monitor)
                 : NotFound("monitor 'current' is the foreground window's monitor, and no window is in the foreground right now " +
-                           "(windows may be switching, or a UAC prompt or the lock screen is shown). Try again shortly, or name the monitor.");
+                           "(windows may be switching, a UAC prompt may be shown, or the session may be locked). Try again shortly, or name the monitor.");
         }
 
         if (name.StartsWith(MonitorIdentity.IdPrefix, StringComparison.OrdinalIgnoreCase))

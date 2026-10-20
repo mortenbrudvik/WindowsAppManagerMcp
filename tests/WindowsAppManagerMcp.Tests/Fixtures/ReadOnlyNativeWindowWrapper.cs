@@ -60,6 +60,8 @@ public sealed class ReadOnlyNativeWindowWrapper(INativeWindowWrapper inner) : IN
 
     public bool HasWindowRegion(nint hWnd) => inner.HasWindowRegion(hWnd);
 
+    public uint GetWindowDisplayAffinity(nint hWnd) => inner.GetWindowDisplayAffinity(hWnd);
+
     public int GetCloakReason(nint hWnd) => inner.GetCloakReason(hWnd);
 
     public (int Left, int Top, int Right, int Bottom)? GetExtendedFrameBounds(nint hWnd) => inner.GetExtendedFrameBounds(hWnd);

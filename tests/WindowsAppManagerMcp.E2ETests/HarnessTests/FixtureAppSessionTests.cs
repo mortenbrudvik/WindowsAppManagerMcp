@@ -118,6 +118,7 @@ public class FixtureAppSessionTests
         options.OtherScaleMonitor.Should().BeFalse("the fixture opens on the primary unless a scenario asks");
         options.OpenCanvas.Should().BeFalse();
         options.OpenOverlay.Should().BeFalse("no topmost window unless a scenario asks for one");
+        options.ExcludeOverlayFromCapture.Should().BeFalse("no window keeps out of captures unless a scenario asks for one");
         options.ChangeAfter.Should().BeNull();
         options.AnimateFor.Should().BeNull();
     }
@@ -127,14 +128,15 @@ public class FixtureAppSessionTests
     [InlineData(DesktopTier.Input)]
     public void BuildOptions_PassesTheM6Surfaces(DesktopTier tier)
     {
-        // Arrange - the canvas (M6.3), the timed change and animation (M6.4) and the topmost overlay (M6.7) only show
-        // something, so a no-input test may ask for them
+        // Arrange - the canvas (M6.3), the timed change and animation (M6.4), the topmost overlay (M6.7) and its exclusion
+        // from capture (issue #17) only show something, so a no-input test may ask for them
         var launch = new FixtureLaunchOptions
         {
             OpenCanvas = true,
             ChangeAfter = TimeSpan.FromMilliseconds(800),
             AnimateFor = TimeSpan.FromMilliseconds(1500),
-            OpenOverlay = true
+            OpenOverlay = true,
+            ExcludeOverlayFromCapture = true
         };
 
         // Act
@@ -145,6 +147,7 @@ public class FixtureAppSessionTests
         options.ChangeAfter.Should().Be(TimeSpan.FromMilliseconds(800));
         options.AnimateFor.Should().Be(TimeSpan.FromMilliseconds(1500));
         options.OpenOverlay.Should().BeTrue();
+        options.ExcludeOverlayFromCapture.Should().BeTrue();
         options.NoActivate.Should().BeTrue("the overlay and the canvas open without taking the foreground too");
     }
 

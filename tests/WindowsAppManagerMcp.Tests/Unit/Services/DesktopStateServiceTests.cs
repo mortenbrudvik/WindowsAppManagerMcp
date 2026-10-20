@@ -1,3 +1,4 @@
+using System.Text.Json;
 using WindowsAppManagerMcp.Infrastructure;
 
 namespace WindowsAppManagerMcp.Tests.Unit.Services;
@@ -29,6 +30,7 @@ public class DesktopStateServiceTests
     private readonly Mock<IUIElementService> _elements = new();
     private readonly Mock<IPopupService> _popups = new();
     private readonly Mock<IScreenshotService> _screenshots = new();
+    private readonly Mock<IProcessSecurityProbe> _security = new();
     private readonly List<(nint Handle, UIElementFilter? Filter)> _walks = [];
     private ITargetPolicy _policy = new TargetPolicy(TargetPolicySettings.Default);
     private ToolsetSelection? _toolsets;
@@ -46,6 +48,7 @@ public class DesktopStateServiceTests
         _windows.Setup(w => w.IsValidWindow(It.IsAny<nint>())).Returns((nint h) => all.Any(w => w.Handle == h));
         _windows.Setup(w => w.GetWindowInfo(It.IsAny<nint>())).Returns((nint h) => all.FirstOrDefault(w => w.Handle == h));
         _input.MovePointer(640, 360);
+        _security.Setup(p => p.GetSessionLock()).Returns(SessionLockState.Unlocked);
 
         _inspection.Setup(i => i.GetFocusedElementAsync(It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new FocusedElementResult(true,
@@ -75,8 +78,8 @@ public class DesktopStateServiceTests
 
     /// <param name="clock">The clock of the deadline: a test that moves it decides when the deadline passes. Default the system clock.</param>
     private DesktopStateService CreateSut(TimeProvider? clock = null) => new(
-        _windows.Object, _session, _input, _inspection.Object, _elements.Object, _popups.Object, _screenshots.Object, _policy, _toolsets,
-        clock);
+        _windows.Object, _session, _input, _inspection.Object, _elements.Object, _popups.Object, _screenshots.Object, _policy,
+        _security.Object, _toolsets, clock);
 
     private static WindowInfo Window(nint handle, string title, string process) =>
         new(handle, title, process, 4000 + (int)(handle % 1000), new WindowRect(0, 0, 1280, 720), WindowState.Normal, true, 0);
@@ -593,6 +596,99 @@ public class DesktopStateServiceTests
         state.Windows.Should().NotBeEmpty();
     }
 
+    [Theory]
+    [InlineData(SessionLockState.Locked)]
+    [InlineData(SessionLockState.Unlocked)]
+    [InlineData(SessionLockState.Unknown)]
+    public async Task TheSessionLock_IsAlwaysRead_AsLockedUnlockedOrUnknown(SessionLockState lockState)
+    {
+        // Arrange - issue #18: the window in front does not say whether the session is locked
+        _security.Setup(p => p.GetSessionLock()).Returns(lockState);
+
+        // Act - no section asked for
+        var (state, _) = await CreateSut().GetStateAsync(Request(include: new HashSet<DesktopStateSection>()), CancellationToken.None);
+
+        // Assert
+        state.SessionLock.Should().Be(lockState);
+    }
+
+    [Fact]
+    public async Task AFailedCall_StillReportsTheSessionLock()
+    {
+        _security.Setup(p => p.GetSessionLock()).Returns(SessionLockState.Locked);
+
+        var (state, _) = await CreateSut().GetStateAsync(Request(window: 0x999), CancellationToken.None);
+
+        state.Success.Should().BeFalse();
+        state.SessionLock.Should().Be(SessionLockState.Locked);
+    }
+
+    [Fact]
+    public async Task TheSessionLock_IsWrittenEvenWhenUnknown_SinceNullFieldsAreLeftOut()
+    {
+        // Arrange
+        _security.Setup(p => p.GetSessionLock()).Returns(SessionLockState.Unknown);
+
+        // Act
+        var (state, _) = await CreateSut().GetStateAsync(Request(include: new HashSet<DesktopStateSection>()), CancellationToken.None);
+        var json = JsonSerializer.Serialize(state, ToolJson.SdkResultOptions);
+
+        // Assert - right after the window in front, which it qualifies
+        json.Should().Contain("\"sessionLock\":\"unknown\"");
+        json.IndexOf("\"sessionLock\"", StringComparison.Ordinal).Should().BeGreaterThan(json.IndexOf("\"foreground\"", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task NoWindowInFront_WhileTheSessionIsLocked_SaysTheSessionIsLocked()
+    {
+        _windows.Setup(w => w.GetForegroundWindow()).Returns((WindowInfo?)null);
+        _security.Setup(p => p.GetSessionLock()).Returns(SessionLockState.Locked);
+
+        var (state, _) = await CreateSut().GetStateAsync(Request(), CancellationToken.None);
+
+        var error = state.Errors.Should().ContainSingle().Which;
+        error.ErrorCode.Should().Be(nameof(WindowErrorCode.NoForegroundWindow));
+        error.Error.Should().Contain("the session is locked").And.Contain("sessionLock");
+    }
+
+    [Theory]
+    [InlineData(SessionLockState.Unlocked)]
+    [InlineData(SessionLockState.Unknown)]
+    public async Task NoWindowInFront_WhileTheSessionIsNotKnownToBeLocked_DoesNotBlameTheLockScreen(SessionLockState lockState)
+    {
+        // Nobody measured that a lock leaves no window in front: LockApp's window can be in front instead (issue #18)
+        _windows.Setup(w => w.GetForegroundWindow()).Returns((WindowInfo?)null);
+        _security.Setup(p => p.GetSessionLock()).Returns(lockState);
+
+        var (state, _) = await CreateSut().GetStateAsync(Request(), CancellationToken.None);
+
+        var error = state.Errors.Should().ContainSingle().Which;
+        error.ErrorCode.Should().Be(nameof(WindowErrorCode.NoForegroundWindow));
+        error.Error.Should().NotContain("lock screen").And.Contain("Call again shortly");
+    }
+
+    [Fact]
+    public async Task ACloakedWindowInFront_IsMarkedCloaked()
+    {
+        // Arrange - a cloaked CoreWindow can report isVisible true, so only isCloaked says it is not on screen
+        var lockApp = Window(0x5A0B1C, "Windows Default Lock Screen", "LockApp") with { ClassName = "Windows.UI.Core.CoreWindow", IsCloaked = true };
+        _windows.Setup(w => w.GetForegroundWindow()).Returns(lockApp);
+
+        // Act
+        var (state, _) = await CreateSut().GetStateAsync(Request(include: new HashSet<DesktopStateSection>()), CancellationToken.None);
+
+        // Assert
+        state.Foreground!.IsCloaked.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task AWindowInFrontThatIsNotCloaked_LeavesIsCloakedOut()
+    {
+        var (state, _) = await CreateSut().GetStateAsync(Request(include: new HashSet<DesktopStateSection>()), CancellationToken.None);
+
+        state.Foreground!.IsCloaked.Should().BeNull();
+    }
+
     [Fact]
     public async Task ANamedHandleThatIsNoWindow_FailsTheCall()
     {
@@ -756,7 +852,7 @@ public class DesktopStateServiceTests
         var clock = new ManualTimerClock();
         var timeout = TimeSpan.FromSeconds(2);
         var sut = new DesktopStateService(_windows.Object, _session, _input, _inspection.Object, new UIElementService(tree, new UiaWorker()),
-            _popups.Object, _screenshots.Object, _policy, time: clock);
+            _popups.Object, _screenshots.Object, _policy, _security.Object, time: clock);
 
         try
         {
@@ -802,7 +898,7 @@ public class DesktopStateServiceTests
         _popups.Setup(p => p.GetPopupList(Notepad)).Returns(new PopupList(
             [new PopupWindow(dialogHandle, PopupKind.Dialog, "Save As", "#32770", 4242, Notepad, PopupRelation.Owned, null, false)], false));
         var sut = new DesktopStateService(_windows.Object, _session, _input, _inspection.Object,
-            new UIElementService(tree, new UiaWorker(), native.Object), _popups.Object, _screenshots.Object, _policy);
+            new UIElementService(tree, new UiaWorker(), native.Object), _popups.Object, _screenshots.Object, _policy, _security.Object);
 
         // Act
         var (state, _) = await sut.GetStateAsync(Request(window: Notepad), CancellationToken.None);
@@ -1057,7 +1153,8 @@ public class DesktopStateServiceTests
 
     private MarkedCapture? _marked;
 
-    private void SetUpMarkedCapture(List<string>? order = null, IReadOnlyList<string>? warnings = null)
+    private void SetUpMarkedCapture(List<string>? order = null, IReadOnlyList<string>? warnings = null,
+        IReadOnlyList<ExcludedWindow>? excluded = null)
     {
         _screenshots.Setup(s => s.ReadCapturedWindow(Notepad, true))
             .Callback(() => order?.Add($"window, {_walks.Count} walks"))
@@ -1074,8 +1171,21 @@ public class DesktopStateServiceTests
                 new AnnotatedScreenshotResult(true, "png", "image/png", 1280, 720, Notepad, "notes.txt - Notepad",
                     new CapturedRegion(0, 0, 1280, 720), new ImageToScreenTransform(0, 0, 1, 1), [], _marked!.Elements.Count, 4, 1,
                     MonitorScaleFactor: 1.25, CaptureMethod: "PrintWindow", Warnings: warnings, CaptureId: warnings == null ? "c2-ab12" : null,
-                    Legend: "[w4120035e7] Button 'Save' center=(50,32)", MarkPrefix: "w4120035"),
+                    Legend: "[w4120035e7] Button 'Save' center=(50,32)", MarkPrefix: "w4120035", ExcludedFromCapture: excluded),
                 new EncodedImage([1, 2, 3], "image/png")));
+    }
+
+    [Fact]
+    public async Task TheMarkedScreenshot_KeepsTheWindowsThatKeptOutOfIt()
+    {
+        // Issue #17: a marked window copied from the screen lists the toast over it, as capture_with_elements does
+        var toast = new ExcludedWindow(0x6000, DisplayAffinity.ExcludeFromCapture, "Enify", "Board saved", 900, 600, 320, 100);
+        SetUpMarkedCapture(excluded: [toast]);
+
+        var (state, _) = await CreateSut().GetStateAsync(Request(include: ScreenshotAndElements) with { ScreenshotMarks = true },
+            CancellationToken.None);
+
+        state.Screenshot!.ExcludedFromCapture.Should().Equal(toast);
     }
 
     [Fact]

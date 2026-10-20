@@ -150,6 +150,19 @@ public class DependencyInjectionTests : IDisposable
     }
 
     [Fact]
+    public void TheCapturesAndTheVisualWait_GetTheSecurityProbe_ForTheirLockWarning()
+    {
+        // Issue #17: a capture or a wait while the session is locked warns that it may show the lock screen; built without
+        // the probe, it would silently never say so
+        var probe = _serviceProvider.GetRequiredService<IProcessSecurityProbe>();
+        static object? Field(object service, string name) =>
+            service.GetType().GetField(name, BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(service);
+
+        Field(_serviceProvider.GetRequiredService<IScreenshotService>(), "_security").Should().BeSameAs(probe);
+        Field(_serviceProvider.GetRequiredService<IVisualChangeService>(), "_security").Should().BeSameAs(probe);
+    }
+
+    [Fact]
     public void TheWindowListingsFocusAndCapture_GetTheVirtualDesktopManager()
     {
         // isOnOtherDesktop and the Cloaked messages that name another virtual desktop (roadmap M7.3). Built without it,

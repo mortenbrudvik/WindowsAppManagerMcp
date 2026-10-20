@@ -75,6 +75,12 @@ internal static class NativeEnums
     // DWMWA_CLOAKED values: why a window is cloaked (a window on another virtual desktop is cloaked by the shell)
     public const int DWM_CLOAKED_SHELL = 0x2;
 
+    // SetWindowDisplayAffinity values (issue #17): a window shown only on a monitor is black in a capture, one excluded from
+    // capture (Windows 10 2004 and later) is not in it at all
+    public const uint WDA_NONE = 0x0;
+    public const uint WDA_MONITOR = 0x1;
+    public const uint WDA_EXCLUDEFROMCAPTURE = 0x11;
+
     // Monitor flags
     public const uint MONITOR_DEFAULTTONULL = 0;
     public const uint MONITOR_DEFAULTTOPRIMARY = 1;

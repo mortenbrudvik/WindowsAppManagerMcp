@@ -89,7 +89,7 @@ public enum WindowErrorCode
 
     // Codes added in M2 (honest results and typed parameters, roadmap M2.1, M2.2 and M2.10):
 
-    /// <summary>get_foreground_window: no window is in the foreground (windows are switching, or a UAC prompt or the lock screen is shown).</summary>
+    /// <summary>get_foreground_window: no window is in the foreground (windows are switching, a UAC prompt is shown, or the session may be locked: the error says what sessionLock reads).</summary>
     NoForegroundWindow = 28,
 
     /// <summary>The window state is not one of the allowed values (minimize, maximize, restore and their aliases).</summary>

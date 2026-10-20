@@ -15,7 +15,9 @@ namespace WindowsAppManagerMcp.Services;
 /// Captures monitors, regions and windows (see <see cref="IScreenshotService"/>), and says when a capture cannot show
 /// what the agent expects (roadmap M2.9): a minimized, hidden or cloaked window is refused with its own code before
 /// any pixel is read, and a successful capture carries warnings for a window that does not answer (copied from the
-/// screen), a region partly off the screen (cut to it), a DPI-scaled window and an image of one solid color.
+/// screen), a region partly off the screen (cut to it), a DPI-scaled window, an image of one solid color, a window that
+/// declares a display affinity and a locked session (issue #17). Pixels copied from the screen list the windows that keep
+/// themselves out of them (excludedFromCapture, <see cref="DisplayAffinityScan"/>).
 /// </summary>
 public class ScreenshotService : IScreenshotService
 {
@@ -82,6 +84,7 @@ public class ScreenshotService : IScreenshotService
     private readonly ITargetPolicy? _targetPolicy;
     private readonly INativeVirtualDesktopWrapper? _virtualDesktops;
     private readonly IGraphicsCaptureWrapper? _graphicsCapture;
+    private readonly IProcessSecurityProbe? _security;
 
     // The windows restoreIfMinimized has restored for a capture, by how many restores: they are minimized again afterwards,
     // so their captures keep no visual signature (roadmap M6.4)
@@ -125,6 +128,11 @@ public class ScreenshotService : IScreenshotService
     /// Windows.Graphics.Capture (roadmap M7.1): window captures fall back to it (method auto) or use it (method wgc). The server
     /// always passes it; without it a window capture reads with PrintWindow or from the screen, as before.
     /// </param>
+    /// <param name="security">
+    /// Whether the session is locked or the input desktop cannot be reached when the pixels are read (issue #17): the capture
+    /// then warns that its image may show the lock screen, and is not refused. The server always passes it; without it no
+    /// capture says so.
+    /// </param>
     public ScreenshotService(
         IScreenCaptureWrapper captureWrapper,
         IMonitorService monitorService,
@@ -136,8 +144,10 @@ public class ScreenshotService : IScreenshotService
         ICaptureTargetPolicy? capturePolicy = null,
         ITargetPolicy? targetPolicy = null,
         INativeVirtualDesktopWrapper? virtualDesktops = null,
-        IGraphicsCaptureWrapper? graphicsCapture = null)
+        IGraphicsCaptureWrapper? graphicsCapture = null,
+        IProcessSecurityProbe? security = null)
     {
+        _security = security;
         _virtualDesktops = virtualDesktops;
         _graphicsCapture = graphicsCapture;
         _capturePolicy = capturePolicy;
@@ -221,7 +231,7 @@ public class ScreenshotService : IScreenshotService
         ThrowIfIncomplete(acquired.Capture);
         AddBlankWarning(acquired.Capture, acquired.Warnings);
         return new RawCapture(target, acquired.Capture, acquired.MonitorIndex, acquired.ScaleFactor, acquired.Warnings.ToArray(),
-            acquired.Window, acquired.Screen);
+            acquired.Window, acquired.Screen, ExcludedOver(acquired.Capture, acquired.Excluded));
     }
 
     /// <inheritdoc />
@@ -254,6 +264,13 @@ public class ScreenshotService : IScreenshotService
         /// (the raw pixels' OCR), but the capture metadata leaves it out, as get_monitors does, rather than report 100% as fact.
         /// </summary>
         public bool ScaleUnknown { get; init; }
+
+        /// <summary>
+        /// The windows that declare a display affinity, read before and after pixels that can show other windows (issue #17),
+        /// with their whole frames, which are cut to the pixels when the result is made, after any crop; empty for pixels that
+        /// show only the window.
+        /// </summary>
+        public IReadOnlyList<ExcludedWindow> Excluded { get; init; } = [];
     }
 
     /// <summary>
@@ -265,11 +282,16 @@ public class ScreenshotService : IScreenshotService
     /// target policy is not checked here (see <see cref="CapturePixels"/>), and no image is made. With <paramref name="request"/>,
     /// a monitor or region whose image would be over the budget (<see cref="CaptureRequest.ThrowIfOutputTooLarge"/>: a zoom)
     /// is refused before its pixels are read; a window's size is known only with its pixels, so its image is checked when
-    /// it is made.
+    /// it is made. The windows that declare a display affinity are read before and after the pixels, and kept when the
+    /// pixels can show other windows (issue #17); a window capture leaves its own window out of them, which its
+    /// DisplayAffinity warning reports. A locked session, or an input desktop out of reach, adds its warning first.
     /// </summary>
     /// <exception cref="CaptureException">The target was refused.</exception>
     private Acquired Acquire(CaptureTarget target, CaptureRequest? request = null)
     {
+        var scan = AffinityScan();
+        var leaveOut = target is CaptureTarget.Window captured ? Root(captured.Handle) : nint.Zero;
+        var before = scan.Read(leaveOut);
         var acquired = target switch
         {
             CaptureTarget.Monitor monitor => AcquireMonitor(monitor.Index, request),
@@ -277,6 +299,12 @@ public class ScreenshotService : IScreenshotService
             CaptureTarget.Window window => AcquireWindow(window.Handle, window.IncludeFrame, window.Method),
             _ => throw new ArgumentException($"Unknown capture target {target.GetType().Name}", nameof(target))
         };
+
+        AddSessionWarning(acquired.Warnings);
+        if (!acquired.WindowCapture || !CaptureMethods.ShowsOnlyTheWindow(acquired.Capture.Method))
+        {
+            acquired = acquired with { Excluded = [.. before, .. scan.Read(leaveOut)] };
+        }
 
         return acquired.WindowCapture ? acquired : acquired with { Screen = ReadScreen() };
     }
@@ -420,6 +448,7 @@ public class ScreenshotService : IScreenshotService
         var capture = CaptureWindowPixels(windowHandle, includeFrame, warnings, method);
         var monitor = _monitorService.GetMonitorForWindow(windowHandle);
         AddDpiWarning(windowHandle, monitor, warnings);
+        AddDisplayAffinityWarning(windowHandle, warnings);
         return new Acquired(capture, monitor?.Index, monitor?.ScaleFactor ?? 1.0, warnings, WindowCapture: true,
             WithClientArea(window, capture))
         {
@@ -476,10 +505,17 @@ public class ScreenshotService : IScreenshotService
             var window = ReadCapturedWindow(windowHandle, includeFrame);
 
             var warnings = new List<string>();
+            var scan = AffinityScan();
+            var root = Root(windowHandle);
+            var before = scan.Read(root);
             var captureStopwatch = Stopwatch.StartNew();
             var capture = CaptureWindowPixels(windowHandle, includeFrame, warnings, options.CaptureMethod);
             var captureMs = captureStopwatch.Elapsed.TotalMilliseconds;
             window = WithClientArea(window, capture);
+            AddSessionWarning(warnings);
+
+            // As for capture_window: only pixels that can show other windows list those that keep themselves out of them
+            var excluded = CaptureMethods.ShowsOnlyTheWindow(capture.Method) ? null : ExcludedOver(capture, [.. before, .. scan.Read(root)]);
 
             // The elements were read before the pixels: a window that moved or resized meanwhile shows them elsewhere than
             // their bounds say, so a click at a mark would land beside its element. No captureId then (roadmap M3.11), and
@@ -501,6 +537,7 @@ public class ScreenshotService : IScreenshotService
             }
             var monitor = _monitorService.GetMonitorForWindow(windowHandle);
             AddDpiWarning(windowHandle, monitor, warnings);
+            AddDisplayAffinityWarning(windowHandle, warnings);
             AddBlankWarning(capture, warnings);
 
             // Element bounds are screen pixels; the image starts at the capture's screen origin, which is the client
@@ -556,7 +593,8 @@ public class ScreenshotService : IScreenshotService
                 CaptureMethod: capture.Method,
                 CoordinateSpace: CoordinateSpaces.PhysicalVirtualScreen,
                 Warnings: warnings.Count > 0 ? warnings : null,
-                MarkPrefix: markPrefix);
+                MarkPrefix: markPrefix,
+                ExcludedFromCapture: excluded);
             metadata = metadata with
             {
                 CaptureId = Register(metadata.Width, metadata.Height, metadata.ImageToScreen!, metadata.CapturedRegion!, windowCapture: true, window,
@@ -718,6 +756,15 @@ public class ScreenshotService : IScreenshotService
         var root = _windows.GetAncestor(windowHandle, WindowAncestor.Root);
         return root == nint.Zero ? windowHandle : root;
     }
+
+    /// <summary>A new scan of the windows that declare a display affinity (issue #17), for one capture.</summary>
+    private DisplayAffinityScan AffinityScan() => new(_windows, _capturePolicy, _targetPolicy);
+
+    /// <summary>The windows of <paramref name="reads"/> over the pixels, cut to them; null when there are none.</summary>
+    private static IReadOnlyList<ExcludedWindow>? ExcludedOver(CaptureResult capture, IReadOnlyList<ExcludedWindow> reads) =>
+        reads.Count == 0
+            ? null
+            : DisplayAffinityScan.Within(new Rectangle(capture.ScreenOriginX, capture.ScreenOriginY, capture.Width, capture.Height), reads);
 
     private static void ThrowIfRefused(CaptureRefusal? refusal)
     {
@@ -896,6 +943,46 @@ public class ScreenshotService : IScreenshotService
     }
 
     /// <summary>
+    /// Warns when the captured window, or the top-level window it is in, declares a display affinity (issue #17): a copy of
+    /// the screen shows what is behind it or black, and what PrintWindow and Windows.Graphics.Capture return for it is not
+    /// known, so every way of reading it warns.
+    /// </summary>
+    private void AddDisplayAffinityWarning(nint windowHandle, List<string> warnings)
+    {
+        if (DisplayAffinities.Of(_windows.GetWindowDisplayAffinity(Root(windowHandle))) is { } affinity)
+        {
+            warnings.Add(CaptureWarnings.Format(CaptureWarnings.DisplayAffinity,
+                $"this window declares a display affinity ({DisplayAffinities.Name(affinity)}) to keep itself out of captures, so " +
+                "the image may be black, empty, or show what is behind it. Read it with the UI Automation tools instead."));
+        }
+    }
+
+    /// <summary>
+    /// Warns, first, when the session was locked as the pixels were read, or the input desktop could not be reached (issues
+    /// #17 and #18): the image may then show the lock screen. Captures are not refused for it, as input is.
+    /// </summary>
+    private void AddSessionWarning(List<string> warnings)
+    {
+        if (_security == null)
+        {
+            return;
+        }
+
+        if (_security.GetSessionLock() == SessionLockState.Locked)
+        {
+            warnings.Insert(0, CaptureWarnings.Format(CaptureWarnings.SessionLocked,
+                "the session is locked, so the image may show the lock screen instead of the windows. Captures are not refused " +
+                "while it is locked; capture again once the user has unlocked it."));
+        }
+        else if (!_security.IsInputDesktopAvailable())
+        {
+            warnings.Insert(0, CaptureWarnings.Format(CaptureWarnings.DesktopUnavailable,
+                "the input desktop cannot be reached (a UAC prompt, Ctrl+Alt+Del or a disconnected session), so the image may " +
+                "be black or show the lock screen instead of the windows. Capture again once the user is back."));
+        }
+    }
+
+    /// <summary>
     /// Warns when the image is one solid color: about 1024 pixels on a grid all have the same color. That is right for
     /// an empty area, but a black image usually means GPU or protected content this capture cannot read, or a window
     /// that has not painted yet.
@@ -1042,7 +1129,8 @@ public class ScreenshotService : IScreenshotService
             CaptureMethod: capture.Method,
             CoordinateSpace: CoordinateSpaces.PhysicalVirtualScreen,
             Warnings: warnings.Count > 0 ? warnings : null,
-            Cursor: pointer is { } at ? new CursorPosition(at.X, at.Y, at.Visible ? null : true, drawn ? true : null) : null);
+            Cursor: pointer is { } at ? new CursorPosition(at.X, at.Y, at.Visible ? null : true, drawn ? true : null) : null,
+            ExcludedFromCapture: ExcludedOver(capture, acquired.Excluded));
         metadata = metadata with
         {
             CaptureId = Register(metadata.Width, metadata.Height, metadata.ImageToScreen!, metadata.CapturedRegion!, windowCapture, window, screen,

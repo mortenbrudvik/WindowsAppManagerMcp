@@ -15,6 +15,15 @@ namespace WindowsAppManagerMcp.Tests.Contract;
 public class WindowFinderToolContractTests
 {
     private readonly Mock<IWindowService> _windowService = new();
+    private readonly Mock<IProcessSecurityProbe> _securityProbe = new();
+
+    public WindowFinderToolContractTests()
+    {
+        // As the real probe answers: get_window_info's detail 'full' reads the integrity through it, and never gets null
+        _securityProbe.Setup(p => p.ServerIntegrity).Returns(new ProcessIntegrity(31_000, IntegrityLevel.Medium, ProcessIntegrity.MediumRid, false, null));
+        _securityProbe.Setup(p => p.GetIntegrity(It.IsAny<int>()))
+            .Returns((int id) => new ProcessIntegrity(id, IntegrityLevel.Medium, ProcessIntegrity.MediumRid, false, null));
+    }
 
     [Fact]
     public async Task FindWindows_BindsTheFilterArguments()
@@ -74,6 +83,7 @@ public class WindowFinderToolContractTests
         windows[1].GetProperty("hostProcessId").GetInt32().Should().Be(500);
 
         windows[2].GetProperty("ownerHandle").GetInt64().Should().Be(1001);
+        windows.Where(w => w.TryGetProperty("sessionLock", out _)).Should().BeEmpty("the lock is get_foreground_window's, not every window's");
     }
 
     [Fact]
@@ -108,6 +118,28 @@ public class WindowFinderToolContractTests
         window.GetProperty("handle").GetInt64().Should().Be(2001);
         window.GetProperty("title").GetString().Should().BeEmpty();
         window.GetProperty("className").GetString().Should().Be("#32768");
+    }
+
+    [Fact]
+    public async Task GetForegroundWindow_ReportsTheSessionLock_AsAStringAfterTheWindowsFields()
+    {
+        // Arrange - issue #18: the lock screen app in front, and whether the session is locked
+        _windowService.Setup(w => w.GetForegroundWindow())
+            .Returns(TestDataFactory.CreateWindowInfo(2002, "Windows Default Lock Screen", "LockApp", 400) with
+            {
+                ClassName = "Windows.UI.Core.CoreWindow"
+            });
+        _securityProbe.Setup(p => p.GetSessionLock()).Returns(SessionLockState.Unlocked);
+        await using var server = await StartServerAsync();
+
+        // Act
+        var window = ParsePayload(await server.CallToolAsync("get_foreground_window"));
+
+        // Assert
+        window.GetProperty("handle").GetInt64().Should().Be(2002);
+        window.GetProperty("processName").GetString().Should().Be("LockApp");
+        window.GetProperty("sessionLock").GetString().Should().Be("unlocked");
+        window.EnumerateObject().Last().Name.Should().Be("sessionLock");
     }
 
     [Fact]
@@ -350,7 +382,7 @@ public class WindowFinderToolContractTests
             [],
             builder => builder
                 .AddToolErrorReporting()
-                .WithServerTools(new WindowFinderTools(_windowService.Object)));
+                .WithServerTools(new WindowFinderTools(_windowService.Object, securityProbe: _securityProbe.Object)));
 
     private static JsonElement ParsePayload(CallToolResult result)
     {

@@ -10,9 +10,9 @@ namespace WindowsAppManagerMcp.Services;
 
 /// <summary>
 /// get_desktop_state's observation (roadmap M3.12; see <see cref="IDesktopStateService"/>). The cheap parts (the window in
-/// front, the cursor, the keys and the pause) are read first on the calling thread; the windows, the focused element, the
-/// popups, the elements walk and the capture then run side by side, and the call waits for them until one deadline. A capture
-/// that marks the elements (roadmap M3.F32) waits for the walk instead.
+/// front, the session's lock, the cursor, the keys and the pause) are read first on the calling thread; the windows, the
+/// focused element, the popups, the elements walk and the capture then run side by side, and the call waits for them until
+/// one deadline. A capture that marks the elements (roadmap M3.F32) waits for the walk instead.
 /// </summary>
 /// <remarks>
 /// The UI Automation parts get a little less than the deadline (<see cref="PartBudget"/>), so a walk that is asked to stop
@@ -49,6 +49,7 @@ public sealed class DesktopStateService : IDesktopStateService
     private readonly IPopupService _popups;
     private readonly IScreenshotService _screenshots;
     private readonly ITargetPolicy _policy;
+    private readonly IProcessSecurityProbe _security;
     private readonly TimeProvider _time;
     private readonly bool _captureServed;
     private readonly bool _stateServed;
@@ -61,6 +62,7 @@ public sealed class DesktopStateService : IDesktopStateService
     /// <param name="popups">The target's popups and find_ui_elements' default scope.</param>
     /// <param name="screenshots">capture_window's capture (captureId).</param>
     /// <param name="policy">The user's target policy: never a read or a capture of a denied window, named or not.</param>
+    /// <param name="security">Whether the session is locked (issue #18), which the window in front does not say.</param>
     /// <param name="toolsets">The tools the server serves; the capture follows capture_window, and the observation other tools
     /// return follows get_desktop_state. Null: every tool.</param>
     /// <param name="time">The clock the deadline and the parts' budget run on; default the system clock. Tests pass one they
@@ -74,6 +76,7 @@ public sealed class DesktopStateService : IDesktopStateService
         IPopupService popups,
         IScreenshotService screenshots,
         ITargetPolicy policy,
+        IProcessSecurityProbe security,
         ToolsetSelection? toolsets = null,
         TimeProvider? time = null)
     {
@@ -85,6 +88,7 @@ public sealed class DesktopStateService : IDesktopStateService
         _popups = popups ?? throw new ArgumentNullException(nameof(popups));
         _screenshots = screenshots ?? throw new ArgumentNullException(nameof(screenshots));
         _policy = policy ?? throw new ArgumentNullException(nameof(policy));
+        _security = security ?? throw new ArgumentNullException(nameof(security));
         _time = time ?? TimeProvider.System;
         _captureServed = toolsets?.Serves(CaptureTool, readOnlyHint: false) ?? true;
         _stateServed = toolsets?.Serves(StateTool, readOnlyHint: true) ?? true;
@@ -127,13 +131,16 @@ public sealed class DesktopStateService : IDesktopStateService
         var start = _time.GetTimestamp();
         var include = request.Include;
 
-        // The cheap parts: Win32 reads that no window's thread answers
+        // The cheap parts: Win32 and WTS reads that no window's thread answers. The lock right after the window in front, which
+        // it qualifies: neither LockApp's window in front nor no window in front says the session is locked (issue #18). A
+        // read that fails is unknown, the enum's default
         var foreground = Read(_windows.GetForegroundWindow);
-        var target = ChooseTarget(request.Window, foreground);
+        var sessionLock = Read(_security.GetSessionLock);
+        var target = ChooseTarget(request.Window, foreground, sessionLock);
         var input = ReadInputState();
         if (target.Invalid)
         {
-            return new DesktopStateSnapshot(Failed(request.Window!.Value, input, _time.GetElapsedTime(start)), null);
+            return new DesktopStateSnapshot(Failed(request.Window!.Value, sessionLock, input, _time.GetElapsedTime(start)), null);
         }
 
         var cursor = Read(_input.GetCursorPos) is { } point ? new ScreenPoint(point.X, point.Y) : null;
@@ -266,7 +273,8 @@ public sealed class DesktopStateService : IDesktopStateService
             WindowHandle: handle,
             WindowTitle: AppText.Cut(target.Title),
             Foreground: foreground is null ? null : new DesktopWindow(foreground.Handle, AppText.Cut(foreground.Title),
-                foreground.ProcessName, foreground.ProcessId, foreground.IsAgentHost ? true : null),
+                foreground.ProcessName, foreground.ProcessId, foreground.IsAgentHost ? true : null, foreground.IsCloaked ? true : null),
+            SessionLock: sessionLock,
             Focus: focus,
             Cursor: cursor,
             Input: input,
@@ -286,7 +294,7 @@ public sealed class DesktopStateService : IDesktopStateService
     /// host or a denied app. A window whose process cannot be named counts as denied while the policy denies anything, as the
     /// reads themselves refuse it (<see cref="UiaTargets.ReadVerdict"/>).
     /// </summary>
-    private Target ChooseTarget(nint? named, WindowInfo? foreground)
+    private Target ChooseTarget(nint? named, WindowInfo? foreground, SessionLockState sessionLock)
     {
         if (named is { } window)
         {
@@ -310,8 +318,11 @@ public sealed class DesktopStateService : IDesktopStateService
         if (foreground is null)
         {
             return new Target(nint.Zero, null, TargetError(nameof(WindowErrorCode.NoForegroundWindow),
-                "No window is in the foreground right now (windows may be switching, or a UAC prompt or the lock screen is shown), " +
-                "so no window's elements, popups or capture were read. Call again shortly, or name the window (handle or window)."));
+                sessionLock == SessionLockState.Locked
+                ? "No window is in the foreground, and the session is locked (sessionLock), so no window's elements, popups or " +
+                  "capture were read. Wait for the user to unlock it; input tools return SessionLocked until then."
+                : "No window is in the foreground right now (windows may be switching, or a UAC prompt is shown), so no window's " +
+                  "elements, popups or capture were read. Call again shortly, or name the window (handle or window)."));
         }
 
         if (foreground.IsAgentHost)
@@ -529,7 +540,7 @@ public sealed class DesktopStateService : IDesktopStateService
             metadata.ImageToScreen, metadata.Success ? Read(() => _windows.GetWindowInfo(window))?.MonitorIndex : null,
             metadata.MonitorScaleFactor, metadata.Error, metadata.ErrorCode, metadata.FilePath, metadata.OriginalWidth,
             metadata.OriginalHeight, metadata.ByteSize, metadata.CaptureMethod, metadata.CoordinateSpace, metadata.Warnings,
-            metadata.CaptureId, MarkPrefix: metadata.MarkPrefix), capture.Image);
+            metadata.CaptureId, MarkPrefix: metadata.MarkPrefix, ExcludedFromCapture: metadata.ExcludedFromCapture), capture.Image);
     }
 
     private static UIElementFilter Filter(DesktopStateRequest request, int maxElements, TimeSpan warmupBudget, TimeSpan stopGrace) => new(
@@ -665,11 +676,12 @@ public sealed class DesktopStateService : IDesktopStateService
     private static IReadOnlyList<DesktopStateError> Ordered(List<DesktopStateError> errors) =>
         errors.OrderBy(e => Array.IndexOf(SectionOrder, e.Section)).ToList();
 
-    private static DesktopState Failed(nint window, DesktopInputState input, TimeSpan elapsed) => new(
+    private static DesktopState Failed(nint window, SessionLockState sessionLock, DesktopInputState input, TimeSpan elapsed) => new(
         Success: false,
         WindowHandle: window,
         WindowTitle: null,
         Foreground: null,
+        SessionLock: sessionLock,
         Focus: null,
         Cursor: null,
         Input: input,

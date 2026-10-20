@@ -13,7 +13,9 @@ namespace WindowsAppManagerMcp.Services;
 /// of the wait once it does not answer, and cut to its visible frame. A region or monitor is copied from the screen, and
 /// the windows the policy denies over it are left out of the comparison and reported (owner decision D8), as are those
 /// over a window whose pixels can show them (copied from the screen, or from its device context when it refuses
-/// PrintWindow; <see cref="CaptureMethods.ShowsOnlyTheWindow"/>). The text caret
+/// PrintWindow; <see cref="CaptureMethods.ShowsOnlyTheWindow"/>). The windows that keep themselves out of such frames
+/// (a display affinity, issue #17) are listed the same way, and a window target that declares one, or a session locked at
+/// the start or the end of the wait, gets a warning. The text caret
 /// the target's thread reports is left out too, so a blinking caret is no change. The last frame is registered as a capture
 /// without an image, so its captureId can be the next wait's since.
 /// </summary>
@@ -60,6 +62,7 @@ public sealed class VisualChangeService : IVisualChangeService
     private readonly ITargetPolicy? _policy;
     private readonly TimeProvider _time;
     private readonly Func<TimeSpan, CancellationToken, Task> _delay;
+    private readonly IProcessSecurityProbe? _security;
 
     /// <param name="capture">Lends the pixels.</param>
     /// <param name="screenshots">The capture health checks of a window (CheckWindow).</param>
@@ -74,6 +77,8 @@ public sealed class VisualChangeService : IVisualChangeService
     /// <param name="time">The clock; default the system clock.</param>
     /// <param name="delay">Waits between two frames; default Task.Delay on <paramref name="time"/>. Tests pass one that moves
     /// a manual clock.</param>
+    /// <param name="security">Whether the session is locked, or the input desktop out of reach, at the start or the end of the
+    /// wait (issue #17): the result then warns that the frames may show the lock screen. Without it no wait says so.</param>
     public VisualChangeService(
         IScreenCaptureWrapper capture,
         IScreenshotService screenshots,
@@ -85,7 +90,8 @@ public sealed class VisualChangeService : IVisualChangeService
         INativeThreadInputWrapper? threads = null,
         ITargetPolicy? policy = null,
         TimeProvider? time = null,
-        Func<TimeSpan, CancellationToken, Task>? delay = null)
+        Func<TimeSpan, CancellationToken, Task>? delay = null,
+        IProcessSecurityProbe? security = null)
     {
         _capture = capture ?? throw new ArgumentNullException(nameof(capture));
         _screenshots = screenshots ?? throw new ArgumentNullException(nameof(screenshots));
@@ -98,6 +104,7 @@ public sealed class VisualChangeService : IVisualChangeService
         _policy = policy;
         _time = time ?? TimeProvider.System;
         _delay = delay ?? ((wait, token) => Task.Delay(wait, _time, token));
+        _security = security;
     }
 
     /// <summary>The condition as wait_for_visual names it.</summary>
@@ -146,28 +153,36 @@ public sealed class VisualChangeService : IVisualChangeService
 
     /// <summary>
     /// The windows the policy denies over what a wait copies from the screen (owner decision D8), gathered for the whole
-    /// wait: every rectangle a denied window had stays left out, so a denied window that moves shows at neither place.
+    /// wait: every rectangle a denied window had stays left out, so a denied window that moves shows at neither place. The
+    /// windows that declare a display affinity over it (issue #17) are gathered with them, each with its last rectangle.
     /// </summary>
     private sealed class MaskTracker(VisualChangeService service, nint target = 0)
     {
         private readonly DeniedWindowMask _mask = new(service._windows, service._capturePolicy, service._policy);
+        private readonly DisplayAffinityScan _scan = new(service._windows, service._capturePolicy, service._policy);
+        private readonly nint _targetRoot = target == 0 ? 0 : service.Root(target);
         private readonly Dictionary<long, MaskedWindow> _masked = [];
         private readonly List<Rectangle> _areas = [];
+        private readonly Dictionary<long, ExcludedWindow> _excluded = [];
+        private readonly List<long> _excludedOrder = [];
 
         public IReadOnlyList<MaskedWindow> Masked => _masked.Values.ToList();
 
         public IReadOnlyList<Rectangle> Areas => _areas;
 
-        /// <summary>Adds the denied windows over <paramref name="area"/> now; the target window itself is never one.</summary>
+        /// <summary>The windows that declared a display affinity over the area during the wait, in the order first seen; null for none.</summary>
+        public IReadOnlyList<ExcludedWindow>? Excluded => _excludedOrder.Count == 0 ? null : _excludedOrder.Select(handle => _excluded[handle]).ToList();
+
+        /// <summary>Adds the windows over <paramref name="area"/> now; the target window itself is never one.</summary>
         public void Add(Rectangle area) => Add(Read(area));
 
-        /// <summary>The denied windows over <paramref name="area"/> now, without adding them (see <see cref="Add(IReadOnlyList{MaskedWindow})"/>).</summary>
-        public IReadOnlyList<MaskedWindow> Read(Rectangle area) => _mask.Over(area);
+        /// <summary>The windows over <paramref name="area"/> now, without adding them (see <see cref="Add(Listing)"/>).</summary>
+        public Listing Read(Rectangle area) => new(_mask.Over(area), DisplayAffinityScan.Within(area, _scan.Read(_targetRoot)) ?? []);
 
-        /// <summary>Adds denied windows <see cref="Read"/> listed; the target window itself is never one.</summary>
-        public void Add(IReadOnlyList<MaskedWindow> windows)
+        /// <summary>Adds the windows <see cref="Read"/> listed; the target window itself is never one.</summary>
+        public void Add(Listing listing)
         {
-            foreach (var window in windows)
+            foreach (var window in listing.Denied)
             {
                 if (window.Handle == (long)target)
                 {
@@ -181,8 +196,21 @@ public sealed class VisualChangeService : IVisualChangeService
                     _areas.Add(rectangle);
                 }
             }
+
+            foreach (var window in listing.Excluded)
+            {
+                if (!_excluded.ContainsKey(window.Handle))
+                {
+                    _excludedOrder.Add(window.Handle);
+                }
+
+                _excluded[window.Handle] = window;
+            }
         }
     }
+
+    /// <summary>What one listing over an area found: the windows the policy denies, and those that declare a display affinity.</summary>
+    private sealed record Listing(IReadOnlyList<MaskedWindow> Denied, IReadOnlyList<ExcludedWindow> Excluded);
 
     /// <summary>What one wait reads: a window, or a screen area.</summary>
     private abstract class Source
@@ -190,6 +218,9 @@ public sealed class VisualChangeService : IVisualChangeService
         public List<string> Warnings { get; } = [];
 
         public virtual IReadOnlyList<MaskedWindow> Masked => [];
+
+        /// <summary>The windows that declared a display affinity over what the frames copied from the screen; null for none.</summary>
+        public virtual IReadOnlyList<ExcludedWindow>? Excluded => null;
 
         /// <summary>Reads the next frame.</summary>
         /// <exception cref="Refused">The pixels could not be read (CaptureFailed).</exception>
@@ -209,6 +240,9 @@ public sealed class VisualChangeService : IVisualChangeService
 
         /// <summary>Only once a read showed what covers the window: the denied windows that covered it.</summary>
         public override IReadOnlyList<MaskedWindow> Masked => _mask?.Masked ?? [];
+
+        /// <summary>Only once a read showed what covers the window: the windows over it that keep themselves out of captures.</summary>
+        public override IReadOnlyList<ExcludedWindow>? Excluded => _mask?.Excluded;
 
         public override Frame Read()
         {
@@ -339,10 +373,12 @@ public sealed class VisualChangeService : IVisualChangeService
 
         public override IReadOnlyList<MaskedWindow> Masked => _mask.Masked;
 
+        public override IReadOnlyList<ExcludedWindow>? Excluded => _mask.Excluded;
+
         public override Frame Read()
         {
             // The denied windows are listed before and after the pixels are copied, so one that opens or moves in between
-            // is left out of this frame too
+            // is left out of this frame too; so are the windows that keep themselves out of the copy
             _mask.Add(area);
             (VisualSignature Signature, string Method) read;
             try
@@ -372,6 +408,38 @@ public sealed class VisualChangeService : IVisualChangeService
                     new VirtualScreenBounds(screen.X, screen.Y, screen.Width, screen.Height), monitors);
             });
         }
+    }
+
+    /// <summary>The top-level window <paramref name="window"/> is in, or the window itself.</summary>
+    private nint Root(nint window)
+    {
+        var root = _windows.GetAncestor(window, WindowAncestor.Root);
+        return root == nint.Zero ? window : root;
+    }
+
+    /// <summary>
+    /// The warning when the session is locked, or the input desktop cannot be reached, now (issue #17): the frames may show
+    /// the lock screen. Null otherwise, and without the probe.
+    /// </summary>
+    private string? SessionWarning()
+    {
+        if (_security == null)
+        {
+            return null;
+        }
+
+        if (_security.GetSessionLock() == SessionLockState.Locked)
+        {
+            return CaptureWarnings.Format(CaptureWarnings.SessionLocked,
+                "the session was locked during the wait, so the frames may show the lock screen instead of the target: a lock or " +
+                "an unlock can count as a change. Waits are not refused while it is locked.");
+        }
+
+        return _security.IsInputDesktopAvailable()
+            ? null
+            : CaptureWarnings.Format(CaptureWarnings.DesktopUnavailable,
+                "the input desktop could not be reached during the wait (a UAC prompt, Ctrl+Alt+Del or a disconnected session), " +
+                "so the frames may be black or show the lock screen instead of the target.");
     }
 
     /// <summary>The text caret of <paramref name="thread"/> on the screen, widened by a margin; null without one.</summary>
@@ -408,6 +476,7 @@ public sealed class VisualChangeService : IVisualChangeService
         private Frame? _last;
         private VisualSignature? _since;
         private int _checks;
+        private string? _sessionWarning;
 
         public async Task<VisualWaitResult> RunAsync(IProgress<OperationProgress>? progress, CancellationToken cancellationToken)
         {
@@ -421,6 +490,8 @@ public sealed class VisualChangeService : IVisualChangeService
                 return Failure(refused.Code, refused.Message);
             }
 
+            // Read again when the wait ends (Result): a lock or an unlock in between changes what the frames show
+            _sessionWarning = service.SessionWarning();
             var changed = request.Condition == VisualWaitCondition.Changed;
             _since = reference;
             IReadOnlyList<Rectangle> referenceExcluded = reference?.Excluded ?? [];
@@ -652,6 +723,15 @@ public sealed class VisualChangeService : IVisualChangeService
                 }
             }
 
+            // As capture_window warns (issue #17): a window that keeps itself out of captures may never change in the frames
+            if (DisplayAffinities.Of(service._windows.GetWindowDisplayAffinity(service.Root(handle))) is { } affinity)
+            {
+                source.Warnings.Add(CaptureWarnings.Format(CaptureWarnings.DisplayAffinity,
+                    $"this window declares a display affinity ({DisplayAffinities.Name(affinity)}) to keep itself out of captures, so the " +
+                    "frames may be black, empty, or show what is behind it, and a change in it may not be seen. Wait with " +
+                    "wait_for_element instead."));
+            }
+
             return source;
         }
 
@@ -799,6 +879,11 @@ public sealed class VisualChangeService : IVisualChangeService
         private VisualWaitResult Result(bool satisfied, string? reason, double? changedPercent, IReadOnlyList<BoundsDto>? regions)
         {
             var warnings = _source?.Warnings.ToList() ?? [];
+            if (_source != null && (_sessionWarning ?? service.SessionWarning()) is { } session)
+            {
+                warnings.Insert(0, session);
+            }
+
             var signature = _last?.Signature;
             if (signature is { Uniform: true })
             {
@@ -822,6 +907,7 @@ public sealed class VisualChangeService : IVisualChangeService
                 CapturedRegion: signature?.Region,
                 CaptureMethod: _last?.Method,
                 MaskedWindows: masked is { Count: > 0 } ? masked : null,
+                ExcludedFromCapture: _source?.Excluded,
                 Warnings: warnings.Count > 0 ? warnings : null);
         }
 

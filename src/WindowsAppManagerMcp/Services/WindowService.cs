@@ -376,7 +376,8 @@ public class WindowService : IWindowService
             IsTopmost: (extendedStyle & NativeEnums.WS_EX_TOPMOST) != 0,
             IsEnabled: (style & NativeEnums.WS_DISABLED) == 0,
             IsResponding: !_nativeWrapper.IsHungAppWindow(handle),
-            Dpi: dpi == 0 ? null : (int)dpi)
+            Dpi: dpi == 0 ? null : (int)dpi,
+            DisplayAffinity: DisplayAffinities.Of(_nativeWrapper.GetWindowDisplayAffinity(handle)))
         {
             Restore = window.State == WindowState.Minimized ? ReadRestore(handle) : null
         };

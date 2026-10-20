@@ -435,7 +435,7 @@ public sealed class PopupService : IPopupService
             if (foreground == nint.Zero)
             {
                 return new ActivePopupsResult(false, 0, null, false, null, Elapsed(stopwatch),
-                    Error: "No window is in the foreground (the desktop or the lock screen has focus). Name the window.",
+                    Error: "No window is in the foreground (the desktop has focus, or the session may be locked). Name the window.",
                     ErrorCode: UIElementErrorCode.WindowNotFound);
             }
 

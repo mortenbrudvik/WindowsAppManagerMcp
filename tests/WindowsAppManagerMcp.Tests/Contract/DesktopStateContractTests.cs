@@ -39,6 +39,7 @@ public class DesktopStateContractTests
         json.GetProperty("success").GetBoolean().Should().BeTrue();
         json.GetProperty("windowHandle").GetInt64().Should().Be(TypicalDesktop.NotepadHandle);
         json.GetProperty("foreground").GetProperty("processName").GetString().Should().Be("notepad");
+        json.GetProperty("sessionLock").GetString().Should().Be("unlocked", "the lock is always read, as a string (issue #18)");
         json.GetProperty("cursor").GetProperty("x").GetInt32().Should().Be(640);
         json.GetProperty("input").GetProperty("paused").GetBoolean().Should().BeFalse();
         json.GetProperty("windows").GetArrayLength().Should().Be(TypicalDesktop.Windows.Count);

@@ -8,7 +8,7 @@ An MCP (Model Context Protocol) server that enables AI assistants like Claude to
 
 ## Features
 
-- **Desktop State** - `get_desktop_state` returns in one call the window in front, the windows, the focused element, the cursor, held keys, the pause, and a window's open popups and interactive elements as compact text lines with refs; optionally a capture
+- **Desktop State** - `get_desktop_state` returns in one call the window in front, whether the session is locked, the windows, the focused element, the cursor, held keys, the pause, and a window's open popups and interactive elements as compact text lines with refs; optionally a capture
 - **Find Controls** - Find controls by name, automation id, control type or class at any depth in one call (`find_ui_elements`), also in a window's open menus, dropdowns and dialogs and, with `searchVirtualized`, among the rows a long list has not created yet; each element gets a ref (`w4120035e17`) that names it in every later call and never silently names another element
 - **Act on Controls** - `element_action` acts through UI Automation patterns without moving the mouse: invoke, toggle, set a value, select, expand, scroll, realize a list row, focus, and open a menu path such as `File>Save As`, with the element's state before and after; the same checks as input (target policy, the agent's own window, elevated apps, modal dialogs, the pause)
 - **Dialogs** - Read a dialog's text and buttons, then press a button by its standard name in any language or by its text, only in the dialog the agent named (`respond_to_dialog`; only cancel may go to the dialog in front unnamed); complete an Open or Save As dialog with a full path, confirming a save by the file written (`file_dialog`)

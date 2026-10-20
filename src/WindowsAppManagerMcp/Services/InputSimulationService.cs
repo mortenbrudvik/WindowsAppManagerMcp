@@ -223,7 +223,7 @@ public partial class InputSimulationService : IInputSimulationService
                 {
                     return held.Apply(Finish(new MouseMoveResult(false, x, y,
                         "SendInput did not insert the move, so the pointer was not moved. The input desktop may not be reachable (a UAC " +
-                        "prompt, the lock screen or a disconnected session). Try again; if it keeps failing, ask the user.",
+                        "prompt or a disconnected session), or the session may be locked. Try again; if it keeps failing, ask the user.",
                         InputErrorCode.SendInputFailed), approved));
                 }
 
@@ -1673,7 +1673,7 @@ public partial class InputSimulationService : IInputSimulationService
 
     private static string CursorPositionFailedMessage(string done) =>
         $"Windows did not move the mouse pointer to the point (SetCursorPos failed). {done} The input desktop may not be " +
-        "reachable (a UAC prompt, the lock screen or a disconnected session). Try again; if it keeps failing, ask the user.";
+        "reachable (a UAC prompt or a disconnected session), or the session may be locked. Try again; if it keeps failing, ask the user.";
 
     private string PausedMessage(string done)
     {

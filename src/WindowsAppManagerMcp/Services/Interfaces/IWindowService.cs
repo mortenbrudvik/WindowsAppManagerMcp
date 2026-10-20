@@ -41,7 +41,8 @@ public interface IWindowService
 
     /// <summary>
     /// Reads one window in full for get_window_info (roadmap M2.4): <see cref="GetWindowInfo"/> plus whether it is in
-    /// front, its z-order position, topmost, enabled, responding and its DPI. Null when the handle is not a window.
+    /// front, its z-order position, topmost, enabled, responding, its DPI and its display affinity (issue #17). Null when
+    /// the handle is not a window.
     /// </summary>
     WindowDetails? GetWindowDetails(nint handle);
 

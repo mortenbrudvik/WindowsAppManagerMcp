@@ -11,10 +11,11 @@ namespace WindowsAppManagerMcp.Services;
 /// <see cref="Apply"/>), and wait_for_visual and the screen captures' signatures leave them out of what they compare
 /// (roadmap M6.4, <see cref="Over"/>). One class for both, so both mask the same windows the same way.
 /// <para>
-/// Read from the drawn top-level windows (visible, not minimized, not cloaked) in z-order: a denied window's rectangle, less
-/// what opaque windows above it cover. Over-masking is the safe side: a denied window's rectangle includes its invisible
-/// resize borders; only a window that is neither layered, click-through, drawn through DirectComposition nor shaped by a
-/// region counts as opaque, and only by its visible frame; the policy's check is capture_window's
+/// Read from the drawn top-level windows (visible, not minimized, not cloaked; <see cref="DrawnWindows"/>) in z-order: a
+/// denied window's rectangle, less what opaque windows above it cover. Over-masking is the safe side: a denied window's
+/// rectangle includes its invisible resize borders; only a window that is neither layered, click-through, drawn through
+/// DirectComposition, shaped by a region nor excluded from capture (a copy of the screen shows what is below it, issue
+/// #17) counts as opaque, and only by its visible frame; the policy's check is capture_window's
 /// (<see cref="ICaptureTargetPolicy"/>), which refuses a window it cannot check while the policy denies anything; and a
 /// denied window that is on screen but cannot be placed refuses the read (<see cref="Read"/>) or masks the whole area
 /// (<see cref="Over"/>). A window that closes during the read is gone, not an error. Masking by rectangle cannot hide denied
@@ -82,22 +83,10 @@ public sealed class DeniedWindowMask
             return [];
         }
 
-        var topLevel = new List<nint>();
-        _windows.EnumWindows(handle =>
-        {
-            topLevel.Add(handle);
-            return true;
-        });
-
         var denied = new List<DeniedWindowArea>();
         var covered = new List<Rectangle>();
-        foreach (var handle in topLevel)
+        foreach (var handle in DrawnWindows.FrontToBack(_windows))
         {
-            if (!_windows.IsWindowVisible(handle) || _windows.IsIconic(handle) || _windows.IsCloaked(handle))
-            {
-                continue;
-            }
-
             if (_windows.GetWindowRect(handle) is not { } rect)
             {
                 // A window that closed meanwhile is gone; one that cannot be placed hides nothing, and if the policy denies
@@ -121,8 +110,9 @@ public sealed class DeniedWindowMask
                 denied.Add(new DeniedWindowArea(handle, visible));
             }
 
-            // A denied window is masked where it shows, so it hides what is below it as well as an opaque one
-            if (isDenied || IsOpaque(handle))
+            // A denied window is masked where it shows, so it hides what is below it as well as an opaque one. A window
+            // excluded from capture hides nothing: a copy of the screen shows what is below it (issue #17)
+            if (isDenied || (IsOpaque(handle) && !IsExcludedFromCapture(handle)))
             {
                 covered.Add(isDenied ? bounds : VisibleFrame(handle, bounds));
             }
@@ -236,6 +226,14 @@ public sealed class DeniedWindowMask
         ((long)_windows.GetWindowLongPtr(handle, NativeEnums.GWL_EXSTYLE) &
          (NativeEnums.WS_EX_LAYERED | NativeEnums.WS_EX_TRANSPARENT | NativeEnums.WS_EX_NOREDIRECTIONBITMAP)) == 0 &&
         !_windows.HasWindowRegion(handle);
+
+    /// <summary>
+    /// Whether the window keeps itself out of captures (WDA_EXCLUDEFROMCAPTURE, issue #17): a copy of the screen shows what is
+    /// below it, as if it were not there. One shown only on the monitor (WDA_MONITOR) is black in the copy, so it still hides
+    /// what is below it.
+    /// </summary>
+    private bool IsExcludedFromCapture(nint handle) =>
+        DisplayAffinities.Of(_windows.GetWindowDisplayAffinity(handle)) == DisplayAffinity.ExcludeFromCapture;
 
     /// <summary>The visible frame (without the invisible resize borders), or the window rectangle when DWM has none.</summary>
     private Rectangle VisibleFrame(nint handle, Rectangle bounds) =>

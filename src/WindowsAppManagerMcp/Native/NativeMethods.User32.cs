@@ -53,6 +53,11 @@ internal static partial class NativeMethods
         [LibraryImport("user32.dll")]
         public static partial int GetWindowRgnBox(nint hWnd, out RECT lprc);
 
+        /// <summary>The window's display affinity (SetWindowDisplayAffinity): WDA_NONE, WDA_MONITOR or WDA_EXCLUDEFROMCAPTURE.</summary>
+        [LibraryImport("user32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        public static partial bool GetWindowDisplayAffinity(nint hWnd, out uint pdwAffinity);
+
         [LibraryImport("user32.dll", SetLastError = true)]
         [return: MarshalAs(UnmanagedType.Bool)]
         public static partial bool SetWindowPos(

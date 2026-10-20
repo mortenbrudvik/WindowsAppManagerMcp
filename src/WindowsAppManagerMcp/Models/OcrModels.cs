@@ -59,6 +59,9 @@ public sealed record OcrMatchDto(string Text, string Line, BoundsDto Bounds, Scr
 /// <param name="WindowHandle">The window read, for a window target.</param>
 /// <param name="TextAngle">The text's angle in degrees when OCR found it skewed.</param>
 /// <param name="MaskedWindows">How many windows the user's policy denies were blacked out before OCR; left out when none.</param>
+/// <param name="ExcludedFromCapture">The windows that declare a display affinity over pixels copied from the screen (a region,
+/// a monitor, or a window copied from the screen or from its device context), which OCR did not see (issue #17); left out when
+/// none.</param>
 /// <param name="Warnings">The capture's warnings, each starting with a code (ImageBlank, WindowNotResponding, OcrTiled, ...).</param>
 /// <param name="InstalledLanguages">The installed OCR languages, with OcrLanguageNotInstalled and OcrUnavailable.</param>
 public sealed record ScreenTextResult(
@@ -74,6 +77,7 @@ public sealed record ScreenTextResult(
     long? WindowHandle = null,
     double? TextAngle = null,
     int? MaskedWindows = null,
+    IReadOnlyList<ExcludedWindow>? ExcludedFromCapture = null,
     IReadOnlyList<string>? Warnings = null,
     string? Error = null,
     string? ErrorCode = null,
@@ -99,6 +103,7 @@ public sealed record TextFindResult(
     bool Truncated,
     long? WindowHandle = null,
     int? MaskedWindows = null,
+    IReadOnlyList<ExcludedWindow>? ExcludedFromCapture = null,
     IReadOnlyList<string>? Warnings = null,
     string? Hint = null,
     string? Error = null,

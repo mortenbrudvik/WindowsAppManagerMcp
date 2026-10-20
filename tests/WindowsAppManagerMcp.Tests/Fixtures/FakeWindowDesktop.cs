@@ -57,7 +57,8 @@ public sealed class FakeWindowDesktop
         long extendedStyle = 0,
         long style = 0,
         bool hung = false,
-        uint dpi = 96)
+        uint dpi = 96,
+        uint displayAffinity = 0)
     {
         var hWnd = new nint(_nextHandle++);
         _topLevel.Add(hWnd);
@@ -79,6 +80,7 @@ public sealed class FakeWindowDesktop
         Native.Setup(n => n.GetAncestor(hWnd, WindowAncestor.Root)).Returns(hWnd);
         Native.Setup(n => n.IsHungAppWindow(hWnd)).Returns(hung);
         Native.Setup(n => n.GetDpiForWindow(hWnd)).Returns(dpi);
+        Native.Setup(n => n.GetWindowDisplayAffinity(hWnd)).Returns(displayAffinity);
         return hWnd;
     }
 

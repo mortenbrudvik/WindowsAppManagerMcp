@@ -55,9 +55,9 @@ This file is the core. The details of each kind of task are in the files beside 
 
 ### Start: observe
 
-Call `get_desktop_state` first, at the start of a task and whenever you need to look again: the windows, the focused element, the pause (`input.paused`) and, for the window you name (default: the one in front), its open popups and its elements as text lines with refs (`w4120035e17 Button 'Save' @812,44 80x24`) that `element_action` and the other element tools take. More: [elements.md](elements.md#observe).
+Call `get_desktop_state` at the start of a task and whenever you need to look again: the windows, the focused element, the pause (`input.paused`) and, for the window you name (default: the one in front), its open popups and its elements as text lines with refs (`w4120035e17 Button 'Save' @812,44 80x24`) that `element_action` and the other element tools take. More: [elements.md](elements.md#observe).
 
-Call `get_server_info` once at the start of a task too, and again whenever tools behave unexpectedly; it is always served, whatever the user turned off. Read its `warnings` first: they name what will make tools fail or coordinates wrong (a DPI awareness that scales coordinates, a locked session or UAC prompt, the pause or its hotkey, ignored settings). It also says which tools are served (see [Toolsets](tools.md#toolsets)), the integrity level, the monitors and your host windows. The steps below and in the reference files name tools the user may have turned off: skip a step whose tool is not in your tool list, and tell the user when the task needs it.
+Call `get_server_info` once at the start of a task too, and again whenever tools behave unexpectedly; it is always served. Read its `warnings` first: they name what will make tools fail or coordinates wrong (a DPI awareness that scales coordinates, a lock or UAC prompt, the pause or its hotkey, ignored settings). It also says which tools are served (see [Toolsets](tools.md#toolsets)), the integrity level, the monitors and your host windows. The steps below and in the reference files name tools the user may have turned off: skip a step whose tool is not in your tool list, and tell the user when the task needs it.
 
 ### 1. Find
 
@@ -92,7 +92,7 @@ Each of these means stop: do what its line says, never repeat the same call befo
 - `TargetIsAgentHost`: the target is your own terminal or chat window; name the window you mean (`windowHandle` for input tools; `window` or `handle` for `get_desktop_state` and the others). If it says the server cannot read its ancestor processes, tell the user.
 - `UserInterrupted`: the user used the keyboard or mouse, so the call stopped part way; ask before you go on.
 - `BlockedByModal`: a modal dialog (`blockingWindow`) disables the target; read it and decide deliberately, or ask the user.
-- `SessionLocked`, `DesktopUnavailable`: the screen is locked or a UAC prompt is shown; wait for the user.
+- `SessionLocked`, `DesktopUnavailable`: the session is locked (see `sessionLock`, not the window in front) or a UAC prompt; wait for the user.
 - `PromptShown`: the app asks to save; ask the user which button to press, never answer it on your own.
 - `ProtectedWindow`: the desktop shell or your own host window; pass `force: true` only if the user explicitly asked to close it.
 - `WaitTimedOut`: look at the screen before you wait again; never act as if the window or control were there.

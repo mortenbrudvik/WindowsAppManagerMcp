@@ -10,7 +10,8 @@ namespace WindowsAppManagerMcp.Services;
 /// the pixels can show them (a monitor, a region, or a window copied from the screen or from its device context; not one that
 /// drew itself or came from the compositor, <see cref="CaptureMethods.ShowsOnlyTheWindow"/>) as read before and after
 /// the capture, enlarge small text 2x, read the image in tiles when it is larger than OCR takes, map the boxes back to
-/// screen pixels, and register the capture.
+/// screen pixels, and register the capture. The windows that keep themselves out of such pixels (excludedFromCapture, issue
+/// #17) and the capture's warnings come from the capture itself (<see cref="RawCapture"/>).
 /// </summary>
 public sealed class OcrService : IOcrService
 {
@@ -83,7 +84,7 @@ public sealed class OcrService : IOcrService
         return new ScreenTextResult(
             true, Source, screen.Language, screen.CaptureId, screen.Capture.CapturedRegion, screen.Scale, screen.Lines.Count, lines,
             screen.Lines.Count > maxLines, WindowHandleOf(request.Target), screen.TextAngle, MaskedOrNull(screen),
-            WarningsOrNull(screen));
+            screen.Capture.ExcludedFromCapture, WarningsOrNull(screen));
     }
 
     /// <inheritdoc />
@@ -128,8 +129,8 @@ public sealed class OcrService : IOcrService
         var ordered = matches.OrderBy(m => m.Bounds.Y).ThenBy(m => m.Bounds.X).ToList();
         return new TextFindResult(
             true, Source, screen.Language, screen.CaptureId, origin, screen.Scale, ordered.Count, ordered.Take(maxResults).ToArray(),
-            ordered.Count > maxResults, WindowHandleOf(request.Target), MaskedOrNull(screen), WarningsOrNull(screen),
-            ordered.Count == 0 ? NoMatchHint : null);
+            ordered.Count > maxResults, WindowHandleOf(request.Target), MaskedOrNull(screen), screen.Capture.ExcludedFromCapture,
+            WarningsOrNull(screen), ordered.Count == 0 ? NoMatchHint : null);
     }
 
     /// <summary>A line read from the screen, with its words' character ranges in its text and its box in screen pixels.</summary>

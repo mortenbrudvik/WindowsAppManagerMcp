@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using ModelContextProtocol.Server;
 using WindowsAppManagerMcp.Infrastructure;
@@ -22,8 +23,9 @@ public partial class WindowFinderTools
     /// <param name="hitTest">The client-area read of get_window_info's detail 'full'; without it clientBounds is left out.</param>
     /// <param name="windowWait">wait_for_window's waits (roadmap M3.7); the server always registers it.</param>
     /// <param name="securityProbe">
-    /// The integrity read of get_window_info's detail 'full' (roadmap M6.6); the server always registers it. Without it
-    /// integrityLevel, elevated and aboveServer are left out.
+    /// The integrity read of get_window_info's detail 'full' (roadmap M6.6) and get_foreground_window's sessionLock (issue
+    /// #18); the server always registers it. Without it integrityLevel, elevated and aboveServer are left out, and sessionLock
+    /// is unknown.
     /// </param>
     /// <param name="virtualDesktops">
     /// The shell's virtual desktop manager, which marks a cloaked window on another virtual desktop with isOnOtherDesktop
@@ -191,7 +193,8 @@ public partial class WindowFinderTools
                  "title, process and state; 'standard' (default) what find_windows reports, visibleBounds (the frame you see) included; 'full' adds " +
                  "clientBounds (the client area on screen), isForeground, zOrder (position among all top-level windows, hidden ones " +
                  "included, front to back; not window.index, and isForeground tells what is in front), isTopmost, isEnabled (false: a " +
-                 "modal dialog takes its input), isResponding (false: Windows reports it hung), dpi (96 is 100%), and its process's " +
+                 "modal dialog takes its input), isResponding (false: Windows reports it hung), dpi (96 is 100%), displayAffinity " +
+                 "(excludeFromCapture or monitor: kept out of captures), and its process's " +
                  "integrityLevel and elevated, with aboveServer: true when it runs above this server (TargetElevated), and for a minimized " +
                  "window restore: the state, bounds and monitor it comes back to (bounds from before a Windows snap). Untitled, cloaked " +
                  "and tool windows are read too when named by handle. errorCode InvalidHandle: the handle is no window; WindowNotFound, " +
@@ -261,16 +264,33 @@ public partial class WindowFinderTools
     }
 
     [McpServerTool(Name = "get_foreground_window", Title = "Get Foreground Window", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
-    [Description("Get information about the currently focused (foreground) window. Untitled windows such as menus, popups and the taskbar are reported too, with an empty title and their className. When no window is in the foreground (for a moment while windows switch, or while a UAC prompt or the lock screen is shown), the call fails with errorCode NoForegroundWindow: call it again shortly.")]
-    public WindowInfoDto GetForegroundWindow()
+    [Description("Get information about the currently focused (foreground) window. Untitled windows such as menus, popups and the taskbar are reported too, with an empty title and their className. sessionLock is locked, unlocked or unknown: judge a lock by it, not by the window in front. When no window is in the foreground (windows switching, a UAC prompt, a locked session), the call fails with errorCode NoForegroundWindow: call it again shortly.")]
+    public ForegroundWindowResult GetForegroundWindow()
     {
+        // The lock right after the window, which it qualifies: neither LockApp's window in front nor no window in front says
+        // the session is locked (issue #18)
+        var window = _windowService.GetForegroundWindow();
+        var sessionLock = _securityProbe?.GetSessionLock() ?? SessionLockState.Unknown;
+
         // Never null: the SDK sends null as empty content, which tells the agent nothing (roadmap M2.1)
-        var window = _windowService.GetForegroundWindow()
-            ?? throw new ToolErrorException(nameof(WindowErrorCode.NoForegroundWindow),
-                "No window is in the foreground right now: windows may be switching, or a UAC prompt or the lock screen is shown. " +
-                "Call get_foreground_window again shortly; do not send keyboard input until a window is in the foreground.");
-        return ToDto(window);
+        return window is null
+            ? throw new ToolErrorException(nameof(WindowErrorCode.NoForegroundWindow), NoForegroundWindowMessage(sessionLock))
+            : new ForegroundWindowResult(ToDto(window), sessionLock);
     }
+
+    private static string NoForegroundWindowMessage(SessionLockState sessionLock) => sessionLock switch
+    {
+        SessionLockState.Locked =>
+            "No window is in the foreground, and the session is locked (sessionLock: locked). Wait for the user to unlock it; " +
+            "input tools return SessionLocked until then.",
+        SessionLockState.Unlocked =>
+            "No window is in the foreground right now, and the session is not locked: windows may be switching, or a UAC prompt " +
+            "is shown. Call get_foreground_window again shortly; do not send keyboard input until a window is in the foreground.",
+        _ =>
+            "No window is in the foreground right now: windows may be switching, a UAC prompt may be shown, or the session may be " +
+            "locked (its lock state could not be read). Call get_foreground_window again shortly; do not send keyboard input " +
+            "until a window is in the foreground."
+    };
 
     [McpServerTool(Name = "get_owned_windows", Title = "Get Owned Windows", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
     [Description("List the windows a window owns, directly or through its other owned windows, in z-order: its dialogs (Save As, " +
@@ -376,11 +396,31 @@ public record WindowInfoDto(
 );
 
 /// <summary>
+/// get_foreground_window's result: the window in front as find_windows reports it, and whether the session is locked (issue
+/// #18). Only this tool reports the lock, not every window. SessionLock is never left out (unknown when it cannot be read),
+/// since the window in front does not say it: while the session is locked there may be no window in front, or the lock
+/// screen app (LockApp) may be. It is read right after the window, not at the same instant, so around a lock or unlock the
+/// two can disagree for a moment.
+/// </summary>
+public sealed record ForegroundWindowResult : WindowInfoDto
+{
+    public ForegroundWindowResult(WindowInfoDto window, SessionLockState sessionLock)
+        : base(window)
+    {
+        SessionLock = sessionLock;
+    }
+
+    /// <summary>locked, unlocked or unknown; written after the window's fields.</summary>
+    [JsonPropertyOrder(1)]
+    public SessionLockState SessionLock { get; init; }
+}
+
+/// <summary>
 /// get_window_info's result (roadmap M2.4): one window at the detail asked for. Compact has handle, title, processName,
 /// processId and state; standard adds what find_windows reports (VisibleBounds included); full adds the fields after
-/// VisibleBounds, the integrity of the window's process among them (roadmap M6.6; AboveServer only when true), and for a
-/// minimized window Restore (issue #12). Fields a detail level does not report are left out. IsOnOtherDesktop (standard and
-/// full) is as find_windows reports it.
+/// VisibleBounds, the integrity of the window's process among them (roadmap M6.6; AboveServer only when true), its display
+/// affinity (issue #17; left out when it has none), and for a minimized window Restore (issue #12). Fields a detail level
+/// does not report are left out. IsOnOtherDesktop (standard and full) is as find_windows reports it.
 /// </summary>
 public sealed record WindowDetailsResult(
     bool Success,
@@ -409,6 +449,7 @@ public sealed record WindowDetailsResult(
     bool? IsEnabled = null,
     bool? IsResponding = null,
     int? Dpi = null,
+    DisplayAffinity? DisplayAffinity = null,
     IntegrityLevel? IntegrityLevel = null,
     bool? Elevated = null,
     bool? AboveServer = null,
@@ -439,6 +480,7 @@ public sealed record WindowDetailsResult(
         IsEnabled = details.IsEnabled,
         IsResponding = details.IsResponding,
         Dpi = details.Dpi,
+        DisplayAffinity = details.DisplayAffinity,
         IntegrityLevel = integrity?.Level,
         Elevated = integrity?.IsElevated,
         AboveServer = aboveServer ? true : null,

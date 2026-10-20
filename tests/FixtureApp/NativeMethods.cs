@@ -6,8 +6,8 @@ namespace WindowsAppManagerMcp.FixtureApp;
 /// <summary>
 /// The few Win32 calls the fixture needs: its DPI awareness, its own geometry for the ready event, the Win32 menu bar
 /// of its menu window, the long form of a path for its save folder, its task dialog, the monitors for
-/// <see cref="FixturePlacement.CenterOnMonitorAtAnotherScale"/>, the hook of <see cref="NoActivateWhileShown"/> and the
-/// styles and owner the overlay reports.
+/// <see cref="FixturePlacement.CenterOnMonitorAtAnotherScale"/>, the hook of <see cref="NoActivateWhileShown"/>, the
+/// styles and owner the overlay reports, and the display affinity it can set on itself (issue #17).
 /// </summary>
 internal static class NativeMethods
 {
@@ -209,4 +209,15 @@ internal static class NativeMethods
 
     [DllImport("user32.dll")]
     public static extern nint GetWindow(nint hwnd, uint command);
+
+    /// <summary>WDA_EXCLUDEFROMCAPTURE (Windows 10 2004 and later): shown on the monitor, left out of every capture.</summary>
+    public const uint WDA_EXCLUDEFROMCAPTURE = 0x11;
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool SetWindowDisplayAffinity(nint hwnd, uint affinity);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool GetWindowDisplayAffinity(nint hwnd, out uint affinity);
 }

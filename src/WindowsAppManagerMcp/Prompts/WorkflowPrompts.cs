@@ -61,7 +61,8 @@ public sealed class WorkflowPrompts
             .Line("")
             .Line("Rules:")
             .Line(UntrustedRule)
-            .Line("- PausedByUser, TargetDeniedByPolicy, TargetElevated, SessionLocked, DesktopUnavailable: stop and tell the user.")
+            .Line("- PausedByUser, TargetDeniedByPolicy, TargetElevated, SessionLocked, DesktopUnavailable: stop and tell the user " +
+                  "(a lock shows in sessionLock, not in the window in front).")
             .Line("- BlockedByModal: a dialog blocks the window. Read it with respond_to_dialog and ask the user before you answer it.",
                 "respond_to_dialog")
             .Line("- AmbiguousWindow: pick one of the candidates by handle; never guess.")

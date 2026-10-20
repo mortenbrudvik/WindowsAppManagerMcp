@@ -49,7 +49,8 @@ public sealed class InputControlToolContractTests : IDisposable
         TaskCompletionSource? callEnded = null,
         InputSession? session = null,
         FakeInputWrapper? input = null,
-        string? revision = null)
+        string? revision = null,
+        IProcessSecurityProbe? securityProbe = null)
     {
         session ??= _session;
         input ??= _input;
@@ -108,9 +109,16 @@ public sealed class InputControlToolContractTests : IDisposable
                     : builder.WithServerTools<InputControlTools>();
             },
             clientOptions: InProcessMcpServer.WithRevision(options, revision),
-            configureServices: services => services
-                .AddSingleton<IInputSession>(session)
-                .AddSingleton<IPauseHotkey>(_hotkey));
+            configureServices: services =>
+            {
+                services
+                    .AddSingleton<IInputSession>(session)
+                    .AddSingleton<IPauseHotkey>(_hotkey);
+                if (securityProbe != null)
+                {
+                    services.AddSingleton(securityProbe);
+                }
+            });
     }
 
     private int _windowToolRuns;
@@ -197,6 +205,43 @@ public sealed class InputControlToolContractTests : IDisposable
         status.GetProperty("paused").GetBoolean().Should().BeFalse();
         status.GetProperty("hotkey").GetProperty("state").GetString().Should().Be("Failed");
         status.GetProperty("message").GetString().Should().Contain("not available").And.Contain("another program");
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task GetControlStatus_WhileTheSessionIsLocked_SaysSo_NotOnlyThatInputIsRunningOrPaused(bool paused)
+    {
+        // Arrange - issue #18: an agent read 'Input is running' as an unlocked desktop
+        if (paused)
+        {
+            _session.Pause(InputControlSources.Hotkey);
+        }
+
+        var probe = new Mock<IProcessSecurityProbe>();
+        probe.Setup(p => p.GetSessionLock()).Returns(SessionLockState.Locked);
+        await using var server = await StartAsync(securityProbe: probe.Object);
+
+        // Act
+        var status = Payload(await server.CallToolAsync("get_control_status"));
+
+        // Assert
+        status.GetProperty("message").GetString().Should().Contain(paused ? "Input is paused" : "Input is running")
+            .And.Contain("The session is locked").And.Contain("SessionLocked");
+    }
+
+    [Theory]
+    [InlineData(SessionLockState.Unlocked)]
+    [InlineData(SessionLockState.Unknown)]
+    public async Task GetControlStatus_WhileTheSessionIsNotKnownToBeLocked_SaysNothingOfALock(SessionLockState lockState)
+    {
+        var probe = new Mock<IProcessSecurityProbe>();
+        probe.Setup(p => p.GetSessionLock()).Returns(lockState);
+        await using var server = await StartAsync(securityProbe: probe.Object);
+
+        var status = Payload(await server.CallToolAsync("get_control_status"));
+
+        status.GetProperty("message").GetString().Should().Contain("Input is running").And.NotContain("locked");
     }
 
     #endregion

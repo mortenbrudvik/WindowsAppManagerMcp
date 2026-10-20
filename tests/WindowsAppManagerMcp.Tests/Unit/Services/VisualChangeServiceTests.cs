@@ -36,7 +36,7 @@ public class VisualChangeServiceTests
         _screen.VirtualScreen = (0, 0, 4480, 1440);
     }
 
-    private VisualChangeService CreateSut(ITargetPolicy? policy = null) => new(
+    private VisualChangeService CreateSut(ITargetPolicy? policy = null, IProcessSecurityProbe? security = null) => new(
         _screen, _screenshots.Object, _windows.Object, _monitors.Object, _capturePolicy.Object, _windowCalls, _registry, _threads.Object,
         policy ?? new TargetPolicy(new TargetPolicySettings([], null, "test")), _clock,
         (pause, token) =>
@@ -44,7 +44,8 @@ public class VisualChangeServiceTests
             token.ThrowIfCancellationRequested();
             _clock.Advance(pause);
             return Task.CompletedTask;
-        });
+        },
+        security);
 
     private static VisualWaitRequest Request(VisualTarget target, VisualWaitCondition condition = VisualWaitCondition.Changed,
         int timeoutMs = 2000, int stableMs = 500, double minChangedPercent = 0) => new()
@@ -585,13 +586,117 @@ public class VisualChangeServiceTests
     }
 
     [Fact]
-    public async Task APolicyThatDeniesNothing_ListsNoWindows()
+    public async Task APolicyThatDeniesNothing_MasksNoWindow_AndAsksItNothing()
     {
+        // The windows are still listed for their display affinity (issue #17), which reads no more of a window without one
+        var window = (nint)0x7070;
+        _windows.Setup(w => w.EnumWindows(It.IsAny<Func<nint, bool>>())).Callback((Func<nint, bool> visit) => visit(window));
+        _windows.Setup(w => w.IsWindowVisible(window)).Returns(true);
+        _windows.Setup(w => w.GetWindowRect(window)).Returns((0, 0, 40, 40));
         _screen.Frames(new VisualFrames(40, 40));
 
-        await CreateSut().WaitAsync(Request(new VisualTarget.Region(0, 0, 40, 40), VisualWaitCondition.Stable, stableMs: 0));
+        var result = await CreateSut().WaitAsync(Request(new VisualTarget.Region(0, 0, 40, 40), VisualWaitCondition.Stable, stableMs: 0));
 
-        _windows.Verify(w => w.EnumWindows(It.IsAny<Func<nint, bool>>()), Times.Never);
+        result.MaskedWindows.Should().BeNull();
+        result.ExcludedFromCapture.Should().BeNull();
+        _capturePolicy.Verify(p => p.Check(It.IsAny<nint>()), Times.Never);
+        _windows.Verify(w => w.GetWindowRect(window), Times.Never);
+    }
+
+    [Fact]
+    public async Task AWindowExcludedFromCapture_OverARegion_IsListed_WithItsLastRectangleInTheArea()
+    {
+        // Issue #17: a toast the frames cannot show opens during the wait and moves once; it is listed once, cut to the area
+        var toast = (nint)0x7171;
+        _windows.Setup(w => w.EnumWindows(It.IsAny<Func<nint, bool>>())).Callback((Func<nint, bool> visit) =>
+        {
+            if (_screen.Sources.Count >= 1)
+            {
+                visit(toast);
+            }
+        });
+        _windows.Setup(w => w.IsWindowVisible(toast)).Returns(true);
+        _windows.Setup(w => w.GetWindowDisplayAffinity(toast)).Returns(0x11u);
+        _windows.SetupSequence(w => w.GetWindowRect(toast))
+            .Returns((300, 200, 500, 260))
+            .Returns((300, 250, 500, 310));
+        _windows.Setup(w => w.GetWindowText(toast)).Returns("Board saved");
+        _windows.Setup(w => w.GetWindowThreadProcessId(toast)).Returns(5151u);
+        _windows.Setup(w => w.GetProcessName(5151u)).Returns("Enify");
+        _screen.Frames(new VisualFrames(400, 300));
+
+        // Act
+        var result = await CreateSut().WaitAsync(Request(new VisualTarget.Region(0, 0, 400, 300), VisualWaitCondition.Stable, stableMs: 400));
+
+        // Assert
+        result.Satisfied.Should().BeTrue(result.Error);
+        result.ExcludedFromCapture.Should().Equal(
+            new ExcludedWindow((long)toast, DisplayAffinity.ExcludeFromCapture, "Enify", "Board saved", 300, 250, 100, 50));
+    }
+
+    [Fact]
+    public async Task AWindowTargetReadByPrintWindow_ListsNoWindowThatKeepsOutOfCaptures()
+    {
+        // The window drew itself: no other window is in its frames
+        var toast = (nint)0x7171;
+        _windows.Setup(w => w.EnumWindows(It.IsAny<Func<nint, bool>>())).Callback((Func<nint, bool> visit) => visit(toast));
+        _windows.Setup(w => w.IsWindowVisible(toast)).Returns(true);
+        _windows.Setup(w => w.GetWindowDisplayAffinity(toast)).Returns(0x11u);
+        _windows.Setup(w => w.GetWindowRect(toast)).Returns((150, 250, 300, 300));
+        _screen.Frames(WindowFrame());
+
+        var result = await CreateSut().WaitAsync(Request(TheWindow(), VisualWaitCondition.Stable, stableMs: 0));
+
+        result.CaptureMethod.Should().Be("PrintWindow");
+        result.ExcludedFromCapture.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task AWindowTargetThatDeclaresADisplayAffinity_Warns()
+    {
+        _windows.Setup(w => w.GetWindowDisplayAffinity(Window)).Returns(0x11u);
+        _screen.Frames(WindowFrame());
+
+        var result = await CreateSut().WaitAsync(Request(TheWindow(), VisualWaitCondition.Stable, stableMs: 0));
+
+        result.Warnings.Should().ContainSingle(w => w.StartsWith("DisplayAffinity: ", StringComparison.Ordinal))
+            .Which.Should().Contain("excludeFromCapture");
+    }
+
+    [Theory]
+    [InlineData(SessionLockState.Locked, true, "SessionLocked: ")]
+    [InlineData(SessionLockState.Unlocked, false, "DesktopUnavailable: ")]
+    public async Task WhileTheSessionIsLockedOrTheDesktopOutOfReach_TheResultWarnsFirst(SessionLockState lockState, bool desktop, string code)
+    {
+        // Issues #17 and #18: not a refusal; the frames may show the lock screen
+        var security = new Mock<IProcessSecurityProbe>();
+        security.Setup(s => s.GetSessionLock()).Returns(lockState);
+        security.Setup(s => s.IsInputDesktopAvailable()).Returns(desktop);
+        _screen.Frames(new VisualFrames(40, 40));
+
+        var result = await CreateSut(security: security.Object).WaitAsync(
+            Request(new VisualTarget.Region(0, 0, 40, 40), VisualWaitCondition.Stable, stableMs: 0));
+
+        result.Satisfied.Should().BeTrue(result.Error);
+        result.Warnings.Should().NotBeNull();
+        result.Warnings![0].Should().StartWith(code);
+        result.Warnings.Should().ContainSingle(w => w.StartsWith(code, StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task WhileTheSessionIsUnlocked_TheResultHasNoSessionWarning()
+    {
+        var security = new Mock<IProcessSecurityProbe>();
+        security.Setup(s => s.GetSessionLock()).Returns(SessionLockState.Unlocked);
+        security.Setup(s => s.IsInputDesktopAvailable()).Returns(true);
+        _screen.Frames(new VisualFrames(40, 40));
+
+        var result = await CreateSut(security: security.Object).WaitAsync(
+            Request(new VisualTarget.Region(0, 0, 40, 40), VisualWaitCondition.Stable, stableMs: 0));
+
+        result.Warnings.Should().NotContain(w => w.StartsWith("SessionLocked", StringComparison.Ordinal) ||
+                                                 w.StartsWith("DesktopUnavailable", StringComparison.Ordinal));
+        security.Verify(s => s.GetSessionLock(), Times.Exactly(2), "at the start of the wait and at its end");
     }
 
     [Fact]

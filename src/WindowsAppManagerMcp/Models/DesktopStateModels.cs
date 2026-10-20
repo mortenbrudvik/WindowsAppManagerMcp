@@ -4,8 +4,8 @@ using WindowsAppManagerMcp.Infrastructure;
 namespace WindowsAppManagerMcp.Models;
 
 /// <summary>
-/// A part of get_desktop_state's observation (roadmap M3.12) that the caller can leave out. The window in front, the cursor,
-/// the held modifiers, Caps Lock and the pause are always read: they cost nothing.
+/// A part of get_desktop_state's observation (roadmap M3.12) that the caller can leave out. The window in front, the session's
+/// lock, the cursor, the held modifiers, Caps Lock and the pause are always read: they cost nothing.
 /// </summary>
 [ToolEnum(ToolErrorReporting.InvalidArgumentsErrorCode, "include value")]
 public enum DesktopStateSection
@@ -104,7 +104,9 @@ public sealed record DesktopStateRequest(
 /// <param name="Title">Its title, cut to <see cref="AppText.MaxLength"/> characters (roadmap M3.F14), as every
 /// title of the observation is.</param>
 /// <param name="IsAgentHost">True for the agent's own terminal, editor or chat window (or a window it owns); left out otherwise.</param>
-public sealed record DesktopWindow(long Handle, string Title, string ProcessName, int ProcessId, bool? IsAgentHost = null);
+/// <param name="IsCloaked">True when DWM cloaks the window, so it is not on screen although Windows calls it visible (a
+/// cloaked CoreWindow reports isVisible true); left out otherwise.</param>
+public sealed record DesktopWindow(long Handle, string Title, string ProcessName, int ProcessId, bool? IsAgentHost = null, bool? IsCloaked = null);
 
 /// <summary>One row of get_desktop_state's window list: a user-facing window, front first.</summary>
 /// <param name="Title">Its title, cut as <see cref="DesktopWindow.Title"/> is.</param>
@@ -174,7 +176,11 @@ public sealed record DesktopStateError(string Section, string ErrorCode, string 
 /// </summary>
 /// <param name="WindowHandle">The window the elements, popups and capture are of: the one named, or the window in front;
 /// 0 when there is none.</param>
-/// <param name="Foreground">The window in front; null when none is (windows switching, a UAC prompt, the lock screen).</param>
+/// <param name="Foreground">The window in front; null when none is (windows switching, a UAC prompt; while the session is
+/// locked, none may be, or the lock screen app, LockApp, may be).</param>
+/// <param name="SessionLock">Whether the session is locked (issue #18): locked, unlocked or unknown, never left out. Decide by
+/// it, not by the window in front. It is read right after the window in front, not at the same instant, so around a lock or
+/// unlock the two can disagree for a moment.</param>
 /// <param name="Cursor">The mouse pointer in physical screen pixels; null when Windows did not say.</param>
 /// <param name="Windows">The user-facing windows (no cloaked, tool, untitled or shell windows), front first, at most maxWindows.</param>
 /// <param name="WindowCount">How many user-facing windows there are; more than <paramref name="Windows"/> lists when it was cut.</param>
@@ -188,6 +194,7 @@ public sealed record DesktopState(
     long WindowHandle,
     string? WindowTitle,
     DesktopWindow? Foreground,
+    SessionLockState SessionLock,
     DesktopFocus? Focus,
     ScreenPoint? Cursor,
     DesktopInputState Input,

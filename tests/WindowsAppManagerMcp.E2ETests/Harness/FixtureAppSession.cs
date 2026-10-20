@@ -65,6 +65,13 @@ public sealed record FixtureLaunchOptions
     public bool OpenOverlay { get; init; }
 
     /// <summary>
+    /// Open the overlay (<see cref="OpenOverlay"/>), which sets WDA_EXCLUDEFROMCAPTURE on itself (issue #17,
+    /// <c>--exclude-overlay-from-capture</c>): it is on the primary monitor, and no copy of the screen shows it. Its
+    /// <see cref="FixtureContract.Events.OverlayOpened"/> event reports the affinity Windows reads back.
+    /// </summary>
+    public bool ExcludeOverlayFromCapture { get; init; }
+
+    /// <summary>
     /// Arguments the harness plants on the fixture's command line after <see cref="FixtureOptions.EndOfOptions"/>, where
     /// the fixture ignores them (roadmap M6.6: a secret-looking switch only a reader of the command line sees).
     /// </summary>
@@ -232,7 +239,8 @@ public sealed class FixtureAppSession : IDisposable
             OpenCanvas: launch.OpenCanvas,
             ChangeAfter: launch.ChangeAfter,
             AnimateFor: launch.AnimateFor,
-            OpenOverlay: launch.OpenOverlay);
+            OpenOverlay: launch.OpenOverlay,
+            ExcludeOverlayFromCapture: launch.ExcludeOverlayFromCapture);
 
         // Here, not as the fixture's exit code 2 or a wait that times out after the watchdog ended it
         options.ThrowIfATimedChangeIsInvalid();

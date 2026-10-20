@@ -406,7 +406,7 @@ internal sealed class MainWindow : Window
 
         // The overlay before the canvas: on a monitor at another scale the canvas hooks the windows created after it until
         // it has rendered (NoActivateWhileShown), and the overlay's topmost style must not go through that hook
-        if (_options.OpenOverlay)
+        if (_options.OpenOverlay || _options.ExcludeOverlayFromCapture)
         {
             OpenOverlay();
         }

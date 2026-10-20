@@ -298,6 +298,75 @@ public class WindowFinderToolsTests
         result!.Title.Should().Be("Foreground Window");
     }
 
+    [Theory]
+    [InlineData(SessionLockState.Locked)]
+    [InlineData(SessionLockState.Unlocked)]
+    [InlineData(SessionLockState.Unknown)]
+    public void GetForegroundWindow_ReportsTheSessionLock(SessionLockState lockState)
+    {
+        // Arrange - issue #18: LockApp's window in front does not say whether the session is locked
+        var lockApp = TestDataFactory.CreateWindowInfo(title: "Windows Default Lock Screen", processName: "LockApp") with
+        {
+            ClassName = "Windows.UI.Core.CoreWindow"
+        };
+        _mockWindowService.Setup(w => w.GetForegroundWindow()).Returns(lockApp);
+        var probe = new Mock<IProcessSecurityProbe>();
+        probe.Setup(p => p.GetSessionLock()).Returns(lockState);
+
+        // Act
+        var result = new WindowFinderTools(_mockWindowService.Object, securityProbe: probe.Object).GetForegroundWindow();
+
+        // Assert - the window's own fields as find_windows reports them, and the lock beside them
+        result.SessionLock.Should().Be(lockState);
+        result.Handle.Should().Be(lockApp.Handle);
+        result.ProcessName.Should().Be("LockApp");
+        result.ClassName.Should().Be("Windows.UI.Core.CoreWindow");
+    }
+
+    [Fact]
+    public void GetForegroundWindow_WithoutAProbe_ReportsTheSessionLockAsUnknown()
+    {
+        _mockWindowService.Setup(w => w.GetForegroundWindow()).Returns(TestDataFactory.CreateWindowInfo());
+
+        CreateSut().GetForegroundWindow().SessionLock.Should().Be(SessionLockState.Unknown);
+    }
+
+    [Fact]
+    public void GetForegroundWindow_WithNoWindowInFrontWhileTheSessionIsLocked_SaysTheSessionIsLocked()
+    {
+        // Arrange
+        _mockWindowService.Setup(w => w.GetForegroundWindow()).Returns((WindowInfo?)null);
+        var probe = new Mock<IProcessSecurityProbe>();
+        probe.Setup(p => p.GetSessionLock()).Returns(SessionLockState.Locked);
+
+        // Act
+        var act = () => new WindowFinderTools(_mockWindowService.Object, securityProbe: probe.Object).GetForegroundWindow();
+
+        // Assert
+        act.Should().Throw<ToolErrorException>()
+            .Where(e => e.ErrorCode == nameof(WindowErrorCode.NoForegroundWindow) && e.Message.Contains("the session is locked") &&
+                        e.Message.Contains("SessionLocked"));
+    }
+
+    [Theory]
+    [InlineData(SessionLockState.Unlocked, "the session is not locked")]
+    [InlineData(SessionLockState.Unknown, "could not be read")]
+    public void GetForegroundWindow_WithNoWindowInFrontOtherwise_SaysWhatIsKnownOfTheLock(SessionLockState lockState, string says)
+    {
+        // Arrange - nobody measured that a lock leaves no window in front, so the error does not say it does
+        _mockWindowService.Setup(w => w.GetForegroundWindow()).Returns((WindowInfo?)null);
+        var probe = new Mock<IProcessSecurityProbe>();
+        probe.Setup(p => p.GetSessionLock()).Returns(lockState);
+
+        // Act
+        var act = () => new WindowFinderTools(_mockWindowService.Object, securityProbe: probe.Object).GetForegroundWindow();
+
+        // Assert
+        act.Should().Throw<ToolErrorException>()
+            .Where(e => e.ErrorCode == nameof(WindowErrorCode.NoForegroundWindow) && e.Message.Contains(says) &&
+                        !e.Message.Contains("lock screen") && e.Message.Contains("again shortly"));
+    }
+
     #endregion
 
     #region WindowState Mapping Tests
@@ -364,6 +433,26 @@ public class WindowFinderToolsTests
         var result = CreateSut().GetWindowInfo(handle: window.Handle, detail: detail);
 
         result.Title.Should().Be(CutTitle);
+    }
+
+    [Fact]
+    public void GetWindowInfo_Full_ReportsTheDisplayAffinity_AndStandardLeavesItOut()
+    {
+        // Issue #17: a window that keeps itself out of captures says so at detail 'full' only
+        var window = TestDataFactory.CreateWindowInfo(title: "Board saved");
+        _mockWindowService.Setup(w => w.IsValidWindow(window.Handle)).Returns(true);
+        _mockWindowService.Setup(w => w.GetWindowInfo(window.Handle)).Returns(window);
+        _mockWindowService.Setup(w => w.GetWindowDetails(window.Handle))
+            .Returns(new WindowDetails(window, false, 3, false, true, true, 96, DisplayAffinity.ExcludeFromCapture));
+        var sut = CreateSut();
+
+        var full = sut.GetWindowInfo(handle: window.Handle, detail: WindowDetail.Full);
+        var standard = sut.GetWindowInfo(handle: window.Handle, detail: WindowDetail.Standard);
+
+        full.DisplayAffinity.Should().Be(DisplayAffinity.ExcludeFromCapture);
+        System.Text.Json.JsonSerializer.Serialize(full, ToolJson.SerializerOptions).Should().Contain("\"displayAffinity\":\"excludeFromCapture\"");
+        standard.DisplayAffinity.Should().BeNull();
+        System.Text.Json.JsonSerializer.Serialize(standard, ToolJson.SerializerOptions).Should().NotContain("displayAffinity");
     }
 
     // get_window_info detail 'full': the integrity of the window's process (roadmap M6.6)

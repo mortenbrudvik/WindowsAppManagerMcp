@@ -14,7 +14,14 @@ public class DeniedWindowMaskTests
     private const long WsExLayered = 0x80000;
     private const long WsExNoRedirectionBitmap = 0x200000;
 
-    /// <summary>A top-level window of the fake desktop; the list is in z-order, topmost first.</summary>
+    /// <summary>WDA_MONITOR and WDA_EXCLUDEFROMCAPTURE (issue #17).</summary>
+    public const uint WdaMonitor = 0x1;
+    public const uint WdaExcludeFromCapture = 0x11;
+
+    /// <summary>
+    /// A top-level window of the fake desktop; the list is in z-order, topmost first. Its process ID is its handle + 1000,
+    /// and <paramref name="ProcessName"/> that process's name.
+    /// </summary>
     public sealed record FakeWindow(
         nint Handle,
         Rectangle Bounds,
@@ -27,7 +34,10 @@ public class DeniedWindowMaskTests
         bool RectUnreadable = false,
         bool Shaped = false,
         bool Gone = false,
-        bool PolicyThrows = false);
+        bool PolicyThrows = false,
+        uint Affinity = 0,
+        string Title = "",
+        string? ProcessName = null);
 
     public static (Mock<INativeWindowWrapper> Native, Mock<ICaptureTargetPolicy> Policy) Desktop(params FakeWindow[] windows)
     {
@@ -56,6 +66,10 @@ public class DeniedWindowMaskTests
         native.Setup(n => n.IsWindow(It.IsAny<nint>())).Returns((nint h) => !Of(h).Gone);
 
         native.Setup(n => n.GetWindowThreadProcessId(It.IsAny<nint>())).Returns((nint h) => (uint)h + 1000);
+        native.Setup(n => n.GetWindowDisplayAffinity(It.IsAny<nint>())).Returns((nint h) => Of(h).Affinity);
+        native.Setup(n => n.GetWindowText(It.IsAny<nint>())).Returns((nint h) => Of(h).Title);
+        native.Setup(n => n.GetProcessName(It.IsAny<uint>())).Returns((uint pid) =>
+            windows.SingleOrDefault(w => (uint)w.Handle + 1000 == pid)?.ProcessName);
 
         var policy = new Mock<ICaptureTargetPolicy>();
         policy.Setup(p => p.Check(It.IsAny<nint>())).Returns((nint h) =>
@@ -101,6 +115,28 @@ public class DeniedWindowMaskTests
             new FakeWindow(1, new Rectangle(0, 0, 400, 100), Denied: true));
 
         areas.Should().ContainSingle().Which.Areas.Should().Equal(new Rectangle(0, 0, 400, 100));
+    }
+
+    [Fact]
+    public void Read_AnOpaqueWindowExcludedFromCaptureAbove_HidesNothing()
+    {
+        // Issue #17: a copy of the screen leaves the window out and shows the denied one below it, so all of it is masked
+        var areas = Read(
+            new FakeWindow(2, new Rectangle(0, 0, 1000, 1000), Affinity: WdaExcludeFromCapture),
+            new FakeWindow(1, new Rectangle(0, 0, 400, 100), Denied: true));
+
+        areas.Should().ContainSingle().Which.Areas.Should().Equal(new Rectangle(0, 0, 400, 100));
+    }
+
+    [Fact]
+    public void Read_AnOpaqueWindowShownOnlyOnTheMonitorAbove_StillHidesWhatItCovers()
+    {
+        // WDA_MONITOR: the copy shows it black, which hides the denied window below it as well as the window itself would
+        var areas = Read(
+            new FakeWindow(2, new Rectangle(0, 0, 1000, 1000), Affinity: WdaMonitor),
+            new FakeWindow(1, new Rectangle(0, 0, 400, 100), Denied: true));
+
+        areas.Should().BeEmpty();
     }
 
     [Fact]

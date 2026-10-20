@@ -14,6 +14,8 @@ namespace WindowsAppManagerMcp.Models;
 /// <param name="IsEnabled">False when it is disabled (WS_DISABLED), usually by a modal dialog that takes its input.</param>
 /// <param name="IsResponding">False when Windows reports it hung (IsHungAppWindow: no message processed for 5 seconds).</param>
 /// <param name="Dpi">Its DPI (GetDpiForWindow; 96 is 100%); null when it cannot be read.</param>
+/// <param name="DisplayAffinity">What it asked Windows to do with it in captures (GetWindowDisplayAffinity, issue #17); null
+/// when it asked nothing or it cannot be read.</param>
 public sealed record WindowDetails(
     WindowInfo Window,
     bool IsForeground,
@@ -21,7 +23,8 @@ public sealed record WindowDetails(
     bool IsTopmost,
     bool IsEnabled,
     bool IsResponding,
-    int? Dpi)
+    int? Dpi,
+    DisplayAffinity? DisplayAffinity = null)
 {
     /// <summary>Where a minimized window comes back to (issue #12); null for any other window, and when it cannot be read.</summary>
     public WindowRestore? Restore { get; init; }
