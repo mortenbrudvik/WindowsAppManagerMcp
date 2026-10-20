@@ -37,6 +37,13 @@ public sealed class WorkspaceService : IWorkspaceService
     /// <summary>How long a save waits for a browser's tab list over its debug port.</summary>
     private static readonly TimeSpan TabListTimeout = TimeSpan.FromSeconds(5);
 
+    /// <summary>
+    /// How a window's shown page is read: as get_browser_url reads it by default, through the browser's own debug port when
+    /// it has one (looked for, not required), else through UI Automation. Without CDP options no port is looked for, and a
+    /// save would never list a window's tabs.
+    /// </summary>
+    private static readonly CdpOptions ShownPageRead = new();
+
     /// <summary>The Chromium browsers: they take --new-window and the pages as arguments.</summary>
     private static readonly HashSet<string> ChromiumBrowsers = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -204,7 +211,7 @@ public sealed class WorkspaceService : IWorkspaceService
         BrowserUrlResult shown;
         try
         {
-            shown = await _browsers.GetBrowserUrlAsync(window.Handle, cancellationToken: cancellationToken).ConfigureAwait(false);
+            shown = await _browsers.GetBrowserUrlAsync(window.Handle, ShownPageRead, cancellationToken).ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -419,7 +426,7 @@ public sealed class WorkspaceService : IWorkspaceService
 
             try
             {
-                var shown = await _browsers.GetBrowserUrlAsync(window.Handle, cancellationToken: cancellationToken).ConfigureAwait(false);
+                var shown = await _browsers.GetBrowserUrlAsync(window.Handle, ShownPageRead, cancellationToken).ConfigureAwait(false);
                 if (shown.Success && WorkspaceUrls.Clean(shown.Url) is { } url && pages.Contains(url, StringComparer.Ordinal))
                 {
                     return window.Handle;

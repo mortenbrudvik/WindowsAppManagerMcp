@@ -171,8 +171,9 @@ public class WorkspaceServiceTests : IDisposable
     [Fact]
     public async Task Save_WithADebugPort_RecordsEveryTabOfTheWindow()
     {
-        // Arrange - the browser's port lists three tabs, two of them in this window
-        _browsers.Setup(b => b.GetBrowserUrlAsync(Edge, It.IsAny<CdpOptions?>(), It.IsAny<CancellationToken>()))
+        // Arrange - the browser's port lists three tabs, two of them in this window. The read finds the port only when it
+        // looks for one, as get_browser_url does by default: without CdpOptions it never does (the constructor's setup)
+        _browsers.Setup(b => b.GetBrowserUrlAsync(Edge, It.Is<CdpOptions?>(cdp => cdp == new CdpOptions()), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new BrowserUrlResult(true, "https://mail.example.com/inbox", "edge", "Inbox", null, BrowserErrorCode.None, CdpPort: 9222));
         CdpTab Tab(string url, bool inWindow) => new(new CdpTarget(url, "page", "t", url, null, 9222), 1, inWindow);
         _tabs.Setup(t => t.ListTabsAsync(9222, 1000 + (int)Edge, It.IsAny<CdpWindow?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
@@ -342,9 +343,10 @@ public class WorkspaceServiceTests : IDisposable
     [Fact]
     public async Task Restore_ABrowserWindowShowingOneOfThePages_IsAlreadyOpen_SoASecondRestoreOpensNoSecondWindow()
     {
-        // Arrange - an earlier restore opened the window: it shows the first page, under that page's title
+        // Arrange - an earlier restore opened the window: it shows the first page, under that page's title, read as
+        // get_browser_url reads it by default (through the debug port when the browser has one)
         _windows.Setup(w => w.GetAllWindows(It.IsAny<bool>())).Returns([Window(Edge, "Docs - Microsoft Edge", "msedge")]);
-        _browsers.Setup(b => b.GetBrowserUrlAsync(Edge, It.IsAny<CdpOptions?>(), It.IsAny<CancellationToken>()))
+        _browsers.Setup(b => b.GetBrowserUrlAsync(Edge, It.Is<CdpOptions?>(cdp => cdp == new CdpOptions()), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new BrowserUrlResult(true, "https://docs.example.com/a", "edge", "Docs", null, BrowserErrorCode.None));
         Saved(Preset(Placement("msedge", "Inbox - Microsoft Edge", @"C:\Edge\msedge.exe",
             new WorkspaceContent(Urls: ["https://docs.example.com/a", "https://mail.example.com/"]))));
