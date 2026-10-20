@@ -572,6 +572,8 @@ Find windows matching specific criteria.
 ]
 ```
 
+The rows have no page address. To tell browser windows with the same title apart, call [get_browser_url](#get_browser_url) with each `handle`: it is read-only and runs outside the input gate, so the calls can be sent in parallel.
+
 **Example:**
 > "Find the taskbar"
 
@@ -604,6 +606,8 @@ The taskbar is an untitled shell window, so listings leave it out. A `className`
   }
 ]
 ```
+
+Its app buttons are elements: to check or list them, see [Check the Taskbar](#check-the-taskbar).
 
 ---
 
@@ -3838,6 +3842,8 @@ For clicking, typing and answering dialogs in a debug browser's page without the
 Get the current URL from a browser window: from the shown tab's page or its address bar with UI Automation, or from the matched tab with CDP.
 
 **The browser in front.** `window: {"foreground": true}` with no other filter reads the browser in front, and returns `NoBrowserInForeground` when the window in front is not a browser (or there is none), instead of `NotABrowser` (roadmap M6.1). With a filter beside it (`{"foreground": true, "processName": "chrome"}`) the selector is resolved as usual, so a window in front that does not match is `WindowNotFound`. There is no implicit default: without `handle` or `window` the call is `InvalidArguments`, so a forgotten handle never reads whatever browser happens to be in front.
+
+**Several windows.** It reads one window per call. To tell browser windows with the same title apart, list them with [find_windows](#find_windows) and call get_browser_url with each `handle`: the calls are read-only and run outside the input gate, so they can be sent in parallel.
 
 With UI Automation the result says where the URL came from (`urlSource`: `document`, the address the tab committed, or `addressBar`, the text the address bar shows, which can lack the scheme; a file page's path is returned as its `file:///` URL), what the address bar shows (`displayUrl`, when it is URL-like) and whether it has the keyboard focus (`isEditing`). A new tab page returns `NewTabPage` (with `url` when the page gave its address, such as `chrome://new-tab-page/`), not `UrlBarNotFound`. When the page gives no address and the address bar is being edited, or may be (the browser is not the foreground window, or its focus cannot be read; `isEditing` is then left out), holds text that is not a URL or cannot be read, the result is `UrlExtractionFailed`: such an address bar may hold what someone is typing, which is never returned as the URL.
 
@@ -7348,6 +7354,30 @@ file_dialog { "handle": 3017422, "path": "C:\\Users\\me\\Documents\\notes.txt", 
 ```
 
 6. Verify with `get_desktop_state` again, or pass `observe: "state"` to element_action.
+
+### Check the Taskbar
+
+Test steps often check the taskbar: "the app is now on the taskbar", "its windows are no longer on the taskbar". The taskbars are untitled shell windows (`Shell_TrayWnd`, and `Shell_SecondaryTrayWnd` on each other monitor), and the element tools read their app buttons like any other controls. On Windows 11 each app button has the class `Taskbar.TaskListButtonAutomationPeer` and the AutomationId `Appid: ` followed by the app's AppUserModelID (AUMID), which does not depend on the user's language: often the app's `appId` in [list_installed_apps](#list_installed_apps), and a listing of the buttons (step 2) shows it.
+
+1. Check a button with [wait_for_element](#wait_for_element) (`condition` `exists`, `gone`, or `name_equals` with the whole name). It needs a `window`: name the primary taskbar, and add `scope: "desktop"` to search the other taskbars too. `matchCount` counts the matching buttons of every taskbar:
+```
+wait_for_element { "window": { "className": "Shell_TrayWnd" }, "scope": "desktop", "className": "Taskbar.TaskListButtonAutomationPeer", "automationId": "Appid: Microsoft.WindowsNotepad_8wekyb3d8bbwe!App" }
+wait_for_element { "window": { "className": "Shell_TrayWnd" }, "scope": "desktop", "className": "Taskbar.TaskListButtonAutomationPeer", "name": "Brave", "nameMatch": "contains", "condition": "gone" }
+```
+
+2. List the buttons of every taskbar with [find_ui_elements](#find_ui_elements); set `maxResults` (at most 100), since the default of 20 leaves out the rest (`truncationReason: "MaxResults"`). Each match's `windowHandle` is its taskbar. Or read the primary taskbar's elements as text lines:
+```
+find_ui_elements { "scope": "desktop", "className": "Taskbar.TaskListButtonAutomationPeer", "maxResults": 100 }
+get_desktop_state { "window": { "className": "Shell_TrayWnd" }, "include": ["elements"] }
+```
+
+3. To read one secondary taskbar, take its `handle` (and `monitorIndex`) from `find_windows { "className": "Shell_SecondaryTrayWnd" }`. As a selector, that class matches every secondary taskbar (`AmbiguousWindow` when there are several); do not pick one by `index`.
+
+What the buttons do not tell:
+- A button stands for an app, not a window. With the default setting (combine buttons), its name is the app's name with the shell's words for its windows and pin, in the user's language: `Brave - 2 running windows`, `Rider pinned`. So match by `automationId`, or by part of the name with `nameMatch: "contains"`; two apps can show the same name.
+- The buttons support only the ScrollItem pattern, so `element_action` `invoke` cannot press one: click its `clickPoint` with [mouse_click](#mouse_click), its taskbar as `windowHandle`.
+- Whether a button is flashing (an app asking for attention) cannot be read.
+- Windows 10 and shell replacements build another tree: this is for the Windows 11 taskbar.
 
 ### Click Automation Workflow
 

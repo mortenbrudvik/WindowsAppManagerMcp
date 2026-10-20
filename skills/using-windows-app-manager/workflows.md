@@ -33,6 +33,7 @@ Common keys and the `send_keys` syntax are in [input.md](input.md#common-keys).
 - See What Is in a Window: [screens-and-ocr.md](screens-and-ocr.md#see-what-is-in-a-window)
 - Reach an Item Far Down a List: [lists.md](lists.md#reach-an-item-far-down-a-list)
 - Copy Text Out of an App: [clipboard.md](clipboard.md#copy-text-out-of-an-app)
+- Check the Taskbar's App Buttons: [elements.md](elements.md#the-taskbar)
 
 ## When to Use
 
