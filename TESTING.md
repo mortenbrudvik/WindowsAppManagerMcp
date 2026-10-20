@@ -2971,22 +2971,38 @@ does.
    opens a second form with `Show(owner)`), respond_to_dialog with the main window's handle and a `button` returns
    `DialogNotFound` naming the open dialog's handle, and nothing is pressed; by the dialog's own handle the press goes
    to it. Close both windows by their handles.
-5. **Keys on a Norwegian layout (issues #8, #9 and #10).** On a Norwegian keyboard layout (0414), to that page:
-   - press_keys `alt+shift+\` (a dead grave accent is then waiting), then `alt+shift+plus` and `alt+shift+?`: the page
-     logs `code` `Minus` (not empty), and there is no SentAsCharacter warning.
-   - Right after `alt+shift+\`: send_keys `hello` into the field puts `hello` there, and the result lists h, e, l and o
-     in `sentAsCharacters` with one SentAsCharacter warning that blames the waiting accent. This also tests the cause of
-     #8 (an accent waiting in the layout that every application shares).
-   - Right after `alt+shift+\`: press_keys `shift+plus` into the field gives `+` and a SentAsCharacter warning that
-     names the waiting accent.
+5. **Keys on a Norwegian layout (issues #8, #9 and #10).** On a Norwegian keyboard layout (0414), to that page. Every
+   press_keys or send_keys below is a call of its own, so each reads the layout afresh. "Press `alt+shift+\`" means a
+   press_keys call of its own: it leaves a dead grave accent waiting, the page logs `key` `Dead` with `code` `Equal`, and
+   the result has a DeadKeyPressed warning that names `` ` `` (the new warning). To start with no accent waiting, press
+   space in the field (it types the accent alone, which uses it up), then clear the field.
+   - Press `alt+shift+\`, then press_keys `alt+shift+plus`; press `alt+shift+\` again, then press_keys `alt+shift+?`.
+     Each time the page logs `code` `Minus` (not empty), and there is no SentAsCharacter warning. `alt+shift+\` comes
+     again before `alt+shift+?` because `alt+shift+plus`, pressed as a key, probably uses the accent up, and
+     `alt+shift+?` would then test only the case with no accent. A pass here does not confirm the cause of #8: with no
+     accent the server can see, `+` is pressed as its key anyway.
+   - The test of #8's inferred cause: an accent that `alt+shift+\` leaves waiting in the page is seen by the server,
+     through the layout every application shares. Press `alt+shift+\`, then send_keys `hello` into the field: the field
+     gets `hello`, and the result lists h, e, l and o in `sentAsCharacters` with one SentAsCharacter warning that blames
+     the waiting accent. Press `alt+shift+\` again, then press_keys `shift+plus` into the field: the field gets `+`, with
+     a SentAsCharacter warning that names the waiting accent. Record both results. If neither blames the accent, the
+     server does not see an accent the page holds (or ToUnicodeEx without a state change does not apply it): the 3.1.0
+     fix for #8 then does nothing (harmless), and the empty `code` 3.0.0 gave stays unexplained.
    - press_keys `alt+shift+oem_plus` logs `code` `Minus` on the Norwegian layout and `Equal` on a US one.
-   - press_keys `ctrl+@` gives `resolvedChords` `{"ctrl+@": "ctrl+ralt+2"}`, and the page logs the 2 key with Ctrl and
+   - With no accent waiting (above; RF.F19: while one waits, `ctrl+^` may be pressed as its dead key instead):
+     press_keys `ctrl+@` gives `resolvedChords` `{"ctrl+@": "ctrl+ralt+2"}`, and the page logs the 2 key with Ctrl and
      AltGr down; `ctrl+^` gives `sentAsCharacters` `["ctrl+^"]` and a SentAsCharacter warning.
    - With Ctrl+Shift+0 as an input-language hotkey: press_keys `ctrl+=` gives `resolvedChords`
      `{"ctrl+=": "ctrl+shift+0"}` and a SystemHotkey warning that starts "SystemHotkey: ctrl+shift+0 (pressed for
-     'ctrl+=')". With two input
-     languages installed, press_keys `alt+shift` gives a SystemHotkey warning about the language switch (Windows may
-     switch the language: switch it back with the same chord).
+     'ctrl+=')". The page logs the Ctrl and Shift keydowns and no keydown with `code` `Digit0`: that is what proves #10's
+     premise, that Windows takes the chord. Record what the page logs; a `Digit0` keydown means Windows let the chord
+     through, which the warning's "may" allows for. With two input languages installed, press_keys `alt+shift` gives a
+     SystemHotkey warning about the language switch (Windows may switch the language: switch it back with the same
+     chord).
+   - Warnings of run_steps' middle steps: run_steps on the debug browser's window with the steps press_keys `ctrl+=`,
+     press_keys `alt+shift+\` and capture_window. The two press_keys steps are `ok` with no `result`, and carry
+     `warnings`: the first the SystemHotkey warning (where Ctrl+Shift+0 is the hotkey), the second the DeadKeyPressed
+     warning; the capture, the last step, returns its whole result. Use the accent up afterwards (above).
    - Optional, where an ABNT2 (Brazilian) layout is installed: `ctrl+/` gives no `resolvedChords` and logs `code`
      `IntlRo`; `ctrl+?` gives `{"ctrl+?": "ctrl+shift+abnt_c1"}`, and `ctrl+shift+abnt_c1` logs the same keydown.
 6. **scroll with modifiers (issue #8).** scroll with `modifiers` `["ctrl"]` over that page zooms it, and with

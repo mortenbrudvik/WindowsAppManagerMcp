@@ -75,8 +75,9 @@ public sealed partial class StepRunner
 
     /// <summary>
     /// The most characters of JSON the steps' own results take in a run's result together, about 6,000 tokens. The failed
-    /// step's and the last step's come first, then the return true steps' in order; one that does not fit is left out, and
-    /// its step says so (resultOmitted).
+    /// step's and the last step's come first, then the return true steps' in order, then the warnings of the other steps that
+    /// ran, in order (<see cref="StepOutcome.Warnings"/>); one that does not fit is left out, and its step says so
+    /// (resultOmitted).
     /// </summary>
     public const int MaxResultTextLength = 24_000;
 
@@ -1037,6 +1038,28 @@ public sealed partial class StepRunner
             }
         }
 
+        // Then, in step order, the warnings of every other step that ran (issues #9 and #10): an ok key step in the middle of
+        // a run says what its keys may not have done, as a direct call's result would
+        var warnings = new Dictionary<int, IReadOnlyList<string>>();
+        for (var i = 0; i < ran.Count; i++)
+        {
+            if (returned.Contains(i) || WarningsOf(ran[i].Body) is not { } stepWarnings)
+            {
+                continue;
+            }
+
+            var length = JsonSerializer.Serialize(stepWarnings).Length;
+            if (length <= room)
+            {
+                warnings[i] = stepWarnings;
+                room -= length;
+            }
+            else
+            {
+                omitted.Add(i);
+            }
+        }
+
         var outcomes = new List<StepOutcome>(steps.Count);
         for (var i = 0; i < steps.Count; i++)
         {
@@ -1049,7 +1072,7 @@ public sealed partial class StepRunner
 
             var r = ran[i];
             outcomes.Add(new StepOutcome(step.Tool, r.Ok ? StepStatus.Ok : StepStatus.Failed, step.Step.Id, r.ElapsedMs, r.ErrorCode,
-                returned.Contains(i) ? r.Body : null, omitted.Contains(i) ? true : null));
+                returned.Contains(i) ? r.Body : null, omitted.Contains(i) ? true : null, warnings.GetValueOrDefault(i)));
         }
 
         // At most MaxImages, of the ok steps whose result is returned: the last step's first, then in step order
@@ -1086,6 +1109,34 @@ public sealed partial class StepRunner
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// The warnings in a step's result, whatever its tool: its warnings (strings, as the key, capture and element_action
+    /// results have them), then its warning (one string, as type_text, drag and the waits have it); null when it has none.
+    /// </summary>
+    private static List<string>? WarningsOf(JsonNode? body)
+    {
+        if (body is not JsonObject o)
+        {
+            return null;
+        }
+
+        var warnings = new List<string>();
+        foreach (var item in o["warnings"] as JsonArray ?? [])
+        {
+            if (item is JsonValue value && value.TryGetValue<string>(out var text))
+            {
+                warnings.Add(text);
+            }
+        }
+
+        if (o["warning"] is JsonValue single && single.TryGetValue<string>(out var warning))
+        {
+            warnings.Add(warning);
+        }
+
+        return warnings.Count == 0 ? null : warnings;
     }
 
     private static string? ErrorCodeOf(JsonNode? body) =>

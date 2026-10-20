@@ -55,7 +55,8 @@ public class StepSequenceTools
                  "quit or lock (ctrl+w, ctrl+q); other keys act in window as in a direct call (ctrl+s saves). A whole " +
                  "value \"$steps.<id>.<path>\" takes an earlier step's ref, handle, captureId or clickPoint.x/y, e.g. " +
                  "\"$steps.find.elements[0].ref\". Returns success, ran, total, stoppedBy, and steps (status ok, failed " +
-                 "or skipped, errorCode, elapsedMs; result for a failed step, the last step and return: true), with at " +
+                 "or skipped, errorCode, elapsedMs; result for a failed step, the last step and return: true, warnings " +
+                 "for the others), with at " +
                  "most 2 images. Each step is audited as its own call.")]
     [ToolResultPayload(typeof(RunStepsResult))]
     public async Task<CallToolResult> RunSteps(

@@ -7,7 +7,7 @@ namespace WindowsAppManagerMcp.Tests.Fixtures;
 /// Q, Z and W swapped) and, in part, Brazilian ABNT2 (/ and ? on VK_ABNT_C1, a key with no OEM name, left of the right
 /// Shift), Russian (Cyrillic letters on the letter keys, no Latin ones: й on Q, ц on W, д on L) and Greek (; on the Q key,
 /// ς on W). Each key has its scan code, its virtual key and what it types
-/// unshifted, with Shift and with AltGr; VkKeyScan, ScanCode and KeyText answer from that table, so the server's mapping is
+/// unshifted, with Shift and with AltGr; VkKeyScan, ScanCode, KeyText and DeadKeyText answer from that table, so the server's mapping is
 /// tested against the layout's own answers rather than against a copy of its logic.
 /// </summary>
 public sealed class FakeKeyboardLayoutWrapper : INativeKeyboardLayoutWrapper
@@ -140,6 +140,23 @@ public sealed class FakeKeyboardLayoutWrapper : INativeKeyboardLayoutWrapper
         }
 
         return typed is null or Dead ? null : typed.Value.ToString();
+    }
+
+    public string? DeadKeyText(ushort virtualKey, uint scanCode, byte shiftState, bool capsLock, nint layout)
+    {
+        // While an accent waits, a dead key types it and its own (KeyText), so it leaves nothing waiting
+        if (PendingDeadKey != null || KeysOf(layout).FirstOrDefault(k => k.VirtualKey == virtualKey) is not { } key ||
+            (shiftState & ~(Shift | AltGr)) != 0)
+        {
+            return null;
+        }
+
+        if (capsLock && key.CapsLock && (shiftState & AltGr) == 0)
+        {
+            shiftState ^= Shift;
+        }
+
+        return key.DeadChar(shiftState)?.ToString();
     }
 
     public SystemKeyboardHotkeys? ReadSystemHotkeys()

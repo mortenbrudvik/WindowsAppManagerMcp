@@ -24,9 +24,10 @@ namespace WindowsAppManagerMcp.Services;
 /// items of an array that is not one chord (<see cref="KeyList.IsOneChord"/>), follow each other.</item>
 /// </list>
 /// Each press is one step; repeat repeats the whole sequence. At most <see cref="MaxPresses"/> presses in one call. The spec
-/// also says how the chords went out on the layout (issues #9, #10): the chords whose character went out on a key of another
-/// name (<see cref="KeySpec.ResolvedChords"/>), and those sent as their character with no key
-/// (<see cref="KeySpec.SentAsCharacters"/>), so the result can tell the agent what the target got.
+/// also says how the chords went out on the layout (issues #8 to #10): the chords whose character went out on a key of another
+/// name (<see cref="KeySpec.ResolvedChords"/>), those sent as their character with no key
+/// (<see cref="KeySpec.SentAsCharacters"/>), and those that pressed a dead key (<see cref="KeySpec.DeadKeys"/>), so the result
+/// can tell the agent what the target got.
 /// </summary>
 public static class PressKeysParser
 {
@@ -72,40 +73,56 @@ public static class PressKeysParser
                 $"The keys press {presses} chords (repeats included); one call presses at most {MaxPresses}. Send the rest in another call.");
         }
 
-        // Each chord once: a repeat presses the same keys
+        // Each chord once: a repeat presses the same keys. Where each chord's first press starts in the events
         var pressed = chords.Select(chord => Press(chord, layout)).ToList();
         var steps = new List<IReadOnlyList<InputEvent>>(presses);
+        var firstEvent = new int[chords.Count];
+        var events = 0;
         for (var r = 0; r < repeat; r++)
         {
             for (var c = 0; c < chords.Count; c++)
             {
                 for (var n = 0; n < chords[c].Count; n++)
                 {
+                    if (r == 0 && n == 0)
+                    {
+                        firstEvent[c] = events;
+                    }
+
                     steps.Add(pressed[c].Events);
+                    events += pressed[c].Events.Count;
                 }
             }
         }
 
         var resolved = new List<ResolvedChord>();
         var asCharacters = new List<CharacterWithoutKey>();
+        var deadKeys = new List<DeadKeyPress>();
         for (var c = 0; c < chords.Count; c++)
         {
             var text = chords[c].Text;
+            var keyDown = firstEvent[c] + pressed[c].KeyDown;
             if (pressed[c].Resolved is { } asPressed && !resolved.Exists(r => r.Asked == text))
             {
-                resolved.Add(new ResolvedChord(text, asPressed.Name, asPressed.Chord));
+                resolved.Add(new ResolvedChord(text, asPressed.Name, asPressed.Chord, keyDown));
             }
 
             if (pressed[c].Character is { } character && !asCharacters.Exists(sent => sent.Keys == text))
             {
-                asCharacters.Add(new CharacterWithoutKey(text, character.ToString(), layout.WhyNoKey(character)));
+                asCharacters.Add(new CharacterWithoutKey(text, character.ToString(), layout.WhyNoKey(character), keyDown));
+            }
+
+            if (pressed[c].DeadKey is { } accent && !deadKeys.Exists(dead => dead.Keys == text))
+            {
+                deadKeys.Add(new DeadKeyPress(text, accent, keyDown));
             }
         }
 
         return new KeySpec(steps)
         {
             ResolvedChords = resolved.Count == 0 ? null : resolved,
-            SentAsCharacters = asCharacters.Count == 0 ? null : asCharacters
+            SentAsCharacters = asCharacters.Count == 0 ? null : asCharacters,
+            DeadKeys = deadKeys.Count == 0 ? null : deadKeys
         };
     }
 
@@ -173,9 +190,12 @@ public static class PressKeysParser
 
     /// <summary>
     /// One press of a chord: its events; the chord as pressed when its character went out on a key of another name (see
-    /// <see cref="ResolvedChord"/>), else null; and the character it sent as Unicode, with no key, else null.
+    /// <see cref="ResolvedChord"/>), else null; the character it sent as Unicode, with no key, else null; the index in its
+    /// events of its key's (or character's) key-down, 0 for modifiers alone; and the accent its key leaves waiting when it is
+    /// a dead key with the chord's modifiers (<see cref="KeyboardLayout.DeadKeyOf"/>), else null.
     /// </summary>
-    private sealed record Pressed(IReadOnlyList<InputEvent> Events, (string Name, KeyChord Chord)? Resolved, char? Character);
+    private sealed record Pressed(IReadOnlyList<InputEvent> Events, (string Name, KeyChord Chord)? Resolved, char? Character, int KeyDown,
+        string? DeadKey);
 
     private static ChordSpec Chord(string token)
     {
@@ -264,6 +284,8 @@ public static class PressKeysParser
         var added = new List<string>();
         (string, KeyChord)? resolved = null;
         char? asCharacter = null;
+        var keyDown = 0;
+        string? deadKey = null;
         foreach (var modifier in chord.Modifiers)
         {
             Down(modifier);
@@ -272,14 +294,12 @@ public static class PressKeysParser
         switch (chord.Key)
         {
             case { Character: null } named:
-                Down(named.VirtualKey);
-                Up(named.VirtualKey);
+                Key(named.VirtualKey);
                 break;
 
             case { Character: { } c } when char.IsAsciiLetterOrDigit(c):
                 // The key Windows calls A-Z or 0-9, as a shortcut names it, whatever the layout types with it
-                Down(char.ToUpperInvariant(c));
-                Up(char.ToUpperInvariant(c));
+                Key(char.ToUpperInvariant(c));
                 break;
 
             case { Character: { } c }:
@@ -310,9 +330,8 @@ public static class PressKeysParser
                     }
 
                     // The chord as Windows reads it at the key-down (AltGr as Ctrl+Alt), as SystemKeyboardHotkeys.Match does
-                    var held = pressed.Aggregate(KeyModifiers.None, (all, key) => all | SendKeysParser.ModifierOf(key));
-                    Down(stroke.VirtualKey);
-                    Up(stroke.VirtualKey);
+                    var held = Held();
+                    Key(stroke.VirtualKey);
                     if (added.Count > 0 || !IsPunctuationKey(stroke.VirtualKey))
                     {
                         // A key of another name: one with a Shift or AltGr added, or a letter or digit key ('-' on AZERTY's 6)
@@ -322,6 +341,7 @@ public static class PressKeysParser
                 }
                 else
                 {
+                    keyDown = events.Count;
                     events.Add(InputEvent.Unicode(c, NativeEnums.KEYEVENTF_KEYDOWN));
                     events.Add(InputEvent.Unicode(c, NativeEnums.KEYEVENTF_KEYUP));
                     asCharacter = c;
@@ -335,9 +355,20 @@ public static class PressKeysParser
             events.Add(KeyEvent(pressed[k], NativeEnums.KEYEVENTF_KEYUP, altGrKeys.Contains(pressed[k])));
         }
 
-        return new Pressed(events, resolved, asCharacter);
+        return new Pressed(events, resolved, asCharacter, keyDown, deadKey);
 
         bool Holds(KeyModifiers kind) => pressed.Any(key => SendKeysParser.ModifierOf(key) == kind);
+
+        KeyModifiers Held() => pressed.Aggregate(KeyModifiers.None, (all, key) => all | SendKeysParser.ModifierOf(key));
+
+        // The chord's key, down and up, with what it leaves waiting when it is a dead key with the modifiers down (issue #8)
+        void Key(ushort virtualKey)
+        {
+            keyDown = events.Count;
+            deadKey = layout.DeadKeyOf(virtualKey, Held());
+            Down(virtualKey);
+            Up(virtualKey);
+        }
 
         void Down(ushort virtualKey, bool altGr = false, bool add = false)
         {

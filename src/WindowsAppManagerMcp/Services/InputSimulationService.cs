@@ -917,7 +917,9 @@ public partial class InputSimulationService : IInputSimulationService
     /// clipboard origin read a batch after the first with the modifiers an earlier batch holds down. With
     /// <paramref name="holdMs"/> a step's leading key-downs go first, and its key-ups follow that much later without a check
     /// of their own (they only release what went down; the session releases them anyway if the call stops meanwhile). A
-    /// call that goes through carries <paramref name="report"/>: how the keys went out on the layout, and its warnings.
+    /// call that goes through carries <paramref name="report"/>: how the keys went out on the layout, and its warnings; a call
+    /// that stops part way carries it for the events that went out before it stopped (issue #9), whole batches and the
+    /// events SendInput inserted of a batch it cut short.
     /// </summary>
     private async Task<SendKeysResult> SendStepsAsync(string keys, KeySpec spec, InputTarget target, bool releaseHeldModifiers,
         int delayMs, int holdMs, int batchSize, KeyReport report, CancellationToken cancellationToken)
@@ -1003,8 +1005,9 @@ public partial class InputSimulationService : IInputSimulationService
                         var recheck = _guard.RecheckKeyboard(approved);
                         if (!recheck.Allowed)
                         {
-                            return held.Apply(Finish(new SendKeysResult(false, keys, $"{KeysSentSoFar(keysSent, total, approved)} {recheck.Error}",
-                                recheck.ErrorCode) { KeysSent = keysSent }, recheck));
+                            return held.Apply(Finish(report.ApplyTo(new SendKeysResult(false, keys,
+                                $"{KeysSentSoFar(keysSent, total, approved)} {recheck.Error}", recheck.ErrorCode) { KeysSent = keysSent }, eventsSent),
+                                recheck));
                         }
 
                         approved = recheck;
@@ -1014,12 +1017,12 @@ public partial class InputSimulationService : IInputSimulationService
                         // batch of these keys holds down ({SHIFT down}) is the server's own.
                         if (ModifiersDownNow("sent", ignoreServerHeld: b > 0) is { } downNow)
                         {
-                            return held.Apply(Finish(new SendKeysResult(false, keys,
+                            return held.Apply(Finish(report.ApplyTo(new SendKeysResult(false, keys,
                                 b == 0 ? downNow.Error : $"{KeysSentSoFar(keysSent, total, approved)} {downNow.Error}", InputErrorCode.ModifiersHeld)
                             {
                                 HeldModifiers = downNow.Names,
                                 KeysSent = keysSent
-                            }, approved));
+                            }, eventsSent), approved));
                         }
 
                         // Right before the keys: a paste must not put the user's clipboard where the agent can read it. The first
@@ -1028,40 +1031,40 @@ public partial class InputSimulationService : IInputSimulationService
                         // is checked against the clipboard as it is now
                         if (PasteRefusal(b == 0 ? inputs : pressedAs, approved) is { } pasteRefused)
                         {
-                            return held.Apply(Finish(new SendKeysResult(false, keys,
+                            return held.Apply(Finish(report.ApplyTo(new SendKeysResult(false, keys,
                                 b == 0 ? pasteRefused : $"{KeysSentSoFar(keysSent, total, approved)} {pasteRefused}", InputErrorCode.PasteNotAllowed)
                             {
                                 KeysSent = keysSent
-                            }, approved));
+                            }, eventsSent), approved));
                         }
                     }
 
                     var sent = Send(batch, pressedAs, approved);
                     if (sent.PausedByUser)
                     {
-                        return held.Apply(Finish(new SendKeysResult(false, keys, PausedMessage(KeysSentSoFar(keysSent, total, approved)),
-                            InputErrorCode.PausedByUser) { KeysSent = keysSent }, approved));
+                        return held.Apply(Finish(report.ApplyTo(new SendKeysResult(false, keys, PausedMessage(KeysSentSoFar(keysSent, total, approved)),
+                            InputErrorCode.PausedByUser) { KeysSent = keysSent }, eventsSent), approved));
                     }
 
                     if (!sent.Complete)
                     {
                         keysSent = StepsWithin(spec, eventsSent + sent.Inserted);
-                        return held.Apply(Finish(new SendKeysResult(false, keys,
+                        return held.Apply(Finish(report.ApplyTo(new SendKeysResult(false, keys,
                             $"SendInput inserted only {sent.Inserted} of {sent.Requested} events, so {keysSent} of {total} keys were sent " +
                             "completely; the keys it had pressed were released again. Check the window before sending the rest.",
-                            InputErrorCode.SendInputFailed) { KeysSent = keysSent }, approved));
+                            InputErrorCode.SendInputFailed) { KeysSent = keysSent }, eventsSent + sent.Inserted), approved));
                     }
 
                     eventsSent += batch.Count;
                     keysSent += steps;
                 }
 
-                return held.Apply(Finish(report.ApplyTo(new SendKeysResult(Success: true, Keys: keys) { KeysSent = keysSent }), approved));
+                return held.Apply(Finish(report.ApplyTo(new SendKeysResult(Success: true, Keys: keys) { KeysSent = keysSent }, eventsSent), approved));
             }
             catch (OperationCanceledException) when (call.IsPaused)
             {
                 var paused = new SendKeysResult(false, keys, PausedMessage(KeysSentSoFar(keysSent, total, approved)), InputErrorCode.PausedByUser);
-                return held.Apply(approved == null ? paused : Finish(paused with { KeysSent = keysSent }, approved));
+                return held.Apply(approved == null ? paused : Finish(report.ApplyTo(paused with { KeysSent = keysSent }, eventsSent), approved));
             }
             finally
             {

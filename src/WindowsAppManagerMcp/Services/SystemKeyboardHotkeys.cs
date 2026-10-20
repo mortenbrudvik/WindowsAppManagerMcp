@@ -10,7 +10,7 @@ namespace WindowsAppManagerMcp.Services;
 /// language or keyboard layout, or turn an Asian IME on or off) and the language-switch toggles (HKCU\Keyboard Layout\Toggle:
 /// Left Alt+Shift, Ctrl+Shift or the grave accent key switches the input language or the layout). press_keys and send_keys
 /// warn when they press one (<see cref="KeyWarnings.SystemHotkey"/>): on a layout where '=' needs Shift, 'ctrl+=' is
-/// Ctrl+Shift+0, which can be such a hotkey, so the call goes through and the application never sees the chord.
+/// Ctrl+Shift+0, which can be such a hotkey, so the call goes through and the application may never see the chord.
 /// </summary>
 /// <param name="InputMethodHotkeys">The input-method hotkeys that have a key.</param>
 /// <param name="Toggles">The language-switch toggles that are on.</param>

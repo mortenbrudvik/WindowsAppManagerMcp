@@ -1241,7 +1241,7 @@ Run ids such as `r1:WC-1` and `r2:WC-1` trace each entry back to the raw review 
 | D-BRW-14 | medium | Browser | Browser UIA searches and content reads are unbounded (whole-tree Descendants scans, full-document GetText, no deadline) | `src/WindowsAppManagerMcp/Native/UIAutomationWrapper.cs:232` | both | open |
 | D-BRW-15 | medium | Browser | UIA content path does not wake Chromium's on-demand accessibility tree | `src/WindowsAppManagerMcp/Native/UIAutomationWrapper.cs:335` | both | open |
 | D-BRW-16 | medium | Browser | UIA content extraction can return browser UI text or a side panel via the frame-pane fallback | `src/WindowsAppManagerMcp/Native/UIAutomationWrapper.cs:335` | r2 | open |
-| D-INP-04 | medium | Input | send_keys shortcuts on punctuation/OEM keys (Ctrl+-, Ctrl+=, Ctrl+/, Ctrl+comma, Ctrl+backtick) are sent as Unicode packets and never fire | `src/WindowsAppManagerMcp/Services/InputSimulationService.cs:371` | both | open |
+| D-INP-04 | medium | Input | send_keys shortcuts on punctuation/OEM keys (Ctrl+-, Ctrl+=, Ctrl+/, Ctrl+comma, Ctrl+backtick) are sent as Unicode packets and never fire | `src/WindowsAppManagerMcp/Services/InputSimulationService.cs:371` | both | fixed (M4) |
 | D-INP-05 | medium | Input | send_keys sends letters and digits as raw virtual keys, ignoring case, Caps Lock and keyboard layout | `src/WindowsAppManagerMcp/Services/InputSimulationService.cs:474` | both | open |
 | D-INP-06 | medium | Input | No Win modifier, and {CTRL}/{ALT}/{SHIFT}/{WIN} in braces are tapped rather than held | `src/WindowsAppManagerMcp/Services/InputSimulationService.cs:359` | both | open |
 | D-INP-07 | medium | Input | send_keys implements only part of the SendKeys grammar: no escapes, grouping, repeat counts or '~' | `src/WindowsAppManagerMcp/Services/InputSimulationService.cs:327` | both | open |
@@ -1298,7 +1298,7 @@ Run ids such as `r1:WC-1` and `r2:WC-1` trace each entry back to the raw review 
 | D-BRW-90 | low | Browser | BrowserReadingService tests depend on whatever real process owns PID 1000 | `tests/WindowsAppManagerMcp.Tests/Unit/Services/BrowserReadingServiceTests.cs:456` | later review | fixed (M0) |
 | D-INP-11 | low | Input | Clicks are not atomic (SetCursorPos, sleep, then SendInput) and the landing point and double-click timing are not verified | `src/WindowsAppManagerMcp/Services/InputSimulationService.cs:190` | both | partly fixed (M1) |
 | D-INP-12 | low | Input | Partial SendInput insertion can leave modifier keys logically held | `src/WindowsAppManagerMcp/Services/InputSimulationService.cs:293` | both | fixed (M1) |
-| D-INP-13 | low | Input | Virtual-key events always carry scan code 0 | `src/WindowsAppManagerMcp/Native/NativeStructs.cs:178` | both | open |
+| D-INP-13 | low | Input | Virtual-key events always carry scan code 0 | `src/WindowsAppManagerMcp/Native/NativeStructs.cs:178` | both | fixed (M4) |
 | D-INP-14 | low | Input | send_keys injects the whole sequence in one burst with no pacing | `src/WindowsAppManagerMcp/Services/InputSimulationService.cs:291` | r1 | open |
 | D-INP-15 | low | Input | type_text is unbounded and uncancellable, and echoes the full text back | `src/WindowsAppManagerMcp/Services/InputSimulationService.cs:234` | r2 | partly fixed (M1) |
 | D-INP-16 | low | Input | Input error codes are misleading or unused | `src/WindowsAppManagerMcp/Services/InputSimulationService.cs:306` | r2 | partly fixed (M1, M2.2) |
@@ -1527,6 +1527,8 @@ Run ids such as `r1:WC-1` and `r2:WC-1` trace each entry back to the raw review 
 
 - Impact: Zoom, toggle comment, settings and VS Code terminal shortcuts do nothing or insert a stray character, while Success=true is returned.
 - Fix: Map characters via VkKeyScanExW with the foreground thread's layout and send the real VK (plus required Shift) whenever a modifier is active; use KEYEVENTF_UNICODE only for plain text.
+- M4: fixed on `m4-1-keyboard-engine` (M4.1): every character, in a chord or not, is mapped with the layout of the thread of the window the keys go to (`KeyboardLayout.Map`: VkKeyScanExW, checked with ToUnicodeEx) and sent as that key with the Shift or AltGr it needs and its scan code, so `^-`, `^=`, `^/`, `^,` and Ctrl+backtick on a US keyboard are chords of the real keys. Unicode stays only for a character no key of the layout types, or only a dead key does, and for every character but letters and digits when the layout cannot be read
+- 3.1.0: on `rf-keys` (RF.17, RF.18; issues #8 and #9): a character in a chord with Ctrl, Alt or Win (send_keys', and press_keys', which M4.3 maps the same way) is its key also while a dead key's accent waits on the layout, and what still goes as Unicode is reported (`sentAsCharacters` and a SentAsCharacter warning, KeyboardLayoutUnknown when the layout cannot be read), so it no longer looks like any other success. Still open: a chord on a character only a dead key types (Ctrl+backtick or Ctrl+^ on a Norwegian keyboard) goes as Unicode, with the warning, and while another accent waits it may be pressed as the dead key instead (RF.F19, which proposes key names by physical place such as `code:Minus`)
 
 **D-INP-05: send_keys sends letters and digits as raw virtual keys, ignoring case, Caps Lock and keyboard layout** (medium, `src/WindowsAppManagerMcp/Services/InputSimulationService.cs:474`, r1:INP-3, r2:INP-5)
 
@@ -1872,6 +1874,7 @@ Run ids such as `r1:WC-1` and `r2:WC-1` trace each entry back to the raw review 
 
 - Impact: RDP/Hyper-V/VMware/Citrix clients, raw-input games and frameworks deriving KeyboardEvent.code from scan codes misread or drop send_keys keystrokes while success is reported.
 - Fix: Fill wScan with MapVirtualKeyExW(vk, MAPVK_VK_TO_VSC_EX) and set KEYEVENTF_EXTENDEDKEY for 0xE0-prefixed codes, optionally offering a scan-code-only mode.
+- M4: fixed on `m4-1-keyboard-engine` (M4.1): send_keys sends each virtual key with the scan code MapVirtualKeyExW(MAPVK_VK_TO_VSC_EX) gives on the window's layout, and KEYEVENTF_EXTENDEDKEY for an 0xE0 code (`KeyboardLayout.ScanOf`; `NativeStructs.KeyboardInput` fills wScan). The keys added since are built the same way: press_keys' chords, type_text's `keys` method, and the modifiers of mouse_click, drag and scroll; the session releases held keys with the scan code they went down with. No scan-code-only mode. Still scan code 0: every key when the window's layout cannot be read (the result warns, KeyboardLayoutUnknown); a virtual key the layout gives no scan code (MapVirtualKeyExW returns 0, with no warning); Pause, whose E1 sequence has no single code; the unassigned key 0xE8 that keeps a released Alt or Win from opening a menu, which is no physical key; and the Escape that bringing a window to the front sends to close a menu it has open (`ForegroundService`)
 
 **D-INP-14: send_keys injects the whole sequence in one burst with no pacing** (low, `src/WindowsAppManagerMcp/Services/InputSimulationService.cs:291`, r1:inp-m1)
 

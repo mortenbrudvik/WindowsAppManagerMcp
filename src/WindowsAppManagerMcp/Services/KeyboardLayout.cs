@@ -28,6 +28,7 @@ public sealed class KeyboardLayout
     private readonly nint _layout;
     private readonly Dictionary<(char, bool, bool), KeyStroke?> _strokes = new();
     private readonly Dictionary<ushort, uint> _scanCodes = new();
+    private readonly Dictionary<(ushort, byte), string?> _deadKeys = new();
     private string? _pendingAccent;
     private bool _pendingAccentRead;
 
@@ -126,6 +127,36 @@ public sealed class KeyboardLayout
         : DeadKeyPending && LayoutKey(character) is (var virtualKey, var state) &&
           _native!.KeyText(virtualKey, RawScanCode(virtualKey), state, capsLock: false, _layout) != null ? NoKeyReason.AccentWaiting
         : NoKeyReason.NotOnLayout;
+
+    /// <summary>
+    /// The accent <paramref name="virtualKey"/> leaves waiting for the next key when it is pressed with <paramref name="held"/>
+    /// down and is a dead key then (issue #8: Alt+Shift+\ on a Norwegian keyboard is the dead grave accent), read from the
+    /// layout without changing its state; null when it is no dead key then, or the layout was not read. What the key types
+    /// is chosen by Shift, Ctrl, and Ctrl with Alt (AltGr), with Caps Lock as it was at the start of the call; Alt without Ctrl
+    /// is left out, since Windows types a key's own character with Alt down, and Win is no modifier of a layout. While an
+    /// accent already waits, a dead key types it and its own, and leaves nothing waiting.
+    /// </summary>
+    public string? DeadKeyOf(ushort virtualKey, KeyModifiers held)
+    {
+        if (_native == null)
+        {
+            return null;
+        }
+
+        var state = (byte)(((held & KeyModifiers.Shift) != 0 ? ShiftState : 0) | ((held & KeyModifiers.Control) != 0 ? CtrlState : 0));
+        if ((held & (KeyModifiers.Control | KeyModifiers.Alt)) == (KeyModifiers.Control | KeyModifiers.Alt))
+        {
+            state |= AltState;
+        }
+
+        if (!_deadKeys.TryGetValue((virtualKey, state), out var accent))
+        {
+            accent = _native.DeadKeyText(virtualKey, RawScanCode(virtualKey), state, CapsLock, _layout);
+            _deadKeys[(virtualKey, state)] = accent;
+        }
+
+        return accent;
+    }
 
     /// <summary>
     /// The scan code to send with <paramref name="virtualKey"/> (without the 0xE0 prefix), and whether it is an extended

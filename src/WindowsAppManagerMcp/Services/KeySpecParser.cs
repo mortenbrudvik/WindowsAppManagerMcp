@@ -34,23 +34,39 @@ public sealed class KeySpec
     /// did. send_keys reads its characters from the events instead.
     /// </summary>
     public IReadOnlyList<CharacterWithoutKey>? SentAsCharacters { get; init; }
+
+    /// <summary>
+    /// press_keys (issue #8): the chords that pressed a dead key of the layout, each once, in order; null when none did.
+    /// send_keys reads its keys from the events instead.
+    /// </summary>
+    public IReadOnlyList<DeadKeyPress>? DeadKeys { get; init; }
 }
 
 /// <summary>
 /// A press_keys chord whose character went out on a key of another name (issue #10), so the agent can tell what the target
 /// got: <paramref name="Asked"/> as written; <paramref name="Pressed"/>, the keys that went down in press_keys' names
 /// ('ctrl+shift+0' for 'ctrl+=' where '=' is Shift+0, 'ctrl+ralt+2' for 'ctrl+@' where '@' is AltGr+2, 'ctrl+6' for 'ctrl+-'
-/// on French AZERTY); and <paramref name="Chord"/>, the chord as Windows reads it (AltGr as Ctrl+Alt), which the SystemHotkey
-/// warning matches to name the chord asked whatever its spelling.
+/// on French AZERTY); <paramref name="Chord"/>, the chord as Windows reads it (AltGr as Ctrl+Alt), which the SystemHotkey
+/// warning matches to name the chord asked whatever its spelling; and <paramref name="Event"/>, the index in
+/// <see cref="KeySpec.Events"/> of its first press's key-down, so a call that stops part way reports it only once it went out.
 /// </summary>
-public sealed record ResolvedChord(string Asked, string Pressed, KeyChord Chord);
+public sealed record ResolvedChord(string Asked, string Pressed, KeyChord Chord, int Event);
 
 /// <summary>
 /// A chord (press_keys) or a character (send_keys) that went out as its character alone (KEYEVENTF_UNICODE), with no key and
-/// no scan code (issue #9): <paramref name="Keys"/> as the call wrote it, the <paramref name="Character"/> sent, and
-/// <paramref name="Why"/>, which the SentAsCharacter warning gives for each.
+/// no scan code (issue #9): <paramref name="Keys"/> as the call wrote it, the <paramref name="Character"/> sent,
+/// <paramref name="Why"/>, which the SentAsCharacter warning gives for each, and <paramref name="Event"/>, the index in
+/// <see cref="KeySpec.Events"/> of its first character's key-down (see <see cref="ResolvedChord"/>).
 /// </summary>
-public sealed record CharacterWithoutKey(string Keys, string Character, NoKeyReason Why);
+public sealed record CharacterWithoutKey(string Keys, string Character, NoKeyReason Why, int Event);
+
+/// <summary>
+/// A chord that pressed a key which is a dead key on the window's layout with the modifiers it held (issue #8: Alt+Shift+\ on
+/// a Norwegian keyboard is the dead grave accent), for the DeadKeyPressed warning: <paramref name="Keys"/> as the call wrote it,
+/// the <paramref name="Accent"/> the key may leave waiting in the target, and <paramref name="Event"/>, the index in
+/// <see cref="KeySpec.Events"/> of its first press's key-down (see <see cref="ResolvedChord"/>).
+/// </summary>
+public sealed record DeadKeyPress(string Keys, string Accent, int Event);
 
 /// <summary>Why a character went out with no key (<see cref="KeyboardLayout.WhyNoKey"/>).</summary>
 public enum NoKeyReason

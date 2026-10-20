@@ -144,7 +144,7 @@ public class PressKeysParserTests
 
         spec.Events.Where(e => e.Kind == InputEventKind.VirtualKey).Select(e => e.Code).Distinct().Should().Equal(modifiers);
         spec.Events.Should().Contain(InputEvent.Unicode('+', 0));
-        spec.SentAsCharacters.Should().Equal(new CharacterWithoutKey(keys, "+", NoKeyReason.AccentWaiting));
+        spec.SentAsCharacters.Should().Equal(new CharacterWithoutKey(keys, "+", NoKeyReason.AccentWaiting, Event: modifiers.Length));
     }
 
     [Fact]
@@ -178,6 +178,8 @@ public class PressKeysParserTests
             new KeyChord(KeyModifiers.Control | KeyModifiers.Shift, InputEventKind.VirtualKey, '0'),
             new KeyChord(KeyModifiers.Control | KeyModifiers.Alt, InputEventKind.VirtualKey, '2'),
             new KeyChord(KeyModifiers.Control | KeyModifiers.Alt, InputEventKind.VirtualKey, '2'));
+        norwegian.ResolvedChords!.Select(r => r.Event).Should().Equal([2, 20, 26],
+            "each is reported at its first press's key-down, so a call that stops part way reports only what went out");
         norwegian.SentAsCharacters.Should().BeNull();
         Resolved(Us("ctrl+plus")).Should().Equal(new Dictionary<string, string> { ["ctrl+plus"] = "ctrl+shift+oem_plus" });
         Us("shift+? ctrl+t ctrl+1 comma").ResolvedChords.Should().BeNull("Shift is named, and a letter, digit or comma needs none");
@@ -212,8 +214,9 @@ public class PressKeysParserTests
         // '^' is only a dead key on Norwegian, and no key types 'é': both go as Unicode, with no key (issue #9)
         var spec = PressKeysParser.Parse(KeyList.Of("ctrl+^ ctrl+^ alt+é ctrl+plus"), 1, Layout(FakeKeyboardLayoutWrapper.Norwegian));
 
-        spec.SentAsCharacters.Should().Equal(new CharacterWithoutKey("ctrl+^", "^", NoKeyReason.NotOnLayout),
-            new CharacterWithoutKey("alt+é", "é", NoKeyReason.NotOnLayout));
+        // Each with the index of its first character's key-down in the events, after the 4 of each Ctrl+^ press
+        spec.SentAsCharacters.Should().Equal(new CharacterWithoutKey("ctrl+^", "^", NoKeyReason.NotOnLayout, Event: 1),
+            new CharacterWithoutKey("alt+é", "é", NoKeyReason.NotOnLayout, Event: 9));
         spec.Events.Should().Contain(InputEvent.Unicode('^', 0));
     }
 
@@ -227,7 +230,41 @@ public class PressKeysParserTests
 
         layout.ReadFailed.Should().BeTrue();
         KeyboardLayout.Invariant.ReadFailed.Should().BeFalse("the invariant layout is used on purpose where no window applies");
-        spec.SentAsCharacters.Should().Equal(new CharacterWithoutKey("alt+shift+plus", "+", NoKeyReason.LayoutUnread));
+        spec.SentAsCharacters.Should().Equal(new CharacterWithoutKey("alt+shift+plus", "+", NoKeyReason.LayoutUnread, Event: 2));
+    }
+
+    [Fact]
+    public void AChordThatPressesADeadKey_IsReportedWithItsAccent()
+    {
+        // Issue #8's trigger: on Norwegian the key right of + types '\', with Shift the dead grave accent and with AltGr the dead
+        // acute; the ¨ key is dead unshifted. Alt without Ctrl does not change what a key types, so alt+shift+\ is the dead
+        // grave and alt+\ is '\'; Ctrl+Shift types nothing on it
+        var spec = PressKeysParser.Parse(KeyList.Of(@"alt+shift+\ shift+\ ctrl+alt+\ oem_1 alt+\ ctrl+shift+\ alt+shift+\ tab"), 1,
+            Layout(FakeKeyboardLayoutWrapper.Norwegian));
+
+        // Each chord once, at its key-down: 6 events for Alt, Shift and the key, 4 for Shift and the key, 6 for Ctrl, Alt and it
+        spec.DeadKeys.Should().Equal(new DeadKeyPress(@"alt+shift+\", "`", Event: 2), new DeadKeyPress(@"shift+\", "`", Event: 7),
+            new DeadKeyPress(@"ctrl+alt+\", "´", Event: 12), new DeadKeyPress("oem_1", "¨", Event: 16));
+        spec.Steps[0].Should().Equal(Seq(One(AltDown), One(ShiftDown), Tap(0xDB, 0x0D), One(ShiftUp), One(AltUp)));
+    }
+
+    [Fact]
+    public void ADigitKeyThatIsADeadKeyWithShift_IsReported_AndNotWithCtrl()
+    {
+        // Brazilian ABNT2: Shift+6 is the dead diaeresis
+        var spec = PressKeysParser.Parse(KeyList.Of("shift+6 alt+shift+6 ctrl+shift+6 6"), 1, Layout(FakeKeyboardLayoutWrapper.Brazilian));
+
+        spec.DeadKeys!.Select(d => (d.Keys, d.Accent)).Should().Equal(("shift+6", "¨"), ("alt+shift+6", "¨"));
+    }
+
+    [Fact]
+    public void ADeadKey_IsNotReported_WhileAnAccentWaits_OrWithoutAReadableLayout()
+    {
+        // With an accent waiting the dead key types it and its own ("``"), so nothing is left waiting; an unread layout cannot tell
+        PressKeysParser.Parse(KeyList.Of(@"alt+shift+\ oem_1"), 1, AccentWaiting(FakeKeyboardLayoutWrapper.Norwegian)).DeadKeys.Should().BeNull();
+        PressKeysParser.Parse(KeyList.Of(@"alt+shift+oem_4 oem_1"), 1, KeyboardLayout.Of(new FakeKeyboardLayoutWrapper { Layout = 0 }, 1, capsLock: false))
+            .DeadKeys.Should().BeNull();
+        Us(@"alt+shift+\ oem_1 shift+6").DeadKeys.Should().BeNull("US has no dead keys");
     }
 
     [Fact]

@@ -4,11 +4,12 @@ using WindowsAppManagerMcp.Native;
 namespace WindowsAppManagerMcp.Services;
 
 /// <summary>
-/// What a send_keys or press_keys call that went through tells about its keys (issues #9 and #10): the chords as pressed on
-/// the window's layout where that differs from what was asked, what went out as a character with no key, and the warnings
+/// What a send_keys or press_keys call tells about the keys that went out (issues #8 to #10): the chords as pressed on the
+/// window's layout where that differs from what was asked, what went out as a character with no key, and the warnings
 /// (<see cref="KeyWarnings"/>). A call that succeeds can still miss its target: a character sent without its key fires no
-/// shortcut, and a chord Windows takes for itself never reaches the application, so the result says so instead of looking
-/// like any other success.
+/// shortcut, a chord Windows takes for itself never reaches the application, and a dead key may leave an accent waiting, so
+/// the result says so instead of looking like any other success. A call that stops part way says the same of the keys that
+/// went out before it stopped.
 /// </summary>
 public partial class InputSimulationService
 {
@@ -22,68 +23,92 @@ public partial class InputSimulationService
     /// </summary>
     private const int MaxListedWithoutKeys = 20;
 
-    /// <summary>What the result of a call adds on success: <see cref="SendKeysResult.ResolvedChords"/>, sentAsCharacters and warnings.</summary>
-    private sealed record KeyReport(IReadOnlyDictionary<string, string>? ResolvedChords, IReadOnlyList<string>? SentAsCharacters,
-        IReadOnlyList<string>? Warnings)
+    /// <summary>
+    /// What <see cref="ReportKeys"/> read before anything was sent, each item with the index in <paramref name="Events"/> of its
+    /// key-down: the chords pressed on keys of another name (press_keys), what went out as characters, the dead keys pressed,
+    /// and Windows' hotkeys (null when not read, or the read failed).
+    /// </summary>
+    private sealed record KeyReport(IReadOnlyList<InputEvent> Events, bool PressKeys, KeyboardLayout Layout,
+        IReadOnlyList<ResolvedChord> Resolved, IReadOnlyList<CharacterWithoutKey> WithoutKeys, IReadOnlyList<DeadKeyPress> DeadKeys,
+        SystemKeyboardHotkeys? Hotkeys)
     {
-        public static KeyReport None { get; } = new(null, null, null);
+        /// <summary>
+        /// <paramref name="result"/> with what the first <paramref name="eventsSent"/> events tell: all of them when the call
+        /// went through, those before it stopped otherwise (issue #9), so nothing is reported that did not go out, and nothing
+        /// at all when none did. <see cref="SendKeysResult.ResolvedChords"/>, sentAsCharacters and warnings are each left out
+        /// when there is nothing to say.
+        /// </summary>
+        public SendKeysResult ApplyTo(SendKeysResult result, int eventsSent)
+        {
+            if (eventsSent <= 0)
+            {
+                return result;
+            }
 
-        public SendKeysResult ApplyTo(SendKeysResult result) =>
-            result with { ResolvedChords = ResolvedChords, SentAsCharacters = SentAsCharacters, Warnings = Warnings };
+            var warnings = new List<string>();
+            if (Layout.ReadFailed)
+            {
+                warnings.Add(KeyWarnings.Format(KeyWarnings.KeyboardLayoutUnknown,
+                    "the keyboard layout of the window the keys went to could not be read, so they were sent without scan codes, and " +
+                    "every character but a letter, a digit or the space as a character alone, with no key. Apps that read the physical " +
+                    "key (shortcuts in browsers and Electron apps, KeyboardEvent.code, scan codes) may not react: check the window, and " +
+                    "pass windowHandle so that its own layout is read."));
+            }
+
+            var withoutKeys = WithoutKeys.Where(k => k.Event < eventsSent).ToList();
+            if (withoutKeys.Count > 0)
+            {
+                warnings.Add(SentAsCharacterWarning(withoutKeys, PressKeys));
+            }
+
+            var resolved = Resolved.Where(r => r.Event < eventsSent).ToList();
+            var sent = eventsSent >= Events.Count ? Events : Events.Take(eventsSent).ToList();
+            foreach (var match in Hotkeys?.Match(sent, Layout.Handle) ?? [])
+            {
+                // Matched on the chord, not on its name: 'lctrl+=' and 'shift+ctrl+=' both press what NameOf writes ctrl+shift+0
+                var name = PressKeys ? PressKeysParser.NameOf(match.Chord) : SendKeysParser.Spec(match.Chord);
+                var asked = resolved.FirstOrDefault(r => r.Chord == match.Chord) is { } chord ? $" (pressed for '{chord.Asked}')" : "";
+                warnings.Add(KeyWarnings.Format(KeyWarnings.SystemHotkey, match.Toggle
+                    ? $"{name}{asked} is {match.What}, so it may switch that instead of reaching the application, and later keys then type " +
+                      "on another layout. Press the modifiers with a key, or ask the user whether to change the hotkey."
+                    : $"{name}{asked} is {match.What}, so Windows may take it, and the application may not get it. Press another chord " +
+                      "(when a character's Shift made it this one, a key that types without it, such as plus to zoom in on a Norwegian " +
+                      "keyboard), or ask the user to change the hotkey (Settings > Time & language > Typing > Advanced keyboard " +
+                      "settings > Input language hot keys)."));
+            }
+
+            var deadKeys = DeadKeys.Where(d => d.Event < eventsSent).ToList();
+            if (deadKeys.Count > 0)
+            {
+                warnings.Add(DeadKeyWarning(deadKeys));
+            }
+
+            Dictionary<string, string>? resolvedChords = null;
+            foreach (var chord in resolved)
+            {
+                (resolvedChords ??= new Dictionary<string, string>(StringComparer.Ordinal)).TryAdd(chord.Asked, chord.Pressed);
+            }
+
+            return result with
+            {
+                ResolvedChords = resolvedChords,
+                SentAsCharacters = withoutKeys.Count == 0 ? null : withoutKeys.Take(MaxListedWithoutKeys).Select(k => k.Keys).ToList(),
+                Warnings = warnings.Count == 0 ? null : warnings
+            };
+        }
     }
 
     /// <summary>
-    /// The report of <paramref name="spec"/>'s keys on <paramref name="layout"/>, read before anything is sent: press_keys' chords
-    /// (<paramref name="pressKeys"/>) are named as press_keys writes them, send_keys' as send_keys does. Windows' hotkeys are
-    /// read once, and only for keys that could press one (a modifier, or the key left of 1); a read that fails warns of nothing.
+    /// The report of <paramref name="spec"/>'s keys on <paramref name="layout"/>, read before anything is sent, since the keys
+    /// change what the layout says (an accent they leave waiting): press_keys' chords (<paramref name="pressKeys"/>) are named
+    /// as press_keys writes them, send_keys' as send_keys does. Windows' hotkeys are read once, and only for keys that could
+    /// press one (a modifier, or the key left of 1); a read that fails warns of nothing.
     /// </summary>
-    private KeyReport ReportKeys(KeySpec spec, KeyboardLayout layout, bool pressKeys)
-    {
-        var warnings = new List<string>();
-        if (layout.ReadFailed)
-        {
-            warnings.Add(KeyWarnings.Format(KeyWarnings.KeyboardLayoutUnknown,
-                "the keyboard layout of the window the keys went to could not be read, so they were sent without scan codes, and " +
-                "every character but a letter, a digit or the space as a character alone, with no key. Apps that read the physical " +
-                "key (shortcuts in browsers and Electron apps, KeyboardEvent.code, scan codes) may not react: check the window, and " +
-                "pass windowHandle so that its own layout is read."));
-        }
-
-        var withoutKeys = pressKeys ? spec.SentAsCharacters ?? [] : CharactersWithoutKeys(spec.Events, layout);
-        if (withoutKeys.Count > 0)
-        {
-            warnings.Add(SentAsCharacterWarning(withoutKeys, pressKeys));
-        }
-
-        var resolved = pressKeys ? spec.ResolvedChords : null;
-        foreach (var match in SystemHotkeysPressed(spec.Events, layout))
-        {
-            // Matched on the chord, not on its name: 'lctrl+=' and 'shift+ctrl+=' both press what NameOf writes ctrl+shift+0
-            var name = pressKeys ? PressKeysParser.NameOf(match.Chord) : SendKeysParser.Spec(match.Chord);
-            var asked = resolved?.FirstOrDefault(r => r.Chord == match.Chord) is { } chord ? $" (pressed for '{chord.Asked}')" : "";
-            warnings.Add(KeyWarnings.Format(KeyWarnings.SystemHotkey, match.Toggle
-                ? $"{name}{asked} is {match.What}, so it may switch that instead of reaching the application, and later keys then type " +
-                  "on another layout. Press the modifiers with a key, or ask the user whether to change the hotkey."
-                : $"{name}{asked} is {match.What}, so Windows takes it and the application does not get it. Press another chord (when " +
-                  "a character's Shift made it this one, a key that types without it, such as plus to zoom in on a Norwegian " +
-                  "keyboard), or ask the user to change the hotkey (Settings > Time & language > Typing > Advanced keyboard settings > " +
-                  "Input language hot keys)."));
-        }
-
-        if (warnings.Count == 0 && resolved == null)
-        {
-            return KeyReport.None;
-        }
-
-        Dictionary<string, string>? resolvedChords = null;
-        foreach (var chord in resolved ?? [])
-        {
-            (resolvedChords ??= new Dictionary<string, string>(StringComparer.Ordinal)).TryAdd(chord.Asked, chord.Pressed);
-        }
-
-        var listed = withoutKeys.Count == 0 ? null : withoutKeys.Take(MaxListedWithoutKeys).Select(k => k.Keys).ToList();
-        return new KeyReport(resolvedChords, listed, warnings.Count == 0 ? null : warnings);
-    }
+    private KeyReport ReportKeys(KeySpec spec, KeyboardLayout layout, bool pressKeys) => new(spec.Events, pressKeys, layout,
+        pressKeys ? spec.ResolvedChords ?? [] : [],
+        pressKeys ? spec.SentAsCharacters ?? [] : CharactersWithoutKeys(spec.Events, layout),
+        pressKeys ? spec.DeadKeys ?? [] : DeadKeysPressed(spec.Events, layout),
+        HotkeysToMatch(spec.Events));
 
     /// <summary>
     /// The SentAsCharacter warning: which chords or characters went out alone; why, for each (the layout was not read, an accent
@@ -125,22 +150,39 @@ public partial class InputSimulationService
     }
 
     /// <summary>
-    /// send_keys' characters that went out as Unicode, each once, in order, with why (<see cref="KeyboardLayout.WhyNoKey"/>); a
-    /// surrogate pair is one, which no key types.
+    /// The DeadKeyPressed warning (issue #8): which chords pressed a dead key, with the accent of each, and that the accent may
+    /// be left waiting in the target. "May": whether the target keeps it is not checked, and is not seen on a desktop yet.
+    /// </summary>
+    private static string DeadKeyWarning(IReadOnlyList<DeadKeyPress> deadKeys)
+    {
+        var one = deadKeys.Count == 1;
+        var names = string.Join(", ", deadKeys.Take(NamedInWarning).Select(k => k.Accent.Length == 0 ? $"'{k.Keys}'" : $"'{k.Keys}' ('{k.Accent}')")) +
+                    (deadKeys.Count > NamedInWarning ? $" and {deadKeys.Count - NamedInWarning} more" : "");
+        return KeyWarnings.Format(KeyWarnings.DeadKeyPressed,
+            $"{names} pressed {(one ? "a dead key" : "dead keys")} of the window's keyboard layout, so {(one ? "its accent" : "their accents")} " +
+            $"may be left waiting in the target, and the next key typed there may then come out with {(one ? "it" : "one")}, in front " +
+            "of its character or combined with it into one letter. If text follows, check what it gives.");
+    }
+
+    /// <summary>
+    /// send_keys' characters that went out as Unicode, each once, in order, with why (<see cref="KeyboardLayout.WhyNoKey"/>) and
+    /// the index of its first key-down; a surrogate pair is one, which no key types.
     /// </summary>
     private static List<CharacterWithoutKey> CharactersWithoutKeys(IReadOnlyList<InputEvent> events, KeyboardLayout layout)
     {
         var characters = new List<CharacterWithoutKey>();
-        var downs = events.Where(e => e.Kind == InputEventKind.Unicode && (e.Flags & NativeEnums.KEYEVENTF_KEYUP) == 0)
-            .Select(e => (char)e.Code).ToList();
+        var downs = events.Select((e, index) => (Event: e, Index: index))
+            .Where(d => d.Event.Kind == InputEventKind.Unicode && (d.Event.Flags & NativeEnums.KEYEVENTF_KEYUP) == 0).ToList();
         for (var i = 0; i < downs.Count; i++)
         {
-            var pair = char.IsHighSurrogate(downs[i]) && i + 1 < downs.Count && char.IsLowSurrogate(downs[i + 1]);
-            var text = pair ? new string([downs[i], downs[++i]]) : downs[i].ToString();
-            if (!characters.Exists(c => c.Character == text))
+            var at = downs[i].Index;
+            var c = (char)downs[i].Event.Code;
+            var pair = char.IsHighSurrogate(c) && i + 1 < downs.Count && char.IsLowSurrogate((char)downs[i + 1].Event.Code);
+            var text = pair ? new string([c, (char)downs[++i].Event.Code]) : c.ToString();
+            if (!characters.Exists(k => k.Character == text))
             {
                 var why = !pair ? layout.WhyNoKey(text[0]) : layout.ReadFailed ? NoKeyReason.LayoutUnread : NoKeyReason.NotOnLayout;
-                characters.Add(new CharacterWithoutKey(text, text, why));
+                characters.Add(new CharacterWithoutKey(text, text, why, at));
             }
         }
 
@@ -148,19 +190,34 @@ public partial class InputSimulationService
     }
 
     /// <summary>
-    /// The chords of <paramref name="events"/> that Windows takes for itself (<see cref="SystemKeyboardHotkeys.Match"/>). The
-    /// registry is read only when the keys hold a modifier or press the key the grave accent toggle uses
-    /// (<see cref="SystemKeyboardHotkeys.IsGraveAccentKey"/>, the test Match applies), since no hotkey or toggle is pressed
-    /// otherwise; nothing when it cannot be read or the server has no layout queries (tests).
+    /// send_keys' keys that pressed a dead key of the layout (<see cref="KeyboardLayout.DeadKeyOf"/>) with the modifiers held,
+    /// read as Windows reads them (an AltGr pair is Ctrl and Alt), each chord once, in order, named as send_keys writes it.
     /// </summary>
-    private IReadOnlyList<SystemHotkeyMatch> SystemHotkeysPressed(IReadOnlyList<InputEvent> events, KeyboardLayout layout)
+    private static List<DeadKeyPress> DeadKeysPressed(IReadOnlyList<InputEvent> events, KeyboardLayout layout)
     {
-        if (_keyboardLayout == null ||
-            !events.Any(e => (e.Kind == InputEventKind.VirtualKey && KeyTable.IsModifier(e.Code)) || SystemKeyboardHotkeys.IsGraveAccentKey(e)))
+        var deadKeys = new List<DeadKeyPress>();
+        foreach (var (chord, index) in SendKeysParser.IndexedChords(events, altGrIsCtrlAlt: true))
         {
-            return [];
+            var name = SendKeysParser.Spec(chord);
+            if (events[index].Kind == InputEventKind.VirtualKey && !deadKeys.Exists(d => d.Keys == name) &&
+                layout.DeadKeyOf(chord.Code, chord.Modifiers) is { } accent)
+            {
+                deadKeys.Add(new DeadKeyPress(name, accent, index));
+            }
         }
 
-        return _keyboardLayout.ReadSystemHotkeys()?.Match(events, layout.Handle) ?? [];
+        return deadKeys;
     }
+
+    /// <summary>
+    /// Windows' hotkeys, which <see cref="SystemKeyboardHotkeys.Match"/> finds in the keys that went out. The registry is read
+    /// only when <paramref name="events"/> hold a modifier or press the key the grave accent toggle uses
+    /// (<see cref="SystemKeyboardHotkeys.IsGraveAccentKey"/>, the test Match applies), since no hotkey or toggle is pressed
+    /// otherwise; null when it is not read, cannot be read, or the server has no layout queries (tests).
+    /// </summary>
+    private SystemKeyboardHotkeys? HotkeysToMatch(IReadOnlyList<InputEvent> events) =>
+        _keyboardLayout != null &&
+        events.Any(e => (e.Kind == InputEventKind.VirtualKey && KeyTable.IsModifier(e.Code)) || SystemKeyboardHotkeys.IsGraveAccentKey(e))
+            ? _keyboardLayout.ReadSystemHotkeys()
+            : null;
 }

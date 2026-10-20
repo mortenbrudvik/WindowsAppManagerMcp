@@ -34,6 +34,14 @@ public interface INativeKeyboardLayoutWrapper
     string? KeyText(ushort virtualKey, uint scanCode, byte shiftState, bool capsLock, nint layout);
 
     /// <summary>
+    /// The accent the key leaves waiting for the next key when it is a dead key with <paramref name="shiftState"/> held and
+    /// Caps Lock on or off: ToUnicodeEx's dead-key answer, read the same way as <see cref="KeyText"/>, without changing any
+    /// keyboard state, as the spacing accent it gives (empty when it gives none). Null when the key types something or nothing
+    /// in that state, as it does while an accent already waits: then it types that accent and its own.
+    /// </summary>
+    string? DeadKeyText(ushort virtualKey, uint scanCode, byte shiftState, bool capsLock, nint layout);
+
+    /// <summary>
     /// The user's input-method hotkeys (HKCU\Control Panel\Input Method\Hot Keys) and language-switch toggles (HKCU\Keyboard
     /// Layout\Toggle), read from the registry now; null when they cannot be read. press_keys and send_keys read them once per
     /// call that holds a modifier, to warn about a chord Windows takes (SystemHotkey); a failed read gives no warning.

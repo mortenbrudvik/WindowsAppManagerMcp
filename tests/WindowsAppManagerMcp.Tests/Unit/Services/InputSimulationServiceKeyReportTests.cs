@@ -1,11 +1,11 @@
 namespace WindowsAppManagerMcp.Tests.Unit.Services;
 
 /// <summary>
-/// What press_keys and send_keys tell about keys that went through (issues #9 and #10): the chords as pressed on the window's
-/// layout (resolvedChords), what went out as a character with no key (sentAsCharacters), and the warnings SentAsCharacter,
-/// KeyboardLayoutUnknown and SystemHotkey. The native input layer is <see cref="FakeInputWrapper"/>, the layouts and Windows'
-/// hotkeys come from <see cref="FakeKeyboardLayoutWrapper"/>, and the guard is a mock, so nothing reaches the desktop or the
-/// registry.
+/// What press_keys and send_keys tell about the keys that went out (issues #8 to #10), when the call went through or stopped
+/// part way: the chords as pressed on the window's layout (resolvedChords), what went out as a character with no key
+/// (sentAsCharacters), and the warnings SentAsCharacter, KeyboardLayoutUnknown, SystemHotkey and DeadKeyPressed. The native
+/// input layer is <see cref="FakeInputWrapper"/>, the layouts and Windows' hotkeys come from
+/// <see cref="FakeKeyboardLayoutWrapper"/>, and the guard is a mock, so nothing reaches the desktop or the registry.
 /// </summary>
 public class InputSimulationServiceKeyReportTests
 {
@@ -111,7 +111,7 @@ public class InputSimulationServiceKeyReportTests
         result.ResolvedChords.Should().Equal(new Dictionary<string, string> { ["ctrl+="] = "ctrl+shift+0" });
         result.Warnings.Should().ContainSingle().Which.Should()
             .StartWith(@"SystemHotkey: ctrl+shift+0 (pressed for 'ctrl+=') is a Windows input-method hotkey (HKCU\Control Panel\Input Method\Hot Keys\00000104)")
-            .And.Contain("does not get it");
+            .And.Contain("so Windows may take it, and the application may not get it", "nothing has shown on a desktop yet that it does");
         _layouts.SystemHotkeyReads.Should().Be(1);
     }
 
@@ -287,6 +287,161 @@ public class InputSimulationServiceKeyReportTests
             $"SentAsCharacter: '{keys}' ('+') went out with its character alone, with no key (an accent typed on a dead key was waiting " +
             "on the window's keyboard layout, and its key would have typed it with that accent).");
         _input.Batches.Should().ContainSingle().Which.Should().Contain(InputEvent.Unicode('+', 0)).And.NotContain(e => e.Code == 0xBB);
+    }
+
+    [Fact]
+    public async Task AChordThatPressesADeadKey_IsSent_WithADeadKeyPressedWarning()
+    {
+        // Issue #8's trigger: Alt+Shift+\ on Norwegian is the dead grave accent, which may stay waiting in the target
+        var result = await PressAsync(@"alt+shift+\");
+
+        result.Success.Should().BeTrue(result.Error);
+        result.SentAsCharacters.Should().BeNull();
+        result.Warnings.Should().ContainSingle().Which.Should().Be(
+            @"DeadKeyPressed: 'alt+shift+\' ('`') pressed a dead key of the window's keyboard layout, so its accent may be left " +
+            "waiting in the target, and the next key typed there may then come out with it, in front of its character or " +
+            "combined with it into one letter. If text follows, check what it gives.");
+    }
+
+    [Fact]
+    public async Task SendKeys_WarnsOfDeadKeys_InItsOwnSpelling()
+    {
+        // The ¨ key unshifted, and the \ key with Alt and Shift
+        var result = await CreateSut().SendKeysAsync(@"{OEM_1}%+\", Duetty);
+
+        result.Success.Should().BeTrue(result.Error);
+        result.Warnings.Should().ContainSingle().Which.Should().StartWith(
+            "DeadKeyPressed: '{OEM1}' ('¨'), '%+{OEM4}' ('`') pressed dead keys of the window's keyboard layout, so their accents " +
+            "may be left waiting in the target");
+    }
+
+    [Fact]
+    public async Task ADeadKey_IsNotReported_WhileAnAccentWaits()
+    {
+        // The dead key then types the waiting accent and its own, and leaves nothing waiting
+        _layouts.PendingDeadKey = '`';
+
+        var result = await PressAsync("oem_1");
+
+        result.Success.Should().BeTrue(result.Error);
+        result.Warnings.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task ACallThatStopsPartWay_ReportsOnlyTheKeysThatWentOut()
+    {
+        // Issue #9: 'ctrl+^' went out as its character before another window came to the front; the dead key and the hotkey
+        // after it never went out
+        _layouts.SystemHotkeys = new SystemKeyboardHotkeys([CtrlShift0], []);
+        var calls = 0;
+        _guard.Setup(g => g.RecheckKeyboard(It.IsAny<InputGuardResult>()))
+            .Returns((InputGuardResult approved) => ++calls == 1
+                ? approved
+                : InputGuardResult.Refuse(InputErrorCode.TargetLostFocus, "Another window came to the front.", InputTarget.None, null));
+
+        var result = await CreateSut().PressKeysAsync(KeyList.Of(@"ctrl+^ alt+shift+\ ctrl+="), 1, 0, delayBetweenMs: 1, Duetty);
+
+        result.ErrorCode.Should().Be(InputErrorCode.TargetLostFocus);
+        result.KeysSent.Should().Be(1);
+        result.SentAsCharacters.Should().Equal("ctrl+^");
+        result.ResolvedChords.Should().BeNull("'ctrl+=' did not go out");
+        result.Warnings.Should().ContainSingle().Which.Should().StartWith("SentAsCharacter: 'ctrl+^' ('^') went out with its character alone");
+    }
+
+    [Fact]
+    public async Task ACallStoppedByAModifierTheUserHolds_ReportsTheHotkeyItAlreadyPressed()
+    {
+        // Issue #10: the chord Windows may take went out before the user's left Alt stopped the call
+        _layouts.SystemHotkeys = new SystemKeyboardHotkeys([CtrlShift0], []);
+        _input.BeforeSend = _ =>
+        {
+            if (_input.Batches.Count == 0)
+            {
+                _input.Press(0xA4);
+            }
+        };
+
+        var result = await CreateSut().PressKeysAsync(KeyList.Of("ctrl+= ctrl+^"), 1, 0, delayBetweenMs: 1, Duetty);
+
+        result.ErrorCode.Should().Be(InputErrorCode.ModifiersHeld);
+        result.KeysSent.Should().Be(1);
+        result.ResolvedChords.Should().Equal(new Dictionary<string, string> { ["ctrl+="] = "ctrl+shift+0" });
+        result.SentAsCharacters.Should().BeNull("'ctrl+^' did not go out");
+        result.Warnings.Should().ContainSingle().Which.Should().StartWith("SystemHotkey: ctrl+shift+0 (pressed for 'ctrl+=')");
+    }
+
+    [Fact]
+    public async Task ACallPausedBetweenKeys_ReportsTheKeysBeforeThePause()
+    {
+        _layouts.Layout = FakeKeyboardLayoutWrapper.Us;
+        _input.BeforeSend = _ =>
+        {
+            if (_input.Batches.Count == 0)
+            {
+                _session.Pause("hotkey");
+            }
+        };
+
+        var result = await CreateSut().SendKeysAsync("é😀", Duetty, delayMs: 1);
+
+        result.ErrorCode.Should().Be(InputErrorCode.PausedByUser);
+        result.KeysSent.Should().Be(1);
+        result.SentAsCharacters.Should().Equal("é");
+        result.Warnings.Should().ContainSingle().Which.Should().StartWith("SentAsCharacter: 'é' went out as a character alone");
+    }
+
+    [Fact]
+    public async Task ACallPausedRightBeforeABatch_ReportsTheKeysBeforeIt()
+    {
+        // The pause comes after the window was checked again, so SendInput is never called for the second key
+        _layouts.Layout = FakeKeyboardLayoutWrapper.Us;
+        var calls = 0;
+        _guard.Setup(g => g.RecheckKeyboard(It.IsAny<InputGuardResult>()))
+            .Returns((InputGuardResult approved) =>
+            {
+                if (++calls == 2)
+                {
+                    _session.Pause("hotkey");
+                }
+
+                return approved;
+            });
+
+        var result = await CreateSut().SendKeysAsync("é😀", Duetty, delayMs: 1);
+
+        result.ErrorCode.Should().Be(InputErrorCode.PausedByUser);
+        result.SentAsCharacters.Should().Equal("é");
+        _input.Batches.Should().ContainSingle();
+    }
+
+    [Fact]
+    public async Task ACallRefusedAPasteInALaterBatch_ReportsTheKeysBeforeIt()
+    {
+        var pasteGuard = new Mock<IClipboardPasteGuard>();
+        pasteGuard.SetupSequence(g => g.Check(It.IsAny<IReadOnlyList<InputEvent>>(), It.IsAny<nint>()))
+            .Returns((string?)null)
+            .Returns("The clipboard holds what the user copied.");
+        var sut = new InputSimulationService(TestDataFactory.CreateMockMonitorService().Object, _input, _guard.Object, _session,
+            pasteGuard: pasteGuard.Object, keyboardLayout: _layouts);
+
+        var result = await sut.PressKeysAsync(KeyList.Of("ctrl+^ ctrl+v"), 1, 0, delayBetweenMs: 1, Duetty);
+
+        result.ErrorCode.Should().Be(InputErrorCode.PasteNotAllowed);
+        result.SentAsCharacters.Should().Equal("ctrl+^");
+    }
+
+    [Fact]
+    public async Task ACallThatSendInputStoppedPartWay_ReportsTheKeysItInserted()
+    {
+        // SendInput inserted the down and up of 'é' and the Tab's down: the emoji never went out
+        _layouts.Layout = FakeKeyboardLayoutWrapper.Us;
+        _input.Insert = (events, call) => call == 0 ? 3u : (uint)events.Count;
+
+        var result = await CreateSut().SendKeysAsync("é{TAB}😀", Duetty);
+
+        result.ErrorCode.Should().Be(InputErrorCode.SendInputFailed);
+        result.SentAsCharacters.Should().Equal("é");
+        result.Warnings.Should().ContainSingle().Which.Should().StartWith("SentAsCharacter: 'é' went out as a character alone");
     }
 
     [Fact]

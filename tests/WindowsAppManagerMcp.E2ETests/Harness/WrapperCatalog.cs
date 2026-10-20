@@ -260,6 +260,8 @@ public static class WrapperCatalog
                 [nameof(INativeKeyboardLayoutWrapper.VkKeyScan)] = WrapperMember.Read,
                 [nameof(INativeKeyboardLayoutWrapper.ScanCode)] = WrapperMember.Read,
                 [nameof(INativeKeyboardLayoutWrapper.KeyText)] = WrapperMember.Read,
+                // The same ToUnicodeEx read, for a dead key a chord presses (issue #8)
+                [nameof(INativeKeyboardLayoutWrapper.DeadKeyText)] = WrapperMember.Read,
                 // The input-method hotkeys and language toggles, from the user's registry, opened for reading (issue #10)
                 [nameof(INativeKeyboardLayoutWrapper.ReadSystemHotkeys)] = WrapperMember.Read
             },
