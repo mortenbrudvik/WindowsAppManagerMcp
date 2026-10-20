@@ -3,7 +3,8 @@ namespace WindowsAppManagerMcp.Models;
 /// <summary>
 /// A window as IWindowService reads it. For a UWP app, ProcessName and ProcessId name the app's own
 /// process (the process of its CoreWindow), and HostProcessName/HostProcessId the
-/// ApplicationFrameHost process that owns the frame window.
+/// ApplicationFrameHost process that owns the frame window. MonitorIndex is the monitor the window is on (most of it); for a
+/// minimized window, the monitor it restores to. Null when the monitor cannot be read (issue #12): never monitor 0 as a guess.
 /// </summary>
 public record WindowInfo(
     nint Handle,
@@ -13,9 +14,25 @@ public record WindowInfo(
     WindowRect Bounds,
     WindowState State,
     bool IsVisible,
-    int MonitorIndex
+    int? MonitorIndex
 )
 {
+    /// <summary>
+    /// The id of the window's monitor, as get_monitors gives it ("m-0d6fc36f"), read with <see cref="MonitorIndex"/> in the
+    /// same lookup (issue #12). Null when the monitor cannot be read or has no id.
+    /// </summary>
+    public string? MonitorId { get; init; }
+
+    /// <summary>
+    /// The snap_window position the visible frame fills on its monitor's work area, or "monitor" for the whole monitor
+    /// (<see cref="Services.WindowZones.Match"/>, issue #12). Null for a minimized window, a frame that fills no zone, and a
+    /// monitor that cannot be read.
+    /// </summary>
+    public string? Zone { get; init; }
+
+    /// <summary>Whether the visible frame covers more than one monitor (<see cref="Services.WindowZones.Spans"/>, issue #12).</summary>
+    public bool SpansMonitors { get; init; }
+
     /// <summary>
     /// What <see cref="ProcessName"/> (and <see cref="HostProcessName"/>) say when the process's name cannot be read (it
     /// has exited, or this server may not query it). Such a window cannot be checked against the target policy.

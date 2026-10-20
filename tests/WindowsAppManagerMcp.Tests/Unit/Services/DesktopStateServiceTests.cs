@@ -158,6 +158,19 @@ public class DesktopStateServiceTests
     }
 
     [Fact]
+    public async Task AWindowRowWhoseMonitorCannotBeRead_LeavesTheMonitorOut()
+    {
+        // Issue #12: it used to say monitor 0
+        var notepad = Window(Notepad, "notes.txt - Notepad", "notepad") with { MonitorIndex = null };
+        _windows.Setup(w => w.GetAllWindows(It.IsAny<bool>())).Returns([notepad]);
+
+        var (state, _) = await CreateSut().GetStateAsync(Request(), CancellationToken.None);
+
+        state.Windows!.Single().Monitor.Should().BeNull();
+        System.Text.Json.JsonSerializer.Serialize(state.Windows, ToolJson.SerializerOptions).Should().NotContain("\"monitor\"");
+    }
+
+    [Fact]
     public async Task ALongTitleOrAutomationId_IsCut_WhereverTheObservationReturnsIt()
     {
         // roadmap M3.F14: the application chooses them; the window in front, its row and the focused element's id are cut

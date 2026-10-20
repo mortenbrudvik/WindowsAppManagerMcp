@@ -27,22 +27,28 @@ public static class WorkspaceCoordinates
     }
 
     /// <summary>
-    /// How far the work area of the rectangle's monitor starts from the monitor's corner, as MonitorFromRect with
-    /// MONITOR_DEFAULTTONEAREST picks the monitor: the one with the largest share of the rectangle, else the nearest one.
-    /// The offsets are a taskbar's size, so the monitor is the same whether the rectangle is read in workspace or screen
-    /// coordinates except within a taskbar's width of a monitor's edge.
+    /// The monitor of the rectangle as MonitorFromRect with MONITOR_DEFAULTTONEAREST picks it: the one with the largest share
+    /// of the rectangle, else the nearest one. Null when there are no monitors.
     /// </summary>
-    private static (int X, int Y) Offset(WindowRect rect, IReadOnlyList<MonitorInfo> monitors)
+    public static MonitorInfo? MonitorOf(WindowRect rect, IReadOnlyList<MonitorInfo> monitors)
     {
+        ArgumentNullException.ThrowIfNull(rect);
         ArgumentNullException.ThrowIfNull(monitors);
-        var monitor = monitors
+        return monitors
             .OrderByDescending(m => Overlap(rect, m.Bounds))
             .ThenBy(m => Distance(rect, m.Bounds))
             .FirstOrDefault();
-        return monitor == null
-            ? (0, 0)
-            : (monitor.WorkArea.X - monitor.Bounds.X, monitor.WorkArea.Y - monitor.Bounds.Y);
     }
+
+    /// <summary>
+    /// How far the work area of the rectangle's monitor (<see cref="MonitorOf"/>) starts from the monitor's corner. The offsets
+    /// are a taskbar's size, so the monitor is the same whether the rectangle is read in workspace or screen coordinates
+    /// except within a taskbar's width of a monitor's edge.
+    /// </summary>
+    private static (int X, int Y) Offset(WindowRect rect, IReadOnlyList<MonitorInfo> monitors) =>
+        MonitorOf(rect, monitors) is { } monitor
+            ? (monitor.WorkArea.X - monitor.Bounds.X, monitor.WorkArea.Y - monitor.Bounds.Y)
+            : (0, 0);
 
     private static long Overlap(WindowRect rect, MonitorRect bounds)
     {

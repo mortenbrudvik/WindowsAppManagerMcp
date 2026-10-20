@@ -27,6 +27,12 @@ public sealed partial class WindowWaitService
     /// <summary>The longest one input_idle poll waits in WaitForInputIdle.</summary>
     public const int MaxInputIdleWaitMs = 250;
 
+    /// <summary>
+    /// The most windows a result lists when several satisfy the condition, are in the way, or count for all or count (issue
+    /// #14); its MatchCount is always all of them. An early end lists up to 5 (<see cref="WindowResolution.MaxCandidates"/>).
+    /// </summary>
+    public const int MaxSetWindows = 20;
+
     /// <summary>How often a condition wait reports its progress.</summary>
     private const int ProgressIntervalMs = 1000;
 
@@ -93,7 +99,7 @@ public sealed partial class WindowWaitService
                 {
                     lastProgress = now;
                     progress.Report(new OperationProgress((int)now, timeoutMs,
-                        $"waiting for {ConditionName(request.Condition)}: {now} of {timeoutMs} ms, {watch.Status}"));
+                        $"waiting for {Waited(request)}: {now} of {timeoutMs} ms, {watch.Status}"));
                 }
 
                 var remaining = timeoutMs - Elapsed();
@@ -154,10 +160,16 @@ public sealed partial class WindowWaitService
         WindowWaitCondition.Gone => "gone",
         WindowWaitCondition.Foreground => "foreground",
         WindowWaitCondition.Visible => "visible",
+        WindowWaitCondition.Minimized => "minimized",
+        WindowWaitCondition.Maximized => "maximized",
         WindowWaitCondition.TitleChanged => "title_changed",
         WindowWaitCondition.InputIdle => "input_idle",
         _ => condition.ToString()
     };
+
+    /// <summary>What a wait waits for, for progress messages: "minimized (all)", "exists (exactly 3)".</summary>
+    private static string Waited(WindowConditionRequest request) =>
+        ConditionName(request.Condition) + (request.All ? " (all)" : "") + (request.Count is { } count ? $" ({count.Describe()})" : "");
 
     private static bool HasTitleFilter(WindowSelector selector) =>
         !string.IsNullOrEmpty(selector.TitleContains) || !string.IsNullOrEmpty(selector.TitleEquals) || !string.IsNullOrEmpty(selector.TitleRegex);
@@ -182,7 +194,8 @@ public sealed partial class WindowWaitService
 
     /// <summary>
     /// The state of one condition wait between polls: since when each window has satisfied the condition, since when no
-    /// window has matched (gone), the new title and since when (title_changed), and what the last poll saw.
+    /// window has matched (gone), which windows have held it together and since when (all and count), the new title and since
+    /// when (title_changed), and what the last poll saw.
     /// </summary>
     private sealed class ConditionWatch
     {
@@ -198,8 +211,12 @@ public sealed partial class WindowWaitService
         private readonly string _previousTitle = string.Empty;
         private readonly bool _titleFiltersMissedAtStart;
         private long? _goneSince;
+        private HashSet<nint>? _held;
+        private long _heldSince;
         private (string Title, long Since)? _newTitle;
         private int? _matchesAtStart;
+        private int? _unindexedAtStart;
+        private int _unindexed;
         private bool _handleIsNoWindow;
         private IReadOnlyList<WindowInfo> _matches = [];
         private WindowInfo? _lastSeen;
@@ -246,27 +263,33 @@ public sealed partial class WindowWaitService
             _ => $"{_matches.Count} matching window{(_matches.Count == 1 ? "" : "s")}"
         };
 
-        /// <summary>One poll: the result when the wait is over (satisfied, or ended early), null to poll again.</summary>
-        public WindowConditionResult? Poll(long now, Func<long> elapsed) => _request.Condition switch
-        {
-            WindowWaitCondition.Gone => PollGone(now),
-            WindowWaitCondition.TitleChanged => PollTitle(now),
-            _ => PollWindows(now, elapsed)
-        };
+        /// <summary>A gone wait, or a count whose most is 0, which waits as gone.</summary>
+        private bool WaitsAsGone => _request.Condition == WindowWaitCondition.Gone || _request.Count?.Range().Most == 0;
 
-        /// <summary>exists, visible, foreground and input_idle: a window that counts satisfies the condition, held for stableMs.</summary>
+        /// <summary>A wait with all or count: its result lists the windows that count (issue #14).</summary>
+        private bool IsSetWait => _request.All || _request.Count != null;
+
+        /// <summary>One poll: the result when the wait is over (satisfied, or ended early), null to poll again.</summary>
+        public WindowConditionResult? Poll(long now, Func<long> elapsed) =>
+            WaitsAsGone ? PollGone(now)
+            : _request.Count is { } count ? PollCount(now, count)
+            : _request.All ? PollAll(now)
+            : _request.Condition == WindowWaitCondition.TitleChanged ? PollTitle(now)
+            : PollWindows(now, elapsed);
+
+        /// <summary>
+        /// exists, visible, minimized, maximized, foreground and input_idle: a window that counts satisfies the condition, held
+        /// for stableMs.
+        /// </summary>
         private WindowConditionResult? PollWindows(long now, Func<long> elapsed)
         {
             if (Read() is { } ended)
                 return ended;
 
             var foreground = _request.Condition == WindowWaitCondition.Foreground ? _service._native.GetForegroundWindow() : nint.Zero;
-            var satisfying = _request.Condition switch
-            {
-                WindowWaitCondition.Visible => _matches.Where(IsOnScreen).ToList(),
-                WindowWaitCondition.Foreground => _matches.Where(w => w.Handle == foreground).ToList(),
-                _ => _matches.ToList()
-            };
+            var satisfying = _request.Condition == WindowWaitCondition.Foreground
+                ? _matches.Where(w => w.Handle == foreground).ToList()
+                : _matches.Where(Holds).ToList();
 
             foreach (var gone in _since.Keys.Where(h => satisfying.All(w => w.Handle != h)).ToList())
                 _since.Remove(gone);
@@ -316,13 +339,56 @@ public sealed partial class WindowWaitService
             return Satisfied([window]) with { IdleCheck = idle == true ? IdleCheck.InputIdle : IdleCheck.RespondingOnly };
         }
 
-        /// <summary>gone: no window that counts matches, for stableMs.</summary>
+        /// <summary>all: every window that counts holds the condition, and at least one counts, the same windows for stableMs.</summary>
+        private WindowConditionResult? PollAll(long now)
+        {
+            if (Read() is { } ended)
+                return ended;
+
+            return _matches.Count > 0 && _matches.All(Holds) ? HoldSet(now) : Unheld();
+        }
+
+        /// <summary>count: as many windows count as it asks for, the same windows for stableMs.</summary>
+        private WindowConditionResult? PollCount(long now, WindowCount count)
+        {
+            if (Read() is { } ended)
+                return ended;
+
+            var (fewest, most) = count.Range();
+            return _matches.Count >= fewest && (most is not { } max || _matches.Count <= max) ? HoldSet(now) : Unheld();
+        }
+
+        /// <summary>
+        /// The set holds the condition now: satisfied once the same windows have held it for stableMs. A window that comes
+        /// into the set or leaves it starts the time again, also when the count stays the same.
+        /// </summary>
+        private WindowConditionResult? HoldSet(long now)
+        {
+            var handles = _matches.Select(w => w.Handle).ToHashSet();
+            if (_held?.SetEquals(handles) != true)
+            {
+                _held = handles;
+                _heldSince = now;
+            }
+
+            return now - _heldSince >= _stableMs ? SetResult(_matches) with { Satisfied = true } : null;
+        }
+
+        /// <summary>The set does not hold the condition: the next time it does, the time starts again.</summary>
+        private WindowConditionResult? Unheld()
+        {
+            _held = null;
+            return null;
+        }
+
+        /// <summary>gone (and a count whose most is 0): no window that counts matches, for stableMs.</summary>
         private WindowConditionResult? PollGone(long now)
         {
             if (Read(handleClosedEnds: false) is { } ended)
                 return ended;
 
             _matchesAtStart ??= _matches.Count;
+            _unindexedAtStart ??= _unindexed;
             if (_matches.Count > 0)
             {
                 _goneSince = null;
@@ -333,7 +399,12 @@ public sealed partial class WindowWaitService
             if (now - _goneSince < _stableMs)
                 return null;
 
-            return new WindowConditionResult { Satisfied = true, Warning = _matchesAtStart == 0 ? NothingAtStartWarning() : null };
+            return new WindowConditionResult
+            {
+                Satisfied = true,
+                IsSet = IsSetWait,
+                Warning = _matchesAtStart == 0 ? NothingAtStartWarning() : null
+            };
         }
 
         /// <summary>The warning of a gone wait that had nothing to close: what the selector named at the start.</summary>
@@ -343,6 +414,10 @@ public sealed partial class WindowWaitService
             // A handle is read whatever the listing's rules, so only its filters can have left it out
             { } handle => $"Window {handle} did not match {_selector.Describe()} when the wait started (it changed, or its handle " +
                           "now names another window), so nothing had to close. If you expected it to match, check it with get_window_info.",
+            // Windows matched, but fewer than the index needs: it named none
+            _ when _selector.Index is { } index && _unindexedAtStart > 0 =>
+                $"Only {_unindexedAtStart} window{(_unindexedAtStart == 1 ? "" : "s")} matched {(_selector with { Index = null }).Describe()} " +
+                $"when the wait started, so index {index} (counted from 0, front to back) named none and nothing had to close.",
             _ => $"No window matched {_selector.Describe()} when the wait started, so nothing had to close. If you expected one to be " +
                  "open, check the selector with find_windows (untitled windows need includeUntitled or className)."
         };
@@ -411,6 +486,7 @@ public sealed partial class WindowWaitService
             }
 
             matches.RemoveAll(w => _excluded.Contains(w.Handle) || _openAtStart?.Contains(w.Handle) == true);
+            _unindexed = matches.Count;
             if (_selector.Index is { } index && !_selector.Handle.HasValue && !_selector.Foreground)
                 matches = index < matches.Count ? [matches[index]] : [];
 
@@ -421,15 +497,42 @@ public sealed partial class WindowWaitService
         private static bool IsOnScreen(WindowInfo window) =>
             window.IsVisible && !window.IsCloaked && window.State != WindowState.Minimized;
 
+        /// <summary>Whether the window is as visible, minimized or maximized wants it; for the other conditions, true.</summary>
+        private bool Holds(WindowInfo window) => _request.Condition switch
+        {
+            WindowWaitCondition.Visible => IsOnScreen(window),
+            WindowWaitCondition.Minimized => window.State == WindowState.Minimized,
+            WindowWaitCondition.Maximized => window.State == WindowState.Maximized,
+            _ => true
+        };
+
+        /// <summary>What visible, minimized and maximized want a window to be, for messages: "on screen", "minimized".</summary>
+        private string Wanted => _request.Condition == WindowWaitCondition.Visible ? "on screen" : ConditionName(_request.Condition);
+
+        /// <summary>What a window that does not hold visible, minimized or maximized is instead, for messages.</summary>
+        private string Unlike(WindowInfo window) =>
+            _request.Condition == WindowWaitCondition.Visible ? OffScreenReason(window) : window.State.ToString().ToLowerInvariant();
+
         private static WindowConditionResult Satisfied(IReadOnlyList<WindowInfo> windows) => new()
         {
             Satisfied = true,
             Window = windows.Count == 1 ? windows[0] : null,
-            Candidates = windows.Count > 1 ? windows.Take(WindowResolution.MaxCandidates).ToList() : [],
+            Candidates = windows.Count > 1 ? windows.Take(MaxSetWindows).ToList() : [],
             MatchCount = windows.Count
         };
 
-        /// <summary>The timeout: what was last seen, the window in the way when there is one, and what to do.</summary>
+        /// <summary>The windows that count, as the result of a wait with all or count lists them.</summary>
+        private static WindowConditionResult SetResult(IReadOnlyList<WindowInfo> windows) => new()
+        {
+            IsSet = true,
+            Candidates = windows.Take(MaxSetWindows).ToList(),
+            MatchCount = windows.Count
+        };
+
+        /// <summary>
+        /// The timeout: what was last seen (the windows that count, all of them for all or count), the window in the way when
+        /// there is one, and what to do.
+        /// </summary>
         public WindowConditionResult TimedOut()
         {
             var what = $"{_selector.Describe()}{Qualifier()}";
@@ -440,7 +543,7 @@ public sealed partial class WindowWaitService
 
             switch (_request.Condition)
             {
-                case WindowWaitCondition.Gone:
+                case var _ when WaitsAsGone:
                     (window, others) = OneOrSeveral(_matches);
                     error = $"{_matches.Count} window{(_matches.Count == 1 ? "" : "s")} matching {what} {(_matches.Count == 1 ? "is" : "are")} " +
                             $"still open after {_timeoutMs} ms{(window != null ? $": '{window.Title}'" : "")}. It may show a prompt " +
@@ -456,14 +559,22 @@ public sealed partial class WindowWaitService
                                 : "");
                     break;
 
-                case WindowWaitCondition.Visible when _matches.Count > 0:
-                    // A window on screen at the end came there less than stableMs before it
+                case var _ when _request.Count is { } count:
+                    error = CountTimedOut(count, what);
+                    break;
+
+                case var _ when _request.All:
+                    error = AllTimedOut(what, waited);
+                    break;
+
+                case WindowWaitCondition.Visible or WindowWaitCondition.Minimized or WindowWaitCondition.Maximized when _matches.Count > 0:
+                    // A window on screen (minimized, maximized) at the end came to be so less than stableMs before it
                     (window, others) = OneOrSeveral(_matches);
-                    error = (_matches.Any(IsOnScreen)
-                                ? $"No window matching {what} stayed on screen for {_stableMs} ms {waited}: "
-                                : $"No window matching {what} came on screen {waited}: ") +
+                    error = (_matches.Any(Holds)
+                                ? $"No window matching {what} stayed {Wanted} for {_stableMs} ms {waited}: "
+                                : $"No window matching {what} {(_request.Condition == WindowWaitCondition.Visible ? "came on screen" : $"was {Wanted}")} {waited}: ") +
                             string.Join("; ", _matches.Take(WindowResolution.MaxCandidates).Select(w =>
-                                $"'{w.Title}' is {(IsOnScreen(w) ? $"on screen, but for less than {_stableMs} ms" : OffScreenReason(w))}")) + ".";
+                                $"'{w.Title}' is {(Holds(w) ? $"{Wanted}, but for less than {_stableMs} ms" : Unlike(w))}")) + ".";
                     break;
 
                 case WindowWaitCondition.Foreground when _matches.Count > 0:
@@ -483,11 +594,16 @@ public sealed partial class WindowWaitService
                     break;
 
                 default:
+                    // exists, and a condition that saw no window: the windows that appeared, as last seen
+                    (window, others) = OneOrSeveral(_matches);
                     error = _matches.Count > 0
                         ? $"Windows matching {what} appeared, but none stayed for {_stableMs} ms {waited}."
                         : $"No window matching {what} appeared {waited}. Check what is open with find_windows; {NoMatchHints()}.";
                     break;
             }
+
+            if (IsSetWait)
+                return SetResult(_matches) with { TimedOut = true, ErrorCode = nameof(WindowErrorCode.WaitTimedOut), Error = error + NothingChanged };
 
             return new WindowConditionResult
             {
@@ -497,12 +613,55 @@ public sealed partial class WindowWaitService
                 MatchCount = _request.Condition == WindowWaitCondition.TitleChanged ? 0 : _matches.Count,
                 PreviousTitle = _request.Condition == WindowWaitCondition.TitleChanged ? _previousTitle : null,
                 ErrorCode = nameof(WindowErrorCode.WaitTimedOut),
-                Error = error + " Nothing was changed; wait again (a longer timeoutMs) or check the state with a read tool."
+                Error = error + NothingChanged
             };
         }
 
+        private const string NothingChanged = " Nothing was changed; wait again (a longer timeoutMs) or check the state with a read tool.";
+
+        /// <summary>A count's timeout: how many windows counted, and whether the same ones held for stableMs.</summary>
+        private string CountTimedOut(WindowCount count, string what)
+        {
+            var open = $"{_matches.Count} window{(_matches.Count == 1 ? "" : "s")} matching {what} {(_matches.Count == 1 ? "is" : "are")} " +
+                       $"open after {_timeoutMs} ms";
+            if (_held != null)
+            {
+                return $"{open}, {count.Describe()}, but not the same windows for {_stableMs} ms: one opened or closed less than " +
+                       $"{_stableMs} ms before the timeout.";
+            }
+
+            return $"{open}, not {count.Describe()}." + (_matches.Count == 0 ? $" Check what is open with find_windows; {NoMatchHints()}." : "");
+        }
+
+        /// <summary>An all wait's timeout: no window, the windows that are not as wanted, or a set that changed.</summary>
+        private string AllTimedOut(string what, string waited)
+        {
+            if (_matches.Count == 0)
+            {
+                return $"No window matching {what} is open after {_timeoutMs} ms, and all needs at least one. Check what is open with " +
+                       $"find_windows; {NoMatchHints()}.";
+            }
+
+            var holding = _matches.Count(Holds);
+            if (holding == _matches.Count && holding == 1)
+            {
+                return $"The one window matching {what} is {Wanted}, but not for {_stableMs} ms {waited}: it came, or came to be " +
+                       $"{Wanted}, less than {_stableMs} ms before the timeout.";
+            }
+
+            if (holding == _matches.Count)
+            {
+                return $"All {_matches.Count} windows matching {what} are {Wanted}, but not the same windows for {_stableMs} ms {waited}: " +
+                       $"one came, went or came to be {Wanted} less than {_stableMs} ms before the timeout.";
+            }
+
+            return $"{holding} of {_matches.Count} windows matching {what} {(holding == 1 ? "is" : "are")} {Wanted} after {_timeoutMs} ms: " +
+                   string.Join("; ", _matches.Where(w => !Holds(w)).Take(WindowResolution.MaxCandidates).Select(w => $"'{w.Title}' is {Unlike(w)}")) +
+                   ".";
+        }
+
         private static (WindowInfo? Window, IReadOnlyList<WindowInfo> Candidates) OneOrSeveral(IReadOnlyList<WindowInfo> windows) =>
-            windows.Count == 1 ? (windows[0], []) : (null, windows.Take(WindowResolution.MaxCandidates).ToList());
+            windows.Count == 1 ? (windows[0], []) : (null, windows.Take(MaxSetWindows).ToList());
 
         private static string OffScreenReason(WindowInfo window) =>
             window.State == WindowState.Minimized ? "minimized"

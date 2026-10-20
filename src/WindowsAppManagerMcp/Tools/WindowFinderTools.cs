@@ -51,8 +51,8 @@ public partial class WindowFinderTools
         " Titles are compared ignoring case, invisible characters (the zero-width space in 'Microsoft Edge') and Edge's ' and N more pages'.";
 
     [McpServerTool(Name = "find_windows", Title = "Find Windows", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
-    [Description("Find windows matching the specified criteria. By default only user-facing app windows are returned: no cloaked windows (other virtual desktops, suspended apps), tool windows, untitled windows or shell windows (desktop, taskbar). A handle or className, or includeShell=true, skips that filter. Returns each window's handle, title, process, className, bounds (the window rect, with the invisible resize borders), visibleBounds (the visible frame, which set_window_bounds takes) and state, front to back unless sort says otherwise; a UWP app's window reports the app's own process, with hostProcessName 'ApplicationFrameHost'. isAgentHost: true marks the agent's own terminal, editor or chat window (while get_server_info warns that the server's ancestors are unknown, older programs' windows too): input tools refuse it unless it is passed as windowHandle with allowHostTarget=true, and close tools refuse it unless force=true (with confirm=true when the client cannot ask the user); use either only when the user explicitly asked." +
-                 " These filters, except visibleOnly, includeToolWindows, includeShell, sort and limit, make up the window selector that " +
+    [Description("Find windows matching the specified criteria. By default only user-facing app windows are returned: no cloaked windows (other virtual desktops, suspended apps), tool windows, untitled windows or shell windows (desktop, taskbar). A handle or className, or includeShell=true, skips that filter. Returns each window's handle, title, process, className, bounds (the window rect, with the invisible resize borders), visibleBounds (the visible frame, which set_window_bounds takes) and state, front to back unless sort says otherwise; a UWP app's window reports the app's own process, with hostProcessName 'ApplicationFrameHost'. monitorIndex and monitorId (get_monitors' id) name the window's monitor (a minimized window's: the one it restores to; left out when unreadable); zone is the snap_window position visibleBounds fills there ('fullscreen' also when maximized; 'monitor': the whole monitor), and spansMonitors: true marks a window across monitors. isAgentHost: true marks the agent's own terminal, editor or chat window (while get_server_info warns that the server's ancestors are unknown, older programs' windows too): input tools refuse it unless it is passed as windowHandle with allowHostTarget=true, and close tools refuse it unless force=true (with confirm=true when the client cannot ask the user); use either only when the user explicitly asked." +
+                 " These filters, except visibleOnly, includeToolWindows, includeShell, includeMinimized, sort and limit, make up the window selector that " +
                  "every tool taking a window accepts as window (beside handle): it must " +
                  "name exactly one window, or the call does nothing and fails with WindowNotFound or AmbiguousWindow (with up to 5 " +
                  "candidates; pick one by handle, narrow the filters, or add index, which picks a match front to back); foreground: " +
@@ -86,6 +86,8 @@ public partial class WindowFinderTools
         bool processNameContains = false,
         [Description("Also return untitled windows, which the user-facing filter leaves out (default: false)")]
         bool includeUntitled = false,
+        [Description("Also return minimized windows (default: true); false gives a shorter listing")]
+        bool includeMinimized = true,
         [Description("Order of the result: 'zorder' (default, front to back), 'title' or 'process'")]
         WindowSort sort = WindowSort.ZOrder,
         [Description("Return at most this many windows, the first in sort order (at least 1; default: all)")]
@@ -119,6 +121,7 @@ public partial class WindowFinderTools
                 IncludeToolWindows = includeToolWindows,
                 IncludeUntitled = includeUntitled,
                 IncludeShell = includeShell,
+                IncludeMinimized = includeMinimized,
                 Sort = sort,
                 Limit = limit
             });
@@ -189,7 +192,8 @@ public partial class WindowFinderTools
                  "clientBounds (the client area on screen), isForeground, zOrder (position among all top-level windows, hidden ones " +
                  "included, front to back; not window.index, and isForeground tells what is in front), isTopmost, isEnabled (false: a " +
                  "modal dialog takes its input), isResponding (false: Windows reports it hung), dpi (96 is 100%), and its process's " +
-                 "integrityLevel and elevated, with aboveServer: true when it runs above this server (TargetElevated). Untitled, cloaked " +
+                 "integrityLevel and elevated, with aboveServer: true when it runs above this server (TargetElevated), and for a minimized " +
+                 "window restore: the state, bounds and monitor it comes back to (bounds from before a Windows snap). Untitled, cloaked " +
                  "and tool windows are read too when named by handle. errorCode InvalidHandle: the handle is no window; WindowNotFound, " +
                  "AmbiguousWindow (with candidates) or HandleMismatch: the selector named no single window.")]
     public WindowDetailsResult GetWindowInfo(
@@ -318,6 +322,7 @@ public partial class WindowFinderTools
         State: info.State.ToString().ToLowerInvariant(),
         IsVisible: info.IsVisible,
         MonitorIndex: info.MonitorIndex,
+        MonitorId: info.MonitorId,
         ClassName: info.ClassName,
         IsCloaked: info.IsCloaked,
         OwnerHandle: info.OwnerHandle?.ToInt64(),
@@ -325,6 +330,8 @@ public partial class WindowFinderTools
         HostProcessId: info.HostProcessId,
         IsAgentHost: info.IsAgentHost ? true : null,
         VisibleBounds: info.VisibleBounds is { } visible ? new BoundsDto(visible.X, visible.Y, visible.Width, visible.Height) : null,
+        Zone: info.Zone,
+        SpansMonitors: info.SpansMonitors ? true : null,
         IsTopmost: info.IsTopmost ? true : null
     );
 }
@@ -339,7 +346,11 @@ public partial class WindowFinderTools
 /// ellipsis of a cut one included (roadmap M3.F14); the filters compare the whole title. IsTopmost is true for a topmost
 /// window and omitted for every other (roadmap M6.7). IsOnOtherDesktop is true for a cloaked window the shell's virtual
 /// desktop manager puts on another virtual desktop, and omitted for every other (roadmap M7.3); the server never switches
-/// desktops or moves a window between them.
+/// desktops or moves a window between them. MonitorIndex and MonitorId (get_monitors' id) name the window's monitor, for a
+/// minimized window the one it restores to; both are omitted when it cannot be read, and MonitorId when the monitor has no
+/// id (issue #12; MonitorIndex was 0 then). Zone is the snap_window position VisibleBounds fills on that monitor
+/// (<see cref="WindowZones"/>), omitted when there is none; SpansMonitors is true for a window over more than one monitor
+/// and omitted otherwise.
 /// </summary>
 public record WindowInfoDto(
     long Handle,
@@ -349,7 +360,8 @@ public record WindowInfoDto(
     BoundsDto Bounds,
     string State,
     bool IsVisible,
-    int MonitorIndex,
+    int? MonitorIndex,
+    string? MonitorId,
     string ClassName,
     bool IsCloaked,
     long? OwnerHandle = null,
@@ -357,6 +369,8 @@ public record WindowInfoDto(
     int? HostProcessId = null,
     bool? IsAgentHost = null,
     BoundsDto? VisibleBounds = null,
+    string? Zone = null,
+    bool? SpansMonitors = null,
     bool? IsTopmost = null,
     bool? IsOnOtherDesktop = null
 );
@@ -364,8 +378,9 @@ public record WindowInfoDto(
 /// <summary>
 /// get_window_info's result (roadmap M2.4): one window at the detail asked for. Compact has handle, title, processName,
 /// processId and state; standard adds what find_windows reports (VisibleBounds included); full adds the fields after
-/// VisibleBounds, the integrity of the window's process among them (roadmap M6.6; AboveServer only when true). Fields a
-/// detail level does not report are left out. IsOnOtherDesktop (standard and full) is as find_windows reports it.
+/// VisibleBounds, the integrity of the window's process among them (roadmap M6.6; AboveServer only when true), and for a
+/// minimized window Restore (issue #12). Fields a detail level does not report are left out. IsOnOtherDesktop (standard and
+/// full) is as find_windows reports it.
 /// </summary>
 public sealed record WindowDetailsResult(
     bool Success,
@@ -377,6 +392,7 @@ public sealed record WindowDetailsResult(
     BoundsDto? Bounds = null,
     bool? IsVisible = null,
     int? MonitorIndex = null,
+    string? MonitorId = null,
     string? ClassName = null,
     bool? IsCloaked = null,
     long? OwnerHandle = null,
@@ -384,6 +400,8 @@ public sealed record WindowDetailsResult(
     int? HostProcessId = null,
     bool? IsAgentHost = null,
     BoundsDto? VisibleBounds = null,
+    string? Zone = null,
+    bool? SpansMonitors = null,
     BoundsDto? ClientBounds = null,
     bool? IsForeground = null,
     int? ZOrder = null,
@@ -395,6 +413,7 @@ public sealed record WindowDetailsResult(
     bool? Elevated = null,
     bool? AboveServer = null,
     bool? IsOnOtherDesktop = null,
+    RestoreDto? Restore = null,
     string? Error = null,
     string? ErrorCode = null)
 {
@@ -405,8 +424,8 @@ public sealed record WindowDetailsResult(
     {
         var dto = WindowFinderTools.ToDto(info);
         return new WindowDetailsResult(true, dto.Handle, dto.Title, dto.ProcessName, dto.ProcessId, dto.State, dto.Bounds, dto.IsVisible,
-            dto.MonitorIndex, dto.ClassName, dto.IsCloaked, dto.OwnerHandle, dto.HostProcessName, dto.HostProcessId, dto.IsAgentHost,
-            VisibleBounds: dto.VisibleBounds, IsTopmost: dto.IsTopmost);
+            dto.MonitorIndex, dto.MonitorId, dto.ClassName, dto.IsCloaked, dto.OwnerHandle, dto.HostProcessName, dto.HostProcessId,
+            dto.IsAgentHost, VisibleBounds: dto.VisibleBounds, Zone: dto.Zone, SpansMonitors: dto.SpansMonitors, IsTopmost: dto.IsTopmost);
     }
 
     internal static WindowDetailsResult Full(
@@ -422,10 +441,26 @@ public sealed record WindowDetailsResult(
         Dpi = details.Dpi,
         IntegrityLevel = integrity?.Level,
         Elevated = integrity?.IsElevated,
-        AboveServer = aboveServer ? true : null
+        AboveServer = aboveServer ? true : null,
+        Restore = details.Restore is { } restore ? RestoreDto.From(restore) : null
     };
 
     internal static WindowDetailsResult InvalidHandle(nint handle) => new(
         false, handle.ToInt64(), Error: $"{WindowService.InvalidHandleMessage}: {handle} is no window (it closed). Find it again with find_windows.",
         ErrorCode: nameof(WindowErrorCode.InvalidHandle));
+}
+
+/// <summary>
+/// get_window_info's restore (detail full, issue #12): where a minimized window comes back to. State is 'normal', or
+/// 'maximized' when it comes back maximized; Bounds its restore rectangle with the invisible resize borders, as a row's bounds
+/// is, from before the snap for a window Windows snapped before it was minimized; MonitorIndex and MonitorId the monitor with
+/// most of Bounds (MonitorId omitted when that monitor has no id).
+/// </summary>
+public sealed record RestoreDto(string State, BoundsDto Bounds, int? MonitorIndex = null, string? MonitorId = null)
+{
+    internal static RestoreDto From(WindowRestore restore) => new(
+        restore.State.ToString().ToLowerInvariant(),
+        new BoundsDto(restore.Bounds.X, restore.Bounds.Y, restore.Bounds.Width, restore.Bounds.Height),
+        restore.Monitor?.Index,
+        restore.Monitor?.Id);
 }

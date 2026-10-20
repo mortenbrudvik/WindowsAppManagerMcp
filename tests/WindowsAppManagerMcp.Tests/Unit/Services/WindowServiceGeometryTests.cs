@@ -386,6 +386,150 @@ public class WindowServiceGeometryTests
 
     #endregion
 
+    #region A monitor that cannot be read is never monitor 0 (issue #12)
+
+    /// <summary>The window's monitor cannot be read (MonitorFromWindow names no monitor of the snapshot) while this is true.</summary>
+    private void MonitorUnreadable(Func<bool> unreadable) =>
+        _monitors.Setup(m => m.GetMonitorIndex(Window)).Returns(() => unreadable() ? null : _window.MonitorIndex);
+
+    [Fact]
+    public void SnapWindow_WithoutAMonitor_OfAWindowWhoseMonitorCannotBeRead_IsMoveFailed_AndPlacesNothing()
+    {
+        // Arrange - the window is on monitor 1; it used to be snapped on monitor 0
+        _window.Visible = new WindowRect(2200, 100, 800, 600);
+        MonitorUnreadable(() => true);
+
+        // Act
+        var result = CreateSut().SnapWindow(Window, SnapPosition.LeftHalf, bringToFront: false);
+
+        // Assert
+        result.ErrorCode.Should().Be(WindowErrorCode.MoveFailed);
+        result.Error.Should().Contain("monitor could not be read").And.Contain("nothing was changed").And.Contain("monitor");
+        _window.Calls.Should().BeEmpty();
+        _monitors.Verify(m => m.CalculateSnapBounds(It.IsAny<int>(), It.IsAny<SnapPosition>()), Times.Never);
+    }
+
+    [Fact]
+    public void SnapWindow_WithoutAMonitor_OfAWindowThatClosedDuringTheLookup_IsInvalidHandle()
+    {
+        // Arrange - MonitorFromWindow finds no monitor for a window that is gone
+        var closed = false;
+        _native.Setup(n => n.IsWindow(Window)).Returns(() => !closed);
+        _monitors.Setup(m => m.GetMonitorIndex(Window)).Returns(() =>
+        {
+            closed = true;
+            return null;
+        });
+
+        // Act & Assert
+        CreateSut().SnapWindow(Window, SnapPosition.LeftHalf).ErrorCode.Should().Be(WindowErrorCode.InvalidHandle);
+        _window.Calls.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void SnapWindow_OnANamedMonitor_DoesNotNeedTheWindowsOwn_AndPlacesOnce()
+    {
+        // Arrange - an unknown scale before and after is no scale change, so the target is not placed again
+        MonitorUnreadable(() => true);
+
+        // Act
+        var result = CreateSut().SnapWindow(Window, SnapPosition.LeftHalf, monitorIndex: 0, bringToFront: false);
+
+        // Assert
+        result.Success.Should().BeTrue(result.Error);
+        _window.Calls.Should().ContainSingle();
+        _window.Visible.Should().Be(new WindowRect(0, 0, 960, 1040));
+    }
+
+    [Fact]
+    public void APlacement_OfAWindowWhoseMonitorIsReadOnlyAfterwards_IsPlacedAgain()
+    {
+        // Arrange - the monitor was unknown before the move, so a scale change cannot be ruled out (it was taken as monitor 0's)
+        var placed = false;
+        MonitorUnreadable(() => !placed);
+        _native.Setup(n => n.SetWindowPos(Window, It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<uint>()))
+            .Callback(() => placed = true)
+            .Returns(Win32CallResult.Ok);
+
+        // Act
+        var result = CreateSut().SetWindowFrame(Window, 10, 20, 640, 480, bringToFront: false);
+
+        // Assert
+        result.Success.Should().BeTrue(result.Error);
+        _native.Verify(n => n.SetWindowPos(Window, It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<uint>()),
+            Times.Exactly(2));
+    }
+
+    [Fact]
+    public void MoveWindowToMonitor_OfAWindowWhoseMonitorCannotBeRead_MovesInTwoSteps_AsAcrossAScaleChange()
+    {
+        // Arrange - both monitors are at 100%, but the window's own scale is unknown until it has moved
+        MonitorUnreadable(() => _window.Calls.Count == 0);
+
+        // Act
+        var result = CreateSut().MoveWindowToMonitor(Window, 1, MonitorPositioning.Center);
+
+        // Assert - onto the monitor without a size first, so an app that rescales itself is not scaled twice
+        result.Success.Should().BeTrue(result.Error);
+        _window.Calls.Should().HaveCount(2);
+        (_window.Calls[0].Flags & SwpNoSize).Should().Be(SwpNoSize);
+        _window.MonitorIndex.Should().Be(1);
+    }
+
+    [Fact]
+    public void MoveWindowToMonitor_WhenTheMonitorCannotBeReadAfterwards_IsMoveFailed_NotDone()
+    {
+        // Arrange - the window moved, but MonitorFromWindow names no monitor afterwards (the displays are changing)
+        MonitorUnreadable(() => _window.Calls.Count > 0);
+
+        // Act
+        var result = CreateSut().MoveWindowToMonitor(Window, 1, MonitorPositioning.Center);
+
+        // Assert - it used to read monitor 0, and a move to monitor 0 would have been Done unseen
+        result.ErrorCode.Should().Be(WindowErrorCode.MoveFailed);
+        result.Error.Should().Contain("could not be read afterwards").And.Contain("not known to be on monitor 1");
+        _window.MonitorIndex.Should().Be(1, "the move itself was sent");
+    }
+
+    [Fact]
+    public void MoveWindowToMonitor_WhenTheWindowClosesBeforeTheCheck_IsInvalidHandle()
+    {
+        // Arrange - the move went through; then the window is gone, and so is its monitor
+        var closed = false;
+        _native.Setup(n => n.IsWindow(Window)).Returns(() => !closed);
+        _monitors.Setup(m => m.GetMonitorIndex(Window)).Returns(() =>
+        {
+            if (_window.Calls.Count == 0)
+                return _window.MonitorIndex;
+
+            closed = true;
+            return null;
+        });
+
+        // Act & Assert
+        CreateSut().MoveWindowToMonitor(Window, 1, MonitorPositioning.Center).ErrorCode.Should().Be(WindowErrorCode.InvalidHandle);
+    }
+
+    [Fact]
+    public void MoveWindowToMonitor_Maximize_OfAWindowWhoseMonitorCannotBeRead_IsNotMaximized_EvenOnMonitor0()
+    {
+        // Arrange - the window is on monitor 1. The unread monitor used to count as monitor 0, the target, so the window was
+        // maximized where it was, on monitor 1, and the call reported success
+        _window.Visible = new WindowRect(2200, 100, 800, 600);
+        MonitorUnreadable(() => true);
+
+        // Act
+        var result = CreateSut().MoveWindowToMonitor(Window, 0, MonitorPositioning.Maximize);
+
+        // Assert - SW_MAXIMIZE (which activates) is sent only once the window is seen on the target
+        result.ErrorCode.Should().Be(WindowErrorCode.MoveFailed);
+        result.Error.Should().Contain("not known to be on monitor 0");
+        _native.Verify(n => n.ShowWindow(Window, SwMaximize), Times.Never);
+        _window.State.Should().Be(WindowState.Normal);
+    }
+
+    #endregion
+
     #region A placement that crosses a DPI change is applied again
 
     [Fact]

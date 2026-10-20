@@ -346,7 +346,7 @@ Every tool the server serves sits in the agent's context on every turn, and a lo
 | Toolset | Default | Tokens | What it covers | Tools |
 |---------|---------|--------|----------------|-------|
 | `server` | always on | about 1,100 | The server's build, environment and toolsets, and the user's control over its input: whether input is paused, resuming it with the user's consent, releasing stuck keys. | [get_server_info](#get_server_info), [get_control_status](#get_control_status), [resume_input](#resume_input), [release_all_input](#release_all_input) |
-| `windows` | on | about 11,300 | Find, wait for, focus, move, resize, snap, minimize, maximize, raise, pin on top and close windows, and close several at once. | [find_windows](#find_windows), [get_foreground_window](#get_foreground_window), [focus_window](#focus_window), [set_window_bounds](#set_window_bounds), [set_window_state](#set_window_state), [snap_window](#snap_window), [move_window_to_monitor](#move_window_to_monitor), [set_window_zorder](#set_window_zorder), [close_window](#close_window), [close_windows_batch](#close_windows_batch), [get_owned_windows](#get_owned_windows), [get_window_info](#get_window_info), [wait_for_window](#wait_for_window), [get_window_events](#get_window_events) |
+| `windows` | on | about 11,700 | Find, wait for, focus, move, resize, snap, minimize, maximize, raise, pin on top and close windows, and close several at once. | [find_windows](#find_windows), [get_foreground_window](#get_foreground_window), [focus_window](#focus_window), [set_window_bounds](#set_window_bounds), [set_window_state](#set_window_state), [snap_window](#snap_window), [move_window_to_monitor](#move_window_to_monitor), [set_window_zorder](#set_window_zorder), [close_window](#close_window), [close_windows_batch](#close_windows_batch), [get_owned_windows](#get_owned_windows), [get_window_info](#get_window_info), [wait_for_window](#wait_for_window), [get_window_events](#get_window_events) |
 | `monitors` | on | about 200 | The monitors: bounds, work areas, scale factors, and the virtual screen they make up. | [get_monitors](#get_monitors) |
 | `capture` | on | about 6,300 | Screenshots of monitors, regions and windows, as image content. | [take_screenshot](#take_screenshot), [capture_region](#capture_region), [capture_window](#capture_window), [capture_with_elements](#capture_with_elements) |
 | `elements` | on | about 8,300 | UI Automation: one-call desktop observations, element trees, searches that return element refs (also in menus, dropdowns and dialogs), waits for elements, the focused element, the element at a point, an app's open popups, an element's text and a table's cells. | [get_desktop_state](#get_desktop_state), [get_ui_elements](#get_ui_elements), [find_ui_elements](#find_ui_elements), [get_focused_element](#get_focused_element), [get_element_at_point](#get_element_at_point), [get_active_popups](#get_active_popups), [read_element_text](#read_element_text), [read_table](#read_table), [wait_for_element](#wait_for_element) |
@@ -364,7 +364,7 @@ Every tool the server serves sits in the agent's context on every turn, and a lo
 | `windows-batch` | off | about 2,100 | Place, snap, or minimize, maximize and restore several windows in one call, each with its own placement or state. | [set_windows_bounds_batch](#set_windows_bounds_batch), [snap_windows_batch](#snap_windows_batch), [set_windows_state_batch](#set_windows_state_batch) |
 | `ocr` | off | about 2,200 | Read and find text on the screen with Windows OCR where UI Automation exposes none (canvas apps, games, remote desktops, rendered PDFs), with click points for the mouse tools. | [read_screen_text](#read_screen_text), [find_text_on_screen](#find_text_on_screen) |
 
-The default surface (the toolsets that are on) is about 56,000 tokens, and every tool together about 66,100.
+The default surface (the toolsets that are on) is about 56,400 tokens, and every tool together about 66,500.
 <!-- tools:end toolsets -->
 
 **Tokens** is what the toolset's tools cost in tools/list, to the nearest 100: their names, titles, descriptions, input schemas and annotations as the server sends them, estimated at 4 bytes of JSON per token (roadmap M6.1). It is what turning the toolset on adds to the context a client loads up front, and what turning it off saves. The two totals under the table are measured the same way and generated with it. Contract tests hold each toolset, the default surface, the whole list and every single tool (at most 2,500 tokens) to a budget, so a change that makes them larger is a decision; see TESTING.md.
@@ -424,7 +424,7 @@ Roadmap M6.1 (release 2.2.0) took twelve tools off the default surface, about 9,
 | double_click | [mouse_click](#mouse_click) with `clickCount: 2` |
 | move_window | [set_window_bounds](#set_window_bounds) with `x` and `y` |
 | resize_window | [set_window_bounds](#set_window_bounds) with `width` and `height` |
-| get_all_windows | [find_windows](#find_windows) with no filter |
+| get_all_windows | [find_windows](#find_windows) with no filter (its `includeMinimized` too, since issue #16) |
 | get_primary_monitor | [get_monitors](#get_monitors), the monitor with `isPrimary` |
 | list_screens | [get_monitors](#get_monitors), whose `virtualScreen` is list_screens' |
 | get_active_browser_url | [get_browser_url](#get_browser_url) with `window: {"foreground": true}` |
@@ -455,11 +455,13 @@ Every window reports two rectangles: `bounds`, the window rect (GetWindowRect), 
 
 A topmost window (one that stays above every window that is not, such as a pinned reference window or an overlay) also reports `isTopmost: true`; every other window leaves the field out (roadmap M6.7). [set_window_zorder](#set_window_zorder) changes it.
 
+**Monitor and zone** (issue #12). Every window reports `monitorIndex` and `monitorId`: the index and the id that [get_monitors](#get_monitors) gives the monitor the window is on (the one with most of it). For a minimized window it is the monitor the window restores to: Windows uses the rectangle from before the minimize, not the icon at -32000. Both are left out when the monitor cannot be read (the window closed, or the displays were changing), and `monitorId` when the monitor has no id; `monitorIndex` used to read 0 then. `zone` names the [snap_window](#snap_window) position whose rectangle `visibleBounds` fills on that monitor's work area, each edge within about 2 px times the monitor's scale: `left_half`, `right_third`, `top_left_quarter` and so on, `fullscreen` for the whole work area (and for every maximized window, by its state), or `monitor` for the whole monitor with its taskbar (a fullscreen video or game; on a monitor whose work area is the whole monitor, that is `fullscreen`). It is left out for a minimized window and for a frame that fills no zone, such as one a window manager placed with gaps. `spansMonitors: true` marks a window whose visible frame covers more than one monitor, and is left out otherwise. So checking where another program, such as a window manager, put a window is one read: compare `monitorId` and `zone`, or `visibleBounds` with the monitor's `workArea`, not `bounds`, which has the invisible borders.
+
 A cloaked window that the shell's virtual desktop manager puts on another virtual desktop also reports `isOnOtherDesktop: true` in find_windows and get_window_info (`standard` and `full`); every other window leaves the field out, a cloaked one too when it is a suspended or prelaunched Store app's frame, its app hid it, or the manager cannot say (roadmap M7.3). The listings show only the current desktop's windows unless `includeCloaked` (or `includeShell`, or a `handle`) asks for more. The server only detects desktops: it never switches the user's desktop or moves a window to another one, and [focus_window](#focus_window) and the capture tools refuse such a window with `Cloaked`, saying it is on another desktop.
 
 ### Window selectors
 
-Every tool that acts on one window takes it as `handle` (`windowHandle` for the [Input Simulation](#input-simulation) tools) or as `window`, a **window selector**: an object with the filters of [find_windows](#find_windows) that the table below lists (find_windows' `visibleOnly`, `includeToolWindows`, `includeShell`, `sort` and `limit` are not selector fields, and a selector with one is refused). Pass one of the two, not both (`InvalidArguments`). The tools that take a window this way are the [Window Control](#window-control) tools, the items of the window [Batch Operations](#batch-operations), [close_application](#close_application), [get_owned_windows](#get_owned_windows), [get_window_info](#get_window_info), [wait_for_window](#wait_for_window) (which resolves it again on every poll, and takes only `window`), [capture_window](#capture_window), [capture_with_elements](#capture_with_elements), the [UI Automation](#ui-automation) tools that read or act in a window ([get_desktop_state](#get_desktop_state), [get_ui_elements](#get_ui_elements), [find_ui_elements](#find_ui_elements), [get_active_popups](#get_active_popups), [element_action](#element_action), [respond_to_dialog](#respond_to_dialog), [file_dialog](#file_dialog), and [read_element_text](#read_element_text) and [wait_for_element](#wait_for_element), which take only `window`), [get_browser_url](#get_browser_url), [get_browser_content](#get_browser_content) and the input tools. A selector is resolved to exactly one window before the tool does anything: it never picks the first of several matches. Prefer a selector to a handle copied from an earlier listing: it costs no extra call, and it cannot act on a window that closed meanwhile.
+Every tool that acts on one window takes it as `handle` (`windowHandle` for the [Input Simulation](#input-simulation) tools) or as `window`, a **window selector**: an object with the filters of [find_windows](#find_windows) that the table below lists (find_windows' `visibleOnly`, `includeToolWindows`, `includeShell`, `includeMinimized`, `sort` and `limit` are not selector fields, and a selector with one is refused). Pass one of the two, not both (`InvalidArguments`). The tools that take a window this way are the [Window Control](#window-control) tools, the items of the window [Batch Operations](#batch-operations), [close_application](#close_application), [get_owned_windows](#get_owned_windows), [get_window_info](#get_window_info), [wait_for_window](#wait_for_window) (which resolves it again on every poll, and takes only `window`), [capture_window](#capture_window), [capture_with_elements](#capture_with_elements), the [UI Automation](#ui-automation) tools that read or act in a window ([get_desktop_state](#get_desktop_state), [get_ui_elements](#get_ui_elements), [find_ui_elements](#find_ui_elements), [get_active_popups](#get_active_popups), [element_action](#element_action), [respond_to_dialog](#respond_to_dialog), [file_dialog](#file_dialog), and [read_element_text](#read_element_text) and [wait_for_element](#wait_for_element), which take only `window`), [get_browser_url](#get_browser_url), [get_browser_content](#get_browser_content) and the input tools. A selector is resolved to exactly one window before the tool does anything: it never picks the first of several matches. Prefer a selector to a handle copied from an earlier listing: it costs no extra call, and it cannot act on a window that closed meanwhile.
 
 | Field | Meaning |
 |-------|---------|
@@ -524,9 +526,12 @@ Find windows matching specific criteria.
 | titleRegex | string | No | - | A .NET regular expression the title must match (case-insensitive, 100 ms timeout), e.g. '^Untitled - Notepad$' |
 | processNameContains | boolean | No | false | Match processName as a part of the process name instead of the whole name (default: false) |
 | includeUntitled | boolean | No | false | Also return untitled windows, which the user-facing filter leaves out (default: false) |
+| includeMinimized | boolean | No | true | Also return minimized windows (default: true); false gives a shorter listing |
 | sort | string (one of: `"zorder"`, `"title"`, `"process"`) | No | "zorder" | Order of the result: 'zorder' (default, front to back), 'title' or 'process' |
 | limit | integer | No | - | Return at most this many windows, the first in sort order (at least 1; default: all) |
 <!-- tools:end params:find_windows -->
+
+`includeMinimized: false` leaves minimized windows out (issue #16): on a desktop where most windows are minimized, the listing of what can be on screen is a fraction of the full one. Like `sort` and `limit`, it is not a [selector](#window-selectors) field.
 
 **Example:**
 > "Find all Chrome windows"
@@ -548,13 +553,15 @@ Find windows matching specific criteria.
     "title": "Google - Google Chrome",
     "processName": "chrome",
     "processId": 12456,
-    "bounds": { "x": 0, "y": 0, "width": 1920, "height": 1040 },
+    "bounds": { "x": -7, "y": 0, "width": 974, "height": 1047 },
     "state": "normal",
     "isVisible": true,
     "monitorIndex": 0,
+    "monitorId": "m-0d6fc36f",
     "className": "Chrome_WidgetWin_1",
     "isCloaked": false,
-    "visibleBounds": { "x": 7, "y": 0, "width": 1906, "height": 1033 }
+    "visibleBounds": { "x": 0, "y": 0, "width": 960, "height": 1040 },
+    "zone": "left_half"
   },
   {
     "handle": 1445556,
@@ -565,12 +572,15 @@ Find windows matching specific criteria.
     "state": "normal",
     "isVisible": true,
     "monitorIndex": 1,
+    "monitorId": "m-5a1e9b27",
     "className": "Chrome_WidgetWin_1",
     "isCloaked": false,
     "visibleBounds": { "x": 107, "y": 100, "width": 1186, "height": 793 }
   }
 ]
 ```
+
+The first window fills the left half of monitor 0's work area (1920 x 1040), so it has `zone: "left_half"`; the second fills no zone.
 
 The rows have no page address. To tell browser windows with the same title apart, call [get_browser_url](#get_browser_url) with each `handle`: it is read-only and runs outside the input gate, so the calls can be sent in parallel.
 
@@ -600,6 +610,7 @@ The taskbar is an untitled shell window, so listings leave it out. A `className`
     "state": "normal",
     "isVisible": true,
     "monitorIndex": 0,
+    "monitorId": "m-0d6fc36f",
     "className": "Shell_TrayWnd",
     "isCloaked": false,
     "visibleBounds": { "x": 0, "y": 1032, "width": 1920, "height": 48 }
@@ -640,10 +651,12 @@ Get information about the currently focused window. Any window is reported, with
   "state": "maximized",
   "isVisible": true,
   "monitorIndex": 0,
+  "monitorId": "m-0d6fc36f",
   "className": "Chrome_WidgetWin_1",
   "isCloaked": false,
   "isAgentHost": true,
-  "visibleBounds": { "x": 0, "y": 0, "width": 1920, "height": 1040 }
+  "visibleBounds": { "x": 0, "y": 0, "width": 1920, "height": 1040 },
+  "zone": "fullscreen"
 }
 ```
 
@@ -720,8 +733,14 @@ Read one window, named by `handle` or by a [window selector](#window-selectors),
 | detail | Fields |
 |--------|--------|
 | `compact` | `handle`, `title`, `processName`, `processId`, `state` |
-| `standard` (default) | What [find_windows](#find_windows) reports for the window: also `bounds` (the window rect), `isVisible`, `monitorIndex`, `className`, `isCloaked`, `visibleBounds` (the visible frame, without the invisible resize borders; see [Window Discovery](#window-discovery)), and `ownerHandle`, `hostProcessName`, `hostProcessId` and `isAgentHost` when they apply |
-| `full` | Standard, plus `clientBounds` (the client area on screen), `isForeground`, `zOrder` (its place among all top-level windows, hidden ones included, front to back from 0; left out for a child window), `isTopmost`, `isEnabled` (false: it is disabled, usually by a modal dialog; [get_owned_windows](#get_owned_windows) names it), `isResponding` (false: Windows reports it hung), `dpi` (96 is 100%), and `integrityLevel` and `elevated` of the window's process (for a UWP window the app's), as [list_processes](#list_processes) reports them, with `aboveServer: true` when it or the frame host runs above this server, so input to the window is refused with `TargetElevated` (roadmap M6.6) |
+| `standard` (default) | What [find_windows](#find_windows) reports for the window: also `bounds` (the window rect), `isVisible`, `monitorIndex` and `monitorId`, `className`, `isCloaked`, `visibleBounds` (the visible frame, without the invisible resize borders; see [Window Discovery](#window-discovery)), and `ownerHandle`, `hostProcessName`, `hostProcessId`, `isAgentHost`, `zone` and `spansMonitors` when they apply |
+| `full` | Standard, plus `clientBounds` (the client area on screen), `isForeground`, `zOrder` (its place among all top-level windows, hidden ones included, front to back from 0; left out for a child window), `isTopmost`, `isEnabled` (false: it is disabled, usually by a modal dialog; [get_owned_windows](#get_owned_windows) names it), `isResponding` (false: Windows reports it hung), `dpi` (96 is 100%), and `integrityLevel` and `elevated` of the window's process (for a UWP window the app's), as [list_processes](#list_processes) reports them, with `aboveServer: true` when it or the frame host runs above this server, so input to the window is refused with `TargetElevated` (roadmap M6.6), and `restore` for a minimized window (below) |
+
+**Where a minimized window comes back to** (issue #12). For a minimized window, `full` adds `restore`: `state` (`normal`, or `maximized` when it comes back maximized), `bounds` (its restore rectangle in screen coordinates: the window rect with the invisible borders, as `bounds` is) and the `monitorIndex` and `monitorId` of the monitor with most of that rectangle. A window that comes back maximized fills that monitor's work area, and returns to `bounds` when it is restored again. For a window Windows snapped (Win+arrow, or a drag to a screen edge) before it was minimized, `bounds` is the rectangle from before the snap: Windows keeps the snapped one elsewhere, and nothing tells such a window apart while it is minimized. A window minimized from maximized on the left monitor of the [get_monitors](#get_monitors) example reads:
+
+```json
+"restore": { "state": "maximized", "bounds": { "x": -2240, "y": 400, "width": 1214, "height": 807 }, "monitorIndex": 0, "monitorId": "m-81c07e5b" }
+```
 
 A window named by its handle is read whatever the listing filter would say: untitled, cloaked, tool and child windows too. No value waits for the window's application, so a hung window is read too.
 
@@ -747,6 +766,7 @@ A window named by its handle is read whatever the listing filter would say: unti
   "bounds": { "x": 0, "y": 0, "width": 1280, "height": 1392 },
   "isVisible": true,
   "monitorIndex": 0,
+  "monitorId": "m-3f9a12c4",
   "className": "Notepad",
   "isCloaked": false,
   "visibleBounds": { "x": 7, "y": 0, "width": 1266, "height": 1385 },
@@ -766,14 +786,16 @@ A handle that is not a window returns `success: false` with `errorCode: "Invalid
 
 ### wait_for_window
 
-Wait on the server until a window condition holds (roadmap M3.7), instead of sleeping or calling [find_windows](#find_windows) again and again: after a launch, a click that opens a dialog, a close or a save. Read-only: it never changes a window, it runs outside the input gate (input and window calls go ahead while it waits), and it keeps working while input is paused.
+Wait on the server until a window condition holds (roadmap M3.7), instead of sleeping or calling [find_windows](#find_windows) again and again: after a launch, a click that opens a dialog, a close or a save, or while an app opens, closes, minimizes or restores several windows at once. Read-only: it never changes a window, it runs outside the input gate (input and window calls go ahead while it waits), and it keeps working while input is paused.
 
 <!-- tools:begin params:wait_for_window -->
 **Parameters:**
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | window | object | Yes | - | The window(s) to wait for: a window selector (its fields filter as find_windows' do; processName is the whole name; className or includeUntitled for untitled dialogs; index picks one of the windows that count, front to back; handle plus filters waits for that window to match them, e.g. {"handle": 1706796, "titleContains": "report.txt"}) |
-| condition | string (one of: `"exists"`, `"gone"`, `"foreground"`, `"visible"`, `"title_changed"`, `"input_idle"`) | No | "exists" | What to wait for (see the table below) |
+| condition | string (one of: `"exists"`, `"gone"`, `"foreground"`, `"visible"`, `"minimized"`, `"maximized"`, `"title_changed"`, `"input_idle"`) | No | "exists" | What to wait for (see the table below) |
+| all | boolean | No | false | With `visible`, `minimized` or `maximized` only: every window that counts must hold the condition, and at least one must count (see A set of windows below) |
+| count | object | No | - | With `exists` only: how many windows must count, as `{"atLeast": n}`, `{"atMost": n}`, both, or `{"exactly": n}` alone; `exactly` or `atMost` 0 waits as `gone`. Not with `all`, `window.index`, `window.handle` or `window.foreground` (see A set of windows below) |
 | newOnly | boolean | No | false | Only count windows that open, or are shown, after this call starts (default: false). A window your last action already opened is missed; prefer excludeHandles. Not with gone, title_changed or window.handle |
 | excludeHandles | integer[] | No | - | Handles of windows that never count: the matching windows you saw before you acted (at most 256; not window.handle itself). Not with title_changed |
 | previousTitle | string | No | - | title_changed only: the title you read before acting (default: the title when the wait starts, which misses a change that already happened) |
@@ -787,6 +809,8 @@ Wait on the server until a window condition holds (roadmap M3.7), instead of sle
 | `gone` | No window that counts is open any more. By handle: the handle is no window (a hidden window still exists) | - |
 | `foreground` | A window that counts is the foreground window | That window |
 | `visible` | A window that counts is on screen: visible, not minimized, not cloaked | That window |
+| `minimized` | A window that counts is minimized | That window |
+| `maximized` | A window that counts is maximized (and not minimized) | That window |
 | `title_changed` | The one window the selector names when the call starts has a title other than `previousTitle` (default: its title then); a title that passes through "Saving..." counts once the new title has held for `stableMs`. A `handle` names its window whatever its title: its title filters describe the title that changes (which may have changed already), and only its process and class filters are checked; when its title already missed them at the start and no `previousTitle` was given, a timeout's `error` says that the change may have come before the call | The window with its new title, and `previousTitle` |
 | `input_idle` | The one window that counts is not hung (IsHungAppWindow) and its process reports input idle (WaitForInputIdle, at most 250 ms per poll; best effort, see below) | The window, and `idleCheck` |
 
@@ -794,7 +818,48 @@ Wait on the server until a window condition holds (roadmap M3.7), instead of sle
 
 **Catching the window your action opened.** Your action and the wait run one after another, so the window may already be open when the wait starts, and `newOnly` would miss it. Read the matching windows before you act (find_windows) and pass their handles as `excludeHandles`; for `title_changed`, pass the title you read before acting as `previousTitle`.
 
-**Timing.** The server reads the windows every 100 ms for the first 2 seconds, then every 250 ms, until the condition has held for `stableMs` (default 300, which skips splash screens and a dialog that closes and opens again) or `timeoutMs` (default 10000, at most 60000) has passed. Only the windows that have held it count: a window that appears beside one that has does not make the result several, nor input_idle ambiguous. `timeoutMs: 0` checks once (`stableMs` is cut to `timeoutMs`). A client that sends a progress token gets a progress notification about once a second (`progress` is the milliseconds waited, `total` is `timeoutMs`), and a cancelled call stops waiting at once (see [Cancellation and progress](#cancellation-and-progress)).
+**A set of windows.** The selector is a set: every window that counts is in it. `exists`, `visible`, `minimized`, `maximized` and `foreground` hold when any window of the set does, each window timed on its own for `stableMs`, and `gone` holds when the set is empty, timed from when it became empty. Two parameters make the condition one about the whole set (issue #14):
+
+- `all: true`, with `visible`, `minimized` or `maximized`: every window that counts must hold the condition, and at least one must count (every window of an empty set would hold anything). "All restored" is `all` with `visible`, not a normal state: a window that was maximized when it was minimized comes back maximized.
+- `count`, with `exists`: how many windows count, as `{"atLeast": 2}`, `{"atMost": 1}`, both (`{"atLeast": 2, "atMost": 4}`), or `{"exactly": 3}` alone. It needs a member, none below 0, `atLeast` not above `atMost`, and not `{"atLeast": 0}` alone, which always holds; an unknown member is refused. `{"exactly": 0}` and `{"atMost": 0}` wait as `gone` does, with its warning when nothing matched at the start (and, as for `gone`, without `newOnly`). It counts the windows the selector's filters match, so it is refused with `window.index`, `window.handle` and `window.foreground`, which name one window.
+
+With `all` or `count`, `stableMs` is about the set: the condition must hold with the same windows (the same handles) for `stableMs`, and a window that comes into the set or leaves it starts the time again, also when the count stays the same (a splash window replaced by the main window). Without them, `stableMs` is timed per window as above.
+
+**The set in the result.** When one window satisfies the condition, the result has `window`, as before. When several do, and always with `all` or `count`, `window` is left out: `matchCount` is how many (with `all` or `count` also when 0 or 1), and `candidates` lists them front to back, up to 20. In wait_for_window's results each candidate has, beside `handle`, `title`, `processName`, `processId` and `className`, the window's `state`, `visibleBounds` (left out for a minimized window, which Windows parks off screen), and `monitorIndex`, `monitorId` and `zone` as find_windows reports them (see Monitor and zone under [Window Discovery](#window-discovery); a minimized window's monitor is the one it restores to). A timeout lists the set as last seen the same way, also for `exists` and `count`, so the window that did not minimize, or the one that is missing, shows.
+
+**Patterns.**
+
+- Several windows your action opens: read the matching windows first (find_windows) and pass their handles as `excludeHandles`. That also keeps windows of the same app that were open already, such as the user's own browser windows when the app opens browser windows, out of the set. Then `count: {"exactly": 3}` or `{"atLeast": 2}` waits for the new ones and returns them.
+- All of them closed: `gone`, with the same `excludeHandles`, so windows of the app that stay open do not keep it waiting.
+- All of them minimized: `condition: "minimized"`, `all: true`.
+- All of them restored: `condition: "visible"`, `all: true`.
+- Windows that need different conditions: one wait each. Several waits, and other reads, can be sent at once: a wait does not hold the input gate, and each one returns when its own condition holds.
+
+Three windows of a board's app opened, none of them the user's own Edge window seen before, on the monitors of the [get_monitors](#get_monitors) example:
+
+```json
+{
+  "name": "wait_for_window",
+  "arguments": { "window": { "processName": "msedge" }, "excludeHandles": [3409966], "count": { "exactly": 3 } }
+}
+```
+
+```json
+{
+  "success": true,
+  "satisfied": true,
+  "timedOut": false,
+  "elapsedMs": 1840,
+  "matchCount": 3,
+  "candidates": [
+    { "handle": 3801422, "title": "Board - Profile 1 - Microsoft Edge", "processName": "msedge", "processId": 15012, "className": "Chrome_WidgetWin_1", "state": "normal", "visibleBounds": { "x": -2560, "y": 365, "width": 1280, "height": 1392 }, "monitorIndex": 0, "monitorId": "m-81c07e5b", "zone": "left_half" },
+    { "handle": 3867010, "title": "Chart - Profile 1 - Microsoft Edge", "processName": "msedge", "processId": 15012, "className": "Chrome_WidgetWin_1", "state": "normal", "visibleBounds": { "x": -1280, "y": 365, "width": 1280, "height": 1392 }, "monitorIndex": 0, "monitorId": "m-81c07e5b", "zone": "right_half" },
+    { "handle": 3932548, "title": "Table - Profile 1 - Microsoft Edge", "processName": "msedge", "processId": 15012, "className": "Chrome_WidgetWin_1", "state": "maximized", "visibleBounds": { "x": 0, "y": 0, "width": 3840, "height": 2088 }, "monitorIndex": 1, "monitorId": "m-3f9a12c4", "zone": "fullscreen" }
+  ]
+}
+```
+
+**Timing.** The server reads the windows every 100 ms for the first 2 seconds, then every 250 ms, until the condition has held for `stableMs` (default 300, which skips splash screens and a dialog that closes and opens again) or `timeoutMs` (default 10000, at most 60000) has passed. Only the windows that have held it count: a window that appears beside one that has does not make the result several, nor input_idle ambiguous (with `all` or `count`, the set is timed as a whole, see A set of windows above). `timeoutMs: 0` checks once (`stableMs` is cut to `timeoutMs`). A client that sends a progress token gets a progress notification about once a second (`progress` is the milliseconds waited, `total` is `timeoutMs`), and a cancelled call stops waiting at once (see [Cancellation and progress](#cancellation-and-progress)).
 
 **input_idle is best effort.** It waits until the window is not hung and its process reports input idle. Windows answers WaitForInputIdle only once per process, the first time it waits for input after it started; later calls return at once, busy or not, so `input_idle` means something right after a launch and little later. A console program has no message loop, so only the hung check applies (`idleCheck: "respondingOnly"`; `"inputIdle"` when Windows reported idle). The check runs on the process that owns the window (a Store app's own process, not `ApplicationFrameHost`), never on a launcher that handed off, so a launcher's own state never counts. To wait for a control inside the window, use [wait_for_element](#wait_for_element).
 
@@ -802,12 +867,12 @@ Wait on the server until a window condition holds (roadmap M3.7), instead of sle
 
 | Outcome | errorCode | Result |
 |---------|-----------|--------|
-| Satisfied | - | `success` and `satisfied` `true`, `timedOut` `false`, `elapsedMs`, `window` (or `matchCount` and up to 5 `candidates`); `previousTitle` for title_changed, `idleCheck` for input_idle; `warning` for a `gone` wait whose selector matched no window when it started (a misspelled selector is gone at once) |
-| Timed out | `WaitTimedOut` | `satisfied` `false`, `timedOut` `true`, `elapsedMs`, `window` as last seen (the window still open, not in front, not on screen, not idle, or with its old title) or `candidates` when several; `error` says what was seen |
+| Satisfied | - | `success` and `satisfied` `true`, `timedOut` `false`, `elapsedMs`, `window` (or `matchCount` and up to 20 `candidates`, always with `all` or `count`); `previousTitle` for title_changed, `idleCheck` for input_idle; `warning` for a `gone` wait (or a `count` whose most is 0) whose selector matched no window when it started (a misspelled selector is gone at once), or whose `index` named none of the windows that matched |
+| Timed out | `WaitTimedOut` | `satisfied` `false`, `timedOut` `true`, `elapsedMs`, `window` as last seen (the window still open, not in front, not on screen, not minimized or maximized, not idle, or with its old title, or for `exists` the window that appeared but did not stay) or `matchCount` and `candidates` when several, and with `all` or `count` the set as last seen; `error` says what was seen |
 | The named window closed | `InvalidHandle` | `window.handle` is no window, for any condition but `gone` (it can never match), or title_changed's window closed during the wait. Ends at once |
 | Several windows | `AmbiguousWindow` | title_changed's selector names several windows when the call starts, or input_idle finds several: `candidates`. Ends at once |
 | No window to follow | `WindowNotFound`, `HandleMismatch` | title_changed's selector names no window (or a reused handle: another process or class) when the call starts. A selector that names the window by its old title finds none once the title changed: name it by handle or process, with `previousTitle` |
-| An argument that cannot be used | `InvalidArguments` (tool error) | A selector that cannot be used (`{"foreground": true}` alone, see above), `timeoutMs` outside 0-60000, `stableMs` outside 0-10000, more than 256 `excludeHandles` or one that is not a positive handle, `newOnly` with `gone`, `title_changed` or `window.handle` (a handle names a window that is already open), `excludeHandles` with `title_changed` or holding `window.handle`, or `previousTitle` without `title_changed`. Nothing was waited for. During the wait: a `titleRegex` that runs longer than 100 ms on a title |
+| An argument that cannot be used | `InvalidArguments` (tool error) | A selector that cannot be used (`{"foreground": true}` alone, see above), `timeoutMs` outside 0-60000, `stableMs` outside 0-10000, more than 256 `excludeHandles` or one that is not a positive handle, `newOnly` with `gone`, `title_changed` or `window.handle` (a handle names a window that is already open), `excludeHandles` with `title_changed` or holding `window.handle`, `previousTitle` without `title_changed`, `all` with a condition other than `visible`, `minimized` and `maximized`, or a `count` that cannot be used (see A set of windows above). Nothing was waited for. During the wait: a `titleRegex` that runs longer than 100 ms on a title |
 
 **Example:**
 > "Click Save As, then wait for the dialog."
@@ -856,7 +921,7 @@ A timeout (`isError: true`):
 }
 ```
 
-**Window events.** Between two reads the server also listens for window events (roadmap M3.F22): a window created, destroyed, shown, hidden, renamed, minimized or restored, cloaked or uncloaked, or brought to the front. Such an event ends the pause early, so the next read comes sooner, but never sooner than 25 ms after the pause began. The events only bring the next read forward: the reads alone decide, `stableMs` is still measured by them, and when the server cannot listen (its hooks could not be installed) it reads on the schedule above. They change how soon a wait ends, not what it waits for.
+**Window events.** Between two reads the server also listens for window events (roadmap M3.F22): a window created, destroyed, shown, hidden, renamed, minimized or restored, cloaked or uncloaked, or brought to the front. Such an event ends the pause early, so the next read comes sooner, but never sooner than 25 ms after the pause began. Windows sends none of these when a window is maximized or goes from maximized to normal, so `maximized` (and `all` with `visible` or `minimized` over windows that change that way) sees such a change at the next scheduled read. The events only bring the next read forward: the reads alone decide, `stableMs` is still measured by them, and when the server cannot listen (its hooks could not be installed) it reads on the schedule above. They change how soon a wait ends, not what it waits for.
 
 ---
 
@@ -941,7 +1006,7 @@ A window that the user's [target policy](#target-policy) denies is not changed a
 | `bounds` | The visible frame. The window rect when DWM cannot report the frame |
 | `outerBounds` | The window rect with the invisible borders: the rect [find_windows](#find_windows) reports as `bounds` (find_windows reports the visible frame as `visibleBounds`) |
 | `state` | `normal`, `minimized` or `maximized`. A minimized window has no `bounds` or `outerBounds`: its rect is an off-screen icon |
-| `monitorIndex` | The monitor the window is on |
+| `monitorIndex` | The monitor the window is on (most of it); for a minimized window, the monitor it restores to. Left out when it cannot be read |
 
 An application can keep a minimum or maximum size or move itself: compare `bounds` with what you asked for. `settleMs` (0-5000, default 0; a value outside that range is clamped to it, not refused) waits until two reads of the frame 20 ms apart agree before the window is read, for an application that animates or re-applies its own size. (These fields replace `newBounds` and `newState`; `newBounds` was the window rect.)
 
@@ -962,7 +1027,7 @@ Only move_window_to_monitor with `positioning: "maximize"` can still activate th
 | `MonitorNotFound`, `AmbiguousMonitor` | The same tools: a `monitor` name names no monitor, or two stacked ones (see [Monitor selectors](#monitor-selectors)). Nothing was changed |
 | `TargetDeniedByPolicy` | The user's [target policy](#target-policy) denies the window's app, or its process name cannot be read while the policy denies anything; nothing was changed. Ask the user |
 | `AccessDenied` | Windows refused the move or resize (Win32 error 5): the window belongs to a more privileged app, for example one running as administrator, and User Interface Privilege Isolation blocks this server. Ask the user |
-| `MoveFailed`, `ResizeFailed` | Windows refused the move or resize for another reason (`error` gives the Win32 error), or a minimized or maximized window did not return to normal, or is hidden (it is not shown), so nothing was placed. move_window_to_monitor also returns `MoveFailed` when the window is not on the target monitor afterwards (with `positioning: "maximize"`: not maximized there; a window left on its old monitor is not maximized at all) |
+| `MoveFailed`, `ResizeFailed` | Windows refused the move or resize for another reason (`error` gives the Win32 error), or a minimized or maximized window did not return to normal, or is hidden (it is not shown), so nothing was placed. move_window_to_monitor also returns `MoveFailed` when the window is not on the target monitor afterwards (with `positioning: "maximize"`: not maximized there; a window left on its old monitor is not maximized at all), or when its monitor cannot be read afterwards, so the move is not confirmed. snap_window without `monitor` returns it when the window's own monitor cannot be read (the displays were changing), and snaps nothing; it used to snap on monitor 0 |
 | `StateChangeFailed` | set_window_state: the window was not seen in the requested state within 300 ms (the application refused or delayed it, or it runs as administrator); `state` and `error` say which state it is in |
 | `NotResponding` | The window's application did not answer: Windows reports the window as hung (refused at once, nothing was tried), it did not answer within 5 seconds, an earlier call to the same application is still blocked (refused at once), or 8 earlier window calls to applications that do not answer are still blocked, whichever applications they are (refused at once). A call refused at once before its first window call changed nothing. Otherwise the window may have changed: the placements restore a minimized or maximized window before they place it, so it can already be restored when the placement is given up on, and a call that timed out can still take effect once the application answers. So check the window (the result's `state` and `bounds`, or [find_windows](#find_windows) with its `handle`) before you act on it. Try again later, or ask the user |
 
@@ -1664,10 +1729,12 @@ Each item of `changes` contains:
   "failed": 0,
   "results": [
     { "handle": 12345, "success": true, "state": "minimized", "monitorIndex": 0 },
-    { "handle": 67890, "success": true, "state": "minimized", "monitorIndex": 0 }
+    { "handle": 67890, "success": true, "state": "minimized", "monitorIndex": 1 }
   ]
 }
 ```
+
+A minimized window's `monitorIndex` is the monitor it restores to, so the two windows still report the monitors they were minimized on.
 
 ---
 
@@ -2658,7 +2725,7 @@ One compact observation of the desktop, and the recommended first call: what the
 
 | Section | Field | What it is |
 |---------|-------|------------|
-| `windows` | `windows`, `windowCount` | The user-facing windows front first, as [find_windows](#find_windows) lists them (no cloaked, tool, untitled or shell windows), at most `maxWindows`, each a compact row: `handle`, `title`, `process`, `state` (`normal`, `minimized`, `maximized`), `monitor` (its index) and `isAgentHost: true` for your own terminal or editor. `windowCount` is how many there are. Windows of apps the target policy denies are listed like any other, as find_windows lists them, but no tool acts on them |
+| `windows` | `windows`, `windowCount` | The user-facing windows front first, as [find_windows](#find_windows) lists them (no cloaked, tool, untitled or shell windows), at most `maxWindows`, each a compact row: `handle`, `title`, `process`, `state` (`normal`, `minimized`, `maximized`), `monitor` (its index; a minimized window's restore monitor; left out when it cannot be read) and `isAgentHost: true` for your own terminal or editor. `windowCount` is how many there are. Windows of apps the target policy denies are listed like any other, as find_windows lists them, but no tool acts on them |
 | `focus` | `focus` | The element with keyboard focus: `ref`, `controlType`, `name`, `automationId`, `bounds`, `windowHandle`, `processName`, `isPassword: true` for a password field. Its value is never returned here ([get_focused_element](#get_focused_element) reads it, never for a password field). Left out, with a `focus` error, when the focus is in a window that is not read: your own host window unless it is the one named (`TargetIsAgentHost`), or an app the policy denies, named or not, or a window or element whose process cannot be named while the policy denies anything (`TargetDeniedByPolicy`). The window in front is checked before the focus is read, so neither is read at all |
 | `popups` | `popups`, `popupsExcluded` | The target window's open menus, dropdowns, flyouts and dialogs, front first, as [get_active_popups](#get_active_popups) returns them (`ref`, `handle`, `kind`, `title`, `isBlocking`, ...). A popup of the agent's own host or of an app the policy denies is left out of `popups` and of the element walk, and counted in `popupsExcluded` |
 | `elements` | `elements` | The target window's elements as [get_ui_elements](#get_ui_elements)' text format, one line per element with its ref first (`text`), with `count`, `truncated`, `truncationReason`, `scope`, `accessibilityWarmup` and `warnings` (see below) |
@@ -8715,7 +8782,7 @@ table, it gives more detail.
 | `AmbiguousApp` | [launch_application](#launch_application), launch_applications_batch | A bare name that is no program on disk is the exact name of several installed apps; `error` lists up to 5 with their `appId` and path. Nothing was started; launch one by its `appId` or path |
 | `AmbiguousElement` | [find_ui_elements](#find_ui_elements) (`withinRef`), [read_element_text](#read_element_text) and [element_action](#element_action) (also their criteria, an element_action `menu_path` item, or `realize` with `maxScrolls` in a window with several lists that scroll and no `listRef`), [respond_to_dialog](#respond_to_dialog) (`button`), and the tools that take an element ref ([capture_window](#capture_window)'s `ref` too), [browser_element_rect](#browser_element_rect), [browser_click](#browser_click), [browser_type](#browser_type) (`selector`) | An element ref's element is gone and several elements now fit it (its automation id, or its name, type and class), so the ref was not moved to any of them; or element criteria, a menu path item or a dialog button name match several elements, also in a search that did not finish (read_element_text lists them in `candidates`). Nothing was done. Find the element you mean with find_ui_elements and use its ref. See [Element refs](#ui-automation). DOM bridge: several elements of the page match `selector`, `text` or `role`/`name` (the first ones described); pass `index`, or narrow it (browser_type takes no `index`: narrow its `selector`, or click the field with browser_click and `index` first) |
 | `AmbiguousMonitor` | Every tool that takes `monitor` (see [Monitor selectors](#monitor-selectors)): a tool error; per item in snap_windows_batch and launch_applications_batch | `monitor` is `"left"` or `"right"` and two monitors are stacked one above the other, so neither is further left or right; `error` lists both with their index, id and bounds. Nothing was done. Pass the index or id of the one you mean |
-| `AmbiguousWindow` | Every tool that takes a `window` selector (tool error; per item in the window batches; in the result of [wait_for_window](#wait_for_window) (`title_changed`, `input_idle`) and [wait_for_element](#wait_for_element)) | Several windows match the selector and it has no `index`; nothing was done. `candidates` lists up to 5 (handle, title, processName, processId, className), front to back: call again with one candidate's `handle` and `processId`, or narrow the selector. See [Window selectors](#window-selectors) |
+| `AmbiguousWindow` | Every tool that takes a `window` selector (tool error; per item in the window batches; in the result of [wait_for_window](#wait_for_window) (`title_changed`, `input_idle`) and [wait_for_element](#wait_for_element)) | Several windows match the selector and it has no `index`; nothing was done. `candidates` lists up to 5 (handle, title, processName, processId, className; wait_for_window's also the window's state and place), front to back: call again with one candidate's `handle` and `processId`, or narrow the selector. See [Window selectors](#window-selectors) |
 | `ArrangeFailed` | [apply_layout](#apply_layout) | A matched window could not be moved, resized, restored or maximized (also when its application did not answer in time), or the placement failed unexpectedly (its placement is `failed`); or it was arranged but could not be brought to the foreground or minimized, or it was launched and its app kept moving it back (its placement is `applied` with this code; see apply_layout's **Launched windows**); `errors` has the reason, including the [focus_window](#focus_window) error code of a failed focus |
 | `AutomationUnavailable` | [Browser Reading](#browser-reading) tools, [UI Automation](#ui-automation) tools, [capture_with_elements](#capture_with_elements) | UI Automation is not available |
 | `BlockedByModal` | [Input Simulation](#input-simulation) tools, [element_action](#element_action), [respond_to_dialog](#respond_to_dialog), [file_dialog](#file_dialog) | The target window (`windowHandle`) is disabled by a modal dialog, or a modal dialog of the target opened while typing (`charactersTyped` says how much was typed); the dialog is named in `blockingWindow`, and nothing (more) was sent. respond_to_dialog: a press asked of a dialog named by `handle` or `window` that a modal dialog of its own now disables (the error names that dialog; nothing was pressed) |
@@ -8877,7 +8944,7 @@ table, it gives more detail.
 | `UrlBarNotFound` | [get_browser_url](#get_browser_url) | UI Automation found neither the page's address nor the browser's address bar (roadmap M5.7: looked up by class and structure, never by name) |
 | `UrlExtractionFailed` | [get_browser_url](#get_browser_url) | The page gave no address, and the address bar has the keyboard focus (`isEditing`: its text may be typed) or may have it (the browser is not the foreground window, or its focus cannot be read), holds text that is not a URL, or cannot be read (roadmap M5.7) |
 | `UserInterrupted` | [type_text](#type_text), [drag](#drag), [run_steps](#run_steps) | With [takeover detection](#takeover-detection) set to `stop` (`WAM_TAKEOVER_DETECTION`): the user used the keyboard or mouse while the operation ran, so it stopped between two batches or steps and released what it held; the result says how far it got (`charactersTyped`, `pressed`, the steps that ran). Do not try again at once: ask the user before you go on |
-| `WaitTimedOut` | [wait_for_window](#wait_for_window), [wait_for_element](#wait_for_element), [wait_for_browser](#wait_for_browser), [browser_navigate](#browser_navigate), [wait_for_visual](#wait_for_visual) (`changedRegions` as last seen) | The condition did not hold within `timeoutMs` (browser_navigate: the page did not reach `waitUntil`, `loadState: "loading"`; it goes on loading; wait_for_browser: the page's `url` and `title` as last seen). The result still carries `satisfied: false`, `timedOut: true`, `elapsedMs` and the window as last seen (still open, not in front, not on screen, not idle, or with its old title), or for wait_for_element `lastObservedState` and the element as last seen (or no `windowHandle` when its window never appeared), and `error` says what was seen. Nothing was changed: wait again with a longer `timeoutMs`, or check the state with a read tool |
+| `WaitTimedOut` | [wait_for_window](#wait_for_window), [wait_for_element](#wait_for_element), [wait_for_browser](#wait_for_browser), [browser_navigate](#browser_navigate), [wait_for_visual](#wait_for_visual) (`changedRegions` as last seen) | The condition did not hold within `timeoutMs` (browser_navigate: the page did not reach `waitUntil`, `loadState: "loading"`; it goes on loading; wait_for_browser: the page's `url` and `title` as last seen). The result still carries `satisfied: false`, `timedOut: true`, `elapsedMs` and the window as last seen (still open, not in front, not on screen, not minimized or maximized, not idle, or with its old title; wait_for_window: `candidates` when several, and the whole set with `all` or `count`), or for wait_for_element `lastObservedState` and the element as last seen (or no `windowHandle` when its window never appeared), and `error` says what was seen. Nothing was changed: wait again with a longer `timeoutMs`, or check the state with a read tool |
 | `WheelFollowsFocus` | [scroll](#scroll) | Windows sends the wheel to the focused window ("Scroll inactive windows when I hover over them" is off, or the setting cannot be read), and the window at the point is not in front, so the wheel would scroll another window; nothing was sent. Call [focus_window](#focus_window) first |
 | `WindowHidden` | [focus_window](#focus_window), [apply_layout](#apply_layout) (named in an `ArrangeFailed` error, see [apply_layout](#apply_layout)), the [Input Simulation](#input-simulation) tools and [element_action](#element_action) (`windowHandle`, as `TargetNotForeground`), [capture_window](#capture_window), [capture_with_elements](#capture_with_elements) | The window is hidden (no WS_VISIBLE, for example an app's window hidden in the notification area), so it was not activated: keys would go to a window the user cannot see. The captures refuse it too: a hidden window draws nothing |
 | `WindowMinimized` | [capture_window](#capture_window), [capture_with_elements](#capture_with_elements), [wait_for_visual](#wait_for_visual) (a window target at the start, or during a `stable` wait), [read_screen_text](#read_screen_text), [find_text_on_screen](#find_text_on_screen) | The window, or the window it is inside, is minimized: Windows does not draw it, and its elements are offscreen. Nothing was captured. Pass `restoreIfMinimized: true` (the capture tools; wait_for_visual and the OCR tools only read and restore nothing), or restore it first with [set_window_state](#set_window_state) |

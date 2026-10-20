@@ -209,8 +209,9 @@ public class MonitorServiceSnapshotTests
         sut.GetMonitorForWindow(42).Should().BeNull();
         wrapper.EnumerateCount.Should().Be(1);
 
-        // Act & Assert - a cached snapshot is refreshed once, then the index falls back to 0
-        sut.GetMonitorIndex(42).Should().Be(0);
+        // Act & Assert - a cached snapshot is refreshed once, then there is no index: it used to fall back to 0, a monitor
+        // the window is not on (issue #12)
+        sut.GetMonitorIndex(42).Should().BeNull();
         wrapper.EnumerateCount.Should().Be(2);
     }
 

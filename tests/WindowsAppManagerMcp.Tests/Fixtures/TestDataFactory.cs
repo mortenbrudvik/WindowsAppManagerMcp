@@ -178,7 +178,7 @@ public static class TestDataFactory
     public static Mock<IMonitorService> WithWindowMonitors(this Mock<IMonitorService> mock)
     {
         mock.Setup(m => m.GetMonitorForWindow(It.IsAny<nint>()))
-            .Returns((nint handle) => mock.Object.GetAllMonitors().ElementAtOrDefault(mock.Object.GetMonitorIndex(handle)));
+            .Returns((nint handle) => mock.Object.GetMonitorIndex(handle) is { } index ? mock.Object.GetAllMonitors().ElementAtOrDefault(index) : null);
 
         return mock;
     }

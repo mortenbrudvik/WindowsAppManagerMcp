@@ -409,10 +409,13 @@ public sealed class LaunchPlacementService : ILaunchPlacementService
             : WindowChangeResult.Done(handle);
     }
 
-    /// <summary>Where a window is: its state, its visible frame (none when minimized) and its monitor; null when it is gone.</summary>
+    /// <summary>
+    /// Where a window is: its state, its visible frame (none when minimized) and its monitor (none when it cannot be read);
+    /// null when it is gone.
+    /// </summary>
     private Frame? Read(nint handle) => _windows.GetWindowInfo(handle) is { } window
         ? new Frame(window.State, window.State == WindowState.Minimized ? null : window.VisibleBounds ?? window.Bounds, window.MonitorIndex)
         : null;
 
-    private sealed record Frame(WindowState State, WindowRect? Bounds, int MonitorIndex);
+    private sealed record Frame(WindowState State, WindowRect? Bounds, int? MonitorIndex);
 }

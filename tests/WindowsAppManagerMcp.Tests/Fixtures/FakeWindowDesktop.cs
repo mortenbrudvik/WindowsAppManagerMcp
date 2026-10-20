@@ -99,6 +99,9 @@ public sealed class FakeWindowDesktop
     /// <summary>The window is minimized, or restored (roadmap M3.7).</summary>
     public void SetMinimized(nint hWnd, bool minimized) => Native.Setup(n => n.IsIconic(hWnd)).Returns(minimized);
 
+    /// <summary>The window is maximized, or no longer (issue #14).</summary>
+    public void SetMaximized(nint hWnd, bool maximized) => Native.Setup(n => n.IsZoomed(hWnd)).Returns(maximized);
+
     /// <summary>The window is shown, or hidden without closing (roadmap M3.7).</summary>
     public void SetVisible(nint hWnd, bool visible) => Native.Setup(n => n.IsWindowVisible(hWnd)).Returns(visible);
 

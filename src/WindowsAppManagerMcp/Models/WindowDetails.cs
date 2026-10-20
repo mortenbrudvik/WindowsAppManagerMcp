@@ -21,4 +21,21 @@ public sealed record WindowDetails(
     bool IsTopmost,
     bool IsEnabled,
     bool IsResponding,
-    int? Dpi);
+    int? Dpi)
+{
+    /// <summary>Where a minimized window comes back to (issue #12); null for any other window, and when it cannot be read.</summary>
+    public WindowRestore? Restore { get; init; }
+}
+
+/// <summary>
+/// Where a minimized window comes back to when it is restored (issue #12), from GetWindowPlacement. For a window Windows
+/// snapped (Aero snap) before it was minimized, <see cref="Bounds"/> is the rectangle from before the snap: Windows keeps
+/// the snapped one elsewhere, and nothing tells such a window apart while it is minimized.
+/// </summary>
+/// <param name="State">Normal, or Maximized when it comes back maximized (WPF_RESTORETOMAXIMIZED).</param>
+/// <param name="Bounds">
+/// Its restore rectangle in screen coordinates: the window rect with the invisible resize borders, as a row's bounds is. A
+/// window that comes back maximized fills its monitor's work area, and returns to this rectangle when it is restored again.
+/// </param>
+/// <param name="Monitor">The monitor with most of <see cref="Bounds"/> (else the nearest); null when no monitor could be read.</param>
+public sealed record WindowRestore(WindowState State, WindowRect Bounds, MonitorInfo? Monitor);

@@ -110,9 +110,12 @@ public sealed record DesktopWindow(long Handle, string Title, string ProcessName
 /// <param name="Title">Its title, cut as <see cref="DesktopWindow.Title"/> is.</param>
 /// <param name="Process">The process name (for a UWP app, the app's own process).</param>
 /// <param name="State">normal, minimized or maximized.</param>
-/// <param name="Monitor">The index of the monitor the window is on (most of it), as get_monitors numbers them.</param>
+/// <param name="Monitor">
+/// The index of the monitor the window is on (most of it), as get_monitors numbers them; for a minimized window, the monitor
+/// it restores to. Left out when it cannot be read (issue #12).
+/// </param>
 /// <param name="IsAgentHost">True for the agent's own terminal, editor or chat window; left out otherwise.</param>
-public sealed record DesktopWindowRow(long Handle, string Title, string Process, string State, int Monitor, bool? IsAgentHost = null);
+public sealed record DesktopWindowRow(long Handle, string Title, string Process, string State, int? Monitor, bool? IsAgentHost = null);
 
 /// <summary>The element that has keyboard focus, as get_desktop_state reports it (its value is never returned here).</summary>
 /// <param name="Ref">The element's ref, for element_action and the other element tools; null when it has no runtime id.</param>

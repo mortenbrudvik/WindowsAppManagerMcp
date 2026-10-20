@@ -3174,7 +3174,7 @@
     {
       "name": "find_windows",
       "title": "Find Windows",
-      "description": "Find windows matching the specified criteria. By default only user-facing app windows are returned: no cloaked windows (other virtual desktops, suspended apps), tool windows, untitled windows or shell windows (desktop, taskbar). A handle or className, or includeShell=true, skips that filter. Returns each window's handle, title, process, className, bounds (the window rect, with the invisible resize borders), visibleBounds (the visible frame, which set_window_bounds takes) and state, front to back unless sort says otherwise; a UWP app's window reports the app's own process, with hostProcessName 'ApplicationFrameHost'. isAgentHost: true marks the agent's own terminal, editor or chat window (while get_server_info warns that the server's ancestors are unknown, older programs' windows too): input tools refuse it unless it is passed as windowHandle with allowHostTarget=true, and close tools refuse it unless force=true (with confirm=true when the client cannot ask the user); use either only when the user explicitly asked. These filters, except visibleOnly, includeToolWindows, includeShell, sort and limit, make up the window selector that every tool taking a window accepts as window (beside handle): it must name exactly one window, or the call does nothing and fails with WindowNotFound or AmbiguousWindow (with up to 5 candidates; pick one by handle, narrow the filters, or add index, which picks a match front to back); foreground: true is the window in front (alone, input tools take it as no windowHandle and close tools refuse it); handle plus processId or a title refuses a reused handle (HandleMismatch). Titles are compared ignoring case, invisible characters (the zero-width space in 'Microsoft Edge') and Edge's ' and N more pages'. An invalid titleRegex or limit fails with InvalidArguments.",
+      "description": "Find windows matching the specified criteria. By default only user-facing app windows are returned: no cloaked windows (other virtual desktops, suspended apps), tool windows, untitled windows or shell windows (desktop, taskbar). A handle or className, or includeShell=true, skips that filter. Returns each window's handle, title, process, className, bounds (the window rect, with the invisible resize borders), visibleBounds (the visible frame, which set_window_bounds takes) and state, front to back unless sort says otherwise; a UWP app's window reports the app's own process, with hostProcessName 'ApplicationFrameHost'. monitorIndex and monitorId (get_monitors' id) name the window's monitor (a minimized window's: the one it restores to; left out when unreadable); zone is the snap_window position visibleBounds fills there ('fullscreen' also when maximized; 'monitor': the whole monitor), and spansMonitors: true marks a window across monitors. isAgentHost: true marks the agent's own terminal, editor or chat window (while get_server_info warns that the server's ancestors are unknown, older programs' windows too): input tools refuse it unless it is passed as windowHandle with allowHostTarget=true, and close tools refuse it unless force=true (with confirm=true when the client cannot ask the user); use either only when the user explicitly asked. These filters, except visibleOnly, includeToolWindows, includeShell, includeMinimized, sort and limit, make up the window selector that every tool taking a window accepts as window (beside handle): it must name exactly one window, or the call does nothing and fails with WindowNotFound or AmbiguousWindow (with up to 5 candidates; pick one by handle, narrow the filters, or add index, which picks a match front to back); foreground: true is the window in front (alone, input tools take it as no windowHandle and close tools refuse it); handle plus processId or a title refuses a reused handle (HandleMismatch). Titles are compared ignoring case, invisible characters (the zero-width space in 'Microsoft Edge') and Edge's ' and N more pages'. An invalid titleRegex or limit fails with InvalidArguments.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -3263,6 +3263,11 @@
             "description": "Also return untitled windows, which the user-facing filter leaves out (default: false)",
             "type": "boolean",
             "default": false
+          },
+          "includeMinimized": {
+            "description": "Also return minimized windows (default: true); false gives a shorter listing",
+            "type": "boolean",
+            "default": true
           },
           "sort": {
             "description": "Order of the result: 'zorder' (default, front to back), 'title' or 'process'",
@@ -4429,7 +4434,7 @@
     {
       "name": "get_window_info",
       "title": "Get Window Info",
-      "description": "Read one window, named by handle or by a window selector, without listing every window. detail 'compact' gives handle, title, process and state; 'standard' (default) what find_windows reports, visibleBounds (the frame you see) included; 'full' adds clientBounds (the client area on screen), isForeground, zOrder (position among all top-level windows, hidden ones included, front to back; not window.index, and isForeground tells what is in front), isTopmost, isEnabled (false: a modal dialog takes its input), isResponding (false: Windows reports it hung), dpi (96 is 100%), and its process's integrityLevel and elevated, with aboveServer: true when it runs above this server (TargetElevated). Untitled, cloaked and tool windows are read too when named by handle. errorCode InvalidHandle: the handle is no window; WindowNotFound, AmbiguousWindow (with candidates) or HandleMismatch: the selector named no single window.",
+      "description": "Read one window, named by handle or by a window selector, without listing every window. detail 'compact' gives handle, title, process and state; 'standard' (default) what find_windows reports, visibleBounds (the frame you see) included; 'full' adds clientBounds (the client area on screen), isForeground, zOrder (position among all top-level windows, hidden ones included, front to back; not window.index, and isForeground tells what is in front), isTopmost, isEnabled (false: a modal dialog takes its input), isResponding (false: Windows reports it hung), dpi (96 is 100%), and its process's integrityLevel and elevated, with aboveServer: true when it runs above this server (TargetElevated), and for a minimized window restore: the state, bounds and monitor it comes back to (bounds from before a Windows snap). Untitled, cloaked and tool windows are read too when named by handle. errorCode InvalidHandle: the handle is no window; WindowNotFound, AmbiguousWindow (with candidates) or HandleMismatch: the selector named no single window.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -9050,7 +9055,7 @@
     {
       "name": "wait_for_window",
       "title": "Wait for Window",
-      "description": "Wait on the server until a window condition holds, instead of sleeping or calling find_windows again and again: after a launch, a click that opens a dialog, a close or a save. window is a window selector (an untitled dialog needs className or includeUntitled). condition: exists (default: a matching window is open, minimized included), gone (none is open any more; by handle: it closed), foreground (a matching window is in front), visible (on screen: not minimized, hidden or cloaked), title_changed (the one window named has a title other than previousTitle) or input_idle (best effort: the window is not hung and its process reports input idle, which Windows answers only once per process, right after it starts, and never for console programs; Store apps and programs started through a launcher are checked on the window's own process, not the launcher's). The condition must hold for stableMs, which skips splash screens and dialogs that close and reopen. To catch the window your last action opened, pass the matching handles you saw before it as excludeHandles. Returns satisfied, elapsedMs and window; when several windows satisfy it, window is left out and matchCount and candidates list them. Not satisfied is a tool error: WaitTimedOut after timeoutMs (timedOut true, window as last seen: the one still open, not in front or with the old title); InvalidHandle when the named window closed and cannot match any more; AmbiguousWindow, with candidates, when title_changed or input_idle match several windows; WindowNotFound when title_changed names none. Only reads windows, and other tools run meanwhile.",
+      "description": "Wait on the server until a window condition holds, instead of sleeping or calling find_windows again and again: after a launch, a click that opens a dialog, a close or a save. window is a window selector; every matching window counts (an untitled dialog needs className or includeUntitled). condition: exists (default: a matching window is open, minimized included), gone (none is open any more; by handle: it closed), foreground (a matching window is in front), visible (on screen: not minimized, hidden or cloaked), minimized, maximized, title_changed (the one window named has a title other than previousTitle) or input_idle (best effort: the window is not hung and its process reports input idle, which Windows answers only once per process, right after it starts, and never for console programs; Store apps and programs started through a launcher are checked on the window's own process, not the launcher's). The condition must hold for stableMs (with all or count, by the same windows), which skips splash screens and dialogs that close and reopen. To catch the window your last action opened, pass the matching handles you saw before it as excludeHandles. Returns satisfied, elapsedMs and window; when several windows satisfy it, or with all or count, window is left out and matchCount and candidates (up to 20, with state and place) list them. Not satisfied is a tool error: WaitTimedOut after timeoutMs (timedOut true, window or candidates as last seen: the one still open, not in front or with the old title); InvalidHandle when the named window closed and cannot match any more; AmbiguousWindow, with candidates, when title_changed or input_idle match several windows; WindowNotFound when title_changed names none. Only reads windows, and other tools run meanwhile.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -9122,7 +9127,7 @@
             "additionalProperties": false
           },
           "condition": {
-            "description": "What to wait for: exists (default), gone, foreground, visible, title_changed or input_idle",
+            "description": "What to wait for: exists (default), gone, foreground, visible, minimized, maximized, title_changed or input_idle",
             "default": "exists",
             "type": "string",
             "enum": [
@@ -9130,9 +9135,45 @@
               "gone",
               "foreground",
               "visible",
+              "minimized",
+              "maximized",
               "title_changed",
               "input_idle"
             ]
+          },
+          "all": {
+            "description": "visible, minimized or maximized: every matching window, at least one, must hold it (default: false)",
+            "type": "boolean",
+            "default": false
+          },
+          "count": {
+            "description": "exists only: how many windows must match, {atLeast, exactly, atMost}; exactly 0 is gone. Not with window.index, handle or foreground",
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "atLeast": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "exactly": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "atMost": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              }
+            },
+            "additionalProperties": false,
+            "default": null
           },
           "newOnly": {
             "description": "Only count windows that open, or are shown, after this call starts (default: false). A window your last action already opened is missed; prefer excludeHandles. Not with gone, title_changed or window.handle",

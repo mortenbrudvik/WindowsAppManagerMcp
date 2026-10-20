@@ -39,7 +39,9 @@ public class WindowConditionWaitTests
         IReadOnlyCollection<nint>? excludeHandles = null,
         string? previousTitle = null,
         IProgress<OperationProgress>? progress = null,
-        CancellationToken cancellationToken = default) =>
+        CancellationToken cancellationToken = default,
+        bool all = false,
+        WindowCount? count = null) =>
         CreateService().WaitForConditionAsync(new WindowConditionRequest
         {
             Window = window,
@@ -48,7 +50,9 @@ public class WindowConditionWaitTests
             StableMs = stableMs,
             NewOnly = newOnly,
             ExcludeHandles = excludeHandles ?? [],
-            PreviousTitle = previousTitle
+            PreviousTitle = previousTitle,
+            All = all,
+            Count = count
         }, progress, cancellationToken);
 
     /// <summary>Lets the time pass and applies the changes due by then.</summary>
@@ -155,6 +159,38 @@ public class WindowConditionWaitTests
         result.Error.Should().Contain("titleEquals 'Save As'").And.Contain("2000 ms");
         result.Window.Should().BeNull();
         result.ElapsedMs.Should().Be(2000);
+    }
+
+    [Fact]
+    public async Task Exists_TimesOut_WithTheWindowThatAppearedButDidNotStay()
+    {
+        // Arrange - the dialog opens 100 ms before the timeout, too late to hold for stableMs
+        nint dialog = 0;
+        At(900, () => dialog = _desktop.Add("Save As", "#32770", processName: "notepad"));
+
+        // Act
+        var result = await WaitAsync(new WindowSelector { TitleEquals = "Save As" }, timeoutMs: 1000);
+
+        // Assert - the window as last seen (issue #14), as the other conditions' timeouts give it
+        result.TimedOut.Should().BeTrue();
+        result.Window!.Handle.Should().Be(dialog);
+        result.MatchCount.Should().Be(1);
+        result.Error.Should().Contain("none stayed for 300 ms");
+    }
+
+    [Fact]
+    public async Task Exists_SeveralMatches_ListUpTo20_WithTheWholeCount()
+    {
+        foreach (var i in Enumerable.Range(1, 25))
+            _desktop.Add($"Window {i}", processName: "app");
+
+        var result = await WaitAsync(new WindowSelector { ProcessName = "app" });
+
+        result.Satisfied.Should().BeTrue();
+        result.Window.Should().BeNull();
+        result.MatchCount.Should().Be(25);
+        result.Candidates.Should().HaveCount(WindowWaitService.MaxSetWindows);
+        result.IsSet.Should().BeFalse("only all and count make a set result");
     }
 
     [Fact]
@@ -407,6 +443,22 @@ public class WindowConditionWaitTests
         result.Warning.Should().Contain("No window matched").And.Contain("when the wait started");
     }
 
+    [Fact]
+    public async Task Gone_WithAnIndexPastTheWindows_SaysHowManyMatched_NotThatNoneDid()
+    {
+        // Arrange - two Explorer windows: index 2 names none, so it is gone at once
+        _desktop.Add("Documents", "CabinetWClass", processName: "explorer");
+        _desktop.Add("Downloads", "CabinetWClass", processName: "explorer");
+
+        // Act
+        var result = await WaitAsync(new WindowSelector { ProcessName = "explorer", Index = 2 }, WindowWaitCondition.Gone);
+
+        // Assert
+        result.Satisfied.Should().BeTrue();
+        result.Warning.Should().Contain("Only 2 windows matched processName 'explorer' when the wait started")
+            .And.Contain("index 2").And.NotContain("No window matched");
+    }
+
     #endregion
 
     #region foreground and visible
@@ -503,6 +555,420 @@ public class WindowConditionWaitTests
         result.Window!.Handle.Should().Be(notepad);
         result.Error.Should().NotContain("came to the front within")
             .And.Contain("'notes.txt - Notepad'").And.Contain("less than 300 ms before the timeout");
+    }
+
+    #endregion
+
+    #region minimized and maximized
+
+    [Fact]
+    public async Task Minimized_AWindowThatIsMinimized_CountsOnceItHasStayedMinimizedForStableMs()
+    {
+        var notepad = _desktop.Add("notes.txt - Notepad", "Notepad", processName: "notepad");
+        At(400, () => _desktop.SetMinimized(notepad, true));
+
+        var result = await WaitAsync(new WindowSelector { ProcessName = "notepad" }, WindowWaitCondition.Minimized);
+
+        result.Satisfied.Should().BeTrue();
+        result.Window!.Handle.Should().Be(notepad);
+        result.Window.State.Should().Be(WindowState.Minimized);
+        result.ElapsedMs.Should().Be(700);
+    }
+
+    [Fact]
+    public async Task Maximized_AWindowThatIsMaximized_Counts_AndAMinimizedOneDoesNot()
+    {
+        // Arrange - minimized from maximized first (IsZoomed may stay true), then restored to maximized 500 ms in
+        var notepad = _desktop.Add("notes.txt - Notepad", "Notepad", processName: "notepad");
+        _desktop.SetMaximized(notepad, true);
+        _desktop.SetMinimized(notepad, true);
+        At(500, () => _desktop.SetMinimized(notepad, false));
+
+        // Act
+        var result = await WaitAsync(new WindowSelector { ProcessName = "notepad" }, WindowWaitCondition.Maximized);
+
+        // Assert
+        result.Satisfied.Should().BeTrue();
+        result.Window!.State.Should().Be(WindowState.Maximized);
+        result.ElapsedMs.Should().Be(800);
+    }
+
+    [Fact]
+    public async Task Minimized_SeveralWindows_AnyOneThatHasHeldSatisfiesIt()
+    {
+        // One of two windows is minimized: without all, the set is satisfied by any window that counts
+        _desktop.Add("Inbox - Google Chrome", "Chrome_WidgetWin_1", processName: "chrome");
+        var docs = _desktop.Add("Docs - Google Chrome", "Chrome_WidgetWin_1", processName: "chrome");
+        _desktop.SetMinimized(docs, true);
+
+        var result = await WaitAsync(new WindowSelector { ProcessName = "chrome" }, WindowWaitCondition.Minimized);
+
+        result.Satisfied.Should().BeTrue();
+        result.Window!.Handle.Should().Be(docs);
+    }
+
+    [Fact]
+    public async Task Minimized_TimesOut_SayingWhatStateTheWindowIsIn()
+    {
+        var notepad = _desktop.Add("notes.txt - Notepad", "Notepad", processName: "notepad");
+        _desktop.SetMaximized(notepad, true);
+
+        var result = await WaitAsync(new WindowSelector { ProcessName = "notepad" }, WindowWaitCondition.Minimized, timeoutMs: 1000);
+
+        result.TimedOut.Should().BeTrue();
+        result.Window!.Handle.Should().Be(notepad);
+        result.Error.Should().Contain("No window matching processName 'notepad' was minimized within 1000 ms")
+            .And.Contain("'notes.txt - Notepad' is maximized");
+    }
+
+    [Fact]
+    public async Task Maximized_TimesOut_SayingAWindowMaximizedTooLateIsMaximized()
+    {
+        var notepad = _desktop.Add("notes.txt - Notepad", "Notepad", processName: "notepad");
+        At(900, () => _desktop.SetMaximized(notepad, true));
+
+        var result = await WaitAsync(new WindowSelector { ProcessName = "notepad" }, WindowWaitCondition.Maximized, timeoutMs: 1000);
+
+        result.TimedOut.Should().BeTrue();
+        result.Error.Should().Contain("stayed maximized for 300 ms").And.Contain("is maximized, but for less than 300 ms");
+    }
+
+    #endregion
+
+    #region all
+
+    [Fact]
+    public async Task All_Minimized_WaitsForEveryWindowThatCounts_AndListsThem()
+    {
+        // Arrange - an app's three windows are minimized one after another
+        var windows = new[] { "Board", "Chart", "Table" }.Select(title => _desktop.Add(title, processName: "msedge")).ToList();
+        At(200, () => _desktop.SetMinimized(windows[0], true));
+        At(400, () => _desktop.SetMinimized(windows[1], true));
+        At(600, () => _desktop.SetMinimized(windows[2], true));
+
+        // Act
+        var result = await WaitAsync(new WindowSelector { ProcessName = "msedge" }, WindowWaitCondition.Minimized, all: true);
+
+        // Assert - all three since 600 ms, held for 300 ms
+        result.Satisfied.Should().BeTrue();
+        result.ElapsedMs.Should().Be(900);
+        result.IsSet.Should().BeTrue();
+        result.Window.Should().BeNull();
+        result.MatchCount.Should().Be(3);
+        result.Candidates.Select(c => c.Handle).Should().Equal(windows);
+        result.Candidates.Should().OnlyContain(c => c.State == WindowState.Minimized);
+    }
+
+    [Fact]
+    public async Task All_Visible_IsAllRestored_AlsoForAWindowThatComesBackMaximized()
+    {
+        // Arrange - both minimized; restored 300 ms in, one of them to maximized, as it was before
+        var board = _desktop.Add("Board", processName: "msedge");
+        var chart = _desktop.Add("Chart", processName: "msedge");
+        _desktop.SetMinimized(board, true);
+        _desktop.SetMinimized(chart, true);
+        _desktop.SetMaximized(chart, true);
+        At(300, () =>
+        {
+            _desktop.SetMinimized(board, false);
+            _desktop.SetMinimized(chart, false);
+        });
+
+        // Act
+        var result = await WaitAsync(new WindowSelector { ProcessName = "msedge" }, WindowWaitCondition.Visible, all: true);
+
+        // Assert
+        result.Satisfied.Should().BeTrue();
+        result.ElapsedMs.Should().Be(600);
+        result.Candidates.Select(c => c.State).Should().Equal(WindowState.Normal, WindowState.Maximized);
+    }
+
+    [Fact]
+    public async Task All_OneWindowThatHolds_IsASetOfOne()
+    {
+        var notepad = _desktop.Add("notes.txt - Notepad", "Notepad", processName: "notepad");
+        _desktop.SetMinimized(notepad, true);
+
+        var result = await WaitAsync(new WindowSelector { ProcessName = "notepad" }, WindowWaitCondition.Minimized, all: true);
+
+        result.Satisfied.Should().BeTrue();
+        result.Window.Should().BeNull("a set result lists its windows as candidates");
+        result.MatchCount.Should().Be(1);
+        result.Candidates.Should().ContainSingle().Which.Handle.Should().Be(notepad);
+    }
+
+    [Fact]
+    public async Task All_AnEmptySet_NeverHolds()
+    {
+        // Every window of none is minimized, but all needs at least one
+        var result = await WaitAsync(new WindowSelector { ProcessName = "msedge" }, WindowWaitCondition.Minimized, timeoutMs: 1000, all: true);
+
+        result.TimedOut.Should().BeTrue();
+        result.IsSet.Should().BeTrue();
+        result.MatchCount.Should().Be(0);
+        result.Candidates.Should().BeEmpty();
+        result.Error.Should().Contain("No window matching processName 'msedge' is open after 1000 ms, and all needs at least one");
+    }
+
+    [Fact]
+    public async Task All_AWindowThatJoinsTheSet_StartsTheHoldAgain()
+    {
+        // Arrange - two minimized windows; a third opens minimized 200 ms in, so the same windows hold from 200 ms
+        _desktop.SetMinimized(_desktop.Add("Board", processName: "msedge"), true);
+        _desktop.SetMinimized(_desktop.Add("Chart", processName: "msedge"), true);
+        At(200, () => _desktop.SetMinimized(_desktop.Add("Table", processName: "msedge"), true));
+
+        // Act
+        var result = await WaitAsync(new WindowSelector { ProcessName = "msedge" }, WindowWaitCondition.Minimized, all: true);
+
+        // Assert
+        result.Satisfied.Should().BeTrue();
+        result.ElapsedMs.Should().Be(500);
+        result.MatchCount.Should().Be(3);
+    }
+
+    [Fact]
+    public async Task All_TimesOut_WithTheSet_AndTheWindowsThatAreNotAsWanted()
+    {
+        // Arrange
+        var board = _desktop.Add("Board", processName: "msedge");
+        var chart = _desktop.Add("Chart", processName: "msedge");
+        _desktop.SetMinimized(board, true);
+        _desktop.SetMaximized(chart, true);
+
+        // Act
+        var result = await WaitAsync(new WindowSelector { ProcessName = "msedge" }, WindowWaitCondition.Minimized, timeoutMs: 1000, all: true);
+
+        // Assert - the last set seen, each window with its state
+        result.TimedOut.Should().BeTrue();
+        result.ErrorCode.Should().Be(nameof(WindowErrorCode.WaitTimedOut));
+        result.IsSet.Should().BeTrue();
+        result.Window.Should().BeNull();
+        result.MatchCount.Should().Be(2);
+        result.Candidates.Select(c => c.State).Should().Equal(WindowState.Minimized, WindowState.Maximized);
+        result.Error.Should().Contain("1 of 2 windows matching processName 'msedge' is minimized after 1000 ms: 'Chart' is maximized");
+    }
+
+    [Fact]
+    public async Task All_TimesOut_SayingTheSetChanged_WhenEveryWindowHoldsButNotLongEnough()
+    {
+        // Arrange - the one window is minimized 800 ms in, and a second opens minimized at 900 ms
+        var board = _desktop.Add("Board", processName: "msedge");
+        At(800, () => _desktop.SetMinimized(board, true));
+        At(900, () => _desktop.SetMinimized(_desktop.Add("Chart", processName: "msedge"), true));
+
+        // Act
+        var result = await WaitAsync(new WindowSelector { ProcessName = "msedge" }, WindowWaitCondition.Minimized, timeoutMs: 1000, all: true);
+
+        // Assert
+
+        result.TimedOut.Should().BeTrue();
+        result.Error.Should().Contain("All 2 windows matching processName 'msedge' are minimized, but not the same windows for 300 ms");
+    }
+
+    [Fact]
+    public async Task All_TimesOut_SayingTheOneWindowHeldTooShortly()
+    {
+        var notepad = _desktop.Add("notes.txt - Notepad", "Notepad", processName: "notepad");
+        At(900, () => _desktop.SetMinimized(notepad, true));
+
+        var result = await WaitAsync(new WindowSelector { ProcessName = "notepad" }, WindowWaitCondition.Minimized, timeoutMs: 1000, all: true);
+
+        result.TimedOut.Should().BeTrue();
+        result.Candidates.Should().ContainSingle();
+        result.Error.Should().Contain("The one window matching processName 'notepad' is minimized, but not for 300 ms within 1000 ms");
+    }
+
+    [Fact]
+    public async Task All_AHandleThatCloses_EndsWithInvalidHandle()
+    {
+        var notepad = _desktop.Add("notes.txt - Notepad", "Notepad", processName: "notepad");
+        At(200, () => _desktop.Close(notepad));
+
+        var result = await WaitAsync(new WindowSelector { Handle = notepad }, WindowWaitCondition.Minimized, all: true);
+
+        result.ErrorCode.Should().Be(nameof(WindowErrorCode.InvalidHandle));
+    }
+
+    #endregion
+
+    #region count
+
+    [Fact]
+    public async Task Count_Exactly_WaitsForThatManyWindows_AndListsThem()
+    {
+        // Arrange - a board opens its windows one by one
+        var board = _desktop.Add("Board", processName: "msedge");
+        nint chart = 0, table = 0;
+        At(200, () => chart = _desktop.Add("Chart", processName: "msedge"));
+        At(400, () => table = _desktop.Add("Table", processName: "msedge"));
+
+        // Act
+        var result = await WaitAsync(new WindowSelector { ProcessName = "msedge" }, count: new WindowCount { Exactly = 3 });
+
+        // Assert
+        result.Satisfied.Should().BeTrue();
+        result.ElapsedMs.Should().Be(700);
+        result.IsSet.Should().BeTrue();
+        result.Window.Should().BeNull();
+        result.MatchCount.Should().Be(3);
+        result.Candidates.Select(c => c.Handle).Should().BeEquivalentTo([board, chart, table]);
+    }
+
+    [Fact]
+    public async Task Count_AtLeast_IsSatisfiedByMore()
+    {
+        foreach (var title in new[] { "Board", "Chart", "Table" })
+            _desktop.Add(title, processName: "msedge");
+
+        var result = await WaitAsync(new WindowSelector { ProcessName = "msedge" }, count: new WindowCount { AtLeast = 2 });
+
+        result.Satisfied.Should().BeTrue();
+        result.ElapsedMs.Should().Be(300);
+        result.MatchCount.Should().Be(3);
+    }
+
+    [Fact]
+    public async Task Count_AtMost_WaitsForWindowsToClose()
+    {
+        var windows = new[] { "Board", "Chart", "Table" }.Select(title => _desktop.Add(title, processName: "msedge")).ToList();
+        At(200, () => _desktop.Close(windows[1]));
+        At(300, () => _desktop.Close(windows[2]));
+
+        var result = await WaitAsync(new WindowSelector { ProcessName = "msedge" }, count: new WindowCount { AtMost = 1 });
+
+        result.Satisfied.Should().BeTrue();
+        result.ElapsedMs.Should().Be(600);
+        result.MatchCount.Should().Be(1);
+        result.Candidates.Should().ContainSingle().Which.Handle.Should().Be(windows[0]);
+    }
+
+    [Fact]
+    public async Task Count_ARange_IsSatisfiedWithinIt()
+    {
+        _desktop.Add("Board", processName: "msedge");
+        At(200, () => _desktop.Add("Chart", processName: "msedge"));
+
+        var result = await WaitAsync(new WindowSelector { ProcessName = "msedge" }, count: new WindowCount { AtLeast = 2, AtMost = 4 });
+
+        result.Satisfied.Should().BeTrue();
+        result.ElapsedMs.Should().Be(500);
+    }
+
+    [Fact]
+    public async Task Count_ExcludeHandles_CountsOnlyTheNewWindows()
+    {
+        // The user's own Edge window was there before: only the two the action opens count
+        var own = _desktop.Add("News - Microsoft Edge", processName: "msedge");
+        At(100, () => _desktop.Add("Board", processName: "msedge"));
+        At(200, () => _desktop.Add("Chart", processName: "msedge"));
+
+        var result = await WaitAsync(new WindowSelector { ProcessName = "msedge" }, excludeHandles: [own], count: new WindowCount { Exactly = 2 });
+
+        result.Satisfied.Should().BeTrue();
+        result.ElapsedMs.Should().Be(500);
+        result.Candidates.Select(c => c.Handle).Should().NotContain(own);
+    }
+
+    [Fact]
+    public async Task Count_AChangeOfMembership_StartsTheHoldAgain_AtTheSameCount()
+    {
+        // Arrange - a splash window is replaced by the main window 200 ms in: still two windows, but not the same two
+        _desktop.Add("Board", processName: "msedge");
+        var splash = _desktop.Add("Loading", processName: "msedge");
+        At(200, () =>
+        {
+            _desktop.Close(splash);
+            _desktop.Add("Chart", processName: "msedge");
+        });
+
+        // Act
+        var result = await WaitAsync(new WindowSelector { ProcessName = "msedge" }, count: new WindowCount { Exactly = 2 });
+
+        // Assert
+        result.Satisfied.Should().BeTrue();
+        result.ElapsedMs.Should().Be(500);
+        result.Candidates.Select(c => c.Title).Should().BeEquivalentTo(["Board", "Chart"]);
+    }
+
+    [Fact]
+    public async Task Count_ExactlyZero_WaitsAsGone_ForTheWindowsToClose()
+    {
+        var windows = new[] { "Board", "Chart" }.Select(title => _desktop.Add(title, processName: "msedge")).ToList();
+        At(400, () => windows.ForEach(_desktop.Close));
+
+        var result = await WaitAsync(new WindowSelector { ProcessName = "msedge" }, count: new WindowCount { Exactly = 0 });
+
+        result.Satisfied.Should().BeTrue();
+        result.ElapsedMs.Should().Be(700);
+        result.IsSet.Should().BeTrue();
+        result.MatchCount.Should().Be(0);
+        result.Warning.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task Count_AtMostZero_WhenNothingMatchedAtTheStart_KeepsGonesWarning()
+    {
+        var result = await WaitAsync(new WindowSelector { ProcessName = "msedg" }, count: new WindowCount { AtMost = 0 });
+
+        result.Satisfied.Should().BeTrue();
+        result.Warning.Should().Contain("No window matched processName 'msedg' when the wait started");
+    }
+
+    [Fact]
+    public async Task Count_ExactlyZero_TimesOut_WithTheWindowsStillOpen()
+    {
+        _desktop.Add("Board", processName: "msedge");
+        _desktop.Add("Chart", processName: "msedge");
+
+        var result = await WaitAsync(new WindowSelector { ProcessName = "msedge" }, timeoutMs: 1000, count: new WindowCount { Exactly = 0 });
+
+        result.TimedOut.Should().BeTrue();
+        result.IsSet.Should().BeTrue();
+        result.MatchCount.Should().Be(2);
+        result.Candidates.Should().HaveCount(2);
+        result.Error.Should().Contain("2 windows matching processName 'msedge' are still open");
+    }
+
+    [Fact]
+    public async Task Count_TimesOut_WithTheLastSetSeen()
+    {
+        // Two of the three windows came
+        _desktop.Add("Board", processName: "msedge");
+        _desktop.SetMinimized(_desktop.Add("Chart", processName: "msedge"), true);
+
+        var result = await WaitAsync(new WindowSelector { ProcessName = "msedge" }, timeoutMs: 1000, count: new WindowCount { Exactly = 3 });
+
+        result.TimedOut.Should().BeTrue();
+        result.ErrorCode.Should().Be(nameof(WindowErrorCode.WaitTimedOut));
+        result.IsSet.Should().BeTrue();
+        result.Window.Should().BeNull();
+        result.MatchCount.Should().Be(2);
+        result.Candidates.Select(c => c.State).Should().Equal(WindowState.Normal, WindowState.Minimized);
+        result.Error.Should().Contain("2 windows matching processName 'msedge' are open after 1000 ms, not exactly 3");
+    }
+
+    [Fact]
+    public async Task Count_TimesOut_SayingTheSetChanged_WhenTheCountHeldButNotLongEnough()
+    {
+        _desktop.Add("Board", processName: "msedge");
+        At(900, () => _desktop.Add("Chart", processName: "msedge"));
+
+        var result = await WaitAsync(new WindowSelector { ProcessName = "msedge" }, timeoutMs: 1000, count: new WindowCount { AtLeast = 2 });
+
+        result.TimedOut.Should().BeTrue();
+        result.Error.Should().Contain("2 windows matching processName 'msedge' are open after 1000 ms, at least 2, but not the same windows for 300 ms");
+    }
+
+    [Fact]
+    public async Task Count_NoWindow_TimesOut_WithTheListingsHints()
+    {
+        var result = await WaitAsync(new WindowSelector { ProcessName = "msedge" }, timeoutMs: 500, count: new WindowCount { AtLeast = 1 });
+
+        result.TimedOut.Should().BeTrue();
+        result.MatchCount.Should().Be(0);
+        result.Error.Should().Contain("0 windows matching processName 'msedge' are open after 500 ms, not at least 1")
+            .And.Contain("includeUntitled");
     }
 
     #endregion
@@ -768,6 +1234,19 @@ public class WindowConditionWaitTests
 
         progress.Reports.Select(p => p.Completed).Should().Equal(1000, 2000, 3000);
         progress.Reports.Should().OnlyContain(p => p.Total == 3000 && p.Message.Contains("exists"));
+    }
+
+    [Fact]
+    public async Task Progress_NamesAllAndCount()
+    {
+        var all = new RecordingProgress<OperationProgress>();
+        var count = new RecordingProgress<OperationProgress>();
+
+        await WaitAsync(new WindowSelector { TitleEquals = "Board" }, WindowWaitCondition.Minimized, timeoutMs: 1000, progress: all, all: true);
+        await WaitAsync(new WindowSelector { TitleEquals = "Board" }, timeoutMs: 1000, progress: count, count: new WindowCount { Exactly = 3 });
+
+        all.Reports.Should().OnlyContain(p => p.Message.StartsWith("waiting for minimized (all):"));
+        count.Reports.Should().OnlyContain(p => p.Message.StartsWith("waiting for exists (exactly 3):"));
     }
 
     #endregion

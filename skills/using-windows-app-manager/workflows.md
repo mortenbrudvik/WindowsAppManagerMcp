@@ -29,7 +29,7 @@ Common keys and the `send_keys` syntax are in [input.md](input.md#common-keys).
 
 - Save a File As, Answer a Prompt: [dialogs.md](dialogs.md)
 - Launch and Position an App: [windows-and-apps.md](windows-and-apps.md#launch-and-position-an-app)
-- Arrange Windows for Development, Save and Restore a Workspace, Multi-Monitor Setup, Keep a Window in View: [layouts-and-monitors.md](layouts-and-monitors.md)
+- Arrange Windows for Development, Save and Restore a Workspace, Multi-Monitor Setup, Keep a Window in View, Check a Placement Another Program Made: [layouts-and-monitors.md](layouts-and-monitors.md)
 - See What Is in a Window: [screens-and-ocr.md](screens-and-ocr.md#see-what-is-in-a-window)
 - Reach an Item Far Down a List: [lists.md](lists.md#reach-an-item-far-down-a-list)
 - Copy Text Out of an App: [clipboard.md](clipboard.md#copy-text-out-of-an-app)

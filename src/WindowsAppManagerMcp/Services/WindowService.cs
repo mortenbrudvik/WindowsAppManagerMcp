@@ -376,7 +376,26 @@ public class WindowService : IWindowService
             IsTopmost: (extendedStyle & NativeEnums.WS_EX_TOPMOST) != 0,
             IsEnabled: (style & NativeEnums.WS_DISABLED) == 0,
             IsResponding: !_nativeWrapper.IsHungAppWindow(handle),
-            Dpi: dpi == 0 ? null : (int)dpi);
+            Dpi: dpi == 0 ? null : (int)dpi)
+        {
+            Restore = window.State == WindowState.Minimized ? ReadRestore(handle) : null
+        };
+    }
+
+    /// <summary>
+    /// Where a minimized window comes back to (issue #12): its restore rectangle in screen coordinates
+    /// (<see cref="GetNormalBounds"/>), whether it comes back maximized, and the monitor of that rectangle. Null when the
+    /// placement cannot be read.
+    /// </summary>
+    private WindowRestore? ReadRestore(nint handle)
+    {
+        if (_nativeWrapper.GetWindowPlacement(handle) is not { } placement)
+            return null;
+
+        var monitors = _monitorService.GetAllMonitors();
+        var bounds = NormalBounds(handle, placement, monitors);
+        var state = (placement.Flags & NativeEnums.WPF_RESTORETOMAXIMIZED) != 0 ? WindowState.Maximized : WindowState.Normal;
+        return new WindowRestore(state, bounds, WorkspaceCoordinates.MonitorOf(bounds, monitors));
     }
 
     public WindowInfo? GetForegroundWindow()
@@ -538,12 +557,16 @@ public class WindowService : IWindowService
         return SetPosition(handle, rect, flags | keep, failure);
     }
 
-    /// <summary>The scale factor of the monitor the window is on (1.0 when it cannot be told).</summary>
-    private double MonitorScale(nint handle)
+    /// <summary>
+    /// The scale factor of the monitor the window is on; null when its monitor cannot be read (issue #12), which the
+    /// placements take as a scale change they cannot rule out: they place again, and move across monitors in two steps.
+    /// </summary>
+    private double? MonitorScale(nint handle)
     {
         var monitors = _monitorService.GetAllMonitors();
-        var index = _monitorService.GetMonitorIndex(handle);
-        return index >= 0 && index < monitors.Count ? monitors[index].ScaleFactor : 1.0;
+        return _monitorService.GetMonitorIndex(handle) is { } index && index >= 0 && index < monitors.Count
+            ? monitors[index].ScaleFactor
+            : null;
     }
 
     /// <summary>
@@ -607,14 +630,17 @@ public class WindowService : IWindowService
     public WindowChangeResult SetWindowState(nint handle, WindowStateRequest state) =>
         ChangeRefusal(handle) ?? ApplyState(handle, state);
 
-    public WindowRect? GetNormalBounds(nint handle)
-    {
-        if (handle == nint.Zero || _nativeWrapper.GetWindowPlacement(handle) is not { } placement)
-            return null;
+    public WindowRect? GetNormalBounds(nint handle) =>
+        handle != nint.Zero && _nativeWrapper.GetWindowPlacement(handle) is { } placement
+            ? NormalBounds(handle, placement, _monitorService.GetAllMonitors())
+            : null;
 
+    /// <summary>The placement's restore rectangle in screen coordinates: a tool window's is already, any other's is in workspace coordinates.</summary>
+    private WindowRect NormalBounds(nint handle, NativeWindowPlacement placement, IReadOnlyList<MonitorInfo> monitors)
+    {
         var (left, top, right, bottom) = placement.NormalPosition;
         var normal = WindowRect.FromLTRB(left, top, right, bottom);
-        return IsToolWindow(handle) ? normal : WorkspaceCoordinates.ToScreen(normal, _monitorService.GetAllMonitors());
+        return IsToolWindow(handle) ? normal : WorkspaceCoordinates.ToScreen(normal, monitors);
     }
 
     public WindowChangeResult SetMinimizedBounds(nint handle, int x, int y, int width, int height)
@@ -752,7 +778,10 @@ public class WindowService : IWindowService
         if (ChangeRefusal(handle) is { } refused)
             return refused;
 
-        var targetMonitor = monitorIndex ?? _monitorService.GetMonitorIndex(handle);
+        // Its own monitor when none is named; one that cannot be read is no reason to snap on monitor 0 (issue #12)
+        if ((monitorIndex ?? _monitorService.GetMonitorIndex(handle)) is not { } targetMonitor)
+            return OwnMonitorUnreadable(handle);
+
         if (MonitorIndexRefusal(handle, targetMonitor) is { } invalid)
             return invalid;
 
@@ -781,6 +810,7 @@ public class WindowService : IWindowService
         if (MonitorIndexRefusal(handle, monitorIndex, monitors.Count) is { } invalid)
             return invalid;
 
+        // A monitor that cannot be read is never the target (issue #12): the window is moved, and checked afterwards
         var maximize = positioning == MonitorPositioning.Maximize;
         if (maximize && _monitorService.GetMonitorIndex(handle) == monitorIndex)
             return OnMonitor(handle, ApplyState(handle, WindowStateRequest.Maximize), monitorIndex, maximize);
@@ -854,14 +884,24 @@ public class WindowService : IWindowService
     /// <summary>
     /// <paramref name="result"/> when it failed; otherwise Done only when the window is on monitor
     /// <paramref name="monitorIndex"/> (MonitorFromWindow) afterwards, and MoveFailed when it is not: an application can
-    /// keep or restore its own position, and SW_MAXIMIZE maximizes a window on the monitor it is on.
+    /// keep or restore its own position, and SW_MAXIMIZE maximizes a window on the monitor it is on. A monitor that cannot be
+    /// read afterwards is not the target either (issue #12): the move is not confirmed, so it is MoveFailed (InvalidHandle
+    /// when the window closed).
     /// </summary>
     private WindowChangeResult OnMonitor(nint handle, WindowChangeResult result, int monitorIndex, bool maximized)
     {
         if (!result.Success)
             return result;
 
-        var actual = _monitorService.GetMonitorIndex(handle);
+        if (_monitorService.GetMonitorIndex(handle) is not { } actual)
+        {
+            return _nativeWrapper.IsWindow(handle)
+                ? WindowChangeResult.Failed(handle, WindowErrorCode.MoveFailed,
+                    "The window was moved, but its monitor could not be read afterwards (the displays may be changing), so it is " +
+                    $"not known to be on monitor {monitorIndex}. Check it with find_windows.")
+                : WindowGone(handle);
+        }
+
         if (actual == monitorIndex)
             return WindowChangeResult.Done(handle);
 
@@ -1129,6 +1169,17 @@ public class WindowService : IWindowService
     private static WindowChangeResult WindowGone(nint handle) =>
         WindowChangeResult.Failed(handle, WindowErrorCode.InvalidHandle,
             "The window no longer exists: it closed during the call. Call find_windows for a current handle.");
+
+    /// <summary>
+    /// A snap without a monitor, of a window whose own monitor cannot be read (issue #12): it closed (InvalidHandle), or the
+    /// displays changed during the lookup (MoveFailed). It used to snap on monitor 0; now nothing is changed.
+    /// </summary>
+    private WindowChangeResult OwnMonitorUnreadable(nint handle) =>
+        _nativeWrapper.IsWindow(handle)
+            ? WindowChangeResult.Failed(handle, WindowErrorCode.MoveFailed,
+                "The window's monitor could not be read (the displays may be changing), so it was not snapped: nothing was changed. " +
+                "Try again, or pass monitor to name one.")
+            : WindowGone(handle);
 
     private WindowChangeResult? MonitorIndexRefusal(nint handle, int monitorIndex) =>
         MonitorIndexRefusal(handle, monitorIndex, _monitorService.GetAllMonitors().Count);
@@ -1828,18 +1879,26 @@ public class WindowService : IWindowService
         var frame = _nativeWrapper.GetExtendedFrameBounds(hWnd) is { } extended
             ? WindowRect.FromLTRB(extended.Left, extended.Top, extended.Right, extended.Bottom)
             : null;
+        var bounds = WindowRect.FromLTRB(rect.Value.Left, rect.Value.Top, rect.Value.Right, rect.Value.Bottom);
         var isAgentHost = _hostGuard.IsHostWindow(hWnd);
+
+        // One lookup for the index, the id and the zone (issue #12); a monitor that cannot be read leaves all of them out
+        var monitor = _monitorService.GetMonitorForWindow(hWnd);
+        var visible = frame ?? bounds;
 
         return new WindowInfo(
             Handle: hWnd,
             Title: title,
             ProcessName: session.ProcessName(process.ProcessId),
             ProcessId: (int)process.ProcessId,
-            Bounds: WindowRect.FromLTRB(rect.Value.Left, rect.Value.Top, rect.Value.Right, rect.Value.Bottom),
+            Bounds: bounds,
             State: state,
             IsVisible: _nativeWrapper.IsWindowVisible(hWnd),
-            MonitorIndex: _monitorService.GetMonitorIndex(hWnd))
+            MonitorIndex: monitor?.Index)
         {
+            MonitorId = monitor?.Id,
+            Zone = monitor == null ? null : WindowZones.Match(visible, state, monitor),
+            SpansMonitors = monitor != null && WindowZones.Spans(visible, state, monitor, _monitorService.GetAllMonitors),
             VisibleBounds = frame,
             ClassName = className,
             IsCloaked = isCloaked,

@@ -35,7 +35,7 @@ public static class ToolDocCatalog
             new("get_foreground_window", "Get focused window"),
             new("get_owned_windows", "Dialogs and popups a window owns; which one blocks it", "handle", "includeHidden"),
             new("get_window_info", "One window, without listing all; full adds foreground, z-order, topmost, enabled, responding, DPI", "window (or handle)", "detail"),
-            new("wait_for_window", "Wait until a window exists, is gone, in front, visible, retitled or input-idle", "window", "condition", "excludeHandles", "timeoutMs"),
+            new("wait_for_window", "Wait until a window exists, is gone, in front, visible, minimized, maximized, retitled or input-idle; all or count for a set of windows", "window", "condition", "all", "count", "excludeHandles", "timeoutMs"),
             new("get_window_events", "What windows came up, went, were retitled or came to the front since an earlier call", "sinceSeq", "types", "processName", "limit"),
         ],
         SkillNote: "Every tool that takes a window's `handle` (or `windowHandle`) also takes `window`, a selector: `find_windows`' " +

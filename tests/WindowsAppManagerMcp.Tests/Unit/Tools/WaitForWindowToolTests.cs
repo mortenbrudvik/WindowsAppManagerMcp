@@ -7,8 +7,9 @@ namespace WindowsAppManagerMcp.Tests.Unit.Tools;
 /// <summary>
 /// The wait_for_window tool (roadmap M3.7): its arguments are checked before anything waits (InvalidArguments), the
 /// request reaches the window wait service as given, and the service's outcome becomes the result: satisfied with the
-/// window (or the candidates when several windows satisfy it), or not satisfied with its errorCode (WaitTimedOut on
-/// timeout), which the tool-error filter turns into isError. The service is a mock; nothing reads the real desktop.
+/// window (or the candidates when several windows satisfy it, and the set with all or count, issue #14), or not satisfied
+/// with its errorCode (WaitTimedOut on timeout), which the tool-error filter turns into isError. The service is a mock;
+/// nothing reads the real desktop.
 /// </summary>
 public class WaitForWindowToolTests
 {
@@ -16,6 +17,18 @@ public class WaitForWindowToolTests
 
     private static readonly WindowInfo NotepadWindow =
         TestDataFactory.CreateWindowInfo(0x1A0B2C, "notes.txt - Notepad", "notepad", 200) with { ClassName = "Notepad" };
+
+    private static readonly WindowSelector Edge = new() { ProcessName = "msedge" };
+
+    /// <summary>An Edge window snapped to the left half of monitor 1, as find_windows reads it.</summary>
+    private static readonly WindowInfo BoardWindow =
+        TestDataFactory.CreateWindowInfo(0x3001, "Board - Microsoft Edge", "msedge", 300, x: 2553, y: 0, width: 1294, height: 1399, monitorIndex: 1) with
+        {
+            ClassName = "Chrome_WidgetWin_1",
+            VisibleBounds = new WindowRect(2560, 0, 1280, 1392),
+            MonitorId = "m-0d6fc36f",
+            Zone = "left_half"
+        };
 
     private readonly Mock<IWindowService> _windows = new();
     private readonly Mock<IWindowWaitService> _wait = new();
@@ -100,6 +113,86 @@ public class WaitForWindowToolTests
         result.Window.Should().BeNull();
         result.MatchCount.Should().Be(7);
         result.Candidates!.Select(c => c.Handle).Should().Equal(0x1A0B2C, 0x2000);
+    }
+
+    [Fact]
+    public async Task TheSetArguments_ReachTheService()
+    {
+        await CreateTools().WaitForWindow(Edge, WindowWaitCondition.Minimized, all: true);
+        _request!.All.Should().BeTrue();
+        _request.Count.Should().BeNull();
+
+        await CreateTools().WaitForWindow(Edge, count: new WindowCount { AtLeast = 2, AtMost = 4 });
+        _request!.All.Should().BeFalse();
+        _request.Count.Should().Be(new WindowCount { AtLeast = 2, AtMost = 4 });
+    }
+
+    [Fact]
+    public async Task ASetResult_ListsItsWindows_WithTheirStateAndPlace_AndAlwaysMatchCount()
+    {
+        Returns(new WindowConditionResult { Satisfied = true, IsSet = true, MatchCount = 1, Candidates = [BoardWindow] });
+
+        var result = await CreateTools().WaitForWindow(Edge, count: new WindowCount { Exactly = 1 });
+
+        result.Window.Should().BeNull();
+        result.MatchCount.Should().Be(1, "a set result always says how many windows count");
+        result.Candidates.Should().ContainSingle().Which.Should().Be(new WindowCandidateDto(0x3001, "Board - Microsoft Edge", "msedge", 300,
+            "Chrome_WidgetWin_1", State: "normal", VisibleBounds: new BoundsDto(2560, 0, 1280, 1392), MonitorIndex: 1,
+            MonitorId: "m-0d6fc36f", Zone: "left_half"));
+    }
+
+    [Fact]
+    public async Task AnEmptySet_SaysMatchCountZero_WithoutCandidates()
+    {
+        Returns(new WindowConditionResult { Satisfied = true, IsSet = true });
+
+        var result = await CreateTools().WaitForWindow(Edge, count: new WindowCount { Exactly = 0 });
+
+        result.MatchCount.Should().Be(0);
+        result.Candidates.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task AMinimizedWindowInTheSet_HasItsMonitor_ButNoVisibleBoundsOrZone()
+    {
+        // Parked off screen at -32000: where it is says nothing; its monitor is the one it restores to
+        var minimized = BoardWindow with
+        {
+            State = WindowState.Minimized,
+            VisibleBounds = new WindowRect(-32000, -32000, 160, 28),
+            Zone = null
+        };
+        Returns(new WindowConditionResult { Satisfied = true, IsSet = true, MatchCount = 1, Candidates = [minimized] });
+
+        var result = await CreateTools().WaitForWindow(Edge, WindowWaitCondition.Minimized, all: true);
+
+        var candidate = result.Candidates!.Single();
+        candidate.State.Should().Be("minimized");
+        candidate.VisibleBounds.Should().BeNull();
+        candidate.Zone.Should().BeNull();
+        candidate.MonitorIndex.Should().Be(1);
+        candidate.MonitorId.Should().Be("m-0d6fc36f");
+    }
+
+    [Fact]
+    public async Task ASetTimeout_ListsTheLastSetSeen()
+    {
+        Returns(new WindowConditionResult
+        {
+            TimedOut = true,
+            IsSet = true,
+            MatchCount = 2,
+            Candidates = [BoardWindow, BoardWindow with { Handle = 0x3002, Title = "Chart - Microsoft Edge", State = WindowState.Maximized }],
+            ErrorCode = nameof(WindowErrorCode.WaitTimedOut),
+            Error = "1 of 2 windows matching processName 'msedge' is minimized after 10000 ms."
+        });
+
+        var result = await CreateTools().WaitForWindow(Edge, WindowWaitCondition.Minimized, all: true);
+
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be("WaitTimedOut");
+        result.MatchCount.Should().Be(2);
+        result.Candidates!.Select(c => c.State).Should().Equal("normal", "maximized");
     }
 
     [Fact]
@@ -226,6 +319,30 @@ public class WaitForWindowToolTests
         { "newOnly", tools => tools.WaitForWindow(new WindowSelector { Handle = 5 }, newOnly: true) },
         { "excludeHandles", tools => tools.WaitForWindow(new WindowSelector { Handle = 5, ProcessName = "notepad" }, excludeHandles: [7, 5]) },
         { "previousTitle", tools => tools.WaitForWindow(Notepad, WindowWaitCondition.Exists, previousTitle: "Untitled - Notepad") },
+        { "all", tools => tools.WaitForWindow(Edge, all: true) },
+        { "all", tools => tools.WaitForWindow(Edge, WindowWaitCondition.Gone, all: true) },
+        { "all", tools => tools.WaitForWindow(Edge, WindowWaitCondition.Foreground, all: true) },
+        { "all", tools => tools.WaitForWindow(Edge, WindowWaitCondition.TitleChanged, all: true) },
+        { "all", tools => tools.WaitForWindow(Edge, WindowWaitCondition.InputIdle, all: true) },
+        { "count", tools => tools.WaitForWindow(Edge, WindowWaitCondition.Visible, count: new WindowCount { Exactly = 2 }) },
+        { "count", tools => tools.WaitForWindow(Edge, WindowWaitCondition.Gone, count: new WindowCount { Exactly = 0 }) },
+        { "count", tools => tools.WaitForWindow(Edge, WindowWaitCondition.Foreground, count: new WindowCount { AtLeast = 1 }) },
+        { "count", tools => tools.WaitForWindow(Edge, WindowWaitCondition.TitleChanged, count: new WindowCount { AtLeast = 1 }) },
+        { "count", tools => tools.WaitForWindow(Edge, WindowWaitCondition.InputIdle, count: new WindowCount { AtLeast = 1 }) },
+        { "count", tools => tools.WaitForWindow(Edge, WindowWaitCondition.Minimized, all: true, count: new WindowCount { Exactly = 2 }) },
+        { "window.index", tools => tools.WaitForWindow(Edge with { Index = 1 }, count: new WindowCount { Exactly = 2 }) },
+        { "window.handle", tools => tools.WaitForWindow(new WindowSelector { Handle = 5 }, count: new WindowCount { Exactly = 1 }) },
+        { "window.handle", tools => tools.WaitForWindow(new WindowSelector { Handle = 5, ProcessName = "msedge" }, count: new WindowCount { Exactly = 1 }) },
+        { "window.foreground", tools => tools.WaitForWindow(Edge with { Foreground = true }, count: new WindowCount { Exactly = 1 }) },
+        { "count", tools => tools.WaitForWindow(Edge, count: new WindowCount()) },
+        { "count", tools => tools.WaitForWindow(Edge, count: new WindowCount { Exactly = -1 }) },
+        { "count", tools => tools.WaitForWindow(Edge, count: new WindowCount { AtLeast = -2, AtMost = 3 }) },
+        { "count", tools => tools.WaitForWindow(Edge, count: new WindowCount { AtLeast = 2, Exactly = 2 }) },
+        { "count", tools => tools.WaitForWindow(Edge, count: new WindowCount { Exactly = 2, AtMost = 3 }) },
+        { "atMost", tools => tools.WaitForWindow(Edge, count: new WindowCount { AtLeast = 4, AtMost = 2 }) },
+        { "always holds", tools => tools.WaitForWindow(Edge, count: new WindowCount { AtLeast = 0 }) },
+        { "newOnly", tools => tools.WaitForWindow(Edge, newOnly: true, count: new WindowCount { Exactly = 0 }) },
+        { "newOnly", tools => tools.WaitForWindow(Edge, newOnly: true, count: new WindowCount { AtLeast = 0, AtMost = 0 }) },
     };
 
     [Theory]

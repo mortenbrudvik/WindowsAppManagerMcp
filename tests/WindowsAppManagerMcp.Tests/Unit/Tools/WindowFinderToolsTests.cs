@@ -203,6 +203,50 @@ public class WindowFinderToolsTests
     }
 
     [Fact]
+    public void FindWindows_ReportsTheMonitorsId_TheZone_AndSpansMonitorsOnlyWhenTrue()
+    {
+        // Issue #12: the monitor's identity and how the window covers it, from the service's one lookup
+        _mockWindowService.Setup(w => w.FindWindows(It.IsAny<WindowQuery>())).Returns(new List<WindowInfo>
+        {
+            TestDataFactory.CreateWindowInfo(handleValue: 1, monitorIndex: 2) with { MonitorId = "m-0d6fc36f", Zone = "left_half" },
+            TestDataFactory.CreateWindowInfo(handleValue: 2, monitorIndex: 0) with { MonitorId = "m-81c07e5b", SpansMonitors = true }
+        });
+
+        var rows = CreateSut().FindWindows();
+
+        rows.Select(r => (r.MonitorIndex, r.MonitorId, r.Zone, r.SpansMonitors)).Should().Equal(
+            (2, "m-0d6fc36f", "left_half", null),
+            (0, "m-81c07e5b", null, true));
+    }
+
+    [Fact]
+    public void FindWindows_ARowWhoseMonitorCannotBeRead_HasNoMonitorIndexOrId()
+    {
+        // It used to say monitorIndex 0
+        _mockWindowService.Setup(w => w.FindWindows(It.IsAny<WindowQuery>()))
+            .Returns(new List<WindowInfo> { TestDataFactory.CreateWindowInfo() with { MonitorIndex = null } });
+
+        var dto = CreateSut().FindWindows().Should().ContainSingle().Which;
+
+        dto.MonitorIndex.Should().BeNull();
+        dto.MonitorId.Should().BeNull();
+    }
+
+    [Fact]
+    public void FindWindows_ListsMinimizedWindows_UnlessIncludeMinimizedIsFalse()
+    {
+        // Issue #16: the query has had IncludeMinimized all along; find_windows now passes it
+        _mockWindowService.Setup(w => w.FindWindows(It.IsAny<WindowQuery>())).Returns(new List<WindowInfo>());
+        var sut = CreateSut();
+
+        sut.FindWindows();
+        sut.FindWindows(includeMinimized: false);
+
+        _mockWindowService.Verify(w => w.FindWindows(It.Is<WindowQuery>(q => q.IncludeMinimized)), Times.Once);
+        _mockWindowService.Verify(w => w.FindWindows(It.Is<WindowQuery>(q => !q.IncludeMinimized)), Times.Once);
+    }
+
+    [Fact]
     public void FindWindows_ConvertsNullHandleCorrectly()
     {
         // Arrange
@@ -422,6 +466,51 @@ public class WindowFinderToolsTests
         result.Success.Should().BeTrue();
         result.IntegrityLevel.Should().BeNull();
         result.AboveServer.Should().BeNull();
+    }
+
+    // Issue #12: the monitor's identity and the zone from standard up, and where a minimized window comes back at full
+
+    [Theory]
+    [InlineData(WindowDetail.Standard)]
+    [InlineData(WindowDetail.Full)]
+    public void GetWindowInfo_ReportsTheMonitorsId_TheZone_AndSpansMonitors(WindowDetail detail)
+    {
+        var window = UseWindow(TestDataFactory.CreateWindowInfo(0x100, monitorIndex: 1) with
+        {
+            MonitorId = "m-81c07e5b", Zone = "right_third", SpansMonitors = true
+        });
+
+        var result = CreateSut().GetWindowInfo(handle: window.Handle, detail: detail);
+
+        (result.MonitorIndex, result.MonitorId, result.Zone, result.SpansMonitors).Should().Be((1, "m-81c07e5b", "right_third", true));
+    }
+
+    [Fact]
+    public void GetWindowInfo_Full_OfAMinimizedWindow_ReportsWhereItComesBack()
+    {
+        // Arrange
+        var window = UseWindow(TestDataFactory.CreateWindowInfo(0x100, state: WindowState.Minimized, monitorIndex: 1));
+        var monitor = TestDataFactory.CreateMonitorInfo(index: 1, isPrimary: false, boundsX: 1920) with { Id = "m-81c07e5b" };
+        _mockWindowService.Setup(w => w.GetWindowDetails(window.Handle)).Returns(new WindowDetails(window, false, 3, false, true, true, 96)
+        {
+            Restore = new WindowRestore(WindowState.Maximized, new WindowRect(2000, 100, 814, 607), monitor)
+        });
+
+        // Act
+        var full = CreateSut().GetWindowInfo(handle: window.Handle, detail: WindowDetail.Full);
+        var standard = CreateSut().GetWindowInfo(handle: window.Handle, detail: WindowDetail.Standard);
+
+        // Assert
+        full.Restore.Should().Be(new RestoreDto("maximized", new BoundsDto(2000, 100, 814, 607), 1, "m-81c07e5b"));
+        standard.Restore.Should().BeNull("only 'full' reads the placement");
+    }
+
+    [Fact]
+    public void GetWindowInfo_Full_WithoutARestore_LeavesItOut()
+    {
+        var window = UseWindow(TestDataFactory.CreateWindowInfo(0x100));
+
+        CreateSut().GetWindowInfo(handle: window.Handle, detail: WindowDetail.Full).Restore.Should().BeNull();
     }
 
     [Fact]
