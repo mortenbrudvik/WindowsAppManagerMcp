@@ -73,7 +73,9 @@ jobs:
             ForEach-Object { [pscustomobject]@{ Name = $_.Node.testName; Outcome = $_.Node.outcome } })
           $skipped = @($tests | Where-Object { $_.Outcome -eq 'NotExecuted' })
           $executed = $tests.Count - $skipped.Count
-          $e2eSkipped = @($skipped | Where-Object { $_.Name -like 'win-desktop-mcp.E2ETests.*' }).Count
+          # testName is the namespace-qualified method. The assembly is win-desktop-mcp.E2ETests,
+          # which does not appear in the result, so the hyphenated name matches nothing.
+          $e2eSkipped = @($skipped | Where-Object { $_.Name -like 'WinDesktopMcp.E2ETests.*' }).Count
           Write-Host "Desktop tests without the opt-ins: $($skipped.Count) skipped ($e2eSkipped end-to-end), $executed executed."
           if ($executed -gt 0 -or $skipped.Count -eq 0) {
             throw 'Every desktop test must be skipped without WAM_ALLOW_DESKTOP_TESTS and WAM_ALLOW_DESKTOP_NOINPUT_TESTS, and there must be at least one.'
