@@ -45,7 +45,9 @@ public interface IWindowWaitService
     /// resolved on every poll with the rules of <see cref="IWindowService.ResolveWindow"/> (the listing's rules, so
     /// includeUntitled or className finds an untitled dialog), minus <see cref="WindowConditionRequest.ExcludeHandles"/>
     /// and, with <see cref="WindowConditionRequest.NewOnly"/>, minus the windows shown at the start; the selector's index
-    /// then picks one of what is left. The condition must hold for <see cref="WindowConditionRequest.StableMs"/>.
+    /// then picks one of what is left. The condition must hold for <see cref="WindowConditionRequest.StableMs"/>: by one of
+    /// the windows that count, or, with <see cref="WindowConditionRequest.All"/> or <see cref="WindowConditionRequest.Count"/>
+    /// (issue #14), by the whole set with the same windows in it, whose result lists them.
     /// </summary>
     /// <remarks>
     /// Ends early, unsatisfied, when the condition can no longer be met: a selector that cannot be used (InvalidArguments),

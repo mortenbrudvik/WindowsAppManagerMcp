@@ -98,7 +98,7 @@ public sealed class DialogService : IDialogService
             if (start == nint.Zero)
             {
                 return DialogLocation.Failed(nameof(UIElementErrorCode.DialogNotFound),
-                    "No window is in the foreground (the desktop or the lock screen has focus), so there is no dialog to answer. " +
+                    "No window is in the foreground (the desktop has focus, or the session may be locked), so there is no dialog to answer. " +
                     "Name the dialog or its window.");
             }
         }

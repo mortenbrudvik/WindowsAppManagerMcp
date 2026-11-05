@@ -461,7 +461,8 @@ public sealed class ElementWaitService : IElementWaitService
                     "candidates lists them, front to back. Wait again with the one you mean as window {handle, processId}, or " +
                     "narrow the selector.") with
                 {
-                    Candidates = outcome.Candidates.Select(WindowCandidateDto.From).ToList()
+                    // The window wait lists up to 20 windows that satisfy it; an ambiguous selector names up to 5
+                    Candidates = outcome.Candidates.Take(WindowResolution.MaxCandidates).Select(WindowCandidateDto.From).ToList()
                 };
             }
 

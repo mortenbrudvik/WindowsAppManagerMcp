@@ -108,6 +108,35 @@ public class RunStepsContractTests
     }
 
     [Fact]
+    public async Task AKeyStepInTheMiddle_KeepsItsWarnings_ThoughItsResultIsLeftOut()
+    {
+        // Arrange - issues #9 and #10: ctrl+= on a Norwegian layout is Ctrl+Shift+0, which Windows may take for itself
+        using var services = new ContractServices(ContractMode.Typical);
+        const string warning = "SystemHotkey: ctrl+shift+0 (pressed for 'ctrl+=') is a Windows input-method hotkey.";
+        services.Input.Setup(i => i.PressKeysAsync(It.IsAny<KeyList>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<InputTarget>(),
+                It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((KeyList keys, int _, int _, int _, InputTarget _, bool _, CancellationToken _) => new SendKeysResult(true, keys.Text)
+            {
+                KeysSent = 1,
+                ResolvedChords = new Dictionary<string, string> { ["ctrl+="] = "ctrl+shift+0" },
+                Warnings = [warning]
+            });
+        await using var server = await StartAsync(services);
+
+        // Act
+        var result = await server.CallToolAsync("run_steps", Run("""
+            [ { "tool": "press_keys", "args": { "keys": "ctrl+=" } }, { "tool": "capture_window" } ]
+            """));
+
+        // Assert - the press_keys step is ok and not the last, so only its status and its warnings come back
+        result.IsError.Should().NotBe(true, Text(result));
+        var step = Body(result)["steps"]![0]!.AsObject();
+        step["status"]!.GetValue<string>().Should().Be("ok");
+        step.ContainsKey("result").Should().BeFalse();
+        step["warnings"]!.AsArray().Select(w => w!.GetValue<string>()).Should().Equal(warning);
+    }
+
+    [Fact]
     public async Task EachAuditedStep_WritesItsOwnAuditLine_UnderTheRunsRequestId_AndTheRunWritesOne()
     {
         // Arrange

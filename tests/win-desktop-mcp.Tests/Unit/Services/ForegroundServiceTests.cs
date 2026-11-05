@@ -773,7 +773,7 @@ public class ForegroundServiceTests
     [Fact]
     public void EnsureForeground_WhenTheInputDesktopIsNotAvailable_SkipsTheUnlock()
     {
-        // Arrange - for example the lock screen or a UAC prompt
+        // Arrange - for example a UAC prompt
         _security.Setup(s => s.IsInputDesktopAvailable()).Returns(false);
         _lock = ForegroundLock.UntilInput;
 

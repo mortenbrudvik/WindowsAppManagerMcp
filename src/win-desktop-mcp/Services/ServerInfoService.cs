@@ -153,7 +153,9 @@ public sealed class ServerInfoService(
         var available = probe.IsInputDesktopAvailable();
         if (locked)
         {
-            warnings.Add("The session is locked: input and captures fail (SessionLocked) until the user unlocks it.");
+            // No capture path checks the lock: a capture is made, and may show the lock screen
+            warnings.Add("The session is locked: input tools return SessionLocked until the user unlocks it. Captures are not " +
+                         "refused, and may show the lock screen.");
         }
         else if (!available)
         {

@@ -76,10 +76,11 @@ public sealed record ServerProcessInfo(int ProcessId, int? SessionId, IntegrityL
 
 /// <summary>Whether input can reach the desktop now.</summary>
 /// <param name="InputDesktopAvailable">
-/// False while the secure desktop (UAC prompt, lock screen, Ctrl+Alt+Del) is shown or the session is disconnected:
-/// input and captures fail (DesktopUnavailable).
+/// False while the secure desktop (UAC prompt, Ctrl+Alt+Del) is shown or the session is disconnected: input and captures
+/// fail (DesktopUnavailable). What it reads while the session is locked has not been measured; SessionLocked tells a lock.
 /// </param>
-/// <param name="SessionLocked">True while the session is locked (SessionLocked).</param>
+/// <param name="SessionLocked">True while the session is locked (SessionLocked); false also when the lock state cannot be read
+/// (get_desktop_state's sessionLock reports that as unknown).</param>
 /// <param name="ForegroundLockTimeoutMs">
 /// How long Windows keeps another process from taking the foreground after the user's last input
 /// (SPI_GETFOREGROUNDLOCKTIMEOUT), or null when it cannot be read. focus_window works around it.

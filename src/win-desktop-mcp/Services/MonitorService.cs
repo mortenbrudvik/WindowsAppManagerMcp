@@ -158,11 +158,7 @@ public class MonitorService : IMonitorService
         return FindMonitor(() => _nativeMonitors.MonitorFromWindow(windowHandle));
     }
 
-    public int GetMonitorIndex(nint windowHandle)
-    {
-        var monitor = GetMonitorForWindow(windowHandle);
-        return monitor?.Index ?? 0;
-    }
+    public int? GetMonitorIndex(nint windowHandle) => GetMonitorForWindow(windowHandle)?.Index;
 
     /// <exception cref="ArgumentOutOfRangeException">
     /// <paramref name="monitorIndex"/> is not a monitor, or <paramref name="position"/> is not a snap position. Never

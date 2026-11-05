@@ -28,6 +28,7 @@ public sealed class KeyboardLayout
     private readonly nint _layout;
     private readonly Dictionary<(char, bool, bool), KeyStroke?> _strokes = new();
     private readonly Dictionary<ushort, uint> _scanCodes = new();
+    private readonly Dictionary<(ushort, byte), string?> _deadKeys = new();
     private string? _pendingAccent;
     private bool _pendingAccentRead;
 
@@ -126,6 +127,57 @@ public sealed class KeyboardLayout
         : DeadKeyPending && LayoutKey(character) is (var virtualKey, var state) &&
           _native!.KeyText(virtualKey, RawScanCode(virtualKey), state, capsLock: false, _layout) != null ? NoKeyReason.AccentWaiting
         : NoKeyReason.NotOnLayout;
+
+    /// <summary>
+    /// The accent <paramref name="virtualKey"/> leaves waiting for the next key when it is pressed with <paramref name="held"/>
+    /// down and is a dead key then (issue #8: Alt+Shift+\ on a Norwegian keyboard is the dead grave accent), read from the
+    /// layout without changing its state; null when it is no dead key then, or the layout was not read. What the key types
+    /// is chosen by Shift, Ctrl, and Ctrl with Alt (AltGr), with Caps Lock as it was at the start of the call; Alt without Ctrl
+    /// is left out, since Windows types a key's own character with Alt down, and Win is no modifier of a layout. While an
+    /// accent already waits, a dead key types it and its own, and leaves nothing waiting. A right Alt held without Ctrl
+    /// (<paramref name="rightAlt"/>, an explicit ralt) is AltGr on a layout that has one, which Windows makes it by adding
+    /// the left Ctrl: the key is read on its AltGr layer when it types something or is a dead key there, and as with Alt
+    /// alone otherwise, as on a layout without AltGr.
+    /// </summary>
+    public string? DeadKeyOf(ushort virtualKey, KeyModifiers held, bool rightAlt = false)
+    {
+        if (_native == null)
+        {
+            return null;
+        }
+
+        var state = (byte)(((held & KeyModifiers.Shift) != 0 ? ShiftState : 0) | ((held & KeyModifiers.Control) != 0 ? CtrlState : 0));
+        if ((held & (KeyModifiers.Control | KeyModifiers.Alt)) == (KeyModifiers.Control | KeyModifiers.Alt))
+        {
+            state |= AltState;
+        }
+        else if (rightAlt && (held & KeyModifiers.Control) == 0)
+        {
+            var altGr = (byte)(state | CtrlState | AltState);
+            if (Dead(altGr) is { } altGrAccent)
+            {
+                return altGrAccent;
+            }
+
+            if (_native.KeyText(virtualKey, RawScanCode(virtualKey), altGr, CapsLock, _layout) != null)
+            {
+                return null;
+            }
+        }
+
+        return Dead(state);
+
+        string? Dead(byte shiftState)
+        {
+            if (!_deadKeys.TryGetValue((virtualKey, shiftState), out var accent))
+            {
+                accent = _native.DeadKeyText(virtualKey, RawScanCode(virtualKey), shiftState, CapsLock, _layout);
+                _deadKeys[(virtualKey, shiftState)] = accent;
+            }
+
+            return accent;
+        }
+    }
 
     /// <summary>
     /// The scan code to send with <paramref name="virtualKey"/> (without the 0xE0 prefix), and whether it is an extended

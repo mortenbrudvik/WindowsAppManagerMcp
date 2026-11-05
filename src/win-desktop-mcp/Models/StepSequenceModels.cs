@@ -132,7 +132,16 @@ public enum StepStopReason
 /// The step's own result (its JSON): for a failed step, the last step that ran, and a step with return true, within the
 /// run's bound on them all (StepRunner.MaxResultTextLength); null otherwise.
 /// </param>
-/// <param name="ResultOmitted">True when the step's result would have been returned but did not fit the run's bound.</param>
+/// <param name="ResultOmitted">
+/// True when the step's result, or the warnings of a step whose result is not returned, would have been returned but did not
+/// fit the run's bound.
+/// </param>
+/// <param name="Warnings">
+/// The warnings of a step that ran and whose result is not returned (an ok step in the middle of the run): its result's
+/// warnings and warning, as its tool gives them (issues #9 and #10: an ok press_keys step whose chord Windows may take, or
+/// whose character went out with no key, says so). Within the run's bound, after the results; null when it has none, or its
+/// result is returned, which holds them.
+/// </param>
 public record StepOutcome(
     string Tool,
     StepStatus Status,
@@ -140,7 +149,8 @@ public record StepOutcome(
     long? ElapsedMs = null,
     string? ErrorCode = null,
     JsonNode? Result = null,
-    bool? ResultOmitted = null
+    bool? ResultOmitted = null,
+    IReadOnlyList<string>? Warnings = null
 );
 
 /// <summary>The result of run_steps (roadmap M6.2).</summary>

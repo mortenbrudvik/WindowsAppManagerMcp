@@ -167,6 +167,14 @@ public interface INativeWindowWrapper
     bool HasWindowRegion(nint hWnd);
 
     /// <summary>
+    /// The window's display affinity (GetWindowDisplayAffinity, issue #17): what its app asked Windows to do with it in
+    /// captures. 0 (WDA_NONE) when it asked nothing or the value cannot be read, WDA_MONITOR (1) when it is shown only on
+    /// a monitor and is black in a capture, WDA_EXCLUDEFROMCAPTURE (0x11) when it is left out of a capture, which shows what
+    /// is behind it. Only a top-level window has one.
+    /// </summary>
+    uint GetWindowDisplayAffinity(nint hWnd);
+
+    /// <summary>
     /// Why DWM cloaks the window (the DWMWA_CLOAKED value): 0 when it is not cloaked or the attribute cannot be read,
     /// DWM_CLOAKED_APP (1) when its app cloaked it, DWM_CLOAKED_SHELL (2) when the shell did, as for a window on another
     /// virtual desktop, DWM_CLOAKED_INHERITED (4) when it inherits its owner's cloak.

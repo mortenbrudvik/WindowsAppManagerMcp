@@ -579,7 +579,7 @@ public class ElementActionRealizeToolTests
         windows.Setup(w => w.IsValidWindow(Handle)).Returns(true);
         desktopState.Setup(s => s.GetStateAsync(It.IsAny<DesktopStateRequest>(), It.IsAny<CancellationToken>()))
             .Callback((DesktopStateRequest request, CancellationToken _) => order.Add($"observe {request.Window} after {_requests.Count} actions"))
-            .ReturnsAsync(new DesktopStateSnapshot(new DesktopState(true, Handle, "Chat", null, null, null, new DesktopInputState(false),
+            .ReturnsAsync(new DesktopStateSnapshot(new DesktopState(true, Handle, "Chat", null, SessionLockState.Unlocked, null, null, new DesktopInputState(false),
                 null, null, null, null, null, null, 9), null));
         var sut = new ElementActionTools(_actions.Object, _search.Object, _registry.Object, windows.Object, desktopState.Object);
 

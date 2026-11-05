@@ -43,6 +43,10 @@ public abstract record CaptureTarget
 /// the capture and its registration (an OCR pass) is then still caught as StaleCapture. Null for a window capture, and
 /// when captures are not registered.
 /// </param>
+/// <param name="ExcludedFromCapture">
+/// The windows that declare a display affinity over the pixels, read before and after them, as the capture tools' result
+/// lists them (issue #17): only for pixels copied from the screen or from a window's device context; null when there are none.
+/// </param>
 public sealed record RawCapture(
     CaptureTarget Target,
     CaptureResult Pixels,
@@ -50,7 +54,8 @@ public sealed record RawCapture(
     double? ScaleFactor,
     IReadOnlyList<string> Warnings,
     CapturedWindow? Window,
-    CapturedScreen? Screen = null)
+    CapturedScreen? Screen = null,
+    IReadOnlyList<ExcludedWindow>? ExcludedFromCapture = null)
 {
     /// <summary>The screen rectangle the pixels show.</summary>
     public CapturedRegion CapturedRegion => new(Pixels.ScreenOriginX, Pixels.ScreenOriginY, Pixels.Width, Pixels.Height);

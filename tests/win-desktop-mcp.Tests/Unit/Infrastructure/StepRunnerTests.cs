@@ -870,6 +870,49 @@ public class StepRunnerTests
         returned.Should().OnlyContain(s => s.ResultOmitted == null);
     }
 
+    [Fact]
+    public async Task AStepWhoseResultIsNotReturned_StillCarriesItsWarnings()
+    {
+        // Issues #9 and #10: an ok key step in the middle of a run showed only "ok", though its keys may not have done what
+        // they look like. Both forms count: the key tools' warnings, and type_text's single warning
+        const string hotkey = "SystemHotkey: ctrl+shift+0 (pressed for 'ctrl+=') is a Windows input-method hotkey.";
+        _dispatcher.Results["press_keys"] = $$"""{ "success": true, "keysSent": 1, "resolvedChords": { "ctrl+=": "ctrl+shift+0" }, "warnings": [ "{{hotkey}}" ] }""";
+        _dispatcher.Results["type_text"] = """{ "success": true, "warning": "Typed instead of pasting." }""";
+        _dispatcher.Results["capture_window"] = """{ "success": true, "warnings": [ "WindowMoved: the window moved." ] }""";
+
+        var run = await RunAsync(
+            Step(StepTool.PressKeys, """{ "keys": "ctrl+=" }"""),
+            Step(StepTool.TypeText, """{ "text": "a" }"""),
+            Step(StepTool.FocusWindow),
+            Step(StepTool.CaptureWindow));
+
+        run.Result.Steps[0].Result.Should().BeNull();
+        run.Result.Steps[0].Warnings.Should().Equal(hotkey);
+        run.Result.Steps[1].Warnings.Should().Equal("Typed instead of pasting.");
+        run.Result.Steps[2].Warnings.Should().BeNull("focus_window warned of nothing");
+        run.Result.Steps[3].Result.Should().NotBeNull();
+        run.Result.Steps[3].Warnings.Should().BeNull("the last step's whole result, warnings included, is returned");
+        run.Result.Steps.Should().OnlyContain(s => s.ResultOmitted == null);
+    }
+
+    [Fact]
+    public async Task TheWarningsOfStepsWhoseResultIsNotReturned_CountInTheBound_AfterTheResults()
+    {
+        // Arrange - every send_keys warns with about 6,000 characters: the last step's result takes about 6,000 of the 24,000,
+        // the warnings of the first two steps 12,000 more, and those of the rest no longer fit
+        var warning = new string('w', 6_000);
+        _dispatcher.Results["send_keys"] = $$"""{ "success": true, "warnings": [ "{{warning}}" ] }""";
+        var steps = Enumerable.Range(0, 6).Select(_ => Step(StepTool.SendKeys, """{ "keys": "a" }""")).ToArray();
+
+        // Act
+        var run = await RunAsync(steps);
+
+        // Assert
+        run.Result.Steps.Select(s => s.Warnings != null).Should().Equal(true, true, false, false, false, false);
+        run.Result.Steps.Select(s => s.ResultOmitted).Should().Equal(null, null, true, true, true, null);
+        run.Result.Steps[^1].Result.Should().NotBeNull();
+    }
+
     // ---- Takeover detection (roadmap M7.4) ----
 
     private Task<StepRunOutcome> RunWatchedAsync(StubTakeoverMonitor monitor, TimeSpan delayBetweenSteps, params RunStep[] steps)

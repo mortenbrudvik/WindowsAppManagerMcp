@@ -34,7 +34,8 @@ public interface IProcessSecurityProbe
     /// <summary>
     /// True when keyboard and mouse input from the server can reach the desktop: the input desktop can
     /// be opened, it is the desktop the server runs on, and the session is not disconnected. False on
-    /// the secure desktop (UAC prompt, lock screen, Ctrl+Alt+Del) and in a disconnected session.
+    /// the secure desktop (UAC prompt, Ctrl+Alt+Del) and in a disconnected session; what it reads while
+    /// the session is locked has not been measured (<see cref="IsSessionLocked"/> tells a lock).
     /// Read live on every call.
     /// </summary>
     bool IsInputDesktopAvailable();
@@ -44,6 +45,13 @@ public interface IProcessSecurityProbe
     /// read. Read live on every call.
     /// </summary>
     bool IsSessionLocked();
+
+    /// <summary>
+    /// Whether the server's session is locked, without guessing (issue #18): <see cref="SessionLockState.Unknown"/> when
+    /// Windows reports WTS_SESSIONSTATE_UNKNOWN or the state cannot be read, which <see cref="IsSessionLocked"/> reads as
+    /// unlocked. What the observation reports; the input guard keeps <see cref="IsSessionLocked"/>. Read live on every call.
+    /// </summary>
+    SessionLockState GetSessionLock();
 
     /// <summary>
     /// Whether Windows asks the user before it elevates a program started as administrator (roadmap M6.5):

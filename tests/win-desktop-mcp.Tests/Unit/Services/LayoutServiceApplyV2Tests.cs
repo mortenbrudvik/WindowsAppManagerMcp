@@ -224,6 +224,32 @@ public class LayoutServiceApplyV2Tests : IDisposable
     }
 
     [Fact]
+    public async Task AMaximizedWindowWhoseMonitorCannotBeRead_IsNotTakenAsAlreadyThere()
+    {
+        // Issue #12: its monitor used to read as 0, so a maximized placement on monitor 0 left it alone wherever it was
+        OpenWindows(Code with { State = WindowState.Maximized, MonitorIndex = null });
+        var sut = await SavedAsync(Placement("Code") with { State = WindowState.Maximized });
+
+        await sut.ApplyPresetAsync("layout");
+
+        _calls.Should().Equal("monitor 0 Maximize");
+    }
+
+    [Fact]
+    public async Task ADryRun_SaysAHiddenMaximizedWindowWhoseMonitorCannotBeRead_WouldNotBeArranged()
+    {
+        // Issue #12: one known to be maximized on the placement's monitor is left alone; one whose monitor is unknown would be
+        // restored to be moved, which would show it
+        OpenWindows(Code with { State = WindowState.Maximized, IsVisible = false, MonitorIndex = null });
+        var sut = await SavedAsync(Placement("Code") with { State = WindowState.Maximized });
+
+        var placement = (await sut.ApplyPresetAsync("layout", options: new LayoutApplyOptions(DryRun: true))).Placements!.Single();
+
+        placement.Status.Should().Be(LayoutPlacementStatus.Failed);
+        placement.Error.Should().Contain("hidden");
+    }
+
+    [Fact]
     public async Task AMaximizedPlacementWithoutARestoreRectangle_IsMaximizedOnItsMonitor_AsBefore()
     {
         OpenWindows(Code);

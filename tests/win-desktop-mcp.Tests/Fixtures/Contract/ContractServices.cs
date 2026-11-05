@@ -246,7 +246,7 @@ public sealed class ContractServices : IDisposable
         // get_desktop_state and the action tools' observe (roadmap M3.12, M3.F32): the real observation over the mocks above
         services.AddSingleton<IDesktopStateService>(sp => new DesktopStateService(
             Windows.Object, Session, InputWrapper, Inspection.Object, UiElements.Object, Popups.Object, Screenshots,
-            sp.GetRequiredService<ITargetPolicy>(), sp.GetService<ToolsetSelection>()));
+            sp.GetRequiredService<ITargetPolicy>(), SecurityProbe.Object, sp.GetService<ToolsetSelection>()));
     }
 
     public void Dispose()
@@ -274,6 +274,7 @@ public sealed class ContractServices : IDisposable
             .Returns((int id) => new ProcessIntegrity(id, IntegrityLevel.Medium, ProcessIntegrity.MediumRid, false, null));
         SecurityProbe.Setup(p => p.IsInputDesktopAvailable()).Returns(typical);
         SecurityProbe.Setup(p => p.IsSessionLocked()).Returns(!typical);
+        SecurityProbe.Setup(p => p.GetSessionLock()).Returns(typical ? SessionLockState.Unlocked : SessionLockState.Locked);
 
         // claude.exe in pwsh in Windows Terminal, as the host guard records it
         var terminal = new HostWindow(0x30_0D1E, new HostProcess(30_100, null));

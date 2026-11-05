@@ -433,8 +433,20 @@ public class WindowServiceSelectorTests
         details.IsEnabled.Should().BeTrue();
         details.IsResponding.Should().BeTrue();
         details.Dpi.Should().BeNull("0 means the DPI could not be read");
+        details.DisplayAffinity.Should().BeNull("the window asked nothing of captures");
 
         sut.GetWindowDetails(new nint(0x7777)).Should().BeNull();
+    }
+
+    [Theory]
+    [InlineData(0x11u, DisplayAffinity.ExcludeFromCapture)]
+    [InlineData(0x1u, DisplayAffinity.Monitor)]
+    public void GetWindowDetails_ReadsTheDisplayAffinity(uint value, DisplayAffinity expected)
+    {
+        // Issue #17: a toast or overlay that keeps itself out of captures
+        var toast = _desktop.Add("Board saved", processName: "Enify", extendedStyle: FakeWindowDesktop.WsExToolWindow, displayAffinity: value);
+
+        CreateSut().GetWindowDetails(toast)!.DisplayAffinity.Should().Be(expected);
     }
 
     #endregion

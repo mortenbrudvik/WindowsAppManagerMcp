@@ -36,8 +36,9 @@ public class DesktopStateTools
 
     [McpServerTool(Name = "get_desktop_state", Title = "Get Desktop State", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
     [Description("One compact observation of the desktop; call it first to get oriented, and again after acting. Returns the window in " +
-                 "front, the cursor, the modifier keys that are down, Caps Lock and whether input is paused; the user-facing " +
-                 "windows front first as rows (handle, title, process, state, monitor); the element with keyboard focus (with its " +
+                 "front, sessionLock (locked, unlocked or unknown; judge a lock by it, not by that window), the cursor, the modifier " +
+                 "keys that are down, Caps Lock and whether input is paused; the user-facing windows front first as rows (handle, " +
+                 "title, process, state, monitor); the element with keyboard focus (with its " +
                  "ref); and for the window named (default: the window in front) its open menus, dropdowns and dialogs and its " +
                  "interactive elements as compact text lines with refs ('w4120035e17 Button 'Save' @812,44 80x24'), which " +
                  "element_action and the other element tools take. include is the complete list of sections; add 'screenshot' " +
@@ -53,9 +54,9 @@ public class DesktopStateTools
         long? handle = null,
         [Description(WindowTargeting.WindowDescription)]
         WindowSelector? window = null,
-        [Description("Every section to read besides the window in front, the cursor, the keys and the pause (always read): 'windows', " +
-                     "'focus', 'elements', 'popups' (default: these four) and 'screenshot' (off by default; needs capture_window to be " +
-                     "served). The list replaces the default: for everything and a capture, pass all five.")]
+        [Description("Every section to read besides the window in front, sessionLock, the cursor, the keys and the pause (always " +
+                     "read): 'windows', 'focus', 'elements', 'popups' (default: these four) and 'screenshot' (off by default; needs " +
+                     "capture_window to be served). The list replaces the default: for everything and a capture, pass all five.")]
         DesktopStateSection[]? include = null,
         [Description("The most element lines, the popups' and the window's together (default: 80, clamped to 1-500). The walk " +
                      "reads breadth first, so the levels nearest the window are kept; elements.truncated says when there are more " +

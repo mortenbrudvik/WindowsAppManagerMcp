@@ -44,6 +44,9 @@ public enum FixtureDpiAwareness
 /// <param name="OpenOverlay">Open the overlay (roadmap M6.7) right after the main window is ready: a small unowned
 /// WS_EX_TOPMOST tool window of the fixture itself, centred on the primary monitor. Unlike the canvas it does not follow
 /// <paramref name="OtherScaleMonitor"/>.</param>
+/// <param name="ExcludeOverlayFromCapture">Open the overlay, which then sets WDA_EXCLUDEFROMCAPTURE on itself (issue #17), as
+/// apps do to the toasts and overlays they keep out of screen shares: it is on the monitor, and no copy of the screen shows it.
+/// It opens the overlay with or without <paramref name="OpenOverlay"/>.</param>
 /// <remarks>
 /// Every argument after <see cref="EndOfOptions"/> is ignored, so a test can plant arguments that only a reader of the
 /// fixture's command line sees (roadmap M6.6: a secret-looking switch the server must redact). Before it, an unknown option
@@ -65,7 +68,8 @@ public sealed record FixtureOptions(
     bool OpenCanvas = false,
     TimeSpan? ChangeAfter = null,
     TimeSpan? AnimateFor = null,
-    bool OpenOverlay = false)
+    bool OpenOverlay = false,
+    bool ExcludeOverlayFromCapture = false)
 {
     public const string InstanceOption = "--instance";
     public const string EventLogOption = "--event-log";
@@ -83,6 +87,7 @@ public sealed record FixtureOptions(
     public const string ChangeAfterOption = "--change-after-ms";
     public const string AnimateForOption = "--animate-for-ms";
     public const string OpenOverlayOption = "--open-overlay";
+    public const string ExcludeOverlayFromCaptureOption = "--exclude-overlay-from-capture";
 
     /// <summary>Ends the options: every argument after it is ignored (see the remarks on <see cref="FixtureOptions"/>).</summary>
     public const string EndOfOptions = "--";
@@ -188,6 +193,9 @@ public sealed record FixtureOptions(
                     break;
                 case OpenOverlayOption:
                     options = options with { OpenOverlay = true };
+                    break;
+                case ExcludeOverlayFromCaptureOption:
+                    options = options with { ExcludeOverlayFromCapture = true };
                     break;
                 default:
                     throw new ArgumentException(
@@ -321,6 +329,10 @@ public sealed record FixtureOptions(
         if (OpenOverlay)
         {
             args.Add(OpenOverlayOption);
+        }
+        if (ExcludeOverlayFromCapture)
+        {
+            args.Add(ExcludeOverlayFromCaptureOption);
         }
         return args;
     }

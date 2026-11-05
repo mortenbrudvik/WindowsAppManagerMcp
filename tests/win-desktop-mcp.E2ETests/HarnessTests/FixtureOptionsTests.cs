@@ -30,7 +30,8 @@ public class FixtureOptionsTests
             OpenCanvas: true,
             ChangeAfter: TimeSpan.FromMilliseconds(800),
             AnimateFor: TimeSpan.FromMilliseconds(1500),
-            OpenOverlay: true);
+            OpenOverlay: true,
+            ExcludeOverlayFromCapture: true);
 
         // Act
         var parsed = FixtureOptions.Parse(options.ToArguments());
@@ -77,6 +78,7 @@ public class FixtureOptionsTests
         options.OpenWebView.Should().BeFalse("only --open-web-view starts WebView2");
         options.OpenCanvas.Should().BeFalse();
         options.OpenOverlay.Should().BeFalse("no topmost window unless a scenario asks for one");
+        options.ExcludeOverlayFromCapture.Should().BeFalse("no window keeps out of captures unless a scenario asks for one");
         options.ChangeAfter.Should().BeNull("the main window's pixels do not change by themselves");
         options.AnimateFor.Should().BeNull();
     }
@@ -87,6 +89,7 @@ public class FixtureOptionsTests
     [InlineData("--open-web-view")]
     [InlineData("--open-canvas")]
     [InlineData("--open-overlay")]
+    [InlineData("--exclude-overlay-from-capture")]
     public void Parse_ReadsAnOpenOption_AsAFlag_ThatWritesBackAlone(string option)
     {
         // Act

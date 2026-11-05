@@ -1153,7 +1153,7 @@ public class LayoutService : ILayoutService
             return null;
 
         var leftAlone = plan.Snap == null && plan.Placement.State == WindowState.Maximized && window.State == WindowState.Maximized &&
-                        window.MonitorIndex == plan.Monitor?.Index;
+                        window.MonitorIndex is { } monitor && monitor == plan.Monitor?.Index;
         return leftAlone
             ? null
             : $"The window is hidden and {window.State.ToString().ToLowerInvariant()}: its application hid it (for example in the " +

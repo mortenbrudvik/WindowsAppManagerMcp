@@ -357,7 +357,7 @@ public class ProcessSecurityProbeTests
     [Fact]
     public void IsInputDesktopAvailable_InputDesktopCannotBeOpened_IsFalse()
     {
-        // Arrange - the secure desktop (UAC prompt, lock screen) denies access
+        // Arrange - the secure desktop (UAC prompt, Ctrl+Alt+Del) denies access
         var sut = new ProcessSecurityProbe(_native.Object);
         _native.Setup(n => n.QueryInputDesktop()).Returns(new InputDesktopQuery(false, null, 5));
 
@@ -455,6 +455,32 @@ public class ProcessSecurityProbeTests
 
         // Act & Assert
         sut.IsSessionLocked().Should().BeFalse();
+    }
+
+    [Theory]
+    [InlineData(0, SessionLockState.Locked)]    // WTS_SESSIONSTATE_LOCK
+    [InlineData(1, SessionLockState.Unlocked)]  // WTS_SESSIONSTATE_UNLOCK
+    [InlineData(-1, SessionLockState.Unknown)]  // WTS_SESSIONSTATE_UNKNOWN, which IsSessionLocked reads as unlocked
+    [InlineData(7, SessionLockState.Unknown)]   // a value Windows does not document
+    public void GetSessionLock_ReadsTheSessionFlags_WithoutGuessingAnUnknownState(int sessionFlags, SessionLockState expected)
+    {
+        // Arrange
+        var sut = new ProcessSecurityProbe(_native.Object);
+        _native.Setup(n => n.QuerySessionState()).Returns(new SessionStateQuery(1, 0, sessionFlags));
+
+        // Act & Assert
+        sut.GetSessionLock().Should().Be(expected);
+    }
+
+    [Fact]
+    public void GetSessionLock_StateUnreadable_IsUnknown()
+    {
+        // Arrange
+        var sut = new ProcessSecurityProbe(_native.Object);
+        _native.Setup(n => n.QuerySessionState()).Returns((SessionStateQuery?)null);
+
+        // Act & Assert
+        sut.GetSessionLock().Should().Be(SessionLockState.Unknown);
     }
 
     #endregion

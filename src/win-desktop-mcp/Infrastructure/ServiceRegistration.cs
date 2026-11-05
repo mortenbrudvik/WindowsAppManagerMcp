@@ -122,13 +122,13 @@ public static class ServiceRegistration
         services.AddSingleton<IGraphicsCaptureWrapper, NativeGraphicsCaptureWrapper>();
         services.AddSingleton<IScreenshotService, ScreenshotService>();
         // wait_for_visual (roadmap M6.4): frames compared by their signatures, with the capture checks, the policy's mask
-        // of region and monitor reads, and the caret left out
+        // of region and monitor reads, and the caret left out; the session lock for its warning (issue #17)
         services.AddSingleton<IVisualChangeService>(sp => new VisualChangeService(
             sp.GetRequiredService<IScreenCaptureWrapper>(), sp.GetRequiredService<IScreenshotService>(),
             sp.GetRequiredService<INativeWindowWrapper>(), sp.GetRequiredService<IMonitorService>(),
             sp.GetRequiredService<ICaptureTargetPolicy>(), sp.GetRequiredService<IWindowCallRunner>(),
             sp.GetRequiredService<ICaptureRegistry>(), sp.GetRequiredService<INativeThreadInputWrapper>(),
-            sp.GetRequiredService<ITargetPolicy>()));
+            sp.GetRequiredService<ITargetPolicy>(), security: sp.GetRequiredService<IProcessSecurityProbe>()));
         // Windows OCR (roadmap M6.3): read_screen_text and find_text_on_screen read the raw pixels above. The wrapper loads
         // WinRT only on its first call, so a server without the ocr toolset never does
         services.AddSingleton<IOcrEngineWrapper, OcrEngineWrapper>();
@@ -181,7 +181,8 @@ public static class ServiceRegistration
         services.AddSingleton<IDesktopStateService>(sp => new DesktopStateService(
             sp.GetRequiredService<IWindowService>(), sp.GetRequiredService<IInputSession>(), sp.GetRequiredService<INativeInputWrapper>(),
             sp.GetRequiredService<IElementInspectionService>(), sp.GetRequiredService<IUIElementService>(), sp.GetRequiredService<IPopupService>(),
-            sp.GetRequiredService<IScreenshotService>(), sp.GetRequiredService<ITargetPolicy>(), sp.GetService<ToolsetSelection>()));
+            sp.GetRequiredService<IScreenshotService>(), sp.GetRequiredService<ITargetPolicy>(), sp.GetRequiredService<IProcessSecurityProbe>(),
+            sp.GetService<ToolsetSelection>()));
         // menu_path, respond_to_dialog and file_dialog (roadmap M3.5, M3.14): searches and popups to find the elements, and
         // every action through element_action's service above, so its guards apply to each step
         services.AddSingleton<IMenuPathService, MenuPathService>();

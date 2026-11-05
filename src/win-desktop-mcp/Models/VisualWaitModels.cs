@@ -91,8 +91,10 @@ public sealed record MaskedWindow(long Handle, int X, int Y, int Width, int Heig
 /// answer).</param>
 /// <param name="MaskedWindows">Region and monitor targets, and a window target copied from the screen or from its device
 /// context (BitBltFallback): the windows the policy denies, left out of the comparison.</param>
+/// <param name="ExcludedFromCapture">For the same targets: the windows that declare a display affinity over the area during the
+/// wait (issue #17). The frames do not show them, so what they show counts as no change.</param>
 /// <param name="Warnings">Each starts with its code: ImageBlank, WindowNotResponding, DpiScaledWindow, RegionClipped,
-/// BaselineReset.</param>
+/// BaselineReset, DisplayAffinity, SessionLocked, DesktopUnavailable.</param>
 public sealed record VisualWaitResult(
     bool Success,
     bool Satisfied,
@@ -108,6 +110,7 @@ public sealed record VisualWaitResult(
     CapturedRegion? CapturedRegion = null,
     string? CaptureMethod = null,
     IReadOnlyList<MaskedWindow>? MaskedWindows = null,
+    IReadOnlyList<ExcludedWindow>? ExcludedFromCapture = null,
     IReadOnlyList<string>? Warnings = null,
     string? Error = null,
     string? ErrorCode = null);

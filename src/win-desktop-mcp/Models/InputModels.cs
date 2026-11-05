@@ -245,25 +245,28 @@ public record SendKeysResult(
     public int? KeysSent { get; init; }
 
     /// <summary>
-    /// press_keys, on success (issue #10): each chord whose character went out on a key of another name, with the keys that
-    /// went down on the window's keyboard layout, in names press_keys takes: a Shift or AltGr the chord does not name
-    /// ({"ctrl+=": "ctrl+shift+0"} where '=' is Shift+0; AltGr as the keys it is, {"ctrl+@": "ctrl+ralt+2"}), or a letter or
-    /// digit key ({"ctrl+-": "ctrl+6"} on French AZERTY). Null when every chord was pressed as written, so a typical result
-    /// stays small.
+    /// press_keys (issue #10): each chord whose character went out on a key of another name, with the keys that went down on
+    /// the window's keyboard layout, in names press_keys takes: a Shift or AltGr the chord does not name ({"ctrl+=":
+    /// "ctrl+shift+0"} where '=' is Shift+0; AltGr as the keys it is, {"ctrl+@": "ctrl+ralt+2"}), or a letter or digit key
+    /// ({"ctrl+-": "ctrl+6"} on French AZERTY). On success, and for the chords that went out before a call stopped part way
+    /// (as <see cref="SentAsCharacters"/> and <see cref="Warnings"/>). Null when every chord was pressed as written, so a
+    /// typical result stays small.
     /// </summary>
     public IReadOnlyDictionary<string, string>? ResolvedChords { get; init; }
 
     /// <summary>
-    /// On success (issue #9): what went out as its character alone, with no key and no scan code (KEYEVENTF_UNICODE): press_keys'
-    /// chords, send_keys' characters, at most 20 (the SentAsCharacter warning counts them all). A text field gets the character,
-    /// but an application that matches the physical key does not see a key press; the warning says why. Null when everything
-    /// went as keys.
+    /// Issue #9: what went out as its character alone, with no key and no scan code (KEYEVENTF_UNICODE): press_keys' chords,
+    /// send_keys' characters, at most 20 (the SentAsCharacter warning counts them all). A text field gets the character, but an
+    /// application that matches the physical key does not see a key press; the warning says why. On success, and for what went
+    /// out before a call stopped part way (a focus change, a held modifier, a paste refused, a pause, a short SendInput). Null
+    /// when everything went as keys.
     /// </summary>
     public IReadOnlyList<string>? SentAsCharacters { get; init; }
 
     /// <summary>
-    /// On success: what to know about keys that went through, each starting with its code (<see cref="KeyWarnings"/>):
-    /// SentAsCharacter, KeyboardLayoutUnknown, SystemHotkey. Null when there is nothing to say.
+    /// What to know about the keys that went out, each starting with its code (<see cref="KeyWarnings"/>): SentAsCharacter,
+    /// KeyboardLayoutUnknown, SystemHotkey, DeadKeyPressed. On success, and for what went out before a call stopped part way
+    /// (see <see cref="SentAsCharacters"/>). Null when there is nothing to say.
     /// </summary>
     public IReadOnlyList<string>? Warnings { get; init; }
 

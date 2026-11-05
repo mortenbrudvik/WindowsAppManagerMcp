@@ -1,6 +1,6 @@
 # Layouts, Monitors and Snap Positions
 
-Read this when you snap, tile or pin windows, move them between monitors, or save and apply layouts.
+Read this when you snap, tile or pin windows, move them between monitors, check where a window landed, or save and apply layouts.
 
 Monitor coordinates, and naming a monitor (`"primary"`, `"left"`, `"right"`, `"current"` or an `id`), are in [screens-and-ocr.md](screens-and-ocr.md#coordinates); launching an app straight into its place is in [windows-and-apps.md](windows-and-apps.md).
 
@@ -36,12 +36,21 @@ The `snap_window` tool supports 14 positions:
 
 1. **Find:** `get_monitors` for the displays and `primaryIndex` (left out when no monitor is primary; no monitors means they could not be read: try again); a monitor's `dpi` and `scaleFactor` are left out when Windows cannot report its DPI
 2. **Act:** `move_window_to_monitor` or `snap_window` with `monitor` (`"left"`, `"right"`, `"primary"` or an `id`), or `set_window_bounds` with `unit: "percent"` and `monitor` for any share of a monitor (thirds tile exactly)
-3. **Verify:** check `monitorIndex` and `bounds`; monitors left of or above the primary one have negative coordinates
+3. **Verify:** check `monitorIndex` and `bounds` in the result; monitors left of or above the primary one have negative coordinates
 
 ## Keep a Window in View
 
 1. **Act:** `set_window_zorder` with `mode: "topmost"` pins a reference window above the others without taking the focus; `mode: "above"` with `aboveHandle` raises it above one window (also a topmost overlay). A failed `above` that says the window was, or may be, left topmost: check `isTopmost` (`get_window_info`), and unpin it with `mode: "notopmost"`
 2. **Clean up:** unpin it with `mode: "notopmost"` when done; `get_server_info`'s `pinnedWindows` lists what this server left pinned
+
+## Check a Placement Another Program Made
+
+A window manager, or the app itself, can place windows too. To check where one is, read `find_windows` (filter it to the window):
+
+- `monitorId` (or `monitorIndex`) names its monitor, as `get_monitors` does; for a minimized window, the monitor it restores to. It is left out when the monitor cannot be read: look again
+- `zone` names the snap position its `visibleBounds` fills on that monitor (`left_half`, `right_third`, ...; `fullscreen` for the whole work area or a maximized window; `monitor` with the taskbar covered). No `zone`: compare `visibleBounds`, never `bounds` (it has invisible borders), with the monitor's `workArea`
+- `spansMonitors: true`: it is across two monitors
+- For a minimized window, `get_window_info` with `detail: "full"` adds `restore`: whether it comes back `maximized`, and its rectangle and monitor (for a window Windows snapped before it was minimized, the rectangle from before the snap)
 
 ## Tips
 

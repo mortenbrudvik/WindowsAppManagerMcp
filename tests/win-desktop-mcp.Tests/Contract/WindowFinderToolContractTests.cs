@@ -15,6 +15,15 @@ namespace WinDesktopMcp.Tests.Contract;
 public class WindowFinderToolContractTests
 {
     private readonly Mock<IWindowService> _windowService = new();
+    private readonly Mock<IProcessSecurityProbe> _securityProbe = new();
+
+    public WindowFinderToolContractTests()
+    {
+        // As the real probe answers: get_window_info's detail 'full' reads the integrity through it, and never gets null
+        _securityProbe.Setup(p => p.ServerIntegrity).Returns(new ProcessIntegrity(31_000, IntegrityLevel.Medium, ProcessIntegrity.MediumRid, false, null));
+        _securityProbe.Setup(p => p.GetIntegrity(It.IsAny<int>()))
+            .Returns((int id) => new ProcessIntegrity(id, IntegrityLevel.Medium, ProcessIntegrity.MediumRid, false, null));
+    }
 
     [Fact]
     public async Task FindWindows_BindsTheFilterArguments()
@@ -74,6 +83,7 @@ public class WindowFinderToolContractTests
         windows[1].GetProperty("hostProcessId").GetInt32().Should().Be(500);
 
         windows[2].GetProperty("ownerHandle").GetInt64().Should().Be(1001);
+        windows.Where(w => w.TryGetProperty("sessionLock", out _)).Should().BeEmpty("the lock is get_foreground_window's, not every window's");
     }
 
     [Fact]
@@ -108,6 +118,28 @@ public class WindowFinderToolContractTests
         window.GetProperty("handle").GetInt64().Should().Be(2001);
         window.GetProperty("title").GetString().Should().BeEmpty();
         window.GetProperty("className").GetString().Should().Be("#32768");
+    }
+
+    [Fact]
+    public async Task GetForegroundWindow_ReportsTheSessionLock_AsAStringAfterTheWindowsFields()
+    {
+        // Arrange - issue #18: the lock screen app in front, and whether the session is locked
+        _windowService.Setup(w => w.GetForegroundWindow())
+            .Returns(TestDataFactory.CreateWindowInfo(2002, "Windows Default Lock Screen", "LockApp", 400) with
+            {
+                ClassName = "Windows.UI.Core.CoreWindow"
+            });
+        _securityProbe.Setup(p => p.GetSessionLock()).Returns(SessionLockState.Unlocked);
+        await using var server = await StartServerAsync();
+
+        // Act
+        var window = ParsePayload(await server.CallToolAsync("get_foreground_window"));
+
+        // Assert
+        window.GetProperty("handle").GetInt64().Should().Be(2002);
+        window.GetProperty("processName").GetString().Should().Be("LockApp");
+        window.GetProperty("sessionLock").GetString().Should().Be("unlocked");
+        window.EnumerateObject().Last().Name.Should().Be("sessionLock");
     }
 
     [Fact]
@@ -152,6 +184,87 @@ public class WindowFinderToolContractTests
         _windowService.Verify(w => w.FindWindows(It.Is<WindowQuery>(q =>
             q.TitleEquals == "Untitled - Notepad" && q.TitleRegex == "^Untitled" && q.ProcessName == "note" && q.ProcessNameContains &&
             q.IncludeUntitled && q.Sort == WindowSort.Title && q.Limit == 3)), Times.Once);
+    }
+
+    [Fact]
+    public async Task FindWindows_ReportsTheMonitorsIdAndTheZone_AndLeavesTheMonitorOutWhenItCannotBeRead()
+    {
+        // Arrange - issue #12: a tile another program placed, a window over two monitors, and one whose monitor cannot be read
+        var tile = TestDataFactory.CreateWindowInfo(1001, monitorIndex: 2) with { MonitorId = "m-0d6fc36f", Zone = "left_half" };
+        var across = TestDataFactory.CreateWindowInfo(1002) with { MonitorId = "m-81c07e5b", SpansMonitors = true };
+        var unread = TestDataFactory.CreateWindowInfo(1003) with { MonitorIndex = null };
+        _windowService.Setup(w => w.FindWindows(It.IsAny<WindowQuery>())).Returns([tile, across, unread]);
+        await using var server = await StartServerAsync();
+
+        // Act
+        var windows = ParsePayload(await server.CallToolAsync("find_windows")).EnumerateArray().ToList();
+
+        // Assert
+        windows[0].GetProperty("monitorIndex").GetInt32().Should().Be(2);
+        windows[0].GetProperty("monitorId").GetString().Should().Be("m-0d6fc36f");
+        windows[0].GetProperty("zone").GetString().Should().Be("left_half");
+        windows[0].TryGetProperty("spansMonitors", out _).Should().BeFalse();
+
+        windows[1].GetProperty("spansMonitors").GetBoolean().Should().BeTrue();
+        windows[1].TryGetProperty("zone", out _).Should().BeFalse();
+
+        foreach (var field in new[] { "monitorIndex", "monitorId", "zone", "spansMonitors" })
+        {
+            windows[2].TryGetProperty(field, out _).Should().BeFalse($"{field} is left out, never monitor 0 as a guess");
+        }
+    }
+
+    [Fact]
+    public async Task FindWindows_BindsIncludeMinimized()
+    {
+        _windowService.Setup(w => w.FindWindows(It.IsAny<WindowQuery>())).Returns([]);
+        await using var server = await StartServerAsync();
+
+        var result = await server.CallToolAsync("find_windows", new Dictionary<string, object?> { ["includeMinimized"] = false });
+
+        result.IsError.Should().NotBe(true);
+        _windowService.Verify(w => w.FindWindows(It.Is<WindowQuery>(q => !q.IncludeMinimized)), Times.Once);
+    }
+
+    [Fact]
+    public async Task IncludeMinimized_IsNoSelectorField_LikeSortAndLimit()
+    {
+        await using var server = await StartServerAsync();
+
+        var result = await server.CallToolAsync("get_window_info", new Dictionary<string, object?>
+        {
+            ["window"] = new Dictionary<string, object?> { ["processName"] = "notepad", ["includeMinimized"] = false }
+        });
+
+        result.IsError.Should().BeTrue();
+        ParsePayload(result).GetProperty("errorCode").GetString().Should().Be(ToolErrorReporting.InvalidArgumentsErrorCode);
+        _windowService.Verify(w => w.ResolveWindow(It.IsAny<WindowSelector>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task GetWindowInfo_Full_OfAMinimizedWindow_ReportsRestore()
+    {
+        // Arrange - minimized from maximized on the second monitor
+        var minimized = TestDataFactory.CreateWindowInfo(1001, state: WindowState.Minimized, monitorIndex: 1) with { MonitorId = "m-81c07e5b" };
+        var monitor = TestDataFactory.CreateMonitorInfo(index: 1, isPrimary: false, boundsX: 1920) with { Id = "m-81c07e5b" };
+        _windowService.Setup(w => w.IsValidWindow(minimized.Handle)).Returns(true);
+        _windowService.Setup(w => w.GetWindowDetails(minimized.Handle)).Returns(new WindowDetails(minimized, false, 4, false, true, true, 96)
+        {
+            Restore = new WindowRestore(WindowState.Maximized, new WindowRect(2000, 100, 814, 607), monitor)
+        });
+        await using var server = await StartServerAsync();
+
+        // Act
+        var payload = ParsePayload(await server.CallToolAsync("get_window_info",
+            new Dictionary<string, object?> { ["handle"] = 1001, ["detail"] = "full" }));
+
+        // Assert
+        var restore = payload.GetProperty("restore");
+        restore.GetProperty("state").GetString().Should().Be("maximized");
+        restore.GetProperty("bounds").GetProperty("x").GetInt32().Should().Be(2000);
+        restore.GetProperty("monitorIndex").GetInt32().Should().Be(1);
+        restore.GetProperty("monitorId").GetString().Should().Be("m-81c07e5b");
+        payload.TryGetProperty("zone", out _).Should().BeFalse("a minimized window has none");
     }
 
     [Theory]
@@ -269,7 +382,7 @@ public class WindowFinderToolContractTests
             [],
             builder => builder
                 .AddToolErrorReporting()
-                .WithServerTools(new WindowFinderTools(_windowService.Object)));
+                .WithServerTools(new WindowFinderTools(_windowService.Object, securityProbe: _securityProbe.Object)));
 
     private static JsonElement ParsePayload(CallToolResult result)
     {

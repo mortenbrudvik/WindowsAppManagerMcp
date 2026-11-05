@@ -65,6 +65,7 @@ public class ReadOnlyNativeWindowWrapperTests
         inner.Setup(w => w.GetWindowLongPtr(Handle, -20)).Returns(new nint(0x80));
         inner.Setup(w => w.GetWindow(Handle, 4u)).Returns(ChildHandle);
         inner.Setup(w => w.IsCloaked(Handle)).Returns(true);
+        inner.Setup(w => w.GetWindowDisplayAffinity(Handle)).Returns(0x11u);
         inner.Setup(w => w.GetExtendedFrameBounds(Handle)).Returns((5, 6, 7, 8));
         inner.Setup(w => w.IsHungAppWindow(Handle)).Returns(true);
         inner.Setup(w => w.GetDpiForWindow(Handle)).Returns(144u);
@@ -86,6 +87,7 @@ public class ReadOnlyNativeWindowWrapperTests
         sut.GetWindowLongPtr(Handle, -20).Should().Be(new nint(0x80));
         sut.GetWindow(Handle, 4u).Should().Be(ChildHandle);
         sut.IsCloaked(Handle).Should().BeTrue();
+        sut.GetWindowDisplayAffinity(Handle).Should().Be(0x11u);
         sut.GetExtendedFrameBounds(Handle).Should().Be((5, 6, 7, 8));
         sut.IsHungAppWindow(Handle).Should().BeTrue();
         sut.GetDpiForWindow(Handle).Should().Be(144u);
@@ -125,7 +127,7 @@ public class ReadOnlyNativeWindowWrapperTests
             nameof(INativeWindowWrapper.EnumChildWindows), nameof(INativeWindowWrapper.GetClassName),
             nameof(INativeWindowWrapper.GetWindowLongPtr), nameof(INativeWindowWrapper.GetWindow),
             nameof(INativeWindowWrapper.IsCloaked), nameof(INativeWindowWrapper.GetCloakReason), nameof(INativeWindowWrapper.HasWindowRegion),
-            nameof(INativeWindowWrapper.GetExtendedFrameBounds),
+            nameof(INativeWindowWrapper.GetWindowDisplayAffinity), nameof(INativeWindowWrapper.GetExtendedFrameBounds),
             nameof(INativeWindowWrapper.IsHungAppWindow), nameof(INativeWindowWrapper.GetDpiForWindow),
             nameof(INativeWindowWrapper.RespondsWithin), nameof(INativeWindowWrapper.GetWindowPlacement),
         ];

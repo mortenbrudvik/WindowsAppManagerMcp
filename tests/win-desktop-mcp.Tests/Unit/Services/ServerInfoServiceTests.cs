@@ -401,6 +401,17 @@ public sealed class ServerInfoServiceTests : IDisposable
     }
 
     [Fact]
+    public void Read_ALockedSession_WarnsThatInputIsRefused_NotThatCapturesFail()
+    {
+        // Issue #18 review: no capture path checks the lock, so a capture while locked is made and may show the lock screen
+        _probe.Setup(p => p.IsSessionLocked()).Returns(true);
+
+        var warning = CreateSut().Read(Connection, 48).Warnings.Should().ContainSingle().Which;
+
+        warning.Should().Contain("SessionLocked").And.Contain("Captures are not refused").And.NotContain("captures fail");
+    }
+
+    [Fact]
     public void Read_AnUnreachableInputDesktop_IsAWarning()
     {
         _probe.Setup(p => p.IsInputDesktopAvailable()).Returns(false);

@@ -292,8 +292,8 @@ public class ElementActionToolTests
         _windows.Setup(w => w.IsValidWindow(Handle)).Returns(true);
         _desktopState.Setup(s => s.GetStateAsync(It.IsAny<DesktopStateRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((DesktopStateRequest request, CancellationToken _) => new DesktopStateSnapshot(
-                new DesktopState(true, request.Window ?? 0x77, "after", null, null, null, new DesktopInputState(false), null, null, null,
-                    null, null, null, 9),
+                new DesktopState(true, request.Window ?? 0x77, "after", null, SessionLockState.Unlocked, null, null, new DesktopInputState(false),
+                    null, null, null, null, null, null, 9),
                 request.Include.Contains(DesktopStateSection.Screenshot) ? new EncodedImage([1, 2, 3], "image/png") : null));
         return new ElementActionTools(_actions.Object, _search.Object, _registry.Object, _windows.Object, _desktopState.Object,
             _menuPaths.Object);
@@ -321,7 +321,7 @@ public class ElementActionToolTests
         var sut = CreateObservingSut();
         _desktopState.Setup(s => s.GetStateAsync(It.IsAny<DesktopStateRequest>(), It.IsAny<CancellationToken>()))
             .Callback((DesktopStateRequest request, CancellationToken _) => order.Add($"observe {request.Window}"))
-            .ReturnsAsync(new DesktopStateSnapshot(new DesktopState(true, Handle, "after", null, null, null, new DesktopInputState(false),
+            .ReturnsAsync(new DesktopStateSnapshot(new DesktopState(true, Handle, "after", null, SessionLockState.Unlocked, null, null, new DesktopInputState(false),
                 null, null, null, null, null, null, 9), null));
 
         // Act
@@ -343,7 +343,7 @@ public class ElementActionToolTests
         DesktopStateRequest? observed = null;
         _desktopState.Setup(s => s.GetStateAsync(It.IsAny<DesktopStateRequest>(), It.IsAny<CancellationToken>()))
             .Callback((DesktopStateRequest request, CancellationToken _) => observed = request)
-            .ReturnsAsync(new DesktopStateSnapshot(new DesktopState(true, 0x77, null, null, null, null, new DesktopInputState(false),
+            .ReturnsAsync(new DesktopStateSnapshot(new DesktopState(true, 0x77, null, null, SessionLockState.Unlocked, null, null, new DesktopInputState(false),
                 null, null, null, null, null, null, 9), null));
 
         await sut.ElementAction(ElementActionKind.Invoke, @ref: "w1e7", observe: ObserveMode.State);
@@ -388,7 +388,7 @@ public class ElementActionToolTests
         DesktopStateRequest? observed = null;
         _desktopState.Setup(s => s.GetStateAsync(It.IsAny<DesktopStateRequest>(), It.IsAny<CancellationToken>()))
             .Callback((DesktopStateRequest request, CancellationToken _) => observed = request)
-            .ReturnsAsync(new DesktopStateSnapshot(new DesktopState(true, 0, null, null, null, null, new DesktopInputState(false),
+            .ReturnsAsync(new DesktopStateSnapshot(new DesktopState(true, 0, null, null, SessionLockState.Unlocked, null, null, new DesktopInputState(false),
                 null, null, null, null, null, null, 9), null));
 
         var result = await sut.ElementAction(ElementActionKind.Invoke, @ref: "w1e7", observe: ObserveMode.State);
@@ -517,7 +517,7 @@ public class ElementActionToolTests
         var sut = CreateObservingSut();
         _desktopState.Setup(s => s.GetStateAsync(It.IsAny<DesktopStateRequest>(), It.IsAny<CancellationToken>()))
             .Callback((DesktopStateRequest request, CancellationToken _) => order.Add($"observe {request.Window}"))
-            .ReturnsAsync(new DesktopStateSnapshot(new DesktopState(true, Handle, "after", null, null, null, new DesktopInputState(false),
+            .ReturnsAsync(new DesktopStateSnapshot(new DesktopState(true, Handle, "after", null, SessionLockState.Unlocked, null, null, new DesktopInputState(false),
                 null, null, null, null, null, null, 9), null));
 
         // Act

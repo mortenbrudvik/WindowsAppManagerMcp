@@ -159,10 +159,31 @@ public class SecurityProbeIntegrationTests
         var probe = new ProcessSecurityProbe(_native);
 
         // Act - the answers depend on the machine (a CI runner may have no interactive desktop)
-        var read = () => (probe.IsInputDesktopAvailable(), probe.IsSessionLocked());
+        var read = () => (probe.IsInputDesktopAvailable(), probe.IsSessionLocked(), probe.GetSessionLock());
 
         // Assert
         read.Should().NotThrow();
+    }
+
+    [Fact]
+    public void Probe_SessionLock_AgreesWithIsSessionLocked()
+    {
+        // Arrange
+        var probe = new ProcessSecurityProbe(_native);
+
+        // Act - two reads of the live state: a lock between them could split them, which a test run does not do
+        var locked = probe.IsSessionLocked();
+        var state = probe.GetSessionLock();
+
+        // Assert - only an unknown state differs: IsSessionLocked reads it as unlocked (issue #18)
+        if (locked)
+        {
+            state.Should().Be(SessionLockState.Locked);
+        }
+        else
+        {
+            state.Should().BeOneOf(SessionLockState.Unlocked, SessionLockState.Unknown);
+        }
     }
 
     #endregion

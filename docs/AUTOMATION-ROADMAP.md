@@ -1230,9 +1230,9 @@ Run ids such as `r1:WC-1` and `r2:WC-1` trace each entry back to the raw review 
 | D-WIN-03 | high | Windows & monitors | move_window_to_monitor 'maximize' maximizes on the current monitor and other modes do not fit the window to the target | `src/win-desktop-mcp/Services/WindowService.cs:268` | both | fixed (M2.2, M2.3) |
 | D-WIN-04 | high | Windows & monitors | Window listings (and save_layout) include cloaked, other-virtual-desktop, tool and shell windows | `src/win-desktop-mcp/Services/WindowService.cs:25` | both | fixed (M1) |
 | D-BRW-05 | medium | Browser | Silent fallback from CDP to UIA with no indication of the method used; textOnly=false is ignored | `src/win-desktop-mcp/Services/BrowserReadingService.cs:201` | both | fixed (M0) |
-| D-BRW-06 | medium | Browser | UIA address-bar lookup is English-only, its fallback fails on wide/high-DPI windows, and it can return non-URL text | `src/win-desktop-mcp/Native/UIAutomationWrapper.cs:111` | both | open |
-| D-BRW-07 | medium | Browser | Browser URL name search matches the top-level window's own title, so a page title can be returned as the URL | `src/win-desktop-mcp/Native/UIAutomationWrapper.cs:180` | both | open |
-| D-BRW-08 | medium | Browser | UIA URL is the omnibox display text, usually missing the scheme or showing in-progress typing | `src/win-desktop-mcp/Native/UIAutomationWrapper.cs:279` | both | open |
+| D-BRW-06 | medium | Browser | UIA address-bar lookup is English-only, its fallback fails on wide/high-DPI windows, and it can return non-URL text | `src/win-desktop-mcp/Native/UIAutomationWrapper.cs:111` | both | fixed (M5.7) |
+| D-BRW-07 | medium | Browser | Browser URL name search matches the top-level window's own title, so a page title can be returned as the URL | `src/win-desktop-mcp/Native/UIAutomationWrapper.cs:180` | both | fixed (M5.7) |
+| D-BRW-08 | medium | Browser | UIA URL is the omnibox display text, usually missing the scheme or showing in-progress typing | `src/win-desktop-mcp/Native/UIAutomationWrapper.cs:279` | both | partly fixed (M5.7) |
 | D-BRW-09 | medium | Browser | get_browser_content is unbounded by default, has no truncation signal or paging, and ContentLength is post-truncation | `src/win-desktop-mcp/Tools/BrowserReadingTools.cs:37` | both | fixed (M5.6) |
 | D-BRW-10 | medium | Browser | launch_browser_with_debug never checks the CDP endpoint opened, does not validate the port, and never cleans up temp profiles | `src/win-desktop-mcp/Services/ProcessService.cs:503` | both | partly fixed (M2.2) |
 | D-BRW-11 | medium | Browser | Debug browser exposes an unauthenticated CDP port on the well-known 9222 | `src/win-desktop-mcp/Services/ProcessService.cs:472` | both | open |
@@ -1241,7 +1241,7 @@ Run ids such as `r1:WC-1` and `r2:WC-1` trace each entry back to the raw review 
 | D-BRW-14 | medium | Browser | Browser UIA searches and content reads are unbounded (whole-tree Descendants scans, full-document GetText, no deadline) | `src/win-desktop-mcp/Native/UIAutomationWrapper.cs:232` | both | open |
 | D-BRW-15 | medium | Browser | UIA content path does not wake Chromium's on-demand accessibility tree | `src/win-desktop-mcp/Native/UIAutomationWrapper.cs:335` | both | open |
 | D-BRW-16 | medium | Browser | UIA content extraction can return browser UI text or a side panel via the frame-pane fallback | `src/win-desktop-mcp/Native/UIAutomationWrapper.cs:335` | r2 | open |
-| D-INP-04 | medium | Input | send_keys shortcuts on punctuation/OEM keys (Ctrl+-, Ctrl+=, Ctrl+/, Ctrl+comma, Ctrl+backtick) are sent as Unicode packets and never fire | `src/win-desktop-mcp/Services/InputSimulationService.cs:371` | both | open |
+| D-INP-04 | medium | Input | send_keys shortcuts on punctuation/OEM keys (Ctrl+-, Ctrl+=, Ctrl+/, Ctrl+comma, Ctrl+backtick) are sent as Unicode packets and never fire | `src/win-desktop-mcp/Services/InputSimulationService.cs:371` | both | fixed (M4) |
 | D-INP-05 | medium | Input | send_keys sends letters and digits as raw virtual keys, ignoring case, Caps Lock and keyboard layout | `src/win-desktop-mcp/Services/InputSimulationService.cs:474` | both | open |
 | D-INP-06 | medium | Input | No Win modifier, and {CTRL}/{ALT}/{SHIFT}/{WIN} in braces are tapped rather than held | `src/win-desktop-mcp/Services/InputSimulationService.cs:359` | both | open |
 | D-INP-07 | medium | Input | send_keys implements only part of the SendKeys grammar: no escapes, grouping, repeat counts or '~' | `src/win-desktop-mcp/Services/InputSimulationService.cs:327` | both | open |
@@ -1298,7 +1298,7 @@ Run ids such as `r1:WC-1` and `r2:WC-1` trace each entry back to the raw review 
 | D-BRW-90 | low | Browser | BrowserReadingService tests depend on whatever real process owns PID 1000 | `tests/win-desktop-mcp.Tests/Unit/Services/BrowserReadingServiceTests.cs:456` | later review | fixed (M0) |
 | D-INP-11 | low | Input | Clicks are not atomic (SetCursorPos, sleep, then SendInput) and the landing point and double-click timing are not verified | `src/win-desktop-mcp/Services/InputSimulationService.cs:190` | both | partly fixed (M1) |
 | D-INP-12 | low | Input | Partial SendInput insertion can leave modifier keys logically held | `src/win-desktop-mcp/Services/InputSimulationService.cs:293` | both | fixed (M1) |
-| D-INP-13 | low | Input | Virtual-key events always carry scan code 0 | `src/win-desktop-mcp/Native/NativeStructs.cs:178` | both | open |
+| D-INP-13 | low | Input | Virtual-key events always carry scan code 0 | `src/win-desktop-mcp/Native/NativeStructs.cs:178` | both | fixed (M4) |
 | D-INP-14 | low | Input | send_keys injects the whole sequence in one burst with no pacing | `src/win-desktop-mcp/Services/InputSimulationService.cs:291` | r1 | open |
 | D-INP-15 | low | Input | type_text is unbounded and uncancellable, and echoes the full text back | `src/win-desktop-mcp/Services/InputSimulationService.cs:234` | r2 | partly fixed (M1) |
 | D-INP-16 | low | Input | Input error codes are misleading or unused | `src/win-desktop-mcp/Services/InputSimulationService.cs:306` | r2 | partly fixed (M1, M2.2) |
@@ -1467,16 +1467,19 @@ Run ids such as `r1:WC-1` and `r2:WC-1` trace each entry back to the raw review 
 
 - Impact: On a localized browser maximized on 4K the omnibox (>2000 px) is skipped (UrlBarNotFound), 'localhost:3000' fails, and the heuristic can return a page form value or a label like 'Search or enter address' as the URL with Success=true.
 - Fix: Use locale-independent locators (document element value, OmniboxViewViews class, toolbar-scoped Edit outside any Document), validate candidates as URLs, and never fall back to Name.
+- M5: fixed on `m5-7-uia-fallback` and `fix-m57-real-browsers` (M5.7): BrowserUiaReader looks nothing up by name. The URL comes from the shown tab's Document (its Value, the committed address); the address bar is the edit box of class OmniboxViewViews, else AutomationId urlbar-input (Firefox), else the first edit box in a toolbar, found by structure with no size limit, and its text is taken only when it is URL-like (BrowserUrls.IsUrlLike: an absolute URL, a host such as `localhost:3000`, or a file page's path), else UrlExtractionFailed. Checked against 3.1.0 (2026-10-20): BrowserUiaReaderTests reads the same elements in English and Norwegian names (ReadUrl_FindsTheSameElements_WhateverTheyAreNamed) and refuses non-URL text (ReadUrl_RefusesAddressBarTextThatIsNotAUrl).
 
 **D-BRW-07: Browser URL name search matches the top-level window's own title, so a page title can be returned as the URL** (medium, `src/win-desktop-mcp/Native/UIAutomationWrapper.cs:180`, r1:ui--m1, r2:ui--m1)
 
 - Impact: A page whose <title> contains 'address and search bar' makes get_browser_url return attacker-chosen text as the URL with Success=true, which can mislead an agent verifying which site it is on before entering credentials.
 - Fix: Exclude the root window and Document subtrees from the name search and validate the result as a URL.
+- M5: fixed on `m5-7-uia-fallback` (M5.7): there is no name search. The search for the address bar starts at the window's children and never enters a Document, a render widget or a tab, reads only an edit box's Value or Text pattern, never a name, and takes only URL-like text, so a page title is never returned as the URL (3.1.0: BrowserUiaReaderTests.ReadUrl_NeverReturnsTheWindowTitle_ATab_ABookmark_OrAPageElement_NamedLikeTheAddressBar, ReadUrl_TakesThePagesAddress_OfAPageTitledLikeTheAddressBar).
 
 **D-BRW-08: UIA URL is the omnibox display text, usually missing the scheme or showing in-progress typing** (medium, `src/win-desktop-mcp/Native/UIAutomationWrapper.cs:279`, r1:BRW-8, r2:BRW-5)
 
 - Impact: get_browser_url returns 'github.com/org/repo', so URL comparisons fail and passing it to launch_application treats it as a file path.
 - Fix: Read the committed URL from the web Document element's value first, otherwise normalize and return Url plus DisplayUrl.
+- M5: partly fixed on `m5-7-uia-fallback` and `fix-m57-real-browsers` (M5.7): the URL is the shown tab's Document's committed address, with its scheme (`urlSource: "document"`), and the result adds `displayUrl` and `isEditing`. Only when no Document gives an address is the address bar's text used (`urlSource: "addressBar"`), and only while the browser is in front and the address bar does not have the keyboard focus, so typing in progress is never returned. That text is not normalized, by design (BrowserUrls.AddressOf: which scheme an address shown without one has cannot be told; a file page's path becomes its file:/// URL), so the fallback can still return `github.com/org/repo`, marked by `urlSource`. Rechecked on 3.1.0 (2026-10-20): get_browser_url on two Brave windows without a debug port, one of them minimized, returned `urlSource: "document"` with the scheme.
 
 **D-BRW-09: get_browser_content is unbounded by default, has no truncation signal or paging, and ContentLength is post-truncation** (medium, `src/win-desktop-mcp/Tools/BrowserReadingTools.cs:37`, r1:BRW-9, r2:BRW-11, r1:MCP-11, r1:mcp-m4)
 
@@ -1527,6 +1530,8 @@ Run ids such as `r1:WC-1` and `r2:WC-1` trace each entry back to the raw review 
 
 - Impact: Zoom, toggle comment, settings and VS Code terminal shortcuts do nothing or insert a stray character, while Success=true is returned.
 - Fix: Map characters via VkKeyScanExW with the foreground thread's layout and send the real VK (plus required Shift) whenever a modifier is active; use KEYEVENTF_UNICODE only for plain text.
+- M4: fixed on `m4-1-keyboard-engine` (M4.1): every character, in a chord or not, is mapped with the layout of the thread of the window the keys go to (`KeyboardLayout.Map`: VkKeyScanExW, checked with ToUnicodeEx) and sent as that key with the Shift or AltGr it needs and its scan code, so `^-`, `^=`, `^/`, `^,` and Ctrl+backtick on a US keyboard are chords of the real keys. Unicode stays only for a character no key of the layout types, or only a dead key does, and for every character but letters and digits when the layout cannot be read
+- 3.1.0: on `rf-keys` (RF.17, RF.18; issues #8 and #9): a character in a chord with Ctrl, Alt or Win (send_keys', and press_keys', which M4.3 maps the same way) is its key also while a dead key's accent waits on the layout, and what still goes as Unicode is reported (`sentAsCharacters` and a SentAsCharacter warning, KeyboardLayoutUnknown when the layout cannot be read), so it no longer looks like any other success. Still open: a chord on a character only a dead key types (Ctrl+backtick or Ctrl+^ on a Norwegian keyboard) goes as Unicode, with the warning, and while another accent waits it may be pressed as the dead key instead (RF.F19, which proposes key names by physical place such as `code:Minus`)
 
 **D-INP-05: send_keys sends letters and digits as raw virtual keys, ignoring case, Caps Lock and keyboard layout** (medium, `src/win-desktop-mcp/Services/InputSimulationService.cs:474`, r1:INP-3, r2:INP-5)
 
@@ -1872,6 +1877,7 @@ Run ids such as `r1:WC-1` and `r2:WC-1` trace each entry back to the raw review 
 
 - Impact: RDP/Hyper-V/VMware/Citrix clients, raw-input games and frameworks deriving KeyboardEvent.code from scan codes misread or drop send_keys keystrokes while success is reported.
 - Fix: Fill wScan with MapVirtualKeyExW(vk, MAPVK_VK_TO_VSC_EX) and set KEYEVENTF_EXTENDEDKEY for 0xE0-prefixed codes, optionally offering a scan-code-only mode.
+- M4: fixed on `m4-1-keyboard-engine` (M4.1): send_keys sends each virtual key with the scan code MapVirtualKeyExW(MAPVK_VK_TO_VSC_EX) gives on the window's layout, and KEYEVENTF_EXTENDEDKEY for an 0xE0 code (`KeyboardLayout.ScanOf`; `NativeStructs.KeyboardInput` fills wScan). The keys added since are built the same way: press_keys' chords, type_text's `keys` method, and the modifiers of mouse_click, drag and scroll; the session releases held keys with the scan code they went down with. No scan-code-only mode. Still scan code 0: every key when the window's layout cannot be read (the result warns, KeyboardLayoutUnknown); a virtual key the layout gives no scan code (MapVirtualKeyExW returns 0, with no warning); Pause, whose E1 sequence has no single code; the unassigned key 0xE8 that keeps a released Alt or Win from opening a menu, which is no physical key; and the Escape that bringing a window to the front sends to close a menu it has open (`ForegroundService`)
 
 **D-INP-14: send_keys injects the whole sequence in one burst with no pacing** (low, `src/win-desktop-mcp/Services/InputSimulationService.cs:291`, r1:inp-m1)
 

@@ -7,6 +7,7 @@ To get a page's URL or text, use these tools instead of screenshots:
 | Need | Use |
 |------|-----|
 | URL of a specific browser window | `get_browser_url` with the window `handle` |
+| Which of several windows with the same title shows which page | `find_windows` (`processName` such as `msedge`), then `get_browser_url` with each `handle`: these reads change nothing, so send them in parallel |
 | URL of the browser in the foreground | `get_browser_url` with `window: {"foreground": true}` (`NoBrowserInForeground` when another window, such as your terminal, is in front) |
 | Text of a page | `get_browser_content` with `handle`; a long page comes in pages: call again with `offset` set to `nextOffset` while `truncated` is true, with `useCdp: false` when the page's `source` is `uia` |
 | Text of a JavaScript-heavy page, or its HTML | `launch_browser_with_debug`, then `get_browser_content` on its window, which it reads through CDP (and `textOnly: false` for HTML) |

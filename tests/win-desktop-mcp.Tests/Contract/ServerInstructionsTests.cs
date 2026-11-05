@@ -57,6 +57,13 @@ public partial class ServerInstructionsTests
     }
 
     [Fact]
+    public void TheSessionLockedLine_SaysToJudgeALockBySessionLock_NotByTheWindowInFront()
+    {
+        // Issue #18: the lock screen app (LockApp) in front, or no window in front, does not say whether the session is locked
+        Lines.Single(line => line.Contains("SessionLocked,")).Should().Contain("sessionLock").And.Contain("not the window in front");
+    }
+
+    [Fact]
     public void TheInstructions_NameOnlyToolsTheServerServes()
     {
         var named = SnakeCaseName().Matches(ServerIdentity.Instructions).Select(m => m.Value).Distinct().ToList();

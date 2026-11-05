@@ -125,10 +125,13 @@ public static class TypicalDesktop
                 ProcessName: app.Process,
                 ProcessId: i == 0 ? NotepadProcessId : 12_000 + i * 113,
                 Bounds: new WindowRect(i % 2 == 0 ? 0 : 1280, i % 3 * 100, 1280, 1392 - i % 3 * 100),
-                State: i % 5 == 4 ? WindowState.Minimized : i % 4 == 3 ? WindowState.Maximized : WindowState.Normal,
+                State: State(i),
                 IsVisible: true,
-                MonitorIndex: i % 4 == 1 ? 1 : 0)
+                MonitorIndex: Monitor(i))
             {
+                // The monitor's id comes with its index (issue #12); of these frames only the maximized windows fill a zone
+                MonitorId = Monitors[Monitor(i)].Id,
+                Zone = State(i) == WindowState.Maximized ? "fullscreen" : null,
                 // The visible frame (DWMWA_EXTENDED_FRAME_BOUNDS) without the invisible resize borders of Windows 10 and 11:
                 // 7 pixels left, right and bottom at 100%. The service reads it for every window, minimized ones included
                 VisibleBounds = new WindowRect((i % 2 == 0 ? 0 : 1280) + 7, i % 3 * 100, 1280 - 14, 1392 - i % 3 * 100 - 7),
@@ -137,6 +140,9 @@ public static class TypicalDesktop
                 HostProcessId = app.Class == "ApplicationFrameWindow" ? 9_120 : null
             })
             .ToList();
+
+        static WindowState State(int i) => i % 5 == 4 ? WindowState.Minimized : i % 4 == 3 ? WindowState.Maximized : WindowState.Normal;
+        static int Monitor(int i) => i % 4 == 1 ? 1 : 0;
     }
 
     /// <summary>A UI Automation tree of <see cref="UiTreeElements"/> elements: a menu bar, a toolbar, a tree and a list.</summary>

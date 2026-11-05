@@ -50,8 +50,8 @@ public class ActionObserveToolTests
                 _observed = request;
             })
             .ReturnsAsync((DesktopStateRequest request, CancellationToken _) => new DesktopStateSnapshot(
-                new DesktopState(true, request.Window ?? InFront, "after", null, null, null, new DesktopInputState(false), null, null, null,
-                    null, null, null, 9),
+                new DesktopState(true, request.Window ?? InFront, "after", null, SessionLockState.Unlocked, null, null, new DesktopInputState(false),
+                    null, null, null, null, null, null, 9),
                 request.Include.Contains(DesktopStateSection.Screenshot) ? new EncodedImage([1, 2, 3], "image/png") : null));
     }
 

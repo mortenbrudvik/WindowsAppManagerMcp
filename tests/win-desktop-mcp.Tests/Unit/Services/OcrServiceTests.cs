@@ -369,6 +369,28 @@ public class OcrServiceTests
 
     private static byte PixelAt(byte[] bgra, int width, int x, int y) => bgra[(y * width + x) * 4];
 
+    [Fact]
+    public async Task BothTools_ReportTheWindowsThatKeptOutOfTheCapture_AndItsWarnings()
+    {
+        // Issue #17: a toast excluded from capture is on the screen, but OCR never saw it
+        var target = new CaptureTarget.Region(100, 200, 400, 300);
+        var toast = new ExcludedWindow(0x6000, DisplayAffinity.ExcludeFromCapture, "Enify", "Board saved", 300, 400, 200, 100);
+        var raw = Captures(target, 400, 300, method: "ScreenBitBlt", warnings: "SessionLocked: the session is locked") with
+        {
+            ExcludedFromCapture = [toast]
+        };
+        _screenshots.Setup(s => s.CapturePixels(target)).Returns(raw);
+        _engine.Read = (_, _, _, _) => new OcrPage(null, []);
+
+        var read = await CreateSut().ReadTextAsync(Request(target), OcrDetail.Lines, 150, null, CancellationToken.None);
+        var found = await CreateSut().FindTextAsync(Request(target), Matcher("Board saved"), 20, null, CancellationToken.None);
+
+        read.ExcludedFromCapture.Should().Equal(toast);
+        found.ExcludedFromCapture.Should().Equal(toast);
+        read.Warnings.Should().StartWith("SessionLocked: the session is locked");
+        found.MatchCount.Should().Be(0);
+    }
+
     #endregion
 
     #region Tiles, progress and cancellation

@@ -190,6 +190,9 @@ public class NativeWindowWrapper : INativeWindowWrapper
 
     public bool HasWindowRegion(nint hWnd) => NativeMethods.User32.GetWindowRgnBox(hWnd, out _) != 0;
 
+    public uint GetWindowDisplayAffinity(nint hWnd) =>
+        NativeMethods.User32.GetWindowDisplayAffinity(hWnd, out var affinity) ? affinity : NativeEnums.WDA_NONE;
+
     public int GetCloakReason(nint hWnd)
     {
         var hr = NativeMethods.Dwmapi.DwmGetWindowAttribute(hWnd, NativeEnums.DWMWA_CLOAKED, out int cloaked, sizeof(int));

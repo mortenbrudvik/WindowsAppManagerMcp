@@ -2265,6 +2265,10 @@ activated (the default for a no-input test): an activated fixture focuses the ed
 `OpenOverlay` (`--open-overlay`, M6.7) opens `WAM Fixture Overlay <instance>`, an unowned WS_EX_TOPMOST tool window
 centred on the primary monitor. That is over the main window's middle unless `--other-scale-monitor` moved the main
 window to another monitor: the overlay does not follow it. Its `overlayOpened` event reports `topmost`, `toolWindow` and `ownerHwnd`.
+`ExcludeOverlayFromCapture` (`--exclude-overlay-from-capture`, issue #17) opens the overlay, with or without `--open-overlay`,
+and has it set WDA_EXCLUDEFROMCAPTURE on itself before it is shown, as a toast that keeps out of screen shares does: it is on
+the monitor, and no copy of the screen shows it. Its `overlayOpened` event then also reports `affinitySet` and the
+`displayAffinity` the fixture's own GetWindowDisplayAffinity reads back (0x11).
 `ExtraArguments` (M6.6) plants arguments after `--`, where the fixture ignores them and logs only how many
 (`argumentsIgnored`). Before `--` an unknown option is still refused, so a misspelt option fails the start instead of
 being ignored.
@@ -2297,6 +2301,8 @@ being ignored.
 | `FixturePlacementTests` | Input | The launch tools' placement of a window (M3.13) |
 | `FixtureLayoutTests` | Both | Layout schema version 2 (M6.8) through the real MCP pipeline, saving the fixture's process only into the harness's layouts folder: a maximized fixture comes back maximized on its monitor with its restore rectangle, a minimized one gets its restore rectangle without being shown (its state is sampled during the apply), an agent-written snap lands on its dry-run target, and on a monitor at another scale it comes back at its window rect; the dry run runs in the no-input tier, whose guard refuses any window change |
 | `FixtureMonitorSelectorTests` | Both | The `monitor` parameter (M6.7) through the real MCP pipeline: get_monitors' ids are the same on a second call and every monitor but the primary has a relation (no input); snap_window by `primary`, a device name, an id and `current` lands on that monitor's left half without activating the fixture, and `left` and `right` on the outermost monitors (`TwoMonitors`), or `AmbiguousMonitor` for stacked ones |
+| `FixtureWindowSetWaitTests` | Input | wait_for_window on a set of windows (issue #14) through the real MCP pipeline, over the fixture's main and document windows: `count` `exactly` 2 lists both with their state and monitor; `all` with `minimized` once both are minimized (no `visibleBounds`), `all` with `visible` once both are restored, and `maximized` for the maximized main window, which only polling sees |
+| `FixtureWindowRowTests` | Input | A window row's monitor, zone and restore (issue #12) through the real MCP pipeline: the fixture snapped to four positions on a monitor reads back `monitorId` and `zone` as snap_window took them; moved off every zone it has none; minimized from normal and from maximized it keeps the monitor it restores to, and get_window_info `full` gives `restore` with its state and rectangle; across two monitors beside each other it has `spansMonitors` (`TwoMonitors`) |
 | `FixturePercentPlacementTests` | Input | set_window_bounds with `unit: "percent"` (M6.7): 50/0/50/100 and the three thirds give exactly snap_window's frames on the primary, and a placement on the monitor at another scale (`MonitorAtAnotherScale`) is exact after the app's DPI change |
 | `FixtureTakeoverTests` | Input | Takeover detection (M7.4) with `WAM_TAKEOVER_DETECTION=stop`: Windows installs the real low-level keyboard and mouse hooks while type_text runs (state `Watching`) and removes them afterwards (`Ready`), and the server's own typing, which Windows marks as injected, never counts as the user's, so the text goes in whole. Run it while nobody uses the keyboard or mouse: the user's input would stop the typing (`UserInterrupted`), which is the feature |
 | `FixtureWindowEventTests` | Input | The window event journal (M7.2) over the real WinEvent hooks: after the first read starts it, minimizing and restoring the fixture's window are recorded in order with the window's title, class and process, and nothing of the server's own process is |
@@ -2305,6 +2311,7 @@ being ignored.
 | `FixtureMouseTests` | Input | The input service's Click, RightClick and DoubleClick (element_action's mouse path; the click, right_click and double_click tools before 3.0.0) and MoveMouse (mouse_move) land on the exact pixel aimed at (the corners and centres of the swatches), on the primary and on a monitor at another scale (skipped without one); Click presses the user's primary button and RightClick the secondary one, as the fixture's `mouseDown` events record them after Windows applied the user's swap; a double click is one press with `clickCount` 1 and one with 2 (M4.2) |
 | `FixtureMouseClickDragTests` | Input | mouse_click: a Ctrl+Shift click reaches the fixture with both modifiers down and neither stays down (a plain click after it sees none); the middle, X1 and X2 buttons arrive as themselves; a triple click is three presses with `clickCount` 1, 2 and 3 at the pixel. drag: a Ctrl+drag presses on one swatch and releases on another, with Ctrl down at both and no other press or release between them, and leaves nothing held; a drop point right of the fixture window is refused before anything is pressed (M4.3). The fixture logs presses and releases with their modifiers (`mouseDown`, `mouseUp`) |
 | `FixtureRunStepsTests` | Input | run_steps through the real MCP pipeline (`ServerHarness.StartMcpServerAsync`, M6.2): a form fill (focus, a click at a found element's clickPoint by `$steps` reference, ctrl+a, typing, a toggle, a wait that verifies the text) in one call, the fixture's events in step order, one audit line per audited step under `<run's id>#<step>`, no modifier left down; a failed step stops the run and the step after it does nothing; a direct element_action made during the run waits for the gate and lands after the run's last step; a pause between steps stops the run with `PausedByUser`; a wait longer than `maxDurationMs` stops it with `OperationTimedOut`; a second fixture, a process of its own, taking the foreground stops it with `TargetNotForeground` and keeps the foreground (the terminal is never touched) |
+| `FixtureDisplayAffinityTests` | No input | Windows that keep out of captures (issue #17): with `--exclude-overlay-from-capture`, capture_region and take_screenshot over the overlay list it in `excludedFromCapture` with `affinity` `excludeFromCapture` and its title, get_window_info's detail 'full' reports its `displayAffinity`, and capture_window of the overlay warns `DisplayAffinity` with every `captureMethod` (the log says what each image held). And a regression guard for the 1.15.0 report of a capture that showed only the wallpaper: capture_region and take_screenshot with monitor 'all' over the WebView2 window (`--open-web-view`) match its Windows.Graphics.Capture frame in the middle; when another window covers it on the screen the test logs which and compares nothing (the no-input tier cannot bring it to the front) |
 | `FixtureOcrTests` | Both | read_screen_text and find_text_on_screen on the canvas window (M6.3): every line read inside its drawn rectangle at both scales, a find's click point on its word and back through the captureId, a regex; in the input tier a covered canvas still reads, a minimized one is `WindowMinimized`, a click through the captureId lands on the word and is `StaleCapture` once the canvas moved, and a canvas a policy denies is blacked out of a region read. Skipped without an OCR language |
 
 **Running them.** Locally only with an opt-in, as above. On GitHub, `.github/workflows/e2e.yml`
@@ -2971,22 +2978,38 @@ does.
    opens a second form with `Show(owner)`), respond_to_dialog with the main window's handle and a `button` returns
    `DialogNotFound` naming the open dialog's handle, and nothing is pressed; by the dialog's own handle the press goes
    to it. Close both windows by their handles.
-5. **Keys on a Norwegian layout (issues #8, #9 and #10).** On a Norwegian keyboard layout (0414), to that page:
-   - press_keys `alt+shift+\` (a dead grave accent is then waiting), then `alt+shift+plus` and `alt+shift+?`: the page
-     logs `code` `Minus` (not empty), and there is no SentAsCharacter warning.
-   - Right after `alt+shift+\`: send_keys `hello` into the field puts `hello` there, and the result lists h, e, l and o
-     in `sentAsCharacters` with one SentAsCharacter warning that blames the waiting accent. This also tests the cause of
-     #8 (an accent waiting in the layout that every application shares).
-   - Right after `alt+shift+\`: press_keys `shift+plus` into the field gives `+` and a SentAsCharacter warning that
-     names the waiting accent.
+5. **Keys on a Norwegian layout (issues #8, #9 and #10).** On a Norwegian keyboard layout (0414), to that page. Every
+   press_keys or send_keys below is a call of its own, so each reads the layout afresh. "Press `alt+shift+\`" means a
+   press_keys call of its own: it leaves a dead grave accent waiting, the page logs `key` `Dead` with `code` `Equal`, and
+   the result has a DeadKeyPressed warning that names `` ` `` (the new warning). To start with no accent waiting, press
+   space in the field (it types the accent alone, which uses it up), then clear the field.
+   - Press `alt+shift+\`, then press_keys `alt+shift+plus`; press `alt+shift+\` again, then press_keys `alt+shift+?`.
+     Each time the page logs `code` `Minus` (not empty), and there is no SentAsCharacter warning. `alt+shift+\` comes
+     again before `alt+shift+?` because `alt+shift+plus`, pressed as a key, probably uses the accent up, and
+     `alt+shift+?` would then test only the case with no accent. A pass here does not confirm the cause of #8: with no
+     accent the server can see, `+` is pressed as its key anyway.
+   - The test of #8's inferred cause: an accent that `alt+shift+\` leaves waiting in the page is seen by the server,
+     through the layout every application shares. Press `alt+shift+\`, then send_keys `hello` into the field: the field
+     gets `hello`, and the result lists h, e, l and o in `sentAsCharacters` with one SentAsCharacter warning that blames
+     the waiting accent. Press `alt+shift+\` again, then press_keys `shift+plus` into the field: the field gets `+`, with
+     a SentAsCharacter warning that names the waiting accent. Record both results. If neither blames the accent, the
+     server does not see an accent the page holds (or ToUnicodeEx without a state change does not apply it): the 3.1.0
+     fix for #8 then does nothing (harmless), and the empty `code` 3.0.0 gave stays unexplained.
    - press_keys `alt+shift+oem_plus` logs `code` `Minus` on the Norwegian layout and `Equal` on a US one.
-   - press_keys `ctrl+@` gives `resolvedChords` `{"ctrl+@": "ctrl+ralt+2"}`, and the page logs the 2 key with Ctrl and
+   - With no accent waiting (above; RF.F19: while one waits, `ctrl+^` may be pressed as its dead key instead):
+     press_keys `ctrl+@` gives `resolvedChords` `{"ctrl+@": "ctrl+ralt+2"}`, and the page logs the 2 key with Ctrl and
      AltGr down; `ctrl+^` gives `sentAsCharacters` `["ctrl+^"]` and a SentAsCharacter warning.
    - With Ctrl+Shift+0 as an input-language hotkey: press_keys `ctrl+=` gives `resolvedChords`
      `{"ctrl+=": "ctrl+shift+0"}` and a SystemHotkey warning that starts "SystemHotkey: ctrl+shift+0 (pressed for
-     'ctrl+=')". With two input
-     languages installed, press_keys `alt+shift` gives a SystemHotkey warning about the language switch (Windows may
-     switch the language: switch it back with the same chord).
+     'ctrl+=')". The page logs the Ctrl and Shift keydowns and no keydown with `code` `Digit0`: that is what proves #10's
+     premise, that Windows takes the chord. Record what the page logs; a `Digit0` keydown means Windows let the chord
+     through, which the warning's "may" allows for. With two input languages installed, press_keys `alt+shift` gives a
+     SystemHotkey warning about the language switch (Windows may switch the language: switch it back with the same
+     chord).
+   - Warnings of run_steps' middle steps: run_steps on the debug browser's window with the steps press_keys `ctrl+=`,
+     press_keys `alt+shift+\` and capture_window. The two press_keys steps are `ok` with no `result`, and carry
+     `warnings`: the first the SystemHotkey warning (where Ctrl+Shift+0 is the hotkey), the second the DeadKeyPressed
+     warning; the capture, the last step, returns its whole result. Use the accent up afterwards (above).
    - Optional, where an ABNT2 (Brazilian) layout is installed: `ctrl+/` gives no `resolvedChords` and logs `code`
      `IntlRo`; `ctrl+?` gives `{"ctrl+?": "ctrl+shift+abnt_c1"}`, and `ctrl+shift+abnt_c1` logs the same keydown.
 6. **scroll with modifiers (issue #8).** scroll with `modifiers` `["ctrl"]` over that page zooms it, and with
@@ -3202,17 +3225,17 @@ typical result over 300 tokens, and tools/list itself, measured in October 2026:
 | `get_ui_elements` | 120 elements at the default depth, each with its ref | 6,000 | 8,500 |
 | `get_browser_content` | A 15,000-character article | 3,815 | 6,000 |
 | `list_processes` | 40 processes, each with its parent, start time, integrity and up to two windows (1,328 before roadmap M6.6) | 2,976 | 4,500 |
-| `get_desktop_state` | 15 window rows, the focused element, 2 popups and 80 element lines with refs (roadmap M3.12) | 2,129 | 3,200 |
+| `get_desktop_state` | 15 window rows, the focused element, 2 popups and 80 element lines with refs (roadmap M3.12), and `sessionLock` (issue #18; 2,129 before) | 2,135 | 3,200 |
 | `capture_with_elements` | Metadata with the legend of 120 marks, one line each, and the tags' `markPrefix` (the image is budgeted separately; roadmap M3.11, M3.F38) | 1,416 | 2,150 |
 | `read_screen_text` | The 40 lines OCR reads in a window, each with its bounds (roadmap M6.3) | 1,276 | 1,900 |
-| `find_windows` | 15 windows, each with `visibleBounds` | 1,213 | 1,850 |
+| `find_windows` | 15 windows, each with `visibleBounds` and `monitorId`, and `zone` on the maximized ones (1,213 before issue #12) | 1,321 | 2,000 |
 | `read_element_text` | The first page of a 3,000-character e-mail | 802 | 1,200 |
 | `list_installed_apps` | The first 25 of 140 Start menu apps, packaged first, desktop apps with their paths (roadmap M6.5) | 761 | 1,150 |
 | `read_table` | Task Manager's first 50 processes, 5 columns with headers | 643 | 1,000 |
 | `get_server_info` | The default deny list, five host processes, two monitors, the resources and prompts (634 before roadmap M6.9) | 707 | 850 |
 | `get_layout` | A preset of 6 placements, each with the captured window identity, its monitor's id and name and its program (529 before M6.8) | 805 | 841 |
-| tools/list | Every tool's name, title, description, schemas and annotations: 78 tools, 264,563 bytes, measured on the 3.0.0 review-fix branch after its docs pass, the follow-up to it and the fixups of their merge (`ToolList_StaysWithinItsBudget`, whose comment in ToolPayloadBudgetTests lists the steps; from M5.8 on: M5.8's six DOM bridge tools added 2,970, 936 of them their window selectors; M5.8's dialog option and the UI Automation browser_handle_dialog 199 more; M6.1a's additive consolidations 405 more: mouse_click's own click checks 249, set_window_bounds' optional pairs 87, get_browser_url's foreground sentence 41, get_monitors' virtualScreen 28; M6.1b's one-line descriptions of the nine deprecated tools and the descriptions that no longer send the agent to them 2,121 fewer; M6.6's list_processes parameters and fields 361 more and get_window_info's integrity fields 31 more; M6.2's run_steps 1,054 more; M6.4's wait_for_visual 1,072 more; M6.3's read_screen_text and find_text_on_screen in the opt-in `ocr` toolset 2,088 more; M6.7's set_window_zorder (522), the `monitor` parameters beside the deprecated monitorIndex, set_window_bounds' percent placement (233), get_monitors' identity fields and get_server_info's pinnedWindows 1,514 more; M6.5's list_installed_apps and runAsAdmin 357 more; M6.8's save_layout placements and includeMinimized and apply_layout dryRun and placements 775 more; then M7's tools and fields, 3.0.0's removal of the nine replaced tools and the monitorIndex parameters, and the 3.0.0 review's fixes, issues #8 to #10, the docs pass and its follow-up) | 66,141 | 66,155 |
-| Default tools/list | The 62 tools a server serves without WAM_TOOLSETS, WAM_EXCLUDE_TOOLS and WAM_READ_ONLY, 224,156 bytes, measured on the 3.0.0 review-fix branch after its docs pass, the follow-up to it and the fixups of their merge (`DefaultToolList_StaysWithinItsBudget`, roadmap M6.1, whose comment lists the steps; 59,627 before M6.1a, 60,032 after it with 70 tools, 9,027 fewer once M6.1b moved the nine deprecated tools and the three geometry batches to opt-in toolsets, 392 more with M6.6's list_processes and get_window_info fields, 1,055 more with M6.2's run_steps in the `steps` toolset, on by default, 1,187 more with M6.7's set_window_zorder in `windows`, the `monitor` parameters, set_window_bounds' percent placement and the get_monitors and get_server_info fields; 357 more with M6.5's list_installed_apps in the `launch` toolset and runAsAdmin; 775 more with M6.8's layout schema version 2 in the `layouts` toolset, 54,806 then; then M7's tools and fields, 3.0.0's removals and the 3.0.0 review's fixes, issues #8 to #10, the docs pass and its follow-up) | 56,039 | 56,052 |
+| tools/list | Every tool's name, title, description, schemas and annotations: 78 tools, 266,179 bytes, measured with the fixes of issues #8 to #18 merged (265,930 after issue #14, 265,209 after issues #12 and #16, 264,563 on the 3.0.0 review-fix branch after its docs pass, the follow-up to it and the fixups of their merge; `ToolList_StaysWithinItsBudget`, whose comment in ToolPayloadBudgetTests lists the steps; from M5.8 on: M5.8's six DOM bridge tools added 2,970, 936 of them their window selectors; M5.8's dialog option and the UI Automation browser_handle_dialog 199 more; M6.1a's additive consolidations 405 more: mouse_click's own click checks 249, set_window_bounds' optional pairs 87, get_browser_url's foreground sentence 41, get_monitors' virtualScreen 28; M6.1b's one-line descriptions of the nine deprecated tools and the descriptions that no longer send the agent to them 2,121 fewer; M6.6's list_processes parameters and fields 361 more and get_window_info's integrity fields 31 more; M6.2's run_steps 1,054 more; M6.4's wait_for_visual 1,072 more; M6.3's read_screen_text and find_text_on_screen in the opt-in `ocr` toolset 2,088 more; M6.7's set_window_zorder (522), the `monitor` parameters beside the deprecated monitorIndex, set_window_bounds' percent placement (233), get_monitors' identity fields and get_server_info's pinnedWindows 1,514 more; M6.5's list_installed_apps and runAsAdmin 357 more; M6.8's save_layout placements and includeMinimized and apply_layout dryRun and placements 775 more; then M7's tools and fields, 3.0.0's removal of the nine replaced tools and the monitorIndex parameters, and the 3.0.0 review's fixes, issues #8 to #10, the docs pass and its follow-up; issue #12's window row fields in find_windows' description and get_window_info's restore, and issue #16's includeMinimized, 162 more; issue #14's minimized and maximized conditions, all and count on wait_for_window, 180 more) | 66,483 | 66,497 |
+| Default tools/list | The 62 tools a server serves without WAM_TOOLSETS, WAM_EXCLUDE_TOOLS and WAM_READ_ONLY, 225,772 bytes, measured with the fixes of issues #8 to #18 merged (225,523 after issue #14, 224,802 after issues #12 and #16, 224,156 on the 3.0.0 review-fix branch after its docs pass, the follow-up to it and the fixups of their merge; `DefaultToolList_StaysWithinItsBudget`, roadmap M6.1, whose comment lists the steps; 59,627 before M6.1a, 60,032 after it with 70 tools, 9,027 fewer once M6.1b moved the nine deprecated tools and the three geometry batches to opt-in toolsets, 392 more with M6.6's list_processes and get_window_info fields, 1,055 more with M6.2's run_steps in the `steps` toolset, on by default, 1,187 more with M6.7's set_window_zorder in `windows`, the `monitor` parameters, set_window_bounds' percent placement and the get_monitors and get_server_info fields; 357 more with M6.5's list_installed_apps in the `launch` toolset and runAsAdmin; 775 more with M6.8's layout schema version 2 in the `layouts` toolset, 54,806 then; then M7's tools and fields, 3.0.0's removals and the 3.0.0 review's fixes, issues #8 to #10, the docs pass and its follow-up; issues #12 and #16, 162 more; issue #14, 180 more) | 56,381 | 56,394 |
 
 Every other typical result is at most 300 tokens. When a change makes a result larger on purpose, raise its
 budget in the same change (the failure message gives the new size); when a change shrinks one a lot, lower it.
@@ -3235,7 +3258,7 @@ after M6.1a):
 | Toolset | Default | Tools | Tokens | Budget |
 |---------|---------|------:|-------:|-------:|
 | `server` | always on | 4 | 1,085 | 1,121 |
-| `windows` | on | 14 | 11,309 | 11,345 |
+| `windows` | on | 14 | 11,651 | 11,687 |
 | `monitors` | on | 1 | 176 | 212 |
 | `capture` | on | 4 | 6,293 | 6,329 |
 | `elements` | on | 9 | 8,323 | 8,359 |

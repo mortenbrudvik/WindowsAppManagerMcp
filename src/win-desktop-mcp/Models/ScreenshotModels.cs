@@ -26,6 +26,10 @@ public interface ICaptureMetadata
 /// element it was given for is gone), with a RefMoved warning; null otherwise.
 /// <see cref="MarkPrefix"/> is set for get_desktop_state's screenshot with marks (roadmap M3.F32, M3.F38): the window part
 /// its tags leave out, as <see cref="AnnotatedScreenshotResult.MarkPrefix"/>; null otherwise.
+/// <see cref="ExcludedFromCapture"/> (issue #17) lists the windows that declare a display affinity over pixels copied from the
+/// screen (a monitor, a region, or a window read by ScreenBitBlt or BitBltFallback): they are on the screen but not in this
+/// image. Read before and after the pixels; null when there are none, and for a window that drew itself or the compositor's
+/// frame of it, which shows no other window.
 /// </summary>
 public record ScreenshotResult(
     bool Success,
@@ -50,7 +54,8 @@ public record ScreenshotResult(
     string? Ref = null,
     bool? RefMoved = null,
     string? MarkPrefix = null,
-    CursorPosition? Cursor = null
+    CursorPosition? Cursor = null,
+    IReadOnlyList<ExcludedWindow>? ExcludedFromCapture = null
 ) : ICaptureMetadata;
 
 /// <summary>
@@ -58,6 +63,30 @@ public record ScreenshotResult(
 /// when the pointer was hidden (a touch or pen session, a game); Drawn is true when includeCursor drew it into the image.
 /// </summary>
 public record CursorPosition(int X, int Y, bool? Hidden = null, bool? Drawn = null);
+
+/// <summary>
+/// A window that declares a display affinity over a copy of the screen (issue #17), as excludedFromCapture lists it: it is
+/// on the screen there but not in the image, which shows what is behind it (excludeFromCapture) or black (monitor). A window
+/// the user's target policy denies, or whose process it cannot check, is listed by its handle, affinity and rectangle only, as
+/// maskedWindows lists it.
+/// </summary>
+/// <param name="Handle">The window.</param>
+/// <param name="Affinity">excludeFromCapture or monitor.</param>
+/// <param name="ProcessName">Its process; left out for a window the policy denies, or when it cannot be read.</param>
+/// <param name="Title">Its title, cut as the window tools cut it; left out for a window the policy denies, or when it has none.</param>
+/// <param name="X">Left edge of its visible frame inside the captured area, in screen pixels.</param>
+/// <param name="Y">Top edge.</param>
+/// <param name="Width">Width.</param>
+/// <param name="Height">Height.</param>
+public sealed record ExcludedWindow(
+    long Handle,
+    DisplayAffinity Affinity,
+    string? ProcessName,
+    string? Title,
+    int X,
+    int Y,
+    int Width,
+    int Height);
 
 /// <summary>
 /// The captured screen rectangle, in physical virtual-screen pixels, before any scaling.
@@ -155,6 +184,8 @@ public record VirtualScreenBounds(
 /// <see cref="OwnedWindows"/> names the windows the window owns (an open dialog or popup) that the walk left out, as
 /// <see cref="UIElementResult.OwnedWindows"/> (roadmap M3.F9): they get no marks, and are captured and marked by their
 /// own handle. Null when there were none.
+/// <see cref="ExcludedFromCapture"/> is as for <see cref="ScreenshotResult.ExcludedFromCapture"/>: only when the window's pixels
+/// were copied from the screen or from its device context.
 /// </summary>
 public record AnnotatedScreenshotResult(
     bool Success,
@@ -188,7 +219,8 @@ public record AnnotatedScreenshotResult(
     string? CaptureId = null,
     string? Legend = null,
     IReadOnlyList<long>? OwnedWindows = null,
-    string? MarkPrefix = null
+    string? MarkPrefix = null,
+    IReadOnlyList<ExcludedWindow>? ExcludedFromCapture = null
 ) : ICaptureMetadata;
 
 /// <summary>
@@ -349,6 +381,25 @@ public static class CaptureWarnings
     /// languages has an OCR recognizer, so the first installed OCR language was used.
     /// </summary>
     public const string OcrLanguageFallback = "OcrLanguageFallback";
+
+    /// <summary>
+    /// The captured window declares a display affinity (issue #17): a copy of the screen shows what is behind it or black,
+    /// and what PrintWindow and Windows.Graphics.Capture return for it is not known, so the image may not show it.
+    /// </summary>
+    public const string DisplayAffinity = "DisplayAffinity";
+
+    /// <summary>
+    /// The session was locked when the pixels were read (issues #17 and #18), so the image may show the lock screen rather
+    /// than the windows. Not a refusal: captures are not refused while the session is locked. The same name as the input
+    /// guard's code, which refuses input then.
+    /// </summary>
+    public const string SessionLocked = "SessionLocked";
+
+    /// <summary>
+    /// The input desktop could not be reached when the pixels were read (a UAC prompt, Ctrl+Alt+Del or a disconnected
+    /// session; issue #17), so the image may be black or show the lock screen. The same name as the input guard's code.
+    /// </summary>
+    public const string DesktopUnavailable = "DesktopUnavailable";
 
     /// <summary>"Code: text".</summary>
     public static string Format(string code, string text) => $"{code}: {text}";

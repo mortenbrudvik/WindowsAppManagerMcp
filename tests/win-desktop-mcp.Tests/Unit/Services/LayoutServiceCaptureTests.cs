@@ -44,7 +44,7 @@ public class LayoutServiceCaptureTests : IDisposable
         _windows.Setup(w => w.GetAllWindows(false)).Returns(windows.Where(w => w.State != WindowState.Minimized).ToList());
         // Each window is on the monitor its listing gives it, when the capture looks its monitor up again
         foreach (var window in windows)
-            _monitors.Setup(m => m.GetMonitorForWindow(window.Handle)).Returns(Monitors[window.MonitorIndex]);
+            _monitors.Setup(m => m.GetMonitorForWindow(window.Handle)).Returns(Monitors[window.MonitorIndex!.Value]);
     }
 
     private async Task<WindowPlacement> CaptureOneAsync(bool includeMinimized = false)

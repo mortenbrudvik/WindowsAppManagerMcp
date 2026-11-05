@@ -27,6 +27,20 @@ public sealed class NativeKeyboardLayoutWrapper : INativeKeyboardLayoutWrapper
 
     public string? KeyText(ushort virtualKey, uint scanCode, byte shiftState, bool capsLock, nint layout)
     {
+        var (count, buffer) = ToUnicode(virtualKey, scanCode, shiftState, capsLock, layout);
+        return count > 0 ? new string(buffer, 0, count) : null;
+    }
+
+    public string? DeadKeyText(ushort virtualKey, uint scanCode, byte shiftState, bool capsLock, nint layout)
+    {
+        // -1 is a dead key, with its spacing accent written to the buffer where Windows has one
+        var (count, buffer) = ToUnicode(virtualKey, scanCode, shiftState, capsLock, layout);
+        return count >= 0 ? null : buffer[0] == '\0' ? string.Empty : buffer[0].ToString();
+    }
+
+    /// <summary>ToUnicodeEx for the key with <paramref name="shiftState"/> and Caps Lock, changing no keyboard state.</summary>
+    private static (int Count, char[] Buffer) ToUnicode(ushort virtualKey, uint scanCode, byte shiftState, bool capsLock, nint layout)
+    {
         var state = new byte[256];
         if (capsLock)
         {
@@ -51,7 +65,7 @@ public sealed class NativeKeyboardLayoutWrapper : INativeKeyboardLayoutWrapper
         var buffer = new char[8];
         var count = NativeMethods.Keyboard.ToUnicodeEx(virtualKey, scanCode & 0xFF, state, buffer, buffer.Length,
             NativeMethods.Keyboard.ToUnicodeNoStateChange, layout);
-        return count > 0 ? new string(buffer, 0, count) : null;
+        return (count, buffer);
     }
 
     public SystemKeyboardHotkeys? ReadSystemHotkeys()

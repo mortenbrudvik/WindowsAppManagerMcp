@@ -13,7 +13,7 @@ Read this for every tool with its key parameters, the toolsets (and what to do w
 | `get_foreground_window` | Get focused window | (none) |
 | `get_owned_windows` | Dialogs and popups a window owns; which one blocks it | handle, includeHidden |
 | `get_window_info` | One window, without listing all; full adds foreground, z-order, topmost, enabled, responding, DPI | window (or handle), detail |
-| `wait_for_window` | Wait until a window exists, is gone, in front, visible, retitled or input-idle | window, condition, excludeHandles, timeoutMs |
+| `wait_for_window` | Wait until a window exists, is gone, in front, visible, minimized, maximized, retitled or input-idle; all or count for a set of windows | window, condition, all, count, excludeHandles, timeoutMs |
 | `get_window_events` | What windows came up, went, were retitled or came to the front since an earlier call | sinceSeq, types, processName, limit |
 
 Every tool that takes a window's `handle` (or `windowHandle`) also takes `window`, a selector: `find_windows`' title, process and class filters (`titleContains`, `titleEquals`, `titleRegex`, `processName`, `processNameContains`, `processId`, `className`), `handle`, `foreground`, `index`, `includeCloaked` and `includeUntitled`, and no other member. It must name exactly one window: several matches fail with `AmbiguousWindow` and up to 5 `candidates`, none with `WindowNotFound`. `window.handle` with `processId` or a title refuses a reused handle (`HandleMismatch`).

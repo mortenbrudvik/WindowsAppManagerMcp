@@ -203,6 +203,50 @@ public class WindowFinderToolsTests
     }
 
     [Fact]
+    public void FindWindows_ReportsTheMonitorsId_TheZone_AndSpansMonitorsOnlyWhenTrue()
+    {
+        // Issue #12: the monitor's identity and how the window covers it, from the service's one lookup
+        _mockWindowService.Setup(w => w.FindWindows(It.IsAny<WindowQuery>())).Returns(new List<WindowInfo>
+        {
+            TestDataFactory.CreateWindowInfo(handleValue: 1, monitorIndex: 2) with { MonitorId = "m-0d6fc36f", Zone = "left_half" },
+            TestDataFactory.CreateWindowInfo(handleValue: 2, monitorIndex: 0) with { MonitorId = "m-81c07e5b", SpansMonitors = true }
+        });
+
+        var rows = CreateSut().FindWindows();
+
+        rows.Select(r => (r.MonitorIndex, r.MonitorId, r.Zone, r.SpansMonitors)).Should().Equal(
+            (2, "m-0d6fc36f", "left_half", null),
+            (0, "m-81c07e5b", null, true));
+    }
+
+    [Fact]
+    public void FindWindows_ARowWhoseMonitorCannotBeRead_HasNoMonitorIndexOrId()
+    {
+        // It used to say monitorIndex 0
+        _mockWindowService.Setup(w => w.FindWindows(It.IsAny<WindowQuery>()))
+            .Returns(new List<WindowInfo> { TestDataFactory.CreateWindowInfo() with { MonitorIndex = null } });
+
+        var dto = CreateSut().FindWindows().Should().ContainSingle().Which;
+
+        dto.MonitorIndex.Should().BeNull();
+        dto.MonitorId.Should().BeNull();
+    }
+
+    [Fact]
+    public void FindWindows_ListsMinimizedWindows_UnlessIncludeMinimizedIsFalse()
+    {
+        // Issue #16: the query has had IncludeMinimized all along; find_windows now passes it
+        _mockWindowService.Setup(w => w.FindWindows(It.IsAny<WindowQuery>())).Returns(new List<WindowInfo>());
+        var sut = CreateSut();
+
+        sut.FindWindows();
+        sut.FindWindows(includeMinimized: false);
+
+        _mockWindowService.Verify(w => w.FindWindows(It.Is<WindowQuery>(q => q.IncludeMinimized)), Times.Once);
+        _mockWindowService.Verify(w => w.FindWindows(It.Is<WindowQuery>(q => !q.IncludeMinimized)), Times.Once);
+    }
+
+    [Fact]
     public void FindWindows_ConvertsNullHandleCorrectly()
     {
         // Arrange
@@ -252,6 +296,75 @@ public class WindowFinderToolsTests
         // Assert
         result.Should().NotBeNull();
         result!.Title.Should().Be("Foreground Window");
+    }
+
+    [Theory]
+    [InlineData(SessionLockState.Locked)]
+    [InlineData(SessionLockState.Unlocked)]
+    [InlineData(SessionLockState.Unknown)]
+    public void GetForegroundWindow_ReportsTheSessionLock(SessionLockState lockState)
+    {
+        // Arrange - issue #18: LockApp's window in front does not say whether the session is locked
+        var lockApp = TestDataFactory.CreateWindowInfo(title: "Windows Default Lock Screen", processName: "LockApp") with
+        {
+            ClassName = "Windows.UI.Core.CoreWindow"
+        };
+        _mockWindowService.Setup(w => w.GetForegroundWindow()).Returns(lockApp);
+        var probe = new Mock<IProcessSecurityProbe>();
+        probe.Setup(p => p.GetSessionLock()).Returns(lockState);
+
+        // Act
+        var result = new WindowFinderTools(_mockWindowService.Object, securityProbe: probe.Object).GetForegroundWindow();
+
+        // Assert - the window's own fields as find_windows reports them, and the lock beside them
+        result.SessionLock.Should().Be(lockState);
+        result.Handle.Should().Be(lockApp.Handle);
+        result.ProcessName.Should().Be("LockApp");
+        result.ClassName.Should().Be("Windows.UI.Core.CoreWindow");
+    }
+
+    [Fact]
+    public void GetForegroundWindow_WithoutAProbe_ReportsTheSessionLockAsUnknown()
+    {
+        _mockWindowService.Setup(w => w.GetForegroundWindow()).Returns(TestDataFactory.CreateWindowInfo());
+
+        CreateSut().GetForegroundWindow().SessionLock.Should().Be(SessionLockState.Unknown);
+    }
+
+    [Fact]
+    public void GetForegroundWindow_WithNoWindowInFrontWhileTheSessionIsLocked_SaysTheSessionIsLocked()
+    {
+        // Arrange
+        _mockWindowService.Setup(w => w.GetForegroundWindow()).Returns((WindowInfo?)null);
+        var probe = new Mock<IProcessSecurityProbe>();
+        probe.Setup(p => p.GetSessionLock()).Returns(SessionLockState.Locked);
+
+        // Act
+        var act = () => new WindowFinderTools(_mockWindowService.Object, securityProbe: probe.Object).GetForegroundWindow();
+
+        // Assert
+        act.Should().Throw<ToolErrorException>()
+            .Where(e => e.ErrorCode == nameof(WindowErrorCode.NoForegroundWindow) && e.Message.Contains("the session is locked") &&
+                        e.Message.Contains("SessionLocked"));
+    }
+
+    [Theory]
+    [InlineData(SessionLockState.Unlocked, "the session is not locked")]
+    [InlineData(SessionLockState.Unknown, "could not be read")]
+    public void GetForegroundWindow_WithNoWindowInFrontOtherwise_SaysWhatIsKnownOfTheLock(SessionLockState lockState, string says)
+    {
+        // Arrange - nobody measured that a lock leaves no window in front, so the error does not say it does
+        _mockWindowService.Setup(w => w.GetForegroundWindow()).Returns((WindowInfo?)null);
+        var probe = new Mock<IProcessSecurityProbe>();
+        probe.Setup(p => p.GetSessionLock()).Returns(lockState);
+
+        // Act
+        var act = () => new WindowFinderTools(_mockWindowService.Object, securityProbe: probe.Object).GetForegroundWindow();
+
+        // Assert
+        act.Should().Throw<ToolErrorException>()
+            .Where(e => e.ErrorCode == nameof(WindowErrorCode.NoForegroundWindow) && e.Message.Contains(says) &&
+                        !e.Message.Contains("lock screen") && e.Message.Contains("again shortly"));
     }
 
     #endregion
@@ -320,6 +433,26 @@ public class WindowFinderToolsTests
         var result = CreateSut().GetWindowInfo(handle: window.Handle, detail: detail);
 
         result.Title.Should().Be(CutTitle);
+    }
+
+    [Fact]
+    public void GetWindowInfo_Full_ReportsTheDisplayAffinity_AndStandardLeavesItOut()
+    {
+        // Issue #17: a window that keeps itself out of captures says so at detail 'full' only
+        var window = TestDataFactory.CreateWindowInfo(title: "Board saved");
+        _mockWindowService.Setup(w => w.IsValidWindow(window.Handle)).Returns(true);
+        _mockWindowService.Setup(w => w.GetWindowInfo(window.Handle)).Returns(window);
+        _mockWindowService.Setup(w => w.GetWindowDetails(window.Handle))
+            .Returns(new WindowDetails(window, false, 3, false, true, true, 96, DisplayAffinity.ExcludeFromCapture));
+        var sut = CreateSut();
+
+        var full = sut.GetWindowInfo(handle: window.Handle, detail: WindowDetail.Full);
+        var standard = sut.GetWindowInfo(handle: window.Handle, detail: WindowDetail.Standard);
+
+        full.DisplayAffinity.Should().Be(DisplayAffinity.ExcludeFromCapture);
+        System.Text.Json.JsonSerializer.Serialize(full, ToolJson.SerializerOptions).Should().Contain("\"displayAffinity\":\"excludeFromCapture\"");
+        standard.DisplayAffinity.Should().BeNull();
+        System.Text.Json.JsonSerializer.Serialize(standard, ToolJson.SerializerOptions).Should().NotContain("displayAffinity");
     }
 
     // get_window_info detail 'full': the integrity of the window's process (roadmap M6.6)
@@ -422,6 +555,51 @@ public class WindowFinderToolsTests
         result.Success.Should().BeTrue();
         result.IntegrityLevel.Should().BeNull();
         result.AboveServer.Should().BeNull();
+    }
+
+    // Issue #12: the monitor's identity and the zone from standard up, and where a minimized window comes back at full
+
+    [Theory]
+    [InlineData(WindowDetail.Standard)]
+    [InlineData(WindowDetail.Full)]
+    public void GetWindowInfo_ReportsTheMonitorsId_TheZone_AndSpansMonitors(WindowDetail detail)
+    {
+        var window = UseWindow(TestDataFactory.CreateWindowInfo(0x100, monitorIndex: 1) with
+        {
+            MonitorId = "m-81c07e5b", Zone = "right_third", SpansMonitors = true
+        });
+
+        var result = CreateSut().GetWindowInfo(handle: window.Handle, detail: detail);
+
+        (result.MonitorIndex, result.MonitorId, result.Zone, result.SpansMonitors).Should().Be((1, "m-81c07e5b", "right_third", true));
+    }
+
+    [Fact]
+    public void GetWindowInfo_Full_OfAMinimizedWindow_ReportsWhereItComesBack()
+    {
+        // Arrange
+        var window = UseWindow(TestDataFactory.CreateWindowInfo(0x100, state: WindowState.Minimized, monitorIndex: 1));
+        var monitor = TestDataFactory.CreateMonitorInfo(index: 1, isPrimary: false, boundsX: 1920) with { Id = "m-81c07e5b" };
+        _mockWindowService.Setup(w => w.GetWindowDetails(window.Handle)).Returns(new WindowDetails(window, false, 3, false, true, true, 96)
+        {
+            Restore = new WindowRestore(WindowState.Maximized, new WindowRect(2000, 100, 814, 607), monitor)
+        });
+
+        // Act
+        var full = CreateSut().GetWindowInfo(handle: window.Handle, detail: WindowDetail.Full);
+        var standard = CreateSut().GetWindowInfo(handle: window.Handle, detail: WindowDetail.Standard);
+
+        // Assert
+        full.Restore.Should().Be(new RestoreDto("maximized", new BoundsDto(2000, 100, 814, 607), 1, "m-81c07e5b"));
+        standard.Restore.Should().BeNull("only 'full' reads the placement");
+    }
+
+    [Fact]
+    public void GetWindowInfo_Full_WithoutARestore_LeavesItOut()
+    {
+        var window = UseWindow(TestDataFactory.CreateWindowInfo(0x100));
+
+        CreateSut().GetWindowInfo(handle: window.Handle, detail: WindowDetail.Full).Restore.Should().BeNull();
     }
 
     [Fact]

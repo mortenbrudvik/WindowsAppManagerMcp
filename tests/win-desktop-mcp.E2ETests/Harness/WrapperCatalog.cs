@@ -119,6 +119,8 @@ public static class WrapperCatalog
                 [nameof(INativeWindowWrapper.IsCloaked)] = WrapperMember.Read,
                 // GetWindowRgnBox: whether the window has a region, for the OCR mask (roadmap M6.3)
                 [nameof(INativeWindowWrapper.HasWindowRegion)] = WrapperMember.Read,
+                // GetWindowDisplayAffinity: whether a window keeps itself out of captures (issue #17)
+                [nameof(INativeWindowWrapper.GetWindowDisplayAffinity)] = WrapperMember.Read,
                 [nameof(INativeWindowWrapper.GetCloakReason)] = WrapperMember.Read,
                 [nameof(INativeWindowWrapper.GetExtendedFrameBounds)] = WrapperMember.Read,
                 [nameof(INativeWindowWrapper.IsHungAppWindow)] = WrapperMember.Read,
@@ -260,6 +262,8 @@ public static class WrapperCatalog
                 [nameof(INativeKeyboardLayoutWrapper.VkKeyScan)] = WrapperMember.Read,
                 [nameof(INativeKeyboardLayoutWrapper.ScanCode)] = WrapperMember.Read,
                 [nameof(INativeKeyboardLayoutWrapper.KeyText)] = WrapperMember.Read,
+                // The same ToUnicodeEx read, for a dead key a chord presses (issue #8)
+                [nameof(INativeKeyboardLayoutWrapper.DeadKeyText)] = WrapperMember.Read,
                 // The input-method hotkeys and language toggles, from the user's registry, opened for reading (issue #10)
                 [nameof(INativeKeyboardLayoutWrapper.ReadSystemHotkeys)] = WrapperMember.Read
             },

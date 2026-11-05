@@ -29,7 +29,7 @@ public class DesktopStateToolsTests
 
     private DesktopStateTools CreateSut() => new(_state.Object, _windows.Object);
 
-    private static DesktopState State(bool success = true) => new(success, Notepad, "notes.txt - Notepad", null, null, null,
+    private static DesktopState State(bool success = true) => new(success, Notepad, "notes.txt - Notepad", null, SessionLockState.Unlocked, null, null,
         new DesktopInputState(false), null, null, null, null, null, null, 12);
 
     private static async Task<ToolErrorException> RefusedAsync(Func<Task> call) =>

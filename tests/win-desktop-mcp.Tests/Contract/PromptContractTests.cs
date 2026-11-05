@@ -21,7 +21,8 @@ public partial class PromptContractTests
     /// <summary>
     /// The most tokens one prompt's text may cost with every step served (the whole surface) and the sample arguments: a recipe
     /// is a page the agent reads once, not a manual. A ratchet just above the largest, measured October 2026: automate_app 464,
-    /// arrange_workspace 393, fill_form 375 and diagnose_click 447 tokens. A change that lengthens a recipe on purpose raises it.
+    /// arrange_workspace 393, fill_form 375 and diagnose_click 447 tokens; automate_app 478 with its lock rule (issue #18), and
+    /// diagnose_click 444. A change that lengthens a recipe on purpose raises it.
     /// </summary>
     private const int PromptTokenBudget = 480;
 
@@ -102,6 +103,17 @@ public partial class PromptContractTests
         text.Should().NotContain("find_windows").And.NotContain("get_window_info");
         text.Should().Contain("\n1. Paused: ").And.Contain("\n2. In the way: get_active_popups").And.Contain("\n5. Look: capture_window");
         StepNumber().Matches(text).Should().HaveCount(5);
+    }
+
+    [Fact]
+    public async Task TheAutomateAppRecipe_TellsALockBySessionLock_NotByTheWindowInFront()
+    {
+        // Issue #18: the lock screen app in front does not say whether the session is locked
+        await using var server = await StartAsync(selection: null);
+
+        var text = await GetTextAsync(server, WorkflowPrompts.AutomateApp);
+
+        text.Should().Contain("SessionLocked").And.Contain("sessionLock, not in the window in front");
     }
 
     [Fact]

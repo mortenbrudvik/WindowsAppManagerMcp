@@ -168,9 +168,21 @@ public sealed record WindowResolution
 /// <summary>
 /// A window an ambiguous selector matched (roadmap M2.4): enough to name it exactly by its handle. IsAgentHost is true for
 /// the agent's own terminal, editor or chat window, as find_windows marks it, and omitted for every other window, so an
-/// agent picking a candidate can tell its own host apart.
+/// agent picking a candidate can tell its own host apart. State, VisibleBounds, MonitorIndex, MonitorId and Zone come only
+/// in wait_for_window's results (<see cref="WithState"/>, issue #14), each omitted when null.
 /// </summary>
-public sealed record WindowCandidateDto(long Handle, string Title, string ProcessName, int ProcessId, string ClassName, bool? IsAgentHost = null)
+public sealed record WindowCandidateDto(
+    long Handle,
+    string Title,
+    string ProcessName,
+    int ProcessId,
+    string ClassName,
+    bool? IsAgentHost = null,
+    string? State = null,
+    BoundsDto? VisibleBounds = null,
+    int? MonitorIndex = null,
+    string? MonitorId = null,
+    string? Zone = null)
 {
     /// <summary>
     /// The candidate for a window that was read, its title cut to <see cref="AppText.MaxLength"/> characters (roadmap M3.F14).
@@ -178,4 +190,20 @@ public sealed record WindowCandidateDto(long Handle, string Title, string Proces
     public static WindowCandidateDto From(WindowInfo window) =>
         new(window.Handle.ToInt64(), AppText.Cut(window.Title), window.ProcessName, window.ProcessId, window.ClassName,
             window.IsAgentHost ? true : null);
+
+    /// <summary>
+    /// The candidate with the window's state and place, as find_windows reads them, for a set of windows wait_for_window
+    /// lists (issue #14). A minimized window has no VisibleBounds (it is parked off screen) and no Zone; its MonitorIndex and
+    /// MonitorId are the monitor it restores to.
+    /// </summary>
+    public static WindowCandidateDto WithState(WindowInfo window) => From(window) with
+    {
+        State = window.State.ToString().ToLowerInvariant(),
+        VisibleBounds = window.State != WindowState.Minimized && window.VisibleBounds is { } visible
+            ? new BoundsDto(visible.X, visible.Y, visible.Width, visible.Height)
+            : null,
+        MonitorIndex = window.MonitorIndex,
+        MonitorId = window.MonitorId,
+        Zone = window.Zone
+    };
 }

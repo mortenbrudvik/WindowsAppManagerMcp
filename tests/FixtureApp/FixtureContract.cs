@@ -415,8 +415,11 @@ public static class FixtureContract
 
         /// <summary>
         /// The overlay has rendered (roadmap M6.7). Fields: <c>hwnd</c>, <c>topmost</c> and <c>toolWindow</c> (whether its
-        /// extended style has WS_EX_TOPMOST and WS_EX_TOOLWINDOW), and <c>ownerHwnd</c> (GetWindow GW_OWNER: 0, it is
-        /// unowned, so the z-order of the main window and of the overlay are independent).
+        /// extended style has WS_EX_TOPMOST and WS_EX_TOOLWINDOW), <c>ownerHwnd</c> (GetWindow GW_OWNER: 0, it is
+        /// unowned, so the z-order of the main window and of the overlay are independent), <c>affinitySet</c> (whether
+        /// SetWindowDisplayAffinity succeeded; false unless <c>--exclude-overlay-from-capture</c> asked for it) and
+        /// <c>displayAffinity</c> (what the fixture's own GetWindowDisplayAffinity reads back: 0x11 when it is excluded from
+        /// capture, 0 when not, -1 when it cannot be read; issue #17).
         /// </summary>
         public const string OverlayOpened = "overlayOpened";
 
