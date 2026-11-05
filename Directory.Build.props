@@ -9,7 +9,7 @@
     The SDK stamps it into the assemblies: FileVersion 1.2.3.0 and ProductVersion /
     AssemblyInformationalVersion 1.2.3+<commit sha>. The MCP server reports the latter as
     serverInfo.version, and scripts/Test-PluginBinary.ps1 uses it to check that the committed
-    bin/WindowsAppManagerMcp.exe was built from the current sources.
+    bin/win-desktop-mcp.exe was built from the current sources.
   -->
   <PropertyGroup>
     <Version>3.1.0</Version>

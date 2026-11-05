@@ -3,9 +3,9 @@ using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Interop;
-using static WindowsAppManagerMcp.FixtureApp.FixtureContract;
+using static WinDesktopMcp.FixtureApp.FixtureContract;
 
-namespace WindowsAppManagerMcp.FixtureApp;
+namespace WinDesktopMcp.FixtureApp;
 
 /// <summary>
 /// A modal dialog owned by the main window. While it is open (ShowDialog) the main window is disabled,

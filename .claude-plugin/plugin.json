@@ -21,7 +21,7 @@
   "skills": "./skills/",
   "mcpServers": {
     "windows-app-manager": {
-      "command": "${CLAUDE_PLUGIN_ROOT}/bin/WindowsAppManagerMcp.exe"
+      "command": "${CLAUDE_PLUGIN_ROOT}/bin/win-desktop-mcp.exe"
     }
   }
 }

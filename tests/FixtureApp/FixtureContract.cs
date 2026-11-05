@@ -1,6 +1,6 @@
 using System.Globalization;
 
-namespace WindowsAppManagerMcp.FixtureApp;
+namespace WinDesktopMcp.FixtureApp;
 
 /// <summary>
 /// The contract between the fixture app (tests/FixtureApp) and the end-to-end tests: process name,

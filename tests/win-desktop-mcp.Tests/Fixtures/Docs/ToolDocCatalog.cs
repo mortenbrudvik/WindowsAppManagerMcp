@@ -1,0 +1,196 @@
+namespace WinDesktopMcp.Tests.Fixtures;
+
+/// <summary>A tool in the generated docs: its one-line summary and the parameters the skill's tool tables name.</summary>
+/// <param name="Name">The tool name, as tools/list sends it.</param>
+/// <param name="Summary">The short description in the skill's tool tables (skills/using-windows-app-manager/tools.md).</param>
+/// <param name="KeyParameters">
+/// The parameters the skill's tool tables list, each a real parameter name, optionally followed by a note in parentheses
+/// (for example "confirm (more than 3 windows)"). Empty for "(none)".
+/// </param>
+public sealed record ToolDoc(string Name, string Summary, params string[] KeyParameters);
+
+/// <summary>A category of tools: a row of the README and TOOLS.md tables and a table of the skill's tools.md.</summary>
+/// <param name="Name">The category name, also the '## ' heading of its section in docs/TOOLS.md.</param>
+/// <param name="Tools">The tools, in the order of their '### ' sections in docs/TOOLS.md.</param>
+/// <param name="SkillNote">Markdown printed under the category's table in the skill's tools.md, or null.</param>
+public sealed record ToolDocCategory(string Name, IReadOnlyList<ToolDoc> Tools, string? SkillNote = null)
+{
+    /// <summary>The GitHub anchor of the category's '## ' heading.</summary>
+    public string Anchor => Name.ToLowerInvariant().Replace(' ', '-');
+}
+
+/// <summary>
+/// What the generated tool tables need beyond tools/list: each tool's category, its one-line summary and the
+/// key parameters the skill's tool tables name. Everything else in the tables (tool names, counts, parameter names, types,
+/// required flags and defaults) comes from tools/list. GeneratedToolDocsTests fails when a served tool is missing
+/// here or a key parameter is not a real parameter; a new tool needs an entry before the docs can be generated.
+/// </summary>
+public static class ToolDocCatalog
+{
+    public static IReadOnlyList<ToolDocCategory> Categories { get; } =
+    [
+        new("Window Discovery",
+        [
+            new("find_windows", "Find windows by criteria", "titleContains", "titleEquals", "titleRegex", "processName", "processId", "className", "sort", "limit"),
+            new("get_foreground_window", "Get focused window"),
+            new("get_owned_windows", "Dialogs and popups a window owns; which one blocks it", "handle", "includeHidden"),
+            new("get_window_info", "One window, without listing all; full adds foreground, z-order, topmost, enabled, responding, DPI", "window (or handle)", "detail"),
+            new("wait_for_window", "Wait until a window exists, is gone, in front, visible, retitled or input-idle", "window", "condition", "excludeHandles", "timeoutMs"),
+            new("get_window_events", "What windows came up, went, were retitled or came to the front since an earlier call", "sinceSeq", "types", "processName", "limit"),
+        ],
+        SkillNote: "Every tool that takes a window's `handle` (or `windowHandle`) also takes `window`, a selector: `find_windows`' " +
+                   "title, process and class filters (`titleContains`, `titleEquals`, `titleRegex`, `processName`, `processNameContains`, " +
+                   "`processId`, `className`), `handle`, `foreground`, `index`, `includeCloaked` and `includeUntitled`, and no other " +
+                   "member. It must name exactly one window: several matches fail with `AmbiguousWindow` and up to 5 `candidates`, " +
+                   "none with `WindowNotFound`. `window.handle` with `processId` or a title refuses a reused handle (`HandleMismatch`)."),
+        new("Window Control",
+        [
+            new("set_window_bounds", "Move, resize, or both (x and y, width and height, or all four), in pixels or percent of a monitor", "window (or handle)", "x", "y", "width", "height", "unit", "monitor"),
+            new("set_window_state", "Min/max/restore", "window (or handle)", "state"),
+            new("focus_window", "Bring to foreground, verified; reports what is in front", "window (or handle)"),
+            new("close_window", "Close gracefully and verify: closed, hidden, stillOpen or promptShown", "window (or handle)", "waitMs", "force"),
+            new("snap_window", "Snap to preset position", "window (or handle)", "position", "monitor"),
+            new("move_window_to_monitor", "Move to monitor", "window (or handle)", "monitor", "positioning"),
+            new("set_window_zorder", "Raise, send to the bottom, pin on top or unpin, or place above another window, without activating it", "window (or handle)", "mode", "aboveHandle"),
+        ]),
+        new("Batch Operations",
+        [
+            new("set_windows_bounds_batch", "Move/resize multiple windows (toolset windows-batch)", "placements"),
+            new("snap_windows_batch", "Snap multiple windows (toolset windows-batch)", "placements"),
+            new("set_windows_state_batch", "Set state of multiple windows (toolset windows-batch)", "changes"),
+            new("close_windows_batch", "Close multiple windows and verify each", "windows", "waitMs", "confirm (more than 3 windows)", "force"),
+            new("launch_applications_batch", "Launch multiple applications", "applications", "waitForWindows"),
+        ]),
+        new("Monitor Info",
+        [
+            new("get_monitors", "List all displays with id, name, DPI and place, and the virtual screen's bounds"),
+        ]),
+        new("Screenshot",
+        [
+            new("take_screenshot", "Capture a monitor", "monitor", "maxDimension", "output"),
+            new("capture_region", "Capture screen region", "x", "y", "width", "height", "maxDimension", "output"),
+            new("capture_window", "Capture a window, or crop it to one element", "handle", "ref", "padding", "includeFrame", "maxDimension", "output"),
+            new("capture_with_elements", "Capture with numbered marks (element refs) and a legend", "handle", "maxElements", "controlTypes", "detail", "maxDimension"),
+            new("read_screen_text", "Read a window's, region's or monitor's text with Windows OCR: lines with screen boxes (toolset ocr)", "window (or handle)", "x", "y", "width", "height", "monitor", "language", "detail", "maxLines"),
+            new("find_text_on_screen", "Find text with Windows OCR: click points and a captureId for mouse_click (toolset ocr)", "text", "match", "window (or handle)", "x", "y", "width", "height", "monitor", "language"),
+            new("wait_for_visual", "Wait until a window, region or monitor changes or settles on screen, no image (toolset visual)", "condition", "window (or handle)", "since", "stableMs", "minChangedPercent", "timeoutMs"),
+        ],
+        SkillNote: "All capture tools also accept `format` (`auto`, `png`, `jpeg`), `quality` (JPEG), `outputPath` and `overwrite` " +
+                   "(with output `file` or `both`), and the legacy `saveToFile` and `maxWidth`. read_screen_text and " +
+                   "find_text_on_screen are the fallback where UI Automation shows no text (canvas apps, games, remote desktops, " +
+                   "rendered PDFs): off by default (`WAM_TOOLSETS=+ocr`), and OCR can misread, so prefer element refs and check " +
+                   "the outcome of a click."),
+        new("UI Automation",
+        [
+            new("get_desktop_state", "One call to get oriented: window in front, windows, focus, popups, the window's elements with refs; optional capture", "window (or handle)", "include", "maxElements", "scope"),
+            new("get_ui_elements", "Get UI element tree", "handle", "maxDepth", "controlTypes", "timeoutMs"),
+            new("find_ui_elements", "Find elements by name, automationId, controlType or className; refs, click points", "window (or handle)", "name", "nameMatch", "automationId", "controlType", "withinRef", "scope", "detail"),
+            new("element_action", "Act on an element through UI Automation patterns (also a menu path); state before and after", "action", "ref (or window + criteria)", "value", "mode", "direction", "fallback", "observe"),
+            new("respond_to_dialog", "Read a dialog's text and buttons and press one, by standard name (yes, no, ok...) in any language", "button", "window (or handle)", "timeoutMs"),
+            new("file_dialog", "Complete an Open or Save As dialog with a full path; answers the replace prompt by overwrite", "path", "action", "overwrite", "window (or handle)"),
+            new("get_focused_element", "Element with keyboard focus, its window and process", "timeoutMs"),
+            new("get_element_at_point", "Element at a screen point, its ancestors and window", "x", "y", "ancestors"),
+            new("get_active_popups", "Open menus, dropdowns, flyouts and dialogs of an app, with refs", "window (or handle)", "timeoutMs"),
+            new("read_element_text", "An element's text a page at a time (document, value or name); never a password", "ref", "window (with criteria)", "offset", "maxLength"),
+            new("read_table", "A table's or list's headers and cells a page of rows at a time", "ref", "startRow", "maxRows", "maxColumns"),
+            new("wait_for_element", "Wait until an element exists, is gone, enabled, visible, focused, or has a name, value or toggle state", "window", "ref", "name", "automationId", "controlType", "scope", "condition", "expected", "timeoutMs"),
+        ]),
+        new("Browser Reading",
+        [
+            new("get_browser_url", "URL of a browser window (`window: {\"foreground\": true}` for the one in front)", "handle", "window", "cdpPort", "requireCdp"),
+            new("get_browser_content", "Text of the page (or HTML through CDP), a page at a time", "handle", "maxLength", "offset", "textOnly", "cdpPort", "requireCdp"),
+            new("launch_browser_with_debug", "Start Chrome, Edge or Brave with a DevTools port", "browser", "url", "port", "userDataDir", "profile", "reuseIfRunning"),
+            new("close_debug_browser", "Close a debug browser this server started, and delete its temporary profile", "processId", "cdpPort", "deleteProfile", "confirm"),
+        ]),
+        new("Browser Tabs and Navigation",
+        [
+            new("list_tabs", "A debug browser's tabs (ids, titles, URLs), the window's tabs and the one it shows", "window (or handle)", "cdpPort"),
+            new("activate_tab", "Show a tab in its window (toolset browser-actions)", "targetId", "window (or handle)", "cdpPort"),
+            new("browser_navigate", "Open an http(s) URL in a tab or a new tab and wait for its load (toolset browser-actions)", "url", "window (or handle)", "targetId", "newTab", "waitUntil", "timeoutMs", "dialog"),
+            new("wait_for_browser", "Wait until a page's URL, title or text contains a string, or a CSS selector matches", "window (or handle)", "targetId", "urlContains", "textContains", "selector", "timeoutMs"),
+        ],
+        SkillNote: "CDP only: a browser started with launch_browser_with_debug (or with its own debug port). activate_tab and " +
+                   "browser_navigate are in the `browser-actions` toolset, off by default (`WAM_TOOLSETS=+browser-actions`)."),
+        new("Browser Page (DOM Bridge)",
+        [
+            new("browser_element_rect", "Find a page element; its rect and click point in screen pixels (toolset browser-actions)", "selector", "text", "role", "name", "index", "window (or handle)"),
+            new("browser_click", "Click a page element with CDP mouse events, no real cursor (toolset browser-actions)", "selector", "text", "role", "name", "index", "dialog", "window (or handle)", "targetId"),
+            new("browser_type", "Type into a page's focused field or a selector's (toolset browser-actions)", "text", "selector", "replace", "pressEnter", "dialog", "window (or handle)"),
+            new("browser_handle_dialog", "Read, accept or dismiss a Chrome or Edge window's JavaScript dialog, through UI Automation (toolset browser-actions)", "accept", "promptText", "window (or handle)"),
+            new("browser_screenshot", "Capture a tab's page as an image, without the browser frame (toolset browser-actions)", "window (or handle)", "targetId", "maxDimension"),
+            new("browser_evaluate", "Run a JavaScript expression in a page; its value or what it threw (toolset browser-script)", "expression", "awaitPromise", "timeoutMs", "window (or handle)"),
+        ],
+        SkillNote: "CDP only, on a debug browser, no real mouse or keyboard: work on a window behind others without taking the " +
+                   "foreground (browser_screenshot may bring a tab that is not shown, and its window, to the front). A JavaScript " +
+                   "dialog: pass `dialog` (accept or dismiss) to the action that opens it; one already open is read and answered " +
+                   "with browser_handle_dialog, through UI Automation (DevTools cannot answer it). Off by default: " +
+                   "`WAM_TOOLSETS=+browser-actions`, and `+browser-script` for browser_evaluate (a script runs with the page's " +
+                   "rights, so clicks and typing do not turn it on). For anything richer, attach Playwright MCP to the same browser: `--cdp-endpoint` set to launch_browser_with_debug's " +
+                   "`browserWsEndpoint` (or `cdpEndpoint`)."),
+        new("Input Simulation",
+        [
+            new("mouse_click", "Any button, 1-3 clicks, with modifier keys held (ctrl+click, middle, triple, x1/x2)", "x", "y", "button", "clickCount", "modifiers", "windowHandle", "captureId"),
+            new("drag", "Press, move and release: drag and drop, sliders, selections; nothing stays held", "fromX", "fromY", "toX", "toY", "button", "modifiers", "windowHandle", "toWindowHandle"),
+            new("mouse_move", "Move cursor (no click)", "x", "y", "windowHandle", "captureId"),
+            new("scroll", "Turn the mouse wheel over the named window", "windowHandle", "deltaY", "deltaX", "x", "y"),
+            new("type_text", "Type text into the named window", "text", "windowHandle", "delayMs"),
+            new("send_keys", "Send keys to the named window", "keys (e.g., `^c`, `{ENTER}`)", "windowHandle"),
+            new("press_keys", "Press key chords by name (ctrl+shift+t) or sequences (tab*3 enter); nothing stays held", "keys", "repeat", "holdMs", "delayBetweenMs", "windowHandle"),
+        ],
+        SkillNote: "All seven also take `allowHostTarget` (default false): only for input to your own host window, named as " +
+                   "`windowHandle`, when the user asked for it; and `releaseHeldModifiers` (default false): only for a stuck " +
+                   "modifier key (see `ModifiersHeld` in [errors.md](errors.md#input-refusals))."),
+        new("Input Control",
+        [
+            new("get_control_status", "Is input paused and why, is the pause hotkey registered, which modifier keys are down"),
+            new("resume_input", "Ask the user to resume input after a pause; only their confirmation resumes it"),
+            new("release_all_input", "Release stuck keys and mouse buttons", "releaseHeldModifiers"),
+        ]),
+        new("Step Sequences",
+        [
+            new("run_steps", "Several steps on one window in one call, under one input gate hold; stops at the first failure",
+                "window", "steps (tool, args, id, optional, return)", "maxDurationMs"),
+        ],
+        SkillNote: "A step is a tool of the list with that tool's own `args`. A step that names no window gets the run's; " +
+                   "`\"$steps.<id>.<path>\"` takes an earlier step's ref, handle, captureId or clickPoint. No paste, file output, " +
+                   "window_close, scope desktop, allowHostTarget or closing chord (ctrl+w, ctrl+q, also on the window's layout: " +
+                   "ctrl+ц on a Russian one) in a step. Off with `WAM_TOOLSETS=-steps`."),
+        new("App Launch",
+        [
+            new("launch_application", "Launch app by path/name/appId/URI", "executable", "arguments", "workingDirectory", "waitForWindow", "placement", "reuseExisting", "runAsAdmin"),
+            new("list_installed_apps", "List the Start menu's apps: name, appId, packaged, path", "nameFilter", "limit"),
+            new("list_processes", "List processes with their windows, parent, start time and integrity", "nameFilter", "processId", "includeWindowless", "sortBy"),
+            new("kill_process", "Close or terminate a process", "processId", "confirm", "forceKill", "expectedProcessName"),
+            new("close_application", "Close an app's Alt+Tab windows gracefully; reports prompts and what remains", "processName", "processId", "window (or handle)", "timeoutMs"),
+        ]),
+        new("Clipboard",
+        [
+            new("get_clipboard", "Read what the agent copied (text, html, files); the user's clipboard only with consent", "format", "maxLength"),
+            new("set_clipboard", "Put text on the clipboard, kept out of clipboard history", "text"),
+        ]),
+        new("Layout Presets",
+        [
+            new("list_layouts", "List saved presets"),
+            new("get_layout", "Get preset details", "name"),
+            new("save_layout", "Save the current arrangement, or placements you write", "name", "description", "includeProcesses", "excludeProcesses", "includeMinimized", "placements"),
+            new("apply_layout", "Restore saved preset, or preview it", "name", "matchBy", "launchMissing", "dryRun", "placements"),
+            new("save_workspace", "Save the windows with their Explorer folders and browser pages (toolset workspaces)", "name", "includeProcesses", "excludeProcesses"),
+            new("restore_workspace", "Open a workspace's missing folders and pages, then arrange it (toolset workspaces)", "name", "dryRun"),
+            new("delete_layout", "Delete a preset", "name"),
+        ]),
+        new("Server Info",
+        [
+            new("get_server_info", "Build, DPI awareness, desktop state, host, pause, policy and toolsets; warnings first"),
+        ]),
+    ];
+
+    /// <summary>Every tool of the catalog, in category order.</summary>
+    public static IEnumerable<ToolDoc> AllTools => Categories.SelectMany(c => c.Tools);
+
+    /// <summary>The parameter name of a key parameter entry: the text before a note in parentheses.</summary>
+    public static string ParameterName(string keyParameter)
+    {
+        var note = keyParameter.IndexOf(" (", StringComparison.Ordinal);
+        return note < 0 ? keyParameter : keyParameter[..note];
+    }
+}

@@ -16,16 +16,16 @@
        inputs. Use -AllowDirty only for local, uncommitted test builds outside <repo>/bin.
     3. Runs dotnet publish (Release, win-x64, framework-dependent single file) into a staging folder
        under artifacts/ (gitignored).
-    4. Checks the publish produced only WindowsAppManagerMcp.exe (plus symbols), because that single
+    4. Checks the publish produced only win-desktop-mcp.exe (plus symbols), because that single
        file is all the plugin ships.
     5. Checks the exe's ProductVersion is "<version>+<HEAD sha>" and that it carries the PerMonitorV2
        DPI awareness of app.manifest (its bytes are read; the exe is not run).
-    6. Copies WindowsAppManagerMcp.exe into -OutputDirectory (default: <repo>/bin).
+    6. Copies win-desktop-mcp.exe into -OutputDirectory (default: <repo>/bin).
 
     The exe is framework-dependent: it needs the .NET 10 Desktop Runtime (x64) on the machine.
 
 .PARAMETER OutputDirectory
-    Where to put WindowsAppManagerMcp.exe. Defaults to <repo>/bin. /update-plugin passes the
+    Where to put win-desktop-mcp.exe. Defaults to <repo>/bin. /update-plugin passes the
     installed plugin's bin folder so a local test build does not touch the committed exe.
 
 .PARAMETER AllowDirty
@@ -90,7 +90,7 @@ if ($dirty.Count -gt 0) {
 }
 
 # 3. Publish into a clean staging folder
-$project = Join-Path $root 'src/WindowsAppManagerMcp/WindowsAppManagerMcp.csproj'
+$project = Join-Path $root 'src/win-desktop-mcp/win-desktop-mcp.csproj'
 $staging = Join-Path $root 'artifacts/plugin-publish'
 if (Test-Path -LiteralPath $staging) {
     Remove-Item -LiteralPath $staging -Recurse -Force
@@ -132,7 +132,7 @@ if ($build.CommitSha -ne $headSha) {
     throw "The published exe reports commit $($build.CommitSha), expected HEAD $headSha."
 }
 if (-not (Test-ExeDpiManifest $exe)) {
-    throw "The published exe carries no PerMonitorV2 dpiAwareness manifest (src/WindowsAppManagerMcp/app.manifest), so Windows could scale its coordinates."
+    throw "The published exe carries no PerMonitorV2 dpiAwareness manifest (src/win-desktop-mcp/app.manifest), so Windows could scale its coordinates."
 }
 
 # 6. Copy into place

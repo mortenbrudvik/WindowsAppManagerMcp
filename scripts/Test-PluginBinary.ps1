@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Checks that the committed bin/WindowsAppManagerMcp.exe (the exe the plugin runs) was built
+    Checks that the committed bin/win-desktop-mcp.exe (the exe the plugin runs) was built
     from the current sources with the current version.
 
 .DESCRIPTION
@@ -8,7 +8,7 @@
       1. Directory.Build.props, plugin.json and marketplace.json declare the same version.
       2. With -Tag: the tag is v<version>.
       3. The exe's ProductVersion is <version>+<commit sha>, and its bytes carry the PerMonitorV2
-         dpiAwareness of src/WindowsAppManagerMcp/app.manifest.
+         dpiAwareness of src/win-desktop-mcp/app.manifest.
       4. That commit exists and no build input changed between it and HEAD. The build inputs are
          listed once, in $BuildInputPaths in scripts/ReleaseCommon.ps1: src/, config/ (the sample
          layout presets embedded in the exe), the MSBuild, NuGet and SDK files at the repository
@@ -19,7 +19,7 @@
     Needs the full git history (in GitHub Actions: actions/checkout with fetch-depth: 0).
 
     The build workflow runs this strictly on v* tags, so a release cannot ship a stale exe, and on
-    pushes and pull requests that change bin/WindowsAppManagerMcp.exe (Test-PluginBinaryChanged in
+    pushes and pull requests that change bin/win-desktop-mcp.exe (Test-PluginBinaryChanged in
     scripts/ReleaseCommon.ps1 decides), so a stale or hand-built exe fails when it is committed.
     On other pushes and pull requests it runs with -WarnOnly, because a stale exe is expected
     there until the next release.
@@ -28,7 +28,7 @@
     The release tag being built (for example v1.12.0). Must equal v<version>.
 
 .PARAMETER ExePath
-    The exe to check. Defaults to <repo>/bin/WindowsAppManagerMcp.exe.
+    The exe to check. Defaults to <repo>/bin/win-desktop-mcp.exe.
 
 .PARAMETER WarnOnly
     Report problems as warnings and exit 0.

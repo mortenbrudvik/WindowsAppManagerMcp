@@ -2,9 +2,9 @@ using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Interop;
-using static WindowsAppManagerMcp.FixtureApp.FixtureContract;
+using static WinDesktopMcp.FixtureApp.FixtureContract;
 
-namespace WindowsAppManagerMcp.FixtureApp;
+namespace WinDesktopMcp.FixtureApp;
 
 /// <summary>
 /// A separate, unowned top-level window with a Win32 menu bar (<see cref="Win32Menu"/>, roadmap M3.F4): a real HMENU set

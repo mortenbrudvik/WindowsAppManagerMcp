@@ -1,0 +1,652 @@
+using System.Text.Json.Serialization;
+
+namespace WinDesktopMcp.Models;
+
+/// <summary>
+/// A window as the input results report it: where input went, what is in front afterwards, or the
+/// dialog that blocks a target.
+/// </summary>
+/// <param name="Handle">The window handle.</param>
+/// <param name="Title">The window title (empty for untitled windows such as menus and popups).</param>
+/// <param name="ProcessName">The process name; for a UWP window the app's own process.</param>
+/// <param name="ProcessId">The ID of <paramref name="ProcessName"/>.</param>
+public sealed record WindowSummary(long Handle, string Title, string ProcessName, int ProcessId);
+
+/// <summary>Why a selector's window failed its recheck inside the input gate (<see cref="InputTarget.SelectorRecheck"/>).</summary>
+/// <param name="ErrorCode">The window tools' errorCode for it: HandleMismatch, or InvalidArguments.</param>
+/// <param name="Error">The message.</param>
+public sealed record SelectorRefusal(string ErrorCode, string Error);
+
+/// <summary>
+/// The window an input call is meant for (roadmap M1.5), or none. With a window the input guard brings it
+/// to the front (keys) or checks that the point is on it (mouse), and refuses to send input that would
+/// land elsewhere.
+/// </summary>
+/// <param name="WindowHandle">The target window, or null for no target.</param>
+/// <param name="AllowHostTarget">
+/// Lets input reach the agent's own host window (its terminal, editor or chat app), but only when that
+/// window is the explicit target. It has no effect without <paramref name="WindowHandle"/>.
+/// </param>
+public readonly record struct InputTarget(nint? WindowHandle, bool AllowHostTarget = false)
+{
+    /// <summary>No target: input goes to the foreground window (keys) or the window at the point (mouse).</summary>
+    public static InputTarget None => default;
+
+    /// <summary>A target window.</summary>
+    public static InputTarget Window(nint handle, bool allowHostTarget = false) => new(handle, allowHostTarget);
+
+    /// <summary>True when a target window was given (even an invalid one).</summary>
+    public bool HasWindow => WindowHandle.HasValue;
+
+    /// <summary>
+    /// For a window a selector named (roadmap M2.4): checks that the window still matches the selector, and returns why
+    /// not (with the window tools' errorCode: HandleMismatch, or InvalidArguments when the selector's titleRegex timed out),
+    /// or null when it does. The selector is resolved before the call waits for the input gate (up to 30 s); the
+    /// input guard runs this inside the gate, before anything is sent, so input never reaches a window that stopped
+    /// matching while it waited, such as a tabbed editor switched to another document (HandleMismatch). Null for a
+    /// windowHandle, which names no title or process to check again.
+    /// </summary>
+    public Func<SelectorRefusal?>? SelectorRecheck { get; init; }
+
+    /// <summary>
+    /// For a point converted from image, window or client coordinates (roadmap M3.11): checks that what the point was
+    /// measured on is unchanged, and returns why not (errorCode StaleCapture), or null when it is. The point is converted
+    /// before the call waits for the input gate; the input guard runs this inside the gate for mouse input, after the
+    /// target's own checks, and again right before the batch with the press (which holds both clicks of a double click), so
+    /// input never reaches a point that a window moving meanwhile turned into another spot.
+    /// </summary>
+    public Func<SelectorRefusal?>? PointRecheck { get; init; }
+
+    /// <summary>
+    /// For keys meant for one element of the window (element_action's keyboard path, roadmap M3.F17): checks that keyboard
+    /// focus is still on that element, and returns why not (errorCode TargetLostFocus), or null when it is. The input guard
+    /// runs this inside the gate for keyboard input, once the target is in front and before every batch (also while the same
+    /// window stays in front), so keys never reach another control of the window that focus moved to after the element was
+    /// focused. It reads the application's focus, so it must bound its own wait: the gate is held while it runs.
+    /// </summary>
+    public Func<SelectorRefusal?>? FocusRecheck { get; init; }
+
+    /// <summary>Two targets are equal when they name the same window with the same host rule; the rechecks are not compared.</summary>
+    public bool Equals(InputTarget other) => WindowHandle == other.WindowHandle && AllowHostTarget == other.AllowHostTarget;
+
+    public override int GetHashCode() => HashCode.Combine(WindowHandle, AllowHostTarget);
+}
+
+/// <summary>
+/// Result of a mouse click operation.
+/// </summary>
+/// <param name="ClickType">
+/// element_action's mouse path (IInputSimulationService's Click, RightClick and DoubleClick): "left", "right" or "double";
+/// mouse_click (roadmap M4.3): the button, "primary", "secondary", "middle", "x1" or "x2".
+/// </param>
+public record ClickResult(
+    bool Success,
+    int X,
+    int Y,
+    string? ClickType = null,
+    string? Error = null,
+    InputErrorCode ErrorCode = InputErrorCode.None
+)
+{
+    /// <summary>mouse_click: how many clicks the batch holds (1 to 3). Null for element_action's mouse path.</summary>
+    public int? ClickCount { get; init; }
+
+    /// <summary>mouse_click: the modifier keys held around the clicks ("ctrl", "shift", "alt", "win"); null without any.</summary>
+    public IReadOnlyList<string>? Modifiers { get; init; }
+
+    /// <summary>
+    /// The top-level window at the point: where the click went, or would have gone when it was refused.
+    /// Null when nothing was checked (invalid coordinates).
+    /// </summary>
+    public WindowSummary? ReceivingWindow { get; init; }
+
+    /// <summary>The foreground window right after the call; the application may still be handling the input.</summary>
+    public WindowSummary? ForegroundAfter { get; init; }
+
+    /// <summary>Where the cursor is after the call (GetCursorPos), in screen pixels.</summary>
+    public int? ActualX { get; init; }
+
+    /// <inheritdoc cref="ActualX"/>
+    public int? ActualY { get; init; }
+
+    /// <summary>With BlockedByModal: the dialog that disables the target window.</summary>
+    public WindowSummary? BlockingWindow { get; init; }
+
+    /// <summary>With ModifiersHeld: the modifier keys that are down (for example "LeftCtrl").</summary>
+    public IReadOnlyList<string>? HeldModifiers { get; init; }
+
+    /// <summary>With releaseHeldModifiers: the modifier keys the server released before sending the input.</summary>
+    public IReadOnlyList<string>? ReleasedModifiers { get; init; }
+
+    /// <summary>
+    /// The point as the call gave it, when not in screen coordinates (space window, client or image, roadmap M3.11);
+    /// <see cref="X"/> and <see cref="Y"/> are then the screen point it was converted to (the given point when it could
+    /// not be converted). Null for a screen point.
+    /// </summary>
+    public RequestedPoint? Requested { get; init; }
+
+    /// <summary>
+    /// With observe 'state' or 'screenshot' (roadmap M3.F32): get_desktop_state's observation of the window the input was for
+    /// after it, as element_action's observed; serialized last. Null without observe.
+    /// </summary>
+    public DesktopState? Observed { get; init; }
+}
+
+/// <summary>
+/// Result of a mouse move operation.
+/// </summary>
+public record MouseMoveResult(
+    bool Success,
+    int X,
+    int Y,
+    string? Error = null,
+    InputErrorCode ErrorCode = InputErrorCode.None
+)
+{
+    /// <inheritdoc cref="ClickResult.ReceivingWindow"/>
+    public WindowSummary? ReceivingWindow { get; init; }
+
+    /// <inheritdoc cref="ClickResult.ForegroundAfter"/>
+    public WindowSummary? ForegroundAfter { get; init; }
+
+    /// <inheritdoc cref="ClickResult.ActualX"/>
+    public int? ActualX { get; init; }
+
+    /// <inheritdoc cref="ClickResult.ActualX"/>
+    public int? ActualY { get; init; }
+
+    /// <inheritdoc cref="ClickResult.BlockingWindow"/>
+    public WindowSummary? BlockingWindow { get; init; }
+
+    /// <inheritdoc cref="ClickResult.HeldModifiers"/>
+    public IReadOnlyList<string>? HeldModifiers { get; init; }
+
+    /// <inheritdoc cref="ClickResult.ReleasedModifiers"/>
+    public IReadOnlyList<string>? ReleasedModifiers { get; init; }
+
+    /// <inheritdoc cref="ClickResult.Requested"/>
+    public RequestedPoint? Requested { get; init; }
+}
+
+/// <summary>
+/// Result of a text typing operation. It never echoes the text (roadmap M4.4): a password or a long document would come
+/// back into the agent's context, and the audit log keeps only the numbers.
+/// </summary>
+/// <param name="Length">
+/// How many characters the text has, counted as <paramref name="CharactersTyped"/> counts them: Unicode code points (an
+/// emoji is one), with a Windows line break (\r\n) as one.
+/// </param>
+/// <param name="CharactersTyped">
+/// How many of them went in: all of them on success, how far typing got when it stopped part way; for a paste all of
+/// them or none.
+/// </param>
+public record TypeTextResult(
+    bool Success,
+    int Length,
+    int CharactersTyped,
+    string? Error = null,
+    InputErrorCode ErrorCode = InputErrorCode.None
+)
+{
+    /// <summary>
+    /// How the text went in, or was to go in when the call failed: unicode, keys or paste (what auto chose). Null when
+    /// the call was refused before a method was chosen (empty text).
+    /// </summary>
+    public string? Method { get; init; }
+
+    /// <summary>
+    /// paste: true when the clipboard holds what it held before the paste again (or is empty again), false when it does
+    /// not (<see cref="Warning"/> says what it holds). Null when the clipboard was not used.
+    /// </summary>
+    public bool? ClipboardRestored { get; init; }
+
+    /// <summary>
+    /// Something to know about a call that went through: auto typed instead of pasting (and why), or the clipboard was
+    /// not put back after a paste.
+    /// </summary>
+    public string? Warning { get; init; }
+
+    /// <summary>
+    /// The window the keys went to (the foreground window, which can be a dialog of the target), or would
+    /// have gone to when the call was refused. Null when nothing was checked (empty text).
+    /// </summary>
+    public WindowSummary? ReceivingWindow { get; init; }
+
+    /// <inheritdoc cref="ClickResult.ForegroundAfter"/>
+    public WindowSummary? ForegroundAfter { get; init; }
+
+    /// <inheritdoc cref="ClickResult.BlockingWindow"/>
+    public WindowSummary? BlockingWindow { get; init; }
+
+    /// <inheritdoc cref="ClickResult.HeldModifiers"/>
+    public IReadOnlyList<string>? HeldModifiers { get; init; }
+
+    /// <inheritdoc cref="ClickResult.ReleasedModifiers"/>
+    public IReadOnlyList<string>? ReleasedModifiers { get; init; }
+
+    /// <inheritdoc cref="ClickResult.Observed"/>
+    public DesktopState? Observed { get; init; }
+}
+
+/// <summary>
+/// Result of a send keys operation.
+/// </summary>
+public record SendKeysResult(
+    bool Success,
+    string Keys,
+    string? Error = null,
+    InputErrorCode ErrorCode = InputErrorCode.None
+)
+{
+    /// <summary>
+    /// How many keys were sent completely, counting each top-level key, chord or group, and each repetition of {KEY n}
+    /// (roadmap M4.1): all of them on success, how far it got when it stopped part way. Null when nothing was checked.
+    /// </summary>
+    public int? KeysSent { get; init; }
+
+    /// <summary>
+    /// press_keys, on success (issue #10): each chord whose character went out on a key of another name, with the keys that
+    /// went down on the window's keyboard layout, in names press_keys takes: a Shift or AltGr the chord does not name
+    /// ({"ctrl+=": "ctrl+shift+0"} where '=' is Shift+0; AltGr as the keys it is, {"ctrl+@": "ctrl+ralt+2"}), or a letter or
+    /// digit key ({"ctrl+-": "ctrl+6"} on French AZERTY). Null when every chord was pressed as written, so a typical result
+    /// stays small.
+    /// </summary>
+    public IReadOnlyDictionary<string, string>? ResolvedChords { get; init; }
+
+    /// <summary>
+    /// On success (issue #9): what went out as its character alone, with no key and no scan code (KEYEVENTF_UNICODE): press_keys'
+    /// chords, send_keys' characters, at most 20 (the SentAsCharacter warning counts them all). A text field gets the character,
+    /// but an application that matches the physical key does not see a key press; the warning says why. Null when everything
+    /// went as keys.
+    /// </summary>
+    public IReadOnlyList<string>? SentAsCharacters { get; init; }
+
+    /// <summary>
+    /// On success: what to know about keys that went through, each starting with its code (<see cref="KeyWarnings"/>):
+    /// SentAsCharacter, KeyboardLayoutUnknown, SystemHotkey. Null when there is nothing to say.
+    /// </summary>
+    public IReadOnlyList<string>? Warnings { get; init; }
+
+    /// <inheritdoc cref="TypeTextResult.ReceivingWindow"/>
+    public WindowSummary? ReceivingWindow { get; init; }
+
+    /// <inheritdoc cref="ClickResult.ForegroundAfter"/>
+    public WindowSummary? ForegroundAfter { get; init; }
+
+    /// <inheritdoc cref="ClickResult.BlockingWindow"/>
+    public WindowSummary? BlockingWindow { get; init; }
+
+    /// <inheritdoc cref="ClickResult.HeldModifiers"/>
+    public IReadOnlyList<string>? HeldModifiers { get; init; }
+
+    /// <inheritdoc cref="ClickResult.ReleasedModifiers"/>
+    public IReadOnlyList<string>? ReleasedModifiers { get; init; }
+
+    /// <inheritdoc cref="ClickResult.Observed"/>
+    public DesktopState? Observed { get; init; }
+}
+
+/// <summary>
+/// Kind of event sent through SendInput.
+/// </summary>
+public enum InputEventKind
+{
+    Mouse,
+    VirtualKey,
+    Unicode
+}
+
+/// <summary>
+/// A single mouse or keyboard event sent through SendInput.
+/// </summary>
+/// <param name="Kind">The kind of event.</param>
+/// <param name="Code">The virtual-key code for VirtualKey events, the character for Unicode events, unused for Mouse events.</param>
+/// <param name="Flags">The raw MOUSEEVENTF_* or KEYEVENTF_* flags.</param>
+/// <param name="Dx">Mouse events: MOUSEINPUT.dx (with MOUSEEVENTF_ABSOLUTE, 0..65535 across the screen); otherwise 0.</param>
+/// <param name="Dy">Mouse events: MOUSEINPUT.dy; otherwise 0.</param>
+/// <param name="MouseData">
+/// Mouse events: MOUSEINPUT.mouseData, the wheel movement of a MOUSEEVENTF_WHEEL or MOUSEEVENTF_HWHEEL event
+/// (a multiple of WHEEL_DELTA, 120, as a two's-complement DWORD), or the X button of a MOUSEEVENTF_XDOWN or XUP event
+/// (XBUTTON1 = 1, XBUTTON2 = 2); otherwise 0.
+/// </param>
+public readonly record struct InputEvent(InputEventKind Kind, ushort Code, uint Flags, int Dx = 0, int Dy = 0, uint MouseData = 0)
+{
+    /// <summary>One notch of the mouse wheel (WHEEL_DELTA).</summary>
+    public const int WheelDelta = 120;
+
+    /// <summary>
+    /// A mouse event of <paramref name="flags"/>; <paramref name="mouseData"/> names the button of a MOUSEEVENTF_XDOWN or
+    /// XUP event (XBUTTON1 or XBUTTON2).
+    /// </summary>
+    public static InputEvent Mouse(uint flags, uint mouseData = 0) => new(InputEventKind.Mouse, 0, flags, MouseData: mouseData);
+
+    /// <summary>
+    /// One vertical wheel event of <paramref name="delta"/> (MOUSEEVENTF_WHEEL): positive turns the wheel forward,
+    /// away from the user, which scrolls up; negative scrolls down. One notch is <see cref="WheelDelta"/>.
+    /// </summary>
+    public static InputEvent Wheel(int delta) =>
+        new(InputEventKind.Mouse, 0, Native.NativeEnums.MOUSEEVENTF_WHEEL, MouseData: unchecked((uint)delta));
+
+    /// <summary>
+    /// One horizontal wheel event of <paramref name="delta"/> (MOUSEEVENTF_HWHEEL): positive tilts the wheel to the
+    /// right, which scrolls right; negative scrolls left. One notch is <see cref="WheelDelta"/>.
+    /// </summary>
+    public static InputEvent HorizontalWheel(int delta) =>
+        new(InputEventKind.Mouse, 0, Native.NativeEnums.MOUSEEVENTF_HWHEEL, MouseData: unchecked((uint)delta));
+
+    /// <summary>
+    /// Moves the pointer to normalized absolute coordinates (0..65535) across the whole virtual desktop
+    /// (MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK).
+    /// </summary>
+    public static InputEvent MouseMoveAbsolute(int normalizedX, int normalizedY) =>
+        new(InputEventKind.Mouse, 0, MouseMoveAbsoluteFlags, normalizedX, normalizedY);
+
+    /// <summary>MOUSEEVENTF_MOVE | MOUSEEVENTF_VIRTUALDESK | MOUSEEVENTF_ABSOLUTE.</summary>
+    public const uint MouseMoveAbsoluteFlags =
+        Native.NativeEnums.MOUSEEVENTF_MOVE | Native.NativeEnums.MOUSEEVENTF_VIRTUALDESK | Native.NativeEnums.MOUSEEVENTF_ABSOLUTE;
+
+    public static InputEvent Key(ushort virtualKey, uint flags) => new(InputEventKind.VirtualKey, virtualKey, flags);
+
+    /// <summary>A virtual key with its scan code (KEYBDINPUT.wScan), which applications read from the key message (roadmap M4.1).</summary>
+    public static InputEvent Key(ushort virtualKey, uint flags, ushort scan) =>
+        new InputEvent(InputEventKind.VirtualKey, virtualKey, flags) { Scan = scan };
+
+    /// <summary>
+    /// VirtualKey events: the key's scan code for KEYBDINPUT.wScan, without the 0xE0 prefix (the event's
+    /// KEYEVENTF_EXTENDEDKEY flag carries that); 0 when unknown. Otherwise 0.
+    /// </summary>
+    public ushort Scan { get; init; }
+
+    /// <summary>
+    /// VirtualKey events: true for a key-down or key-up of the left Ctrl or the right Alt that a key parser
+    /// (<see cref="Services.KeySpecParser"/>, <see cref="Services.PressKeysParser"/>) sent as AltGr, to type a character
+    /// the layout types with AltGr ('@' on a German keyboard). The chord checks read that pair as a character, not as
+    /// Ctrl+Alt (<see cref="Services.SendKeysParser.Chords"/>); the same keys pressed as keys (<c>{LCTRL down}{RALT down}</c>,
+    /// <c>lctrl+ralt</c>) are not tagged and count as Ctrl and Alt, as Windows reads them. Not passed to SendInput.
+    /// </summary>
+    public bool AltGr { get; init; }
+
+    public static InputEvent Unicode(char character, uint flags) => new(InputEventKind.Unicode, character, flags);
+}
+
+/// <summary>
+/// Error codes for input simulation operations.
+/// </summary>
+public enum InputErrorCode
+{
+    None = 0,
+    InvalidCoordinates = 1,
+    SendInputFailed = 2,
+    CoordinatesOutOfBounds = 3,
+    EmptyText = 4,
+    InvalidKeySpecification = 5,
+    UnknownKey = 6,
+
+    // Input guard codes (roadmap M1.1, M1.5 and M1.12) are numbered from 20, so that earlier input codes
+    // can be added after UnknownKey without renumbering. In every case nothing was sent.
+
+    /// <summary>
+    /// The input would reach the agent's own host (its terminal, editor or chat app, or a window it owns),
+    /// and the call did not target that window explicitly with allowHostTarget=true.
+    /// </summary>
+    TargetIsAgentHost = 20,
+
+    /// <summary>
+    /// Keyboard input: the target window could not be brought to the foreground, or no window is in the
+    /// foreground.
+    /// </summary>
+    TargetNotForeground = 21,
+
+    /// <summary>Mouse input: another window (not the target or a popup of it) is at the point.</summary>
+    TargetOccluded = 22,
+
+    /// <summary>The target window is disabled by a modal dialog; BlockingWindow names the dialog.</summary>
+    BlockedByModal = 23,
+
+    /// <summary>
+    /// type_text: the foreground window changed to a window outside the target while typing, so typing
+    /// stopped; CharactersTyped says how much was typed before.
+    /// </summary>
+    TargetLostFocus = 24,
+
+    /// <summary>send_keys, press_keys: the keys contain a chord that closes, quits or locks, and no windowHandle was given.</summary>
+    DestructiveChordNeedsTarget = 25,
+
+    /// <summary>
+    /// The receiving window's process has a higher integrity level than the server (for example it runs as
+    /// administrator): Windows (UIPI) would drop the input without an error.
+    /// </summary>
+    TargetElevated = 26,
+
+    /// <summary>
+    /// The input desktop cannot be reached: a UAC prompt or Ctrl+Alt+Del screen is shown, or the session
+    /// is disconnected.
+    /// </summary>
+    DesktopUnavailable = 27,
+
+    /// <summary>The session is locked.</summary>
+    SessionLocked = 28,
+
+    /// <summary>The server's target policy (WAM_DENY_PROCESSES, WAM_ALLOW_PROCESSES) refuses the window's process.</summary>
+    TargetDeniedByPolicy = 29,
+
+    /// <summary>windowHandle is not a window, or the window has closed.</summary>
+    InvalidHandle = 30,
+
+    /// <summary>type_text: a menu is active in the receiving window, so typed letters would select menu items.</summary>
+    TargetInMenuMode = 31,
+
+    /// <summary>
+    /// Mouse input: the pointer did not stay at the point, so the click would land somewhere the guard did
+    /// not check (it is confined to a window, for example by a game or a remote session, or the user is
+    /// moving the mouse).
+    /// </summary>
+    CursorNotAtPoint = 32,
+
+    /// <summary>
+    /// send_keys, press_keys: keys follow a chord that hands the keyboard to another window (Alt+Tab, Alt+Esc, Ctrl+Esc,
+    /// the Windows key, Alt+Space or a closing chord), so they would reach a window the guard never checked.
+    /// </summary>
+    KeysAfterFocusChange = 33,
+
+    // Input session codes (roadmap M1.10). Nothing (more) was sent.
+
+    /// <summary>
+    /// Input is paused: the user pressed the pause hotkey, or the server paused itself because it could not read the pause
+    /// it shares with the other servers on the desktop (shared_pause_unreadable; the error says which). Nothing (more) was
+    /// sent: a call that was running stopped (CharactersTyped says how much it typed). Only the user resumes input: the
+    /// hotkey again, or resume_input confirmed by the user. After the server paused itself, the first press of the hotkey
+    /// keeps the pause, as the user's own, and only a second one resumes; the presses of another server's chord reach this
+    /// server only once it can read the shared pause again. While it cannot read the shared pause, whoever paused, only the
+    /// hotkey of the server that registered the chord reaches it. In both cases the error names resume_input, and
+    /// get_control_status says what the hotkey does.
+    /// </summary>
+    PausedByUser = 34,
+
+    /// <summary>
+    /// A modifier key (Shift, Ctrl, Alt or Windows) is down: the user is holding it, or it is stuck. Keys
+    /// would become shortcuts and clicks Ctrl- or Shift-clicks, so nothing was sent; releaseHeldModifiers
+    /// releases them first. Also returned when keys the server pressed earlier could not be released.
+    /// </summary>
+    ModifiersHeld = 35,
+
+    /// <summary>Another call held the input gate for longer than the wait limit, so nothing was sent.</summary>
+    InputBusy = 36,
+
+    /// <summary>
+    /// send_keys, press_keys, type_text: the keys contain the user's pause hotkey chord, which only the user may press
+    /// (type_text: a character method keys types with AltGr on the chord's key, or a paste's Ctrl+V).
+    /// </summary>
+    PauseChordNotAllowed = 37,
+
+    /// <summary>
+    /// resume_input: the MCP client cannot ask the user (it does not support elicitation), or the question could not be
+    /// shown, so only the user can resume input: with the pause hotkey, or, after the server paused itself or while it
+    /// cannot read the shared pause, as the error says (a second press, a confirmed resume_input or a restart). Input stays
+    /// paused.
+    /// </summary>
+    ResumeNeedsUser = 38,
+
+    /// <summary>
+    /// resume_input: the user declined or dismissed the question, or did not answer in time; or input was paused again
+    /// meanwhile (the answer was for the earlier pause); or another question is open (another resume_input is waiting for its
+    /// answer). Input stays paused.
+    /// </summary>
+    ResumeDeclined = 39,
+
+    /// <summary>
+    /// Mouse input: a mouse button is held down (the user is dragging or selecting), or a window other than the one
+    /// at the point has captured the mouse, so the click or move could go to that window instead, or the capture
+    /// could not be read, so where it would go is not known. Nothing (more) was sent.
+    /// </summary>
+    MouseInUse = 40,
+
+    /// <summary>
+    /// Mouse input: Windows did not move the pointer to the point (SetCursorPos failed, for example because the
+    /// input desktop cannot be reached). Nothing was clicked. Not SendInputFailed, which means the input itself was
+    /// not accepted (roadmap M2.2).
+    /// </summary>
+    CursorPositionFailed = 41,
+
+    /// <summary>
+    /// scroll: Windows sends the wheel to the window with the keyboard focus, not to the window under the pointer
+    /// (the "Scroll inactive windows when I hover over them" setting is off, or its value cannot be read), and the
+    /// window at the point is not the foreground window, so the wheel would scroll another window. Nothing was sent.
+    /// </summary>
+    WheelFollowsFocus = 42,
+
+    /// <summary>
+    /// The window a selector named no longer matches it once the call holds the input gate: it changed (another document
+    /// or tab, another title), or it closed and its handle was reused, while the call waited. Nothing was sent.
+    /// </summary>
+    HandleMismatch = 43,
+
+    /// <summary>
+    /// The input pastes (Ctrl+V, Shift+Insert, the SYN character, Win+V, or a right or middle click in a terminal), and the
+    /// clipboard holds content get_clipboard would not return: the user's (not allowed by the user), content marked
+    /// private, or clipboard history; or the clipboard could not be checked; or the call copies and then pastes (copy
+    /// keys, or the ETX or CAN character, before the paste), or copy keys sent moments ago have not copied yet, so the
+    /// paste would paste a copy no check saw. A paste followed by a read would disclose it. Nothing (more) was sent.
+    /// </summary>
+    PasteNotAllowed = 44,
+
+    /// <summary>
+    /// The window selector could not be checked again once the call held the input gate because of the selector itself
+    /// (a titleRegex that took longer than 100 ms on the window's title), as the window tools report it; or type_text's
+    /// arguments cannot be used together; or send_keys' delayMs waits would add up to more than
+    /// <see cref="Services.InputSimulationService.MaxSendKeysDurationMs"/>. Nothing was sent.
+    /// </summary>
+    InvalidArguments = 45,
+
+    // Coordinate space codes (roadmap M3.11). Nothing was sent.
+
+    /// <summary>
+    /// The point was given in image, window or client coordinates, and what it was measured on changed: the captured
+    /// window moved or resized by more than 2 pixels since the capture, closed, was minimized or its handle was reused,
+    /// or the monitors changed since a screen capture; or the window moved while the call waited for the input gate.
+    /// The point would land somewhere the image no longer shows. Nothing was sent: capture again.
+    /// </summary>
+    StaleCapture = 46,
+
+    /// <summary>
+    /// The captureId names no capture: it is mistyped, from an earlier server run, older than 10 minutes, or 32 newer
+    /// captures pushed it out. Nothing was sent: capture again.
+    /// </summary>
+    CaptureNotFound = 47,
+
+    // Mouse correctness (roadmap M4.2). Unlike every code above, the input WAS sent.
+
+    /// <summary>
+    /// Mouse input: the batch (the move to the point with its clicks, wheel notches or nothing more) was sent, but afterwards
+    /// the pointer is not at the point (ActualX, ActualY say where it is): Windows kept it off the point (ClipCursor confines
+    /// it to a window, as games and remote sessions do, or the point is on no monitor), or the user or the application moved
+    /// it at once. The input may have landed where the pointer is. Not CursorNotAtPoint, which is found before anything is
+    /// sent.
+    /// </summary>
+    CursorClamped = 48,
+
+    // type_text paste mode and bounded text (roadmap M4.4). Nothing was sent.
+
+    /// <summary>
+    /// type_text: the text is longer than its method takes: more than <see cref="Services.InputSimulationService.MaxTypedLength"/>
+    /// characters to type (unicode, keys, or auto when it types), or more than
+    /// <see cref="Services.InputSimulationService.MaxPasteLength"/> to paste. Nothing was typed. send_keys: the keys press more
+    /// than <see cref="Services.InputSimulationService.MaxSendKeysPresses"/> keys, or make more than
+    /// <see cref="Services.InputSimulationService.MaxSendKeysEvents"/> input events. Nothing was sent.
+    /// </summary>
+    TextTooLong = 49,
+
+    /// <summary>
+    /// type_text with method paste: the clipboard cannot be lent to the paste. It holds content the server could not put
+    /// back afterwards (formatted text, an image, files, an application's own data, content marked private, or very long
+    /// text), or it could not be opened, read or written. Nothing was pasted, and the clipboard is as it was.
+    /// </summary>
+    ClipboardUnavailable = 50,
+
+    // Takeover detection (roadmap M7.4). Input may have been sent before the stop.
+
+    /// <summary>
+    /// type_text, drag and run_steps with WAM_TAKEOVER_DETECTION=stop: the user used the keyboard or mouse while the operation
+    /// ran, so it stopped between two batches (or two steps) and released what it held. The result says how far it got. Do
+    /// not retry at once: the user is using the computer; ask the user before you go on.
+    /// </summary>
+    UserInterrupted = 51
+}
+
+/// <summary>
+/// A mouse button as the user knows it (roadmap M4.2). Primary is the button the user clicks with: the left one, or the
+/// right one when the user swapped the buttons in Windows' mouse settings. SendInput names physical buttons, so
+/// <see cref="Services.InputBatchBuilder"/> sends a primary click as the right button's events when they are swapped.
+/// mouse_click and drag take it as their button (roadmap M4.3), with 'left' and 'right' accepted for primary and secondary.
+/// </summary>
+[ToolEnum(WinDesktopMcp.Infrastructure.ToolErrorReporting.InvalidArgumentsErrorCode, "mouse button")]
+public enum MouseButton
+{
+    /// <summary>The button that clicks, selects and drags: the left one unless the buttons are swapped.</summary>
+    [JsonStringEnumMemberName("primary")]
+    [ToolValueAlias("left", Listed = false)]
+    Primary,
+
+    /// <summary>The button that opens context menus: the right one unless the buttons are swapped.</summary>
+    [JsonStringEnumMemberName("secondary")]
+    [ToolValueAlias("right", Listed = false)]
+    Secondary,
+
+    /// <summary>The middle button (the wheel), which swapping does not change.</summary>
+    [JsonStringEnumMemberName("middle")]
+    Middle,
+
+    /// <summary>The first extended button (XBUTTON1), Back in browsers and File Explorer.</summary>
+    [JsonStringEnumMemberName("x1")]
+    X1,
+
+    /// <summary>The second extended button (XBUTTON2), Forward in browsers and File Explorer.</summary>
+    [JsonStringEnumMemberName("x2")]
+    X2
+}
+
+/// <summary>
+/// A modifier key mouse_click and drag hold down around their mouse events (roadmap M4.3): sent as the left-hand key, down
+/// in the batch before the first press and up after the last release.
+/// </summary>
+[ToolEnum(WinDesktopMcp.Infrastructure.ToolErrorReporting.InvalidArgumentsErrorCode, "modifier")]
+public enum MouseModifier
+{
+    /// <summary>Ctrl (VK_LCONTROL).</summary>
+    [JsonStringEnumMemberName("ctrl")]
+    [ToolValueAlias("control", Listed = false)]
+    Ctrl,
+
+    /// <summary>Shift (VK_LSHIFT).</summary>
+    [JsonStringEnumMemberName("shift")]
+    Shift,
+
+    /// <summary>Alt (VK_LMENU).</summary>
+    [JsonStringEnumMemberName("alt")]
+    Alt,
+
+    /// <summary>The Windows key (VK_LWIN).</summary>
+    [JsonStringEnumMemberName("win")]
+    [ToolValueAlias("windows", Listed = false)]
+    Win
+}

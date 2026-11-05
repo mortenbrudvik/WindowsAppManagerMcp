@@ -2,7 +2,7 @@
 
   <!--
     WamFixtureApp: a small WPF app with known AutomationIds that the end-to-end tests
-    (tests/WindowsAppManagerMcp.E2ETests) start, read, capture and type into. The suite owns this
+    (tests/win-desktop-mcp.E2ETests) start, read, capture and type into. The suite owns this
     app, so its desktop tests never act on the developer's own windows.
 
     Never start it from a normal test run: only the E2E harness starts it, and only when a desktop
@@ -24,7 +24,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <AssemblyName>WamFixtureApp</AssemblyName>
-    <RootNamespace>WindowsAppManagerMcp.FixtureApp</RootNamespace>
+    <RootNamespace>WinDesktopMcp.FixtureApp</RootNamespace>
     <IsPackable>false</IsPackable>
     <IsTestProject>false</IsTestProject>
     <!-- Common controls version 6, for the task dialog; no DPI setting (see app.manifest) -->

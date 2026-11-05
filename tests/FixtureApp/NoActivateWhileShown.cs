@@ -1,6 +1,6 @@
 using System.Text;
 
-namespace WindowsAppManagerMcp.FixtureApp;
+namespace WinDesktopMcp.FixtureApp;
 
 /// <summary>
 /// Keeps the windows that WPF creates on the calling thread from being activated until <see cref="Release"/> (roadmap M3.F30):

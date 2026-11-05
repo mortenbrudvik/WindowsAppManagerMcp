@@ -11,7 +11,7 @@
     Only the version strings are rewritten; the rest of each file is left byte-for-byte intact.
     The marketplace's own metadata.version is not a plugin version and is left alone.
 
-    Afterwards, run scripts/Publish-Plugin.ps1 so bin/WindowsAppManagerMcp.exe carries the new version.
+    Afterwards, run scripts/Publish-Plugin.ps1 so bin/win-desktop-mcp.exe carries the new version.
 
 .PARAMETER Version
     The new version, as MAJOR.MINOR.PATCH (for example 1.12.0). Release tags are v<Version>.
@@ -84,4 +84,4 @@ if ($problems.Count -gt 0) {
 }
 
 Write-Host "Version $previous -> $Version in Directory.Build.props, .claude-plugin/plugin.json and .claude-plugin/marketplace.json."
-Write-Host 'Next: ./scripts/Publish-Plugin.ps1 to rebuild bin/WindowsAppManagerMcp.exe with this version.'
+Write-Host 'Next: ./scripts/Publish-Plugin.ps1 to rebuild bin/win-desktop-mcp.exe with this version.'

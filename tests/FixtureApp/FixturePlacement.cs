@@ -1,7 +1,7 @@
 using System.Runtime.InteropServices;
 using System.Windows;
 
-namespace WindowsAppManagerMcp.FixtureApp;
+namespace WinDesktopMcp.FixtureApp;
 
 /// <summary>Where the fixture's top-level windows open.</summary>
 internal static class FixturePlacement

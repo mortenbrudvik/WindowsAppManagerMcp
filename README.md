@@ -61,21 +61,21 @@ Install as a Claude Code plugin:
 
 Then restart Claude Code. The plugin includes a skill with usage guidance.
 
-The plugin runs the pre-built `bin/WindowsAppManagerMcp.exe` from this repository, so it needs the
+The plugin runs the pre-built `bin/win-desktop-mcp.exe` from this repository, so it needs the
 .NET 10 Desktop Runtime too. That exe is rebuilt at each release and can lag behind `main` in between:
 the tools and safety behaviour described here are those of the source on `main`, and the plugin gets
 them with the next release (its version is `serverInfo.version` in the MCP handshake).
 
 ### Option 2: Claude Desktop (Manual)
 
-Get `WindowsAppManagerMcp.exe` from a release (Option 4) or build it (Option 3), then add it to your
+Get `win-desktop-mcp.exe` from a release (Option 4) or build it (Option 3), then add it to your
 `claude_desktop_config.json` (located at `%APPDATA%\Claude\`):
 
 ```json
 {
   "mcpServers": {
     "windows-app-manager": {
-      "command": "C:\\path\\to\\WindowsAppManagerMcp.exe"
+      "command": "C:\\path\\to\\win-desktop-mcp.exe"
     }
   }
 }
@@ -87,11 +87,11 @@ Then restart Claude Desktop.
 
 ```bash
 git clone https://github.com/mortenbrudvik/WindowsAppManagerMcp.git
-cd WindowsAppManagerMcp
-dotnet publish src/WindowsAppManagerMcp -c Release -o ./publish
+cd win-desktop-mcp
+dotnet publish src/win-desktop-mcp -c Release -o ./publish
 ```
 
-This produces `publish/WindowsAppManagerMcp.exe`, a framework-dependent single-file exe of about 8 MB that needs the
+This produces `publish/win-desktop-mcp.exe`, a framework-dependent single-file exe of about 8 MB that needs the
 .NET 10 Desktop Runtime. It carries its own projection of only the Windows OCR types (about 0.9 MB, generated at build
 time by CsWinRT from Windows metadata that `dotnet restore` downloads), so neither building nor running it needs the
 Windows SDK. To bundle the runtime instead, add `--self-contained`; the output is much larger
@@ -100,13 +100,13 @@ that folder holds the committed plugin exe (see [Building](#building)).
 
 ### Option 4: Download Release
 
-Download `WindowsAppManagerMcp-vX.Y.Z-win-x64.zip` from the [Releases](https://github.com/mortenbrudvik/WindowsAppManagerMcp/releases)
-page, extract it, and point your MCP client at `WindowsAppManagerMcp.exe` (see Option 2). It is a
+Download `win-desktop-mcp-vX.Y.Z-win-x64.zip` from the [Releases](https://github.com/mortenbrudvik/WindowsAppManagerMcp/releases)
+page, extract it, and point your MCP client at `win-desktop-mcp.exe` (see Option 2). It is a
 framework-dependent single-file exe and needs the .NET 10 Desktop Runtime. Releases are created by CI when a `v*` tag
 is pushed; the first one is v1.12.0 (no release was published for earlier tags).
 
 The release zip is built by CI from the tagged sources. It is not a copy of the plugin's committed
-`bin/WindowsAppManagerMcp.exe`: both have the same version and sources, but they are separate builds,
+`bin/win-desktop-mcp.exe`: both have the same version and sources, but they are separate builds,
 so `serverInfo.version` shows a different commit SHA (`X.Y.Z+<tag commit>` for the release,
 `X.Y.Z+<commit before the release commit>` for the plugin exe).
 
@@ -155,8 +155,8 @@ server configuration). No tool argument can change them.
 | `WAM_DENY_PROCESSES` | common password managers, the Windows credential prompts (`CredentialUIBroker`, `CredDialogHost`), the elevation prompt (`consent`), the SmartScreen prompt (`CHXSmartScreen`, `smartscreen`) Windows Security (`SecHealthUI`, `SecurityHealthHost`) and the Entra ID and Microsoft account sign-in windows (`Microsoft.AAD.BrokerPlugin`, `WWAHost`); with it, also the "Open File - Security Warning" prompt in any process, recognized by its structure | Apps the agent may not act on or read: no input, element actions, dialog answers, window changes, closing, killing, window captures or UI Automation reads (`TargetDeniedByPolicy`). UI Automation reads and element actions also cover such an app's content shown inside another app's window, such as an embedded WebView2; input to that window and captures of it do not. Not covered: the browser reading tools' CDP reads with `cdpPort`, take_screenshot and capture_region. A value replaces the default list; `default` puts it back in, `none` alone turns it off. See [Target policy](docs/TOOLS.md#target-policy) |
 | `WAM_ALLOW_PROCESSES` | not set | When set, the only apps the agent may act on; the deny list still wins. An app that shows another process's content inside its windows needs that process listed too for the UI Automation reads and element actions on that content, such as a WebView2 (`msedgewebview2`) or a preview handler (`prevhost`) |
 | `WAM_DESTRUCTIVE_CHORDS` | `%{F4} ^w ^q ^{F4} ^+{ESC} #l` | `send_keys` chords that need `windowHandle` (`DestructiveChordNeedsTarget`) |
-| `WAM_LAYOUTS_PATH` | `%LOCALAPPDATA%\WindowsAppManagerMcp\layouts` | Folder of the [layout presets](docs/TOOLS.md#layout-presets) |
-| `WAM_AUDIT_PATH` | `%LOCALAPPDATA%\WindowsAppManagerMcp\audit` | Folder of the [audit log](docs/TOOLS.md#audit-log): one JSON line per input, element action, dialog answer, file dialog, close, kill, launch, layout-write (apply, save, delete), browser tab activation or navigation call (the URL as its scheme and host only), browser page click, typing, dialog answer, script or capture (a script, a text or a selector as its length only, never a script's value) and per clipboard read or write, one file per day, kept 7 days |
+| `WAM_LAYOUTS_PATH` | `%LOCALAPPDATA%\win-desktop-mcp\layouts` | Folder of the [layout presets](docs/TOOLS.md#layout-presets) |
+| `WAM_AUDIT_PATH` | `%LOCALAPPDATA%\win-desktop-mcp\audit` | Folder of the [audit log](docs/TOOLS.md#audit-log): one JSON line per input, element action, dialog answer, file dialog, close, kill, launch, layout-write (apply, save, delete), browser tab activation or navigation call (the URL as its scheme and host only), browser page click, typing, dialog answer, script or capture (a script, a text or a selector as its length only, never a script's value) and per clipboard read or write, one file per day, kept 7 days |
 | `WAM_TOOLSETS` | the default toolsets (all but `browser-actions`, `browser-script`, `visual`, `windows-batch`, `ocr` and `workspaces`) | The [toolsets](docs/TOOLS.md#toolsets) to serve, such as `windows,monitors,layouts`; `all` (every toolset), `default`, `+name` and `-name` (`-browser`) also work. The `server` toolset is always served. A moved tool (the window batches) is served only while the toolset it came from is on too. A name that is not a toolset never serves more than you asked for: an unknown `-name`, or unknown plain names with no valid one, serve only the `server` toolset (an unknown `+name` is just ignored) |
 | `WAM_EXCLUDE_TOOLS` | not set | Tools to leave out by name, such as `kill_process`, or every tool of a toolset by the toolset's name (`process`, which also leaves out the tools that moved out of it). Naming a tool that is not served anyway, or one 3.0.0 removed (`click`), is no error. `get_server_info` is always served. A name that is neither a tool nor a toolset serves only the `server` toolset, so a typo never leaves on a tool you meant to turn off |
 | `WAM_READ_ONLY` | not set | `1` serves only the tools annotated read-only (an observer profile: no input, element actions, dialog answers, window changes, captures, layout writes, clipboard writes or process control) |
@@ -270,7 +270,7 @@ The `config/layouts/` folder contains example presets. They are built into the s
 - `dual-monitor.json` - Multi-monitor configuration
 - `focus-mode.json` - Single centered window
 
-Presets are stored in `%LOCALAPPDATA%\WindowsAppManagerMcp\layouts`, outside the plugin folder, so they survive plugin updates. To use another folder, set the `WAM_LAYOUTS_PATH` environment variable to an absolute path. On first run, presets saved by older versions (in a `layouts` folder next to the executable) are copied there and the originals are left in place. Existing presets are never overwritten, and a sample you delete is not added back. A file in the folder that is not a valid preset is listed by `list_layouts` with its error (`InvalidPresetFile`) and cannot be applied; fix or delete it there, since the layout tools never change it (`delete_layout` of its name deletes a valid preset of the same name, not that file).
+Presets are stored in `%LOCALAPPDATA%\win-desktop-mcp\layouts`, outside the plugin folder, so they survive plugin updates. To use another folder, set the `WAM_LAYOUTS_PATH` environment variable to an absolute path. On first run, presets saved by older versions (in a `layouts` folder next to the executable, or in `%LOCALAPPDATA%\WindowsAppManagerMcp\layouts`) are copied there and the originals are left in place. Existing presets are never overwritten, and a sample you delete is not added back. A file in the folder that is not a valid preset is listed by `list_layouts` with its error (`InvalidPresetFile`) and cannot be applied; fix or delete it there, since the layout tools never change it (`delete_layout` of its name deletes a valid preset of the same name, not that file).
 
 ## Building
 
@@ -282,7 +282,7 @@ dotnet build
 dotnet test
 
 # Publish the exe (framework-dependent single file, needs the .NET 10 Desktop Runtime)
-dotnet publish src/WindowsAppManagerMcp -c Release -o ./publish
+dotnet publish src/win-desktop-mcp -c Release -o ./publish
 ```
 
 ### Versioning and the plugin binary
@@ -291,7 +291,7 @@ dotnet publish src/WindowsAppManagerMcp -c Release -o ./publish
   `./scripts/Set-Version.ps1 -Version X.Y.Z`, which also updates `.claude-plugin/plugin.json` and
   `.claude-plugin/marketplace.json` (tests fail if they drift). The server reports it, with the
   commit SHA, as `serverInfo.version` in the MCP handshake.
-- The plugin runs the committed `bin/WindowsAppManagerMcp.exe`; it is the only binary in git.
+- The plugin runs the committed `bin/win-desktop-mcp.exe`; it is the only binary in git.
   Refresh it only with `./scripts/Publish-Plugin.ps1` (the `/commit` release flow does this). The
   script refuses uncommitted changes to the build inputs and verifies the exe reports
   `<version>+<HEAD sha>`. The build inputs are `src/`, `config/` (the sample layout presets are
@@ -302,13 +302,13 @@ dotnet publish src/WindowsAppManagerMcp -c Release -o ./publish
 - `./scripts/Test-PluginBinary.ps1` checks that the committed exe has the current version and that
   no build input changed since the commit it was built from. The Build workflow runs it as an error
   on `v*` tags, so a release cannot ship a stale exe, and on pushes and pull requests that change
-  `bin/WindowsAppManagerMcp.exe`, so a stale or hand-built exe fails when it is committed. On other
+  `bin/win-desktop-mcp.exe`, so a stale or hand-built exe fails when it is committed. On other
   pushes and pull requests it is only a warning. The tag's GitHub release gets
-  `WindowsAppManagerMcp-vX.Y.Z-win-x64.zip`, which CI rebuilds from the tagged sources (a separate
+  `win-desktop-mcp-vX.Y.Z-win-x64.zip`, which CI rebuilds from the tagged sources (a separate
   build from the committed exe, see [Option 4](#option-4-download-release)) and publishes with the
   GitHub CLI.
-- `bin/` is gitignored, but `bin/WindowsAppManagerMcp.exe` is tracked, so staging it needs
-  `git add -f -- bin/WindowsAppManagerMcp.exe`. The `/commit` command
+- `bin/` is gitignored, but `bin/win-desktop-mcp.exe` is tracked, so staging it needs
+  `git add -f -- bin/win-desktop-mcp.exe`. The `/commit` command
   (`.claude/commands/commit.md`) does this.
 
 ## Testing
@@ -329,7 +329,7 @@ dotnet test --filter "Category!=Desktop" --collect:"XPlat Code Coverage"
 - **About 6,700 tests**: about 6,450 unit, contract and integration tests and about 250 in the end-to-end project (about 200 tests of the harness itself and 55 gated desktop scenarios), about 75% line coverage
 - **Contract tests** call every tool over MCP through an in-process server, hold each typical result to a
   token budget, and compare the tools/list the server sends with a checked-in snapshot
-  (`tests/WindowsAppManagerMcp.Tests/Contract/tools.snapshot.json`). The tool tables in this README,
+  (`tests/win-desktop-mcp.Tests/Contract/tools.snapshot.json`). The tool tables in this README,
   docs/TOOLS.md and the plugin skill (skills/using-windows-app-manager/tools.md) are generated from it. After a deliberate change to the tools, run the
   tests once with `UPDATE_SNAPSHOTS=1` to regenerate both, and review the diff
   (see [TESTING.md](TESTING.md#tool-surface-snapshot))
@@ -342,7 +342,7 @@ dotnet test --filter "Category!=Desktop" --collect:"XPlat Code Coverage"
   skipped. A narrower tier, `[DesktopNoInputFact]` (also `Category=DesktopNoInput`), only starts
   the suite's own fixture app and reads or captures it; `WAM_ALLOW_DESKTOP_NOINPUT_TESTS=1` opts in
   to that tier alone.
-- **End-to-end tests** (`tests/WindowsAppManagerMcp.E2ETests`) drive the real server services
+- **End-to-end tests** (`tests/win-desktop-mcp.E2ETests`) drive the real server services
   against `tests/FixtureApp`, a small WPF app the suite owns, never against your own windows. They
   are desktop tests of both tiers; on GitHub they run only on demand (`.github/workflows/e2e.yml`).
   To opt in:
@@ -364,7 +364,7 @@ See [TESTING.md](TESTING.md#desktop-tests) for details.
 ## Project Structure
 
 ```
-WindowsAppManagerMcp/
+win-desktop-mcp/
 ├── .claude/commands/    # /commit (release) and /update-plugin (local install) commands
 ├── .claude-plugin/      # Claude Code plugin configuration
 │   ├── plugin.json      # Plugin metadata and MCP server config
@@ -376,7 +376,7 @@ WindowsAppManagerMcp/
 ├── bin/                 # Pre-built plugin executable (refreshed only by scripts/Publish-Plugin.ps1)
 ├── scripts/             # Release scripts: Set-Version, Publish-Plugin, Test-PluginBinary
 ├── Directory.Build.props # Product version (single source of truth)
-├── src/WindowsAppManagerMcp/
+├── src/win-desktop-mcp/
 │   ├── Infrastructure/  # MCP pipeline and setup: toolsets, handshake instructions, resources and prompts, input gate, argument checks, removed tools, run_steps, user confirmations, audit log, error reporting
 │   ├── Models/          # Data models and DTOs
 │   ├── Native/          # P/Invoke declarations and native wrappers
@@ -400,7 +400,7 @@ WindowsAppManagerMcp/
 - **Pause Hotkey** - Ctrl+Alt+Shift+Pause (`WAM_PAUSE_HOTKEY`) pauses and resumes the input and window changes of every server on the desktop; only the user can resume (also after a server paused itself because it could not read the shared pause), and no key or mouse button the server presses stays down after a call, an interrupted batch or a shutdown
 - **Protected Windows** - `close_window`, `close_windows_batch` and `close_application` refuse the desktop shell (Program Manager, the taskbars) and the terminal, editor or chat app the agent runs in (the window tools unless `force` is true, which the server confirms with you first when the client can ask, and which otherwise needs `confirm` too; `close_application` always), and closing more than 3 windows at once requires your confirmation (asked through the client when it supports elicitation, otherwise `confirm`). Closes are verified: the result says whether the window closed or an app is waiting behind a "Save changes?" prompt, which the agent never answers on its own
 - **Clipboard Privacy** - `get_clipboard` returns only what the agent put on the clipboard or copied itself; your own clipboard only after you allow it (asked through the client, or `WAM_ALLOW_USER_CLIPBOARD`), and content password managers mark as private never. Input that pastes follows the same rule (`PasteNotAllowed`), so a paste cannot put your clipboard where the agent can read it. Menu paste, drag and drop and custom paste shortcuts are not covered (see [Clipboard](docs/TOOLS.md#clipboard))
-- **Audit Log** - Every input, element action, dialog answer, file dialog, close, kill, launch, layout-write (apply, save, delete), browser tab activation or navigation (the URL as its scheme and host only), browser page action (lengths only, never a typed text, script or script value) and clipboard-write call, and every clipboard read, is appended to `%LOCALAPPDATA%\WindowsAppManagerMcp\audit\<date>.jsonl` (`WAM_AUDIT_PATH`) with its target window, the window the input went to, its outcome and error code. Typed text, keys, element values, the element names element_action searches by, file dialog paths, clipboard text, command-line arguments and the paths, queries and credentials of URLs are never logged, only their lengths (respond_to_dialog's `button` is kept as given); a launched URL keeps only its scheme and host. Files are kept 7 days, and the log cannot be turned off (see [Audit log](docs/TOOLS.md#audit-log))
+- **Audit Log** - Every input, element action, dialog answer, file dialog, close, kill, launch, layout-write (apply, save, delete), browser tab activation or navigation (the URL as its scheme and host only), browser page action (lengths only, never a typed text, script or script value) and clipboard-write call, and every clipboard read, is appended to `%LOCALAPPDATA%\win-desktop-mcp\audit\<date>.jsonl` (`WAM_AUDIT_PATH`) with its target window, the window the input went to, its outcome and error code. Typed text, keys, element values, the element names element_action searches by, file dialog paths, clipboard text, command-line arguments and the paths, queries and credentials of URLs are never logged, only their lengths (respond_to_dialog's `button` is kept as given); a launched URL keeps only its scheme and host. Files are kept 7 days, and the log cannot be turned off (see [Audit log](docs/TOOLS.md#audit-log))
 - **Hung Applications** - The window tools give up on an application that does not answer within 5 seconds (`NotResponding`), the UI Automation tools do not read a window that does not respond (`NotResponding`) and run every read under a timeout, so a hung app cannot block the other tools
 - **Read-Only Mode** - `WAM_READ_ONLY=1` serves only the tools annotated read-only, and `WAM_TOOLSETS`/`WAM_EXCLUDE_TOOLS` leave out whole groups or single tools; a tool that is not served cannot be called (see [Toolsets](docs/TOOLS.md#toolsets))
 - **Browser Debug Port** - `launch_browser_with_debug` opens a Chrome DevTools port on localhost with no authentication. Any local program can control that browser until it is closed. The browser uses a new, empty temporary profile unless `userDataDir` or a named `profile` (kept in the server's own folder) is given; never point it at your real profile (a folder inside a browser's `User Data` folder is refused). Its `url` is held to what `browser_navigate` opens: an `http` or `https` address with its scheme, or `about:blank`; no `file:` or `data:` URL, browser page, path or switch, and no port on this computer where a browser listens. Each DevTools tab list and connection is used only while the browser's own process still listens on its port: the listener is read again once the list has come and once the connection is open, and otherwise the call fails (`CdpPortOwnerMismatch`) with nothing sent. `close_debug_browser` closes it and deletes its temporary profile; it closes only a debug browser the server started or one with a profile in the server's own folders, never your own browser, and asks you first when the client can. A cancelled launch ends only the browser and its own helper processes, never a program the browser opened.

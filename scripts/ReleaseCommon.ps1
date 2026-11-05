@@ -3,16 +3,16 @@
 # Works on Windows PowerShell 5.1 and PowerShell 7+.
 
 $script:PluginName = 'windows-app-manager'
-$script:ExeName = 'WindowsAppManagerMcp.exe'
+$script:ExeName = 'win-desktop-mcp.exe'
 $script:Utf8NoBom = New-Object System.Text.UTF8Encoding $false
 
-# Everything in the repository that goes into bin/WindowsAppManagerMcp.exe, as git pathspecs relative
+# Everything in the repository that goes into bin/win-desktop-mcp.exe, as git pathspecs relative
 # to the repository root. Publish-Plugin.ps1 refuses to build while any of them has uncommitted
 # changes, and Test-PluginBinary.ps1 reports the exe as stale when any of them changed after the
 # commit the exe was built from.
 #   src     the project and its sources
 #   config  the sample layout presets the project embeds (config/layouts/*.json, see the
-#           EmbeddedResource item in src/WindowsAppManagerMcp/WindowsAppManagerMcp.csproj)
+#           EmbeddedResource item in src/win-desktop-mcp/win-desktop-mcp.csproj)
 #   others  files MSBuild, NuGet and the .NET SDK read from the repository root. Files that do not
 #           exist yet are listed too, so adding one later counts as a change.
 # Directory.Build.props is a build input as well, but Set-Version.ps1 changes its <Version> on purpose
@@ -96,7 +96,7 @@ function Get-ExeBuildInfo([string]$ExePath) {
     }
 }
 
-# Whether an exe carries the app manifest's per-monitor v2 DPI awareness (src/WindowsAppManagerMcp/app.manifest):
+# Whether an exe carries the app manifest's per-monitor v2 DPI awareness (src/win-desktop-mcp/app.manifest):
 # the manifest is a UTF-8 Win32 resource of the apphost, which the single-file bundle is, so its bytes are searched.
 # Reads the file only; it never runs the exe.
 function Test-ExeDpiManifest([string]$ExePath) {
@@ -202,7 +202,7 @@ function Get-ChangedBuildInputs([string]$Root, [string]$FromCommit) {
     $files.ToArray()
 }
 
-# $Path relative to $Root with forward slashes (bin/WindowsAppManagerMcp.exe) when it is inside $Root, for messages;
+# $Path relative to $Root with forward slashes (bin/win-desktop-mcp.exe) when it is inside $Root, for messages;
 # otherwise $Path as it is.
 function Get-RepoRelativeLabel([string]$Root, [string]$Path) {
     if ($Path.StartsWith($Root, [System.StringComparison]::OrdinalIgnoreCase)) {
@@ -238,7 +238,7 @@ function Get-PluginBinaryProblems([string]$Root, [string]$ExePath, [string]$Tag)
     }
 
     if (-not (Test-ExeDpiManifest $ExePath)) {
-        $problems.Add("$exeLabel carries no PerMonitorV2 dpiAwareness manifest (src/WindowsAppManagerMcp/app.manifest), so Windows can scale its coordinates. $republish")
+        $problems.Add("$exeLabel carries no PerMonitorV2 dpiAwareness manifest (src/win-desktop-mcp/app.manifest), so Windows can scale its coordinates. $republish")
     }
 
     if (-not $build.CommitSha) {
@@ -269,7 +269,7 @@ function New-PluginBinaryChange([bool]$Changed, [string]$Reason) {
     [pscustomobject]@{ Changed = $Changed; Reason = $Reason }
 }
 
-# Whether a push or pull request changes the committed plugin exe (bin/WindowsAppManagerMcp.exe).
+# Whether a push or pull request changes the committed plugin exe (bin/win-desktop-mcp.exe).
 # The Build workflow checks the exe strictly when it does, and only warns otherwise. Compares $Base
 # with $Head (default HEAD); with -SinceMergeBase it compares the merge base of the two with $Head,
 # which is what a pull request itself changes. When the answer is unknown, Changed is $true, so the
@@ -322,7 +322,7 @@ function Get-UncommittedBuildInputs([string]$Root) {
         throw "git status for the build inputs failed in $Root."
     }
 
-    # "src/WindowsAppManagerMcp/bin/", "src/WindowsAppManagerMcp/obj/", ...
+    # "src/win-desktop-mcp/bin/", "src/win-desktop-mcp/obj/", ...
     $buildOutput = New-Object System.Collections.Generic.List[string]
     foreach ($project in @($projects.Output | Where-Object { $_ })) {
         $directory = ([string]$project).Trim('"')

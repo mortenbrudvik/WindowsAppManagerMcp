@@ -4,7 +4,7 @@
     the checked-in tools/list and resources snapshots.
 
 .DESCRIPTION
-    The snapshot (tests/WindowsAppManagerMcp.Tests/Contract/tools.snapshot.json) is what the sources serve:
+    The snapshot (tests/win-desktop-mcp.Tests/Contract/tools.snapshot.json) is what the sources serve:
     ToolSurfaceSnapshotTests keeps it equal to the tools/list of an in-process server with the production
     registrations. This script checks that an exe serves the same: it starts the exe with stdin and stdout
     redirected, sends initialize, notifications/initialized and tools/list (following nextCursor), closes
@@ -14,7 +14,7 @@
 
     It then lists the resources, resource templates and prompts (resources/list, resources/templates/list,
     prompts/list, roadmap M6.9) and compares them, item by item, with
-    tests/WindowsAppManagerMcp.Tests/Contract/resources.snapshot.json, which ToolSurfaceSnapshotTests keeps equal to
+    tests/win-desktop-mcp.Tests/Contract/resources.snapshot.json, which ToolSurfaceSnapshotTests keeps equal to
     the lists of an in-process server, so an exe that serves stale resources or prompts fails too.
 
     It RUNS the exe. The server starts as it does for an MCP client: it records the foreground window, logs its
@@ -23,7 +23,7 @@
     changes no window. The build workflow runs it on a GitHub-hosted runner; it is not part of the test suite.
 
     The build workflow runs it twice: on the exe it has just published from the checked-out sources (always),
-    and with -OnlyIfCurrent on the committed bin/WindowsAppManagerMcp.exe, which is compared only when it was
+    and with -OnlyIfCurrent on the committed bin/win-desktop-mcp.exe, which is compared only when it was
     built from the current build inputs (the checks of scripts/Test-PluginBinary.ps1). A stale committed exe is
     expected between releases and is skipped with a notice.
 
@@ -34,10 +34,10 @@
     Arguments for the exe. The server takes none; this exists to point the script at a stand-in server.
 
 .PARAMETER SnapshotPath
-    The snapshot. Defaults to tests/WindowsAppManagerMcp.Tests/Contract/tools.snapshot.json.
+    The snapshot. Defaults to tests/win-desktop-mcp.Tests/Contract/tools.snapshot.json.
 
 .PARAMETER ResourcesSnapshotPath
-    The resources and prompts snapshot. Defaults to tests/WindowsAppManagerMcp.Tests/Contract/resources.snapshot.json.
+    The resources and prompts snapshot. Defaults to tests/win-desktop-mcp.Tests/Contract/resources.snapshot.json.
 
 .PARAMETER OnlyIfCurrent
     Skip (exit 0 with a notice) unless the exe passes the checks of Test-PluginBinary.ps1: its version is the
@@ -51,10 +51,10 @@
     the server's SDK speaks, which stdio clients such as Claude Code use (ProtocolRevisionContractTests pins it).
 
 .EXAMPLE
-    ./scripts/Test-ToolsSnapshot.ps1 -ExePath ./publish/WindowsAppManagerMcp.exe
+    ./scripts/Test-ToolsSnapshot.ps1 -ExePath ./publish/win-desktop-mcp.exe
 
 .EXAMPLE
-    ./scripts/Test-ToolsSnapshot.ps1 -ExePath ./bin/WindowsAppManagerMcp.exe -OnlyIfCurrent
+    ./scripts/Test-ToolsSnapshot.ps1 -ExePath ./bin/win-desktop-mcp.exe -OnlyIfCurrent
 #>
 [CmdletBinding()]
 param(
@@ -77,13 +77,13 @@ if ($SnapshotPath) {
     $SnapshotPath = $PSCmdlet.GetUnresolvedProviderPathFromPSPath($SnapshotPath)
 }
 else {
-    $SnapshotPath = Join-Path $root 'tests/WindowsAppManagerMcp.Tests/Contract/tools.snapshot.json'
+    $SnapshotPath = Join-Path $root 'tests/win-desktop-mcp.Tests/Contract/tools.snapshot.json'
 }
 if ($ResourcesSnapshotPath) {
     $ResourcesSnapshotPath = $PSCmdlet.GetUnresolvedProviderPathFromPSPath($ResourcesSnapshotPath)
 }
 else {
-    $ResourcesSnapshotPath = Join-Path $root 'tests/WindowsAppManagerMcp.Tests/Contract/resources.snapshot.json'
+    $ResourcesSnapshotPath = Join-Path $root 'tests/win-desktop-mcp.Tests/Contract/resources.snapshot.json'
 }
 $ExePath = $PSCmdlet.GetUnresolvedProviderPathFromPSPath($ExePath)
 $exeLabel = Get-RepoRelativeLabel $root $ExePath

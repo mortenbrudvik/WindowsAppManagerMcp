@@ -10,9 +10,9 @@ using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Shapes;
 using System.Windows.Threading;
-using static WindowsAppManagerMcp.FixtureApp.FixtureContract;
+using static WinDesktopMcp.FixtureApp.FixtureContract;
 
-namespace WindowsAppManagerMcp.FixtureApp;
+namespace WinDesktopMcp.FixtureApp;
 
 /// <summary>
 /// The fixture's main window: an edit box, a password box, a check box, a combo box, a button that opens a modal

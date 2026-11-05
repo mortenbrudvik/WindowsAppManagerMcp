@@ -6,9 +6,9 @@ using System.Windows.Automation.Peers;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
-using static WindowsAppManagerMcp.FixtureApp.FixtureContract;
+using static WinDesktopMcp.FixtureApp.FixtureContract;
 
-namespace WindowsAppManagerMcp.FixtureApp;
+namespace WinDesktopMcp.FixtureApp;
 
 /// <summary>
 /// A separate, unowned top-level window that draws <see cref="CanvasLines"/> as pixels only (roadmap M6.3): UI Automation

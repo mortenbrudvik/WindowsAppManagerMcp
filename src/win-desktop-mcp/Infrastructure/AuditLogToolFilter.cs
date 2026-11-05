@@ -1,0 +1,206 @@
+using System.Text.Json;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using ModelContextProtocol;
+using ModelContextProtocol.Protocol;
+using ModelContextProtocol.Server;
+using WinDesktopMcp.Models;
+using WinDesktopMcp.Services.Interfaces;
+
+namespace WinDesktopMcp.Infrastructure;
+
+/// <summary>
+/// Call-tool filter that writes one audit log line (roadmap M2.17, <see cref="IAuditLog"/>) for every call of an
+/// <see cref="AuditedTools">audited tool</see>: what it was aimed at, where its input went, and how it ended. It is
+/// the outermost filter, so it records the result the agent got: an exception the error filter turned into an error
+/// result, and a call the input gate filter refused while input was paused, are recorded with their errorCode.
+/// </summary>
+/// <remarks>
+/// The filter does nothing when no <see cref="IAuditLog"/> is registered (tests that register their own services), and
+/// it never changes a call's result or fails it: the audit log swallows its own failures, and the filter swallows any
+/// failure of a log that does not, logging a warning with the exception (category <see cref="LoggerCategory"/>), so that
+/// a call that went unaudited leaves a trace. The line is normally written before the result goes back (one small append);
+/// the call waits for it at most <see cref="Services.AuditLog.MaxCallDelay"/>, so a slow or unreachable audit folder never
+/// holds up a call for longer.
+/// </remarks>
+public static class AuditLogToolFilter
+{
+    /// <summary>The log category of the filter's warnings: this class's full name.</summary>
+    public static string LoggerCategory { get; } = typeof(AuditLogToolFilter).FullName!;
+
+    /// <summary>
+    /// The audited tools: every tool that injects input (keys, clicks, pointer moves, scrolling, key releases) or acts on a UI
+    /// element through a UI Automation pattern (element_action, with its value's length only; respond_to_dialog with its
+    /// button; file_dialog with its path's length only), closes a
+    /// window, stops a process, starts a program, changes the windows or presets of a layout, replaces the clipboard, or
+    /// shows or navigates a browser tab (activate_tab, browser_navigate with its URL's scheme and host only), or acts on a
+    /// browser's page through CDP (browser_click, browser_type, browser_evaluate with what they were given as lengths, and
+    /// browser_screenshot, which may bring a tab to the front) or answers its JavaScript dialog through UI Automation
+    /// (browser_handle_dialog, with its promptText's length only); runs steps (run_steps, roadmap M6.2: the run's line counts
+    /// its steps, and every audited step writes its own line as a direct call would, with the request id
+    /// "&lt;run's id&gt;#&lt;step&gt;");
+    /// and get_clipboard, the one read that can return the user's own clipboard (after their yes, or with
+    /// WAM_ALLOW_USER_CLIPBOARD), recorded with its format, origin and length, never its content. Other read-only tools are
+    /// never audited. The captures are left out: they are destructive only through overwrite:true of an image file, and
+    /// are observation, called too often for their lines to help. A contract test checks that every other destructive
+    /// tool, and every input tool, is here.
+    /// </summary>
+    public static IReadOnlySet<string> AuditedTools { get; } = new HashSet<string>(StringComparer.Ordinal)
+    {
+        // Input, and actions on UI elements through UI Automation patterns (roadmap M3.6)
+        "mouse_click", "drag", "mouse_move", "type_text", "send_keys", "press_keys", "scroll",
+        "release_all_input", "element_action",
+        // Dialogs answered and file dialogs completed through element_action (roadmap M3.5, M3.14)
+        "respond_to_dialog", "file_dialog",
+        // Close and kill
+        "close_window", "close_windows_batch", "close_application", "kill_process", "close_debug_browser",
+        // Launch
+        "launch_application", "launch_applications_batch", "launch_browser_with_debug",
+        // Layouts: arrange (and launch) windows, replace or delete a preset
+        "apply_layout", "save_layout", "delete_layout",
+        // Workspaces (roadmap M7.5): a restore opens folders and pages and starts programs; a save replaces a preset
+        "save_workspace", "restore_workspace",
+        // Clipboard: the write, and the read that can return the user's clipboard
+        "set_clipboard", "get_clipboard",
+        // A debug browser's tab shown or navigated through CDP (roadmap M5.5): the URL's scheme and host only
+        "activate_tab", "browser_navigate",
+        // The DOM bridge's actions (roadmap M5.8): a script, a text, a selector or a name as its length only, never the value
+        // or the script's result; a capture that may bring a tab to the front
+        "browser_click", "browser_type", "browser_handle_dialog", "browser_evaluate", "browser_screenshot",
+        // A run of steps (roadmap M6.2): one line for the run (its window, the number of steps, how it ended), and each audited
+        // step's own line under the request id "<run's id>#<step>"
+        "run_steps"
+    };
+
+    /// <summary>Registers <see cref="Filter"/> in the call-tool pipeline of the MCP server.</summary>
+    public static IMcpServerBuilder AddAuditLog(this IMcpServerBuilder builder)
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        return builder.WithRequestFilters(filters => filters.AddCallToolFilter(Filter));
+    }
+
+    /// <summary>
+    /// Call-tool filter: starts the audit record of an audited tool's call before the rest of the pipeline runs (the
+    /// targets are read then, before a close or kill makes them unreadable) and finishes it with the result, or with
+    /// <c>cancelled</c> or <c>protocolError</c> when the call ends with an exception. Other tools pass straight through.
+    /// </summary>
+    public static McpRequestHandler<CallToolRequestParams, CallToolResult> Filter(
+        McpRequestHandler<CallToolRequestParams, CallToolResult> next) =>
+        async (request, cancellationToken) =>
+        {
+            var tool = request.Params?.Name;
+            var audit = tool != null && AuditedTools.Contains(tool) ? AuditLogOf(request.Services, tool!) : null;
+            var call = audit == null ? null : Begin(audit, tool!, request);
+            if (call == null)
+            {
+                return await next(request, cancellationToken).ConfigureAwait(false);
+            }
+
+            CallToolResult result;
+            try
+            {
+                // The tool notes the windows it learns of while it runs (a selector's, close_application's) in this call's record
+                using (AuditScope.Enter(call))
+                {
+                    result = await next(request, cancellationToken).ConfigureAwait(false);
+                }
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                await EndAsync(audit!, call, null, AuditOutcome.Cancelled, request.Services).ConfigureAwait(false);
+                throw;
+            }
+            catch (McpProtocolException)
+            {
+                await EndAsync(audit!, call, null, AuditOutcome.ProtocolError, request.Services).ConfigureAwait(false);
+                throw;
+            }
+            catch (Exception)
+            {
+                // The error filter inside turns every other exception into an error result; recorded all the same
+                await EndAsync(audit!, call, null, AuditOutcome.Error, request.Services).ConfigureAwait(false);
+                throw;
+            }
+
+            await EndAsync(audit!, call, result, result.IsError == true ? AuditOutcome.Error : AuditOutcome.Ok, request.Services)
+                .ConfigureAwait(false);
+            return result;
+        };
+
+    /// <summary>
+    /// Starts the record, with the tool's declared input schema; null (the call goes unaudited, with a warning in the
+    /// server's log) if the log fails.
+    /// </summary>
+    private static AuditCall? Begin(IAuditLog audit, string tool, RequestContext<CallToolRequestParams> request)
+    {
+        try
+        {
+            return audit.Begin(tool, request.Params?.Arguments, request.JsonRpcRequest?.Id.ToString(), InputSchemaOf(request, tool));
+        }
+        catch (Exception e)
+        {
+            // An audit log that breaks its own contract never breaks the call, but the call going unaudited is logged
+            Warn(request.Services, logger => logger.LogWarning(e,
+                "The audit log failed to start the record of a '{Tool}' call; the call runs unaudited", tool));
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Finishes the record. The log bounds its own wait; this also bounds a log that breaks its contract, so that a call
+    /// waits for its line at most <see cref="Services.AuditLog.MaxCallDelay"/>, without a thread.
+    /// </summary>
+    private static async Task EndAsync(IAuditLog audit, AuditCall call, CallToolResult? result, string outcome, IServiceProvider? services)
+    {
+        try
+        {
+            await audit.EndAsync(call, result, outcome).WaitAsync(Services.AuditLog.MaxCallDelay).ConfigureAwait(false);
+        }
+        catch (Exception e)
+        {
+            // As in Begin: the result goes back as it is, and the line that may be missing is logged
+            Warn(services, logger => logger.LogWarning(e,
+                "The audit log failed to write the line of a '{Tool}' call, or did not finish it in time; the call's result goes " +
+                "back as it is", call.Tool));
+        }
+    }
+
+    /// <summary>
+    /// Writes a warning through a logger of <see cref="LoggerCategory"/>, from the call's services. Never throws: a logger
+    /// that fails is ignored, as a failing audit log is.
+    /// </summary>
+    private static void Warn(IServiceProvider? services, Action<ILogger> warn)
+    {
+        try
+        {
+            if (services?.GetService<ILoggerFactory>()?.CreateLogger(LoggerCategory) is { } logger)
+            {
+                warn(logger);
+            }
+        }
+        catch (Exception)
+        {
+            // Nowhere left to report it
+        }
+    }
+
+    /// <summary>The input schema the server declares for <paramref name="tool"/>, or null when the filter cannot see it.</summary>
+    internal static JsonElement? InputSchemaOf(RequestContext<CallToolRequestParams> request, string tool) =>
+        request.Server?.ServerOptions?.ToolCollection is { } tools && tools.TryGetPrimitive(tool, out var served)
+            ? served.ProtocolTool.InputSchema
+            : null;
+
+    private static IAuditLog? AuditLogOf(IServiceProvider? services, string tool)
+    {
+        try
+        {
+            return services?.GetService<IAuditLog>();
+        }
+        catch (Exception e)
+        {
+            // A log that cannot even be created never breaks the call, but the call going unaudited is logged
+            Warn(services, logger => logger.LogWarning(e, "The audit log could not be created; the '{Tool}' call runs unaudited", tool));
+            return null;
+        }
+    }
+}

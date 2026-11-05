@@ -51,7 +51,7 @@ jobs:
         # The run above leaves desktop tests out. This one runs only them (both tiers, every test
         # project), with both opt-in variables unset, and fails unless every one was reported as
         # skipped, so CI proves the gate skips them on the runner. The gate's canaries and the fixture
-        # app scenarios of WindowsAppManagerMcp.E2ETests must both be among them.
+        # app scenarios of win-desktop-mcp.E2ETests must both be among them.
         shell: pwsh
         run: |
           Remove-Item Env:WAM_ALLOW_DESKTOP_TESTS -ErrorAction SilentlyContinue
@@ -73,13 +73,13 @@ jobs:
             ForEach-Object { [pscustomobject]@{ Name = $_.Node.testName; Outcome = $_.Node.outcome } })
           $skipped = @($tests | Where-Object { $_.Outcome -eq 'NotExecuted' })
           $executed = $tests.Count - $skipped.Count
-          $e2eSkipped = @($skipped | Where-Object { $_.Name -like 'WindowsAppManagerMcp.E2ETests.*' }).Count
+          $e2eSkipped = @($skipped | Where-Object { $_.Name -like 'win-desktop-mcp.E2ETests.*' }).Count
           Write-Host "Desktop tests without the opt-ins: $($skipped.Count) skipped ($e2eSkipped end-to-end), $executed executed."
           if ($executed -gt 0 -or $skipped.Count -eq 0) {
             throw 'Every desktop test must be skipped without WAM_ALLOW_DESKTOP_TESTS and WAM_ALLOW_DESKTOP_NOINPUT_TESTS, and there must be at least one.'
           }
           if ($e2eSkipped -eq 0) {
-            throw 'The fixture app scenarios of WindowsAppManagerMcp.E2ETests must be among the skipped desktop tests.'
+            throw 'The fixture app scenarios of win-desktop-mcp.E2ETests must be among the skipped desktop tests.'
           }
 
       - name: Generate coverage report
@@ -117,7 +117,7 @@ jobs:
           Get-Content CoverageReport/SummaryGithub.md | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
 
       - name: Check coverage threshold
-        # Line coverage of the server assembly (package WindowsAppManagerMcp) in the Category!=Desktop
+        # Line coverage of the server assembly (package win-desktop-mcp) in the Category!=Desktop
         # run, merged over every test project's coverage file: a line counts as covered when any test
         # project covers it. One file per project would not do: the end-to-end project covers almost
         # nothing in this run (its scenarios are desktop tests), and the order of the files is arbitrary.
@@ -132,7 +132,7 @@ jobs:
         shell: pwsh
         run: |
           $threshold = 59
-          $package = 'WindowsAppManagerMcp'
+          $package = 'win-desktop-mcp'
           $files = @(Get-ChildItem -Path TestResults -Filter coverage.cobertura.xml -Recurse -File)
           if ($files.Count -eq 0) {
             throw 'No coverage.cobertura.xml was written to TestResults.'

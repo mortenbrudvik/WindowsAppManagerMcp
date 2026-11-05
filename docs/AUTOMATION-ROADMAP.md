@@ -8,7 +8,7 @@ Task status is tracked in [BACKLOG.md](../BACKLOG.md) (Phase 13). This document 
 
 ## Assessment
 
-Both reviews reach the same diagnosis of WindowsAppManagerMcp. The architecture is sound: services behind interfaces, DI, mockable native wrappers, per-monitor DPI, structured Success/ErrorCode results, and UIA and CDP read paths. It is not yet safe or reliable for an agent to drive a Windows task from start to finish. Five problems stand out. (1) The model cannot see screenshots, because they arrive as base64 inside a JSON text block. (2) Keyboard and mouse input has no target and no verified activation, so it can land in the agent's own terminal; the test suite already did this with Alt+F4. (3) Many tools report success after doing the wrong thing or nothing at all: maximize on the wrong monitor, unknown states treated as restore, save_layout always true, CDP reads from the wrong tab, and a controlTypes filter that drops nested matches. (4) Headline features are broken: a stale plugin binary, an unserializable debug-launch result, and no published release. (5) Everything is addressed by raw HWND plus hand-computed physical pixels, with no waits and no element actions, so a simple form fill costs 4-10 round trips that cannot be verified. The plan works in layers. M0, shipped in 1.12.0, stops the bleeding. M1 makes seeing and typing safe by default. It starts with a default host-window input guard, ships image content together with the true capture origin, and adds verified activation, guarded input with receiving-window reporting, and a desktop-safe fixture e2e suite to validate the Windows-specific behaviour. M2 makes results honest and settles the MCP surface (contract tests, annotations, stable SDK, curated toolsets) before M3-M5 add about 30 tools. It also pulls scroll and clipboard forward. M3 is the biggest lever. It moves from blind coordinates to selector-addressed, pattern-first UIA actions with stable refs, popup-aware search, Chromium accessibility activation, text and table reading, virtualized items and server-side waits, each returning verified post-state. That cuts typical tasks to 1-2 calls that can each be checked. M4-M7 complete the input vocabulary, build a thin browser bridge with a Playwright handoff, add breadth, and hold the deferred items. Design assumptions were checked against the repo. ModelContextProtocol 0.5.0-preview.1 already exposes McpServerOptions.Filters.CallToolFilters and McpServer.ElicitAsync, so the M0 exception filter and M2 elicitation can be built on the current SDK. ProcessStartInfo.ArgumentList is honored with UseShellExecute=true on .NET 10; re-check this on the net8 target. The main residual risks are Windows-behaviour details the critics flagged: the foreground-lock unlock, popup hit-testing, InvokePattern blocking while its modal is open, Edge title formats, and stale element refs. That is why the fixture e2e suite sits in M1, ahead of the large feature work.
+Both reviews reach the same diagnosis of win-desktop-mcp. The architecture is sound: services behind interfaces, DI, mockable native wrappers, per-monitor DPI, structured Success/ErrorCode results, and UIA and CDP read paths. It is not yet safe or reliable for an agent to drive a Windows task from start to finish. Five problems stand out. (1) The model cannot see screenshots, because they arrive as base64 inside a JSON text block. (2) Keyboard and mouse input has no target and no verified activation, so it can land in the agent's own terminal; the test suite already did this with Alt+F4. (3) Many tools report success after doing the wrong thing or nothing at all: maximize on the wrong monitor, unknown states treated as restore, save_layout always true, CDP reads from the wrong tab, and a controlTypes filter that drops nested matches. (4) Headline features are broken: a stale plugin binary, an unserializable debug-launch result, and no published release. (5) Everything is addressed by raw HWND plus hand-computed physical pixels, with no waits and no element actions, so a simple form fill costs 4-10 round trips that cannot be verified. The plan works in layers. M0, shipped in 1.12.0, stops the bleeding. M1 makes seeing and typing safe by default. It starts with a default host-window input guard, ships image content together with the true capture origin, and adds verified activation, guarded input with receiving-window reporting, and a desktop-safe fixture e2e suite to validate the Windows-specific behaviour. M2 makes results honest and settles the MCP surface (contract tests, annotations, stable SDK, curated toolsets) before M3-M5 add about 30 tools. It also pulls scroll and clipboard forward. M3 is the biggest lever. It moves from blind coordinates to selector-addressed, pattern-first UIA actions with stable refs, popup-aware search, Chromium accessibility activation, text and table reading, virtualized items and server-side waits, each returning verified post-state. That cuts typical tasks to 1-2 calls that can each be checked. M4-M7 complete the input vocabulary, build a thin browser bridge with a Playwright handoff, add breadth, and hold the deferred items. Design assumptions were checked against the repo. ModelContextProtocol 0.5.0-preview.1 already exposes McpServerOptions.Filters.CallToolFilters and McpServer.ElicitAsync, so the M0 exception filter and M2 elicitation can be built on the current SDK. ProcessStartInfo.ArgumentList is honored with UseShellExecute=true on .NET 10; re-check this on the net8 target. The main residual risks are Windows-behaviour details the critics flagged: the foreground-lock unlock, popup hit-testing, InvokePattern blocking while its modal is open, Edge title formats, and stale element refs. That is why the fixture e2e suite sits in M1, ahead of the large feature work.
 
 ## Milestones
 
@@ -61,7 +61,7 @@ Make the exe the plugin runs the one built from main. Make the version visible o
 
 Fix the launch_browser_with_debug crash, which comes from System.Text.Json refusing to serialize IntPtr. Add a test over every tool that would have caught it, and replace the SDK's opaque 'An error occurred invoking' with actionable messages.
 
-**Design.** As shipped: DebugBrowserLaunchResultDto uses long? for the window handle, and a contract test serializes every tool's result type with all members populated using the SDK's McpJsonUtilities.DefaultOptions. A call-tool filter (Infrastructure/ToolErrorReporting.cs, registered through the shared ServiceRegistration used by Program.cs and the DI tests) returns a structured isError result instead of rethrowing: errorCode ToolError for deliberate McpException (or the specific code of a ToolErrorException, e.g. PresetNotFound, StorageUnavailable), InvalidArguments for argument-binding failures, UnhandledException for anything else; cancellation and protocol errors pass through. It logs every call's start and completion (tool, duration, outcome; never arguments or results) in the WindowsAppManagerMcp.ToolCalls category at Information, with a Warning for slow calls.
+**Design.** As shipped: DebugBrowserLaunchResultDto uses long? for the window handle, and a contract test serializes every tool's result type with all members populated using the SDK's McpJsonUtilities.DefaultOptions. A call-tool filter (Infrastructure/ToolErrorReporting.cs, registered through the shared ServiceRegistration used by Program.cs and the DI tests) returns a structured isError result instead of rethrowing: errorCode ToolError for deliberate McpException (or the specific code of a ToolErrorException, e.g. PresetNotFound, StorageUnavailable), InvalidArguments for argument-binding failures, UnhandledException for anything else; cancellation and protocol errors pass through. It logs every call's start and completion (tool, duration, outcome; never arguments or results) in the WinDesktopMcp.ToolCalls category at Information, with a Warning for slow calls.
 
 *Sources: r1:R6, r2:R3, r1:R8, r1:crit-prio:R8, r1:R3, r1:MCP-2, r2:BRW-1, r2:MSP-2, r2:BRW-G7*
 
@@ -93,7 +93,7 @@ The SDK runs tool calls concurrently. Make the monitor state an atomic snapshot 
 
 Saved layouts live inside the versioned plugin folder today, so every update wipes them, and the sample presets never ship. Move storage, seed the samples, migrate old files, report save and delete outcomes honestly, reload from disk and make the cache thread-safe.
 
-**Design.** Default to %LOCALAPPDATA%/WindowsAppManagerMcp/layouts, overridable with one env var (pick WAM_LAYOUTS_DIR or WAM_LAYOUTS_PATH) that plugin.json can set. Embed config/layouts/*.json as resources and seed them on first run. Migrate any *.json found in AppContext.BaseDirectory/layouts once. Create the directory lazily and return StorageUnavailable instead of failing the singleton factory. save_layout passes the write result through (SaveFailed), returns InvalidName for bad names, and takes overwrite with a replaced flag. delete_layout returns PresetNotFound. get_layout and apply_layout reload from disk using an mtime check. _presetCache becomes a ConcurrentDictionary with a reload lock. The path is reported later in get_server_info.
+**Design.** Default to %LOCALAPPDATA%/win-desktop-mcp/layouts, overridable with one env var (pick WAM_LAYOUTS_DIR or WAM_LAYOUTS_PATH) that plugin.json can set. Embed config/layouts/*.json as resources and seed them on first run. Migrate any *.json found in AppContext.BaseDirectory/layouts once. Create the directory lazily and return StorageUnavailable instead of failing the singleton factory. save_layout passes the write result through (SaveFailed), returns InvalidName for bad names, and takes overwrite with a replaced flag. delete_layout returns PresetNotFound. get_layout and apply_layout reload from disk using an mtime check. _presetCache becomes a ConcurrentDictionary with a reload lock. The path is reported later in get_server_info.
 
 *Sources: r1:R57, r2:R39, r2:crit-prio:R39, r1:PAL-3, r1:PAL-16, r1:MCP-8, r1:MCP-missed-1, r2:PAL-5, r2:MSP-11, r2:PAL-missed-layout-cache-stale*
 
@@ -123,7 +123,7 @@ The model sees real pixels it can click from accurately. Keyboard and mouse inpu
 
 M1 is complete on the integration branch `m1-see-and-type-safely`: all 12 items, their review follow-ups (`m1-wave1-followups`, `m1-wave2-followups`, `m1-wave3-followups`), the fixes from a final review of the integrated branch (`m1-fix-concurrency`, `m1-fix-guards`), a docs pass and the fixes for the code gaps it found (`m1-last-fixes`). The server serves 47 tools (42 in 1.12.0). The safe suite (desktop tests skipped) has 2839 unit, contract and integration tests and 167 E2E harness tests; the gated fixture scenarios run only with the opt-in, locally or through e2e.yml on demand.
 
-- M1 shipped in release 1.13.0 on 2026-10-10 (PR #3, release commit 7d57de9), which rebuilt bin/WindowsAppManagerMcp.exe (scripts/Set-Version.ps1, then scripts/Publish-Plugin.ps1). Until then the committed exe was the 1.12.0 build, which ignores the windowHandle argument the M1 skill tells agents to pass, so the merge to main and the release went together.
+- M1 shipped in release 1.13.0 on 2026-10-10 (PR #3, release commit 7d57de9), which rebuilt bin/win-desktop-mcp.exe (scripts/Set-Version.ps1, then scripts/Publish-Plugin.ps1). Until then the committed exe was the 1.12.0 build, which ignores the windowHandle argument the M1 skill tells agents to pass, so the merge to main and the release went together.
 - The final review found that a hung application could hold the input gate, and with it every input and window tool, indefinitely (D-WIN-12, made worse by the gate). `m1-fix-concurrency` bounds every wait inside and for the gate (M1.10 follow-ups), and `m1-fix-guards` closes gaps in the guards: the target policy for every window change, hidden windows, the menu Esc and the pause chord's modifiers, chord spellings, the agent's console server, unreadable process trees, mouse capture and held buttons, minimized captures and the partial UI Automation tree (see the items below).
 - Deliberate trade-offs, recorded under M1.5 and M1.10: with the default pause chord the agent can release only a stuck Windows key, and a mouse button that the server did not press blocks clicks and moves until the user presses and releases it.
 - Moved on: get_server_info and server instructions (M2.11), window selectors (M2.4), tool annotations (M2.10), asynchronous and verified geometry calls (M2.3), capture health for hidden, cloaked and hung windows (M2.9), cached UI Automation walks (M3.1), the capture registry and image-space clicks (M3.11), the WebView2 fixture pane (M3.3) and the in-process MCP contract tests (M2.12). The gaps the M1 docs pass found in the code are fixed on `m1-last-fixes`; the notes under M1.3, M1.5, M1.7 and M1.10 say what they were.
@@ -152,7 +152,7 @@ Return every capture as an image content block the model can see, with vision-si
 
 **Design.** A shared ToolImages helper returns CallToolResult{Content=[ImageContentBlock{Data, MimeType}, TextContentBlock(metadata JSON without ImageData)], IsError=!Success} and isolates the SDK's byte-API change. maxDimension sets the long edge (default 1568), with maxWidth kept as an alias. Default to jpeg q80 for monitor and window captures, and png for small regions or on request. An unknown format returns InvalidFormat. Encode from Format32bppRgb so the undefined alpha byte cannot make regions transparent. output=image|file|both|metadata, with saveToFile kept as an alias. outputPath is resolved with GetFullPath, needs an extension that matches the format, gets no implicit directory creation, and needs overwrite=true to replace an existing file. Origin: IScreenCaptureWrapper returns CaptureResult(Bgra, Width, Height, ScreenOriginX/Y, Method). Frame captures use the GetWindowRect origin; client captures map the client rectangle to the screen with MapWindowPoints (new P/Invoke), which is also right for mirrored right-to-left windows. This replaces CapturedRegion(0,0) at ScreenshotService.cs:185, and capture_with_elements overlays use the same origin. Metadata: imageToScreen{offsetX, offsetY, scaleX, scaleY}, originalWidth/Height, mimeType, byteSize and coordinateSpace='physical-virtual-screen'. ScaleFactor is documented as informational only. Delete the dead SaveImageToFile and EncodeImage.
 
-**As shipped (`m1-captures`, with the wave 1 follow-ups).** Infrastructure/ToolImages builds every capture result: an ImageContentBlock (base64, image/jpeg or image/png) followed by a TextContentBlock with the metadata JSON (no image data), and isError = !success; a failure returns only the metadata. [ToolResultPayload] names the metadata type of each capture tool for the contract tests. maxDimension (default 1568, 0 = full resolution) limits the long edge; maxWidth given alone replaces that default and limits only the width, as before. format auto is JPEG at quality 80, or PNG when the long edge is at most 512 pixels; png, jpeg and jpg are accepted and anything else is InvalidFormat. Pixels are encoded from Format32bppRgb, so images are opaque (D-SCR-10). output is image, file, both or metadata, with saveToFile as an alias. outputPath must be an absolute path on a drive letter whose extension matches the format (auto follows the extension), in an existing folder; no folder is created, an existing file needs overwrite=true (FileExists), and the default is a new file in %TEMP%\WindowsAppManagerMcp\captures. Beyond the design, UNC and device paths (\\server\share, \\?\, \\.\) are refused with InvalidOutputPath, so a prompt-injected path cannot send a capture, or an NTLM handshake, to another computer. IScreenCaptureWrapper returns CaptureResult with the screen origin and the method (PrintWindow, or BitBlt when the window refused to draw itself): GetWindowRect for frame captures, and for client captures the client rectangle mapped with MapWindowPoints (a wave 1 review fix: the client point (0,0) of a mirrored right-to-left window is its top-right corner, so mapping that point alone gave the wrong origin). capture_with_elements draws its overlays and reports imageBounds from the same origin. The metadata adds imageToScreen {offsetX, offsetY, scaleX, scaleY} with a scale per axis, originalWidth/Height when scaled, mimeType, byteSize, captureMethod and coordinateSpace physical-virtual-screen. Refinements: an edge that would scale below one pixel keeps one, and the per-axis scale absorbs it; overlay pens are widened by the downscale factor, so lines stay visible in a scaled image (D-SCR-08), and overlay rectangles are clipped to the image (D-SCR-15); the dead encode and save paths are gone and EncoderParameters is disposed (D-SCR-18). capture_with_elements passes on the UI Automation walk's errorCode (for example OperationTimedOut) and draws the partial tree a timeout leaves (M1.8). Follow-up (`m1-fix-guards`): capture_window and capture_with_elements refuse a minimized window (IsIconic of the window or of its top-level window) with CaptureFailed before any pixel or UI Automation read, instead of returning the 160x28 icon image at (-32000,-32000). The fixture suite checks the frame and client origins and swatch pixels at full resolution, and the client origin of a mirrored window (M1.11). Still open: hidden and cloaked windows are captured as they are, frame captures keep the invisible DWM borders, and a hung window's PrintWindow has no deadline (M2.9); the capture registry, captureId and image-space clicks (M3.11); a write root for outputPath and cleanup of old capture files (not scheduled).
+**As shipped (`m1-captures`, with the wave 1 follow-ups).** Infrastructure/ToolImages builds every capture result: an ImageContentBlock (base64, image/jpeg or image/png) followed by a TextContentBlock with the metadata JSON (no image data), and isError = !success; a failure returns only the metadata. [ToolResultPayload] names the metadata type of each capture tool for the contract tests. maxDimension (default 1568, 0 = full resolution) limits the long edge; maxWidth given alone replaces that default and limits only the width, as before. format auto is JPEG at quality 80, or PNG when the long edge is at most 512 pixels; png, jpeg and jpg are accepted and anything else is InvalidFormat. Pixels are encoded from Format32bppRgb, so images are opaque (D-SCR-10). output is image, file, both or metadata, with saveToFile as an alias. outputPath must be an absolute path on a drive letter whose extension matches the format (auto follows the extension), in an existing folder; no folder is created, an existing file needs overwrite=true (FileExists), and the default is a new file in %TEMP%\win-desktop-mcp\captures. Beyond the design, UNC and device paths (\\server\share, \\?\, \\.\) are refused with InvalidOutputPath, so a prompt-injected path cannot send a capture, or an NTLM handshake, to another computer. IScreenCaptureWrapper returns CaptureResult with the screen origin and the method (PrintWindow, or BitBlt when the window refused to draw itself): GetWindowRect for frame captures, and for client captures the client rectangle mapped with MapWindowPoints (a wave 1 review fix: the client point (0,0) of a mirrored right-to-left window is its top-right corner, so mapping that point alone gave the wrong origin). capture_with_elements draws its overlays and reports imageBounds from the same origin. The metadata adds imageToScreen {offsetX, offsetY, scaleX, scaleY} with a scale per axis, originalWidth/Height when scaled, mimeType, byteSize, captureMethod and coordinateSpace physical-virtual-screen. Refinements: an edge that would scale below one pixel keeps one, and the per-axis scale absorbs it; overlay pens are widened by the downscale factor, so lines stay visible in a scaled image (D-SCR-08), and overlay rectangles are clipped to the image (D-SCR-15); the dead encode and save paths are gone and EncoderParameters is disposed (D-SCR-18). capture_with_elements passes on the UI Automation walk's errorCode (for example OperationTimedOut) and draws the partial tree a timeout leaves (M1.8). Follow-up (`m1-fix-guards`): capture_window and capture_with_elements refuse a minimized window (IsIconic of the window or of its top-level window) with CaptureFailed before any pixel or UI Automation read, instead of returning the 160x28 icon image at (-32000,-32000). The fixture suite checks the frame and client origins and swatch pixels at full resolution, and the client origin of a mirrored window (M1.11). Still open: hidden and cloaked windows are captured as they are, frame captures keep the invisible DWM borders, and a hung window's PrintWindow has no deadline (M2.9); the capture registry, captureId and image-space clicks (M3.11); a write root for outputPath and cleanup of old capture files (not scheduled).
 
 *Sources: r1:R15, r2:R12, r1:R17, r1:crit-prio:R17, r2:R13, r2:crit-prio:R13, r1:R5, r1:R55, r1:SCR-1, r1:MCP-1, r1:SCR-5, r1:SCR-12, r1:SCR-G3, r1:MCP-missed-2, r2:SCR-1, r2:MSP-1, r2:SCR-G1, r2:SCR-2, r2:SCR-9, r2:MSP-missed-overlay-offset*
 
@@ -282,7 +282,7 @@ After M0.1, nothing tests the real foreground, UIPI, SendInput, capture and UIA 
 
 **Design.** tests/FixtureApp is a small WinForms or WPF exe with known AutomationIds: an edit box, a checkbox, a combo box, a button that opens a modal, a context menu, a 10k-item virtualized list, a WebView2 pane and a document that shows a save prompt on close. The E2E project is gated by the M0.1 opt-in. It drives the fixture through the in-process MCP client (M2.12; direct services until then), uses only targeted, guarded input against the fixture, and kills the fixture in Dispose. It covers EnsureForeground, the host guard, BlockedByModal, the capture origin and transform, DPI moves, and later find/act/wait. It runs in a separate CI job on windows-latest only after confirming that the runner has an interactive desktop; otherwise it runs on a self-hosted runner or in Windows Sandbox (.wsb) through workflow_dispatch. It never runs locally without the opt-in. Add the DesktopNoInput gate tier (deferred from M0.1) for capture-only tests against the fixture window.
 
-**Scaffold (as built).** tests/FixtureApp is WamFixtureApp, a code-only WPF app (WPF rather than WinForms for real UIA virtualization in the 10k-item list and popup-window context menus). It has the controls above except the WebView2 pane, which would add a package and a runtime dependency to every build; add it with the Chromium work in M3. It writes a JSON-lines event log (a ready event with its pid, hwnd, DPI, window and client rects and every element's screen rect, then every change it receives) as ground truth independent of the server, takes an instance token for its titles, can start without activation or with the modal or the document open, sets its own DPI awareness, and ends itself when the test host exits or after a maximum lifetime. The gate moved into a shared project, WindowsAppManagerMcp.Tests.Infrastructure, and gained [DesktopNoInputFact]/[DesktopNoInputTheory]: their own opt-in WAM_ALLOW_DESKTOP_NOINPUT_TESTS=1 (the full opt-in includes it), traits Category=Desktop plus Category=DesktopNoInput. tests/WindowsAppManagerMcp.E2ETests builds the real services through ServiceRegistration and puts every native wrapper behind a fail-closed DispatchProxy guard. That includes the process and monitor wrappers that ProcessService and MonitorService would otherwise create themselves: the harness registers them, and an ordinary test walks every resolved service for unguarded wrappers. WrapperCatalog classifies every wrapper member explicitly, and a member it does not list is refused. No-input tests can only read. Input tests can act only on the fixture process, with the foreground (keys) or the window under the cursor (mouse) checked before every SendInput batch; since M1.1 and M1.5 shipped, this is a second, independent layer under the server's own input guard, so a guard bug cannot reach a window outside the fixture. No tier may start a process, and CDP calls are refused. First scenarios against current behaviour: find_windows, get_window_info, get_ui_elements (AutomationIds, control types, bounds against the fixture's own rects, realized items only), capture_window of the client area and the frame with swatch pixels at the expected offsets (no-input), and focus_window plus type_text into the edit box (input). .github/workflows/e2e.yml runs them only through workflow_dispatch and skips with a notice when the runner has no interactive desktop; test.yml's coverage check now merges every project's coverage file.
+**Scaffold (as built).** tests/FixtureApp is WamFixtureApp, a code-only WPF app (WPF rather than WinForms for real UIA virtualization in the 10k-item list and popup-window context menus). It has the controls above except the WebView2 pane, which would add a package and a runtime dependency to every build; add it with the Chromium work in M3. It writes a JSON-lines event log (a ready event with its pid, hwnd, DPI, window and client rects and every element's screen rect, then every change it receives) as ground truth independent of the server, takes an instance token for its titles, can start without activation or with the modal or the document open, sets its own DPI awareness, and ends itself when the test host exits or after a maximum lifetime. The gate moved into a shared project, win-desktop-mcp.Tests.Infrastructure, and gained [DesktopNoInputFact]/[DesktopNoInputTheory]: their own opt-in WAM_ALLOW_DESKTOP_NOINPUT_TESTS=1 (the full opt-in includes it), traits Category=Desktop plus Category=DesktopNoInput. tests/win-desktop-mcp.E2ETests builds the real services through ServiceRegistration and puts every native wrapper behind a fail-closed DispatchProxy guard. That includes the process and monitor wrappers that ProcessService and MonitorService would otherwise create themselves: the harness registers them, and an ordinary test walks every resolved service for unguarded wrappers. WrapperCatalog classifies every wrapper member explicitly, and a member it does not list is refused. No-input tests can only read. Input tests can act only on the fixture process, with the foreground (keys) or the window under the cursor (mouse) checked before every SendInput batch; since M1.1 and M1.5 shipped, this is a second, independent layer under the server's own input guard, so a guard bug cannot reach a window outside the fixture. No tier may start a process, and CDP calls are refused. First scenarios against current behaviour: find_windows, get_window_info, get_ui_elements (AutomationIds, control types, bounds against the fixture's own rects, realized items only), capture_window of the client area and the frame with swatch pixels at the expected offsets (no-input), and focus_window plus type_text into the edit box (input). .github/workflows/e2e.yml runs them only through workflow_dispatch and skips with a notice when the runner has no interactive desktop; test.yml's coverage check now merges every project's coverage file.
 
 **As shipped (scenarios).** WrapperCatalog classifies every wrapper member the M1 branches added (thread-input attach and global hotkey are kinds of their own: the input tier allows only the calling thread's own attach and zero-distance moves wherever the cursor is, and no tier registers a hotkey), and the input tier also checks where a click's absolute move ends. The gated scenarios now cover: find_windows and the fixture's owned modal (FixtureWindowTests), the UI element tree, bounds and the virtualized list (FixtureUiElementsTests), the frame and client capture origins with swatch pixels (FixtureCaptureTests) and the client origin of a mirrored right-to-left window the test creates itself (MirroredWindowCaptureTests), EnsureForeground with and without the WPF modal (FixtureForegroundTests), the input guard's BlockedByModal, %{F4} without a target, TargetIsAgentHost, targeted typing that brings the fixture back and TargetOccluded (FixtureInputGuardTests), focus_window plus type_text (FixtureTypingTests), the close guard against the fixture document and the desktop shell (FixtureCloseTests), and a pause in the middle of real typing (FixtureSessionTests). They run only with the opt-in, locally or through e2e.yml on demand; nothing runs them on a schedule. Still open: DPI moves (with M2.3), the in-process MCP client (M2.12), an alpha==255 check of real captures, the WebView2 pane (M3.3), and a desktop runner that runs the suite regularly.
 
@@ -314,7 +314,7 @@ Every tool either does what it reports or says precisely why not: typed paramete
 
 M2 is complete on the integration branch `m2-honest-results`: all 17 items (`m2-foundation`, `m2-tool-surface`, `m2-server-info-toolsets`, `m2-geometry`, `m2-layouts`, `m2-close-verify`, `m2-launch`, `m2-capture-health`, `m2-scroll-clipboard`, `m2-audit-log` and `m2-selectors`), the wave-B review follow-ups (`m2-wave-b-followups`), the fixes from a final review of the integrated branch (`m2-fix-integration`, `m2-fix-privacy`), a docs pass (`m2-docs-pass`) and the fixes it found (`m2-last-fixes`). The server serves 54 tools (47 in 1.13.0) in eleven toolsets, all on by default. The safe suite (desktop tests skipped) has 4581 unit, contract and integration tests and 179 E2E harness tests; the gated fixture scenarios run only with the opt-in.
 
-- M2 shipped in release 1.14.0 on 2026-10-11 (PR #4, release commit 9d5280d), which rebuilt bin/WindowsAppManagerMcp.exe (scripts/Set-Version.ps1, then scripts/Publish-Plugin.ps1). Until then the committed exe was the 1.13.0 build (47 tools: no window selectors, verified close, toolsets, scroll, clipboard, audit log or get_server_info), so the merge to main and the release went together. docs/TOOLS.md lists what a client sees change under "Changes for existing clients".
+- M2 shipped in release 1.14.0 on 2026-10-11 (PR #4, release commit 9d5280d), which rebuilt bin/win-desktop-mcp.exe (scripts/Set-Version.ps1, then scripts/Publish-Plugin.ps1). Until then the committed exe was the 1.13.0 build (47 tools: no window selectors, verified close, toolsets, scroll, clipboard, audit log or get_server_info), so the merge to main and the release went together. docs/TOOLS.md lists what a client sees change under "Changes for existing clients".
 - The final review looked at the integrated branch through privacy, MCP-surface, integration and docs lenses. `m2-fix-privacy` closed its privacy and MCP-surface findings: input that pastes follows get_clipboard's rule (PasteNotAllowed), the agent's copy windows can no longer be kept open, one clipboard question at a time, get_clipboard audited, confirmation questions that drop format characters, `force` on a protected window confirmed by the user, launch_browser_with_debug destructive and refusing switch-like URLs and real profiles, WAM_EXCLUDE_TOOLS failing closed, scroll's bare foreground selector and the instructions' act rule. `m2-fix-integration` closed the integration findings: hidden and other-desktop windows, reused handles in close_application, the input tools' selector recheck inside the gate, kill_process held to the process the user confirmed and releasing the gate before its wait, apply_layout's activating restore and lost launches, the batch-launch handoff, the audit log's items and its background writer, and get_server_info's clipboard and URI scheme settings. The items below say what changed.
 - Known limits the final review accepted, recorded under the items: a right click in a terminal outside the known classes is not recognised as a paste (M2.16); a batch launch's handoff rule can credit a failed launch with a later window of another item's instance (M2.6); close_application takes every shell-cloaked window as one on another virtual desktop (M2.5).
 - Follow-ups after the release (listed under M2 in BACKLOG.md), done on M3's integration branch and shipping with M3 in 1.15.0. Done on `m3-force-confirm` (M2.10's follow-up note): on a client without elicitation, `force` on a protected window needs `confirm=true` too, in close_window and close_windows_batch (the user's decision of 2026-10-11). Done on `m3-m2-followups` (see each item's follow-up note): right-click paste detection for the VS Code and other Electron terminals, Alacritty and WezTerm, by process where the class is shared (M2.16); a real-handoff check (exit code 0) before a batch launch credits another item's window (M2.6); IVirtualDesktopManager to tell other-desktop windows from suspended or prelaunched frames (M2.5); the audit log's wait without blocking a thread-pool thread (M2.17); and the payload budgets re-measured with `visibleBounds` (M2.12).
@@ -560,9 +560,9 @@ Copy-then-read is the cheapest way to extract text from apps with poor UIA (term
 
 When an action does damage, neither the user nor the agent can reconstruct what was sent where. A cheap append-only log builds trust in a server that types into the desktop.
 
-**Design.** The call filter writes JSONL to %LOCALAPPDATA%/WindowsAppManagerMcp/audit/<date>.jsonl, one line per input, close, kill, launch or layout action: {ts, tool, target handle/title/process, receivingWindow, outcome, errorCode, durationMs}. It never logs type_text or set_clipboard content, only its length, and never logs secrets. Retention rolls over 7 days, and get_server_info reports the path.
+**Design.** The call filter writes JSONL to %LOCALAPPDATA%/win-desktop-mcp/audit/<date>.jsonl, one line per input, close, kill, launch or layout action: {ts, tool, target handle/title/process, receivingWindow, outcome, errorCode, durationMs}. It never logs type_text or set_clipboard content, only its length, and never logs secrets. Retention rolls over 7 days, and get_server_info reports the path.
 
-**As shipped (`m2-audit-log`).** Infrastructure/AuditLogToolFilter is the outermost call-tool filter (added before ToolErrorReporting), so a line records the result the agent got: an exception the error filter turned into an error result, an InvalidArguments binding failure, and a call the gate filter refused while paused, each with its errorCode; a cancelled call is `cancelled` and a protocol error (a tool turned off) `protocolError`. It does nothing when no IAuditLog is registered, so tests with their own services write nothing. Audited (AuditedTools): the six input tools plus release_all_input, close_window, close_windows_batch, kill_process, the three launch tools, apply_layout, and, refinement, save_layout and delete_layout (they replace or remove a preset, so they count as layout actions), plus scroll, set_clipboard and close_application from M2.15, M2.16 and M2.5, audited as soon as they are served. The captures are left out on purpose (destructive only through overwrite:true, and observation called too often for their lines to help). Contract tests require every input tool and every destructive tool but the captures to be audited, no read-only tool to be (get_clipboard is the one exception since the final review, below), and every audited name to be served or one of the three planned ones; every audited tool's typical call writes exactly one line with none of its string arguments in it. Services/AuditLog (IAuditLog) reads the targets before the call through INativeWindowWrapper (IsWindow, GetWindowText, GetWindowThreadProcessId, GetProcessName; no new native member), because a closed window or killed process cannot be read afterwards, and writes `<folder>\<yyyy-MM-dd>.jsonl` (local day): {ts (local, with offset), tool, outcome, errorCode, durationMs, target {handle, title, process, processId, executable}, receivingWindow, items (batches, with titles read before the call), args, result, serverPid, requestId}. Refinement on secrets: Infrastructure/AuditRecord summarizes the arguments default-deny against the tool's declared input schema (the filter reads it from the server's tool collection) rather than per tool: an undeclared argument is only counted (`unknownArgumentsCount`, so a client-chosen key never reaches the file), a number or boolean is kept only where the schema declares one (a PIN sent as a number for `text` becomes `textLength`), strings only when they name a process, preset or fixed value (NamedStringArguments) and otherwise as `<name>Length`, arrays as `<name>Count`, objects dropped. `executable` keeps a program name or file path; a URL keeps only its scheme, host and port (a path can be a bearer secret: webhook, password-reset, magic-login and share links; an opaque `data:` or `javascript:` body is content), a scheme-less `www.host/...` only its host, with `executableLength` when something was cut. So type_text, send_keys and set_clipboard text, URL paths and queries, working directories and launch arguments never reach the file, and a new tool or parameter cannot leak by default. The filter also guards IAuditLog's Begin and End itself, so even a log that throws cannot fail a call, and End runs at most once. The E2E ServerHarness writes its audit log inside its temporary layouts folder. Of a result, only top-level numbers and booleans, errorCode, receivingWindow and batch items are kept. Several servers share a day's file: each line is one write while the file is open for writing by that writer alone (FileShare.Read|Delete), retried for about half a second on a sharing violation, so lines never interleave. Retention: the first line of each day deletes day files 7 or more days old (only names matching yyyy-MM-dd.jsonl). Nothing touches the disk before the first line. A failed write never fails or changes the call: LastError keeps the reason, stderr gets one warning per run of failures, and get_server_info warns. The folder is %LOCALAPPDATA%\WindowsAppManagerMcp\audit or WAM_AUDIT_PATH (AuditLogOptions; AddWindowsAppManagerServices takes an options factory, as for layouts), and get_server_info reports it as paths.auditLog. Not done: an opt-out switch and a configurable retention; the stderr call log (ToolErrorReporting) is unchanged.
+**As shipped (`m2-audit-log`).** Infrastructure/AuditLogToolFilter is the outermost call-tool filter (added before ToolErrorReporting), so a line records the result the agent got: an exception the error filter turned into an error result, an InvalidArguments binding failure, and a call the gate filter refused while paused, each with its errorCode; a cancelled call is `cancelled` and a protocol error (a tool turned off) `protocolError`. It does nothing when no IAuditLog is registered, so tests with their own services write nothing. Audited (AuditedTools): the six input tools plus release_all_input, close_window, close_windows_batch, kill_process, the three launch tools, apply_layout, and, refinement, save_layout and delete_layout (they replace or remove a preset, so they count as layout actions), plus scroll, set_clipboard and close_application from M2.15, M2.16 and M2.5, audited as soon as they are served. The captures are left out on purpose (destructive only through overwrite:true, and observation called too often for their lines to help). Contract tests require every input tool and every destructive tool but the captures to be audited, no read-only tool to be (get_clipboard is the one exception since the final review, below), and every audited name to be served or one of the three planned ones; every audited tool's typical call writes exactly one line with none of its string arguments in it. Services/AuditLog (IAuditLog) reads the targets before the call through INativeWindowWrapper (IsWindow, GetWindowText, GetWindowThreadProcessId, GetProcessName; no new native member), because a closed window or killed process cannot be read afterwards, and writes `<folder>\<yyyy-MM-dd>.jsonl` (local day): {ts (local, with offset), tool, outcome, errorCode, durationMs, target {handle, title, process, processId, executable}, receivingWindow, items (batches, with titles read before the call), args, result, serverPid, requestId}. Refinement on secrets: Infrastructure/AuditRecord summarizes the arguments default-deny against the tool's declared input schema (the filter reads it from the server's tool collection) rather than per tool: an undeclared argument is only counted (`unknownArgumentsCount`, so a client-chosen key never reaches the file), a number or boolean is kept only where the schema declares one (a PIN sent as a number for `text` becomes `textLength`), strings only when they name a process, preset or fixed value (NamedStringArguments) and otherwise as `<name>Length`, arrays as `<name>Count`, objects dropped. `executable` keeps a program name or file path; a URL keeps only its scheme, host and port (a path can be a bearer secret: webhook, password-reset, magic-login and share links; an opaque `data:` or `javascript:` body is content), a scheme-less `www.host/...` only its host, with `executableLength` when something was cut. So type_text, send_keys and set_clipboard text, URL paths and queries, working directories and launch arguments never reach the file, and a new tool or parameter cannot leak by default. The filter also guards IAuditLog's Begin and End itself, so even a log that throws cannot fail a call, and End runs at most once. The E2E ServerHarness writes its audit log inside its temporary layouts folder. Of a result, only top-level numbers and booleans, errorCode, receivingWindow and batch items are kept. Several servers share a day's file: each line is one write while the file is open for writing by that writer alone (FileShare.Read|Delete), retried for about half a second on a sharing violation, so lines never interleave. Retention: the first line of each day deletes day files 7 or more days old (only names matching yyyy-MM-dd.jsonl). Nothing touches the disk before the first line. A failed write never fails or changes the call: LastError keeps the reason, stderr gets one warning per run of failures, and get_server_info warns. The folder is %LOCALAPPDATA%\win-desktop-mcp\audit or WAM_AUDIT_PATH (AuditLogOptions; AddWindowsAppManagerServices takes an options factory, as for layouts), and get_server_info reports it as paths.auditLog. Not done: an opt-out switch and a configurable retention; the stderr call log (ToolErrorReporting) is unchanged.
 
 **Final review (`m2-fix-integration`, `m2-fix-privacy`).** The log read only a batch's `results` and the handles in the arguments, so close_application lines named no window, apply_layout lines no placement or launch, and a close named by a selector only a bare handle. AuditScope lets a tool note the windows it learns of while it runs (the window a selector resolves to, close_application's targets) in the call's record before it acts on them, with nothing extra read; AuditRecord reads close_application's `windows` and apply_layout's `placements` as items, with status, `launched` and the launch program (redacted like `executable`), and names a selector's window by its noted title and process. Writing: one background writer per server appends the lines in order, and End waits for its line at most 2 s (AuditLog.MaxCallDelay), so a slow or unreachable folder never holds up a call; a line beyond 1000 waiting is dropped with LastError. The half-second retry on a file another server holds stays. get_clipboard is audited (PRIVA-4): the one read-only tool that can return the user's own clipboard, recorded with its `format` and the result's `origin` and `length`, never the content; AuditLogContractTests allows exactly that read-only tool. Known limit: End blocks a thread-pool thread for up to 2 s while the writer, also on the pool, may wait for one, so under heavy parallel load a call can wait the full 2 s; the wait is bounded.
 
@@ -578,7 +578,7 @@ The biggest lever. Move from blind coordinates to selector-addressed, pattern-fi
 
 M3 is complete on the integration branch `m3-semantic-find-act-wait` (PR #6): all 14 items, built in four waves of parallel branches, each with its own implementer and an independent reviewer (A: `m3-uia-engine`, `m3-wait-for-window`, `m3-launch-arrange`; B: `m3-chromium-warmup`, `m3-element-refs`, `m3-capture-registry`; C: `m3-popup-search`, `m3-element-action`, `m3-wait-for-element`, `m3-read-text-tables`; D: `m3-virtualized`, `m3-desktop-state`, `m3-dialogs`, `m3-set-of-marks`), the M2 follow-ups (`m3-m2-followups`, `m3-force-confirm`), the fixes from a review of the integrated branch (`m3-fix-policy`, `m3-fix-refs`, `m3-fix-reading`, `m3-fix-action`, `m3-fix-dialogs`, `m3-fix-waits`, `m3-fix-surface`, `m3-fix-launch`, `m3-fix-release-gate`, `m3-fix-failclosed`), a docs pass, and the fixes for what the first release gate found (`m3-fix-gate`). The server serves 64 tools (54 in 1.14.0). The safe suite (desktop tests skipped) has about 6,480 unit, contract and integration tests and about 230 E2E harness tests; the 55 gated fixture scenarios run only with the opt-in. The 36 no-input scenarios (44 tests: a theory runs once per engine) passed on a real desktop in both runs of the release gate on 2026-10-13 (below). The rest of the new UI Automation paths, element_action's above all, are tested through fakes, and the 19 input-tier scenarios wait for the user's run (BACKLOG.md, M3.F2).
 
-- M3 is to ship in release 1.15.0. PR #6 is merged with a merge commit, not a squash (the release check must find the build commit), and the release commit rebuilds bin/WindowsAppManagerMcp.exe (scripts/Set-Version.ps1, then scripts/Publish-Plugin.ps1), as for 1.13.0 and 1.14.0. **Release gate: passed on 2026-10-13, so the release blocker is cleared.** The default UI Automation engine is now uia3 (M3.2), so before the release the repo owner ran the whole gated no-input tier twice on a real desktop, on commit 293cacd, as [TESTING.md, "Release gate: the UI Automation engines"](../TESTING.md#release-gate-the-ui-automation-engines) describes: once with WAM_UIA_ENGINE unset (the scenarios that leave the engine to the server wrote `UI Automation engine: Uia3 (default)`) and once with WAM_UIA_ENGINE=uia2 (`Uia2 (WAM_UIA_ENGINE)`). Both runs passed 44 of 44 tests, the same tests, with no outcome difference: the engines agree (TESTING.md's point 1), so uia3 stays the default. The first gate, on c2db508, found three problems in both its runs, none of them an engine difference, which `m3-fix-gate` fixed: the E2E harness recorded the fixture as the agent's host, FixtureDesktopStateTests failed on a null errors list, and searchVirtualized could not read the items a WPF list has not realized (M3.2, M3.10). Its BothEngines_* comparison also differed in its uia2 run, at the window's title bar only, which Windows serves, not the server; the repo owner kept uia3, and those facts now compare the title bar and its buttons by control type and name only (M3.2). The input-tier scenarios have still not run (BACKLOG.md, M3.F2); they do not block the release. docs/TOOLS.md lists what a client sees change under "Changes for existing clients".
+- M3 is to ship in release 1.15.0. PR #6 is merged with a merge commit, not a squash (the release check must find the build commit), and the release commit rebuilds bin/win-desktop-mcp.exe (scripts/Set-Version.ps1, then scripts/Publish-Plugin.ps1), as for 1.13.0 and 1.14.0. **Release gate: passed on 2026-10-13, so the release blocker is cleared.** The default UI Automation engine is now uia3 (M3.2), so before the release the repo owner ran the whole gated no-input tier twice on a real desktop, on commit 293cacd, as [TESTING.md, "Release gate: the UI Automation engines"](../TESTING.md#release-gate-the-ui-automation-engines) describes: once with WAM_UIA_ENGINE unset (the scenarios that leave the engine to the server wrote `UI Automation engine: Uia3 (default)`) and once with WAM_UIA_ENGINE=uia2 (`Uia2 (WAM_UIA_ENGINE)`). Both runs passed 44 of 44 tests, the same tests, with no outcome difference: the engines agree (TESTING.md's point 1), so uia3 stays the default. The first gate, on c2db508, found three problems in both its runs, none of them an engine difference, which `m3-fix-gate` fixed: the E2E harness recorded the fixture as the agent's host, FixtureDesktopStateTests failed on a null errors list, and searchVirtualized could not read the items a WPF list has not realized (M3.2, M3.10). Its BothEngines_* comparison also differed in its uia2 run, at the window's title bar only, which Windows serves, not the server; the repo owner kept uia3, and those facts now compare the title bar and its buttons by control type and name only (M3.2). The input-tier scenarios have still not run (BACKLOG.md, M3.F2); they do not block the release. docs/TOOLS.md lists what a client sees change under "Changes for existing clients".
 - Thirteen reviewers looked at the integrated branch (at 8c2db66), each by area and lens, and a second reviewer checked every finding: 88 held up. The fix round, by area: the target policy, popups and privacy (`m3-fix-policy`, then `m3-fix-failclosed`), element refs and search (`m3-fix-refs`), the text and table reads (`m3-fix-reading`), element_action and the input guard (`m3-fix-action`), the dialog tools and menu paths (`m3-fix-dialogs`), the waits (`m3-fix-waits`), captures, the UI Automation engine, get_desktop_state and the tool surface (`m3-fix-surface`), launch and web content (`m3-fix-launch`) and the release-gate scenarios (`m3-fix-release-gate`). It fixed the findings except the few listed below, which it deferred or the repo owner left for later; the items below say what changed.
 - The repo owner's decisions applied in the fix round: the UI Automation reads of a denied app's window are refused (TargetDeniedByPolicy), and SecHealthUI and CredDialogHost joined the default deny list with CHXSmartScreen and smartscreen (M1.12); respond_to_dialog presses only in a dialog the agent named, except cancel (M3.5); element_action's `name` criterion is audited as its length (M3.6); a ref in a recycled list row goes stale, and a ref moved to a re-created element is reported (refMoved) and element_action refuses it (M3.4); reuseExisting reuses a window that shows only the name with a warning, and never reuses by a page's host without expectWindow.titleContains (M3.13); the acting tools refuse an argument they do not declare (M3.6); the release gate is two full no-input runs, and the fixture app has a PasswordBox (M3.2). Left for later: a stableMs for wait_for_element and a guard on the programs launch_application runs (BACKLOG.md).
 - Deferred from the review, with the reason, in BACKLOG.md under the M3 follow-ups: element_action's keyboard path is not atomic (it needs a focus recheck inside the input gate, M3.6), the maxScrolls fallback needs exactly one visible list (it needs a list parameter, M3.10), and WebView2 in visual hosting gets no warm-up (it needs a real desktop and a WebView2 fixture pane, M3.3). A security prompt drawn inside a shared process such as explorer.exe cannot be denied by process name (M1.12; M3.F5 later recognizes Explorer's "Open File - Security Warning" by its structure).
@@ -894,7 +894,7 @@ The agent should not need to know cdpPort, and tab, navigation and wait tools al
 
 Re-running setup fails with PortInUse, profiles are either throwaway or raw paths, and nothing closes the browser or deletes the cookies left in %TEMP%.
 
-**Design.** *Profiles* (DebugBrowserProfiles): named profiles under %LOCALAPPDATA%\WindowsAppManagerMcp\browser-profiles\<name> (1-64 ASCII letters, digits, '-' and '_', starting with a letter or digit, not a Windows device name, so a name is one folder and cannot reach another), and a new temporary profile per launch under %TEMP%\WindowsAppManagerMcp\browser-debug\<32 hex digits>, made by the launch. Only a folder directly under one of these roots with its kind's name is the server's (KindOf); only such a folder is ever deleted, never a link to another folder, retried for up to 10 s while the browser's processes release their files. A launch whose browser did not start, or whose call was cancelled, deletes its temporary profile at once; each launch with a new temporary profile sweeps the ones older than 10 minutes that no browser holds (Chromium's lockfile) and no browser of this server uses (a browser closed by the user, ended or crashed, or a server that stopped). *Reuse* (DebugBrowserLifecycle.LaunchAsync): reuseIfRunning needs profile or userDataDir; when Chromium's lockfile shows a browser runs with the profile, the main process (chrome, msedge or brave without --type) whose own command line names that --user-data-dir is found, and returned as launchStatus alreadyRunning (processId, a window of it, cdpPort, cdpReady, browserVersion, cdpEndpoint, browserWsEndpoint) only when it has --remote-debugging-port, is the requested browser's .exe, and its port is its own listener (DebugPortLocator, M5.3) that answers /json/version; never by a window title. A browser on the profile without a debug port (it may be the user's) is DebugLaunchFailed without a processId; one whose port cannot be used, DebugLaunchFailed with its processId to close it. *Close* (close_debug_browser(processId and/or cdpPort, deleteProfile=false, confirm, timeoutMs 1000-30000)): CheckClose accepts only the main process of chrome, msedge or brave whose command line has a DevTools port and a --user-data-dir that is the one this server started it with (tracked by PID and start time, and still on its command line) or a folder of the server's own; anything else is the new NotADebugBrowser (18), and the target policy and the agent's host are respected. The M2.10 pattern: the user is asked through elicitation (PID, window titles, what happens to the profile) before the input gate is taken, else confirm=true (ConfirmationRequired). Then the PID's start time and profile are checked again; inside the gate, Browser.close goes over the browser's own browser-level connection (ICdpService.CloseBrowserAsync: the port's listener must be the browser, fail closed, through its own /json/version); outside it, up to timeoutMs for the exit; a browser still running is ended (its process only) inside the gate again; what is left of its own child processes (the same .exe, start time unchanged) is ended; a program it opened is never ended. A temporary profile is then deleted, a named one only with deleteProfile, a userDataDir never. *Placement*: launch_browser_with_debug takes launch_application's placement, checked before anything is launched and applied through ILaunchPlacementService (M3.13; the placing code moved to Tools/LaunchPlacing, shared by both tools), also to a reused browser's window. *Cancellation*: a launch cancelled after the start (LaunchRequest.OnStarted gives the PID before the window wait) ends the browser it started with its tree, when the PID still has its start time, and deletes its temporary profile.
+**Design.** *Profiles* (DebugBrowserProfiles): named profiles under %LOCALAPPDATA%\win-desktop-mcp\browser-profiles\<name> (1-64 ASCII letters, digits, '-' and '_', starting with a letter or digit, not a Windows device name, so a name is one folder and cannot reach another), and a new temporary profile per launch under %TEMP%\win-desktop-mcp\browser-debug\<32 hex digits>, made by the launch. Only a folder directly under one of these roots with its kind's name is the server's (KindOf); only such a folder is ever deleted, never a link to another folder, retried for up to 10 s while the browser's processes release their files. A launch whose browser did not start, or whose call was cancelled, deletes its temporary profile at once; each launch with a new temporary profile sweeps the ones older than 10 minutes that no browser holds (Chromium's lockfile) and no browser of this server uses (a browser closed by the user, ended or crashed, or a server that stopped). *Reuse* (DebugBrowserLifecycle.LaunchAsync): reuseIfRunning needs profile or userDataDir; when Chromium's lockfile shows a browser runs with the profile, the main process (chrome, msedge or brave without --type) whose own command line names that --user-data-dir is found, and returned as launchStatus alreadyRunning (processId, a window of it, cdpPort, cdpReady, browserVersion, cdpEndpoint, browserWsEndpoint) only when it has --remote-debugging-port, is the requested browser's .exe, and its port is its own listener (DebugPortLocator, M5.3) that answers /json/version; never by a window title. A browser on the profile without a debug port (it may be the user's) is DebugLaunchFailed without a processId; one whose port cannot be used, DebugLaunchFailed with its processId to close it. *Close* (close_debug_browser(processId and/or cdpPort, deleteProfile=false, confirm, timeoutMs 1000-30000)): CheckClose accepts only the main process of chrome, msedge or brave whose command line has a DevTools port and a --user-data-dir that is the one this server started it with (tracked by PID and start time, and still on its command line) or a folder of the server's own; anything else is the new NotADebugBrowser (18), and the target policy and the agent's host are respected. The M2.10 pattern: the user is asked through elicitation (PID, window titles, what happens to the profile) before the input gate is taken, else confirm=true (ConfirmationRequired). Then the PID's start time and profile are checked again; inside the gate, Browser.close goes over the browser's own browser-level connection (ICdpService.CloseBrowserAsync: the port's listener must be the browser, fail closed, through its own /json/version); outside it, up to timeoutMs for the exit; a browser still running is ended (its process only) inside the gate again; what is left of its own child processes (the same .exe, start time unchanged) is ended; a program it opened is never ended. A temporary profile is then deleted, a named one only with deleteProfile, a userDataDir never. *Placement*: launch_browser_with_debug takes launch_application's placement, checked before anything is launched and applied through ILaunchPlacementService (M3.13; the placing code moved to Tools/LaunchPlacing, shared by both tools), also to a reused browser's window. *Cancellation*: a launch cancelled after the start (LaunchRequest.OnStarted gives the PID before the window wait) ends the browser it started with its tree, when the PID still has its start time, and deletes its temporary profile.
 
 **Decisions.** (1) No get_cdp_status: reuseIfRunning returns the running browser's status and endpoints, and the reading tools find a window's port themselves (M5.3); a separate tool would cost tokens for nothing new. (2) close_debug_browser is in the default-on browser toolset next to launch_browser_with_debug: the server must be able to clean up what it starts, and it acts only on browsers it can prove are its own debug instances. It is destructive (it closes every page of a browser and can delete a named profile's sign-ins), not idempotent, not open-world, audited, and self-gated like kill_process (ask outside the gate, act inside it, wait outside it). (3) Identity is the process's own command line plus, for a folder outside the server's roots, the server's own record of PID and start time; a window title is never used (a page sets it). An untracked debug browser with a server-owned profile is closable, so one an earlier server run started (or a launch whose result was lost) can still be cleaned up; a userDataDir the agent passed counts only while this server's record of it holds. (4) The ask always happens when the client can, also for a browser the server started a moment ago: the M2.10 pattern, as the roadmap correction asked, rather than a bare confirm. (5) Temporary profiles stay under %TEMP% so Windows' own cleanup removes what the server could not, in a subfolder of the server's, which is what lets close_debug_browser prove them. (6) Browser.close first (it closes every window, without beforeunload prompts) and an end of the browser process alone only after the wait, not a tree kill: a tree kill would also end a program the browser opened (a downloaded file's app). (7) No headless option.
 
@@ -1208,171 +1208,171 @@ Run ids such as `r1:WC-1` and `r2:WC-1` trace each entry back to the raw review 
 
 | Key | Severity | Area | Defect | Location | Found by | Status |
 |-----|----------|------|--------|----------|----------|--------|
-| D-BRW-01 | critical | Browser | launch_browser_with_debug cannot serialize its success result (nint? WindowHandle) | `src/WindowsAppManagerMcp/Tools/BrowserReadingTools.cs:138` | both | fixed (M0) |
-| D-SCR-01 | critical | Screenshots | Screenshots are returned as base64 inside JSON text, not as MCP image content | `src/WindowsAppManagerMcp/Tools/ScreenshotTools.cs:34` | both | fixed (M1) |
-| D-BRW-02 | high | Browser | CDP WebSocket calls have no timeout or cancellation | `src/WindowsAppManagerMcp/Services/CdpService.cs:195` | both | fixed (M0) |
-| D-BRW-03 | high | Browser | CDP target selection uses title substring matching and can return another tab's or browser's data | `src/WindowsAppManagerMcp/Services/CdpService.cs:145` | both | fixed (M0) |
-| D-BRW-04 | high | Browser | Debug browser starts with a fresh profile but does not suppress first-run UI | `src/WindowsAppManagerMcp/Services/ProcessService.cs:470` | both | open |
-| D-INP-01 | high | Input | Keyboard and mouse input is not tied to a target window and never verifies which window received it | `src/WindowsAppManagerMcp/Tools/InputSimulationTools.cs:79` | both | fixed (M1) |
-| D-INP-02 | high | Input | InputSimulationService unit tests send real mouse/keyboard input, including Alt+F4, to the developer's desktop | `tests/WindowsAppManagerMcp.Tests/Unit/Services/InputSimulationServiceTests.cs:567` | both | fixed (M0) |
-| D-INP-03 | high | Input | Input blocked by UIPI/elevation or the secure desktop is not detected or diagnosed | `src/WindowsAppManagerMcp/Native/NativeMethods.Input.cs:9` | both | fixed (M1) |
+| D-BRW-01 | critical | Browser | launch_browser_with_debug cannot serialize its success result (nint? WindowHandle) | `src/win-desktop-mcp/Tools/BrowserReadingTools.cs:138` | both | fixed (M0) |
+| D-SCR-01 | critical | Screenshots | Screenshots are returned as base64 inside JSON text, not as MCP image content | `src/win-desktop-mcp/Tools/ScreenshotTools.cs:34` | both | fixed (M1) |
+| D-BRW-02 | high | Browser | CDP WebSocket calls have no timeout or cancellation | `src/win-desktop-mcp/Services/CdpService.cs:195` | both | fixed (M0) |
+| D-BRW-03 | high | Browser | CDP target selection uses title substring matching and can return another tab's or browser's data | `src/win-desktop-mcp/Services/CdpService.cs:145` | both | fixed (M0) |
+| D-BRW-04 | high | Browser | Debug browser starts with a fresh profile but does not suppress first-run UI | `src/win-desktop-mcp/Services/ProcessService.cs:470` | both | open |
+| D-INP-01 | high | Input | Keyboard and mouse input is not tied to a target window and never verifies which window received it | `src/win-desktop-mcp/Tools/InputSimulationTools.cs:79` | both | fixed (M1) |
+| D-INP-02 | high | Input | InputSimulationService unit tests send real mouse/keyboard input, including Alt+F4, to the developer's desktop | `tests/win-desktop-mcp.Tests/Unit/Services/InputSimulationServiceTests.cs:567` | both | fixed (M0) |
+| D-INP-03 | high | Input | Input blocked by UIPI/elevation or the secure desktop is not detected or diagnosed | `src/win-desktop-mcp/Native/NativeMethods.Input.cs:9` | both | fixed (M1) |
 | D-MCP-01 | high | MCP surface & project | The plugin runs a stale committed exe, and /commit and /update-plugin publish to paths the plugin never runs | `.claude-plugin/plugin.json:24` | both | partly fixed (M0, M2.12) |
-| D-MCP-02 | high | MCP surface & project | Test suite drives the real desktop beyond input (launches Chrome/Notepad, attempts kills), runs unfiltered in CI/README, and the CI test job keeps failing | `tests/WindowsAppManagerMcp.Tests/Unit/Services/ProcessServiceTests.cs:458` | both | fixed (M0) |
-| D-PAL-01 | high | Launch & layouts | Launching via a launcher stub or single-instance app (browsers with a URL) returns a dead PID and no window handle | `src/WindowsAppManagerMcp/Services/ProcessService.cs:360` | both | fixed (M2.6) |
-| D-PAL-02 | high | Launch & layouts | Shell-metacharacter check rejects any path containing '(' or ')', so 'Program Files (x86)' apps and Edge debug launch always fail | `src/WindowsAppManagerMcp/Services/InputValidationService.cs:14` | both | fixed (M0) |
-| D-PAL-03 | high | Launch & layouts | Layouts are stored in the versioned plugin install folder: lost on update and bundled samples never deployed | `src/WindowsAppManagerMcp/Program.cs:49` | both | fixed (M0) |
-| D-PAL-04 | high | Launch & layouts | A captured layout cannot restore more than one window per process: every placement hits the same window | `src/WindowsAppManagerMcp/Services/LayoutService.cs:245` | both | fixed (M2.8) |
-| D-PAL-05 | high | Launch & layouts | kill_process graceful mode escalates to a forced process-tree kill after 3 seconds | `src/WindowsAppManagerMcp/Services/ProcessService.cs:303` | both | fixed (M0) |
-| D-UIA-01 | high | UI Automation | controlTypes filter discards matching descendants of non-matching containers and double-counts TotalElementCount | `src/WindowsAppManagerMcp/Services/UIElementService.cs:284` | both | fixed (M1) |
-| D-UIA-02 | high | UI Automation | A null ControlType (UWP/WinUI AppBar, SemanticZoom) or any non-ElementNotAvailable exception on one element aborts the whole traversal | `src/WindowsAppManagerMcp/Services/UIElementService.cs:369` | both | fixed (M0) |
-| D-WIN-01 | high | Windows & monitors | focus_window has no foreground-lock workaround and never verifies focus changed | `src/WindowsAppManagerMcp/Services/WindowService.cs:196` | both | fixed (M1) |
-| D-WIN-02 | high | Windows & monitors | Geometry operations never un-maximize (and move/resize ignore minimized windows) | `src/WindowsAppManagerMcp/Services/WindowService.cs:151` | both | fixed (M2.3) |
-| D-WIN-03 | high | Windows & monitors | move_window_to_monitor 'maximize' maximizes on the current monitor and other modes do not fit the window to the target | `src/WindowsAppManagerMcp/Services/WindowService.cs:268` | both | fixed (M2.2, M2.3) |
-| D-WIN-04 | high | Windows & monitors | Window listings (and save_layout) include cloaked, other-virtual-desktop, tool and shell windows | `src/WindowsAppManagerMcp/Services/WindowService.cs:25` | both | fixed (M1) |
-| D-BRW-05 | medium | Browser | Silent fallback from CDP to UIA with no indication of the method used; textOnly=false is ignored | `src/WindowsAppManagerMcp/Services/BrowserReadingService.cs:201` | both | fixed (M0) |
-| D-BRW-06 | medium | Browser | UIA address-bar lookup is English-only, its fallback fails on wide/high-DPI windows, and it can return non-URL text | `src/WindowsAppManagerMcp/Native/UIAutomationWrapper.cs:111` | both | open |
-| D-BRW-07 | medium | Browser | Browser URL name search matches the top-level window's own title, so a page title can be returned as the URL | `src/WindowsAppManagerMcp/Native/UIAutomationWrapper.cs:180` | both | open |
-| D-BRW-08 | medium | Browser | UIA URL is the omnibox display text, usually missing the scheme or showing in-progress typing | `src/WindowsAppManagerMcp/Native/UIAutomationWrapper.cs:279` | both | open |
-| D-BRW-09 | medium | Browser | get_browser_content is unbounded by default, has no truncation signal or paging, and ContentLength is post-truncation | `src/WindowsAppManagerMcp/Tools/BrowserReadingTools.cs:37` | both | fixed (M5.6) |
-| D-BRW-10 | medium | Browser | launch_browser_with_debug never checks the CDP endpoint opened, does not validate the port, and never cleans up temp profiles | `src/WindowsAppManagerMcp/Services/ProcessService.cs:503` | both | partly fixed (M2.2) |
-| D-BRW-11 | medium | Browser | Debug browser exposes an unauthenticated CDP port on the well-known 9222 | `src/WindowsAppManagerMcp/Services/ProcessService.cs:472` | both | open |
-| D-BRW-12 | medium | Browser | --user-data-dir is quoted twice, so paths with spaces split into separate arguments | `src/WindowsAppManagerMcp/Services/ProcessService.cs:473` | both | fixed (M0) |
-| D-BRW-13 | medium | Browser | Debug-launch url argument is not validated and can inject browser switches | `src/WindowsAppManagerMcp/Services/ProcessService.cs:473` | both | partly fixed (M0), fixed (M2.10) |
-| D-BRW-14 | medium | Browser | Browser UIA searches and content reads are unbounded (whole-tree Descendants scans, full-document GetText, no deadline) | `src/WindowsAppManagerMcp/Native/UIAutomationWrapper.cs:232` | both | open |
-| D-BRW-15 | medium | Browser | UIA content path does not wake Chromium's on-demand accessibility tree | `src/WindowsAppManagerMcp/Native/UIAutomationWrapper.cs:335` | both | open |
-| D-BRW-16 | medium | Browser | UIA content extraction can return browser UI text or a side panel via the frame-pane fallback | `src/WindowsAppManagerMcp/Native/UIAutomationWrapper.cs:335` | r2 | open |
-| D-INP-04 | medium | Input | send_keys shortcuts on punctuation/OEM keys (Ctrl+-, Ctrl+=, Ctrl+/, Ctrl+comma, Ctrl+backtick) are sent as Unicode packets and never fire | `src/WindowsAppManagerMcp/Services/InputSimulationService.cs:371` | both | open |
-| D-INP-05 | medium | Input | send_keys sends letters and digits as raw virtual keys, ignoring case, Caps Lock and keyboard layout | `src/WindowsAppManagerMcp/Services/InputSimulationService.cs:474` | both | open |
-| D-INP-06 | medium | Input | No Win modifier, and {CTRL}/{ALT}/{SHIFT}/{WIN} in braces are tapped rather than held | `src/WindowsAppManagerMcp/Services/InputSimulationService.cs:359` | both | open |
-| D-INP-07 | medium | Input | send_keys implements only part of the SendKeys grammar: no escapes, grouping, repeat counts or '~' | `src/WindowsAppManagerMcp/Services/InputSimulationService.cs:327` | both | open |
-| D-INP-08 | medium | Input | type_text sends Tab, CR and LF as Unicode packets instead of real Tab/Enter key presses | `src/WindowsAppManagerMcp/Services/InputSimulationService.cs:238` | both | open |
-| D-INP-09 | medium | Input | Input operations are not serialized across concurrent MCP requests | `src/WindowsAppManagerMcp/Services/InputSimulationService.cs:234` | r1 | fixed (M0) |
-| D-INP-10 | medium | Input | Clicks ignore swapped mouse buttons | `src/WindowsAppManagerMcp/Services/InputSimulationService.cs:204` | both | open |
+| D-MCP-02 | high | MCP surface & project | Test suite drives the real desktop beyond input (launches Chrome/Notepad, attempts kills), runs unfiltered in CI/README, and the CI test job keeps failing | `tests/win-desktop-mcp.Tests/Unit/Services/ProcessServiceTests.cs:458` | both | fixed (M0) |
+| D-PAL-01 | high | Launch & layouts | Launching via a launcher stub or single-instance app (browsers with a URL) returns a dead PID and no window handle | `src/win-desktop-mcp/Services/ProcessService.cs:360` | both | fixed (M2.6) |
+| D-PAL-02 | high | Launch & layouts | Shell-metacharacter check rejects any path containing '(' or ')', so 'Program Files (x86)' apps and Edge debug launch always fail | `src/win-desktop-mcp/Services/InputValidationService.cs:14` | both | fixed (M0) |
+| D-PAL-03 | high | Launch & layouts | Layouts are stored in the versioned plugin install folder: lost on update and bundled samples never deployed | `src/win-desktop-mcp/Program.cs:49` | both | fixed (M0) |
+| D-PAL-04 | high | Launch & layouts | A captured layout cannot restore more than one window per process: every placement hits the same window | `src/win-desktop-mcp/Services/LayoutService.cs:245` | both | fixed (M2.8) |
+| D-PAL-05 | high | Launch & layouts | kill_process graceful mode escalates to a forced process-tree kill after 3 seconds | `src/win-desktop-mcp/Services/ProcessService.cs:303` | both | fixed (M0) |
+| D-UIA-01 | high | UI Automation | controlTypes filter discards matching descendants of non-matching containers and double-counts TotalElementCount | `src/win-desktop-mcp/Services/UIElementService.cs:284` | both | fixed (M1) |
+| D-UIA-02 | high | UI Automation | A null ControlType (UWP/WinUI AppBar, SemanticZoom) or any non-ElementNotAvailable exception on one element aborts the whole traversal | `src/win-desktop-mcp/Services/UIElementService.cs:369` | both | fixed (M0) |
+| D-WIN-01 | high | Windows & monitors | focus_window has no foreground-lock workaround and never verifies focus changed | `src/win-desktop-mcp/Services/WindowService.cs:196` | both | fixed (M1) |
+| D-WIN-02 | high | Windows & monitors | Geometry operations never un-maximize (and move/resize ignore minimized windows) | `src/win-desktop-mcp/Services/WindowService.cs:151` | both | fixed (M2.3) |
+| D-WIN-03 | high | Windows & monitors | move_window_to_monitor 'maximize' maximizes on the current monitor and other modes do not fit the window to the target | `src/win-desktop-mcp/Services/WindowService.cs:268` | both | fixed (M2.2, M2.3) |
+| D-WIN-04 | high | Windows & monitors | Window listings (and save_layout) include cloaked, other-virtual-desktop, tool and shell windows | `src/win-desktop-mcp/Services/WindowService.cs:25` | both | fixed (M1) |
+| D-BRW-05 | medium | Browser | Silent fallback from CDP to UIA with no indication of the method used; textOnly=false is ignored | `src/win-desktop-mcp/Services/BrowserReadingService.cs:201` | both | fixed (M0) |
+| D-BRW-06 | medium | Browser | UIA address-bar lookup is English-only, its fallback fails on wide/high-DPI windows, and it can return non-URL text | `src/win-desktop-mcp/Native/UIAutomationWrapper.cs:111` | both | open |
+| D-BRW-07 | medium | Browser | Browser URL name search matches the top-level window's own title, so a page title can be returned as the URL | `src/win-desktop-mcp/Native/UIAutomationWrapper.cs:180` | both | open |
+| D-BRW-08 | medium | Browser | UIA URL is the omnibox display text, usually missing the scheme or showing in-progress typing | `src/win-desktop-mcp/Native/UIAutomationWrapper.cs:279` | both | open |
+| D-BRW-09 | medium | Browser | get_browser_content is unbounded by default, has no truncation signal or paging, and ContentLength is post-truncation | `src/win-desktop-mcp/Tools/BrowserReadingTools.cs:37` | both | fixed (M5.6) |
+| D-BRW-10 | medium | Browser | launch_browser_with_debug never checks the CDP endpoint opened, does not validate the port, and never cleans up temp profiles | `src/win-desktop-mcp/Services/ProcessService.cs:503` | both | partly fixed (M2.2) |
+| D-BRW-11 | medium | Browser | Debug browser exposes an unauthenticated CDP port on the well-known 9222 | `src/win-desktop-mcp/Services/ProcessService.cs:472` | both | open |
+| D-BRW-12 | medium | Browser | --user-data-dir is quoted twice, so paths with spaces split into separate arguments | `src/win-desktop-mcp/Services/ProcessService.cs:473` | both | fixed (M0) |
+| D-BRW-13 | medium | Browser | Debug-launch url argument is not validated and can inject browser switches | `src/win-desktop-mcp/Services/ProcessService.cs:473` | both | partly fixed (M0), fixed (M2.10) |
+| D-BRW-14 | medium | Browser | Browser UIA searches and content reads are unbounded (whole-tree Descendants scans, full-document GetText, no deadline) | `src/win-desktop-mcp/Native/UIAutomationWrapper.cs:232` | both | open |
+| D-BRW-15 | medium | Browser | UIA content path does not wake Chromium's on-demand accessibility tree | `src/win-desktop-mcp/Native/UIAutomationWrapper.cs:335` | both | open |
+| D-BRW-16 | medium | Browser | UIA content extraction can return browser UI text or a side panel via the frame-pane fallback | `src/win-desktop-mcp/Native/UIAutomationWrapper.cs:335` | r2 | open |
+| D-INP-04 | medium | Input | send_keys shortcuts on punctuation/OEM keys (Ctrl+-, Ctrl+=, Ctrl+/, Ctrl+comma, Ctrl+backtick) are sent as Unicode packets and never fire | `src/win-desktop-mcp/Services/InputSimulationService.cs:371` | both | open |
+| D-INP-05 | medium | Input | send_keys sends letters and digits as raw virtual keys, ignoring case, Caps Lock and keyboard layout | `src/win-desktop-mcp/Services/InputSimulationService.cs:474` | both | open |
+| D-INP-06 | medium | Input | No Win modifier, and {CTRL}/{ALT}/{SHIFT}/{WIN} in braces are tapped rather than held | `src/win-desktop-mcp/Services/InputSimulationService.cs:359` | both | open |
+| D-INP-07 | medium | Input | send_keys implements only part of the SendKeys grammar: no escapes, grouping, repeat counts or '~' | `src/win-desktop-mcp/Services/InputSimulationService.cs:327` | both | open |
+| D-INP-08 | medium | Input | type_text sends Tab, CR and LF as Unicode packets instead of real Tab/Enter key presses | `src/win-desktop-mcp/Services/InputSimulationService.cs:238` | both | open |
+| D-INP-09 | medium | Input | Input operations are not serialized across concurrent MCP requests | `src/win-desktop-mcp/Services/InputSimulationService.cs:234` | r1 | fixed (M0) |
+| D-INP-10 | medium | Input | Clicks ignore swapped mouse buttons | `src/win-desktop-mcp/Services/InputSimulationService.cs:204` | both | open |
 | D-MCP-03 | medium | MCP surface & project | Agent-facing docs drift from the registered tools: wrong tool count, browser tools undocumented, wrong parameter names | `skills/using-windows-app-manager/SKILL.md:73` | both | fixed (M0) |
-| D-MCP-04 | medium | MCP surface & project | The exe requires the .NET 8 Windows Desktop Runtime but docs only ask for the .NET 8 Runtime | `src/WindowsAppManagerMcp/WindowsAppManagerMcp.csproj:11` | both | fixed (M0) |
-| D-MCP-05 | medium | MCP surface & project | Errors surface as generic SDK errors, empty results or stripped messages; one malformed batch item aborts the whole batch | `src/WindowsAppManagerMcp/Tools/LayoutPresetTools.cs:39` | both | partly fixed (M0), fixed (M2.1) |
+| D-MCP-04 | medium | MCP surface & project | The exe requires the .NET 8 Windows Desktop Runtime but docs only ask for the .NET 8 Runtime | `src/win-desktop-mcp/win-desktop-mcp.csproj:11` | both | fixed (M0) |
+| D-MCP-05 | medium | MCP surface & project | Errors surface as generic SDK errors, empty results or stripped messages; one malformed batch item aborts the whole batch | `src/win-desktop-mcp/Tools/LayoutPresetTools.cs:39` | both | partly fixed (M0), fixed (M2.1) |
 | D-MCP-06 | medium | MCP surface & project | The GitHub release job has never succeeded (read-only token) | `.github/workflows/build.yml:42` | r2 | fixed (M0) |
 | D-MCP-07 | medium | MCP surface & project | Committed .claude/settings.local.json grants broad no-prompt permissions and local artifacts are tracked | `.claude/settings.local.json:63` | both | partly fixed (M0) |
-| D-PAL-06 | medium | Launch & layouts | Layout matching can target arbitrary windows: empty matchers/title_only match everything, unknown matchBy is accepted, ClassName ignored | `src/WindowsAppManagerMcp/Services/LayoutService.cs:313` | both | fixed (M2.8) |
-| D-PAL-07 | medium | Launch & layouts | Protocol policy blocks legitimate targets (ms-settings:, shell:AppsFolder) yet allows cmd/powershell with arbitrary arguments | `src/WindowsAppManagerMcp/Services/InputValidationService.cs:17` | r1 | fixed (M2.7) |
-| D-PAL-08 | medium | Launch & layouts | launch_application joins arguments without proper Windows quoting | `src/WindowsAppManagerMcp/Services/ProcessService.cs:70` | both | fixed (M0) |
-| D-PAL-09 | medium | Launch & layouts | Process.Start returning null (ShellExecute handed off to an existing instance) is reported as failure | `src/WindowsAppManagerMcp/Services/ProcessService.cs:75` | both | fixed (M2.6) |
-| D-PAL-10 | medium | Launch & layouts | Layouts identify monitors only by enumeration index and silently fall back to monitor 0 | `src/WindowsAppManagerMcp/Services/LayoutService.cs:246` | both | fixed (M2.8, M6.8) |
-| D-PAL-11 | medium | Launch & layouts | apply_layout ignores window state and mixed DPI | `src/WindowsAppManagerMcp/Services/LayoutService.cs:254` | both | fixed (M2.3, M2.8) |
-| D-PAL-12 | medium | Launch & layouts | save_layout and delete_layout report success when nothing was saved or deleted | `src/WindowsAppManagerMcp/Tools/LayoutPresetTools.cs:83` | both | fixed (M0) |
-| D-PAL-13 | medium | Launch & layouts | apply_layout returns only counts, never verifies placement, and reports success with zero matches | `src/WindowsAppManagerMcp/Services/LayoutService.cs:272` | both | fixed (M0) |
-| D-PAL-14 | medium | Launch & layouts | launchMissing cannot work for agent-saved layouts: no launch command is captured and commands cannot carry arguments | `src/WindowsAppManagerMcp/Services/LayoutService.cs:220` | both | fixed (M6.8) |
-| D-PAL-15 | medium | Launch & layouts | apply_layout throws NullReferenceException when a freshly launched window is untitled or already closed | `src/WindowsAppManagerMcp/Services/LayoutService.cs:227` | both | fixed (M0) |
-| D-PAL-16 | medium | Launch & layouts | LayoutService preset cache is not thread-safe and get_layout/apply_layout never reload from disk | `src/WindowsAppManagerMcp/Services/LayoutService.cs:68` | both | fixed (M0) |
-| D-PAL-17 | medium | Launch & layouts | Bare executable names are resolved against the server's current directory first (binary planting) | `src/WindowsAppManagerMcp/Services/ProcessService.cs:65` | r1 | partly fixed (M0), fixed (M2.7) |
-| D-PAL-18 | medium | Launch & layouts | Arguments passed to batch-file shims (e.g. code.cmd) let cmd.exe interpret '&', '\|' and %VAR% | `src/WindowsAppManagerMcp/Services/ProcessService.cs:70` | r1 | fixed (M0) |
-| D-SCR-02 | medium | Screenshots | capture_with_elements with includeFrame=false offsets every overlay and ImageBounds by the frame/title-bar size | `src/WindowsAppManagerMcp/Tools/ScreenshotTools.cs:216` | both | fixed (M1) |
-| D-SCR-03 | medium | Screenshots | capture_with_elements is all-or-nothing: any UIA failure or timeout drops the screenshot | `src/WindowsAppManagerMcp/Tools/ScreenshotTools.cs:197` | both | partly fixed (M1), fixed (M2.9) |
-| D-SCR-04 | medium | Screenshots | Window captures give no screen origin or image-to-screen transform | `src/WindowsAppManagerMcp/Services/ScreenshotService.cs:185` | both | fixed (M1) |
-| D-SCR-05 | medium | Screenshots | Capturing a minimized, hidden or cloaked window succeeds with a tiny or black image | `src/WindowsAppManagerMcp/Native/ScreenCaptureWrapper.cs:76` | both | partly fixed (M1), fixed (M2.9) |
-| D-SCR-06 | medium | Screenshots | outputPath allows unvalidated writes anywhere, overwriting existing files | `src/WindowsAppManagerMcp/Services/ScreenshotService.cs:405` | both | fixed (M1) |
-| D-SCR-07 | medium | Screenshots | Defaults produce full-resolution lossless PNGs and maxWidth limits only width | `src/WindowsAppManagerMcp/Tools/ScreenshotTools.cs:46` | r2 | fixed (M1) |
-| D-SCR-08 | medium | Screenshots | Element overlays are drawn at full resolution before the maxWidth downscale, making them faint or invisible | `src/WindowsAppManagerMcp/Services/ScreenshotService.cs:515` | r2 | fixed (M1) |
-| D-SCR-09 | medium | Screenshots | DPI-unaware target windows may be rendered by PrintWindow at logical size inside a physical-size bitmap (plausible, not reproduced) | `src/WindowsAppManagerMcp/Native/ScreenCaptureWrapper.cs:78` | r1 | partly fixed (M2.9) |
-| D-UIA-03 | medium | UI Automation | Traversal timeout discards the partially built tree | `src/WindowsAppManagerMcp/Services/UIElementService.cs:164` | both | fixed (M1) |
-| D-UIA-04 | medium | UI Automation | timeoutMs is not a hard bound: a blocked UIA call or hung window holds the request and MCP cancellation is ignored | `src/WindowsAppManagerMcp/Services/UIElementService.cs:223` | both | fixed (M1, M2.13, M3.1, M3.2) |
-| D-UIA-05 | medium | UI Automation | No CacheRequest: about 10 uncached cross-process calls per element with duplicate reads | `src/WindowsAppManagerMcp/Services/UIElementService.cs:278` | both | fixed (M3.1, M3.2) |
-| D-UIA-06 | medium | UI Automation | visibleOnly/interactableOnly/minWidth/minHeight prune whole subtrees, and interactableOnly only checks IsEnabled | `src/WindowsAppManagerMcp/Services/UIElementService.cs:314` | both | fixed (M1) |
-| D-UIA-07 | medium | UI Automation | Minimized or elevated target windows return an empty tree as Success with no diagnostic | `src/WindowsAppManagerMcp/Services/UIElementService.cs:151` | both | fixed (M3.F16) |
-| D-UIA-08 | medium | UI Automation | UIElementService has no test seam, so filter tests never reach the traversal code | `src/WindowsAppManagerMcp/Services/UIElementService.cs:112` | r2 | fixed (M1) |
-| D-WIN-05 | medium | Windows & monitors | Untitled windows are invisible to GetWindowInfo, so get_foreground_window, post-action re-queries and capture_with_elements fail on them | `src/WindowsAppManagerMcp/Services/WindowService.cs:466` | both | fixed (M1) |
-| D-WIN-06 | medium | Windows & monitors | MonitorService singleton clears and rebuilds a shared List on every call with no locking | `src/WindowsAppManagerMcp/Services/MonitorService.cs:18` | both | fixed (M0) |
-| D-WIN-07 | medium | Windows & monitors | Invalid monitorIndex, positioning and state values are silently coerced to defaults and reported as success | `src/WindowsAppManagerMcp/Services/MonitorService.cs:113` | both | fixed (M2.2) |
-| D-WIN-08 | medium | Windows & monitors | set_window_state reports ShowWindow's previous-visibility flag as Success | `src/WindowsAppManagerMcp/Services/WindowService.cs:181` | both | fixed (M2.2) |
-| D-WIN-09 | medium | Windows & monitors | close_window / close_windows_batch have no guard for shell or agent-host windows | `src/WindowsAppManagerMcp/Services/WindowService.cs:309` | both | fixed (M1) |
-| D-WIN-10 | medium | Windows & monitors | close_window reports success as soon as WM_CLOSE is queued | `src/WindowsAppManagerMcp/Services/WindowService.cs:309` | r2 | fixed (M2.5) |
-| D-WIN-11 | medium | Windows & monitors | Native window failures return a bare success:false; GetLastError is never read and elevation/UIPI is never detected | `src/WindowsAppManagerMcp/Tools/WindowManagerTools.cs:40` | both | partly fixed (M0, M1), fixed (M2.2) |
-| D-WIN-12 | medium | Windows & monitors | Calls on hung ('Not Responding') windows can block a tool call indefinitely | `src/WindowsAppManagerMcp/Native/NativeWindowWrapper.cs:63` | both | partly fixed (M1) |
-| D-WIN-13 | medium | Windows & monitors | UWP/packaged app windows are attributed to ApplicationFrameHost instead of the app process | `src/WindowsAppManagerMcp/Services/WindowService.cs:470` | both | fixed (M1) |
-| D-WIN-14 | medium | Windows & monitors | Snap and reported bounds use GetWindowRect including DWM's invisible resize borders | `src/WindowsAppManagerMcp/Services/MonitorService.cs:120` | both | fixed (M2.3) |
-| D-WIN-15 | medium | Windows & monitors | move_window_to_monitor measures the window before restoring it, shrinking minimized windows to their iconic size | `src/WindowsAppManagerMcp/Services/WindowService.cs:228` | both | fixed (M2.3) |
-| D-BRW-17 | low | Browser | Browser executable lookup misses per-user installs, App Paths and non-stable channels | `src/WindowsAppManagerMcp/Services/ProcessService.cs:394` | r1 | open |
-| D-BRW-18 | low | Browser | CDP reads use 4 HTTP requests and 2 WebSocket handshakes per call via 'localhost' | `src/WindowsAppManagerMcp/Services/CdpService.cs:36` | both | open |
-| D-BRW-19 | low | Browser | Browser detection suffix/prefix heuristics classify non-browsers as browsers and inject --new-window | `src/WindowsAppManagerMcp/Services/BrowserDetectionService.cs:76` | both | open |
-| D-BRW-20 | low | Browser | UIA content path always repeats the expensive URL lookup and attaches its possibly bogus value | `src/WindowsAppManagerMcp/Services/BrowserReadingService.cs:226` | r2 | open |
-| D-BRW-90 | low | Browser | BrowserReadingService tests depend on whatever real process owns PID 1000 | `tests/WindowsAppManagerMcp.Tests/Unit/Services/BrowserReadingServiceTests.cs:456` | later review | fixed (M0) |
-| D-INP-11 | low | Input | Clicks are not atomic (SetCursorPos, sleep, then SendInput) and the landing point and double-click timing are not verified | `src/WindowsAppManagerMcp/Services/InputSimulationService.cs:190` | both | partly fixed (M1) |
-| D-INP-12 | low | Input | Partial SendInput insertion can leave modifier keys logically held | `src/WindowsAppManagerMcp/Services/InputSimulationService.cs:293` | both | fixed (M1) |
-| D-INP-13 | low | Input | Virtual-key events always carry scan code 0 | `src/WindowsAppManagerMcp/Native/NativeStructs.cs:178` | both | open |
-| D-INP-14 | low | Input | send_keys injects the whole sequence in one burst with no pacing | `src/WindowsAppManagerMcp/Services/InputSimulationService.cs:291` | r1 | open |
-| D-INP-15 | low | Input | type_text is unbounded and uncancellable, and echoes the full text back | `src/WindowsAppManagerMcp/Services/InputSimulationService.cs:234` | r2 | partly fixed (M1) |
-| D-INP-16 | low | Input | Input error codes are misleading or unused | `src/WindowsAppManagerMcp/Services/InputSimulationService.cs:306` | r2 | partly fixed (M1, M2.2) |
-| D-MCP-90 | low | MCP surface & project | DependencyInjectionTests claimed to mirror Program.cs but had drifted (8 types missing) | `tests/WindowsAppManagerMcp.Tests/Integration/DependencyInjectionTests.cs:27` | later review | fixed (M0) |
-| D-PAL-19 | low | Launch & layouts | Launch/kill error codes are inaccurate: the AccessDenied branch is unreachable and kill success is not confirmed | `src/WindowsAppManagerMcp/Services/ProcessService.cs:342` | both | fixed (M0) |
-| D-PAL-20 | low | Launch & layouts | list_processes(includeWindowless:true) reports WindowCount=0 for every process | `src/WindowsAppManagerMcp/Services/ProcessService.cs:114` | both | fixed (M6 S0e) |
-| D-PAL-21 | low | Launch & layouts | kill_process acts on a bare PID with no identity check (PID reuse) | `src/WindowsAppManagerMcp/Services/ProcessService.cs:288` | both | fixed (M0) |
-| D-PAL-22 | low | Launch & layouts | kill_process protected list omits shell-infrastructure processes and the agent's own host | `src/WindowsAppManagerMcp/Services/ProcessService.cs:226` | r2 | partly fixed (M0), fixed (M1) |
-| D-PAL-23 | low | Launch & layouts | Launch waits are synchronous Thread.Sleep loops with no timeout cap or cancellation; batch waits run sequentially and drop ErrorCode | `src/WindowsAppManagerMcp/Tools/AppLauncherTools.cs:30` | both | partly fixed (M0, M1), fixed (M2.6) |
-| D-PAL-24 | low | Launch & layouts | file:// is allowed as a 'safe' protocol, bypassing every executable check | `src/WindowsAppManagerMcp/Services/InputValidationService.cs:37` | r1 | fixed (M0) |
-| D-PAL-25 | low | Launch & layouts | apply_layout ignores the result of FocusWindow for focus placements | `src/WindowsAppManagerMcp/Services/LayoutService.cs:260` | r2 | partly fixed (M1), fixed (M2.8) |
-| D-SCR-10 | low | Screenshots | The undefined high byte of GDI pixels is copied into an ARGB bitmap, producing transparent PNG pixels | `src/WindowsAppManagerMcp/Services/ScreenshotService.cs:560` | both | fixed (M1) |
-| D-SCR-11 | low | Screenshots | Window capture has no hang protection: PrintWindow runs synchronously against the target's UI thread | `src/WindowsAppManagerMcp/Native/ScreenCaptureWrapper.cs:130` | r1 | fixed (M2.9) |
-| D-SCR-12 | low | Screenshots | Frame captures include the invisible DWM resize borders | `src/WindowsAppManagerMcp/Native/ScreenCaptureWrapper.cs:78` | r1 | fixed (M2.9) |
-| D-SCR-13 | low | Screenshots | Large captures triple-copy pixels and the 16384 cap still allows multi-GB allocations | `src/WindowsAppManagerMcp/Native/ScreenCaptureWrapper.cs:188` | both | fixed (M2.9) |
-| D-SCR-14 | low | Screenshots | GetDIBits is called while the bitmap is still selected into the memory DC | `src/WindowsAppManagerMcp/Native/ScreenCaptureWrapper.cs:49` | both | fixed (M2.9) |
-| D-SCR-15 | low | Screenshots | Annotation rectangles are too wide/tall for elements extending above or left of the image | `src/WindowsAppManagerMcp/Services/ScreenshotService.cs:639` | r2 | fixed (M1) |
-| D-SCR-16 | low | Screenshots | capture_region silently returns black for off-screen areas and reports the nearest monitor | `src/WindowsAppManagerMcp/Services/ScreenshotService.cs:122` | r2 | fixed (M2.9) |
-| D-SCR-17 | low | Screenshots | capture_with_elements combines window bounds, UIA bounds and pixels taken at different times | `src/WindowsAppManagerMcp/Tools/ScreenshotTools.cs:149` | r2 | partly fixed (M3.11) |
-| D-SCR-18 | low | Screenshots | Dead encode/save paths, undisposed EncoderParameters and silent format fallback | `src/WindowsAppManagerMcp/Services/ScreenshotService.cs:360` | r1 | fixed (M1) |
-| D-UIA-09 | low | UI Automation | Empty bounding rectangles serialize as int.MinValue coordinates | `src/WindowsAppManagerMcp/Services/UIElementService.cs:304` | both | fixed (M1) |
-| D-UIA-10 | low | UI Automation | maxDepth is off by one (N returns N+1 levels) and truncation is not reported | `src/WindowsAppManagerMcp/Services/UIElementService.cs:340` | both | fixed (M1) |
-| D-UIA-11 | low | UI Automation | A single vanished sibling silently drops all remaining siblings in the traversal | `src/WindowsAppManagerMcp/Services/UIElementService.cs:249` | both | fixed (M0) |
-| D-UIA-12 | low | UI Automation | Unknown controlTypes names are silently accepted and return empty success | `src/WindowsAppManagerMcp/Tools/UIElementTools.cs:53` | r2 | fixed (M1) |
-| D-WIN-16 | low | Windows & monitors | bringToFront (default true in snap) activates the window despite SWP_NOACTIVATE, making keyboard focus nondeterministic | `src/WindowsAppManagerMcp/Services/WindowService.cs:124` | both | partly fixed (M1, M2.3) |
-| D-WIN-17 | low | Windows & monitors | set_window_state('restore'/'normal') on a window minimized from maximized returns it maximized | `src/WindowsAppManagerMcp/Services/WindowService.cs:177` | r2 | partly fixed (M2.2) |
-| D-WIN-18 | low | Windows & monitors | DPI awareness is per-monitor v1 via API call with the HRESULT ignored and no manifest | `src/WindowsAppManagerMcp/Program.cs:13` | both | fixed (M2.11) |
-| D-WIN-19 | low | Windows & monitors | Snap tests exercise a copied algorithm; MonitorService has no test seam | `tests/WindowsAppManagerMcp.Tests/Unit/Services/MonitorServiceTests.cs:145` | both | fixed (M2.3) |
-| D-WIN-20 | low | Windows & monitors | Batch delayBetweenMs is unbounded and blocks via Thread.Sleep with no cancellation | `src/WindowsAppManagerMcp/Services/WindowService.cs:341` | r2 | partly fixed (M1), fixed (M2.13) |
+| D-PAL-06 | medium | Launch & layouts | Layout matching can target arbitrary windows: empty matchers/title_only match everything, unknown matchBy is accepted, ClassName ignored | `src/win-desktop-mcp/Services/LayoutService.cs:313` | both | fixed (M2.8) |
+| D-PAL-07 | medium | Launch & layouts | Protocol policy blocks legitimate targets (ms-settings:, shell:AppsFolder) yet allows cmd/powershell with arbitrary arguments | `src/win-desktop-mcp/Services/InputValidationService.cs:17` | r1 | fixed (M2.7) |
+| D-PAL-08 | medium | Launch & layouts | launch_application joins arguments without proper Windows quoting | `src/win-desktop-mcp/Services/ProcessService.cs:70` | both | fixed (M0) |
+| D-PAL-09 | medium | Launch & layouts | Process.Start returning null (ShellExecute handed off to an existing instance) is reported as failure | `src/win-desktop-mcp/Services/ProcessService.cs:75` | both | fixed (M2.6) |
+| D-PAL-10 | medium | Launch & layouts | Layouts identify monitors only by enumeration index and silently fall back to monitor 0 | `src/win-desktop-mcp/Services/LayoutService.cs:246` | both | fixed (M2.8, M6.8) |
+| D-PAL-11 | medium | Launch & layouts | apply_layout ignores window state and mixed DPI | `src/win-desktop-mcp/Services/LayoutService.cs:254` | both | fixed (M2.3, M2.8) |
+| D-PAL-12 | medium | Launch & layouts | save_layout and delete_layout report success when nothing was saved or deleted | `src/win-desktop-mcp/Tools/LayoutPresetTools.cs:83` | both | fixed (M0) |
+| D-PAL-13 | medium | Launch & layouts | apply_layout returns only counts, never verifies placement, and reports success with zero matches | `src/win-desktop-mcp/Services/LayoutService.cs:272` | both | fixed (M0) |
+| D-PAL-14 | medium | Launch & layouts | launchMissing cannot work for agent-saved layouts: no launch command is captured and commands cannot carry arguments | `src/win-desktop-mcp/Services/LayoutService.cs:220` | both | fixed (M6.8) |
+| D-PAL-15 | medium | Launch & layouts | apply_layout throws NullReferenceException when a freshly launched window is untitled or already closed | `src/win-desktop-mcp/Services/LayoutService.cs:227` | both | fixed (M0) |
+| D-PAL-16 | medium | Launch & layouts | LayoutService preset cache is not thread-safe and get_layout/apply_layout never reload from disk | `src/win-desktop-mcp/Services/LayoutService.cs:68` | both | fixed (M0) |
+| D-PAL-17 | medium | Launch & layouts | Bare executable names are resolved against the server's current directory first (binary planting) | `src/win-desktop-mcp/Services/ProcessService.cs:65` | r1 | partly fixed (M0), fixed (M2.7) |
+| D-PAL-18 | medium | Launch & layouts | Arguments passed to batch-file shims (e.g. code.cmd) let cmd.exe interpret '&', '\|' and %VAR% | `src/win-desktop-mcp/Services/ProcessService.cs:70` | r1 | fixed (M0) |
+| D-SCR-02 | medium | Screenshots | capture_with_elements with includeFrame=false offsets every overlay and ImageBounds by the frame/title-bar size | `src/win-desktop-mcp/Tools/ScreenshotTools.cs:216` | both | fixed (M1) |
+| D-SCR-03 | medium | Screenshots | capture_with_elements is all-or-nothing: any UIA failure or timeout drops the screenshot | `src/win-desktop-mcp/Tools/ScreenshotTools.cs:197` | both | partly fixed (M1), fixed (M2.9) |
+| D-SCR-04 | medium | Screenshots | Window captures give no screen origin or image-to-screen transform | `src/win-desktop-mcp/Services/ScreenshotService.cs:185` | both | fixed (M1) |
+| D-SCR-05 | medium | Screenshots | Capturing a minimized, hidden or cloaked window succeeds with a tiny or black image | `src/win-desktop-mcp/Native/ScreenCaptureWrapper.cs:76` | both | partly fixed (M1), fixed (M2.9) |
+| D-SCR-06 | medium | Screenshots | outputPath allows unvalidated writes anywhere, overwriting existing files | `src/win-desktop-mcp/Services/ScreenshotService.cs:405` | both | fixed (M1) |
+| D-SCR-07 | medium | Screenshots | Defaults produce full-resolution lossless PNGs and maxWidth limits only width | `src/win-desktop-mcp/Tools/ScreenshotTools.cs:46` | r2 | fixed (M1) |
+| D-SCR-08 | medium | Screenshots | Element overlays are drawn at full resolution before the maxWidth downscale, making them faint or invisible | `src/win-desktop-mcp/Services/ScreenshotService.cs:515` | r2 | fixed (M1) |
+| D-SCR-09 | medium | Screenshots | DPI-unaware target windows may be rendered by PrintWindow at logical size inside a physical-size bitmap (plausible, not reproduced) | `src/win-desktop-mcp/Native/ScreenCaptureWrapper.cs:78` | r1 | partly fixed (M2.9) |
+| D-UIA-03 | medium | UI Automation | Traversal timeout discards the partially built tree | `src/win-desktop-mcp/Services/UIElementService.cs:164` | both | fixed (M1) |
+| D-UIA-04 | medium | UI Automation | timeoutMs is not a hard bound: a blocked UIA call or hung window holds the request and MCP cancellation is ignored | `src/win-desktop-mcp/Services/UIElementService.cs:223` | both | fixed (M1, M2.13, M3.1, M3.2) |
+| D-UIA-05 | medium | UI Automation | No CacheRequest: about 10 uncached cross-process calls per element with duplicate reads | `src/win-desktop-mcp/Services/UIElementService.cs:278` | both | fixed (M3.1, M3.2) |
+| D-UIA-06 | medium | UI Automation | visibleOnly/interactableOnly/minWidth/minHeight prune whole subtrees, and interactableOnly only checks IsEnabled | `src/win-desktop-mcp/Services/UIElementService.cs:314` | both | fixed (M1) |
+| D-UIA-07 | medium | UI Automation | Minimized or elevated target windows return an empty tree as Success with no diagnostic | `src/win-desktop-mcp/Services/UIElementService.cs:151` | both | fixed (M3.F16) |
+| D-UIA-08 | medium | UI Automation | UIElementService has no test seam, so filter tests never reach the traversal code | `src/win-desktop-mcp/Services/UIElementService.cs:112` | r2 | fixed (M1) |
+| D-WIN-05 | medium | Windows & monitors | Untitled windows are invisible to GetWindowInfo, so get_foreground_window, post-action re-queries and capture_with_elements fail on them | `src/win-desktop-mcp/Services/WindowService.cs:466` | both | fixed (M1) |
+| D-WIN-06 | medium | Windows & monitors | MonitorService singleton clears and rebuilds a shared List on every call with no locking | `src/win-desktop-mcp/Services/MonitorService.cs:18` | both | fixed (M0) |
+| D-WIN-07 | medium | Windows & monitors | Invalid monitorIndex, positioning and state values are silently coerced to defaults and reported as success | `src/win-desktop-mcp/Services/MonitorService.cs:113` | both | fixed (M2.2) |
+| D-WIN-08 | medium | Windows & monitors | set_window_state reports ShowWindow's previous-visibility flag as Success | `src/win-desktop-mcp/Services/WindowService.cs:181` | both | fixed (M2.2) |
+| D-WIN-09 | medium | Windows & monitors | close_window / close_windows_batch have no guard for shell or agent-host windows | `src/win-desktop-mcp/Services/WindowService.cs:309` | both | fixed (M1) |
+| D-WIN-10 | medium | Windows & monitors | close_window reports success as soon as WM_CLOSE is queued | `src/win-desktop-mcp/Services/WindowService.cs:309` | r2 | fixed (M2.5) |
+| D-WIN-11 | medium | Windows & monitors | Native window failures return a bare success:false; GetLastError is never read and elevation/UIPI is never detected | `src/win-desktop-mcp/Tools/WindowManagerTools.cs:40` | both | partly fixed (M0, M1), fixed (M2.2) |
+| D-WIN-12 | medium | Windows & monitors | Calls on hung ('Not Responding') windows can block a tool call indefinitely | `src/win-desktop-mcp/Native/NativeWindowWrapper.cs:63` | both | partly fixed (M1) |
+| D-WIN-13 | medium | Windows & monitors | UWP/packaged app windows are attributed to ApplicationFrameHost instead of the app process | `src/win-desktop-mcp/Services/WindowService.cs:470` | both | fixed (M1) |
+| D-WIN-14 | medium | Windows & monitors | Snap and reported bounds use GetWindowRect including DWM's invisible resize borders | `src/win-desktop-mcp/Services/MonitorService.cs:120` | both | fixed (M2.3) |
+| D-WIN-15 | medium | Windows & monitors | move_window_to_monitor measures the window before restoring it, shrinking minimized windows to their iconic size | `src/win-desktop-mcp/Services/WindowService.cs:228` | both | fixed (M2.3) |
+| D-BRW-17 | low | Browser | Browser executable lookup misses per-user installs, App Paths and non-stable channels | `src/win-desktop-mcp/Services/ProcessService.cs:394` | r1 | open |
+| D-BRW-18 | low | Browser | CDP reads use 4 HTTP requests and 2 WebSocket handshakes per call via 'localhost' | `src/win-desktop-mcp/Services/CdpService.cs:36` | both | open |
+| D-BRW-19 | low | Browser | Browser detection suffix/prefix heuristics classify non-browsers as browsers and inject --new-window | `src/win-desktop-mcp/Services/BrowserDetectionService.cs:76` | both | open |
+| D-BRW-20 | low | Browser | UIA content path always repeats the expensive URL lookup and attaches its possibly bogus value | `src/win-desktop-mcp/Services/BrowserReadingService.cs:226` | r2 | open |
+| D-BRW-90 | low | Browser | BrowserReadingService tests depend on whatever real process owns PID 1000 | `tests/win-desktop-mcp.Tests/Unit/Services/BrowserReadingServiceTests.cs:456` | later review | fixed (M0) |
+| D-INP-11 | low | Input | Clicks are not atomic (SetCursorPos, sleep, then SendInput) and the landing point and double-click timing are not verified | `src/win-desktop-mcp/Services/InputSimulationService.cs:190` | both | partly fixed (M1) |
+| D-INP-12 | low | Input | Partial SendInput insertion can leave modifier keys logically held | `src/win-desktop-mcp/Services/InputSimulationService.cs:293` | both | fixed (M1) |
+| D-INP-13 | low | Input | Virtual-key events always carry scan code 0 | `src/win-desktop-mcp/Native/NativeStructs.cs:178` | both | open |
+| D-INP-14 | low | Input | send_keys injects the whole sequence in one burst with no pacing | `src/win-desktop-mcp/Services/InputSimulationService.cs:291` | r1 | open |
+| D-INP-15 | low | Input | type_text is unbounded and uncancellable, and echoes the full text back | `src/win-desktop-mcp/Services/InputSimulationService.cs:234` | r2 | partly fixed (M1) |
+| D-INP-16 | low | Input | Input error codes are misleading or unused | `src/win-desktop-mcp/Services/InputSimulationService.cs:306` | r2 | partly fixed (M1, M2.2) |
+| D-MCP-90 | low | MCP surface & project | DependencyInjectionTests claimed to mirror Program.cs but had drifted (8 types missing) | `tests/win-desktop-mcp.Tests/Integration/DependencyInjectionTests.cs:27` | later review | fixed (M0) |
+| D-PAL-19 | low | Launch & layouts | Launch/kill error codes are inaccurate: the AccessDenied branch is unreachable and kill success is not confirmed | `src/win-desktop-mcp/Services/ProcessService.cs:342` | both | fixed (M0) |
+| D-PAL-20 | low | Launch & layouts | list_processes(includeWindowless:true) reports WindowCount=0 for every process | `src/win-desktop-mcp/Services/ProcessService.cs:114` | both | fixed (M6 S0e) |
+| D-PAL-21 | low | Launch & layouts | kill_process acts on a bare PID with no identity check (PID reuse) | `src/win-desktop-mcp/Services/ProcessService.cs:288` | both | fixed (M0) |
+| D-PAL-22 | low | Launch & layouts | kill_process protected list omits shell-infrastructure processes and the agent's own host | `src/win-desktop-mcp/Services/ProcessService.cs:226` | r2 | partly fixed (M0), fixed (M1) |
+| D-PAL-23 | low | Launch & layouts | Launch waits are synchronous Thread.Sleep loops with no timeout cap or cancellation; batch waits run sequentially and drop ErrorCode | `src/win-desktop-mcp/Tools/AppLauncherTools.cs:30` | both | partly fixed (M0, M1), fixed (M2.6) |
+| D-PAL-24 | low | Launch & layouts | file:// is allowed as a 'safe' protocol, bypassing every executable check | `src/win-desktop-mcp/Services/InputValidationService.cs:37` | r1 | fixed (M0) |
+| D-PAL-25 | low | Launch & layouts | apply_layout ignores the result of FocusWindow for focus placements | `src/win-desktop-mcp/Services/LayoutService.cs:260` | r2 | partly fixed (M1), fixed (M2.8) |
+| D-SCR-10 | low | Screenshots | The undefined high byte of GDI pixels is copied into an ARGB bitmap, producing transparent PNG pixels | `src/win-desktop-mcp/Services/ScreenshotService.cs:560` | both | fixed (M1) |
+| D-SCR-11 | low | Screenshots | Window capture has no hang protection: PrintWindow runs synchronously against the target's UI thread | `src/win-desktop-mcp/Native/ScreenCaptureWrapper.cs:130` | r1 | fixed (M2.9) |
+| D-SCR-12 | low | Screenshots | Frame captures include the invisible DWM resize borders | `src/win-desktop-mcp/Native/ScreenCaptureWrapper.cs:78` | r1 | fixed (M2.9) |
+| D-SCR-13 | low | Screenshots | Large captures triple-copy pixels and the 16384 cap still allows multi-GB allocations | `src/win-desktop-mcp/Native/ScreenCaptureWrapper.cs:188` | both | fixed (M2.9) |
+| D-SCR-14 | low | Screenshots | GetDIBits is called while the bitmap is still selected into the memory DC | `src/win-desktop-mcp/Native/ScreenCaptureWrapper.cs:49` | both | fixed (M2.9) |
+| D-SCR-15 | low | Screenshots | Annotation rectangles are too wide/tall for elements extending above or left of the image | `src/win-desktop-mcp/Services/ScreenshotService.cs:639` | r2 | fixed (M1) |
+| D-SCR-16 | low | Screenshots | capture_region silently returns black for off-screen areas and reports the nearest monitor | `src/win-desktop-mcp/Services/ScreenshotService.cs:122` | r2 | fixed (M2.9) |
+| D-SCR-17 | low | Screenshots | capture_with_elements combines window bounds, UIA bounds and pixels taken at different times | `src/win-desktop-mcp/Tools/ScreenshotTools.cs:149` | r2 | partly fixed (M3.11) |
+| D-SCR-18 | low | Screenshots | Dead encode/save paths, undisposed EncoderParameters and silent format fallback | `src/win-desktop-mcp/Services/ScreenshotService.cs:360` | r1 | fixed (M1) |
+| D-UIA-09 | low | UI Automation | Empty bounding rectangles serialize as int.MinValue coordinates | `src/win-desktop-mcp/Services/UIElementService.cs:304` | both | fixed (M1) |
+| D-UIA-10 | low | UI Automation | maxDepth is off by one (N returns N+1 levels) and truncation is not reported | `src/win-desktop-mcp/Services/UIElementService.cs:340` | both | fixed (M1) |
+| D-UIA-11 | low | UI Automation | A single vanished sibling silently drops all remaining siblings in the traversal | `src/win-desktop-mcp/Services/UIElementService.cs:249` | both | fixed (M0) |
+| D-UIA-12 | low | UI Automation | Unknown controlTypes names are silently accepted and return empty success | `src/win-desktop-mcp/Tools/UIElementTools.cs:53` | r2 | fixed (M1) |
+| D-WIN-16 | low | Windows & monitors | bringToFront (default true in snap) activates the window despite SWP_NOACTIVATE, making keyboard focus nondeterministic | `src/win-desktop-mcp/Services/WindowService.cs:124` | both | partly fixed (M1, M2.3) |
+| D-WIN-17 | low | Windows & monitors | set_window_state('restore'/'normal') on a window minimized from maximized returns it maximized | `src/win-desktop-mcp/Services/WindowService.cs:177` | r2 | partly fixed (M2.2) |
+| D-WIN-18 | low | Windows & monitors | DPI awareness is per-monitor v1 via API call with the HRESULT ignored and no manifest | `src/win-desktop-mcp/Program.cs:13` | both | fixed (M2.11) |
+| D-WIN-19 | low | Windows & monitors | Snap tests exercise a copied algorithm; MonitorService has no test seam | `tests/win-desktop-mcp.Tests/Unit/Services/MonitorServiceTests.cs:145` | both | fixed (M2.3) |
+| D-WIN-20 | low | Windows & monitors | Batch delayBetweenMs is unbounded and blocks via Thread.Sleep with no cancellation | `src/win-desktop-mcp/Services/WindowService.cs:341` | r2 | partly fixed (M1), fixed (M2.13) |
 
 ### Defect details
 
-**D-BRW-01: launch_browser_with_debug cannot serialize its success result (nint? WindowHandle)** (critical, `src/WindowsAppManagerMcp/Tools/BrowserReadingTools.cs:138`, r2:BRW-1, r1:MCP-2, r2:MSP-2)
+**D-BRW-01: launch_browser_with_debug cannot serialize its success result (nint? WindowHandle)** (critical, `src/win-desktop-mcp/Tools/BrowserReadingTools.cs:138`, r2:BRW-1, r1:MCP-2, r2:MSP-2)
 
 - Impact: On the normal path (browser started, window found) the tool returns an opaque error with no PID, port or profile dir; a retry fails with PortInUse or opens more browsers.
 - Fix: Declare long? WindowHandle mapped via WindowHandle?.ToInt64() and add a contract test that serializes every tool return type with the MCP serializer options.
 - M0: fixed on `m0-tool-contract`
 
-**D-SCR-01: Screenshots are returned as base64 inside JSON text, not as MCP image content** (critical, `src/WindowsAppManagerMcp/Tools/ScreenshotTools.cs:34`, r1:SCR-1, r2:SCR-1, r1:MCP-1, r2:MSP-1)
+**D-SCR-01: Screenshots are returned as base64 inside JSON text, not as MCP image content** (critical, `src/win-desktop-mcp/Tools/ScreenshotTools.cs:34`, r1:SCR-1, r2:SCR-1, r1:MCP-1, r2:MSP-1)
 
 - Impact: The model cannot see the image at all, and a 1080p PNG becomes 1.4M+ characters that exceed Claude Code's MCP output cap (truncated or written to a file) or burn hundreds of thousands of tokens, breaking the entire visual loop.
 - Fix: Return CallToolResult with an ImageContentBlock (base64, image/png or image/jpeg) plus a TextContentBlock of metadata JSON without ImageData, and IsError = !Success.
 - M1: fixed on `m1-captures` (M1.2): captures are MCP image content, with the metadata in a text block
 
-**D-BRW-02: CDP WebSocket calls have no timeout or cancellation** (high, `src/WindowsAppManagerMcp/Services/CdpService.cs:195`, r1:BRW-1, r2:BRW-3)
+**D-BRW-02: CDP WebSocket calls have no timeout or cancellation** (high, `src/win-desktop-mcp/Services/CdpService.cs:195`, r1:BRW-1, r2:BRW-3)
 
 - Impact: On a tab with an alert/confirm/beforeunload dialog, a paused debugger or a hung renderer, Runtime.evaluate never replies and get_browser_content/get_browser_url hang forever, leaking the worker and socket.
 - Fix: Make the browser tools async with the SDK CancellationToken plus a clamped timeoutMs linked into Connect/Send/Receive, and pass a timeout to Runtime.evaluate.
 - M0: fixed on `m0-cdp-timeouts`
 
-**D-BRW-03: CDP target selection uses title substring matching and can return another tab's or browser's data** (high, `src/WindowsAppManagerMcp/Services/CdpService.cs:145`, r1:BRW-2, r2:BRW-4)
+**D-BRW-03: CDP target selection uses title substring matching and can return another tab's or browser's data** (high, `src/win-desktop-mcp/Services/CdpService.cs:145`, r1:BRW-2, r2:BRW-4)
 
 - Impact: 'GitHub - Google Chrome'.Contains('Google') picks a google.com tab, duplicate tabs depend on /json order, and a handle from a different browser instance returns the debug browser's data, all with Success=true.
 - Fix: Verify the port's owning PID matches the HWND's process, then bind HWND to target deterministically (Browser.getWindowForTarget / bounds match), failing with CdpTargetNotMatched instead of guessing.
 - M0: fixed on `m0-cdp-timeouts`
 
-**D-BRW-04: Debug browser starts with a fresh profile but does not suppress first-run UI** (high, `src/WindowsAppManagerMcp/Services/ProcessService.cs:470`, r1:BRW-4, r2:BRW-8)
+**D-BRW-04: Debug browser starts with a fresh profile but does not suppress first-run UI** (high, `src/win-desktop-mcp/Services/ProcessService.cs:470`, r1:BRW-4, r2:BRW-8)
 
 - Impact: Every launch can show welcome/sign-in, default-browser and (EEA) search-engine-choice dialogs, the returned handle may be the first-run window, and the agent must click through them before the URL loads.
 - Fix: Always add --no-first-run --no-default-browser-check --disable-search-engine-choice-screen (and Edge equivalents) and confirm the returned HWND shows the requested URL.
 
-**D-INP-01: Keyboard and mouse input is not tied to a target window and never verifies which window received it** (high, `src/WindowsAppManagerMcp/Tools/InputSimulationTools.cs:79`, r1:INP-1, r2:INP-2, r1:MCP-4, r2:MSP-3)
+**D-INP-01: Keyboard and mouse input is not tied to a target window and never verifies which window received it** (high, `src/win-desktop-mcp/Tools/InputSimulationTools.cs:79`, r1:INP-1, r2:INP-2, r1:MCP-4, r2:MSP-3)
 
 - Impact: If focus_window was refused or focus moved (toast, dialog, user, the agent's terminal) between calls, '^a{DELETE}', '%{F4}' or a typed password lands in the wrong app while Success=true is returned.
 - Fix: Add an optional windowHandle to all input tools; before SendInput ensure GetAncestor(GetForegroundWindow(), GA_ROOT) equals the target (focusing it via the lock workaround), fail with ForegroundMismatch otherwise, and report the receiving window.
 - M1: fixed on `m1-input-guard` (M1.5): windowHandle, a guard before every batch and receivingWindow/foregroundAfter in every result
 
-**D-INP-02: InputSimulationService unit tests send real mouse/keyboard input, including Alt+F4, to the developer's desktop** (high, `tests/WindowsAppManagerMcp.Tests/Unit/Services/InputSimulationServiceTests.cs:567`, r1:INP-12, r2:INP-1, r1:MCP-5, r2:MSP-6)
+**D-INP-02: InputSimulationService unit tests send real mouse/keyboard input, including Alt+F4, to the developer's desktop** (high, `tests/win-desktop-mcp.Tests/Unit/Services/InputSimulationServiceTests.cs:567`, r1:INP-12, r2:INP-1, r1:MCP-5, r2:MSP-6)
 
 - Impact: dotnet test (CLI, IDE or an agent verifying a change) clicks, pastes, deletes and sends Alt+F4 into the focused window, typically closing the terminal; the send_keys grammar has no isolated coverage.
 - Fix: Land the fix-input-test-isolation work (INativeInputWrapper, 6c4648d), extend InputEvent with Dx/Dy/MouseData/Scan, and add table-driven parser tests asserting exact event sequences.
 - M0: fixed on `m0-test-isolation`
 
-**D-INP-03: Input blocked by UIPI/elevation or the secure desktop is not detected or diagnosed** (high, `src/WindowsAppManagerMcp/Native/NativeMethods.Input.cs:9`, r1:INP-5, r2:INP-3)
+**D-INP-03: Input blocked by UIPI/elevation or the secure desktop is not detected or diagnosed** (high, `src/win-desktop-mcp/Native/NativeMethods.Input.cs:9`, r1:INP-5, r2:INP-3)
 
 - Impact: Clicking or typing into Task Manager, an admin terminal, an installer or a UAC prompt silently does nothing while Success=true (or a generic 'SendInput failed') is returned, so the agent retries blindly.
 - Fix: Pre-flight the target (foreground window for keys, WindowFromPoint for clicks), compare its token integrity level with the server's, read GetLastError on short SendInput counts, and return ElevatedTarget/DesktopUnavailable codes.
@@ -1385,176 +1385,176 @@ Run ids such as `r1:WC-1` and `r2:WC-1` trace each entry back to the raw review 
 - M0: partly fixed on `m0-release-pipeline`
 - M2: partly fixed on `m2-foundation` (M2.12): scripts/Test-ToolsSnapshot.ps1 lists the tools of the published exe, and of the committed bin exe when it is current, and compares them with the tools/list snapshot in CI
 
-**D-MCP-02: Test suite drives the real desktop beyond input (launches Chrome/Notepad, attempts kills), runs unfiltered in CI/README, and the CI test job keeps failing** (high, `tests/WindowsAppManagerMcp.Tests/Unit/Services/ProcessServiceTests.cs:458`, r1:MCP-5, r2:MSP-6, r1:bro-m1)
+**D-MCP-02: Test suite drives the real desktop beyond input (launches Chrome/Notepad, attempts kills), runs unfiltered in CI/README, and the CI test job keeps failing** (high, `tests/win-desktop-mcp.Tests/Unit/Services/ProcessServiceTests.cs:458`, r1:MCP-5, r2:MSP-6, r1:bro-m1)
 
 - Impact: 'Unit' tests open real browser and Notepad windows that are never cleaned up, CI has failed 7 runs in a row so regressions like the nint serialization crash ship unnoticed, and the documented test command is unsafe to run.
 - Fix: Put an IProcessLauncher seam behind ProcessService, tag remaining real-OS tests as Integration, and exclude them from default and CI runs.
 - M0: fixed on `m0-test-isolation`
 
-**D-PAL-01: Launching via a launcher stub or single-instance app (browsers with a URL) returns a dead PID and no window handle** (high, `src/WindowsAppManagerMcp/Services/ProcessService.cs:360`, r1:PAL-1, r2:PAL-1, r1:BRW-3, r2:BRW-10)
+**D-PAL-01: Launching via a launcher stub or single-instance app (browsers with a URL) returns a dead PID and no window handle** (high, `src/win-desktop-mcp/Services/ProcessService.cs:360`, r1:PAL-1, r2:PAL-1, r1:BRW-3, r2:BRW-10)
 
 - Impact: launch_application('chrome', [url], waitForWindow:true) while Chrome runs waits the full timeout and returns WindowHandle=null with an exited PID, so find_windows(processId)/kill_process fail and the agent must guess which window is new.
 - Fix: Snapshot top-level HWNDs before Process.Start, then wait (async) for a new visible unowned window from the launched PID or any process with the same image, returning its HWND/PID and a handedOff flag.
 - M2: fixed on `m2-launch` (M2.6): the launch waits for a new window of the started process, its process tree, the same image or a handoff target (or expectWindow) and returns it with launchStatus, whichever process owns it
 
-**D-PAL-02: Shell-metacharacter check rejects any path containing '(' or ')', so 'Program Files (x86)' apps and Edge debug launch always fail** (high, `src/WindowsAppManagerMcp/Services/InputValidationService.cs:14`, r1:PAL-2, r2:PAL-2, r2:BRW-2)
+**D-PAL-02: Shell-metacharacter check rejects any path containing '(' or ')', so 'Program Files (x86)' apps and Edge debug launch always fail** (high, `src/win-desktop-mcp/Services/InputValidationService.cs:14`, r1:PAL-2, r2:PAL-2, r2:BRW-2)
 
 - Impact: No 32-bit app can be launched by full path and launch_browser_with_debug(browser:'edge') never succeeds on a standard install, with a misleading 'command injection' error.
 - Fix: Drop the metacharacter check for FileName/WorkingDirectory (keep control chars and embedded quotes), validate with Path.GetFullPath, and start trusted BrowserPaths entries directly.
 - M0: fixed on `m0-launch-and-kill`
 
-**D-PAL-03: Layouts are stored in the versioned plugin install folder: lost on update and bundled samples never deployed** (high, `src/WindowsAppManagerMcp/Program.cs:49`, r1:PAL-3, r2:PAL-5, r1:MCP-8, r2:MSP-11)
+**D-PAL-03: Layouts are stored in the versioned plugin install folder: lost on update and bundled samples never deployed** (high, `src/win-desktop-mcp/Program.cs:49`, r1:PAL-3, r2:PAL-5, r1:MCP-8, r2:MSP-11)
 
 - Impact: Saved layouts vanish after the next plugin version bump, documented examples like apply_layout('work-setup') are never found, and the constructor throws if the folder is read-only.
-- Fix: Store presets under %LOCALAPPDATA%/WindowsAppManagerMcp/layouts (env override), migrate existing files on startup, and seed the bundled samples on first run.
+- Fix: Store presets under %LOCALAPPDATA%/win-desktop-mcp/layouts (env override), migrate existing files on startup, and seed the bundled samples on first run.
 - M0: fixed on `m0-layout-storage`
 
-**D-PAL-04: A captured layout cannot restore more than one window per process: every placement hits the same window** (high, `src/WindowsAppManagerMcp/Services/LayoutService.cs:245`, r1:PAL-4, r2:PAL-4, r2:mcp-m1)
+**D-PAL-04: A captured layout cannot restore more than one window per process: every placement hits the same window** (high, `src/win-desktop-mcp/Services/LayoutService.cs:245`, r1:PAL-4, r2:PAL-4, r2:mcp-m1)
 
 - Impact: Save-then-restore fails for browsers, Explorer, VS Code and Office (the most common multi-window apps) while reporting a full WindowsArranged count, so the agent tells the user it worked.
 - Fix: Track already-assigned handles and pick the best unassigned candidate scored by captured title, className and ordinal.
 - M2: fixed on `m2-layouts` (M2.8): every placement-window pair is scored from one snapshot and each window goes to one placement
 
-**D-PAL-05: kill_process graceful mode escalates to a forced process-tree kill after 3 seconds** (high, `src/WindowsAppManagerMcp/Services/ProcessService.cs:303`, r1:PAL-5, r2:PAL-3, r1:MCP-7)
+**D-PAL-05: kill_process graceful mode escalates to a forced process-tree kill after 3 seconds** (high, `src/win-desktop-mcp/Services/ProcessService.cs:303`, r1:PAL-5, r2:PAL-3, r1:MCP-7)
 
 - Impact: Closing an editor with unsaved changes shows the save prompt and then kills it and all children 3 s later, losing the work (and every shell/build under a terminal or IDE) while the agent believes it chose the safe mode.
 - Fix: When forceKill=false never escalate; return GracefulCloseTimedOut/blockedByPrompt with the prompt handle if the process is still running.
 - M0: fixed on `m0-launch-and-kill`
 
-**D-UIA-01: controlTypes filter discards matching descendants of non-matching containers and double-counts TotalElementCount** (high, `src/WindowsAppManagerMcp/Services/UIElementService.cs:284`, r1:UIA-1, r2:UIA-1, r1:scr-m1, r2:SCR-4)
+**D-UIA-01: controlTypes filter discards matching descendants of non-matching containers and double-counts TotalElementCount** (high, `src/win-desktop-mcp/Services/UIElementService.cs:284`, r1:UIA-1, r2:UIA-1, r1:scr-m1, r2:SCR-4)
 
 - Impact: get_ui_elements or capture_with_elements with controlTypes='Button,Edit' (the documented workflow) returns an almost empty list/overlay because controls sit inside Pane/ToolBar/Group, so the agent concludes the control does not exist.
 - Fix: When a node fails only the type filter, splice its matching descendants into the parent's list, count only included elements, and add tests over a fake tree.
 - M1: fixed on `m1-uia-tree` (M1.8): matches inside non-matching containers are spliced into their parent, and each element is counted once
 
-**D-UIA-02: A null ControlType (UWP/WinUI AppBar, SemanticZoom) or any non-ElementNotAvailable exception on one element aborts the whole traversal** (high, `src/WindowsAppManagerMcp/Services/UIElementService.cs:369`, r1:UIA-2, r2:UIA-3)
+**D-UIA-02: A null ControlType (UWP/WinUI AppBar, SemanticZoom) or any non-ElementNotAvailable exception on one element aborts the whole traversal** (high, `src/win-desktop-mcp/Services/UIElementService.cs:369`, r1:UIA-2, r2:UIA-3)
 
 - Impact: get_ui_elements and capture_with_elements fail completely ('Value cannot be null') on any window with a CommandBar or SemanticZoom, and one bad Chromium/Electron node discards hundreds of good elements.
 - Fix: Null-guard GetControlTypeName (fall back to LocalizedControlType or the raw id) and catch Exception per element, skipping the node and recording it in a Warnings/SkippedElements field.
 - M0: fixed on `m0-concurrency-and-uia-crash`
 
-**D-WIN-01: focus_window has no foreground-lock workaround and never verifies focus changed** (high, `src/WindowsAppManagerMcp/Services/WindowService.cs:196`, r1:WC-1, r2:WC-1)
+**D-WIN-01: focus_window has no foreground-lock workaround and never verifies focus changed** (high, `src/win-desktop-mcp/Services/WindowService.cs:196`, r1:WC-1, r2:WC-1)
 
 - Impact: The server is a background stdio child of the agent host, so SetForegroundWindow is usually refused (taskbar flashes) yet focus_window reports success. The skill tells the agent to focus then type, so keystrokes land in the agent's own terminal or another app.
 - Fix: Add an EnsureForeground routine behind INativeWindowWrapper (restore if iconic, SetForegroundWindow, then AttachThreadInput/BringWindowToTop or an Alt-tap fallback) and return success only if GetForegroundWindow's root equals the target.
 - M1: fixed on `m1-foreground` (M1.3): EnsureForeground works around the foreground lock and verifies what is in front
 
-**D-WIN-02: Geometry operations never un-maximize (and move/resize ignore minimized windows)** (high, `src/WindowsAppManagerMcp/Services/WindowService.cs:151`, r1:WC-3, r2:WC-4, r2:mcp-m2)
+**D-WIN-02: Geometry operations never un-maximize (and move/resize ignore minimized windows)** (high, `src/win-desktop-mcp/Services/WindowService.cs:151`, r1:WC-3, r2:WC-4, r2:mcp-m2)
 
 - Impact: snap_window/set_window_bounds on a maximized browser or IDE leaves WS_MAXIMIZE set, so the window is reported 'maximized' with half-screen bounds and jumps back on the next restore; move/resize on a minimized window return success with no visible effect.
 - Fix: Add a shared PrepareForGeometryChange step that, when IsIconic or IsZoomed, uses SetWindowPlacement(showCmd=SW_SHOWNORMAL, rcNormalPosition=target) (or SW_RESTORE up to twice) before SetWindowPos.
 - M2: fixed on `m2-geometry` (M2.3): every placement restores a minimized or maximized window without activation (SW_SHOWNOACTIVATE, at most twice) and measures it only then; one that stays minimized or maximized fails with MoveFailed or ResizeFailed
 
-**D-WIN-03: move_window_to_monitor 'maximize' maximizes on the current monitor and other modes do not fit the window to the target** (high, `src/WindowsAppManagerMcp/Services/WindowService.cs:268`, r1:WC-2, r2:WC-2, r2:MSP-8)
+**D-WIN-03: move_window_to_monitor 'maximize' maximizes on the current monitor and other modes do not fit the window to the target** (high, `src/win-desktop-mcp/Services/WindowService.cs:268`, r1:WC-2, r2:WC-2, r2:MSP-8)
 
 - Impact: 'Move app to monitor 2 and maximize' returns success while the window stays maximized on the original monitor; a large window moved from 4K to 1080p overflows the target with its title bar above the work area, so it cannot be dragged back.
 - Fix: Restore first, place rcNormalPosition inside the target work area (clamped and DPI-scaled) via SetWindowPlacement/SetWindowPos, then SW_MAXIMIZE, and verify MonitorFromWindow equals the target.
 - M2: fixed on `m2-tool-surface` (M2.2) and `m2-geometry` (M2.3): move_window_to_monitor restores, fits the window into the target work area, moves it (in two steps across a scale change), maximizes only once it is on the target monitor (since `m2-fix-integration`) and verifies the monitor (MoveFailed otherwise)
 
-**D-WIN-04: Window listings (and save_layout) include cloaked, other-virtual-desktop, tool and shell windows** (high, `src/WindowsAppManagerMcp/Services/WindowService.cs:25`, r1:WC-4, r2:WC-3, r1:PAL-14, r2:pro-m1)
+**D-WIN-04: Window listings (and save_layout) include cloaked, other-virtual-desktop, tool and shell windows** (high, `src/win-desktop-mcp/Services/WindowService.cs:25`, r1:WC-4, r2:WC-3, r1:PAL-14, r2:pro-m1)
 
 - Impact: get_all_windows/find_windows return invisible suspended UWP frames, 'Windows Input Experience', other-desktop windows and 'Program Manager'; actions on them 'succeed' invisibly, and save_layout/apply_layout capture and move these phantom windows (including resizing the desktop host).
 - Fix: Add IsCloaked (DWMWA_CLOAKED) to INativeWindowWrapper and by default exclude cloaked windows, WS_EX_TOOLWINDOW without WS_EX_APPWINDOW, and Progman/WorkerW/Shell_TrayWnd, with includeCloaked/includeShell opt-ins.
 - M1: fixed on `m1-window-reads` (M1.6): listings leave out cloaked, tool, untitled and shell windows unless asked
 
-**D-BRW-05: Silent fallback from CDP to UIA with no indication of the method used; textOnly=false is ignored** (medium, `src/WindowsAppManagerMcp/Services/BrowserReadingService.cs:201`, r1:BRW-6, r2:BRW-7)
+**D-BRW-05: Silent fallback from CDP to UIA with no indication of the method used; textOnly=false is ignored** (medium, `src/win-desktop-mcp/Services/BrowserReadingService.cs:201`, r1:BRW-6, r2:BRW-7)
 
 - Impact: An agent passing cdpPort for rendered HTML silently gets UIA text or a UIA error (e.g. UrlBarNotFound) with no sign CDP failed or why.
 - Fix: Add Source ('cdp'|'uia'), format and CdpError fields plus a mode parameter (auto|cdp|uia) that returns explicit CDP error codes in cdp mode.
 - M0: fixed on `m0-cdp-timeouts`
 
-**D-BRW-06: UIA address-bar lookup is English-only, its fallback fails on wide/high-DPI windows, and it can return non-URL text** (medium, `src/WindowsAppManagerMcp/Native/UIAutomationWrapper.cs:111`, r1:BRW-7, r2:BRW-6, r1:UIA-12, r2:UIA-11)
+**D-BRW-06: UIA address-bar lookup is English-only, its fallback fails on wide/high-DPI windows, and it can return non-URL text** (medium, `src/win-desktop-mcp/Native/UIAutomationWrapper.cs:111`, r1:BRW-7, r2:BRW-6, r1:UIA-12, r2:UIA-11)
 
 - Impact: On a localized browser maximized on 4K the omnibox (>2000 px) is skipped (UrlBarNotFound), 'localhost:3000' fails, and the heuristic can return a page form value or a label like 'Search or enter address' as the URL with Success=true.
 - Fix: Use locale-independent locators (document element value, OmniboxViewViews class, toolbar-scoped Edit outside any Document), validate candidates as URLs, and never fall back to Name.
 
-**D-BRW-07: Browser URL name search matches the top-level window's own title, so a page title can be returned as the URL** (medium, `src/WindowsAppManagerMcp/Native/UIAutomationWrapper.cs:180`, r1:ui--m1, r2:ui--m1)
+**D-BRW-07: Browser URL name search matches the top-level window's own title, so a page title can be returned as the URL** (medium, `src/win-desktop-mcp/Native/UIAutomationWrapper.cs:180`, r1:ui--m1, r2:ui--m1)
 
 - Impact: A page whose <title> contains 'address and search bar' makes get_browser_url return attacker-chosen text as the URL with Success=true, which can mislead an agent verifying which site it is on before entering credentials.
 - Fix: Exclude the root window and Document subtrees from the name search and validate the result as a URL.
 
-**D-BRW-08: UIA URL is the omnibox display text, usually missing the scheme or showing in-progress typing** (medium, `src/WindowsAppManagerMcp/Native/UIAutomationWrapper.cs:279`, r1:BRW-8, r2:BRW-5)
+**D-BRW-08: UIA URL is the omnibox display text, usually missing the scheme or showing in-progress typing** (medium, `src/win-desktop-mcp/Native/UIAutomationWrapper.cs:279`, r1:BRW-8, r2:BRW-5)
 
 - Impact: get_browser_url returns 'github.com/org/repo', so URL comparisons fail and passing it to launch_application treats it as a file path.
 - Fix: Read the committed URL from the web Document element's value first, otherwise normalize and return Url plus DisplayUrl.
 
-**D-BRW-09: get_browser_content is unbounded by default, has no truncation signal or paging, and ContentLength is post-truncation** (medium, `src/WindowsAppManagerMcp/Tools/BrowserReadingTools.cs:37`, r1:BRW-9, r2:BRW-11, r1:MCP-11, r1:mcp-m4)
+**D-BRW-09: get_browser_content is unbounded by default, has no truncation signal or paging, and ContentLength is post-truncation** (medium, `src/win-desktop-mcp/Tools/BrowserReadingTools.cs:37`, r1:BRW-9, r2:BRW-11, r1:MCP-11, r1:mcp-m4)
 
 - Impact: One call on an SPA dumps hundreds of KB to MB into context and exceeds client output limits; with maxLength set, the agent cannot tell content was cut or fetch the rest.
 - Fix: Default maxLength to ~20,000 chars with a hard cap, add offset, and return TotalLength, Truncated and NextOffset.
 
-**D-BRW-10: launch_browser_with_debug never checks the CDP endpoint opened, does not validate the port, and never cleans up temp profiles** (medium, `src/WindowsAppManagerMcp/Services/ProcessService.cs:503`, r1:BRW-10, r2:BRW-8, r1:pro-m1, r2:pro-m2)
+**D-BRW-10: launch_browser_with_debug never checks the CDP endpoint opened, does not validate the port, and never cleans up temp profiles** (medium, `src/win-desktop-mcp/Services/ProcessService.cs:503`, r1:BRW-10, r2:BRW-8, r1:pro-m1, r2:pro-m2)
 
 - Impact: Success and a dead CdpPort are returned when policy disables debugging, a userDataDir hands off to a running instance, or Chrome 136+ ignores the flag; later reads fail confusingly and each launch leaves a full profile in %TEMP%.
 - Fix: Validate the port, poll http://127.0.0.1:{port}/json/version until ready or fail with DebugLaunchFailed, return the browser WS endpoint, and delete temp profiles this tool created.
 - M2: partly fixed on `m2-tool-surface` (M2.2): the port is validated (1-65535, InvalidArguments); the CDP endpoint is still not checked and temporary profiles are not deleted (M5.1, M5.4)
 
-**D-BRW-11: Debug browser exposes an unauthenticated CDP port on the well-known 9222** (medium, `src/WindowsAppManagerMcp/Services/ProcessService.cs:472`, r2:BRW-13, r1:BRW-10)
+**D-BRW-11: Debug browser exposes an unauthenticated CDP port on the well-known 9222** (medium, `src/win-desktop-mcp/Services/ProcessService.cs:472`, r2:BRW-13, r1:BRW-10)
 
 - Impact: Any local process (e.g. infostealer malware scanning 9222) can attach, read cookies and run script in any origin the agent signs into, and the cookies persist in the leftover temp profile.
 - Fix: Default to --remote-debugging-port=0, read the port from DevToolsActivePort in the user-data dir, and delete the profile on exit.
 
-**D-BRW-12: --user-data-dir is quoted twice, so paths with spaces split into separate arguments** (medium, `src/WindowsAppManagerMcp/Services/ProcessService.cs:473`, r1:BRW-5, r2:BRW-9, r1:mcp-m3, r1:PAL-8, r2:PAL-7)
+**D-BRW-12: --user-data-dir is quoted twice, so paths with spaces split into separate arguments** (medium, `src/win-desktop-mcp/Services/ProcessService.cs:473`, r1:BRW-5, r2:BRW-9, r1:mcp-m3, r1:PAL-8, r2:PAL-7)
 
 - Impact: For profiles under a user folder with a space (or Chrome's 'User Data'), Chrome uses a truncated or unwritable directory and opens the stray token as a URL, and CDP may attach to the wrong profile.
 - Fix: Build the command line with ProcessStartInfo.ArgumentList and pass --user-data-dir=<path> without manual quotes.
 - M0: fixed on `m0-launch-and-kill`
 
-**D-BRW-13: Debug-launch url argument is not validated and can inject browser switches** (medium, `src/WindowsAppManagerMcp/Services/ProcessService.cs:473`, r1:BRW-5, r2:BRW-13)
+**D-BRW-13: Debug-launch url argument is not validated and can inject browser switches** (medium, `src/win-desktop-mcp/Services/ProcessService.cs:473`, r1:BRW-5, r2:BRW-13)
 
 - Impact: A 'URL' taken from untrusted page text (prompt injection) that starts with '-' or contains quoted switches is passed to the browser as command-line flags.
 - Fix: Require Uri.TryCreate(Absolute) with an http/https/file/about scheme, reject values starting with '-', and insert '--' before the positional URL.
 - M0: partly fixed on `m0-launch-and-kill`
 - M2: fixed on `m2-fix-privacy` (M2.10 follow-up): a url that starts with '-' or '/' or holds a control character is refused (InvalidArguments) before anything starts; the url is one argument, quoted with the standard rules, so quoted switches inside it stay part of the URL
 
-**D-BRW-14: Browser UIA searches and content reads are unbounded (whole-tree Descendants scans, full-document GetText, no deadline)** (medium, `src/WindowsAppManagerMcp/Native/UIAutomationWrapper.cs:232`, r1:UIA-13, r2:ui--m3, r2:BRW-12)
+**D-BRW-14: Browser UIA searches and content reads are unbounded (whole-tree Descendants scans, full-document GetText, no deadline)** (medium, `src/win-desktop-mcp/Native/UIAutomationWrapper.cs:232`, r1:UIA-13, r2:ui--m3, r2:BRW-12)
 
 - Impact: On heavy pages (long diffs, infinite feeds) get_browser_url/get_browser_content in UIA mode can block for tens of seconds or more and read the whole document even for a small maxLength, with no way to cancel.
 - Fix: Pass a deadline/CancellationToken through IUIAutomationWrapper, scope URL searches to the toolbar subtree, use GetText(maxLength), and cap walks by node count and time.
 
-**D-BRW-15: UIA content path does not wake Chromium's on-demand accessibility tree** (medium, `src/WindowsAppManagerMcp/Native/UIAutomationWrapper.cs:335`, r1:bro-m2, r2:bro-m1)
+**D-BRW-15: UIA content path does not wake Chromium's on-demand accessibility tree** (medium, `src/win-desktop-mcp/Native/UIAutomationWrapper.cs:335`, r1:bro-m2, r2:bro-m1)
 
 - Impact: The first get_browser_content on an untouched Chrome/Edge window returns empty content, ContentExtractionFailed or frame text as success while an identical second call works, so results are flaky.
 - Fix: Trigger the renderer accessibility tree and retry briefly until the Document has children before extracting.
 - M3: left open: M3.3's warm-up wakes a page's accessibility tree before the UI Automation element tools read a window (get_ui_elements, find_ui_elements, the text and table reads, the waits), but the browser reading tools' UI Automation path does not use it yet (M5.7)
 
-**D-BRW-16: UIA content extraction can return browser UI text or a side panel via the frame-pane fallback** (medium, `src/WindowsAppManagerMcp/Native/UIAutomationWrapper.cs:335`, r2:BRW-12)
+**D-BRW-16: UIA content extraction can return browser UI text or a side panel via the frame-pane fallback** (medium, `src/win-desktop-mcp/Native/UIAutomationWrapper.cs:335`, r2:BRW-12)
 
 - Impact: Success=true with tab titles, bookmarks or side-panel text instead of the page, which the agent cannot distinguish from real content.
 - Fix: Select the active page's Document (on-screen, value equals the committed URL) and return ContentAreaNotFound instead of falling back to the frame pane.
 
-**D-INP-04: send_keys shortcuts on punctuation/OEM keys (Ctrl+-, Ctrl+=, Ctrl+/, Ctrl+comma, Ctrl+backtick) are sent as Unicode packets and never fire** (medium, `src/WindowsAppManagerMcp/Services/InputSimulationService.cs:371`, r1:INP-2, r2:INP-4)
+**D-INP-04: send_keys shortcuts on punctuation/OEM keys (Ctrl+-, Ctrl+=, Ctrl+/, Ctrl+comma, Ctrl+backtick) are sent as Unicode packets and never fire** (medium, `src/win-desktop-mcp/Services/InputSimulationService.cs:371`, r1:INP-2, r2:INP-4)
 
 - Impact: Zoom, toggle comment, settings and VS Code terminal shortcuts do nothing or insert a stray character, while Success=true is returned.
 - Fix: Map characters via VkKeyScanExW with the foreground thread's layout and send the real VK (plus required Shift) whenever a modifier is active; use KEYEVENTF_UNICODE only for plain text.
 
-**D-INP-05: send_keys sends letters and digits as raw virtual keys, ignoring case, Caps Lock and keyboard layout** (medium, `src/WindowsAppManagerMcp/Services/InputSimulationService.cs:474`, r1:INP-3, r2:INP-5)
+**D-INP-05: send_keys sends letters and digits as raw virtual keys, ignoring case, Caps Lock and keyboard layout** (medium, `src/win-desktop-mcp/Services/InputSimulationService.cs:474`, r1:INP-3, r2:INP-5)
 
 - Impact: send_keys('Hello{ENTER}') types 'hello', Caps Lock inverts case, and on AZERTY '1' types '&', silently corrupting form input, search terms and file names.
 - Fix: Send unmodified characters as KEYEVENTF_UNICODE (as type_text does) and use case-insensitive VK mapping plus VkKeyScanExW only for modifier chords.
 
-**D-INP-06: No Win modifier, and {CTRL}/{ALT}/{SHIFT}/{WIN} in braces are tapped rather than held** (medium, `src/WindowsAppManagerMcp/Services/InputSimulationService.cs:359`, r1:INP-4, r2:INP-6)
+**D-INP-06: No Win modifier, and {CTRL}/{ALT}/{SHIFT}/{WIN} in braces are tapped rather than held** (medium, `src/win-desktop-mcp/Services/InputSimulationService.cs:359`, r1:INP-4, r2:INP-6)
 
 - Impact: Win+R, Win+D, Win+E, Win+Shift+S and Win+Arrow cannot be sent: '{WIN}r' opens Start and searches 'r', and '{CTRL}c' taps Ctrl then types 'c', both with Success=true.
 - Fix: Add a '#' Win modifier prefix (AutoHotkey convention) and '{KEY down}'/'{KEY up}' tokens, tracking held keys and releasing them at the end.
 
-**D-INP-07: send_keys implements only part of the SendKeys grammar: no escapes, grouping, repeat counts or '~'** (medium, `src/WindowsAppManagerMcp/Services/InputSimulationService.cs:327`, r1:INP-4, r2:INP-7)
+**D-INP-07: send_keys implements only part of the SendKeys grammar: no escapes, grouping, repeat counts or '~'** (medium, `src/win-desktop-mcp/Services/InputSimulationService.cs:327`, r1:INP-4, r2:INP-7)
 
 - Impact: send_keys('100%{ENTER}') sends Alt+Enter, 'C++' types 'c' plus Shift taps, '~' and '(...)' are typed literally, and literal + ^ % { } cannot be sent; LLMs trained on .NET SendKeys get silent wrong behavior.
 - Fix: Replace the parser with a tokenizer supporting {+} {^} {%} {~} {(} {)} {{} {}} escapes, +(abc) groups, {LEFT 5} repeats, '~' as Enter and NUMPAD/F13-F24/media keys, returning InvalidKeySpecification on errors.
 
-**D-INP-08: type_text sends Tab, CR and LF as Unicode packets instead of real Tab/Enter key presses** (medium, `src/WindowsAppManagerMcp/Services/InputSimulationService.cs:238`, r1:INP-9, r2:INP-8)
+**D-INP-08: type_text sends Tab, CR and LF as Unicode packets instead of real Tab/Enter key presses** (medium, `src/win-desktop-mcp/Services/InputSimulationService.cs:238`, r1:INP-9, r2:INP-8)
 
 - Impact: type_text('user<TAB>pass<LF>') does not move between dialog fields or submit (IsDialogMessage and default buttons look for VK_TAB/VK_RETURN), and CRLF can double line breaks in editors, all with Success=true.
 - Fix: Normalize CRLF/CR to LF and send LF as VK_RETURN, Tab as VK_TAB and Backspace as VK_BACK by default, with a controlChars option to keep literal packets.
 
-**D-INP-09: Input operations are not serialized across concurrent MCP requests** (medium, `src/WindowsAppManagerMcp/Services/InputSimulationService.cs:234`, r1:INP-7)
+**D-INP-09: Input operations are not serialized across concurrent MCP requests** (medium, `src/win-desktop-mcp/Services/InputSimulationService.cs:234`, r1:INP-7)
 
 - Impact: Parallel type_text calls interleave into garbled text, and a send_keys('^a') holding Ctrl can turn another call's characters into shortcuts.
 - Fix: Guard every input operation with one process-wide SemaphoreSlim.
 - M0: fixed on `m0-concurrency-and-uia-crash`
 
-**D-INP-10: Clicks ignore swapped mouse buttons** (medium, `src/WindowsAppManagerMcp/Services/InputSimulationService.cs:204`, r1:INP-11, r2:INP-10)
+**D-INP-10: Clicks ignore swapped mouse buttons** (medium, `src/win-desktop-mcp/Services/InputSimulationService.cs:204`, r1:INP-11, r2:INP-10)
 
 - Impact: On a left-handed setup 'click' opens context menus and 'right_click' activates items, so an inspecting right-click can open a file or press a button.
 - Fix: Read GetSystemMetrics(SM_SWAPBUTTON) per click and swap LEFT/RIGHT flags so 'click' always means the primary button.
@@ -1565,13 +1565,13 @@ Run ids such as `r1:WC-1` and `r2:WC-1` trace each entry back to the raw review 
 - Fix: Generate tool tables in README/TOOLS.md/SKILL.md from tools/list output, fix parameter names, and add a browser and coordinate-space section.
 - M0: fixed on `m0-docs-safety`
 
-**D-MCP-04: The exe requires the .NET 8 Windows Desktop Runtime but docs only ask for the .NET 8 Runtime** (medium, `src/WindowsAppManagerMcp/WindowsAppManagerMcp.csproj:11`, r1:MCP-12, r2:MSP-15)
+**D-MCP-04: The exe requires the .NET 8 Windows Desktop Runtime but docs only ask for the .NET 8 Runtime** (medium, `src/win-desktop-mcp/win-desktop-mcp.csproj:11`, r1:MCP-12, r2:MSP-15)
 
 - Impact: On a machine with only the base runtime the MCP server exits at startup and the agent simply has no tools, with no actionable error.
 - Fix: Publish the plugin exe self-contained or document the .NET 8 Desktop Runtime (x64) prerequisite with a link.
 - M0: fixed on `m0-release-pipeline`
 
-**D-MCP-05: Errors surface as generic SDK errors, empty results or stripped messages; one malformed batch item aborts the whole batch** (medium, `src/WindowsAppManagerMcp/Tools/LayoutPresetTools.cs:39`, r1:MCP-14, r2:MSP-9)
+**D-MCP-05: Errors surface as generic SDK errors, empty results or stripped messages; one malformed batch item aborts the whole batch** (medium, `src/win-desktop-mcp/Tools/LayoutPresetTools.cs:39`, r1:MCP-14, r2:MSP-9)
 
 - Impact: The agent cannot tell 'not found' from a broken call or which batch item/field was wrong, so it retries blindly or gives up.
 - Fix: Return explicit {found:false, errorCode} objects instead of null, validate batch items individually with per-item errors, and include exception details in error results.
@@ -1590,144 +1590,144 @@ Run ids such as `r1:WC-1` and `r2:WC-1` trace each entry back to the raw review 
 - Fix: git rm --cached settings.local.json and the tmpclaude-* files, put a minimal shared allow-list in .claude/settings.json, and replace git add -A in /commit with explicit paths.
 - M0: partly fixed on `m0-test-isolation`
 
-**D-PAL-06: Layout matching can target arbitrary windows: empty matchers/title_only match everything, unknown matchBy is accepted, ClassName ignored** (medium, `src/WindowsAppManagerMcp/Services/LayoutService.cs:313`, r1:PAL-6, r2:PAL-10)
+**D-PAL-06: Layout matching can target arbitrary windows: empty matchers/title_only match everything, unknown matchBy is accepted, ClassName ignored** (medium, `src/win-desktop-mcp/Services/LayoutService.cs:313`, r1:PAL-6, r2:PAL-10)
 
 - Impact: apply_layout(matchBy:'title_only') on a captured layout repeatedly resizes unrelated windows such as the agent's own terminal or IDE while reporting N windows arranged.
 - Fix: Treat a matcher with no usable criterion as no match (reported per placement), validate matchBy as an enum, and honor ClassName.
 - M2: fixed on `m2-tool-surface` (M2.2, InvalidMatchBy) and `m2-layouts` (M2.8): a placement without a criterion for the matchBy is notApplicable (NoMatchCriterion), and className, title, exe path and ordinal rank the candidates
 
-**D-PAL-07: Protocol policy blocks legitimate targets (ms-settings:, shell:AppsFolder) yet allows cmd/powershell with arbitrary arguments** (medium, `src/WindowsAppManagerMcp/Services/InputValidationService.cs:17`, r1:PAL-7)
+**D-PAL-07: Protocol policy blocks legitimate targets (ms-settings:, shell:AppsFolder) yet allows cmd/powershell with arbitrary arguments** (medium, `src/win-desktop-mcp/Services/InputValidationService.cs:17`, r1:PAL-7)
 
 - Impact: 'Open display settings' or launching a Store app is impossible, so the agent falls back to powershell Start-Process, which is allowed; the block adds friction without security.
 - Fix: Allow ms-settings: and shell:AppsFolder/<AUMID> by default plus a configurable protocol allow-list, while still blocking script schemes.
 - M2: fixed on `m2-launch` (M2.7): ms-settings: and shell:AppsFolder\<AppUserModelID> are built in, WAM_ALLOWED_PROTOCOLS adds schemes, and script and shell schemes stay blocked; cmd and PowerShell with their own arguments remain the agent's choice, documented in TOOLS.md
 - M3: changed on `m3-f08-interpreter-guard` (M3.F8, the repo owner's choice on 2026-10-14: refuse interpreters with arguments): InterpreterGuard refuses a command interpreter, script host or other program that runs its command line (cmd, PowerShell, wscript, mshta, rundll32, regsvr32, wsl, Python, node, java, msiexec, conhost, wt, ...) given any arguments (InterpreterWithArguments), and a script target (.bat, .cmd, .ps1, .vbs, .js, .wsf, .hta, .py, .jar, .msi, ...) or explorer given one (ScriptFile), by the requested and the resolved name, before anything is started; the interpreter warning is gone, and a bare interpreter still starts. Not caught: a renamed copy, a shortcut to an interpreter, and a command typed into a console
 
-**D-PAL-08: launch_application joins arguments without proper Windows quoting** (medium, `src/WindowsAppManagerMcp/Services/ProcessService.cs:70`, r1:PAL-8, r2:PAL-7)
+**D-PAL-08: launch_application joins arguments without proper Windows quoting** (medium, `src/win-desktop-mcp/Services/ProcessService.cs:70`, r1:PAL-8, r2:PAL-7)
 
 - Impact: Arguments with trailing backslashes, embedded quotes, spaces or empty strings are mangled, so the app opens the wrong path or nothing while Success is reported.
 - Fix: Use ProcessStartInfo.ArgumentList (or PasteArguments-style escaping).
 - M0: fixed on `m0-launch-and-kill`
 
-**D-PAL-09: Process.Start returning null (ShellExecute handed off to an existing instance) is reported as failure** (medium, `src/WindowsAppManagerMcp/Services/ProcessService.cs:75`, r1:PAL-9, r2:PAL-12)
+**D-PAL-09: Process.Start returning null (ShellExecute handed off to an existing instance) is reported as failure** (medium, `src/win-desktop-mcp/Services/ProcessService.cs:75`, r1:PAL-9, r2:PAL-12)
 
 - Impact: Opening a document or URL works but returns ProcessStartFailed, so the agent retries and opens duplicates or tells the user it failed.
 - Fix: Return Success=true with ProcessId=null and a 'handled by existing instance' status, then locate the new window via the HWND-diff logic.
 - M2: fixed on `m2-launch` (M2.6): a null Process.Start is launchStatus possibleHandoff, a success without processId, and the window is looked for as for any launch
 
-**D-PAL-10: Layouts identify monitors only by enumeration index and silently fall back to monitor 0** (medium, `src/WindowsAppManagerMcp/Services/LayoutService.cs:246`, r1:PAL-10, r2:PAL-8)
+**D-PAL-10: Layouts identify monitors only by enumeration index and silently fall back to monitor 0** (medium, `src/win-desktop-mcp/Services/LayoutService.cs:246`, r1:PAL-10, r2:PAL-8)
 
 - Impact: After undocking, placements for monitors 1-2 stack on monitor 0; after re-docking in a different order windows swap monitors, all reported as success.
 - Fix: Save monitor identity (DeviceName, IsPrimary, Bounds, DPI) and resolve by DeviceName, then primary, then nearest, reporting unresolved placements.
 - M2: partly fixed on `m2-layouts` (M2.8): a monitorIndex that is not a monitor fails that placement with InvalidMonitorIndex instead of falling back to monitor 0; monitor identity by device name waits for layout schema v2 (M6.8)
 - M6: fixed on `m6-8-layouts-v2` (M6.8): save_layout records the monitor's id (a hash of its device path, which DISPLAYn renumbering does not change) and EDID name; apply_layout resolves the id, then the name, then the index, reports `monitorFallback`, and fails with MonitorNotFound when none fits
 
-**D-PAL-11: apply_layout ignores window state and mixed DPI** (medium, `src/WindowsAppManagerMcp/Services/LayoutService.cs:254`, r1:PAL-11, r2:PAL-8)
+**D-PAL-11: apply_layout ignores window state and mixed DPI** (medium, `src/win-desktop-mcp/Services/LayoutService.cs:254`, r1:PAL-11, r2:PAL-8)
 
 - Impact: Maximized windows are moved while still maximized (half-size but flagged maximized) and windows crossing 100%/150% monitors end up the wrong size, never verified.
 - Fix: Capture showCmd and the normal rect with GetWindowPlacement, restore before placing, apply via SetWindowPlacement, and verify the final rect.
 - M2: fixed on `m2-geometry` (M2.3) and `m2-layouts` (M2.8): apply_layout places through SetWindowBounds, which restores a minimized or maximized window without activation first and places again after a scale change; a maximized placement maximizes on its monitor and verifies it; results report the window afterwards
 
-**D-PAL-12: save_layout and delete_layout report success when nothing was saved or deleted** (medium, `src/WindowsAppManagerMcp/Tools/LayoutPresetTools.cs:83`, r1:PAL-12, r2:PAL-6, r1:MCP-8, r2:MSP-10, r1:MCP-14, r1:PAL-16)
+**D-PAL-12: save_layout and delete_layout report success when nothing was saved or deleted** (medium, `src/win-desktop-mcp/Tools/LayoutPresetTools.cs:83`, r1:PAL-12, r2:PAL-6, r1:MCP-8, r2:MSP-10, r1:MCP-14, r1:PAL-16)
 
 - Impact: After a failed write the agent tells the user 'layout saved' and the next apply returns not found; delete_layout('typo') reports success.
 - Fix: Propagate SavePresetAsync failures as SaveFailed, warn on WindowCount==0, and return PresetNotFound from delete.
 - M0: fixed on `m0-layout-storage`
 
-**D-PAL-13: apply_layout returns only counts, never verifies placement, and reports success with zero matches** (medium, `src/WindowsAppManagerMcp/Services/LayoutService.cs:272`, r1:PAL-12, r2:PAL-11, r2:MSP-10)
+**D-PAL-13: apply_layout returns only counts, never verifies placement, and reports success with zero matches** (medium, `src/win-desktop-mcp/Services/LayoutService.cs:272`, r1:PAL-12, r2:PAL-11, r2:MSP-10)
 
 - Impact: apply_layout with none of the apps open returns success with windowsArranged=0, and the agent cannot tell which apps are missing or misplaced without extra get_all_windows round trips.
 - Fix: Return per-placement entries (status arranged/notFound/launched/launchFailed, handle, requested vs actual rect) and Success=false or Partial when nothing or not everything matched.
 - M0: fixed on `m0-layout-storage`
 
-**D-PAL-14: launchMissing cannot work for agent-saved layouts: no launch command is captured and commands cannot carry arguments** (medium, `src/WindowsAppManagerMcp/Services/LayoutService.cs:220`, r1:PAL-13, r2:PAL-9)
+**D-PAL-14: launchMissing cannot work for agent-saved layouts: no launch command is captured and commands cannot carry arguments** (medium, `src/win-desktop-mcp/Services/LayoutService.cs:220`, r1:PAL-13, r2:PAL-9)
 
 - Impact: 'Restore my layout and open anything missing' launches nothing for saved layouts, and slow or splash-screen apps in hand-written presets report 'Failed to launch'.
 - Fix: Capture GetProcessPath (and AUMID/command line) into LaunchCommand with LaunchArguments/WorkingDirectory, and wait for the new window via the HWND-diff logic.
 - M6: fixed on `m6-8-layouts-v2` (M6.8): save_layout records `launch` (the program, or a packaged app's AppUserModelID) and fills launchCommand from it, and launchMissing launches through the LaunchRequest path (planning, script refusals, packaged activation, the window wait whichever process opens it). Arguments are not captured or taken, by owner decision D15
 
-**D-PAL-15: apply_layout throws NullReferenceException when a freshly launched window is untitled or already closed** (medium, `src/WindowsAppManagerMcp/Services/LayoutService.cs:227`, r1:win-m2, r1:PAL-13, r2:PAL-9)
+**D-PAL-15: apply_layout throws NullReferenceException when a freshly launched window is untitled or already closed** (medium, `src/win-desktop-mcp/Services/LayoutService.cs:227`, r1:win-m2, r1:PAL-13, r2:PAL-9)
 
 - Impact: apply_layout(launchMissing:true) fails as an SDK tool error and loses the counts for placements already processed, leaving the desktop half-arranged with no record of what moved.
 - Fix: Null-check the launched window info and record the placement as launchFailed/notFound instead of throwing.
 - M0: fixed on `m0-layout-storage` (a launched window that cannot be read is a LaunchFailed error); recorded in the M1 docs pass
 
-**D-PAL-16: LayoutService preset cache is not thread-safe and get_layout/apply_layout never reload from disk** (medium, `src/WindowsAppManagerMcp/Services/LayoutService.cs:68`, r1:PAL-16, r1:mcp-m1, r2:pro-m4, r1:MCP-13)
+**D-PAL-16: LayoutService preset cache is not thread-safe and get_layout/apply_layout never reload from disk** (medium, `src/win-desktop-mcp/Services/LayoutService.cs:68`, r1:PAL-16, r1:mcp-m1, r2:pro-m4, r1:MCP-13)
 
 - Impact: Preset files added or edited on disk are 'not found' or stale until list_layouts runs, so results depend on call order; parallel calls can throw 'Collection was modified'.
 - Fix: Use a ConcurrentDictionary or lock and reload (or check file timestamps) in GetPreset.
 - M0: fixed on `m0-layout-storage`
 
-**D-PAL-17: Bare executable names are resolved against the server's current directory first (binary planting)** (medium, `src/WindowsAppManagerMcp/Services/ProcessService.cs:65`, r1:pro-m2)
+**D-PAL-17: Bare executable names are resolved against the server's current directory first (binary planting)** (medium, `src/win-desktop-mcp/Services/ProcessService.cs:65`, r1:pro-m2)
 
 - Impact: In an untrusted repository containing notepad.exe or code.cmd, launch_application('notepad') or a layout launchCommand runs the planted file, and launched apps inherit the repo as working directory.
 - Fix: Resolve bare names via App Paths and PATH only (excluding CWD) and default WorkingDirectory to the user profile.
 - M0: partly fixed on `m0-launch-and-kill`
 - M2: fixed on `m2-launch` (M2.7): a bare name found nowhere is ExecutableNotFound instead of an unresolved hand-off to ShellExecute, only .com, .exe, .bat and .cmd are tried, and a program starts in its own folder, never the server's current directory
 
-**D-PAL-18: Arguments passed to batch-file shims (e.g. code.cmd) let cmd.exe interpret '&', '|' and %VAR%** (medium, `src/WindowsAppManagerMcp/Services/ProcessService.cs:70`, r1:pro-m3)
+**D-PAL-18: Arguments passed to batch-file shims (e.g. code.cmd) let cmd.exe interpret '&', '|' and %VAR%** (medium, `src/win-desktop-mcp/Services/ProcessService.cs:70`, r1:pro-m3)
 
 - Impact: launch_application('code', [a path containing 'R&D']) opens the wrong path and tries to run the remainder as a command; a path from untrusted content can execute commands.
 - Fix: Detect .cmd/.bat targets and apply cmd.exe escaping (caret-escape metacharacters, reject %), or resolve the shim to its underlying executable.
 - M0: fixed on `m0-launch-and-kill`
 
-**D-SCR-02: capture_with_elements with includeFrame=false offsets every overlay and ImageBounds by the frame/title-bar size** (medium, `src/WindowsAppManagerMcp/Tools/ScreenshotTools.cs:216`, r1:UIA-5, r1:SCR-2, r2:UIA-9, r2:SCR-3, r2:mcp-m4)
+**D-SCR-02: capture_with_elements with includeFrame=false offsets every overlay and ImageBounds by the frame/title-bar size** (medium, `src/win-desktop-mcp/Tools/ScreenshotTools.cs:216`, r1:UIA-5, r1:SCR-2, r2:UIA-9, r2:SCR-3, r2:mcp-m4)
 
 - Impact: Boxes are drawn ~8 px right and ~31 px down (more at high DPI) of their controls and edge elements are clipped, so an agent reasoning from the image or ImageBounds targets the wrong control.
 - Fix: Have IScreenCaptureWrapper.CaptureWindow return the actual screen origin (GetWindowRect or ClientToScreen(hwnd,{0,0})) and compute overlays/ImageBounds from it.
 - M1: fixed on `m1-captures` (M1.2): overlays and imageBounds use the capture's real origin, with or without the frame
 
-**D-SCR-03: capture_with_elements is all-or-nothing: any UIA failure or timeout drops the screenshot** (medium, `src/WindowsAppManagerMcp/Tools/ScreenshotTools.cs:197`, r1:UIA-7, r2:MSP-12, r2:SCR-8, r2:UIA-2)
+**D-SCR-03: capture_with_elements is all-or-nothing: any UIA failure or timeout drops the screenshot** (medium, `src/win-desktop-mcp/Tools/ScreenshotTools.cs:197`, r1:UIA-7, r2:MSP-12, r2:SCR-8, r2:UIA-2)
 
 - Impact: On heavy windows (browsers, Electron, Office) where visual grounding matters most, a UIA timeout or crash returns neither overlays nor the plain image, costing an extra capture_window call.
 - Fix: Always capture the image and return it with Elements=[] or partial overlays plus ElementsError/Truncated fields when retrieval fails.
 - M1: partly fixed on `m1-uia-tree` and `m1-fix-guards` (M1.8): a timeout that leaves matching elements keeps the image with the partial overlays; any other UI Automation failure, or a timeout before a match, still drops the image (M2.9)
 - M2: fixed on `m2-capture-health` (M2.9): the pixels are captured whatever the walk returns; a failed walk gives the image without overlays, with elementsError, elementsErrorCode and truncated
 
-**D-SCR-04: Window captures give no screen origin or image-to-screen transform** (medium, `src/WindowsAppManagerMcp/Services/ScreenshotService.cs:185`, r1:SCR-3, r2:SCR-5, r2:MSP-13)
+**D-SCR-04: Window captures give no screen origin or image-to-screen transform** (medium, `src/win-desktop-mcp/Services/ScreenshotService.cs:185`, r1:SCR-3, r2:SCR-5, r2:MSP-13)
 
 - Impact: capture_window reports origin (0,0), so an agent clicking what it sees (especially in client-area or maxWidth-scaled captures) is off by the frame offset, DPI and downscale factor and misclicks.
 - Fix: Return the true screen origin in CapturedRegion plus an explicit ImageToScreen {OffsetX, OffsetY, ScaleX, ScaleY}.
 - M1: fixed on `m1-captures` (M1.2): capturedRegion is the real screen origin (GetWindowRect, or the client rectangle through MapWindowPoints) and imageToScreen converts image points
 
-**D-SCR-05: Capturing a minimized, hidden or cloaked window succeeds with a tiny or black image** (medium, `src/WindowsAppManagerMcp/Native/ScreenCaptureWrapper.cs:76`, r1:SCR-4, r2:SCR-7)
+**D-SCR-05: Capturing a minimized, hidden or cloaked window succeeds with a tiny or black image** (medium, `src/win-desktop-mcp/Native/ScreenCaptureWrapper.cs:76`, r1:SCR-4, r2:SCR-7)
 
 - Impact: An app that starts minimized or sits on another virtual desktop yields Success=true with a 160x28 or black image, so the agent concludes the UI is broken or acts blindly.
 - Fix: Check IsIconic, IsWindowVisible and DWMWA_CLOAKED before capturing and return WindowMinimized/WindowHidden/WindowCloaked, or offer opt-in restoreIfMinimized.
 - M1: partly fixed on `m1-fix-guards`: a minimized window is refused with CaptureFailed; hidden and cloaked windows are still captured as they are (M2.9)
 - M2: fixed on `m2-capture-health` (M2.9): WindowHidden, Cloaked and WindowMinimized are refused before any pixel is read, in that order; restoreIfMinimized restores a minimized window without activation and minimizes it again
 
-**D-SCR-06: outputPath allows unvalidated writes anywhere, overwriting existing files** (medium, `src/WindowsAppManagerMcp/Services/ScreenshotService.cs:405`, r1:SCR-8, r2:SCR-9, r1:mcp-m2)
+**D-SCR-06: outputPath allows unvalidated writes anywhere, overwriting existing files** (medium, `src/win-desktop-mcp/Services/ScreenshotService.cs:405`, r1:SCR-8, r2:SCR-9, r1:mcp-m2)
 
 - Impact: A mis-filled or prompt-injected outputPath (e.g. a .docx or source file) is silently replaced with image bytes through a tool that looks read-only, bypassing the client's file-write permissions; relative paths land in an unknown CWD.
 - Fix: Require an absolute path with an extension matching the format, refuse to overwrite unless overwrite=true, return the full path, and optionally restrict writes to a screenshot root.
 - M1: fixed on `m1-captures` and `m1-wave1-followups` (M1.2): an absolute drive-letter path with a matching extension in an existing folder, overwrite=true to replace a file, no UNC or device paths; a restricted write root is not scheduled
 
-**D-SCR-07: Defaults produce full-resolution lossless PNGs and maxWidth limits only width** (medium, `src/WindowsAppManagerMcp/Tools/ScreenshotTools.cs:46`, r2:SCR-2)
+**D-SCR-07: Defaults produce full-resolution lossless PNGs and maxWidth limits only width** (medium, `src/win-desktop-mcp/Tools/ScreenshotTools.cs:46`, r2:SCR-2)
 
 - Impact: Even once returned as image content, a 4K capture is 5-15 MB, exceeding per-image API limits (5 MB) and being downscaled client-side anyway, wasting bandwidth and tokens.
 - Fix: Add maxDimension applied to the long edge, default it to about 1568, and consider JPEG ~80 as the default for monitor/window captures.
 - M1: fixed on `m1-captures` (M1.2): JPEG (PNG for small images) scaled to 1568 pixels on the long edge by default
 
-**D-SCR-08: Element overlays are drawn at full resolution before the maxWidth downscale, making them faint or invisible** (medium, `src/WindowsAppManagerMcp/Services/ScreenshotService.cs:515`, r2:scr-m1)
+**D-SCR-08: Element overlays are drawn at full resolution before the maxWidth downscale, making them faint or invisible** (medium, `src/win-desktop-mcp/Services/ScreenshotService.cs:515`, r2:scr-m1)
 
 - Impact: maxWidth plus JPEG (the documented way to keep captures affordable) yields overlays a vision model can barely see, defeating capture_with_elements.
 - Fix: Downscale first and draw overlays on the scaled image with scaled coordinates and a minimum stroke/label size.
 - M1: fixed on `m1-wave1-followups` (M1.2): overlay pens are widened by the downscale factor
 
-**D-SCR-09: DPI-unaware target windows may be rendered by PrintWindow at logical size inside a physical-size bitmap (plausible, not reproduced)** (medium, `src/WindowsAppManagerMcp/Native/ScreenCaptureWrapper.cs:78`, r1:scr-m2)
+**D-SCR-09: DPI-unaware target windows may be rendered by PrintWindow at logical size inside a physical-size bitmap (plausible, not reproduced)** (medium, `src/win-desktop-mcp/Native/ScreenCaptureWrapper.cs:78`, r1:scr-m2)
 
 - Impact: On 125-150% monitors legacy apps could appear in the top-left of a partly black image, with UIA overlays (physical coordinates) misaligned, so the agent mis-targets by vision.
 - Fix: Verify on a scaled monitor with a DPI-unaware app and, if confirmed, fall back to a screen-DC BitBlt of the window rect or scale by the window's DPI.
 - M2: partly fixed on `m2-capture-health` (M2.9): a window whose DPI differs from its monitor's gets a DpiScaledWindow warning; the image is not rescaled
 
-**D-UIA-03: Traversal timeout discards the partially built tree** (medium, `src/WindowsAppManagerMcp/Services/UIElementService.cs:164`, r1:UIA-3, r2:UIA-2)
+**D-UIA-03: Traversal timeout discards the partially built tree** (medium, `src/win-desktop-mcp/Services/UIElementService.cs:164`, r1:UIA-3, r2:UIA-2)
 
 - Impact: On large Chromium/Electron/Office trees the walk exceeds timeoutMs and the agent gets zero elements despite thousands already read, then retries at lower depth and pays the full cost again.
 - Fix: Return the partial tree with Success=true, Truncated=true and a TruncationReason, traversing breadth-first so shallow levels survive a cut-off.
 - M1: fixed on `m1-uia-tree` and `m1-fix-guards` (M1.8): a timeout returns the elements read so far with truncated=true, also when a blocked UI Automation call is abandoned; only a walk with no match yet fails with OperationTimedOut
 
-**D-UIA-04: timeoutMs is not a hard bound: a blocked UIA call or hung window holds the request and MCP cancellation is ignored** (medium, `src/WindowsAppManagerMcp/Services/UIElementService.cs:223`, r1:UIA-3, r2:UIA-5)
+**D-UIA-04: timeoutMs is not a hard bound: a blocked UIA call or hung window holds the request and MCP cancellation is ignored** (medium, `src/win-desktop-mcp/Services/UIElementService.cs:223`, r1:UIA-3, r2:UIA-5)
 
 - Impact: Pointing get_ui_elements at a 'Not Responding' app blocks the tool far past timeoutMs and the client cannot cancel it.
 - Fix: Check IsHungAppWindow/SendMessageTimeout(WM_NULL) first (WindowNotResponding), run the walk on a worker awaited with WaitAsync(deadline), and link the SDK CancellationToken with the timeout.
@@ -1735,19 +1735,19 @@ Run ids such as `r1:WC-1` and `r2:WC-1` trace each entry back to the raw review 
 - M2: partly fixed on `m2-foundation` (M2.13): get_ui_elements and capture_with_elements link the request's cancellation with their timeout; there is still no hung-window precheck (M3.1)
 - M3: fixed on `m3-uia-engine` (M3.1, M3.2): a window Windows reports hung, or that does not answer WM_NULL within 500 ms, fails at once with NotResponding before any UI Automation call, and the UIA3 engine gives every call a 1 s connection and 5 s transaction timeout; the M3 review added the same probe of the CoreWindow a UWP frame hosts (`m3-fix-surface`)
 
-**D-UIA-05: No CacheRequest: about 10 uncached cross-process calls per element with duplicate reads** (medium, `src/WindowsAppManagerMcp/Services/UIElementService.cs:278`, r1:UIA-4, r2:UIA-4)
+**D-UIA-05: No CacheRequest: about 10 uncached cross-process calls per element with duplicate reads** (medium, `src/win-desktop-mcp/Services/UIElementService.cs:278`, r1:UIA-4, r2:UIA-4)
 
 - Impact: Tree retrieval is roughly an order of magnitude slower than a cached fetch, driving the timeouts and producing inconsistent snapshots as elements change between property reads.
 - Fix: Build one CacheRequest for the needed properties and pattern-availability flags and fetch children per level with FindAll(TreeScope.Children) under it.
 - M3: fixed on `m3-uia-engine` (M3.1, M3.2): each level of up to 200 elements comes with the walk's properties and pattern flags in one call (FindAllBuildCache, or FindAll under an activated CacheRequest with uia2), a wider one one element at a time, and the single-element reads of the UIA3 engine are one BuildUpdatedCache each
 
-**D-UIA-06: visibleOnly/interactableOnly/minWidth/minHeight prune whole subtrees, and interactableOnly only checks IsEnabled** (medium, `src/WindowsAppManagerMcp/Services/UIElementService.cs:314`, r1:UIA-8, r2:UIA-6)
+**D-UIA-06: visibleOnly/interactableOnly/minWidth/minHeight prune whole subtrees, and interactableOnly only checks IsEnabled** (medium, `src/win-desktop-mcp/Services/UIElementService.cs:314`, r1:UIA-8, r2:UIA-6)
 
 - Impact: minWidth drops every button inside a zero-size or narrow container, and interactableOnly=true still returns all labels and panes, so output size and contents are unpredictable.
 - Fix: Apply node filters as include/exclude while still recursing (hoisting qualifying descendants), and define interactable as enabled, on-screen and focusable or supporting an action pattern.
 - M1: fixed on `m1-uia-tree` (M1.8): only visibleOnly prunes a subtree, and interactableOnly needs keyboard focus or an action pattern
 
-**D-UIA-07: Minimized or elevated target windows return an empty tree as Success with no diagnostic** (medium, `src/WindowsAppManagerMcp/Services/UIElementService.cs:151`, r1:UIA-9, r2:UIA-8)
+**D-UIA-07: Minimized or elevated target windows return an empty tree as Success with no diagnostic** (medium, `src/win-desktop-mcp/Services/UIElementService.cs:151`, r1:UIA-9, r2:UIA-8)
 
 - Impact: The agent gets success with zero elements and concludes the app has no UI instead of restoring the window or asking for elevation.
 - Fix: Check IsIconic/cloaking and the target's integrity level up front and return WindowMinimized/ElevatedTarget (or a Warnings entry), optionally with an autoRestore parameter.
@@ -1755,49 +1755,49 @@ Run ids such as `r1:WC-1` and `r2:WC-1` trace each entry back to the raw review 
 - M3: left open (M3.1): get_ui_elements still succeeds on a minimized window, with windowState; element_action refuses an element of a minimized window with ElementOffscreen and says to restore the window, and get_desktop_state's screenshot of it fails with WindowMinimized; an elevated window is still not diagnosed (M6.6)
 - M3: fixed on `m3-f16-walk-warnings` (M3.F16): get_ui_elements still succeeds, and its result carries warnings (null when there are none), each "Code: text" as the captures' warnings: WindowMinimized for a successful walk of a minimized window (visibleOnly left its elements out, or they are offscreen; restore it with set_window_state or focus_window), and TargetElevated when the window's process (for a UWP frame, the app's) is more privileged than the server by the input guard's own test (IProcessSecurityProbe, ProcessIntegrity.IsMorePrivilegedThan), for a successful or failed walk, whatever the number of elements, since what Windows reports about the window's child windows can still be read. capture_with_elements merges them into its warnings and get_desktop_state into elements.warnings. No new error code: an elevated window is still read. Structured elevation fields on the window results stay with M6.6
 
-**D-UIA-08: UIElementService has no test seam, so filter tests never reach the traversal code** (medium, `src/WindowsAppManagerMcp/Services/UIElementService.cs:112`, r2:UIA-12)
+**D-UIA-08: UIElementService has no test seam, so filter tests never reach the traversal code** (medium, `src/win-desktop-mcp/Services/UIElementService.cs:112`, r2:UIA-12)
 
 - Impact: Traversal, filter and depth bugs (the controlTypes and maxDepth defects) shipped despite 15+ filter tests, and fixes to them cannot be regression-tested.
 - Fix: Introduce an IAutomationTree abstraction with a UIA implementation and an in-memory fake, inject it, and test traversal against fake trees.
 - M1: fixed on `m1-uia-tree` (M1.8): IUiaTree with the UiaTree adapter and FakeUiaTree for tests
 
-**D-WIN-05: Untitled windows are invisible to GetWindowInfo, so get_foreground_window, post-action re-queries and capture_with_elements fail on them** (medium, `src/WindowsAppManagerMcp/Services/WindowService.cs:466`, r1:WC-13, r2:WC-8, r2:mcp-m5, r1:UIA-6, r2:UIA-10, r1:SCR-6, r2:SCR-8)
+**D-WIN-05: Untitled windows are invisible to GetWindowInfo, so get_foreground_window, post-action re-queries and capture_with_elements fail on them** (medium, `src/win-desktop-mcp/Services/WindowService.cs:466`, r1:WC-13, r2:WC-8, r2:mcp-m5, r1:UIA-6, r2:UIA-10, r1:SCR-6, r2:SCR-8)
 
 - Impact: get_foreground_window returns null when a menu, taskbar or untitled popup has focus (indistinguishable from no window), move/resize return NewBounds=null, and capture_with_elements rejects untitled popups/menus/splash windows as 'invalid handle' even though capture_window works.
 - Fix: Split an unfiltered ReadWindowInfo(hWnd) (empty title plus className allowed) from the listing predicate, use it for GetWindowInfo/GetForegroundWindow/capture_with_elements, and return WindowNotFound only when IsWindow is false.
 - M1: fixed on `m1-window-reads` (M1.6): GetWindowInfo and get_foreground_window read any window
 
-**D-WIN-06: MonitorService singleton clears and rebuilds a shared List on every call with no locking** (medium, `src/WindowsAppManagerMcp/Services/MonitorService.cs:18`, r1:WC-11, r2:WC-10, r1:SCR-11, r2:scr-m3, r2:inp-m1, r1:INP-7, r1:MCP-13)
+**D-WIN-06: MonitorService singleton clears and rebuilds a shared List on every call with no locking** (medium, `src/win-desktop-mcp/Services/MonitorService.cs:18`, r1:WC-11, r2:WC-10, r1:SCR-11, r2:scr-m3, r2:inp-m1, r1:INP-7, r1:MCP-13)
 
 - Impact: The SDK dispatches requests concurrently, so parallel calls (get_all_windows with get_monitors, a click's coordinate validation, a screenshot) can throw 'Collection was modified', see an empty list (spurious CoordinatesOutOfBounds / monitor index out of range) or capture the wrong monitor; the list is also rebuilt once per enumerated window.
 - Fix: Build a new immutable monitor list and publish it with an atomic reference swap (or lock), and take one snapshot per public call instead of refreshing per window.
 - M0: fixed on `m0-concurrency-and-uia-crash`
 
-**D-WIN-07: Invalid monitorIndex, positioning and state values are silently coerced to defaults and reported as success** (medium, `src/WindowsAppManagerMcp/Services/MonitorService.cs:113`, r1:WC-8, r1:WC-9, r2:WC-7, r1:MCP-6, r1:MCP-9, r2:MSP-8)
+**D-WIN-07: Invalid monitorIndex, positioning and state values are silently coerced to defaults and reported as success** (medium, `src/win-desktop-mcp/Services/MonitorService.cs:113`, r1:WC-8, r1:WC-9, r2:WC-7, r1:MCP-6, r1:MCP-9, r2:MSP-8)
 
 - Impact: snap_window(monitorIndex:2) on a 2-monitor setup snaps on the primary, positioning:'left' centers, and set_window_state('minimise'/'hide'/'close') restores the window, all with Success=true, so the agent never learns its input was wrong.
 - Fix: Validate every index and enum-like string (or make them C# enums so the schema lists values) and return InvalidMonitorIndex/InvalidPositioning/InvalidState with the allowed values.
 - M2: fixed on `m2-tool-surface` (M2.2): state, positioning, position and matchBy are strict enums listed in the schema, refused with their own errorCode and the allowed values; monitorIndex is InvalidMonitorIndex with the valid range
 
-**D-WIN-08: set_window_state reports ShowWindow's previous-visibility flag as Success** (medium, `src/WindowsAppManagerMcp/Services/WindowService.cs:181`, r1:WC-9, r2:WC-5, r2:mcp-m3)
+**D-WIN-08: set_window_state reports ShowWindow's previous-visibility flag as Success** (medium, `src/win-desktop-mcp/Services/WindowService.cs:181`, r1:WC-9, r2:WC-5, r2:mcp-m3)
 
 - Impact: Every call on a visible window reports success even when nothing changed or the call was blocked, while a successful change on a hidden window reports failure and the batch path omits its NewState, so batch Succeeded counts are wrong.
 - Fix: Ignore ShowWindow's return value, poll IsIconic/IsZoomed/IsWindowVisible briefly after the call, set Success from observed==requested state, and always return NewState.
 - M2: fixed on `m2-tool-surface` (M2.2): ShowWindow's return value is ignored; success is the state observed within 300 ms (StateChangeFailed otherwise), and every result and batch item reports the state
 
-**D-WIN-09: close_window / close_windows_batch have no guard for shell or agent-host windows** (medium, `src/WindowsAppManagerMcp/Services/WindowService.cs:309`, r1:WC-12, r2:WC-11)
+**D-WIN-09: close_window / close_windows_batch have no guard for shell or agent-host windows** (medium, `src/win-desktop-mcp/Services/WindowService.cs:309`, r1:WC-12, r2:WC-11)
 
 - Impact: A 'close everything except X' batch built from get_all_windows can WM_CLOSE 'Program Manager' (opens the Shut Down dialog) or the agent's own Windows Terminal, ending the session.
 - Fix: Refuse shell classes (Progman, WorkerW, Shell_TrayWnd) and windows owned by the server's ancestor processes unless force=true, and flag such windows (isAgentHost) in WindowInfo.
 - M1: fixed on `m1-close-guards` (M1.7): ProtectedWindow for shell and host windows unless force=true
 
-**D-WIN-10: close_window reports success as soon as WM_CLOSE is queued** (medium, `src/WindowsAppManagerMcp/Services/WindowService.cs:309`, r2:WC-11)
+**D-WIN-10: close_window reports success as soon as WM_CLOSE is queued** (medium, `src/win-desktop-mcp/Services/WindowService.cs:309`, r2:WC-11)
 
 - Impact: The window can stay open behind a 'Save changes?' prompt or because the app is hung, but the agent is told it closed and moves on.
 - Fix: After posting WM_CLOSE, poll IsWindow up to a timeoutMs and return closed/stillOpen/promptShown (detect prompts via GetWindow(GW_ENABLEDPOPUP)).
 - M2: fixed on `m2-close-verify` (M2.5): the close tools wait (waitMs) and report closed, hidden, stillOpen or promptShown with the prompt
 
-**D-WIN-11: Native window failures return a bare success:false; GetLastError is never read and elevation/UIPI is never detected** (medium, `src/WindowsAppManagerMcp/Tools/WindowManagerTools.cs:40`, r1:WC-7, r2:WC-9, r2:MSP-9)
+**D-WIN-11: Native window failures return a bare success:false; GetLastError is never read and elevation/UIPI is never detected** (medium, `src/win-desktop-mcp/Tools/WindowManagerTools.cs:40`, r1:WC-7, r2:WC-9, r2:MSP-9)
 
 - Impact: Moving or closing an elevated window (Task Manager, admin terminal, installer) is blocked by UIPI and the agent gets no reason, so it retries or switches strategy instead of telling the user elevation is needed; exceptions are masked as a generic SDK error.
 - Fix: Return (ok, win32Error) from mutating wrapper calls, map ERROR_ACCESS_DENIED to AccessDeniedElevated, add IsElevated to WindowInfo, and fill Error/ErrorCode on every failure.
@@ -1805,126 +1805,126 @@ Run ids such as `r1:WC-1` and `r2:WC-1` trace each entry back to the raw review 
 - M1: partly fixed on `m1-close-guards` and `m1-fix-concurrency`: close_window reads the Win32 error (AccessDenied, CloseFailed) and the window changes report NotResponding; a refused move, resize or state change is still a bare success:false (M2.2)
 - M2: fixed on `m2-tool-surface` (M2.2): SetWindowPos returns its Win32 error, so a refused move or resize is AccessDenied, InvalidHandle, MoveFailed or ResizeFailed with the reason; IsElevated was not added to WindowInfo (the input guard's TargetElevated and AccessDenied tell the agent to ask the user)
 
-**D-WIN-12: Calls on hung ('Not Responding') windows can block a tool call indefinitely** (medium, `src/WindowsAppManagerMcp/Native/NativeWindowWrapper.cs:63`, r1:WC-10, r2:WC-9)
+**D-WIN-12: Calls on hung ('Not Responding') windows can block a tool call indefinitely** (medium, `src/win-desktop-mcp/Native/NativeWindowWrapper.cs:63`, r1:WC-10, r2:WC-9)
 
 - Impact: Moving, snapping, minimizing or restoring a hung window, exactly when an agent tries to recover it, blocks inside SetWindowPos/ShowWindow until the app recovers or the client times out; batches stall at the hung item.
 - Fix: Check IsHungAppWindow up front and return WindowNotResponding, otherwise use SWP_ASYNCWINDOWPOS/ShowWindowAsync and poll the result with a bounded timeout.
 - M1: partly fixed on `m1-fix-concurrency` (M1.10 follow-ups): IsHungAppWindow refuses a hung window at once and every SetWindowPos or ShowWindow gets a 5 s deadline (NotResponding); SWP_ASYNCWINDOWPOS and ShowWindowAsync are not used, and an abandoned call can still complete later (M2.3)
 - M2: M2.3 kept the window call runner instead of SWP_ASYNCWINDOWPOS and ShowWindowAsync (an asynchronous call returns without its Win32 error, so AccessDenied could not be reported); PrintWindow goes through the runner too (M2.9). An abandoned call can still complete later, which the NotResponding text says
 
-**D-WIN-13: UWP/packaged app windows are attributed to ApplicationFrameHost instead of the app process** (medium, `src/WindowsAppManagerMcp/Services/WindowService.cs:470`, r1:WC-5, r2:WC-12)
+**D-WIN-13: UWP/packaged app windows are attributed to ApplicationFrameHost instead of the app process** (medium, `src/win-desktop-mcp/Services/WindowService.cs:470`, r1:WC-5, r2:WC-12)
 
 - Impact: find_windows(processName:'Calculator') finds nothing, launch_application cannot find UWP windows by PID, and save_layout stores 'ApplicationFrameHost' for every UWP window so apply_layout sends all those placements to the same window.
 - Fix: For ApplicationFrameWindow, resolve the Windows.UI.Core.CoreWindow child's PID/process as appProcessId/appProcessName, keep hostProcessName, and add a className filter.
 - M1: fixed on `m1-window-reads` (M1.6): a UWP frame reports its app's process, with hostProcessName ApplicationFrameHost
 
-**D-WIN-14: Snap and reported bounds use GetWindowRect including DWM's invisible resize borders** (medium, `src/WindowsAppManagerMcp/Services/MonitorService.cs:120`, r1:WC-6, r2:WC-6)
+**D-WIN-14: Snap and reported bounds use GetWindowRect including DWM's invisible resize borders** (medium, `src/win-desktop-mcp/Services/MonitorService.cs:120`, r1:WC-6, r2:WC-6)
 
 - Impact: Snapped windows show ~7 px gaps at edges and ~14 px between halves (more at high DPI), unlike Windows Snap, and edge-relative click coordinates computed from Bounds are off by the border.
 - Fix: Add GetExtendedFrameBounds (DWMWA_EXTENDED_FRAME_BOUNDS) to the wrapper, grow target rects by the frame insets before SetWindowPos, and report visible-frame Bounds (with OuterBounds separately).
 - M2: fixed on `m2-geometry` (M2.3): placements take and report the visible frame (bounds), with outerBounds beside it; snapped windows meet without gaps; find_windows reports the frame as visibleBounds (since `m2-fix-integration`)
 
-**D-WIN-15: move_window_to_monitor measures the window before restoring it, shrinking minimized windows to their iconic size** (medium, `src/WindowsAppManagerMcp/Services/WindowService.cs:228`, r1:win-m1, r2:win-m1)
+**D-WIN-15: move_window_to_monitor measures the window before restoring it, shrinking minimized windows to their iconic size** (medium, `src/win-desktop-mcp/Services/WindowService.cs:228`, r1:win-m1, r2:win-m1)
 
 - Impact: Moving a minimized window to another monitor leaves a ~160x28 sliver (or a tiny maximized window) on the target and overwrites the user's normal size, while returning success.
 - Fix: Read the restored size from GetWindowPlacement.rcNormalPosition (or restore first) before computing the target rectangle.
 - M2: fixed on `m2-geometry` (M2.3): the window is restored first, measured only then, and fitted into the target work area
 
-**D-BRW-17: Browser executable lookup misses per-user installs, App Paths and non-stable channels** (low, `src/WindowsAppManagerMcp/Services/ProcessService.cs:394`, r1:BRW-11)
+**D-BRW-17: Browser executable lookup misses per-user installs, App Paths and non-stable channels** (low, `src/win-desktop-mcp/Services/ProcessService.cs:394`, r1:BRW-11)
 
 - Impact: With a per-user Chrome/Brave install or only Beta/Canary, launch_browser_with_debug returns BrowserNotFound although the browser is installed.
 - Fix: Resolve via App Paths (HKCU then HKLM), then ProgramFiles/ProgramFilesX86/LocalApplicationData paths including Beta/Dev/Canary.
 
-**D-BRW-18: CDP reads use 4 HTTP requests and 2 WebSocket handshakes per call via 'localhost'** (low, `src/WindowsAppManagerMcp/Services/CdpService.cs:36`, r1:BRW-13, r2:BRW-14)
+**D-BRW-18: CDP reads use 4 HTTP requests and 2 WebSocket handshakes per call via 'localhost'** (low, `src/win-desktop-mcp/Services/CdpService.cs:36`, r1:BRW-13, r2:BRW-14)
 
 - Impact: Each CDP read pays seconds of avoidable latency (compounded by IPv6 fallback and 5 s timeouts when the port is down) and can mix URL and content from different navigations.
 - Fix: Use 127.0.0.1, fetch /json once, and evaluate title/url/text in one WebSocket session.
 
-**D-BRW-19: Browser detection suffix/prefix heuristics classify non-browsers as browsers and inject --new-window** (low, `src/WindowsAppManagerMcp/Services/BrowserDetectionService.cs:76`, r1:BRW-14, r2:bro-m2)
+**D-BRW-19: Browser detection suffix/prefix heuristics classify non-browsers as browsers and inject --new-window** (low, `src/win-desktop-mcp/Services/BrowserDetectionService.cs:76`, r1:BRW-14, r2:bro-m2)
 
 - Impact: launch_application of a portable non-browser tool with a URL gets an unknown '--new-window' switch, and get_browser_url on it returns UrlBarNotFound instead of NotABrowser.
 - Fix: Apply suffix tiers only with a known browser family token and inject --new-window only for known Chromium/Firefox families.
 
-**D-BRW-20: UIA content path always repeats the expensive URL lookup and attaches its possibly bogus value** (low, `src/WindowsAppManagerMcp/Services/BrowserReadingService.cs:226`, r2:bro-m3)
+**D-BRW-20: UIA content path always repeats the expensive URL lookup and attaches its possibly bogus value** (low, `src/win-desktop-mcp/Services/BrowserReadingService.cs:226`, r2:bro-m3)
 
 - Impact: get_browser_content is slower and can attach a wrong URL to correct content, so the agent records the page under the wrong address.
 - Fix: Make the URL lookup optional for content reads or reuse a validated URL, and mark it unverified when heuristic.
 
-**D-BRW-90: BrowserReadingService tests depend on whatever real process owns PID 1000** (low, `tests/WindowsAppManagerMcp.Tests/Unit/Services/BrowserReadingServiceTests.cs:456`, external-review:D4)
+**D-BRW-90: BrowserReadingService tests depend on whatever real process owns PID 1000** (low, `tests/win-desktop-mcp.Tests/Unit/Services/BrowserReadingServiceTests.cs:456`, external-review:D4)
 
 - Impact: Tests mock GetWindowThreadProcessId to return 1000, then the service calls the real Process.GetProcessById(1000), so results depend on the developer's machine.
 - Fix: Move the process-name lookup behind a native wrapper seam and mock it.
 - M0: fixed on `m0-hardening-tests`
 
-**D-INP-11: Clicks are not atomic (SetCursorPos, sleep, then SendInput) and the landing point and double-click timing are not verified** (low, `src/WindowsAppManagerMcp/Services/InputSimulationService.cs:190`, r1:INP-6, r2:INP-11, r1:INP-11)
+**D-INP-11: Clicks are not atomic (SetCursorPos, sleep, then SendInput) and the landing point and double-click timing are not verified** (low, `src/win-desktop-mcp/Services/InputSimulationService.cs:190`, r1:INP-6, r2:INP-11, r1:INP-11)
 
 - Impact: A physical mouse move, concurrent mouse_move or ClipCursor during the gap redirects the click while the requested coordinates are reported; a double_click delayMs at or above the user's double-click time registers as two single clicks.
 - Fix: Send one SendInput array (absolute VIRTUALDESK move, down, up; all four events for double-click), cap delayMs below GetDoubleClickTime(), and report GetCursorPos as ActualX/ActualY.
 - M1: partly fixed on `m1-input-guard` (M1.5): each press goes out in one SendInput call with an absolute move to the checked point, a pointer that does not stay there is CursorNotAtPoint, and actualX/actualY are reported; double-click timing is still not checked against GetDoubleClickTime (M4.2)
 
-**D-INP-12: Partial SendInput insertion can leave modifier keys logically held** (low, `src/WindowsAppManagerMcp/Services/InputSimulationService.cs:293`, r1:INP-8, r2:inp-m2)
+**D-INP-12: Partial SendInput insertion can leave modifier keys logically held** (low, `src/win-desktop-mcp/Services/InputSimulationService.cs:293`, r1:INP-8, r2:inp-m2)
 
 - Impact: If injection stops mid-batch (desktop switch, UAC, input block), Ctrl/Alt/Shift stay down so later clicks become Ctrl+clicks and typed text becomes shortcuts for both agent and user; pre-existing stuck modifiers are not detected.
 - Fix: Track inserted modifiers and send compensating key-ups on partial insertion, and check GetAsyncKeyState for modifiers/buttons before each operation.
 - M1: fixed on `m1-session-safety` (M1.10): the session releases what an inserted prefix left down, and refuses input while a modifier is down (ModifiersHeld)
 
-**D-INP-13: Virtual-key events always carry scan code 0** (low, `src/WindowsAppManagerMcp/Native/NativeStructs.cs:178`, r1:INP-10, r2:INP-9)
+**D-INP-13: Virtual-key events always carry scan code 0** (low, `src/win-desktop-mcp/Native/NativeStructs.cs:178`, r1:INP-10, r2:INP-9)
 
 - Impact: RDP/Hyper-V/VMware/Citrix clients, raw-input games and frameworks deriving KeyboardEvent.code from scan codes misread or drop send_keys keystrokes while success is reported.
 - Fix: Fill wScan with MapVirtualKeyExW(vk, MAPVK_VK_TO_VSC_EX) and set KEYEVENTF_EXTENDEDKEY for 0xE0-prefixed codes, optionally offering a scan-code-only mode.
 
-**D-INP-14: send_keys injects the whole sequence in one burst with no pacing** (low, `src/WindowsAppManagerMcp/Services/InputSimulationService.cs:291`, r1:inp-m1)
+**D-INP-14: send_keys injects the whole sequence in one burst with no pacing** (low, `src/win-desktop-mcp/Services/InputSimulationService.cs:291`, r1:inp-m1)
 
 - Impact: Sequences whose later keys depend on UI opened by earlier keys ('^l' then a URL, '%f' then a menu key) can arrive before that UI exists, forcing the agent to split calls and widen the focus-drift window.
 - Fix: Add an optional per-chord delay or a '{WAIT n}' token.
 
-**D-INP-15: type_text is unbounded and uncancellable, and echoes the full text back** (low, `src/WindowsAppManagerMcp/Services/InputSimulationService.cs:234`, r2:INP-12)
+**D-INP-15: type_text is unbounded and uncancellable, and echoes the full text back** (low, `src/win-desktop-mcp/Services/InputSimulationService.cs:234`, r2:INP-12)
 
 - Impact: A 10,000-character string with delayMs=100 types for ~17 minutes and keeps typing into whatever has focus after the client cancels; echoing the text doubles token cost.
 - Fix: Make the tool async with the SDK CancellationToken, check it and the foreground window between chunks, cap length, and return a character count instead of the text.
 - M1: partly fixed on `m1-input-guard` and `m1-session-safety` (M1.5, M1.10): type_text is async, cancellable and pausable, and checks the foreground before every batch of 32 characters; the text is still unbounded and echoed back (M4.4)
 - M4: fixed on `m4-4-type-text-paste` (M4.4): typing takes at most 5,000 characters (TextTooLong) and a paste 1,000,000, batches are 64 characters, and the result returns `length` instead of the text
 
-**D-INP-16: Input error codes are misleading or unused** (low, `src/WindowsAppManagerMcp/Services/InputSimulationService.cs:306`, r2:INP-13)
+**D-INP-16: Input error codes are misleading or unused** (low, `src/win-desktop-mcp/Services/InputSimulationService.cs:306`, r2:INP-13)
 
 - Impact: An agent branching on ErrorCode cannot tell a key-spec syntax error from an unknown key name, or a locked/secure desktop from an injection failure, leading to wrong retries.
 - Fix: Map syntax errors to InvalidKeySpecification and unknown names to UnknownKey, add CursorPositionFailed/DesktopUnavailable, and remove unused codes.
 - M1: partly fixed on `m1-input-guard` (M1.5): DesktopUnavailable and SessionLocked tell a locked or secure desktop from an injection failure; a key-spec syntax error is still reported as UnknownKey (M4.1)
 - M2: partly fixed on `m2-tool-surface` (M2.2): a key-spec syntax error is InvalidKeySpecification and a failed SetCursorPos is CursorPositionFailed; InvalidCoordinates is still unused
 
-**D-MCP-90: DependencyInjectionTests claimed to mirror Program.cs but had drifted (8 types missing)** (low, `tests/WindowsAppManagerMcp.Tests/Integration/DependencyInjectionTests.cs:27`, final-review:TEST-3, external-review:A5, external-review:D3)
+**D-MCP-90: DependencyInjectionTests claimed to mirror Program.cs but had drifted (8 types missing)** (low, `tests/win-desktop-mcp.Tests/Integration/DependencyInjectionTests.cs:27`, final-review:TEST-3, external-review:A5, external-review:D3)
 
 - Impact: Production wiring for screenshot, UI Automation and input tools was untested; removing the error-reporting filter left every test green.
 - Fix: Share one registration method between Program.cs and the tests.
 - M0: fixed on `m0-final-fixes`
 
-**D-PAL-19: Launch/kill error codes are inaccurate: the AccessDenied branch is unreachable and kill success is not confirmed** (low, `src/WindowsAppManagerMcp/Services/ProcessService.cs:342`, r1:PAL-15, r2:PAL-14)
+**D-PAL-19: Launch/kill error codes are inaccurate: the AccessDenied branch is unreachable and kill success is not confirmed** (low, `src/win-desktop-mcp/Services/ProcessService.cs:342`, r1:PAL-15, r2:PAL-14)
 
 - Impact: The agent cannot tell 'blocked by policy' from 'needs elevation' from 'not found', and may report a process killed while it still runs.
 - Fix: Catch Win32Exception/AggregateException with NativeErrorCode 5 as AccessDenied with requiresElevation, and confirm exit with WaitForExit before reporting success.
 - M0: fixed on `m0-launch-and-kill`
 
-**D-PAL-20: list_processes(includeWindowless:true) reports WindowCount=0 for every process** (low, `src/WindowsAppManagerMcp/Services/ProcessService.cs:114`, r1:pro-m4, r2:PAL-15)
+**D-PAL-20: list_processes(includeWindowless:true) reports WindowCount=0 for every process** (low, `src/win-desktop-mcp/Services/ProcessService.cs:114`, r1:pro-m4, r2:PAL-15)
 
 - Impact: An agent listing all processes to find which owns windows sees zeros and may relaunch an app or kill the wrong PID.
 - Fix: Always build windowCounts and apply the windowless filter only when includeWindowless is false.
 - M6: fixed on `m6-s0e-process-seam` (the M6.6 process seam). ProcessService.GetRunningProcesses always maps windows to processes and applies the windowless filter only when includeWindowless is false. list_processes' includeWindowless description still says windowCount is 0; M6.6 rewrites it with the rest of the tool's surface.
 - M6: description fixed on `m6-6-processes` (M6.6): list_processes says windowCount and windows are real with includeWindowless too.
 
-**D-PAL-21: kill_process acts on a bare PID with no identity check (PID reuse)** (low, `src/WindowsAppManagerMcp/Services/ProcessService.cs:288`, r1:pro-m5, r2:PAL-13)
+**D-PAL-21: kill_process acts on a bare PID with no identity check (PID reuse)** (low, `src/win-desktop-mcp/Services/ProcessService.cs:288`, r1:pro-m5, r2:PAL-13)
 
 - Impact: If the target exits between list_processes and kill_process and the PID is reused, a different process and its whole tree are killed.
 - Fix: Add expectedProcessName (and optional expectedStartTime) parameters and refuse on mismatch.
 - M0: fixed on `m0-launch-and-kill`
 
-**D-PAL-22: kill_process protected list omits shell-infrastructure processes and the agent's own host** (low, `src/WindowsAppManagerMcp/Services/ProcessService.cs:226`, r2:PAL-13)
+**D-PAL-22: kill_process protected list omits shell-infrastructure processes and the agent's own host** (low, `src/win-desktop-mcp/Services/ProcessService.cs:226`, r2:PAL-13)
 
 - Impact: An agent 'cleaning up processes' can kill ctfmon/TextInputHost (breaking keyboard input), Start-menu hosts, or its own session host.
 - Fix: Extend the protected list and refuse to kill ancestors of Environment.ProcessId unless allowHostTermination=true.
 - M0: partly fixed on `m0-launch-and-kill`
 - M1: fixed on `m1-wave3-followups` and `m1-fix-guards` (M1.7): kill_process refuses every host process (ancestors, the console host and console server, the startup foreground app) and checks a forced kill's whole tree
 
-**D-PAL-23: Launch waits are synchronous Thread.Sleep loops with no timeout cap or cancellation; batch waits run sequentially and drop ErrorCode** (low, `src/WindowsAppManagerMcp/Tools/AppLauncherTools.cs:30`, r1:pro-m6, r2:PAL-16)
+**D-PAL-23: Launch waits are synchronous Thread.Sleep loops with no timeout cap or cancellation; batch waits run sequentially and drop ErrorCode** (low, `src/win-desktop-mcp/Tools/AppLauncherTools.cs:30`, r1:pro-m6, r2:PAL-16)
 
 - Impact: A large timeout or a batch of handoff launchers takes N x timeout and outlives the client's request timeout, notifications/cancelled cannot stop it, and batch failures cannot be branched on by code.
 - Fix: Make launch async with the SDK CancellationToken, clamp waitTimeoutMs, wait for batch items concurrently against one deadline, and add ErrorCode to LaunchResultItem.
@@ -1932,123 +1932,123 @@ Run ids such as `r1:WC-1` and `r2:WC-1` trace each entry back to the raw review 
 - M1: partly fixed on `m1-fix-concurrency`: waitTimeoutMs is clamped to 0-30000; the waits are still synchronous, sequential and not cancellable
 - M2: fixed on `m2-launch` (M2.6) and `m2-foundation` (M2.13): the waits are asynchronous (Task.Delay on the call's token), cancellable, and a batch waits for all its windows at once against one deadline
 
-**D-PAL-24: file:// is allowed as a 'safe' protocol, bypassing every executable check** (low, `src/WindowsAppManagerMcp/Services/InputValidationService.cs:37`, r1:pro-m7)
+**D-PAL-24: file:// is allowed as a 'safe' protocol, bypassing every executable check** (low, `src/win-desktop-mcp/Services/InputValidationService.cs:37`, r1:pro-m7)
 
 - Impact: A file:/// URL pointing at cmd.exe or a UNC tool launches with no warning while ms-settings: is blocked, an inconsistent policy agents can stumble into.
 - Fix: Treat file:// targets as paths and run them through the same executable validation.
 - M0: fixed on `m0-launch-and-kill`
 
-**D-PAL-25: apply_layout ignores the result of FocusWindow for focus placements** (low, `src/WindowsAppManagerMcp/Services/LayoutService.cs:260`, r2:pro-m3)
+**D-PAL-25: apply_layout ignores the result of FocusWindow for focus placements** (low, `src/win-desktop-mcp/Services/LayoutService.cs:260`, r2:pro-m3)
 
 - Impact: The agent assumes the focused app is ready for type_text/send_keys and sends keystrokes to whichever window actually has focus.
 - Fix: Report the focus outcome per placement and in the overall result.
 - M1: partly fixed on `m1-foreground` (M1.3): a focus placement that does not come to the front makes apply_layout fail with an ArrangeFailed error naming the focus errorCode; since `m1-last-fixes` apply_layout also returns the per-placement focus results as `focus`
 - M2: fixed on `m2-layouts` (M2.8): every placement reports `focused`, beside the per-placement focus results and the ArrangeFailed error
 
-**D-SCR-10: The undefined high byte of GDI pixels is copied into an ARGB bitmap, producing transparent PNG pixels** (low, `src/WindowsAppManagerMcp/Services/ScreenshotService.cs:560`, r1:SCR-5, r2:SCR-6)
+**D-SCR-10: The undefined high byte of GDI pixels is copied into an ARGB bitmap, producing transparent PNG pixels** (low, `src/win-desktop-mcp/Services/ScreenshotService.cs:560`, r1:SCR-5, r2:SCR-6)
 
 - Impact: Captures (fully so on the BitBlt fallback) can contain transparent regions that render black or blank in vision pipelines, and resizing loses colors.
 - Fix: Create bitmaps as Format32bppRgb (or force alpha to 0xFF) before encoding/resizing, and report the capture method used.
 - M1: fixed on `m1-captures` (M1.2): pixels are encoded from Format32bppRgb, so images are opaque
 
-**D-SCR-11: Window capture has no hang protection: PrintWindow runs synchronously against the target's UI thread** (low, `src/WindowsAppManagerMcp/Native/ScreenCaptureWrapper.cs:130`, r1:SCR-7)
+**D-SCR-11: Window capture has no hang protection: PrintWindow runs synchronously against the target's UI thread** (low, `src/win-desktop-mcp/Native/ScreenCaptureWrapper.cs:130`, r1:SCR-7)
 
 - Impact: Capturing a 'Not Responding' window to diagnose it can block the tool call for as long as the target is hung.
 - Fix: Check IsHungAppWindow and fall back to screen-DC BitBlt (or error), and run PrintWindow with a bounded wait plus a CancellationToken.
 - M2: fixed on `m2-capture-health` (M2.9): PrintWindow runs through the window call runner (refused at once for a hung window, 5 s deadline); a window that does not answer is copied from the screen with a WindowNotResponding warning
 
-**D-SCR-12: Frame captures include the invisible DWM resize borders** (low, `src/WindowsAppManagerMcp/Native/ScreenCaptureWrapper.cs:78`, r1:SCR-9)
+**D-SCR-12: Frame captures include the invisible DWM resize borders** (low, `src/win-desktop-mcp/Native/ScreenCaptureWrapper.cs:78`, r1:SCR-9)
 
 - Impact: includeFrame=true images carry junk strips on three sides and are offset from the visible window, mismatching monitor-capture geometry.
 - Fix: Crop to DWMWA_EXTENDED_FRAME_BOUNDS and report that origin in CapturedRegion.
 - M2: fixed on `m2-capture-health` (M2.9): frame captures are cut to DWMWA_EXTENDED_FRAME_BOUNDS and report that origin
 
-**D-SCR-13: Large captures triple-copy pixels and the 16384 cap still allows multi-GB allocations** (low, `src/WindowsAppManagerMcp/Native/ScreenCaptureWrapper.cs:188`, r1:SCR-10, r2:SCR-12)
+**D-SCR-13: Large captures triple-copy pixels and the 16384 cap still allows multi-GB allocations** (low, `src/win-desktop-mcp/Native/ScreenCaptureWrapper.cs:188`, r1:SCR-10, r2:SCR-12)
 
 - Impact: Polling full-virtual-desktop captures on multi-4K setups allocates hundreds of MB of LOH memory per call (about 3 GB at the cap), causing GC pressure or OutOfMemory.
 - Fix: Capture into a CreateDIBSection wrapped directly by Bitmap (removing two copies) and lower the total-pixel cap or downscale during capture.
 - M2: fixed on `m2-capture-health` (M2.9): one top-down CreateDIBSection copy wrapped by the bitmap without another copy, and a 64-megapixel budget checked before any allocation
 
-**D-SCR-14: GetDIBits is called while the bitmap is still selected into the memory DC** (low, `src/WindowsAppManagerMcp/Native/ScreenCaptureWrapper.cs:49`, r1:scr-m3, r2:SCR-12)
+**D-SCR-14: GetDIBits is called while the bitmap is still selected into the memory DC** (low, `src/win-desktop-mcp/Native/ScreenCaptureWrapper.cs:49`, r1:scr-m3, r2:SCR-12)
 
 - Impact: Outside the documented contract; can yield garbage or 'GetDIBits failed' on some drivers or remote sessions as intermittent, undiagnosable capture errors.
 - Fix: Call SelectObject(memoryDc, oldBitmap) before GetDIBits.
 - M2: fixed on `m2-capture-health` (M2.9): GetDIBits is gone; the bits of the DIB section are copied out after GdiFlush
 
-**D-SCR-15: Annotation rectangles are too wide/tall for elements extending above or left of the image** (low, `src/WindowsAppManagerMcp/Services/ScreenshotService.cs:639`, r2:SCR-10, r2:UIA-9)
+**D-SCR-15: Annotation rectangles are too wide/tall for elements extending above or left of the image** (low, `src/win-desktop-mcp/Services/ScreenshotService.cs:639`, r2:SCR-10, r2:UIA-9)
 
 - Impact: For partly off-image elements the drawn box and ImageBounds overrun the element's real edge by |X|/|Y| px and overlap neighbors, skewing computed centers.
 - Fix: Clip with Rectangle.Intersect(elementRect, imageRect).
 - M1: fixed on `m1-captures` (M1.2): overlay rectangles are clipped to the image
 
-**D-SCR-16: capture_region silently returns black for off-screen areas and reports the nearest monitor** (low, `src/WindowsAppManagerMcp/Services/ScreenshotService.cs:122`, r2:SCR-11)
+**D-SCR-16: capture_region silently returns black for off-screen areas and reports the nearest monitor** (low, `src/win-desktop-mcp/Services/ScreenshotService.cs:122`, r2:SCR-11)
 
 - Impact: A miscomputed region (e.g. logical instead of physical pixels) returns a black image with a valid MonitorIndex and Success=true, hiding the coordinate bug.
 - Fix: Intersect the region with the virtual screen, error when nothing overlaps or warn with the clipped region, and use MONITOR_DEFAULTTONULL.
 - M2: fixed on `m2-capture-health` (M2.9): the region is cut to the virtual screen (RegionClipped), one entirely off it is RegionOffScreen, parts between monitors give RegionPartlyOffMonitors, and the monitor is the one that contains the centre, or none
 
-**D-SCR-17: capture_with_elements combines window bounds, UIA bounds and pixels taken at different times** (low, `src/WindowsAppManagerMcp/Tools/ScreenshotTools.cs:149`, r2:scr-m2)
+**D-SCR-17: capture_with_elements combines window bounds, UIA bounds and pixels taken at different times** (low, `src/win-desktop-mcp/Tools/ScreenshotTools.cs:149`, r2:scr-m2)
 
 - Impact: If the window moves, scrolls or finishes loading during the multi-second traversal, overlays misalign with the pixels and nothing flags it, so the agent clicks stale targets.
 - Fix: Re-read the window rect after traversal and capture, and flag (or retry) when it changed.
 - M3: partly fixed on `m3-fix-surface` (M3.11): the window's rectangle is read before the element walk and again with the pixels, and a window that moved or resized by more than 2 px in between gives a capture without a captureId and a WindowMoved warning, so a mark is never clicked beside its element; a page that scrolls or finishes loading inside a window that stays put is not detected
 
-**D-SCR-18: Dead encode/save paths, undisposed EncoderParameters and silent format fallback** (low, `src/WindowsAppManagerMcp/Services/ScreenshotService.cs:360`, r1:SCR-12)
+**D-SCR-18: Dead encode/save paths, undisposed EncoderParameters and silent format fallback** (low, `src/win-desktop-mcp/Services/ScreenshotService.cs:360`, r1:SCR-12)
 
 - Impact: An unsupported format silently yields another format, and duplicated code paths risk fixes (e.g. alpha handling) landing in only one.
 - Fix: Delete the dead methods, wrap EncoderParameters in using, reject unsupported formats, and add a MimeType field.
 - M1: fixed on `m1-captures` (M1.2): the dead paths are gone, EncoderParameters is disposed, an unknown format is InvalidFormat, and the metadata has mimeType
 
-**D-UIA-09: Empty bounding rectangles serialize as int.MinValue coordinates** (low, `src/WindowsAppManagerMcp/Services/UIElementService.cs:304`, r1:UIA-10, r2:UIA-7)
+**D-UIA-09: Empty bounding rectangles serialize as int.MinValue coordinates** (low, `src/win-desktop-mcp/Services/UIElementService.cs:304`, r1:UIA-10, r2:UIA-7)
 
 - Impact: With visibleOnly=false, geometry-less elements report bounds of -2147483648, so a computed center is garbage and the agent cannot tell 'no geometry' from a real position.
 - Fix: Emit Bounds=null (or HasBounds=false) when rect.IsEmpty or non-finite, skip size filters for such nodes, and use Floor/Ceiling rounding.
 - M1: fixed on `m1-uia-tree` (M1.8): empty or non-finite bounds are left out
 
-**D-UIA-10: maxDepth is off by one (N returns N+1 levels) and truncation is not reported** (low, `src/WindowsAppManagerMcp/Services/UIElementService.cs:340`, r1:UIA-11, r2:UIA-13)
+**D-UIA-10: maxDepth is off by one (N returns N+1 levels) and truncation is not reported** (low, `src/win-desktop-mcp/Services/UIElementService.cs:340`, r1:UIA-11, r2:UIA-13)
 
 - Impact: A cheap overview (maxDepth=1) returns an extra, often largest, level, pushing into timeouts, and the agent cannot tell whether nodes exist below the cut-off.
 - Fix: Count window children as depth 1 and report MaxDepthReached/HasMoreChildren on truncated nodes.
 - M1: fixed on `m1-uia-tree` (M1.8): maxDepth counts levels exactly, with depthReached and truncated/truncationReason
 
-**D-UIA-11: A single vanished sibling silently drops all remaining siblings in the traversal** (low, `src/WindowsAppManagerMcp/Services/UIElementService.cs:249`, r1:ui--m2, r2:ui--m2)
+**D-UIA-11: A single vanished sibling silently drops all remaining siblings in the traversal** (low, `src/win-desktop-mcp/Services/UIElementService.cs:249`, r1:ui--m2, r2:ui--m2)
 
 - Impact: In dynamic UIs (refreshing lists, toasts, Chromium re-layout) half a toolbar or list can disappear from a result that still reports success, so the agent concludes controls are absent.
 - Fix: Snapshot children with FindAll(TreeScope.Children) under a CacheRequest (or resume from the last live sibling) and set a Truncated/Warning flag on failure.
 - M0: fixed on `m0-concurrency-and-uia-crash`
 
-**D-UIA-12: Unknown controlTypes names are silently accepted and return empty success** (low, `src/WindowsAppManagerMcp/Tools/UIElementTools.cs:53`, r2:ui--m4)
+**D-UIA-12: Unknown controlTypes names are silently accepted and return empty success** (low, `src/win-desktop-mcp/Tools/UIElementTools.cs:53`, r2:ui--m4)
 
 - Impact: The agent cannot tell 'bad filter value' from 'control not present' and may conclude the UI lacks the control.
 - Fix: Reject unknown names with the list of valid control types, or echo the accepted names in the result.
 - M1: fixed on `m1-uia-tree` (M1.8): unknown names fail with InvalidControlType, which lists the valid names
 
-**D-WIN-16: bringToFront (default true in snap) activates the window despite SWP_NOACTIVATE, making keyboard focus nondeterministic** (low, `src/WindowsAppManagerMcp/Services/WindowService.cs:124`, r1:win-m3, r2:win-m2)
+**D-WIN-16: bringToFront (default true in snap) activates the window despite SWP_NOACTIVATE, making keyboard focus nondeterministic** (low, `src/win-desktop-mcp/Services/WindowService.cs:124`, r1:win-m3, r2:win-m2)
 
 - Impact: Whether focus moves to the rearranged window depends on whether the server currently has foreground rights, so type_text/send_keys after a layout step go to an unpredictable window.
 - Fix: Use SetWindowPos(HWND_TOP, SWP_NOACTIVATE) for z-order only, document that bringToFront does not focus, and require focus_window for activation.
 - M1: partly fixed on `m1-wave2-followups` (M1.3): bringToFront uses SetWindowPos(HWND_TOP, SWP_NOACTIVATE) only; restoring a minimized window (SW_RESTORE) and move_window_to_monitor's maximize (SW_MAXIMIZE) still activate (M2.3)
 - M2: partly fixed on `m2-geometry` (M2.3) and `m2-fix-integration`: no placement activates (restores use SW_SHOWNOACTIVATE, apply_layout included); move_window_to_monitor's maximize still activates (Windows has no non-activating maximize), documented
 
-**D-WIN-17: set_window_state('restore'/'normal') on a window minimized from maximized returns it maximized** (low, `src/WindowsAppManagerMcp/Services/WindowService.cs:177`, r2:win-m4)
+**D-WIN-17: set_window_state('restore'/'normal') on a window minimized from maximized returns it maximized** (low, `src/win-desktop-mcp/Services/WindowService.cs:177`, r2:win-m4)
 
 - Impact: An agent asking for 'normal' gets 'maximized' and needs a second call; in the batch path NewState may be omitted so it cannot even see this.
 - Fix: For 'normal', use SW_SHOWNORMAL (or SetWindowPlacement showCmd=SW_SHOWNORMAL) and verify IsZoomed is false afterwards.
 - M2: partly fixed on `m2-tool-surface` (M2.2): restore and normal follow the Windows Restore command on purpose (a window minimized from maximized comes back maximized), and every result and batch item now reports the state, so the agent sees it
 
-**D-WIN-18: DPI awareness is per-monitor v1 via API call with the HRESULT ignored and no manifest** (low, `src/WindowsAppManagerMcp/Program.cs:13`, r1:WC-14, r2:WC-13)
+**D-WIN-18: DPI awareness is per-monitor v1 via API call with the HRESULT ignored and no manifest** (low, `src/win-desktop-mcp/Program.cs:13`, r1:WC-14, r2:WC-13)
 
 - Impact: If the call ever fails (awareness already set by a host or shim), every bound, snap rect and click coordinate becomes silently DPI-virtualized on scaled displays, with nothing telling the agent.
 - Fix: Declare PerMonitorV2 in app.manifest (or SetProcessDpiAwarenessContext(-4) with fallback), log non-S_OK results to stderr, and report the effective awareness in get_monitors.
 - M2: fixed on `m2-server-info-toolsets` (M2.11): app.manifest declares PerMonitorV2 (PerMonitor before Windows 10 1703), the API call is gone, and the effective awareness is logged at start and reported by get_server_info
 
-**D-WIN-19: Snap tests exercise a copied algorithm; MonitorService has no test seam** (low, `tests/WindowsAppManagerMcp.Tests/Unit/Services/MonitorServiceTests.cs:145`, r1:WC-15, r2:WC-14)
+**D-WIN-19: Snap tests exercise a copied algorithm; MonitorService has no test seam** (low, `tests/win-desktop-mcp.Tests/Unit/Services/MonitorServiceTests.cs:145`, r1:WC-15, r2:WC-14)
 
 - Impact: Regressions in the production snap math, monitor-index fallback or maximized/minimized handling pass the suite unnoticed.
 - Fix: Extract a pure SnapMath used by MonitorService (or inject a monitor-enumeration seam), delete the mirrored helper, and test production code with mocks.
 - M2: fixed on `m2-geometry` (M2.3): MonitorService uses the pure SnapMath, the copied test helper is deleted, and SnapMathTests test the production code
 
-**D-WIN-20: Batch delayBetweenMs is unbounded and blocks via Thread.Sleep with no cancellation** (low, `src/WindowsAppManagerMcp/Services/WindowService.cs:341`, r2:win-m3)
+**D-WIN-20: Batch delayBetweenMs is unbounded and blocks via Thread.Sleep with no cancellation** (low, `src/win-desktop-mcp/Services/WindowService.cs:341`, r2:win-m3)
 
 - Impact: A model passing a large delay (e.g. 5000 ms over 10 windows) blocks the request for nearly a minute and the client cannot cancel it.
 - Fix: Clamp delayBetweenMs and make batch tools async with the SDK CancellationToken and Task.Delay.

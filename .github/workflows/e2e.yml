@@ -1,6 +1,6 @@
 name: E2E
 
-# End-to-end tests against the suite's own fixture app (tests/WindowsAppManagerMcp.E2ETests and
+# End-to-end tests against the suite's own fixture app (tests/win-desktop-mcp.E2ETests and
 # tests/FixtureApp). They start a real app and, in the "all" tier, bring it to the front and type into
 # it, so they never run on push or pull_request: only when started by hand, and only on a runner with
 # an interactive desktop. Without one the job says so and stops, successfully, before building.
@@ -130,7 +130,7 @@ jobs:
             $filter = 'Category=DesktopNoInput'
           }
           $results = Join-Path $PWD 'TestResults/e2e'
-          dotnet test tests/WindowsAppManagerMcp.E2ETests/WindowsAppManagerMcp.E2ETests.csproj `
+          dotnet test tests/win-desktop-mcp.E2ETests/win-desktop-mcp.E2ETests.csproj `
             --no-build --configuration Release `
             --filter $filter `
             --blame-hang-timeout 5m `

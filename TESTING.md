@@ -1,6 +1,6 @@
 # Testing Guide
 
-> **WindowsAppManagerMcp** | .NET 10.0 | xUnit | Moq
+> **win-desktop-mcp** | .NET 10.0 | xUnit | Moq
 
 A comprehensive guide for Test-Driven Development (TDD) using the Red-Green-Refactor methodology.
 
@@ -40,7 +40,7 @@ A comprehensive guide for Test-Driven Development (TDD) using the Red-Green-Refa
 
 ### Purpose
 
-This document establishes testing standards and best practices for the WindowsAppManagerMcp project. It serves as:
+This document establishes testing standards and best practices for the win-desktop-mcp project. It serves as:
 
 - A guide for TDD implementation
 - A template for consistent test creation
@@ -267,9 +267,9 @@ public void BadTest_MixedActAssert()
 ### Project Structure
 
 ```
-WindowsAppManagerMcp/
+win-desktop-mcp/
 ├── src/
-│   └── WindowsAppManagerMcp/
+│   └── win-desktop-mcp/
 │       ├── Infrastructure/        # MCP call filters (errors, input gate, audit log), toolsets, run_steps, server instructions
 │       ├── Models/                # DTOs, result records, error codes
 │       ├── Native/                # P/Invoke declarations and the native wrappers tests mock
@@ -279,8 +279,8 @@ WindowsAppManagerMcp/
 │       └── Tools/                 # [McpServerTool] classes
 │
 └── tests/
-    ├── WindowsAppManagerMcp.Tests/
-    │   ├── WindowsAppManagerMcp.Tests.csproj
+    ├── win-desktop-mcp.Tests/
+    │   ├── win-desktop-mcp.Tests.csproj
     │   ├── GlobalUsings.cs
     │   ├── Contract/              # Tool contract: serialization, errors, descriptions, docs, policy and gate contracts
     │   ├── Fixtures/              # TestDataFactory, RepositoryFiles, RawMcpConnection, FakeCdp, Contract/NativeFakedServer, ...
@@ -292,10 +292,10 @@ WindowsAppManagerMcp/
     │       ├── Native/
     │       ├── Services/
     │       └── Tools/
-    ├── WindowsAppManagerMcp.Tests.Infrastructure/  # Shared desktop test gate ([DesktopFact], [DesktopNoInputFact], ...)
+    ├── win-desktop-mcp.Tests.Infrastructure/  # Shared desktop test gate ([DesktopFact], [DesktopNoInputFact], ...)
     │                                               # and the in-process MCP test host (InProcessMcpServer)
     ├── FixtureApp/                # WamFixtureApp: the WPF app the end-to-end tests drive
-    └── WindowsAppManagerMcp.E2ETests/
+    └── win-desktop-mcp.E2ETests/
         ├── Harness/               # Starts the fixture, guarded server services, event log reader
         ├── HarnessTests/          # Ordinary tests of the harness (never start the fixture)
         └── Scenarios/             # Gated end-to-end tests against the fixture
@@ -677,7 +677,7 @@ unless `WAM_ALLOW_DESKTOP_NOINPUT_TESTS=1` or `WAM_ALLOW_DESKTOP_TESTS=1`, and r
 `Category=Desktop` and `Category=DesktopNoInput`.
 
 Besides the gate's own canaries in `DesktopTestGateTests`, the tests marked this way are the
-fixture app scenarios in `tests/WindowsAppManagerMcp.E2ETests`. See
+fixture app scenarios in `tests/win-desktop-mcp.E2ETests`. See
 [End-to-end tests against the fixture app](#end-to-end-tests-against-the-fixture-app).
 
 ### xUnit Assertions Reference
@@ -934,7 +934,7 @@ public bool IsValidWindow(nint handle)
 
 ```csharp
 // File: Services/Interfaces/INativeWindowWrapper.cs
-namespace WindowsAppManagerMcp.Services.Interfaces;
+namespace WinDesktopMcp.Services.Interfaces;
 
 public interface INativeWindowWrapper
 {
@@ -1064,7 +1064,7 @@ start ./TestResults/report/index.html
 
 CI fails the build when line coverage of the `Category!=Desktop` run drops below the
 threshold in `.github/workflows/test.yml` (currently 59%). It measures the server assembly
-(package `WindowsAppManagerMcp`), merged over the coverage files of every test project: a line
+(package `win-desktop-mcp`), merged over the coverage files of every test project: a line
 counts as covered when any project covers it. Lines are matched by full source path, because
 coverlet writes file names relative to a source root that depends on what each project
 instruments. Measured this way, the suite covers about 76% of the server's lines (October 2026); the
@@ -1365,7 +1365,7 @@ public class LayoutPersistenceTests : IDisposable
 ### Complete WindowServiceTests
 
 ```csharp
-namespace WindowsAppManagerMcp.Tests.Unit.Services;
+namespace WinDesktopMcp.Tests.Unit.Services;
 
 public class WindowServiceTests
 {
@@ -1442,7 +1442,7 @@ public class WindowServiceTests
 ### Complete LayoutServiceTests
 
 ```csharp
-namespace WindowsAppManagerMcp.Tests.Unit.Services;
+namespace WinDesktopMcp.Tests.Unit.Services;
 
 public class LayoutServiceTests : IDisposable
 {
@@ -1581,8 +1581,8 @@ public class LayoutServiceTests : IDisposable
 ### TestDataFactory Class
 
 ```csharp
-// File: tests/WindowsAppManagerMcp.Tests/Fixtures/TestDataFactory.cs
-namespace WindowsAppManagerMcp.Tests.Fixtures;
+// File: tests/win-desktop-mcp.Tests/Fixtures/TestDataFactory.cs
+namespace WinDesktopMcp.Tests.Fixtures;
 
 public static class TestDataFactory
 {
@@ -1729,7 +1729,7 @@ public static class TestDataFactory
 ### Project File Template
 
 ```xml
-<!-- tests/WindowsAppManagerMcp.Tests/WindowsAppManagerMcp.Tests.csproj -->
+<!-- tests/win-desktop-mcp.Tests/win-desktop-mcp.Tests.csproj -->
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
@@ -1756,9 +1756,9 @@ public static class TestDataFactory
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\src\WindowsAppManagerMcp\WindowsAppManagerMcp.csproj" />
-    <!-- The desktop test gate, shared with WindowsAppManagerMcp.E2ETests -->
-    <ProjectReference Include="..\WindowsAppManagerMcp.Tests.Infrastructure\WindowsAppManagerMcp.Tests.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\src\win-desktop-mcp\win-desktop-mcp.csproj" />
+    <!-- The desktop test gate, shared with win-desktop-mcp.E2ETests -->
+    <ProjectReference Include="..\win-desktop-mcp.Tests.Infrastructure\win-desktop-mcp.Tests.Infrastructure.csproj" />
   </ItemGroup>
 
 </Project>
@@ -1767,23 +1767,23 @@ public static class TestDataFactory
 ### GlobalUsings.cs Template
 
 ```csharp
-// tests/WindowsAppManagerMcp.Tests/GlobalUsings.cs
+// tests/win-desktop-mcp.Tests/GlobalUsings.cs
 global using Xunit;
 global using Moq;
 global using FluentAssertions;
 
-global using WindowsAppManagerMcp.Models;
-global using WindowsAppManagerMcp.Services;
-global using WindowsAppManagerMcp.Services.Interfaces;
-global using WindowsAppManagerMcp.Tests.Fixtures;
+global using WinDesktopMcp.Models;
+global using WinDesktopMcp.Services;
+global using WinDesktopMcp.Services.Interfaces;
+global using WinDesktopMcp.Tests.Fixtures;
 ```
 
 ### Directory Structure to Create
 
 ```
 tests/
-└── WindowsAppManagerMcp.Tests/
-    ├── WindowsAppManagerMcp.Tests.csproj
+└── win-desktop-mcp.Tests/
+    ├── win-desktop-mcp.Tests.csproj
     ├── GlobalUsings.cs
     ├── Unit/
     │   ├── Services/
@@ -1849,7 +1849,7 @@ belongs to the collection too, as `DependencyInjectionTests` and `InputGuardRegi
 Process launches and kills go through a mocked `INativeProcessWrapper`, so no default test starts
 or stops a real process. A test that really needs a side effect like that must be marked with a
 desktop gate attribute
-(`tests/WindowsAppManagerMcp.Tests.Infrastructure/DesktopTestAttributes.cs`, a small project
+(`tests/win-desktop-mcp.Tests.Infrastructure/DesktopTestAttributes.cs`, a small project
 that the unit tests and the end-to-end tests share). There are two tiers:
 
 | Attribute | Tier | Runs when | Traits |
@@ -1983,7 +1983,7 @@ Rules for new tests:
   desktop shares. The E2E `WrapperCatalog` classifies the wrapper's members, and the shared pause's Set
   and Reset, as `GlobalHotkey`, which no tier allows. The one test of the real named event,
   `NativeHotkeyWrapperSharedPauseTests`, opens it only through wrappers built with `NativeHotkeyWrapper(string)` on a
-  name of its own (`Local\WamTests.SharedPause.<guid>`), never the servers' `Local\WindowsAppManagerMcp.InputPaused`,
+  name of its own (`Local\WamTests.SharedPause.<guid>`), never the servers' `Local\win-desktop-mcp.InputPaused`,
   builds the servers' parameterless wrapper only to read the name it would open, and registers no hotkey;
   `TestCodeNativeWrapperTests` traces the name passed to that constructor through the IL and fails one it
   cannot trace to a `Local\WamTests.` literal of the test's own, unless `SanctionedHotkeyNames` gives a reason (a
@@ -2037,7 +2037,7 @@ Rules for new tests:
   start-up (30 s, free, since an answer ends the wait); only the test of a check that never answers waits one out (3 s).
 - The guards above scan the server assembly. `TestCodeNativeWrapperTests` checks the premise they rest on, that the
   default run replaces the action wrappers, by scanning the IL of the test assemblies (this one and
-  WindowsAppManagerMcp.Tests.Infrastructure) outside the desktop-gated tests. Test code may construct a real action
+  win-desktop-mcp.Tests.Infrastructure) outside the desktop-gated tests. Test code may construct a real action
   wrapper only where `SanctionedConstructions` says why that use only reads (the read-only window wrapper, the process
   reads, the shared pause of a name of the test's own), and may call a real window, process or hotkey wrapper only
   through the members on `ReadOnlyMembers`, also through their interfaces in a type that constructs one. No test closes
@@ -2088,7 +2088,7 @@ a real one.
 
 ### End-to-end tests against the fixture app
 
-`tests/WindowsAppManagerMcp.E2ETests` tests the real server services against an app the suite
+`tests/win-desktop-mcp.E2ETests` tests the real server services against an app the suite
 owns, `tests/FixtureApp` (WamFixtureApp, a small WPF app). This is where Windows behaviour that
 mocks cannot reproduce gets tested: the foreground lock, UI Automation trees, captures and DPI.
 
@@ -2194,7 +2194,7 @@ fails until a new kind is named in this list).
   in `ServerHarness.RefusedServices`. The CDP port-owner check (`ITcpPortOwnerResolver`) is a guarded read.
 
 **The MCP pipeline.** The scenarios call the server's services directly. The in-process MCP test host the contract
-tests use (`InProcessMcpServer`) lives in `WindowsAppManagerMcp.Tests.Infrastructure`, so this tier can run the real
+tests use (`InProcessMcpServer`) lives in `win-desktop-mcp.Tests.Infrastructure`, so this tier can run the real
 MCP pipeline (argument binding, filters, result serialization) too; `HarnessTests/InProcessMcpServerTests` runs it with
 a fake tool. A scenario that hosts the server's own tools through it (roadmap M6.2) must pass them the harness's guarded
 services (`configureServices`), never the defaults of `AddWindowsAppManagerServices`, which would put unguarded native
@@ -2543,7 +2543,7 @@ unchanged). Pages are 127.0.0.1 HttpListener pages under 1 MB (rule 3). A named 
 of the user's browser: the refusals of the user's browser are covered by the fakes (`DebugBrowserLifecycleTests`):
 
 - **Close a temporary-profile browser.** Launch without `profile` or `userDataDir`: `userDataDir` is under
-  `%TEMP%\WindowsAppManagerMcp\browser-debug\` with a 32-hex-digit name. close_debug_browser with its `processId`
+  `%TEMP%\win-desktop-mcp\browser-debug\` with a 32-hex-digit name. close_debug_browser with its `processId`
   (answer the question when the client asks; otherwise `confirm: true`) returns `success: true`, `closedGracefully: true`,
   `forced: false`, `exited: true` and `profileDeleted: true`; list_processes with `includeWindowless: true` lists none of
   the processes of that tree, the folder is gone, and the user's browser process IDs are unchanged. Record how long the
@@ -2564,12 +2564,12 @@ of the user's browser: the refusals of the user's browser are covered by the fak
 - **Cancelled launch.** With a client that can cancel a call (`notifications/cancelled` about 1 second after
   launch_browser_with_debug starts), record the process IDs before; after the cancellation, list_processes with
   `includeWindowless: true` lists no new `msedge` process with the launch's profile, and no folder was left under
-  `%TEMP%\WindowsAppManagerMcp\browser-debug\`. If the client cannot cancel a call, skip it and record that. Since the
+  `%TEMP%\win-desktop-mcp\browser-debug\`. If the client cannot cancel a call, skip it and record that. Since the
   3.0.0 review a cancelled launch ends only the browser and its own helpers (the same .exe, a `--type` switch, the
   launch's profile), never the process tree, so a program the browser opened keeps running; the fakes cover that
   (`DebugBrowserLaunchTests`, `DebugBrowserLifecycleTests`), and the check opens no such program.
 - **Leftover sweep.** A folder with a 32-hex-digit name that the check creates under
-  `%TEMP%\WindowsAppManagerMcp\browser-debug\`, with its creation time set an hour back, is deleted by the next launch
+  `%TEMP%\win-desktop-mcp\browser-debug\`, with its creation time set an hour back, is deleted by the next launch
   with a temporary profile; the folder of a debug browser that is still running is kept.
 - **A browser that does not close**, a port that is not the browser's, a PID reused while the user was asked, and the
   user's own browser (with or without a debug port) are covered by the fakes (`DebugBrowserLifecycleTests`,
@@ -2849,7 +2849,7 @@ tool is served in `DependencyInjectionTests`, and the tool over MCP in the contr
 `--animate-for-ms`) checks them on a real window. They passed on the owner's desktop on 2026-10-17 (see Desktop run: M6 scenarios); the
 owner runs that class and checks:
 
-1. **The scenarios.** `WAM_ALLOW_DESKTOP_NOINPUT_TESTS=1 dotnet test tests/WindowsAppManagerMcp.E2ETests --filter
+1. **The scenarios.** `WAM_ALLOW_DESKTOP_NOINPUT_TESTS=1 dotnet test tests/win-desktop-mcp.E2ETests --filter
    FullyQualifiedName~FixtureVisualWaitTests`. The harness owns and closes the fixture; nothing is clicked or typed. The
    output logs every result's regions, method and warnings. The region scenario reads the screen, so it needs the
    fixture's change panel uncovered (the fixture comes up in front); the window scenarios do not.
@@ -2891,7 +2891,7 @@ run is the newest file there. Run them while nobody uses the keyboard or mouse:
 
 ```powershell
 $env:WAM_ALLOW_DESKTOP_TESTS = '1'
-dotnet test tests/WindowsAppManagerMcp.E2ETests --filter "FullyQualifiedName~ScenarioEvaluationTests" --logger "console;verbosity=detailed"
+dotnet test tests/win-desktop-mcp.E2ETests --filter "FullyQualifiedName~ScenarioEvaluationTests" --logger "console;verbosity=detailed"
 ```
 
 On GitHub, the E2E workflow's `scenarios` tier runs them on a self-hosted runner in a logged-on desktop session, compares
@@ -3003,7 +3003,7 @@ does.
 in-process server with the production registrations (`ServiceRegistration.AddWindowsAppManagerTools`, the
 call Program.cs makes) and compares every tool object, as the server sends it (name, title, description,
 annotations, inputSchema, outputSchema), with the checked-in
-`tests/WindowsAppManagerMcp.Tests/Contract/tools.snapshot.json`, sorted by tool name. A failure names the
+`tests/win-desktop-mcp.Tests/Contract/tools.snapshot.json`, sorted by tool name. A failure names the
 added, removed and changed tools and the JSON paths that changed. The same class snapshots what the server answers a
 client's first request on each protocol revision into `Contract/initialize.snapshot.json`: the `initialize` result on
 2025-06-18 and 2025-11-25, and the `server/discover` result on 2026-07-28 (where serverInfo sits in `_meta`), with
@@ -3050,7 +3050,7 @@ default `2025-11-25`, the one Claude Code most likely negotiates); `ProtocolRevi
 the revision the SDK answers an unknown request with, and `ToolSurfaceSnapshotTests` that the script still asks for
 it, so an SDK upgrade cannot leave the guard on a stale revision. Relative `-ExePath` and `-SnapshotPath` values are
 resolved against the PowerShell location. It checks the exe the workflow has just published from the
-checkout, always, and the committed `bin/WindowsAppManagerMcp.exe` with `-OnlyIfCurrent`: only when that exe
+checkout, always, and the committed `bin/win-desktop-mcp.exe` with `-OnlyIfCurrent`: only when that exe
 is a build of the current build inputs (the checks of `scripts/Test-PluginBinary.ps1`); a stale committed exe
 is expected until the next release and is skipped with a notice. The script runs the server, so it is not
 part of `dotnet test`; `ToolSurfaceSnapshotTests` checks that the workflow still calls it on both exes.
@@ -3091,7 +3091,7 @@ To add a tool to the docs:
 3. Run the tests with `UPDATE_SNAPSHOTS=1` (above), then edit the generated parameter descriptions in
    docs/TOOLS.md if they need it.
 
-A new tool also needs a toolset: add it to one of `Toolsets.Server` (src/WindowsAppManagerMcp/Infrastructure/Toolsets.cs);
+A new tool also needs a toolset: add it to one of `Toolsets.Server` (src/win-desktop-mcp/Infrastructure/Toolsets.cs);
 `ToolsetContractTests` fails until every served tool is in one, and the `toolsets` region lists it.
 
 ### The plugin skill's files
@@ -3379,7 +3379,7 @@ Two production services write to the user's machine, so a test never uses them a
 server:
 
 - **The audit log** (roadmap M2.17). `ServiceRegistration.AddWindowsAppManagerServices` defaults to
-  `AuditLogOptions.FromEnvironment`, the real `%LOCALAPPDATA%\WindowsAppManagerMcp\audit` folder (or
+  `AuditLogOptions.FromEnvironment`, the real `%LOCALAPPDATA%\win-desktop-mcp\audit` folder (or
   `WAM_AUDIT_PATH`). A test that builds the server with the production registrations and calls an audited tool must
   pass a temporary folder: `auditLog: () => AuditLogOptions.ForFolder(<temp folder>)`, as
   `Integration/DependencyInjectionTests` does; the contract services (`Fixtures/Contract/ContractServices.cs`) write

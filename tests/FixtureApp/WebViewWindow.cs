@@ -5,9 +5,9 @@ using System.Windows.Automation;
 using System.Windows.Interop;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.Wpf;
-using static WindowsAppManagerMcp.FixtureApp.FixtureContract;
+using static WinDesktopMcp.FixtureApp.FixtureContract;
 
-namespace WindowsAppManagerMcp.FixtureApp;
+namespace WinDesktopMcp.FixtureApp;
 
 /// <summary>
 /// A separate, unowned top-level window holding a WebView2 pane (roadmap M3.F4), opened only with --open-web-view, so an

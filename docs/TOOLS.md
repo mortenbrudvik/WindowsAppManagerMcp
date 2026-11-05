@@ -157,7 +157,7 @@ so that the user can reconstruct what was sent where after something went wrong.
 maximizing or focusing a single window, and the bounds, snap and state batches, are not logged. The agent does not need
 to do anything for it, and cannot turn it off.
 
-- **Where:** one file per local day, `%LOCALAPPDATA%\WindowsAppManagerMcp\audit\<yyyy-MM-dd>.jsonl`, or in the folder
+- **Where:** one file per local day, `%LOCALAPPDATA%\win-desktop-mcp\audit\<yyyy-MM-dd>.jsonl`, or in the folder
   that `WAM_AUDIT_PATH` names. [get_server_info](#get_server_info) reports the folder as `paths.auditLog`. Several servers
   (one per agent session) write the same day's file; `serverPid` tells their lines apart.
 - **Kept:** 7 days. The first line a server writes on a day deletes the day files that are 7 or more days old. Only
@@ -208,7 +208,7 @@ to do anything for it, and cannot turn it off.
   The server writes one warning to stderr, and get_server_info adds a warning, until a line is written again. An audit
   log that fails in another way (it throws, or keeps a call waiting past the 2 seconds below) never fails the call
   either: the result goes back as it is, and the server logs a warning to stderr (category
-  `WindowsAppManagerMcp.Infrastructure.AuditLogToolFilter`) that names the tool whose line may be missing.
+  `WinDesktopMcp.Infrastructure.AuditLogToolFilter`) that names the tool whose line may be missing.
 - **Cost:** one background writer per server, on a thread of its own, appends the lines in order, and a call waits for
   its own line at most 2 seconds before its result goes back, without holding a thread while it waits, so a slow or
   unreachable folder delays a call by at most that and never blocks it or the server's other calls; a line still waiting then is written when the writer gets to it. When another server is appending to the
@@ -394,7 +394,7 @@ Read-only mode serves these 27 tools: [find_windows](#find_windows), [get_foregr
 {
   "mcpServers": {
     "windows-app-manager": {
-      "command": "${CLAUDE_PLUGIN_ROOT}/bin/WindowsAppManagerMcp.exe",
+      "command": "${CLAUDE_PLUGIN_ROOT}/bin/win-desktop-mcp.exe",
       "env": { "WAM_READ_ONLY": "1" }
     }
   }
@@ -1919,7 +1919,7 @@ The **Response** examples below show the metadata text, formatted.
 - **Size:** the image is scaled down to at most 1568 pixels on its long edge by default (`maxDimension`), the size vision models work at. `maxDimension: 0` keeps full resolution. `width` and `height` are the returned image size; `originalWidth` and `originalHeight` are set only when the image was scaled down. An edge that would scale below one pixel (a long, thin strip) keeps one pixel; `imageToScreen` has a scale per axis, so points still map exactly. A full-resolution image of a large monitor, especially as PNG, can be several megabytes, more than many clients and models accept as inline image content: for full detail use `output: "file"`, or capture a smaller region.
 - **Format:** `format: "auto"` (default) returns JPEG at quality 80, or PNG when the image's long edge is at most 512 pixels (small regions and dialogs, where text must stay crisp). Pass `"png"` or `"jpeg"` (`"jpg"` also works, in any case) to choose. Any other value fails with `InvalidFormat` instead of falling back, as a tool error that lists the formats. `quality` is used for JPEG only; a value outside 1-100 is clamped to that range, not refused. PNG images are always opaque.
 - **Output:** `output: "image"` (default) returns the image and the metadata. `"file"` writes the image to a file and returns only the metadata, with `filePath`. `"both"` does both, and `"metadata"` returns only the metadata (`byteSize` still tells how large the image would be). Any other value fails with `InvalidOutputMode`, as a tool error that lists the outputs.
-- **Files:** without `outputPath`, the file gets a new name in `%TEMP%\WindowsAppManagerMcp\captures`. `outputPath` must be an absolute path on a drive letter (such as `C:\captures\shot.png`) ending in `.png`, `.jpg` or `.jpeg` to match the format (with `format: "auto"` the extension decides), in a folder that already exists; the server creates no folders. Network paths (`\\server\share\...`) and device paths (`\\?\...`, `\\.\...`) fail with `InvalidOutputPath` before anything is written or checked, so a capture cannot be sent to another computer. An existing file is replaced only with `overwrite: true`; otherwise the call fails with `FileExists`. `filePath` is the normalized full path.
+- **Files:** without `outputPath`, the file gets a new name in `%TEMP%\win-desktop-mcp\captures`. `outputPath` must be an absolute path on a drive letter (such as `C:\captures\shot.png`) ending in `.png`, `.jpg` or `.jpeg` to match the format (with `format: "auto"` the extension decides), in a folder that already exists; the server creates no folders. Network paths (`\\server\share\...`) and device paths (`\\?\...`, `\\.\...`) fail with `InvalidOutputPath` before anything is written or checked, so a capture cannot be sent to another computer. An existing file is replaced only with `overwrite: true`; otherwise the call fails with `FileExists`. `filePath` is the normalized full path.
 - **Legacy options:** `saveToFile: true` is the same as `output: "file"`. `maxWidth` limits the image width; given without `maxDimension`, it replaces the 1568 default and limits only the width, as in earlier versions.
 - **Errors:** a failed capture returns `isError: true` with only the metadata: `success: false`, `error` and `errorCode` (see the [Error code reference](#error-code-reference)). An unknown `format` or `output` is refused before the tool runs, so its error is a [tool error](#tool-errors) (`success`, `error`, `errorCode`, `tool`) without the capture metadata.
 - **Capture health:** a capture that cannot show the window fails with its own code before any pixel is read: `WindowHidden` (no WS_VISIBLE, for example an app hidden in the notification area), `Cloaked` (on another virtual desktop, or a suspended Store app) and `WindowMinimized` (pass `restoreIfMinimized: true`, or restore the window first). They are checked in that order, so a window that is minimized and also hidden or cloaked fails with `WindowHidden` or `Cloaked`, and `restoreIfMinimized` never restores it. A region entirely off the screen fails with `RegionOffScreen`; one partly off it is cut to the screen. A successful capture can carry `warnings`, each a sentence that starts with a code: `ImageBlank` (about 1024 sampled pixels all have one color, named in the warning: right for an empty area, but a black image usually means GPU or protected content this capture cannot read, or a window that has not painted yet), `WindowNotResponding` (the window could not be asked to draw itself, because its application does not answer or too many calls to other applications are stuck; the warning gives the reason. The window was taken from the desktop compositor instead, as it was last drawn, or where that is not available copied from the screen, so windows that cover it show), `DpiScaledWindow` (the window is not per-monitor DPI aware, so Windows scales it and the image can show it at its unscaled size), `RegionClipped`, `RegionPartlyOffMonitors` (part of the region lies between monitors and is black), for `restoreIfMinimized` `WindowRestored`, `WindowStillPainting` and `ReminimizeFailed`, for capture_window's `ref` `RefMoved` (the ref was moved to a re-created element, see [Element refs](#ui-automation)), for capture_with_elements `WindowMoved` (the window moved while its elements were read; no `captureId`) and its walk's `TargetElevated` (see [get_ui_elements](#get_ui_elements)), and `GridWidened` (the `gridSpacing` asked for would put the grid's lines closer than 16 pixels in the scaled image, so they are drawn at a multiple of it, named in the warning). `warnings` is left out when there is nothing to say.
@@ -2700,7 +2700,7 @@ Like every tool result, the JSON writes apostrophes and non-ASCII text as they a
   "input": { "paused": false, "capsLock": false },
   "windows": [
     { "handle": 1706796, "title": "notes.txt - Notepad", "process": "Notepad", "state": "normal", "monitor": 0 },
-    { "handle": 3147228, "title": "pwsh in WindowsAppManagerMcp", "process": "WindowsTerminal", "state": "maximized", "monitor": 0, "isAgentHost": true }
+    { "handle": 3147228, "title": "pwsh in win-desktop-mcp", "process": "WindowsTerminal", "state": "maximized", "monitor": 0, "isAgentHost": true }
   ],
   "windowCount": 2,
   "popups": [],
@@ -3968,7 +3968,7 @@ Extract the content of the page shown in a browser window. UI Automation returns
 ```json
 {
   "success": true,
-  "content": "Skip to content\nmortenbrudvik / WindowsAppManagerMcp\n...",
+  "content": "Skip to content\nmortenbrudvik / win-desktop-mcp\n...",
   "url": "https://github.com/mortenbrudvik/WindowsAppManagerMcp",
   "browserType": "edge",
   "pageTitle": "mortenbrudvik/WindowsAppManagerMcp - Microsoft Edge",
@@ -4057,7 +4057,7 @@ Launch Chrome, Edge or Brave with a Chrome DevTools Protocol (CDP) debug port, s
 
 > **Security:** This opens a DevTools port on localhost with no authentication. Any program running on this computer can connect to it and take full control of that browser: read pages and cookies, run JavaScript and navigate. The port stays open until that browser has exited. Launch it only when you need CDP. When you are done, close it with [close_debug_browser](#close_debug_browser) and its `processId`: it closes the whole browser, every window on every virtual desktop, and deletes its temporary profile (closing its windows one by one leaves the profile, and misses a window the page opened elsewhere).
 
-By default the browser starts as a separate instance with a new, empty profile in `%TEMP%\WindowsAppManagerMcp\browser-debug\<32 hex digits>` (roadmap M5.4). It has none of the logins, cookies, history or extensions of your normal profile. close_debug_browser deletes it; a launch whose browser did not start, or whose call was cancelled, deletes it at once (a cancelled call first ends the browser it started, during the launch, during the `placement`, or when the start itself returns after the cancel, and each time only what close_debug_browser would end: the browser and what is left of its own child processes, never a program it opened); and each launch with a new temporary profile deletes the ones earlier browsers left (closed by the user, ended or crashed) once they are 10 minutes old and no browser holds them. Edge may still sign in to Microsoft sites (Outlook, OneDrive, SharePoint) with the Windows account, even in a new profile, and those sessions would then be open through the port (not yet checked on a real desktop); use `chrome` or `brave` when that matters. Do not set `userDataDir` to your real browser profile, because that would expose its signed-in sessions through the open port. A `userDataDir` inside a `User Data` folder, where Chrome, Edge and Brave keep the user's profiles, is refused (`InvalidArguments`), by the check the launch tools apply to a `--user-data-dir`: also by its 8.3 short name (expanded on a drive letter), with an alternate data stream or trailing dots and spaces, and an 8.3 short name on a network or device path is refused without being expanded, since that would connect to another computer. A real profile kept elsewhere cannot be told apart. The profile is never the browser's default one, which also matters because Chrome 136 and later ignore `--remote-debugging-port` on the default profile.
+By default the browser starts as a separate instance with a new, empty profile in `%TEMP%\win-desktop-mcp\browser-debug\<32 hex digits>` (roadmap M5.4). It has none of the logins, cookies, history or extensions of your normal profile. close_debug_browser deletes it; a launch whose browser did not start, or whose call was cancelled, deletes it at once (a cancelled call first ends the browser it started, during the launch, during the `placement`, or when the start itself returns after the cancel, and each time only what close_debug_browser would end: the browser and what is left of its own child processes, never a program it opened); and each launch with a new temporary profile deletes the ones earlier browsers left (closed by the user, ended or crashed) once they are 10 minutes old and no browser holds them. Edge may still sign in to Microsoft sites (Outlook, OneDrive, SharePoint) with the Windows account, even in a new profile, and those sessions would then be open through the port (not yet checked on a real desktop); use `chrome` or `brave` when that matters. Do not set `userDataDir` to your real browser profile, because that would expose its signed-in sessions through the open port. A `userDataDir` inside a `User Data` folder, where Chrome, Edge and Brave keep the user's profiles, is refused (`InvalidArguments`), by the check the launch tools apply to a `--user-data-dir`: also by its 8.3 short name (expanded on a drive letter), with an alternate data stream or trailing dots and spaces, and an 8.3 short name on a network or device path is refused without being expanded, since that would connect to another computer. A real profile kept elsewhere cannot be told apart. The profile is never the browser's default one, which also matters because Chrome 136 and later ignore `--remote-debugging-port` on the default profile.
 
 The browser starts without the screens a new profile shows first (roadmap M5.1): `--no-first-run` (Chrome's welcome and "make Chrome your own" pages, Edge's welcome, sign-in and personalization pages, Brave's welcome tour, the offer to import another browser's data), `--no-default-browser-check` (the offer to become the default browser), `--disable-search-engine-choice-screen` (Chrome's search engine choice dialog in some regions) and `--disable-sync` (a browser sign-in, by the user or Edge's own with the Windows account, does not copy the account's passwords and history into a profile the open port exposes; it does not stop that sign-in itself). So the first tab is `url`, which the window title and the CDP tab match then show.
 
@@ -4067,7 +4067,7 @@ The browser starts without the screens a new profile shows first (roadmap M5.1):
 
 **Readiness.** Once the port is known, the server asks the browser's DevTools endpoint for `GET /json/version` on `127.0.0.1` and that port only, every quarter second for up to 10 seconds (each request at most 2 seconds); it connects to nothing. The call succeeds only when the endpoint answers as a browser does: the result then has `cdpReady: true`, `browserVersion` (for example `Chrome/141.0.7390.55` or `Edg/141.0.3537.57`), `cdpEndpoint` (`http://127.0.0.1:<cdpPort>`, what CDP clients such as Playwright's `connectOverCDP` take) and `browserWsEndpoint` (the browser-level `ws://127.0.0.1:<cdpPort>/devtools/browser/<id>` from `/json/version`). A `webSocketDebuggerUrl` on another address or port, or not under `/devtools/browser/`, is refused. The answer counts as the started browser's only when the port's listener is that browser's process or, when the listener cannot be read, when the browser's own `DevToolsActivePort` names the port and the `browserWsEndpoint` that answered. The call fails with `DebugLaunchFailed` and `cdpReady: false`, and says why, when the endpoint does not answer within 10 seconds; at once when it answers but not as a DevTools endpoint (for example a `webSocketDebuggerUrl` that is not a URL), when the browser exits during the wait, or when the port is not shown to be the browser's: it belongs to another process (another program took an explicit port after the check) or its listener cannot be read and the profile does not name it (launch again with port 0 for both). A browser that is still running keeps its `processId`, `windowHandle` and `userDataDir` in the result, so that you can close it. `cdpPort` stays only when the endpoint did not answer in time or did not answer as a browser does (after a timeout you can try it later with that `cdpPort`); it is null when the port is another process's or not shown to be the browser's, because a CDP client pointed at it would control whatever listens there.
 
-**Named profiles and reuse (roadmap M5.4).** `profile` names a profile kept between launches, in the server's own folder `%LOCALAPPDATA%\WindowsAppManagerMcp\browser-profiles\<name>`: sign-ins and cookies made in it persist, so a later launch with the same name starts signed in. A name is 1 to 64 letters, digits, `-` and `_`, starting with a letter or digit, and not a Windows device name (`CON`, `NUL`, `COM1`, ...); anything else, or `profile` with `userDataDir`, is `InvalidArguments`. The folder is never the user's real browser profile. A second launch with a profile a browser already runs with fails with `DebugLaunchFailed`, unless `reuseIfRunning: true` (it needs `profile` or `userDataDir`): then the debug browser running with that profile is returned instead, with `launchStatus` `alreadyRunning`, its `processId`, a `windowHandle` of it, `cdpPort`, `cdpReady: true`, `browserVersion`, `cdpEndpoint` and `browserWsEndpoint`, and nothing is started. It is found by its main process's own command line (`--user-data-dir` and `--remote-debugging-port`, never by a window title, which a page sets) and its port is used only when that process listens on it (as the reading tools find it, roadmap M5.3). `url` is not opened in it then (`warning` says so). A browser running with the profile without a debug port (it may be the user's) is not reused and not named: `DebugLaunchFailed`. Another browser's `.exe` on the profile, or a debug browser whose port is not its own or does not answer, fails with `DebugLaunchFailed` too (the latter with its `processId`, to close it with close_debug_browser, when this server started it or its profile is one of the server's folders; otherwise without it: ask the user to close it). A browser the [target policy](#target-policy) refuses is not reused (`TargetDeniedByPolicy`, nothing named). A debug browser on a `userDataDir` that this server did not start is returned with a `warning` that it may be the user's own and that close_debug_browser does not close it.
+**Named profiles and reuse (roadmap M5.4).** `profile` names a profile kept between launches, in the server's own folder `%LOCALAPPDATA%\win-desktop-mcp\browser-profiles\<name>`: sign-ins and cookies made in it persist, so a later launch with the same name starts signed in. A name is 1 to 64 letters, digits, `-` and `_`, starting with a letter or digit, and not a Windows device name (`CON`, `NUL`, `COM1`, ...); anything else, or `profile` with `userDataDir`, is `InvalidArguments`. The folder is never the user's real browser profile. A second launch with a profile a browser already runs with fails with `DebugLaunchFailed`, unless `reuseIfRunning: true` (it needs `profile` or `userDataDir`): then the debug browser running with that profile is returned instead, with `launchStatus` `alreadyRunning`, its `processId`, a `windowHandle` of it, `cdpPort`, `cdpReady: true`, `browserVersion`, `cdpEndpoint` and `browserWsEndpoint`, and nothing is started. It is found by its main process's own command line (`--user-data-dir` and `--remote-debugging-port`, never by a window title, which a page sets) and its port is used only when that process listens on it (as the reading tools find it, roadmap M5.3). `url` is not opened in it then (`warning` says so). A browser running with the profile without a debug port (it may be the user's) is not reused and not named: `DebugLaunchFailed`. Another browser's `.exe` on the profile, or a debug browser whose port is not its own or does not answer, fails with `DebugLaunchFailed` too (the latter with its `processId`, to close it with close_debug_browser, when this server started it or its profile is one of the server's folders; otherwise without it: ask the user to close it). A browser the [target policy](#target-policy) refuses is not reused (`TargetDeniedByPolicy`, nothing named). A debug browser on a `userDataDir` that this server did not start is returned with a `warning` that it may be the user's own and that close_debug_browser does not close it.
 
 **Placement.** `placement` arranges the browser's window once it is found, exactly as launch_application's [placement](#launch-and-arrange) does (snap or bounds, monitor, state, focus; checked before anything is launched, and reported in `placement`); a reused browser's window is placed too. A placement that fails keeps the launch's success.
 
@@ -4084,7 +4084,7 @@ The browser is looked for in App Paths (`HKCU`, then `HKLM`; the value must be a
 | port | integer | No | 0 | CDP debug port: 0 lets the browser pick a free port, or 1024-65535 (other values fail with `InvalidArguments`). The result's `cdpPort` is the port it listens on |
 | userDataDir | string | No | new temp folder | Profile folder for the browser instance, as a full path. A relative path, or a folder inside a `User Data` folder (where Chrome, Edge and Brave keep the user's real profiles), fails with `InvalidArguments`: the open debug port would expose its signed-in sessions |
 | executablePath | string | No | found | Full path of the browser's `.exe` (`chrome.exe`, `msedge.exe` or `brave.exe`, matching `browser`), for a copy the server does not find, such as Chrome Beta or a portable Brave. Nothing else is tried then. A relative path or another file name fails with `InvalidArguments` |
-| profile | string | No | - | A named profile kept between launches, so its sign-ins persist, in `%LOCALAPPDATA%\WindowsAppManagerMcp\browser-profiles\<name>`: 1-64 letters, digits, `-` and `_`. An invalid name, or `profile` with `userDataDir`, is `InvalidArguments` (roadmap M5.4) |
+| profile | string | No | - | A named profile kept between launches, so its sign-ins persist, in `%LOCALAPPDATA%\win-desktop-mcp\browser-profiles\<name>`: 1-64 letters, digits, `-` and `_`. An invalid name, or `profile` with `userDataDir`, is `InvalidArguments` (roadmap M5.4) |
 | reuseIfRunning | boolean | No | false | With `profile` or `userDataDir` (else `InvalidArguments`): return the debug browser already running with that profile (`launchStatus` `alreadyRunning`, nothing started) instead of `DebugLaunchFailed` |
 | placement | object | No | - | Where to put the browser's window, as launch_application's [placement](#launch-and-arrange): checked before anything is launched, and reported in the result's `placement` |
 <!-- tools:end params:launch_browser_with_debug -->
@@ -4109,7 +4109,7 @@ The browser is looked for in App Paths (`HKCU`, then `HKLM`; the value must be a
   "processId": 18320,
   "windowHandle": 3342410,
   "cdpPort": 51874,
-  "userDataDir": "C:\\Users\\me\\AppData\\Local\\Temp\\WindowsAppManagerMcp\\browser-debug\\6f1c2d3e4a5b6c7d8e9f0a1b2c3d4e5f",
+  "userDataDir": "C:\\Users\\me\\AppData\\Local\\Temp\\win-desktop-mcp\\browser-debug\\6f1c2d3e4a5b6c7d8e9f0a1b2c3d4e5f",
   "launchStatus": "windowObserved",
   "cdpReady": true,
   "browserVersion": "Chrome/141.0.7390.55",
@@ -4131,7 +4131,7 @@ The browser is looked for in App Paths (`HKCU`, then `HKLM`; the value must be a
 
 Close a debug browser that [launch_browser_with_debug](#launch_browser_with_debug) started, by the `processId` or `cdpPort` its launch returned, and delete its temporary profile (roadmap M5.4).
 
-**Only debug browsers of this server.** The process must be the main process (not a helper with `--type`) of `chrome.exe`, `msedge.exe` or `brave.exe` whose own command line has `--remote-debugging-port` and a `--user-data-dir` that is either the profile this server started it with (the same PID and start time, so a PID reused by another process does not count) or a folder of the server's own: a temporary profile under `%TEMP%\WindowsAppManagerMcp\browser-debug` or a named profile under `%LOCALAPPDATA%\WindowsAppManagerMcp\browser-profiles` (so a debug browser of an earlier server run can be closed too). Anything else is `NotADebugBrowser` and nothing is closed: the user's own browser has no debug port, or a profile of its own, so it is never closed. With `cdpPort`, the process listening on it on `127.0.0.1` is the one checked; with both, they must be the same process. The [target policy](#target-policy) and the agent's host are respected (`TargetDeniedByPolicy`, `CannotTerminateHost`).
+**Only debug browsers of this server.** The process must be the main process (not a helper with `--type`) of `chrome.exe`, `msedge.exe` or `brave.exe` whose own command line has `--remote-debugging-port` and a `--user-data-dir` that is either the profile this server started it with (the same PID and start time, so a PID reused by another process does not count) or a folder of the server's own: a temporary profile under `%TEMP%\win-desktop-mcp\browser-debug` or a named profile under `%LOCALAPPDATA%\win-desktop-mcp\browser-profiles` (so a debug browser of an earlier server run can be closed too). Anything else is `NotADebugBrowser` and nothing is closed: the user's own browser has no debug port, or a profile of its own, so it is never closed. With `cdpPort`, the process listening on it on `127.0.0.1` is the one checked; with both, they must be the same process. The [target policy](#target-policy) and the agent's host are respected (`TargetDeniedByPolicy`, `CannotTerminateHost`).
 
 **Confirmation.** When the MCP client can ask the user (elicitation), the user is asked, with the browser's PID, its window titles and what happens to its profile, before the input gate is taken; nothing is done unless they confirm (`ConfirmationDeclined`). A client that cannot ask needs `confirm: true` (`ConfirmationRequired`), as [kill_process](#kill_process).
 
@@ -4165,7 +4165,7 @@ Close a debug browser that [launch_browser_with_debug](#launch_browser_with_debu
 {
   "success": true,
   "processId": 18320,
-  "userDataDir": "C:\\Users\\me\\AppData\\Local\\Temp\\WindowsAppManagerMcp\\browser-debug\\6f1c2d3e4a5b6c7d8e9f0a1b2c3d4e5f",
+  "userDataDir": "C:\\Users\\me\\AppData\\Local\\Temp\\win-desktop-mcp\\browser-debug\\6f1c2d3e4a5b6c7d8e9f0a1b2c3d4e5f",
   "profileKind": "temporary",
   "closedGracefully": true,
   "forced": false,
@@ -6553,7 +6553,7 @@ Put text on the clipboard, replacing what the user had copied there; the old con
 
 Tools for saving and restoring window arrangements.
 
-**Where presets are stored:** each preset is a JSON file in `%LOCALAPPDATA%\WindowsAppManagerMcp\layouts`. To use another folder, set the `WAM_LAYOUTS_PATH` environment variable to an absolute folder path. The folder is outside the plugin install, so presets survive plugin updates.
+**Where presets are stored:** each preset is a JSON file in `%LOCALAPPDATA%\win-desktop-mcp\layouts`. To use another folder, set the `WAM_LAYOUTS_PATH` environment variable to an absolute folder path. The folder is outside the plugin install, so presets survive plugin updates.
 
 The first time a layout tool runs, the server:
 - copies presets saved by older versions into this folder. Older versions kept them in a `layouts` folder next to the executable, inside the versioned plugin folder. The original files are left in place.
@@ -6673,7 +6673,7 @@ Get full details of a layout preset. If no preset has that name, the call return
       "order": 1,
       "exactProcessName": true,
       "className": "Chrome_WidgetWin_1",
-      "titlePattern": "main.cs - WindowsAppManagerMcp - Visual Studio Code",
+      "titlePattern": "main.cs - win-desktop-mcp - Visual Studio Code",
       "exePath": "C:\\Users\\user\\AppData\\Local\\Programs\\Microsoft VS Code\\Code.exe",
       "ordinal": 0,
       "state": "normal",
@@ -7163,7 +7163,7 @@ Reports the server's build and the environment its tools work in, in one read-on
       { "handle": 3149086, "role": "startupForeground", "processId": 30100, "processName": "WindowsTerminal" }
     ],
     "processes": [
-      { "processId": 31000, "role": "server", "processName": "WindowsAppManagerMcp" },
+      { "processId": 31000, "role": "server", "processName": "win-desktop-mcp" },
       { "processId": 30900, "role": "ancestor", "processName": "claude" },
       { "processId": 30500, "role": "ancestor", "processName": "pwsh" },
       { "processId": 30100, "role": "ancestor", "processName": "WindowsTerminal" },
@@ -7184,8 +7184,8 @@ Reports the server's build and the environment its tools work in, in one read-on
     "allowedProtocols": ["http", "https", "mailto", "tel", "ms-settings"]
   },
   "paths": {
-    "layouts": "C:\\Users\\user\\AppData\\Local\\WindowsAppManagerMcp\\layouts",
-    "auditLog": "C:\\Users\\user\\AppData\\Local\\WindowsAppManagerMcp\\audit"
+    "layouts": "C:\\Users\\user\\AppData\\Local\\win-desktop-mcp\\layouts",
+    "auditLog": "C:\\Users\\user\\AppData\\Local\\win-desktop-mcp\\audit"
   },
   "toolsets": {
     "enabled": ["server", "windows", "monitors", "capture", "elements", "input", "clipboard", "launch", "process", "layouts", "browser"],
@@ -7466,7 +7466,7 @@ the old behavior sees now. The plugin's committed exe has them since release 1.1
   `WAM_TOOLSETS`, or an unknown name in `WAM_EXCLUDE_TOOLS` (which also takes toolset names), serves only the `server`
   toolset, and get_server_info reports the `source` and a warning.
 - **Audit log.** The server now appends one JSON line per call of an input, close, kill, launch, layout-write (apply, save,
-  delete) or clipboard tool to `%LOCALAPPDATA%\WindowsAppManagerMcp\audit\<yyyy-MM-dd>.jsonl` (or `WAM_AUDIT_PATH`), with the target
+  delete) or clipboard tool to `%LOCALAPPDATA%\win-desktop-mcp\audit\<yyyy-MM-dd>.jsonl` (or `WAM_AUDIT_PATH`), with the target
   window's title, process name and PID, the window the input went to, a launch's program path, the outcome and the
   error code, and keeps 7 days of files. Typed text, keys, clipboard content, URL paths and command-line arguments
   are recorded only as lengths. It cannot be turned off; see [Audit log](#audit-log).
@@ -8135,10 +8135,10 @@ the new tools; their sections have the rest.
   `processId` or `cdpPort` with Browser.close, ends what is left, and deletes its temporary profile; it closes only a
   browser this server started or whose command line shows a debug port and a profile in the server's own folders, and
   refuses anything else with the new code `NotADebugBrowser`. launch_browser_with_debug adds `profile` (a named profile
-  kept under `%LOCALAPPDATA%\WindowsAppManagerMcp\browser-profiles`), `reuseIfRunning` (the debug browser running with
+  kept under `%LOCALAPPDATA%\win-desktop-mcp\browser-profiles`), `reuseIfRunning` (the debug browser running with
   the profile is returned with the new `launchStatus` `alreadyRunning` instead of `DebugLaunchFailed`) and `placement`
   (launch_application's), and its result adds `placement`. **Changed:** a new temporary profile is now
-  `%TEMP%\WindowsAppManagerMcp\browser-debug\<32 hex digits>` (it was `%TEMP%\browser-debug-<guid>`); it is deleted when
+  `%TEMP%\win-desktop-mcp\browser-debug\<32 hex digits>` (it was `%TEMP%\browser-debug-<guid>`); it is deleted when
   the browser did not start (the failure's `userDataDir` is then null), and leftovers older than 10 minutes that no
   browser holds are deleted by the next launch with a temporary profile. A call cancelled after the start now ends the
   browser it started and deletes its temporary profile (it kept running with an open port no result named), also when
@@ -8644,7 +8644,7 @@ fixed value.
 
 An unknown tool name is still reported as a JSON-RPC protocol error, not as a tool result, at once and also while input is paused.
 
-The server logs every tool call to stderr (category `WindowsAppManagerMcp.ToolCalls`): its start, and its end with the duration and the outcome (`ok`, `isError` with the `errorCode`, `cancelled`, `protocolError` or the type of an unhandled exception), as a warning when the call took 10 seconds or more. Arguments and results are never logged; a normal result with `success: false` is logged as `isError` with its `errorCode`. The duration includes the time a call waited for another call to finish, and a call refused while input is paused is logged too.
+The server logs every tool call to stderr (category `WinDesktopMcp.ToolCalls`): its start, and its end with the duration and the outcome (`ok`, `isError` with the `errorCode`, `cancelled`, `protocolError` or the type of an unhandled exception), as a warning when the call took 10 seconds or more. Arguments and results are never logged; a normal result with `success: false` is logged as `isError` with its `errorCode`. The duration includes the time a call waited for another call to finish, and a call refused while input is paused is logged too.
 
 ### Error code reference
 

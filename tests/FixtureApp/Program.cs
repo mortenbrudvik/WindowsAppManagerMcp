@@ -3,7 +3,7 @@ using System.Runtime.CompilerServices;
 using System.Windows;
 using System.Windows.Threading;
 
-namespace WindowsAppManagerMcp.FixtureApp;
+namespace WinDesktopMcp.FixtureApp;
 
 /// <summary>
 /// Entry point of WamFixtureApp. See <see cref="FixtureOptions"/> for the command line and

@@ -21,8 +21,8 @@ $version = (Get-Content "$repo\.claude-plugin\plugin.json" -Raw | ConvertFrom-Js
 $dest = Join-Path $env:USERPROFILE ".claude\plugins\cache\windows-app-manager-marketplace\windows-app-manager\$version"
 ```
 
-The installed plugin runs `${CLAUDE_PLUGIN_ROOT}/bin/WindowsAppManagerMcp.exe`, which is
-`$dest\bin\WindowsAppManagerMcp.exe`.
+The installed plugin runs `${CLAUDE_PLUGIN_ROOT}/bin/win-desktop-mcp.exe`, which is
+`$dest\bin\win-desktop-mcp.exe`.
 
 ### 1. Compare Versions
 
@@ -47,7 +47,7 @@ Show the user the version comparison before proceeding.
 ```
 
 This publishes straight to `$dest\bin`, the path the plugin runs, and leaves the committed
-`bin/WindowsAppManagerMcp.exe` in the repository untouched (only `/commit` refreshes that one).
+`bin/win-desktop-mcp.exe` in the repository untouched (only `/commit` refreshes that one).
 `-AllowDirty` allows testing uncommitted changes; the script warns when a build input (`src/`,
 `config/` or a root build file) is dirty. With uncommitted changes it refuses to publish into the
 repository's `bin/`, so never drop the `-OutputDirectory` argument. If the installed exe is
@@ -92,7 +92,7 @@ write the updated JSON back to the file.
 
 Display a summary:
 - Previous version -> New version
-- ProductVersion of `$dest\bin\WindowsAppManagerMcp.exe`
+- ProductVersion of `$dest\bin\win-desktop-mcp.exe`
 - Files copied
 - Reminder: "Restart Claude Code to use the updated plugin"
 
@@ -106,7 +106,7 @@ Versions:
   Installed:   1.11.0
 
 Building release binary...
-✓ Published ...\windows-app-manager\1.12.0\bin\WindowsAppManagerMcp.exe (1.12.0+3f2a9c1...)
+✓ Published ...\windows-app-manager\1.12.0\bin\win-desktop-mcp.exe (1.12.0+3f2a9c1...)
 
 Copying files to cache...
 ✓ .claude-plugin/ copied

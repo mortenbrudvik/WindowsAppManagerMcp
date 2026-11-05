@@ -31,7 +31,7 @@ x86/
 [Aa][Rr][Mm]64/
 bld/
 [Bb]in/
-# The plugin exe, bin/WindowsAppManagerMcp.exe at the repository root, is the one binary in git
+# The plugin exe, bin/win-desktop-mcp.exe at the repository root, is the one binary in git
 # (.claude-plugin/plugin.json runs it). It stays tracked although bin/ is ignored; refresh it only
 # with scripts/Publish-Plugin.ps1. Former copies elsewhere must not come back:
 /dist/

@@ -16,12 +16,12 @@ Create a versioned release commit with tag for the Windows App Manager plugin.
 - The version has one source: `<Version>` in `Directory.Build.props`. `scripts/Set-Version.ps1`
   copies it into `.claude-plugin/plugin.json` and `.claude-plugin/marketplace.json`, and tests fail
   if they drift. The server reports it (plus the commit SHA) as `serverInfo.version`.
-- The plugin runs `bin/WindowsAppManagerMcp.exe` (see `.claude-plugin/plugin.json`). That committed
+- The plugin runs `bin/win-desktop-mcp.exe` (see `.claude-plugin/plugin.json`). That committed
   exe is the only binary in git, and `scripts/Publish-Plugin.ps1` is the only way to refresh it.
   There is no `dist/` folder any more.
-- `bin/` matches the `[Bb]in/` rule in `.gitignore`, but `bin/WindowsAppManagerMcp.exe` is tracked
+- `bin/` matches the `[Bb]in/` rule in `.gitignore`, but `bin/win-desktop-mcp.exe` is tracked
   anyway. Git still reports changes to it, but a plain `git add` of that path fails (see step 6).
-  `git check-ignore -v --no-index bin/WindowsAppManagerMcp.exe` shows the rule; without
+  `git check-ignore -v --no-index bin/win-desktop-mcp.exe` shows the rule; without
   `--no-index`, `git check-ignore` prints nothing for a tracked file.
 - When the `v<version>` tag is pushed, the Build workflow runs `scripts/Test-PluginBinary.ps1`. It
   fails, and no GitHub release is created, unless the committed exe has the tagged version and was
@@ -29,7 +29,7 @@ Create a versioned release commit with tag for the Windows App Manager plugin.
   exe), the MSBuild, NuGet and SDK files at the repository root, and `Directory.Build.props` apart
   from its `<Version>`. `$BuildInputPaths` in `scripts/ReleaseCommon.ps1` lists them.
 - The same check runs strictly (without the tag comparison) on every push and pull request that
-  changes `bin/WindowsAppManagerMcp.exe`, so a release commit with a stale exe already fails when
+  changes `bin/win-desktop-mcp.exe`, so a release commit with a stale exe already fails when
   its branch is pushed in step 7, before the tag build. Pushes that leave the exe alone only get a
   warning.
 - The release job creates the GitHub release with the GitHub CLI (`gh release create`), not a
@@ -96,7 +96,7 @@ the tag. Stop if either fails.
 
 Run `git status` and `git diff --stat` to show the user what will be committed. Expect exactly
 `Directory.Build.props`, `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json` and
-`bin/WindowsAppManagerMcp.exe`.
+`bin/win-desktop-mcp.exe`.
 
 ### 6. Commit and Tag
 
@@ -108,13 +108,13 @@ files are staged:
 
 ```bash
 git add Directory.Build.props .claude-plugin/plugin.json .claude-plugin/marketplace.json
-git add -f -- bin/WindowsAppManagerMcp.exe
+git add -f -- bin/win-desktop-mcp.exe
 
 # Expect exactly these four paths
 git diff --cached --name-only
 ```
 
-Stop if the list is different, for example because `bin/WindowsAppManagerMcp.exe` is missing.
+Stop if the list is different, for example because `bin/win-desktop-mcp.exe` is missing.
 Then commit and tag:
 
 ```bash
@@ -123,7 +123,7 @@ git commit -m "chore: Release v<version>
 <message>
 
 - Bump version to <version>
-- Rebuild bin/WindowsAppManagerMcp.exe"
+- Rebuild bin/win-desktop-mcp.exe"
 
 # Create annotated tag
 git tag -a v<version> -m "Release v<version> - <message>"
@@ -142,7 +142,7 @@ Display:
 - Tag name
 - Build workflow run for the tag: `gh run list --workflow=build.yml --limit 3`
 - GitHub release URL (exists once that run succeeds; asset
-  `WindowsAppManagerMcp-v<version>-win-x64.zip`, a CI rebuild of the tagged sources rather than
+  `win-desktop-mcp-v<version>-win-x64.zip`, a CI rebuild of the tagged sources rather than
   the committed plugin exe, see "How releases work"):
   `https://github.com/mortenbrudvik/WindowsAppManagerMcp/releases/tag/v<version>`
 
@@ -154,7 +154,7 @@ Display:
 
 Results in:
 - Version 1.2.0 in `Directory.Build.props` and the plugin manifests
-- `bin/WindowsAppManagerMcp.exe` rebuilt, reporting ProductVersion `1.2.0+<sha>`
+- `bin/win-desktop-mcp.exe` rebuilt, reporting ProductVersion `1.2.0+<sha>`
 - Commit: `chore: Release v1.2.0`
 - Tag: `v1.2.0`
 - Pushed to origin; CI checks the committed exe, rebuilds the exe from the tag and publishes that

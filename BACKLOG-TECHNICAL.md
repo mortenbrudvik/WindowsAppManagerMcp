@@ -1,6 +1,6 @@
 # Technical Backlog - Testing Tasks
 
-> **WindowsAppManagerMcp** | Testing Implementation Backlog
+> **win-desktop-mcp** | Testing Implementation Backlog
 
 This document contains granular, actionable testing tasks following TDD principles outlined in [TESTING.md](TESTING.md).
 
@@ -42,8 +42,8 @@ This document contains granular, actionable testing tasks following TDD principl
 
 | ID | Task | Priority | Status | Notes |
 |----|------|----------|--------|-------|
-| T1.1 | Create `tests/WindowsAppManagerMcp.Tests/` project | P0 | [x] | `dotnet new xunit` |
-| T1.2 | Add project reference to main project | P0 | [x] | Reference `src/WindowsAppManagerMcp` |
+| T1.1 | Create `tests/win-desktop-mcp.Tests/` project | P0 | [x] | `dotnet new xunit` |
+| T1.2 | Add project reference to main project | P0 | [x] | Reference `src/win-desktop-mcp` |
 | T1.3 | Add NuGet: `xunit` 2.8.1 | P0 | [x] | Test framework |
 | T1.4 | Add NuGet: `xunit.runner.visualstudio` 2.8.1 | P0 | [x] | VS test runner |
 | T1.5 | Add NuGet: `Microsoft.NET.Test.Sdk` 17.10.0 | P0 | [x] | Test SDK |
@@ -338,7 +338,7 @@ This document contains granular, actionable testing tasks following TDD principl
 
 *Service interaction and file I/O tests. Target: 20% of total tests.*
 
-> **Note**: Integration tests are in `tests/WindowsAppManagerMcp.Tests/Integration/`. 37 tests added.
+> **Note**: Integration tests are in `tests/win-desktop-mcp.Tests/Integration/`. 37 tests added.
 
 ### T7.1: LayoutService Integration ✅
 
@@ -477,7 +477,7 @@ Optional enhancements in BACKLOG.md:
 | T9.1.7 | Test `GetVirtualScreenBounds` returns valid bounds | P1 | [x] | Multi-monitor |
 | T9.1.8 | Test `IsValidWindow` behavior | P1 | [x] | Validation |
 
-**Test file:** `tests/WindowsAppManagerMcp.Tests/Integration/ScreenCaptureWrapperIntegrationTests.cs`
+**Test file:** `tests/win-desktop-mcp.Tests/Integration/ScreenCaptureWrapperIntegrationTests.cs`
 
 ### T9.2: ScreenshotService Tests ✓
 
@@ -496,7 +496,7 @@ Optional enhancements in BACKLOG.md:
 | T9.2.11 | Test image encoding produces valid base64 | P1 | [x] | Output format |
 | T9.2.12 | Test JPEG quality setting | P2 | [x] | Quality parameter |
 
-**Test file:** `tests/WindowsAppManagerMcp.Tests/Unit/Services/ScreenshotServiceTests.cs` (29 tests)
+**Test file:** `tests/win-desktop-mcp.Tests/Unit/Services/ScreenshotServiceTests.cs` (29 tests)
 
 ### T9.3: ScreenshotTools Tests ✓
 
@@ -510,7 +510,7 @@ Optional enhancements in BACKLOG.md:
 | T9.3.6 | Test `capture_window` tool | P0 | [x] | Window capture |
 | T9.3.7 | Test `capture_window` tool includeFrame option | P2 | [x] | Frame toggle |
 
-**Test file:** `tests/WindowsAppManagerMcp.Tests/Unit/Tools/ScreenshotToolsTests.cs` (21 tests)
+**Test file:** `tests/win-desktop-mcp.Tests/Unit/Tools/ScreenshotToolsTests.cs` (21 tests)
 
 ---
 

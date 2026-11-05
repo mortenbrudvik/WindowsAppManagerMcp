@@ -13,7 +13,7 @@
 
 | # | Task | Status | Notes |
 |---|------|--------|-------|
-| 1.1 | Create solution and project structure | ✅ Complete | `WindowsAppManagerMcp.sln` created |
+| 1.1 | Create solution and project structure | ✅ Complete | `win-desktop-mcp.sln` created |
 | 1.2 | Add NuGet packages (MCP SDK, Hosting, DI) | ✅ Complete | ModelContextProtocol 0.5.0-preview.1; 2.2.0 since M2.13 |
 | 1.3 | Create folder structure | ✅ Complete | Models, Native, Services, Tools |
 | 1.4 | Create base data models | ✅ Complete | WindowInfo, MonitorInfo, LayoutPreset, etc. |
@@ -94,65 +94,65 @@
 ## Files Created
 
 ### ✅ Complete - Models
-- `src/WindowsAppManagerMcp/Models/WindowRect.cs`
-- `src/WindowsAppManagerMcp/Models/WindowState.cs`
-- `src/WindowsAppManagerMcp/Models/WindowInfo.cs`
-- `src/WindowsAppManagerMcp/Models/MonitorRect.cs`
-- `src/WindowsAppManagerMcp/Models/MonitorInfo.cs`
-- `src/WindowsAppManagerMcp/Models/SnapPosition.cs`
-- `src/WindowsAppManagerMcp/Models/WindowMatcher.cs`
-- `src/WindowsAppManagerMcp/Models/RelativePosition.cs`
-- `src/WindowsAppManagerMcp/Models/WindowPlacement.cs`
-- `src/WindowsAppManagerMcp/Models/LayoutPreset.cs`
-- `src/WindowsAppManagerMcp/Models/ErrorCodes.cs`
-- `src/WindowsAppManagerMcp/Models/ScreenshotModels.cs`
-- `src/WindowsAppManagerMcp/Models/InputModels.cs`
-- `src/WindowsAppManagerMcp/Models/Results/LaunchResult.cs`
-- `src/WindowsAppManagerMcp/Models/Results/LayoutApplyResult.cs`
-- `src/WindowsAppManagerMcp/Models/Results/KillResult.cs`
+- `src/win-desktop-mcp/Models/WindowRect.cs`
+- `src/win-desktop-mcp/Models/WindowState.cs`
+- `src/win-desktop-mcp/Models/WindowInfo.cs`
+- `src/win-desktop-mcp/Models/MonitorRect.cs`
+- `src/win-desktop-mcp/Models/MonitorInfo.cs`
+- `src/win-desktop-mcp/Models/SnapPosition.cs`
+- `src/win-desktop-mcp/Models/WindowMatcher.cs`
+- `src/win-desktop-mcp/Models/RelativePosition.cs`
+- `src/win-desktop-mcp/Models/WindowPlacement.cs`
+- `src/win-desktop-mcp/Models/LayoutPreset.cs`
+- `src/win-desktop-mcp/Models/ErrorCodes.cs`
+- `src/win-desktop-mcp/Models/ScreenshotModels.cs`
+- `src/win-desktop-mcp/Models/InputModels.cs`
+- `src/win-desktop-mcp/Models/Results/LaunchResult.cs`
+- `src/win-desktop-mcp/Models/Results/LayoutApplyResult.cs`
+- `src/win-desktop-mcp/Models/Results/KillResult.cs`
 
 ### ✅ Complete - Native Interop
-- `src/WindowsAppManagerMcp/Native/NativeMethods.User32.cs`
-- `src/WindowsAppManagerMcp/Native/NativeMethods.Kernel32.cs`
-- `src/WindowsAppManagerMcp/Native/NativeMethods.Shcore.cs`
-- `src/WindowsAppManagerMcp/Native/NativeMethods.Gdi32.cs`
-- `src/WindowsAppManagerMcp/Native/NativeMethods.Input.cs`
-- `src/WindowsAppManagerMcp/Native/NativeStructs.cs`
-- `src/WindowsAppManagerMcp/Native/NativeEnums.cs`
-- `src/WindowsAppManagerMcp/Native/ScreenCaptureWrapper.cs`
+- `src/win-desktop-mcp/Native/NativeMethods.User32.cs`
+- `src/win-desktop-mcp/Native/NativeMethods.Kernel32.cs`
+- `src/win-desktop-mcp/Native/NativeMethods.Shcore.cs`
+- `src/win-desktop-mcp/Native/NativeMethods.Gdi32.cs`
+- `src/win-desktop-mcp/Native/NativeMethods.Input.cs`
+- `src/win-desktop-mcp/Native/NativeStructs.cs`
+- `src/win-desktop-mcp/Native/NativeEnums.cs`
+- `src/win-desktop-mcp/Native/ScreenCaptureWrapper.cs`
 
 ### ✅ Complete - Services
-- `src/WindowsAppManagerMcp/Services/Interfaces/IWindowService.cs`
-- `src/WindowsAppManagerMcp/Services/Interfaces/IMonitorService.cs`
-- `src/WindowsAppManagerMcp/Services/Interfaces/IProcessService.cs`
-- `src/WindowsAppManagerMcp/Services/Interfaces/ILayoutService.cs`
-- `src/WindowsAppManagerMcp/Services/Interfaces/IInputValidationService.cs`
-- `src/WindowsAppManagerMcp/Services/Interfaces/IScreenCaptureWrapper.cs`
-- `src/WindowsAppManagerMcp/Services/Interfaces/IScreenshotService.cs`
-- `src/WindowsAppManagerMcp/Services/Interfaces/IInputSimulationService.cs`
-- `src/WindowsAppManagerMcp/Services/WindowService.cs`
-- `src/WindowsAppManagerMcp/Services/MonitorService.cs`
-- `src/WindowsAppManagerMcp/Services/ProcessService.cs`
-- `src/WindowsAppManagerMcp/Services/LayoutService.cs`
-- `src/WindowsAppManagerMcp/Services/InputValidationService.cs`
-- `src/WindowsAppManagerMcp/Services/ScreenshotService.cs`
-- `src/WindowsAppManagerMcp/Services/InputSimulationService.cs`
-- `src/WindowsAppManagerMcp/Services/Interfaces/INativeWindowWrapper.cs`
-- `src/WindowsAppManagerMcp/Native/NativeWindowWrapper.cs`
+- `src/win-desktop-mcp/Services/Interfaces/IWindowService.cs`
+- `src/win-desktop-mcp/Services/Interfaces/IMonitorService.cs`
+- `src/win-desktop-mcp/Services/Interfaces/IProcessService.cs`
+- `src/win-desktop-mcp/Services/Interfaces/ILayoutService.cs`
+- `src/win-desktop-mcp/Services/Interfaces/IInputValidationService.cs`
+- `src/win-desktop-mcp/Services/Interfaces/IScreenCaptureWrapper.cs`
+- `src/win-desktop-mcp/Services/Interfaces/IScreenshotService.cs`
+- `src/win-desktop-mcp/Services/Interfaces/IInputSimulationService.cs`
+- `src/win-desktop-mcp/Services/WindowService.cs`
+- `src/win-desktop-mcp/Services/MonitorService.cs`
+- `src/win-desktop-mcp/Services/ProcessService.cs`
+- `src/win-desktop-mcp/Services/LayoutService.cs`
+- `src/win-desktop-mcp/Services/InputValidationService.cs`
+- `src/win-desktop-mcp/Services/ScreenshotService.cs`
+- `src/win-desktop-mcp/Services/InputSimulationService.cs`
+- `src/win-desktop-mcp/Services/Interfaces/INativeWindowWrapper.cs`
+- `src/win-desktop-mcp/Native/NativeWindowWrapper.cs`
 
 ### ✅ Complete - MCP Tools
-- `src/WindowsAppManagerMcp/Tools/WindowFinderTools.cs`
-- `src/WindowsAppManagerMcp/Tools/WindowManagerTools.cs`
-- `src/WindowsAppManagerMcp/Tools/MonitorInfoTools.cs`
-- `src/WindowsAppManagerMcp/Tools/AppLauncherTools.cs`
-- `src/WindowsAppManagerMcp/Tools/LayoutPresetTools.cs`
-- `src/WindowsAppManagerMcp/Tools/ScreenshotTools.cs`
-- `src/WindowsAppManagerMcp/Tools/InputSimulationTools.cs`
+- `src/win-desktop-mcp/Tools/WindowFinderTools.cs`
+- `src/win-desktop-mcp/Tools/WindowManagerTools.cs`
+- `src/win-desktop-mcp/Tools/MonitorInfoTools.cs`
+- `src/win-desktop-mcp/Tools/AppLauncherTools.cs`
+- `src/win-desktop-mcp/Tools/LayoutPresetTools.cs`
+- `src/win-desktop-mcp/Tools/ScreenshotTools.cs`
+- `src/win-desktop-mcp/Tools/InputSimulationTools.cs`
 
 ### ✅ Complete - Configuration & Docs
-- `WindowsAppManagerMcp.sln`
-- `src/WindowsAppManagerMcp/WindowsAppManagerMcp.csproj`
-- `src/WindowsAppManagerMcp/Program.cs`
+- `win-desktop-mcp.sln`
+- `src/win-desktop-mcp/win-desktop-mcp.csproj`
+- `src/win-desktop-mcp/Program.cs`
 - `PLANNING.md`
 - `BACKLOG.md`
 - `config/layouts/work-setup.json`
@@ -268,29 +268,29 @@
 ## Test Files Created
 
 ### ✅ Complete - Test Infrastructure
-- `tests/WindowsAppManagerMcp.Tests/WindowsAppManagerMcp.Tests.csproj`
-- `tests/WindowsAppManagerMcp.Tests/GlobalUsings.cs`
-- `tests/WindowsAppManagerMcp.Tests/Fixtures/TestDataFactory.cs`
+- `tests/win-desktop-mcp.Tests/win-desktop-mcp.Tests.csproj`
+- `tests/win-desktop-mcp.Tests/GlobalUsings.cs`
+- `tests/win-desktop-mcp.Tests/Fixtures/TestDataFactory.cs`
 
 ### ✅ Complete - Unit Tests
-- `tests/WindowsAppManagerMcp.Tests/Unit/Services/LayoutServiceTests.cs` (23 tests)
-- `tests/WindowsAppManagerMcp.Tests/Unit/Services/WindowServiceTests.cs` (39 tests)
-- `tests/WindowsAppManagerMcp.Tests/Unit/Services/MonitorServiceTests.cs` (20 tests)
-- `tests/WindowsAppManagerMcp.Tests/Unit/Services/ProcessServiceTests.cs` (11 tests)
-- `tests/WindowsAppManagerMcp.Tests/Unit/Services/InputValidationServiceTests.cs` (57 tests)
-- `tests/WindowsAppManagerMcp.Tests/Unit/Models/ModelTests.cs` (29 tests)
-- `tests/WindowsAppManagerMcp.Tests/Unit/Tools/WindowFinderToolsTests.cs` (14 tests)
-- `tests/WindowsAppManagerMcp.Tests/Unit/Tools/WindowManagerToolsTests.cs` (26 tests)
-- `tests/WindowsAppManagerMcp.Tests/Unit/Tools/MonitorInfoToolsTests.cs` (10 tests)
-- `tests/WindowsAppManagerMcp.Tests/Unit/Tools/AppLauncherToolsTests.cs` (14 tests)
-- `tests/WindowsAppManagerMcp.Tests/Unit/Tools/LayoutPresetToolsTests.cs` (23 tests)
-- `tests/WindowsAppManagerMcp.Tests/Unit/Services/InputSimulationServiceTests.cs` (17 tests)
-- `tests/WindowsAppManagerMcp.Tests/Unit/Tools/InputSimulationToolsTests.cs` (24 tests)
+- `tests/win-desktop-mcp.Tests/Unit/Services/LayoutServiceTests.cs` (23 tests)
+- `tests/win-desktop-mcp.Tests/Unit/Services/WindowServiceTests.cs` (39 tests)
+- `tests/win-desktop-mcp.Tests/Unit/Services/MonitorServiceTests.cs` (20 tests)
+- `tests/win-desktop-mcp.Tests/Unit/Services/ProcessServiceTests.cs` (11 tests)
+- `tests/win-desktop-mcp.Tests/Unit/Services/InputValidationServiceTests.cs` (57 tests)
+- `tests/win-desktop-mcp.Tests/Unit/Models/ModelTests.cs` (29 tests)
+- `tests/win-desktop-mcp.Tests/Unit/Tools/WindowFinderToolsTests.cs` (14 tests)
+- `tests/win-desktop-mcp.Tests/Unit/Tools/WindowManagerToolsTests.cs` (26 tests)
+- `tests/win-desktop-mcp.Tests/Unit/Tools/MonitorInfoToolsTests.cs` (10 tests)
+- `tests/win-desktop-mcp.Tests/Unit/Tools/AppLauncherToolsTests.cs` (14 tests)
+- `tests/win-desktop-mcp.Tests/Unit/Tools/LayoutPresetToolsTests.cs` (23 tests)
+- `tests/win-desktop-mcp.Tests/Unit/Services/InputSimulationServiceTests.cs` (17 tests)
+- `tests/win-desktop-mcp.Tests/Unit/Tools/InputSimulationToolsTests.cs` (24 tests)
 
 ### ✅ Complete - Integration Tests
-- `tests/WindowsAppManagerMcp.Tests/Integration/LayoutServiceIntegrationTests.cs` (14 tests)
-- `tests/WindowsAppManagerMcp.Tests/Integration/FilePersistenceTests.cs` (10 tests)
-- `tests/WindowsAppManagerMcp.Tests/Integration/DependencyInjectionTests.cs` (13 tests)
+- `tests/win-desktop-mcp.Tests/Integration/LayoutServiceIntegrationTests.cs` (14 tests)
+- `tests/win-desktop-mcp.Tests/Integration/FilePersistenceTests.cs` (10 tests)
+- `tests/win-desktop-mcp.Tests/Integration/DependencyInjectionTests.cs` (13 tests)
 
 ---
 
@@ -326,12 +326,12 @@
    {
      "mcpServers": {
        "windows-app-manager": {
-         "command": "C:\\code\\projects\\WindowsAppManagerMcp\\publish\\WindowsAppManagerMcp.exe"
+         "command": "C:\\code\\projects\\win-desktop-mcp\\publish\\win-desktop-mcp.exe"
        }
      }
    }
    ```
-   Build command: `dotnet publish src/WindowsAppManagerMcp -c Release -o ./publish` (see README, "Option 3: Build from Source")
+   Build command: `dotnet publish src/win-desktop-mcp -c Release -o ./publish` (see README, "Option 3: Build from Source")
 
 2. **Optional Tasks:**
    - 6.4: Create appsettings.json for configuration
@@ -362,7 +362,7 @@
 ### Plugin Structure
 
 ```
-WindowsAppManagerMcp/
+win-desktop-mcp/
 ├── .claude-plugin/
 │   ├── plugin.json              # Plugin metadata + MCP server config
 │   └── marketplace.json         # For marketplace distribution
@@ -370,7 +370,7 @@ WindowsAppManagerMcp/
 │   └── using-windows-app-manager/
 │       └── SKILL.md             # How to use the 21 tools effectively
 ├── bin/
-│   └── WindowsAppManagerMcp.exe # Pre-built framework-dependent exe (needs .NET 8 Desktop Runtime)
+│   └── win-desktop-mcp.exe # Pre-built framework-dependent exe (needs .NET 8 Desktop Runtime)
 ```
 
 ### Compatibility
@@ -495,7 +495,7 @@ Get UI element tree with bounding boxes without image capture.
 
 *From the automated feature review on 2026-10-10. Two independent multi-agent review runs, with adversarial verification and a critic pass in each, were consolidated into one roadmap. The review found 120 distinct verified defects (2 critical, 19 high, 62 medium, 37 low).*
 
-Both reviews reach the same diagnosis of WindowsAppManagerMcp. The architecture is sound: services behind interfaces, DI, mockable native wrappers, per-monitor DPI, structured Success/ErrorCode results, and UIA and CDP read paths. It is not yet safe or reliable for an agent to drive a Windows task from start to finish. Five problems stand out. (1) The model cannot see screenshots, because they arrive as base64 inside a JSON text block. (2) Keyboard and mouse input has no target and no verified activation, so it can land in the agent's own terminal; the test suite already did this with Alt+F4. (3) Many tools report success after doing the wrong thing or nothing at all: maximize on the wrong monitor, unknown states treated as restore, save_layout always true, CDP reads from the wrong tab, and a controlTypes filter that drops nested matches. (4) Headline features are broken: a stale plugin binary, an unserializable debug-launch result, and no published release. (5) Everything is addressed by raw HWND plus hand-computed physical pixels, with no waits and no element actions, so a simple form fill costs 4-10 round trips that cannot be verified. The plan works in layers. M0, shipped in 1.12.0, stops the bleeding. M1 makes seeing and typing safe by default. It starts with a default host-window input guard, ships image content together with the true capture origin, and adds verified activation, guarded input with receiving-window reporting, and a desktop-safe fixture e2e suite to validate the Windows-specific behaviour. M2 makes results honest and settles the MCP surface (contract tests, annotations, stable SDK, curated toolsets) before M3-M5 add about 30 tools. It also pulls scroll and clipboard forward. M3 is the biggest lever. It moves from blind coordinates to selector-addressed, pattern-first UIA actions with stable refs, popup-aware search, Chromium accessibility activation, text and table reading, virtualized items and server-side waits, each returning verified post-state. That cuts typical tasks to 1-2 calls that can each be checked. M4-M7 complete the input vocabulary, build a thin browser bridge with a Playwright handoff, add breadth, and hold the deferred items. Design assumptions were checked against the repo. ModelContextProtocol 0.5.0-preview.1 already exposes McpServerOptions.Filters.CallToolFilters and McpServer.ElicitAsync, so the M0 exception filter and M2 elicitation can be built on the current SDK. ProcessStartInfo.ArgumentList is honored with UseShellExecute=true on .NET 10; re-check this on the net8 target. The main residual risks are Windows-behaviour details the critics flagged: the foreground-lock unlock, popup hit-testing, InvokePattern blocking while its modal is open, Edge title formats, and stale element refs. That is why the fixture e2e suite sits in M1, ahead of the large feature work.
+Both reviews reach the same diagnosis of win-desktop-mcp. The architecture is sound: services behind interfaces, DI, mockable native wrappers, per-monitor DPI, structured Success/ErrorCode results, and UIA and CDP read paths. It is not yet safe or reliable for an agent to drive a Windows task from start to finish. Five problems stand out. (1) The model cannot see screenshots, because they arrive as base64 inside a JSON text block. (2) Keyboard and mouse input has no target and no verified activation, so it can land in the agent's own terminal; the test suite already did this with Alt+F4. (3) Many tools report success after doing the wrong thing or nothing at all: maximize on the wrong monitor, unknown states treated as restore, save_layout always true, CDP reads from the wrong tab, and a controlTypes filter that drops nested matches. (4) Headline features are broken: a stale plugin binary, an unserializable debug-launch result, and no published release. (5) Everything is addressed by raw HWND plus hand-computed physical pixels, with no waits and no element actions, so a simple form fill costs 4-10 round trips that cannot be verified. The plan works in layers. M0, shipped in 1.12.0, stops the bleeding. M1 makes seeing and typing safe by default. It starts with a default host-window input guard, ships image content together with the true capture origin, and adds verified activation, guarded input with receiving-window reporting, and a desktop-safe fixture e2e suite to validate the Windows-specific behaviour. M2 makes results honest and settles the MCP surface (contract tests, annotations, stable SDK, curated toolsets) before M3-M5 add about 30 tools. It also pulls scroll and clipboard forward. M3 is the biggest lever. It moves from blind coordinates to selector-addressed, pattern-first UIA actions with stable refs, popup-aware search, Chromium accessibility activation, text and table reading, virtualized items and server-side waits, each returning verified post-state. That cuts typical tasks to 1-2 calls that can each be checked. M4-M7 complete the input vocabulary, build a thin browser bridge with a Playwright handoff, add breadth, and hold the deferred items. Design assumptions were checked against the repo. ModelContextProtocol 0.5.0-preview.1 already exposes McpServerOptions.Filters.CallToolFilters and McpServer.ElicitAsync, so the M0 exception filter and M2 elicitation can be built on the current SDK. ProcessStartInfo.ArgumentList is honored with UseShellExecute=true on .NET 10; re-check this on the net8 target. The main residual risks are Windows-behaviour details the critics flagged: the foreground-lock unlock, popup hit-testing, InvokePattern blocking while its modal is open, Edge title formats, and stale element refs. That is why the fixture e2e suite sits in M1, ahead of the large feature work.
 
 Design notes, sources and the full defect register: [docs/AUTOMATION-ROADMAP.md](docs/AUTOMATION-ROADMAP.md).
 
@@ -518,7 +518,7 @@ Design notes, sources and the full defect register: [docs/AUTOMATION-ROADMAP.md]
 
 *The model sees real pixels it can click from accurately. Keyboard and mouse input cannot reach the agent's own host, a shell window, an elevated or deny-listed window, or an unintended target. Every input result reports where it actually went. The user can pause everything with a hotkey. A desktop-safe suite against a self-owned fixture app validates the real foreground, UIPI and capture behaviour.*
 
-M1 shipped in release 1.13.0 (PR #3 merged the integration branch `m1-see-and-type-safely` into main, and the release commit rebuilt the committed plugin exe, `bin/WindowsAppManagerMcp.exe`). What shipped, the deliberate deviations and what moved to later milestones are in the [roadmap](docs/AUTOMATION-ROADMAP.md#m1-see-and-type-safely).
+M1 shipped in release 1.13.0 (PR #3 merged the integration branch `m1-see-and-type-safely` into main, and the release commit rebuilt the committed plugin exe, `bin/win-desktop-mcp.exe`). What shipped, the deliberate deviations and what moved to later milestones are in the [roadmap](docs/AUTOMATION-ROADMAP.md#m1-see-and-type-safely).
 
 | # | Task | Status | Priority | Effort | Notes |
 |---|------|--------|----------|--------|-------|
@@ -539,7 +539,7 @@ M1 shipped in release 1.13.0 (PR #3 merged the integration branch `m1-see-and-ty
 
 *Every tool either does what it reports or says precisely why not: typed parameters, real post-state, verified close, handoff-aware launch and faithful layouts. The MCP surface (contract tests, generated docs, annotations, stable SDK, curated toolsets, server instructions) is settled before M3-M5 add about 30 tools. Scroll and clipboard, the two primitives agents miss first, are pulled forward.*
 
-M2 shipped in release 1.14.0 (PR #4 merged the integration branch `m2-honest-results` into main, and the release commit rebuilt the committed plugin exe, `bin/WindowsAppManagerMcp.exe`): all 17 items, the wave-B follow-ups (`m2-wave-b-followups`), the fixes from a final review of the integrated branch (`m2-fix-integration`, `m2-fix-privacy`), a docs pass (`m2-docs-pass`) and the fixes it found (`m2-last-fixes`). The server serves 54 tools (47 in 1.13.0). What shipped, the final-review fixes, the known limits and what moved to later milestones are in the [roadmap](docs/AUTOMATION-ROADMAP.md#m2-honest-results-and-a-stable-mcp-surface); what clients see change is under "Changes for existing clients" in [docs/TOOLS.md](docs/TOOLS.md#changes-for-existing-clients).
+M2 shipped in release 1.14.0 (PR #4 merged the integration branch `m2-honest-results` into main, and the release commit rebuilt the committed plugin exe, `bin/win-desktop-mcp.exe`): all 17 items, the wave-B follow-ups (`m2-wave-b-followups`), the fixes from a final review of the integrated branch (`m2-fix-integration`, `m2-fix-privacy`), a docs pass (`m2-docs-pass`) and the fixes it found (`m2-last-fixes`). The server serves 54 tools (47 in 1.13.0). What shipped, the final-review fixes, the known limits and what moved to later milestones are in the [roadmap](docs/AUTOMATION-ROADMAP.md#m2-honest-results-and-a-stable-mcp-surface); what clients see change is under "Changes for existing clients" in [docs/TOOLS.md](docs/TOOLS.md#changes-for-existing-clients).
 
 | # | Task | Status | Priority | Effort | Notes |
 |---|------|--------|----------|--------|-------|
@@ -559,7 +559,7 @@ M2 shipped in release 1.14.0 (PR #4 merged the integration branch `m2-honest-res
 | M2.14 | Toolsets with a curated default and a read-only mode | ✅ Complete | P1 | S | Branch `m2-server-info-toolsets`. WAM_TOOLSETS, WAM_EXCLUDE_TOOLS and WAM_READ_ONLY (keyed on readOnlyHint), read before the registrations; ten toolsets (eleven with M2.16's clipboard), all on by default today, with opt-in groups for the tools of M3-M6; observer and other env profiles in docs/TOOLS.md. WAM_TOOLSETS and WAM_EXCLUDE_TOOLS fail closed on an unknown entry (only the server toolset; `m2-wave-b-followups`, `m2-fix-privacy`), and WAM_EXCLUDE_TOOLS takes toolset names. run_steps (M6.2) must honour them. |
 | M2.15 | scroll primitive (pulled forward) | ✅ Complete | P1 | S | Branch `m2-scroll-clipboard`. scroll(windowHandle?, x?, y?, deltaY, deltaX) on the click path of the input guard, one SendInput batch (move plus one wheel event per notch), client centre by default; WheelFollowsFocus when the wheel would follow the focus to another window; a bare foreground selector without a point is InvalidArguments (`m2-fix-privacy`). |
 | M2.16 | Clipboard get/set with a privacy guard (pulled forward) | ✅ Complete | P1 | S | Branch `m2-scroll-clipboard`. get_clipboard (text, html, files) and set_clipboard behind INativeClipboardWrapper (STA thread, raw Win32); reads return only the agent's own content (set_clipboard, or a change within 5 s of its copy keys or click), never content marked private, and the user's clipboard only with WAM_ALLOW_USER_CLIPBOARD or the user's yes. Final review (`m2-fix-privacy`): input that pastes follows the same rule (PasteNotAllowed), copy windows run from the first input and back off after empty runs, one question at a time. |
-| M2.17 | Audit log of injected input and destructive actions | ✅ Complete | P2 | S | Branch `m2-audit-log`. One JSONL line per input, close, kill, launch, layout and clipboard-write call in %LOCALAPPDATA%\WindowsAppManagerMcp\audit\<date>.jsonl (WAM_AUDIT_PATH), written by the outermost call filter: target (read before the call), receiving window, outcome, errorCode, duration; string arguments only as lengths; 7-day retention; never breaks a call; get_server_info reports the folder. Final review: get_clipboard audited (format, origin, length), close_application windows and apply_layout placements as items, selector targets named, and a background writer that holds a call up for at most 2 s. |
+| M2.17 | Audit log of injected input and destructive actions | ✅ Complete | P2 | S | Branch `m2-audit-log`. One JSONL line per input, close, kill, launch, layout and clipboard-write call in %LOCALAPPDATA%\win-desktop-mcp\audit\<date>.jsonl (WAM_AUDIT_PATH), written by the outermost call filter: target (read before the call), receiving window, outcome, errorCode, duration; string arguments only as lengths; 7-day retention; never breaks a call; get_server_info reports the folder. Final review: get_clipboard audited (format, origin, length), close_application windows and apply_layout placements as items, selector targets named, and a background writer that holds a call up for at most 2 s. |
 
 #### M2 follow-ups
 
@@ -698,7 +698,7 @@ M3 is complete on the integration branch `m3-semantic-find-act-wait` (PR #6) and
 | M5.1 | Debug-browser launch readiness and first-run suppression | ✅ Complete | P1 | S | Branches `m5-1-launch-readiness` and `m5-1-readiness` (merged). launch_browser_with_debug starts the browser with first-run, default-browser, search-engine-choice and sync screens switched off, finds it through App Paths, Program Files and %LOCALAPPDATA% or a new `executablePath` (BrowserNotFound lists the places tried; where.exe is gone), waits only for the started browser's windows, refuses a `userDataDir` a running browser holds and a relative one, and treats a launch another browser took over as DebugLaunchFailed. **Breaking:** `port` defaults to 0: the browser picks a free port, read from the profile's DevToolsActivePort and returned as `cdpPort`; an explicit port must be 1024-65535. The launch returns only once its DevTools endpoint answers on 127.0.0.1 at that port, owned by the started browser (ICdpService.GetBrowserVersionAsync over /json/version, DebugBrowserReadinessProbe): `cdpReady`, `browserVersion`, `cdpEndpoint`, `browserWsEndpoint`; otherwise DebugLaunchFailed within 10 s with the still-running `processId`. Reviewed by three adversarial lenses per branch (17 and 9 confirmed findings, fixed). Desktop (2026-10-15, throwaway profiles, local pages): Edge 155 and Chrome 155 started straight on the page with no first-run screen (Chrome shows an 'Action required' pill, nothing blocking) and did not sign in; port 0 and an explicit port each gave cdpReady true in about 2 s, with cdpPort and browserWsEndpoint matching DevToolsActivePort, and a read at once gave source cdp; an explicit port another program held gave PortInUse with nothing launched. |
 | M5.2 | CDP transport seam, persistent sessions and explicit errors | ✅ Complete | P1 | M | Branch `m5-2-cdp-transport` (merged). ICdpTransport (the only type that touches the network: /json on 127.0.0.1 without redirects, 16 MB, and correlated WebSocket connections with a 64 MB message cap, validated ws URLs on the same port) and CdpConnection (ids, events, dialog state, per-command timeouts that keep the connection, detach and crash reasons); one connection per tool call, no pool. New codes CdpTargetClosed (39) and CdpResponseTooLarge (40); a program that answers but not as DevTools is CdpProtocolError; a 403 handshake is CdpUnavailable with the reason. get_browser_url and get_browser_content take `targetId` (needs cdpPort, implies requireCdp, port owner fail-closed). The unused IsCdpAvailableAsync and GetContentViaCdpAsync are gone. Reviewed by three lenses (10 confirmed findings, fixed). Desktop (2026-10-15, throwaway Edge instances, local pages): ten reads left no DevTools client attached; a dialog opened during a read gave CdpDialogOpen; a tab closed during a read gave CdpTargetClosed with Edge's reason; two tabs with one title gave CdpTargetAmbiguous, reading by targetId worked and a closed targetId gave CdpTargetNotFound; one instance's window with another instance's port gave CdpPortOwnerMismatch with and without targetId; a read after the browser exited gave CdpUnavailable. Not as designed: a dialog already open before the read gives CdpTimeout (its message says a dialog is probably open), because Edge does not report an open dialog again to a new connection (see M5.8). The 64 MB cap was not reached with a 70 MB file page (the page had not finished loading); covered by tests only. |
 | M5.3 | HWND-to-target binding and automatic port discovery | ✅ Complete | P1 | M | Branch `m5-3-window-binding` (merged). cdpPort is optional on get_browser_url, get_active_browser_url and get_browser_content: DebugPortLocator reads --remote-debugging-port from the command line of the window's own process (NtQueryInformationProcess, parsed as Chromium parses it; for port 0 the DevToolsActivePort of a fully qualified --user-data-dir) and uses it only when the 127.0.0.1 listener belongs to that same process; it never scans ports, and a browser started without the switch reads through UI Automation as before. The window is bound to its browser window (Browser.getWindowForTarget over one browser-level connection, with the window's bounds, state and DPI) before the title picks the tab; titles over all tabs are the last resort. The title path now fails closed when the port owner cannot be read; automatic CDP respects the target policy. New `useCdp` (default true; false reads through UI Automation only, and with cdpPort, targetId, requireCdp or selector it is InvalidArguments); results add `cdpPort`. WebView2 and Electron hosts: only the window's own process counts, never a child. Reviewed by three lenses (11 confirmed findings, 9 fixed; an explicit cdpPort keeps its older policy exemption). Desktop (2026-10-15, throwaway debug instances, local pages): without cdpPort Edge (port 0) and Chrome (explicit port) read through CDP with the found port, text and HTML; useCdp false read through UI Automation with the URL from the page, and with cdpPort was InvalidArguments with nothing read; two windows of one instance, each showing a tab titled Same, each returned its own tab (the targetIds matched Browser.getWindowForTarget's windows). Not run: the covered-window and no-client-left checks. |
-| M5.4 | Debug-browser lifecycle: reuse, named profiles, close and cleanup | ✅ Complete | P2 | M | Branch `m5-4-debug-lifecycle` (merged). launch_browser_with_debug takes a named `profile` (kept in %LOCALAPPDATA%\WindowsAppManagerMcp\browser-profiles\<name>; validated names, no links), else a new temporary profile under %TEMP%\WindowsAppManagerMcp\browser-debug (old ones swept), `reuseIfRunning` (the running debug browser of that profile as launchStatus alreadyRunning, identified by its own command line and port, never by title) and launch_application's `placement`. New close_debug_browser (processId or cdpPort, deleteProfile, confirm, timeoutMs) closes only the main process of a browser with a DevTools port whose --user-data-dir is the one this server started it with or one of the server's own profile folders (else NotADebugBrowser, 18), asks the user through elicitation as kill_process does (else confirm), sends Browser.close over its own connection, ends it only if it does not exit, and deletes a temporary profile (a named one with deleteProfile). A cancelled launch ends the browser it started. Reviewed by three lenses (11 confirmed findings, fixed, including two that could have closed or handed over a browser the server never started). Desktop (2026-10-15, own instances only): a named Edge profile launched, reuseIfRunning returned the same process as alreadyRunning, close_debug_browser closed it gracefully and deleted the profile; a temporary Chrome closed by its port, its profile deleted; closing it again gave ProcessNotFound; the user's own browser was untouched. |
+| M5.4 | Debug-browser lifecycle: reuse, named profiles, close and cleanup | ✅ Complete | P2 | M | Branch `m5-4-debug-lifecycle` (merged). launch_browser_with_debug takes a named `profile` (kept in %LOCALAPPDATA%\win-desktop-mcp\browser-profiles\<name>; validated names, no links), else a new temporary profile under %TEMP%\win-desktop-mcp\browser-debug (old ones swept), `reuseIfRunning` (the running debug browser of that profile as launchStatus alreadyRunning, identified by its own command line and port, never by title) and launch_application's `placement`. New close_debug_browser (processId or cdpPort, deleteProfile, confirm, timeoutMs) closes only the main process of a browser with a DevTools port whose --user-data-dir is the one this server started it with or one of the server's own profile folders (else NotADebugBrowser, 18), asks the user through elicitation as kill_process does (else confirm), sends Browser.close over its own connection, ends it only if it does not exit, and deletes a temporary profile (a named one with deleteProfile). A cancelled launch ends the browser it started. Reviewed by three lenses (11 confirmed findings, fixed, including two that could have closed or handed over a browser the server never started). Desktop (2026-10-15, own instances only): a named Edge profile launched, reuseIfRunning returned the same process as alreadyRunning, close_debug_browser closed it gracefully and deleted the profile; a temporary Chrome closed by its port, its profile deleted; closing it again gave ProcessNotFound; the user's own browser was untouched. |
 | M5.5 | Tabs, navigation with a load wait, and browser waits | ✅ Complete | P1 | L | Branch `m5-5-tabs-navigation` (merged). New tools: list_tabs and wait_for_browser (default-on browser toolset; wait until urlContains, titleContains, textContains or a selector, polling on one connection, out-of-range timeouts refused), activate_tab and browser_navigate (opt-in browser-actions toolset; url, targetId, newTab, waitUntil load, domcontentloaded or none, the load event registered before Page.navigate, errorText and loadState; self-gated). browser_navigate opens only http and https, and refuses javascript:, data:, file:, the browsers' own pages and any browser's DevTools endpoint on this computer; the target policy applies to the port owner. NavigationFailed is 19. CDP only, no UI Automation fallback. Reviewed by three lenses (11 confirmed findings, fixed: self-redirecting pages, slow servers, a DevTools endpoint as url). Desktop (2026-10-15, own Edge instance, a 127.0.0.1 test server): a page answering after 1.5 s loaded at 1.55 s; with a 3 s image domcontentloaded returned in 34 ms and load at 3.02 s; a self-redirecting page loaded in 62 ms; javascript:, edge://settings, file: and the instance's own /json/list were refused; newTab opened a tab with its targetId; wait_for_browser found text added after 1.2 s and timed out after 1.5 s on text that never came; activate_tab switched the window to the other tab. |
 | M5.6 | Paged, scoped, structured browser content | ✅ Complete | P1 | S | Branches `m5-6-paged-content` and `fix-m56-uia-paging` (merged). get_browser_content reads a bounded page (`offset`, `maxLength`) and reports `totalLength`, `nextOffset`, `truncated` and `textSkipped`, keeping `contentLength`; offsets belong to their source: a 'cdp' page continues through CDP (the page measures and slices its own text, so a page over the 64 MB message cap can be read in pages), a 'uia' page continues with useCdp false through the Document's Text pattern (as read_element_text pages). A CSS `selector` scopes a CDP read (no fallback). With M5.3 the selector and later pages go through the found port, the window binding and the target policy. Reviewed by three lenses (7 confirmed findings, fixed; a page's reported slice is checked, a cut Text pattern page is reported). Desktop (2026-10-15, throwaway debug instances, a 100 KB local page of 1000 lines): CDP pages of 20000 joined to the page's text exactly; a selector read just its element; an offset without useCdp continued through CDP. The UI Automation pages repeated one line break: a Chromium text range that starts right after a line break reads that line break again, so page 2 reported nextOffset 39999. Fixed in `fix-m56-uia-paging` (UiaTextPageReader, shared with read_element_text and both UI Automation engines): every page after the first is read from the character before its offset, which is left out. After the fix the UI Automation pages joined to exactly the CDP text on Edge 155 and Chrome 155 at page sizes 20000, 7777, 3000 and 999, and the element text desktop tests passed on uia3 (14) and uia2 (4). Not checked on the desktop: a page over 64 MB (a 70 MB test page in Edge ran the machine low on memory; covered by tests only). |
 | M5.7 | Locale-independent UIA browser fallback | ✅ Complete | P1 | M | Branches `m5-7-uia-fallback` and `fix-m57-real-browsers` (merged). Without cdpPort, get_browser_url, get_active_browser_url and get_browser_content find nothing by name (names change with the browser's language and pages set them): the URL comes from the shown tab's Document (automationId RootWebArea, whose Value is the committed URL with its scheme; `urlSource: "document"`), else from the address bar (Chromium's OmniboxViewViews class, Firefox's urlbar-input, or the first edit box in a toolbar, never inside the page or the tabs; `urlSource: "addressBar"`), returned only when it is a URL; new `displayUrl`, `urlSource` and `isEditing`; a new tab page is NewTabPage; an address bar that may be being edited (it has focus, or the browser is behind another window) with no address from the page is UrlExtractionFailed; get_browser_content reads the shown tab's Document, not DevTools, side panels or frames, and returns ContentAreaNotFound when there is none. Reviewed by three lenses (9 confirmed findings, 7 fixed, 2 refuted). The first desktop check (2026-10-15, throwaway debug Edge) failed: the warm-up hands the reader the render widget's pane ('Chrome Legacy Window', no Value), while the tab's Document is its sibling under the web view, so no URL came from the page; and Edge and Chrome show a file page's path as C:/... without file:///. Fixed in `fix-m57-real-browsers`: a page root that is not a Document stands for the first Document among its parent's children, else the window's Documents are searched (frames left out), else the pane itself is the page (the WebView2 case); a path shown the browsers' way is returned as its file:/// URL. After the fix, 48 reads of background windows on Edge 155 and Chrome 155, in English and Norwegian (the language set only in the throwaway profile's Local State), took the URL from the page. Limit: Chromium builds no page tree for a window covered since its page loaded (no render widget, no Document), so only CDP can read it; the error says so. |

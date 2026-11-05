@@ -1,7 +1,7 @@
 using System.Runtime.InteropServices;
-using static WindowsAppManagerMcp.FixtureApp.FixtureContract;
+using static WinDesktopMcp.FixtureApp.FixtureContract;
 
-namespace WindowsAppManagerMcp.FixtureApp;
+namespace WinDesktopMcp.FixtureApp;
 
 /// <summary>
 /// The task dialog the main window's Task dialog button shows (roadmap M3.F4): TaskDialogIndirect with two command links
